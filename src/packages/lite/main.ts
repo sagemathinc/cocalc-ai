@@ -48,10 +48,11 @@ export async function main(opts?: {
   reflectUi?: any;
 }): Promise<number> {
   logger.debug("main");
-  // Lite doesn't expose the project process-info UI, so disable expensive
-  // project-info/project-status/usage-info background collection entirely.
-  process.env.COCALC_ENABLE_PROJECT_INFO = "0";
-  // If this is toggled back on for debugging, default to owned-scope snapshots.
+  // Lite now exposes project/process info in the UI, so force-enable the
+  // project info services even if an outer shell exported
+  // COCALC_ENABLE_PROJECT_INFO=0.
+  process.env.COCALC_ENABLE_PROJECT_INFO = "1";
+  // Lite defaults to owned-scope snapshots for process monitoring.
   process.env.COCALC_PROJECT_INFO_SCOPE ??= "owned";
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");

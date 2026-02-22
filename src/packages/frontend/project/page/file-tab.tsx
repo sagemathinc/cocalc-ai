@@ -144,7 +144,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "microchip",
     flyout: ProjectInfoFlyout,
     noAnonymous: false,
-    noLite: true, // process monitor doesn't work at all yet for some reason
+    noLite: false,
   },
   settings: {
     label: labels.settings,

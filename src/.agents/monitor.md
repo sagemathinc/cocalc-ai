@@ -297,4 +297,5 @@ Rule:
 - [x] Commit 9: darwin owned-scope provider + tests.
 - [~] Commit 10: defaults/cutover.
   - [x] Scope default now resolves to `owned` for lite and `all` for launchpad.
-  - [ ] Lite still explicitly disables process-info services in `lite/main.ts` for performance unless re-enabled.
+  - [x] Lite still explicitly disables process-info services in `lite/main.ts` for performance unless re-enabled.
+
