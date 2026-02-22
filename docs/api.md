@@ -54,7 +54,8 @@ sequenceDiagram
 | Notebook API | MVP implemented | list/run/set cells. |
 | Timetravel providers | Implemented | `patchflow/snapshots/backups/git` list/get primitives. |
 | Syncdoc lifecycle | Improved | refcounted direct syncdoc access, no tab dependency. |
-| Terminal API | In progress | next major capability set. |
+| Terminal API | MVP implemented | list/openSplit/spawn/write/history/state/cwd/resize/destroy. |
+| Extensions API | MVP implemented | session-scoped `api.extensions` with hello-world editor demo. |
 
 ## Capability Shape (Launchpad vs Lite)
 
@@ -107,6 +108,7 @@ Notes:
 
 - Harden docs and examples (this file + exec-api snippets).
 - Add `api.terminal` MVP (list/open split/spawn/write/read/resize/destroy).
+- Add extension runtime MVP (`api.extensions`) with dynamic hello-world editor registration.
 - Ensure lite-mode parity for browser subcommands and capability reporting.
 - Extend notebook edits (insert/delete/move and kernel/session helpers).
 
@@ -118,7 +120,7 @@ Notes:
 
 ### Phase C
 
-- Extension/plugin runtime API (register editor/panel/actions).
+- Extension/plugin runtime API expansion (manifest/bundle install, panels/actions, capability gating).
 - Optional exec event streaming for progress and approvals.
 
 ## Terminal MVP Target

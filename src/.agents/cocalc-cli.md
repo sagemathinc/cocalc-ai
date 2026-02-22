@@ -14,6 +14,35 @@ TODO:
 - [x] upgrade host (or set host to a specific version)
 - [x] ssh to host (or something like "kubectl exec bash").
 
+## Current Status Snapshot
+
+### Browser CLI + Exec Runtime
+
+| Area | Status | Notes |
+|---|---|---|
+| `browser session list/use/clear` | done | Browser heartbeat + active session targeting is in place. |
+| `browser open/close` (multiple files) | done | Multi-file open/close in one command. |
+| `browser exec` | done | Inline JS, `--file`, `--stdin`, configurable timeout. |
+| `browser exec` LRO | done | `start/get/wait/cancel` implemented and exposed in CLI. |
+| `browser exec-api` | done | Prints TypeScript API declaration + usage snippets. |
+| `api.notify` | done | In-browser notifications (`show/info/success/warning/error`). |
+| `api.fs` | done | Node-like async fs + `find/fd/ripgrep/dust` wrappers. |
+| `api.bash` | done | Blocking + async job lifecycle (`run/start/get/wait`). |
+| `api.notebook` | MVP | `listCells`, `runCells`, `setCells`. |
+| `api.terminal` | MVP | list/openSplit/spawn/write/history/state/cwd/resize/destroy. |
+| `api.timetravel` | MVP+ | patchflow/snapshots/backups/git list/get primitives. |
+| syncdoc handling | done | Direct syncdoc open path + refcounted reuse + cleanup. |
+| lite-mode browser support | done | Browser CLI flow works with lite hub surface. |
+| extension runtime | MVP | Session-scoped `api.extensions` with hello-world editor demo. |
+
+### Current High-Priority Next Steps
+
+- Harden lite-mode conat auth defaults and agent-scope token model.
+- Expand notebook editing API beyond set/run/list.
+- Add richer timetravel helpers (`restore/search/summarize`) at unified layer.
+- Extend extension runtime from hello-world MVP to generic bundle/manifest install.
+- Add policy/approval hooks directly in browser exec API methods.
+
 ## Goals
 
 - Provide a single, scriptable CLI for CoCalc Launchpad and related products.
@@ -627,12 +656,12 @@ Execution flow:
 
 Phase A (near-term)
 
-- Make `cocalc browser ...` work in lite mode by wiring against [src/packages/lite/hub](./src/packages/lite/hub) (parallel lightweight API surface to server conat API), so browser automation can be used during ongoing development.
-- Expand `api.session`, `api.files` (read/write text), `api.editor` save/focus.
-- Expose `api.fs` node-compatible baseline (`readFile/writeFile/readdir/stat/rm/mkdir/rename`) plus safe `ripgrep/find/fd`.
-- Harden `api.notebook` with insert/delete/move + kernel status.
-- Add `api.ui.confirm` and richer notify variants.
-- Add `api.timetravel` MVP (`listProviders`, `listVersions`, `getVersionText`, `restoreVersion`) with `patchflow` + `snapshots` first.
+- [x] Make `cocalc browser ...` work in lite mode by wiring against [src/packages/lite/hub](./src/packages/lite/hub) (parallel lightweight API surface to server conat API), so browser automation can be used during ongoing development.
+- [ ] Expand `api.session`, `api.files` (read/write text), `api.editor` save/focus. (in progress)
+- [x] Expose `api.fs` node-compatible baseline (`readFile/writeFile/readdir/stat/rm/mkdir/rename`) plus safe `ripgrep/find/fd`.
+- [ ] Harden `api.notebook` with insert/delete/move + kernel status. (in progress)
+- [ ] Add `api.ui.confirm` and richer notify variants. (in progress)
+- [ ] Add `api.timetravel` MVP (`listProviders`, `listVersions`, `getVersionText`, `restoreVersion`) with `patchflow` + `snapshots` first. (in progress)
 
 Phase B
 
