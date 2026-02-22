@@ -492,6 +492,7 @@ export function Kernel({
   function renderKernelDetails() {
     const openProcessInfo = () => {
       if (actions.path == null) return;
+      actions.hide_select_kernel();
       project_actions?.setState({
         project_info_focus: {
           kind: "jupyter",

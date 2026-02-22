@@ -197,19 +197,34 @@ export const ProjectInfo: React.FC<Props> = React.memo(
 
     React.useEffect(() => {
       if (project_info_focus == null || info?.processes == null) return;
+      const focusGet = (key: "pid" | "kind" | "path") => {
+        if (typeof (project_info_focus as any)?.get === "function") {
+          return (project_info_focus as any).get(key);
+        }
+        return (project_info_focus as any)?.[key];
+      };
+      const focusPid = focusGet("pid");
+      const focusKind = focusGet("kind");
+      const focusPath = focusGet("path");
       let proc: Process | undefined;
-      if (project_info_focus.pid != null) {
-        proc = info.processes[project_info_focus.pid];
+      if (focusPid != null) {
+        proc = info.processes[focusPid];
       }
-      if (
-        proc == null &&
-        project_info_focus.kind != null &&
-        project_info_focus.path != null
-      ) {
+      if (proc == null && focusKind != null && focusPath != null) {
+        const normalizePath = (path: string) => path.replace(/^\/+/, "");
+        const targetPath = normalizePath(focusPath);
         for (const p of Object.values(info.processes)) {
+          const cocalc = p.cocalc;
+          if (cocalc == null || cocalc.type !== focusKind) continue;
+          const cocalcPath = "path" in cocalc ? cocalc.path : undefined;
+          if (cocalcPath != null && normalizePath(cocalcPath) === targetPath) {
+            proc = p;
+            break;
+          }
           if (
-            p.cocalc?.type === project_info_focus.kind &&
-            p.cocalc.path === project_info_focus.path
+            focusKind === "jupyter" &&
+            cocalc.type === "jupyter" &&
+            cocalc.path.endsWith(`/${targetPath}`)
           ) {
             proc = p;
             break;
