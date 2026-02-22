@@ -95,7 +95,8 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     if (metadata?.agent_kind === "acp" || metadata?.acp_config != null) {
       agentMode = "codex";
     } else if (metadata?.agent_kind === "llm") {
-      agentMode = "model";
+      // "Other model" is currently hidden from UI for shipping focus.
+      agentMode = "human";
     }
     setRenamingThread(threadKey);
     setRenameValue(metadata?.name?.trim() || currentLabel || "");
@@ -410,7 +411,6 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
               options={[
                 { value: "codex", label: "Codex (agent)" },
                 { value: "human", label: "Human only" },
-                { value: "model", label: "Other model" },
               ]}
             />
           </div>

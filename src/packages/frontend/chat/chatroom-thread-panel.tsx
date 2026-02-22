@@ -210,7 +210,6 @@ export function ChatRoomThreadPanel({
                 options={[
                   { value: "codex", label: "Codex (agent)" },
                   { value: "human", label: "Human only" },
-                  { value: "model", label: "Other model" },
                 ]}
               />
             </div>
@@ -220,11 +219,7 @@ export function ChatRoomThreadPanel({
                   Default model
                 </div>
                 <Input
-                  placeholder={
-                    newThreadSetup.agentMode === "codex"
-                      ? DEFAULT_CODEX_MODEL
-                      : "e.g. gpt-4o"
-                  }
+                  placeholder={DEFAULT_CODEX_MODEL}
                   value={newThreadSetup.model}
                   onChange={(e) => {
                     const model = e.target.value;
