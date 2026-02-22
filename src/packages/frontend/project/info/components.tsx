@@ -36,7 +36,6 @@ import { filename, warning_color_disk, warning_color_pct } from "./utils";
 import { useProjectContext } from "../context";
 import ShowError from "@cocalc/frontend/components/error";
 import { useState } from "react";
-import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 
 interface AboutContentProps {
   proc?: Process;
@@ -182,24 +181,30 @@ export const AboutContent: React.FC<AboutContentProps> = ({
         </Descriptions.Item>
         {t != null && t.cpu.length >= 2 && t.mem.length >= 2 ? (
           <Descriptions.Item label="History" span={2}>
-            <Row gutter={[12, 0]}>
-              <Col md={12} xs={24}>
-                <ProcessTrendChart
-                  title="CPU Trend"
-                  values={t.cpu}
-                  unit="%"
-                  color={COLORS.BLUE_D}
-                />
-              </Col>
-              <Col md={12} xs={24}>
-                <ProcessTrendChart
-                  title="Memory Trend"
-                  values={t.mem}
-                  unit="MiB"
-                  color={COLORS.ANTD_GREEN_D}
-                />
-              </Col>
-            </Row>
+            <div
+              style={
+                isFlyout
+                  ? undefined
+                  : {
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                      gap: "12px",
+                    }
+              }
+            >
+              <ProcessTrendChart
+                title="CPU Trend"
+                values={t.cpu}
+                unit="%"
+                color={COLORS.BLUE_D}
+              />
+              <ProcessTrendChart
+                title="Memory Trend"
+                values={t.mem}
+                unit="MiB"
+                color={COLORS.ANTD_GREEN_D}
+              />
+            </div>
             {timeCaption != null ? (
               <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
                 {timeCaption}
@@ -604,6 +609,23 @@ interface CoCalcFileProps {
   project_actions;
 }
 
+const COCALC_ROLE_BUTTON_STYLE: CSS = {
+  width: "100%",
+  maxWidth: "100%",
+  display: "inline-flex",
+  alignItems: "center",
+} as const;
+
+const COCALC_ROLE_BUTTON_TEXT_STYLE: CSS = {
+  flex: 1,
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  display: "inline-block",
+  verticalAlign: "bottom",
+} as const;
+
 export const CoCalcFile: React.FC<CoCalcFileProps> = React.memo(
   (props: CoCalcFileProps) => {
     const { icon, path, project_actions } = props;
@@ -623,7 +645,7 @@ export const CoCalcFile: React.FC<CoCalcFileProps> = React.memo(
               Click to open <code>{path}</code>
             </span>
           }
-          style={{ paddingLeft: "1rem" }}
+          style={COCALC_ROLE_BUTTON_TEXT_STYLE}
         >
           {filename(path)}
         </Tip>
@@ -631,7 +653,12 @@ export const CoCalcFile: React.FC<CoCalcFileProps> = React.memo(
     }
 
     return (
-      <Button shape="round" icon={<Icon name={icon} />} onClick={click}>
+      <Button
+        shape="round"
+        icon={<Icon name={icon} />}
+        onClick={click}
+        style={COCALC_ROLE_BUTTON_STYLE}
+      >
         {render_tip()}
       </Button>
     );
@@ -788,8 +815,8 @@ export const SignalButtons: React.FC<SignalButtonsProps> = React.memo(
 
 export function render_cocalc_btn({ title, onClick }) {
   return (
-    <Button shape="round" onClick={onClick}>
-      {title}
+    <Button shape="round" onClick={onClick} style={COCALC_ROLE_BUTTON_STYLE}>
+      <span style={COCALC_ROLE_BUTTON_TEXT_STYLE}>{title}</span>
     </Button>
   );
 }

@@ -11,7 +11,7 @@ import {
   ALERT_HIGH_PCT,
   ALERT_MEDIUM_PCT,
 } from "@cocalc/comm/project-status/const";
-import { separate_file_extension, trunc } from "@cocalc/util/misc";
+import { separate_file_extension } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { DUState, PTStats, ProcessRow } from "./types";
 const { ANTD_RED, ANTD_ORANGE, ANTD_GREEN } = COLORS;
@@ -24,7 +24,7 @@ export const DETAILS_BTN_TEXT = "Details";
 export function filename(path) {
   const fn = basename(path);
   const name = separate_file_extension(fn).name;
-  return trunc(name, 12);
+  return name;
 }
 
 // this is always normalized for 0 to 100

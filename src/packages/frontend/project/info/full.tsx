@@ -19,13 +19,14 @@ import {
 } from "@ant-design/icons";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
-import { A, Loading, Tip } from "@cocalc/frontend/components";
+import { A, Icon, Loading, Tip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { cmp, field_cmp, seconds2hms } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   Process,
+  Processes,
   ProjectInfo as ProjectInfoType,
 } from "@cocalc/util/types/project-info/types";
 import type { ProjectInfoHistory } from "@cocalc/conat/project/project-info";
@@ -543,6 +544,55 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   }
 
   function render_modals() {
+    const renderModalFileLink = (proc: Process): React.JSX.Element | undefined => {
+      const cocalc = proc.cocalc;
+      if (cocalc == null) return;
+      if (
+        cocalc.type !== "jupyter" &&
+        cocalc.type !== "terminal" &&
+        cocalc.type !== "x11"
+      ) {
+        return;
+      }
+      const openPath = cocalc.path;
+      const sourcePath = proc.origin?.path ?? openPath;
+      const displayPath =
+        sourcePath.startsWith("/") ? sourcePath : `/${sourcePath}`;
+      const icon =
+        cocalc.type === "jupyter"
+          ? "ipynb"
+          : cocalc.type === "terminal"
+            ? "terminal"
+            : "window-restore";
+      return (
+        <Button
+          shape="round"
+          icon={<Icon name={icon} />}
+          onClick={() =>
+            project_actions?.open_file({
+              path: openPath,
+              foreground: true,
+            })
+          }
+          style={{ maxWidth: "100%" }}
+        >
+          <span
+            style={{
+              display: "inline-block",
+              maxWidth: "52vw",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              verticalAlign: "bottom",
+            }}
+            title={displayPath}
+          >
+            {displayPath}
+          </span>
+        </Button>
+      );
+    };
+
     switch (modal) {
       case "ssh":
         return (
@@ -577,6 +627,18 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
         );
       default:
         if (modal != null && typeof modal !== "string") {
+          const processes: Processes = info?.processes ?? { [modal.pid]: modal };
+          const signalControls = (
+            <div style={{ marginBottom: "8px" }}>
+              <SignalButtons
+                pid={modal.pid}
+                loading={loading}
+                processes={processes}
+                project_actions={project_actions}
+              />
+            </div>
+          );
+          const modalFileLink = renderModalFileLink(modal);
           return (
             <Modal
               title="Process info"
@@ -585,7 +647,14 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               footer={render_modal_footer()}
               onCancel={() => set_modal(undefined)}
             >
-              <AboutContent proc={modal} trend={processHistoryForProcess(modal)} />
+              {signalControls}
+              {modalFileLink != null ? (
+                <div style={{ marginBottom: "10px" }}>{modalFileLink}</div>
+              ) : undefined}
+              <AboutContent
+                proc={modal}
+                trend={processHistoryForProcess(modal)}
+              />
             </Modal>
           );
         }
@@ -635,6 +704,23 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     const rowSelection = {
       selectedRowKeys: selected,
       onChange: select_proc,
+    };
+
+    const openRowProcessModal = (proc: ProcessRow) => {
+      const live = info?.processes?.[proc.pid];
+      if (live == null) return;
+      set_selected([live.pid]);
+      set_modal(live);
+    };
+
+    const shouldIgnoreRowClick = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.closest("[data-cocalc-role-cell='1']")) return true;
+      if (target.closest(".ant-table-selection-column")) return true;
+      if (target.closest(".ant-checkbox-wrapper")) return true;
+      if (target.closest(".ant-table-row-expand-icon")) return true;
+      if (target.closest("button,a,input,label")) return true;
+      return false;
     };
 
     const cocalc_title = (
@@ -687,16 +773,23 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
             dataSource={ptree}
             size={"small"}
             pagination={false}
+            tableLayout="fixed"
             scroll={{ y: tableHeight }}
             style={table_style}
             expandable={expandable}
             rowSelection={rowSelection}
             loading={disconnected || loading}
+            onRow={(proc) => ({
+              onClick: (event) => {
+                if (shouldIgnoreRowClick(event.target)) return;
+                openRowProcessModal(proc);
+              },
+            })}
           >
             <Table.Column<ProcessRow>
               key="process"
               title="Process"
-              width="40%"
+              width="35%"
               align={"left"}
               ellipsis={true}
               render={(proc) => (
@@ -709,10 +802,14 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
             <Table.Column<ProcessRow>
               key="cocalc"
               title={cocalc_title}
-              width="15%"
+              width="20%"
               align={"left"}
               render={(proc) => (
-                <div style={{ width: "100%", overflow: "hidden" }}>
+                <div
+                  data-cocalc-role-cell="1"
+                  onClick={(event) => event.stopPropagation()}
+                  style={{ width: "100%", overflow: "hidden" }}
+                >
                   {render_cocalc(proc)}
                 </div>
               )}
