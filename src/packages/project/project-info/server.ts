@@ -33,6 +33,7 @@ import type {
 } from "@cocalc/util/types/project-info/types";
 
 const L = getLogger("project-info:server").debug;
+const DEFAULT_INTERVAL_S = 7;
 
 const bytes2MiB = (bytes) => bytes / (1024 * 1024);
 
@@ -76,6 +77,7 @@ export class ProjectInfoServer extends EventEmitter {
   private last?: ProjectInfo = undefined;
   private readonly dbg: Function;
   private running = false;
+  private starting = false;
   private readonly testing: boolean;
   private delay_s: number;
   private tmpIsMemoryBased?: boolean;
@@ -85,7 +87,13 @@ export class ProjectInfoServer extends EventEmitter {
 
   constructor(testing = false) {
     super();
-    this.delay_s = 2;
+    this.delay_s = Math.max(
+      1,
+      Number.parseInt(
+        process.env.COCALC_PROJECT_INFO_INTERVAL_S ?? `${DEFAULT_INTERVAL_S}`,
+        10,
+      ) || DEFAULT_INTERVAL_S,
+    );
     this.testing = testing;
     this.dbg = L;
     // cgroup version will be detected lazily
@@ -555,45 +563,55 @@ export class ProjectInfoServer extends EventEmitter {
   };
 
   public async start(): Promise<void> {
-    if (this.running) {
+    if (this.running || this.starting) {
       this.dbg("project-info/server: already running, cannot be started twice");
     } else {
-      await this._start();
+      this.starting = true;
+      try {
+        await this._start();
+      } finally {
+        this.starting = false;
+      }
     }
   }
 
   private async _start(): Promise<void> {
-    this.dbg("start");
+    this.dbg("start", { interval_s: this.delay_s });
     if (this.running) {
       throw Error("Cannot start ProjectInfoServer twice");
     }
-
-    // Initialize tmpfs detection once at startup
-    this.tmpIsMemoryBased = await isTmpMemoryBased();
+    // This must be set before the first await to prevent concurrent callers
+    // from racing into a second background loop.
     this.running = true;
-    this.processStats = ProcessStats.getInstance();
-    if (this.testing) {
-      this.processStats.setTesting(true);
-    }
-    await this.processStats.init();
-    while (true) {
-      //this.dbg(`listeners on 'info': ${this.listenerCount("info")}`);
-      const info = await this.get_info();
-      if (info != null) this.last = info;
-      this.emit("info", info ?? this.last);
-      if (this.running) {
-        await delay(1000 * this.delay_s);
-      } else {
-        this.dbg("start: no longer running → stopping loop");
-        this.last = undefined;
-        return;
+    try {
+      // Initialize tmpfs detection once at startup
+      this.tmpIsMemoryBased = await isTmpMemoryBased();
+      this.processStats = ProcessStats.getInstance();
+      if (this.testing) {
+        this.processStats.setTesting(true);
       }
-      // in test mode just one more, that's enough
-      if (this.last != null && this.testing) {
+      await this.processStats.init();
+      while (true) {
+        //this.dbg(`listeners on 'info': ${this.listenerCount("info")}`);
         const info = await this.get_info();
-        this.dbg(JSON.stringify(info, null, 2));
-        return;
+        if (info != null) this.last = info;
+        this.emit("info", info ?? this.last);
+        if (this.running) {
+          await delay(1000 * this.delay_s);
+        } else {
+          this.dbg("start: no longer running -> stopping loop");
+          return;
+        }
+        // in test mode just one more, that's enough
+        if (this.last != null && this.testing) {
+          const info = await this.get_info();
+          this.dbg(JSON.stringify(info, null, 2));
+          return;
+        }
       }
+    } finally {
+      this.running = false;
+      this.last = undefined;
     }
   }
 }
