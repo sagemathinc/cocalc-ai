@@ -6,8 +6,6 @@
 import { Button, Input, Select, Space } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
-import { Icon } from "@cocalc/frontend/components";
-import type { IconName } from "@cocalc/frontend/components/icon";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -26,8 +24,8 @@ import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
-import { THREAD_ICON_OPTIONS } from "./chatroom-modals";
 import { ThreadImageUpload } from "./thread-image-upload";
+import { ChatIconPicker } from "./chat-icon-picker";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -128,10 +126,6 @@ export function ChatRoomThreadPanel({
   if (!selectedThreadKey) {
     const update = (patch: Partial<NewThreadSetup>) =>
       onNewThreadSetupChange({ ...newThreadSetup, ...patch });
-    const iconOptions = THREAD_ICON_OPTIONS.map((icon) => ({
-      value: icon,
-      label: icon,
-    }));
     const codexModel = newThreadSetup.codexConfig.model ?? DEFAULT_CODEX_MODEL;
     const codexReasoningOptions = (
       DEFAULT_CODEX_MODELS.find((model) => model.name === codexModel)?.reasoning ??
@@ -255,23 +249,11 @@ export function ChatRoomThreadPanel({
             )}
             <div>
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
-              <Select
-                allowClear
-                showSearch
+              <ChatIconPicker
                 value={newThreadSetup.icon}
-                style={{ width: "100%" }}
-                options={iconOptions}
-                optionFilterProp="label"
+                onChange={(value) => update({ icon: value ? String(value) : undefined })}
+                modalTitle="Select Chat Icon"
                 placeholder="Optional icon"
-                onChange={(value) =>
-                  update({ icon: value ? String(value) : undefined })
-                }
-                optionRender={(option) => (
-                  <Space>
-                    <Icon name={option.value as IconName} />
-                    <span>{String(option.value)}</span>
-                  </Space>
-                )}
               />
             </div>
             <div>

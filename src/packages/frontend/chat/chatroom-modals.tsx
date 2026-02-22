@@ -7,11 +7,9 @@ import { Button, Input, Modal, Select, Space, message as antdMessage } from "ant
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
-import { Icon } from "@cocalc/frontend/components";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { lite } from "@cocalc/frontend/lite";
 import type { IconName } from "@cocalc/frontend/components/icon";
-import { capitalize } from "@cocalc/util/misc";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
   DEFAULT_CODEX_MODELS,
@@ -21,6 +19,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
 import { ThreadImageUpload } from "./thread-image-upload";
+import { ChatIconPicker } from "./chat-icon-picker";
 
 export interface ChatRoomModalHandlers {
   openRenameModal: (
@@ -281,10 +280,6 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     setForkName(name);
   }, [forkThread]);
 
-  const iconOptions = THREAD_ICON_OPTIONS.map((icon) => ({
-    value: icon,
-    label: icon,
-  }));
   const codexModelOptions = DEFAULT_CODEX_MODELS.map((model) => ({
     value: model.name,
     label: model.name,
@@ -346,23 +341,13 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
           </div>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
-            <Select
-              allowClear
-              showSearch
+            <ChatIconPicker
               value={renameIcon}
-              style={{ width: "100%" }}
-              options={iconOptions}
-              optionFilterProp="label"
-              placeholder="Select an icon"
               onChange={(value) =>
                 setRenameIcon(value ? (value as IconName) : undefined)
               }
-              optionRender={(option) => (
-                <Space>
-                  <Icon name={option.value as IconName} />
-                  <span>{capitalize(String(option.value))}</span>
-                </Space>
-              )}
+              modalTitle="Select Chat Icon"
+              placeholder="Select an icon"
             />
           </div>
           <div>
@@ -575,33 +560,6 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     </>
   );
 }
-
-export const THREAD_ICON_OPTIONS: IconName[] = [
-  "thumbs-up",
-  "thumbs-down",
-  "question-circle",
-  "heart",
-  "star",
-  "plus-one",
-  "jupyter",
-  "smile",
-  "frown",
-  "fire",
-  "sagemath",
-  "tex",
-  "bolt",
-  "graduation-cap",
-  "python",
-  "r",
-  "calculator",
-  "cocalc-ring",
-  "hand",
-  "exchange",
-  "exclamation-triangle",
-  "user",
-  "cube",
-  "dot-circle",
-];
 
 function getReasoningForModel({
   modelValue,
