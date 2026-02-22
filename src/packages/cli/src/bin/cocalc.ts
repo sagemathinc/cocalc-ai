@@ -472,6 +472,121 @@ function normalizeOptionalSecret(value: string | undefined): string | undefined 
   return trimmed;
 }
 
+type LiteConnectionInfo = {
+  url?: string;
+  protocol?: string;
+  host?: string;
+  port?: number;
+  agent_token?: string;
+  account_id?: string;
+};
+
+function isLoopbackHostName(hostname: string): boolean {
+  const host = `${hostname ?? ""}`.trim().toLowerCase();
+  if (!host) return false;
+  return host === "localhost" || host === "::1" || host.startsWith("127.");
+}
+
+function liteConnectionInfoPath(): string {
+  const explicit =
+    process.env.COCALC_LITE_CONNECTION_INFO ??
+    process.env.COCALC_WRITE_CONNECTION_INFO;
+  if (explicit?.trim()) return explicit.trim();
+  return join(
+    process.env.HOME?.trim() || process.cwd(),
+    ".local",
+    "share",
+    "cocalc-lite",
+    "connection-info.json",
+  );
+}
+
+function loadLiteConnectionInfo(): LiteConnectionInfo | undefined {
+  const path = liteConnectionInfoPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as LiteConnectionInfo;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function matchesLiteConnection({
+  apiBaseUrl,
+  info,
+}: {
+  apiBaseUrl: string;
+  info: LiteConnectionInfo;
+}): boolean {
+  if (typeof info.url === "string" && info.url.trim()) {
+    try {
+      return normalizeUrl(info.url) === apiBaseUrl;
+    } catch {
+      // ignore malformed url in connection-info
+    }
+  }
+  try {
+    const base = new URL(apiBaseUrl);
+    const hostOk =
+      typeof info.host === "string" &&
+      info.host.trim().toLowerCase() === base.hostname.toLowerCase();
+    const protocolOk =
+      typeof info.protocol === "string"
+        ? info.protocol.trim().toLowerCase().replace(/:$/, "") ===
+          base.protocol.replace(/:$/, "").toLowerCase()
+        : true;
+    const port = Number(info.port ?? NaN);
+    const basePort = Number(base.port || (base.protocol === "https:" ? 443 : 80));
+    const portOk = Number.isFinite(port) ? port === basePort : true;
+    return hostOk && protocolOk && portOk;
+  } catch {
+    return false;
+  }
+}
+
+function maybeApplyLiteAgentAuth({
+  globals,
+  apiBaseUrl,
+}: {
+  globals: GlobalOptions;
+  apiBaseUrl: string;
+}): GlobalOptions {
+  const hasExplicitAuth =
+    !!normalizeOptionalSecret(globals.cookie) ||
+    !!normalizeOptionalSecret(globals.bearer) ||
+    !!normalizeOptionalSecret(globals.apiKey) ||
+    !!normalizeSecretValue(globals.hubPassword) ||
+    !!normalizeOptionalSecret(process.env.COCALC_BEARER_TOKEN) ||
+    !!normalizeOptionalSecret(process.env.COCALC_API_KEY) ||
+    !!normalizeSecretValue(process.env.COCALC_HUB_PASSWORD);
+  if (hasExplicitAuth) return globals;
+
+  let hostname = "";
+  try {
+    hostname = new URL(apiBaseUrl).hostname;
+  } catch {
+    return globals;
+  }
+  if (!isLoopbackHostName(hostname)) return globals;
+
+  const info = loadLiteConnectionInfo();
+  if (!info?.agent_token?.trim()) return globals;
+  if (!matchesLiteConnection({ apiBaseUrl, info })) return globals;
+
+  const next = {
+    ...globals,
+    bearer: info.agent_token.trim(),
+  };
+  const account_id = `${info.account_id ?? ""}`.trim();
+  if (!getExplicitAccountId(next) && isValidUUID(account_id)) {
+    next.accountId = account_id;
+  }
+  return next;
+}
+
 function profileFromGlobals(globals: GlobalOptions): Partial<AuthProfile> {
   const profile: Partial<AuthProfile> = {};
   if (globals.api?.trim()) {
@@ -701,7 +816,7 @@ function resolveAccountIdFromRemote(remote: RemoteConnection): string | undefine
 async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext> {
   const config = loadAuthConfig();
   const applied = applyAuthProfile(globals, config);
-  const effectiveGlobals = applied.globals as GlobalOptions;
+  let effectiveGlobals = applied.globals as GlobalOptions;
 
   const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
   const rpcTimeoutMs = Math.max(
@@ -710,6 +825,10 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
   );
   const pollMs = durationToMs(effectiveGlobals.pollMs, 1_000);
   const apiBaseUrl = effectiveGlobals.api ? normalizeUrl(effectiveGlobals.api) : defaultApiBaseUrl();
+  effectiveGlobals = maybeApplyLiteAgentAuth({
+    globals: effectiveGlobals,
+    apiBaseUrl,
+  });
   const remote = await connectRemote({ globals: effectiveGlobals, apiBaseUrl, timeoutMs });
 
   let accountId =

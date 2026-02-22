@@ -206,6 +206,8 @@ async function writeConnectionInfo({
       port,
       token: AUTH_TOKEN ?? "",
       agent_token: AGENT_TOKEN ?? "",
+      account_id,
+      project_id,
       protocol: isHttps ? "https" : "http",
       host: hostname,
       url: `${isHttps ? "https" : "http"}://${hostname}:${port}`,
