@@ -12,6 +12,11 @@ import type { WebappClient } from "@cocalc/frontend/client/client";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
 import {
+  BrowserExtensionsRuntime,
+  type BrowserExtensionSummary,
+  type BrowserInstallHelloWorldOptions,
+} from "./extensions-runtime";
+import {
   createBrowserSessionService,
   type BrowserExecOperation,
   type BrowserOpenFileInfo,
@@ -56,6 +61,11 @@ const BROWSER_EXEC_API_DECLARATION = `/**
  *   const stats = await Promise.all(files.map(async (p) => ({ p, s: await api.fs.stat(p) })));
  *   stats.sort((a, b) => (b.s?.mtimeMs ?? 0) - (a.s?.mtimeMs ?? 0));
  *   await api.openFiles(stats.slice(0, 3).map((x) => x.p));
+ *
+ *   // Install hello-world extension editor and open a demo file:
+ *   api.extensions.installHelloWorld({ ext: ".hello" });
+ *   await api.fs.writeFile("/root/demo.hello", "hello extension runtime\\n");
+ *   await api.openFiles(["/root/demo.hello"]);
  *
  * Notes:
  * - paths are absolute (e.g. "/home/user/file.txt")
@@ -182,6 +192,26 @@ export type BrowserTerminalSessionInfo = {
   args: string[];
   pid?: number;
   history_chars?: number;
+};
+
+export type BrowserExtensionSummary = {
+  id: string;
+  name: string;
+  version: string;
+  kind: "hello-world";
+  enabled: boolean;
+  file_extensions: string[];
+  installed_at: string;
+};
+
+export type BrowserInstallHelloWorldOptions = {
+  id?: string;
+  name?: string;
+  version?: string;
+  ext?: string | string[];
+  title?: string;
+  message?: string;
+  replace?: boolean;
 };
 
 export type BrowserExecApi = {
@@ -391,6 +421,13 @@ export type BrowserExecApi = {
       >;
       getText: (path: string, commit: string) => Promise<string>;
     };
+  };
+  extensions: {
+    list: () => BrowserExtensionSummary[];
+    installHelloWorld: (
+      options?: BrowserInstallHelloWorldOptions,
+    ) => BrowserExtensionSummary;
+    uninstall: (id: string) => { ok: true; id: string };
   };
 };`;
 
@@ -852,6 +889,9 @@ type BrowserTerminalSessionInfo = {
   history_chars?: number;
 };
 
+type BrowserExtensionApiSummary = BrowserExtensionSummary;
+type BrowserInstallHelloOptions = BrowserInstallHelloWorldOptions;
+
 type BrowserExecApi = {
   projectId: string;
   workspaceId: string;
@@ -1061,6 +1101,13 @@ type BrowserExecApi = {
       getText: (path: string, commit: string) => Promise<string>;
     };
   };
+  extensions: {
+    list: () => BrowserExtensionApiSummary[];
+    installHelloWorld: (
+      options?: BrowserInstallHelloOptions,
+    ) => BrowserExtensionApiSummary;
+    uninstall: (id: string) => { ok: true; id: string };
+  };
 };
 
 function asPlain(value: any): any {
@@ -1180,6 +1227,7 @@ export function createBrowserSessionAutomation({
       opening?: Promise<any>;
     }
   >();
+  const extensionsRuntime = new BrowserExtensionsRuntime();
 
   const closeManagedSyncDoc = async (key: string): Promise<void> => {
     const entry = managedSyncDocs.get(key);
@@ -2660,6 +2708,22 @@ export function createBrowserSessionAutomation({
           },
         },
       },
+      extensions: {
+        list: (): BrowserExtensionApiSummary[] => {
+          assertExecNotCanceled(isCanceled);
+          return extensionsRuntime.list();
+        },
+        installHelloWorld: (
+          options?: BrowserInstallHelloOptions,
+        ): BrowserExtensionApiSummary => {
+          assertExecNotCanceled(isCanceled);
+          return extensionsRuntime.installHelloWorld(options);
+        },
+        uninstall: (id: string): { ok: true; id: string } => {
+          assertExecNotCanceled(isCanceled);
+          return extensionsRuntime.uninstall(id);
+        },
+      },
     };
     return { api, cleanup };
   };
@@ -2876,6 +2940,7 @@ export function createBrowserSessionAutomation({
       }
       await Promise.resolve().then(async () => {
         await closeAllManagedSyncDocs();
+        extensionsRuntime.clear();
         if (service) {
           service.close();
           service = undefined;
@@ -2902,6 +2967,7 @@ export function createBrowserSessionAutomation({
       clearTimer();
       execOps.clear();
       await closeAllManagedSyncDocs();
+      extensionsRuntime.clear();
       if (service) {
         service.close();
         service = undefined;
