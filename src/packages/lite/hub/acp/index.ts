@@ -47,7 +47,6 @@ import {
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import { appendStreamMessage, extractEventText } from "@cocalc/chat";
 import {
-  findProjectRootFromChatPath,
   resolveInlineCodeLinks,
   type InlineCodeLink,
 } from "./inline-code-links";
@@ -277,7 +276,6 @@ export class ChatStreamWriter {
   private readonly chatKey: string;
   private readonly workspaceRoot?: string;
   private readonly hostWorkspaceRoot?: string;
-  private readonly projectRoot?: string;
   private inlineCodeLinksCache?: {
     content: string;
     links: InlineCodeLink[];
@@ -526,10 +524,6 @@ export class ChatStreamWriter {
     this.chatKey = chatKey(metadata);
     this.workspaceRoot = workspaceRoot;
     this.hostWorkspaceRoot = hostWorkspaceRoot ?? workspaceRoot;
-    this.projectRoot = findProjectRootFromChatPath({
-      hostWorkspaceRoot: this.hostWorkspaceRoot,
-      chatPath: metadata.path,
-    });
     this.usePool = syncdbOverride == null;
     this.syncdbPromise =
       syncdbOverride != null
@@ -865,7 +859,6 @@ export class ChatStreamWriter {
       markdown: content,
       workspaceRoot: this.workspaceRoot,
       hostWorkspaceRoot: this.hostWorkspaceRoot,
-      projectRoot: this.projectRoot,
     });
     this.inlineCodeLinksCache = { content, links };
     return links.length ? links : undefined;

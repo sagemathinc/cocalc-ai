@@ -11,9 +11,12 @@ export interface MessageHistory {
 export interface InlineCodeLink {
   code: string;
   abs_path: string;
-  project_path: string;
+  display_path_at_turn: string;
+  workspace_root_at_turn?: string;
   line?: number;
   col?: number;
+  // Legacy field kept optional for backward compatibility.
+  project_path?: string;
 }
 
 export interface ChatMessage {

@@ -1,13 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
-
-export interface InlineCodeLink {
-  code: string;
-  abs_path: string;
-  project_path: string;
-  line?: number;
-  col?: number;
-}
+import type { InlineCodeLink } from "@cocalc/chat";
+export type { InlineCodeLink };
 
 interface ParsedInlineCodePath {
   rawPath: string;
@@ -19,46 +13,20 @@ interface ResolveInlineCodeLinksOptions {
   markdown: string;
   workspaceRoot?: string;
   hostWorkspaceRoot?: string;
-  projectRoot?: string;
   maxLinks?: number;
 }
 
 const MAX_INLINE_CODE_LINKS = 64;
 
-export function findProjectRootFromChatPath({
-  hostWorkspaceRoot,
-  chatPath,
-}: {
-  hostWorkspaceRoot?: string;
-  chatPath?: string;
-}): string | undefined {
-  if (!hostWorkspaceRoot || !chatPath) return undefined;
-  const normalizedChatPath = chatPath.replace(/^\.\//, "");
-  if (!normalizedChatPath) return undefined;
-  let current = path.resolve(hostWorkspaceRoot);
-  while (true) {
-    const candidate = path.join(current, normalizedChatPath);
-    if (fs.existsSync(candidate)) {
-      return safeRealpath(current);
-    }
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return undefined;
-}
-
 export function resolveInlineCodeLinks(
   opts: ResolveInlineCodeLinksOptions,
 ): InlineCodeLink[] {
-  const workspaceRoot = normalizeAbsPath(
+  const workspaceRootForDisplay = normalizeAbsPath(
     opts.hostWorkspaceRoot ?? opts.workspaceRoot,
   );
-  if (!workspaceRoot) return [];
-  const realWorkspaceRoot = safeRealpath(workspaceRoot);
-  if (!realWorkspaceRoot) return [];
-  const projectRoot = normalizeAbsPath(opts.projectRoot) ?? realWorkspaceRoot;
-  const realProjectRoot = safeRealpath(projectRoot) ?? realWorkspaceRoot;
+  const realWorkspaceRoot = workspaceRootForDisplay
+    ? safeRealpath(workspaceRootForDisplay)
+    : undefined;
   const maxLinks = opts.maxLinks ?? MAX_INLINE_CODE_LINKS;
   const out: InlineCodeLink[] = [];
   const seen = new Set<string>();
@@ -75,16 +43,18 @@ export function resolveInlineCodeLinks(
     if (!hostPath) continue;
     const resolved = safeRealpath(hostPath);
     if (!resolved) continue;
-    if (!isInsideRoot(resolved, realWorkspaceRoot)) continue;
-    const projectPath = toProjectRelativePath(resolved, realProjectRoot);
-    if (!projectPath) continue;
     const key = `${code}\u0000${resolved}\u0000${parsed.line ?? ""}\u0000${parsed.col ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const displayPath = toDisplayPath({
+      absPath: resolved,
+      workspaceRoot: realWorkspaceRoot,
+    });
     out.push({
       code,
       abs_path: resolved,
-      project_path: projectPath,
+      display_path_at_turn: displayPath,
+      workspace_root_at_turn: realWorkspaceRoot,
       line: parsed.line,
       col: parsed.col,
     });
@@ -142,7 +112,7 @@ function candidateToHostPath({
   candidatePath: string;
   workspaceRoot?: string;
   hostWorkspaceRoot?: string;
-  hostWorkspaceRootResolved: string;
+  hostWorkspaceRootResolved?: string;
 }): string | undefined {
   const normalizedCandidate = path.normalize(candidatePath);
   if (path.isAbsolute(normalizedCandidate)) {
@@ -150,6 +120,7 @@ function candidateToHostPath({
     if (
       workspaceRoot &&
       hostWorkspaceRoot &&
+      hostWorkspaceRootResolved &&
       workspaceRoot !== hostWorkspaceRoot
     ) {
       const normalizedWorkspace = path.normalize(workspaceRoot);
@@ -160,14 +131,8 @@ function candidateToHostPath({
     }
     return path.resolve(normalizedCandidate);
   }
+  if (!hostWorkspaceRootResolved) return undefined;
   return path.resolve(hostWorkspaceRootResolved, normalizedCandidate);
-}
-
-function toProjectRelativePath(absPath: string, projectRoot: string): string | undefined {
-  if (!isInsideRoot(absPath, projectRoot)) return undefined;
-  const rel = path.relative(projectRoot, absPath);
-  if (!rel || rel === ".") return undefined;
-  return rel.split(path.sep).join("/");
 }
 
 function normalizeAbsPath(value?: string): string | undefined {
@@ -181,6 +146,27 @@ function safeRealpath(value: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function toDisplayPath({
+  absPath,
+  workspaceRoot,
+}: {
+  absPath: string;
+  workspaceRoot?: string;
+}): string {
+  if (!workspaceRoot) {
+    return toPosix(absPath);
+  }
+  const rel = path.relative(workspaceRoot, absPath);
+  if (!rel || rel === ".") {
+    return toPosix(path.basename(absPath));
+  }
+  return toPosix(rel);
+}
+
+function toPosix(value: string): string {
+  return value.split(path.sep).join("/");
 }
 
 function isInsideRoot(candidate: string, root: string): boolean {

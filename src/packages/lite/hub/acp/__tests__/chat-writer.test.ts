@@ -848,7 +848,9 @@ describe("ChatStreamWriter", () => {
       expect(final.inline_code_links).toHaveLength(1);
       expect(final.inline_code_links[0]).toMatchObject({
         code: "src/exists.ts:12",
-        project_path: "work/src/exists.ts",
+        abs_path: path.join(workspaceRoot, "src", "exists.ts"),
+        display_path_at_turn: "src/exists.ts",
+        workspace_root_at_turn: workspaceRoot,
         line: 12,
       });
       writer.dispose?.(true);
