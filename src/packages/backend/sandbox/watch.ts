@@ -82,7 +82,7 @@ function isHighFanoutSystemDir(path: string, options: WatchOptions): boolean {
   return HIGH_FANOUT_SYSTEM_DIRS.has(normalized);
 }
 
-const DEFAULT_POLL_INTERVAL = (() => {
+const CONFIGURED_POLL_INTERVAL = (() => {
   const raw = process.env.COCALC_SANDBOX_WATCH_POLL_INTERVAL_MS;
   if (raw == null || raw === "") {
     return 0;
@@ -97,6 +97,25 @@ const DEFAULT_POLL_INTERVAL = (() => {
   }
   return parsed;
 })();
+
+function getRequestedPollInterval(options: WatchOptions): number {
+  const requested = options.pollInterval ?? CONFIGURED_POLL_INTERVAL;
+  if (!Number.isFinite(requested)) {
+    return 0;
+  }
+  return requested;
+}
+
+function assertPollingDisabled(path: string, options: WatchOptions): void {
+  const requestedPollInterval = getRequestedPollInterval(options);
+  if (requestedPollInterval === 0) {
+    return;
+  }
+  throw new Error(
+    `Polling file watchers are disabled (path='${path}', requested pollInterval=${requestedPollInterval}). ` +
+      "Set pollInterval=0 or omit it.",
+  );
+}
 
 // do NOT use patch for tracking file changes if the file exceeds
 // this size.  The reason is mainly because computing diffs of
@@ -113,6 +132,7 @@ export default async function watch(
   lastOnDiskHash: TTL<string, boolean>,
 ): Promise<WatchIterator> {
   log("watch", path, options);
+  assertPollingDisabled(path, options);
   const watcher = new Watcher(path, options, lastOnDisk, lastOnDiskHash);
   await watcher.waitUntilReady();
 
@@ -155,18 +175,14 @@ class Watcher extends EventEmitter {
     });
 
     const stabilityThreshold = options.stabilityThreshold ?? 500;
-    const pollInterval = Math.max(
-      0,
-      options.pollInterval ?? DEFAULT_POLL_INTERVAL,
-    );
-    const usePolling = pollInterval > 0;
     const normalizedPath = normalizeWatchPath(path);
     const pseudoFsWatch = isPseudoFsPath(normalizedPath);
     const highFanoutSystemWatch = isHighFanoutSystemDir(normalizedPath, options);
     const useNativeWatcher = pseudoFsWatch || highFanoutSystemWatch;
     const trackerInfo: Record<string, unknown> = {
-      usePolling,
-      pollInterval,
+      usePolling: false,
+      pollInterval: 0,
+      requestedPollInterval: options.pollInterval ?? null,
       stabilityThreshold,
       closeOnUnlink: !!options.closeOnUnlink,
       patch: !!options.patch,
@@ -217,8 +233,7 @@ class Watcher extends EventEmitter {
         alwaysStat: options.stats ?? false,
         atomic: true,
         ignorePermissionErrors: true,
-        usePolling,
-        interval: usePolling ? pollInterval : undefined,
+        usePolling: false,
         awaitWriteFinish: stabilityThreshold
           ? {
               stabilityThreshold,
@@ -251,10 +266,9 @@ class Watcher extends EventEmitter {
             }
             trackerInfo.watchedDirs = watchedDirs;
             trackerInfo.watchedEntries = watchedEntries;
-            if (usePolling && watchedEntries >= 500) {
-              logger.warn("polling sandbox watcher has large watch-set", {
+            if (watchedEntries >= 500) {
+              logger.warn("sandbox watcher has large watch-set", {
                 path,
-                pollInterval,
                 watchedDirs,
                 watchedEntries,
               });

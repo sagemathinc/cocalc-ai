@@ -172,7 +172,6 @@ describe("test watching a file and a folder in the sandbox", () => {
     const w = await fs.watch("x", {
       maxQueue: 2,
       stabilityThreshold: 20,
-      pollInterval: 10,
     });
     expect(w.queueSize()).toBe(0);
     // make many changes
@@ -199,6 +198,15 @@ describe("test watching a file and a folder in the sandbox", () => {
     // one more next would hang...
     expect(w.queueSize()).toBe(0);
     w.end();
+  });
+
+  it("rejects nonzero pollInterval requests", async () => {
+    await fs.writeFile("x", "hi");
+    await expect(
+      fs.watch("x", {
+        pollInterval: 250,
+      }),
+    ).rejects.toThrow("Polling file watchers are disabled");
   });
 
   it("maxQueue with overflow throw", async () => {

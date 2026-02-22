@@ -22,14 +22,16 @@ The code below deals with two very different cases:
         NOTE: this case can't happen when path='', which exists, so we can assume to have read perms on parent.
  - when the path does exist: use fs.watch (hence inotify) on the path itself to report when it changes
 
-NOTE: if you are running on a file system like NFS, inotify won't work well or not at all.
-In that case, set the env variable COCALC_FS_WATCHER=poll to use polling instead.
-You can configure the poll interval by setting COCALC_FS_WATCHER_POLL_INTERVAL_MS.
+IMPORTANT:
+Do NOT enable polling here.
 
-UPDATE: We are using polling in ALL cases.  We have subtle bugs
-with adding and removing directories otherwise, and also
-we are only ever watching a relatively small number of directories
-with a long interval, so polling is not so bad.
+Polling with chokidar on large directories can create enormous watcher fanout
+and sustained CPU load (e.g., thousands of files causing thousands of polling
+checks). This path is security-sensitive because it can be reached by API-driven
+watch requests, so allowing polling is an avoidable denial-of-service vector.
+
+If behavior here needs to change in the future, use native fs.watch semantics or
+another non-polling approach. Do not reintroduce polling toggles/env flags.
 */
 
 import { watch } from "chokidar";
@@ -43,27 +45,13 @@ import { trackBackendWatcher } from "./watcher-debug";
 
 const logger = getLogger("backend:path-watcher");
 
-// const COCALC_FS_WATCHER = process.env.COCALC_FS_WATCHER ?? "inotify";
-// if (!["inotify", "poll"].includes(COCALC_FS_WATCHER)) {
-//   throw new Error(
-//     `$COCALC_FS_WATCHER=${COCALC_FS_WATCHER} -- must be "inotify" or "poll"`,
-//   );
-// }
-// const POLLING = COCALC_FS_WATCHER === "poll";
-
-const POLLING = true;
-
-const DEFAULT_POLL_MS = parseInt(
-  process.env.COCALC_FS_WATCHER_POLL_INTERVAL_MS ?? "2000",
-);
+const DEFAULT_DEBOUNCE_MS = 2000;
 
 const ChokidarOpts = {
   persistent: true, // otherwise won't work
   followSymlinks: false, // don't wander about
   disableGlobbing: true, // watch the path as it is, that's it
-  usePolling: POLLING,
-  interval: DEFAULT_POLL_MS,
-  binaryInterval: DEFAULT_POLL_MS,
+  usePolling: false,
   depth: 0, // we only care about the explicitly mentioned path – there could be a lot of files and sub-dirs!
   // maybe some day we want this:
   // awaitWriteFinish: {
@@ -87,11 +75,11 @@ export class Watcher extends EventEmitter {
 
   constructor(
     path: string,
-    { debounce: debounce_ms = DEFAULT_POLL_MS }: { debounce?: number } = {},
+    { debounce: debounce_ms = DEFAULT_DEBOUNCE_MS }: { debounce?: number } = {},
   ) {
     super();
     this.log = logger.extend(path).debug;
-    this.log(`initializing: poll=${POLLING}`);
+    this.log("initializing: polling disabled");
     if (process.env.HOME == null) {
       throw Error("bug -- HOME must be defined");
     }
@@ -127,8 +115,7 @@ export class Watcher extends EventEmitter {
       type: "chokidar",
       path: this.path,
       info: {
-        usePolling: POLLING,
-        interval: DEFAULT_POLL_MS,
+        usePolling: false,
         depth: ChokidarOpts.depth,
       },
     });
@@ -147,8 +134,7 @@ export class Watcher extends EventEmitter {
       type: "chokidar",
       path: containing_path,
       info: {
-        usePolling: POLLING,
-        interval: DEFAULT_POLL_MS,
+        usePolling: false,
         depth: ChokidarOpts.depth,
       },
     });
