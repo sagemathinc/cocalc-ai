@@ -474,6 +474,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         this.ignoreData++;
         const options = {
           id: this.termPath,
+          path: this.path,
           cwd: this.workingDir ?? dirname(this.path),
           env0,
           timeout: SPAWN_TIMEOUT,

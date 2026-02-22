@@ -31,7 +31,8 @@ import { Flyout } from "./flyout";
 import { Full } from "./full";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
 import useProjectInfo from "./use-project-info";
-import { grid_warning, linearList, process_tree, sum_children } from "./utils";
+import useProjectInfoHistory from "./use-project-info-history";
+import { grid_warning, linearList, process_forest, sum_children } from "./utils";
 
 interface Props {
   project_id: string;
@@ -67,9 +68,25 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const { project_id } = useProjectContext();
     const intl = useIntl();
     const projectLabel = intl.formatMessage(labels.project);
-    const { disconnected, info, error, setError } = useProjectInfo({
+    const {
+      disconnected,
+      info,
+      error,
+      setError,
+      refresh: refreshInfo,
+    } = useProjectInfo({
       project_id,
     });
+    const {
+      history,
+      error: historyError,
+      refresh: refreshHistory,
+    } = useProjectInfoHistory({
+      project_id,
+    });
+    const refresh = React.useCallback(async () => {
+      await Promise.all([refreshInfo(), refreshHistory()]);
+    }, [refreshInfo, refreshHistory]);
     const loading = info == null;
     const status = disconnected ? "Connecting..." : "Connected";
     const project_actions = useActions({ project_id });
@@ -80,6 +97,10 @@ export const ProjectInfo: React.FC<Props> = React.memo(
 
     const show_explanation =
       useTypedRedux({ project_id }, "show_project_info_explanation") ?? false;
+    const project_info_focus = useTypedRedux(
+      { project_id },
+      "project_info_focus",
+    );
     // this is @cocalc/conn/project-status/types::ProjectStatus
     const project_status = useTypedRedux({ project_id }, "status");
     const project_map = useTypedRedux("projects", "project_map");
@@ -130,8 +151,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
         case "full":
           const pchildren: string[] = [];
           const pt_stats = { ...pt_stats_init };
-          const new_ptree =
-            process_tree(info.processes, 1, pchildren, pt_stats) ?? [];
+          const new_ptree = process_forest(info.processes, pchildren, pt_stats);
           sum_children(new_ptree);
           set_ptree(new_ptree);
           set_pt_stats(pt_stats);
@@ -174,6 +194,48 @@ export const ProjectInfo: React.FC<Props> = React.memo(
         set_disk_usage({ pct, usage: p.usage, total });
       }
     }, [info]);
+
+    React.useEffect(() => {
+      if (project_info_focus == null || info?.processes == null) return;
+      const focusGet = (key: "pid" | "kind" | "path") => {
+        if (typeof (project_info_focus as any)?.get === "function") {
+          return (project_info_focus as any).get(key);
+        }
+        return (project_info_focus as any)?.[key];
+      };
+      const focusPid = focusGet("pid");
+      const focusKind = focusGet("kind");
+      const focusPath = focusGet("path");
+      let proc: Process | undefined;
+      if (focusPid != null) {
+        proc = info.processes[focusPid];
+      }
+      if (proc == null && focusKind != null && focusPath != null) {
+        const normalizePath = (path: string) => path.replace(/^\/+/, "");
+        const targetPath = normalizePath(focusPath);
+        for (const p of Object.values(info.processes)) {
+          const cocalc = p.cocalc;
+          if (cocalc == null || cocalc.type !== focusKind) continue;
+          const cocalcPath = "path" in cocalc ? cocalc.path : undefined;
+          if (cocalcPath != null && normalizePath(cocalcPath) === targetPath) {
+            proc = p;
+            break;
+          }
+          if (
+            focusKind === "jupyter" &&
+            cocalc.type === "jupyter" &&
+            cocalc.path.endsWith(`/${targetPath}`)
+          ) {
+            proc = p;
+            break;
+          }
+        }
+      }
+      if (proc == null) return;
+      set_modal(proc);
+      set_selected([proc.pid]);
+      project_actions?.setState({ project_info_focus: undefined });
+    }, [info, project_actions, project_info_focus]);
 
     function select_proc(pids: number[]) {
       set_selected(pids);
@@ -305,7 +367,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const showError = (
       <ShowError
         style={{ margin: "15px 0" }}
-        error={error}
+        error={error || historyError}
         setError={setError}
       />
     );
@@ -349,6 +411,8 @@ export const ProjectInfo: React.FC<Props> = React.memo(
             disk_usage={disk_usage}
             error={showError}
             info={info}
+            history={history}
+            refresh={refresh}
             loading={loading}
             modal={modal}
             project_actions={project_actions}

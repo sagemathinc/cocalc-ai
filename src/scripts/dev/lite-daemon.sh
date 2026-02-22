@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export DEBUG_CONSOLE=yes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 STATE_DIR_DEFAULT="$SRC_DIR/.local/lite-daemon"
@@ -128,6 +129,12 @@ start_daemon() {
   mkdir -p "$LITE_HOME"
   mkdir -p "$(dirname "$LITE_STDOUT_LOG")"
   mkdir -p "$(dirname "$LITE_CONNECTION_INFO")"
+  # Keep startup logs easy to reason about by clearing previous run output.
+  local lite_debug_log
+  lite_debug_log="$LITE_HOME/.local/share/cocalc-lite/logs/log"
+  mkdir -p "$(dirname "$lite_debug_log")"
+  rm -f "$lite_debug_log"
+  rm -f "$LITE_STDOUT_LOG"
   touch "$LITE_STDOUT_LOG"
 
   (

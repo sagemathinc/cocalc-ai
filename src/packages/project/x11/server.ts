@@ -17,6 +17,7 @@ import { clone } from "lodash";
 
 import abspath from "@cocalc/backend/misc/abspath";
 import { path_split } from "@cocalc/util/misc";
+import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 
 const x11_channels = {};
 
@@ -139,14 +140,37 @@ class X11Channel {
     const cwd = this.get_cwd();
     const options: SpawnOptions = { cwd, env, detached: true, stdio: "ignore" };
     args = args != null ? args : [];
+    const registry = getOwnedProcessRegistry();
+    const root_id = registry.registerRoot({
+      kind: "x11",
+      path: this.path,
+      session_id: this.name,
+    }).root_id;
     try {
       const sub = spawn(command, args, options);
       sub.unref();
-      pid2path[sub.pid ?? 0] = this.path;
+      if (sub.pid == null) {
+        registry.removeRoot(root_id);
+        return;
+      }
+      registry.attachPid(root_id, sub.pid);
+      pid2path[sub.pid] = this.path;
       sub.on("exit", () => {
-        delete pid2path[sub.pid ?? 0];
+        if (sub.pid != null) {
+          delete pid2path[sub.pid];
+        }
+        registry.markExited(root_id, { pid: sub.pid ?? undefined });
+        registry.removeRoot(root_id);
+      });
+      sub.on("error", () => {
+        if (sub.pid != null) {
+          delete pid2path[sub.pid];
+        }
+        registry.markExited(root_id, { pid: sub.pid ?? undefined });
+        registry.removeRoot(root_id);
       });
     } catch (err) {
+      registry.removeRoot(root_id);
       this.channel.write({
         error: `error launching ${command} -- ${err}`,
       });

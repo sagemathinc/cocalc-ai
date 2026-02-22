@@ -56,7 +56,9 @@ export interface WatchOptions {
   patch?: boolean;
 
   stabilityThreshold?: number;
-  pollInterval?: number; // explicitly set to 0 to disable polling
+  // Polling watchers are intentionally disabled in backend implementations.
+  // Any nonzero value may be rejected server-side.
+  pollInterval?: number;
 }
 
 export function watchServer({

@@ -80,6 +80,36 @@ const MAX_KERNEL_SPAWN_TIME = 120 * 1000;
 
 const logger = getLogger("jupyter:kernel");
 
+export type KernelLifecycleEvent =
+  | {
+      event: "spawn";
+      identity: string;
+      path: string;
+      pid: number;
+    }
+  | {
+      event: "exit" | "close";
+      identity: string;
+      path: string;
+      pid?: number;
+    };
+
+type KernelLifecycleObserver = (event: KernelLifecycleEvent) => void;
+
+let kernelLifecycleObserver: KernelLifecycleObserver | undefined;
+
+export function setKernelLifecycleObserver(observer?: KernelLifecycleObserver) {
+  kernelLifecycleObserver = observer;
+}
+
+function emitKernelLifecycle(event: KernelLifecycleEvent) {
+  try {
+    kernelLifecycleObserver?.(event);
+  } catch (err) {
+    logger.debug("kernel lifecycle observer failed", err);
+  }
+}
+
 function killKernel(kernel: SpawnedKernel) {
   try {
     kernel.spawn?.removeAllListeners?.();
@@ -409,6 +439,14 @@ export class JupyterKernel
     try {
       dbg("launching Jupyter kernel");
       this._kernel = await launchJupyterKernel(this.name, opts);
+      if (this._kernel.spawn.pid != null) {
+        emitKernelLifecycle({
+          event: "spawn",
+          identity: this.identity,
+          path: this._path,
+          pid: this._kernel.spawn.pid,
+        });
+      }
       dbg("finishing kernel setup");
       await this.finishSpawningKernel();
     } catch (err) {
@@ -555,6 +593,12 @@ export class JupyterKernel
     });
 
     this._kernel.spawn.once("exit", (exit_code, signal) => {
+      emitKernelLifecycle({
+        event: "exit",
+        identity: this.identity,
+        path: this._path,
+        pid: this.pid(),
+      });
       if (this._state === "closed") {
         return;
       }
@@ -601,6 +645,12 @@ export class JupyterKernel
     if (this._state === "closed") {
       return;
     }
+    emitKernelLifecycle({
+      event: "close",
+      identity: this.identity,
+      path: this._path,
+      pid: this.pid(),
+    });
     this.signal("SIGKILL");
     if (this.sockets != null) {
       this.sockets.close();

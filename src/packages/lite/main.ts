@@ -137,6 +137,8 @@ export async function main(opts?: {
 
   logger.debug("start project services");
   cleanup();
+  // After environment cleanup, default lite process monitoring to owned scope.
+  process.env.COCALC_PROJECT_INFO_SCOPE ??= "owned";
   startProjectServices({ client: conatClient });
 
   logger.debug("start changefeed server");
