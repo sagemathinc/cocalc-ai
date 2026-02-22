@@ -147,6 +147,12 @@ export function cleanup(): void {
   for (const key in process.env) {
     if (key.startsWith("npm_")) delete process.env[key];
   }
+
+  // Drop all CoCalc-prefixed env vars inherited from the parent shell.
+  // The project server should set any required COCALC_* vars explicitly.
+  for (const key in process.env) {
+    if (key.startsWith("COCALC_")) delete process.env[key];
+  }
 }
 
 // See https://github.com/opencv/opencv/issues/14884

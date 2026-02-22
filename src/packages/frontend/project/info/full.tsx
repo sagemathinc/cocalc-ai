@@ -7,13 +7,17 @@
 
 declare let DEBUG;
 
-import { Alert, Button, Card, Form, Modal, Popconfirm, Switch, Table } from "antd";
+import { Alert, Button, Card, Form, Modal, Popover, Table } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
-import { InfoCircleOutlined, ScheduleOutlined } from "@ant-design/icons";
+import {
+  InfoCircleOutlined,
+  QuestionCircleOutlined,
+  ScheduleOutlined,
+} from "@ant-design/icons";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
-import { CSS, ProjectActions, redux } from "@cocalc/frontend/app-framework";
+import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
 import { A, Loading, Tip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
@@ -26,7 +30,6 @@ import {
 import type { ProjectInfoHistory } from "@cocalc/conat/project/project-info";
 import { useProjectContext } from "../context";
 import { ROOT_STYLE } from "../servers/consts";
-import { RestartProject } from "../settings/restart-project";
 import {
   AboutContent,
   CGroup,
@@ -131,7 +134,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const {
-    any_alerts,
     cg_info,
     render_disconnected,
     disconnected,
@@ -143,7 +145,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     loading,
     modal,
     project_actions,
-    project_id,
     project_state,
     project_status,
     pt_stats,
@@ -153,7 +154,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     set_expanded,
     set_modal,
     set_selected,
-    show_explanation,
     show_long_loading,
     start_ts,
     render_cocalc,
@@ -165,7 +165,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   const problemsRef = useRef<HTMLDivElement>(null);
   const cgroupRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
-  const explanationRef = useRef<HTMLDivElement>(null);
   const generalStatusRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState<number>(400);
 
@@ -185,9 +184,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       // Add height of header row
       usedHeight += headerRef.current?.offsetHeight ?? 0;
 
-      // Add height of explanation row if visible
-      usedHeight += explanationRef.current?.offsetHeight ?? 0;
-
       // Add height of general status row if DEBUG is enabled
       if (DEBUG) {
         usedHeight += generalStatusRef.current?.offsetHeight ?? 0;
@@ -205,17 +201,58 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     // Recalculate on window resize
     window.addEventListener("resize", calculateTableHeight);
     return () => window.removeEventListener("resize", calculateTableHeight);
-  }, [show_explanation, ptree, contentSize.height, contentSize.width]);
+  }, [ptree, contentSize.height, contentSize.width]);
+
+  function render_help_content() {
+    return (
+      <div style={{ maxWidth: "560px" }}>
+        <p>
+          This panel shows <strong>real-time information about this project</strong>{" "}
+          and its resource usage. In particular, you can see which processes are
+          running, and if available, also get a button to <SiteName /> specific
+          information or links to the associated file.
+        </p>
+        <p>
+          By selecting a process via the checkbox on the left hand side, you can
+          obtain more detailed information via the "{DETAILS_BTN_TEXT}" button
+          or even issue commands like sending a signal to the selected job(s).
+        </p>
+        <p>
+          Sub-processes are shown as a tree. When you collapse a branch, the
+          values you see are the sum of that particular process and all its
+          children. Note that because of this tree structure, sorting happens in
+          each branch, since the tree structure must also be preserved.
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          If there are any issues detected, there will be highlights in red.
+          They could be caused by individual processes using CPU non-stop, the
+          total of all processes hitting the overall memory limit, or even the
+          disk space running low. You can use the signals to fix some of these
+          issues by interrupting/terminating a job, or restarting the project.
+          If you're low on disk space, you either have to delete some files or
+          purchase disk space upgrades.
+        </p>
+      </div>
+    );
+  }
 
   function render_help() {
     return (
-      <Form.Item label="Help:">
-        <Switch
-          checked={show_explanation}
-          onChange={(val) =>
-            project_actions?.setState({ show_project_info_explanation: val })
-          }
-        />
+      <Form.Item>
+        <Popover
+          trigger={["click"]}
+          placement="bottomRight"
+          content={render_help_content()}
+          title="Help"
+          overlayStyle={{ maxWidth: "620px" }}
+        >
+          <Button
+            type="text"
+            size="small"
+            icon={<QuestionCircleOutlined />}
+            aria-label="Show help"
+          />
+        </Popover>
       </Form.Item>
     );
   }
@@ -244,19 +281,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           />
         </Col>
       </Row>
-    );
-  }
-
-  function render_restart_project() {
-    return (
-      <Form.Item>
-        <RestartProject
-          project_id={project_id}
-          text={"Restart…"}
-          size={"small"}
-          danger={any_alerts()}
-        />
-      </Form.Item>
     );
   }
 
@@ -300,22 +324,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     return proc.children != null && proc.children.length > 0;
   }
 
-  function restart_project() {
-    return (
-      <Popconfirm
-        title={`Are you sure to restart this ${projectLabelLower}?`}
-        onConfirm={() => {
-          const actions = redux.getActions("projects");
-          actions?.restart_project(project_id);
-        }}
-        okText="Restart"
-        cancelText="No"
-      >
-        <a href="#">restart this {projectLabelLower}</a>
-      </Popconfirm>
-    );
-  }
-
   function render_modal_footer() {
     return (
       <Button type={"primary"} onClick={() => set_modal(undefined)}>
@@ -352,8 +360,8 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           >
             <div>
               This is the {projectLabelLower}'s own management process. Do not
-              terminate it! If it uses too much resources, you can{" "}
-              {restart_project()}.
+              terminate it! If it uses too much resources, use the workspace
+              controls outside this page.
             </div>
           </Modal>
         );
@@ -387,10 +395,8 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               <div>
                 <p>
                   If the Table of Processes does not load, the project might be
-                  malfunctioning or saturated by load. Try restarting the
-                  project to make it work again.
+                  malfunctioning or saturated by load.
                 </p>
-                {render_restart_project()}
               </div>
             }
           />
@@ -461,12 +467,10 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           </Col>
           <Col md={3}>
             <Form layout="inline" style={{ float: "right" }}>
-              {render_restart_project()}
               {render_help()}
             </Form>
           </Col>
         </Row>
-        <Row ref={explanationRef}>{render_explanation()}</Row>
         <Row>
           <Table<ProcessRow>
             key={`table-${contentSize.width}-${contentSize.height}`}
@@ -555,56 +559,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           </Table>
         </Row>
       </>
-    );
-  }
-
-  function render_explanation() {
-    if (!show_explanation) return;
-    const msg = (
-      <div>
-        <p>
-          This panel shows{" "}
-          <strong>real-time information about this project</strong> and its
-          resource usage. In particular, you can see which processes are
-          running, and if available, also get a button to <SiteName /> specific
-          information or links to the associated file.
-        </p>
-        <p>
-          By selecting a process via the checkbox on the left hand side, you can
-          obtain more detailed information via the "{DETAILS_BTN_TEXT}" button
-          or even issue commands like sending a signal to the selected job(s).
-        </p>
-        <p>
-          Sub-processes are shown as a tree. When you collapse a branch, the
-          values you see are the sum of that particular process and all its
-          children. Note that because of this tree structure, sorting happens in
-          each branch, since the tree structure must also be preserved.
-        </p>
-        <p>
-          If there are any issues detected, there will be highlights in red.
-          They could be caused by individual processes using CPU non-stop, the
-          total of all processes hitting the overall memory limit, or even the
-          disk space running low. You can use the signals to fix some of these
-          issues by interrupting/terminating a job, or restarting the project.
-          If you're low on disk space, you either have to delete some files or
-          purchase disk space upgrades.
-        </p>
-      </div>
-    );
-    return (
-      <Col md={12} mdOffset={0}>
-        <Alert
-          title={msg}
-          style={{ margin: "10px 0" }}
-          type={"info"}
-          closable
-          onClose={() =>
-            project_actions?.setState({
-              show_project_info_explanation: false,
-            })
-          }
-        />
-      </Col>
     );
   }
 

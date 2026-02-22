@@ -7,6 +7,7 @@ import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { getLogger } from "@cocalc/conat/client";
 import { projectSubject } from "@cocalc/conat/names";
 import { conat } from "@cocalc/conat/client";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   Process,
   Processes,
@@ -158,6 +159,7 @@ function getSubject({ project_id }: { project_id: string }) {
 export function createService(opts: {
   infoServer;
   project_id: string;
+  client?: ConatClient;
 }) {
   return new ProjectInfoService(opts);
 }
@@ -172,12 +174,22 @@ class ProjectInfoService {
   private readonly historySampleMs: number;
   private readonly historyTTLms: number;
   private readonly historyTopN: number;
+  private readonly client?: ConatClient;
   private lastHistoryBucket?: number;
   info?: ProjectInfo | null = null;
 
-  constructor({ infoServer, project_id }: { infoServer; project_id: string }) {
+  constructor({
+    infoServer,
+    project_id,
+    client,
+  }: {
+    infoServer;
+    project_id: string;
+    client?: ConatClient;
+  }) {
     logger.debug("register");
     this.subject = getSubject({ project_id });
+    this.client = client;
     this.historyWindowMinutes = envInt(
       "COCALC_PROJECT_INFO_HISTORY_WINDOW_MINUTES",
       DEFAULT_HISTORY_WINDOW_MINUTES,
@@ -204,6 +216,7 @@ class ProjectInfoService {
       project_id,
       name: HISTORY_STORE_NAME,
       ephemeral: historyEphemeralDefault(),
+      client: this.client,
     });
     logger.debug("history config", {
       historyWindowMinutes: this.historyWindowMinutes,
@@ -282,7 +295,7 @@ class ProjectInfoService {
 
   private createService = async () => {
     logger.debug("started project info service ", { subject: this.subject });
-    const client = await conat();
+    const client = this.client ?? (await conat());
     this.service = await client.service<Api>(this.subject, {
       get: async () => this.info ?? null,
       getHistory: async ({ minutes } = {}) => await this.getHistory({ minutes }),

@@ -32,7 +32,7 @@ import { Full } from "./full";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
 import useProjectInfo from "./use-project-info";
 import useProjectInfoHistory from "./use-project-info-history";
-import { grid_warning, linearList, process_tree, sum_children } from "./utils";
+import { grid_warning, linearList, process_forest, sum_children } from "./utils";
 
 interface Props {
   project_id: string;
@@ -134,8 +134,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
         case "full":
           const pchildren: string[] = [];
           const pt_stats = { ...pt_stats_init };
-          const new_ptree =
-            process_tree(info.processes, 1, pchildren, pt_stats) ?? [];
+          const new_ptree = process_forest(info.processes, pchildren, pt_stats);
           sum_children(new_ptree);
           set_ptree(new_ptree);
           set_pt_stats(pt_stats);

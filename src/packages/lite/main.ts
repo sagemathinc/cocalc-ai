@@ -48,12 +48,6 @@ export async function main(opts?: {
   reflectUi?: any;
 }): Promise<number> {
   logger.debug("main");
-  // Lite now exposes project/process info in the UI, so force-enable the
-  // project info services even if an outer shell exported
-  // COCALC_ENABLE_PROJECT_INFO=0.
-  process.env.COCALC_ENABLE_PROJECT_INFO = "1";
-  // Lite defaults to owned-scope snapshots for process monitoring.
-  process.env.COCALC_PROJECT_INFO_SCOPE ??= "owned";
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");
   initBugCounter();
@@ -100,6 +94,8 @@ export async function main(opts?: {
 
   logger.debug("start project services");
   cleanup();
+  // After environment cleanup, default lite process monitoring to owned scope.
+  process.env.COCALC_PROJECT_INFO_SCOPE ??= "owned";
   startProjectServices({ client: conatClient });
 
   logger.debug("start changefeed server");

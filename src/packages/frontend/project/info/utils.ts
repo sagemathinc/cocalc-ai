@@ -164,6 +164,36 @@ export function process_tree(
 }
 
 /**
+ * Build a forest of process trees from a possibly-partial process set.
+ *
+ * In owned-scope snapshots we often only have a subset of the full process
+ * hierarchy, so roots are nodes whose parent PID is not present in `procs`.
+ */
+export function process_forest(
+  procs: Processes,
+  pchildren: string[],
+  stats: PTStats,
+): ProcessRow[] {
+  const parentIds = new Set<number>();
+  for (const proc of Object.values(procs)) {
+    if (procs[proc.ppid] == null) {
+      parentIds.add(proc.ppid);
+    }
+  }
+  if (parentIds.size === 0) {
+    parentIds.add(1);
+  }
+  const forest: ProcessRow[] = [];
+  for (const parentid of parentIds) {
+    const trees = process_tree(procs, parentid, pchildren, stats);
+    if (trees != null) {
+      forest.push(...trees);
+    }
+  }
+  return forest;
+}
+
+/**
  * A linear list of processes, where each process is a row in the table.
  */
 export function linearList(procs: Processes): ProcessRow[] | undefined {

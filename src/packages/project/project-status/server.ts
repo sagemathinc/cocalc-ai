@@ -32,6 +32,7 @@ import {
 } from "@cocalc/comm/project-status/types";
 import { cgroup_stats } from "@cocalc/comm/project-status/utils";
 import { createPublisher } from "@cocalc/conat/project/project-status";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/project/logger";
 import { how_long_ago_m, round1 } from "@cocalc/util/misc";
 import { version as smcVersion } from "@cocalc/util/smc-version";
@@ -82,11 +83,14 @@ export class ProjectStatusServer extends EventEmitter {
   private components: { [name in ComponentName]?: number | undefined } = {};
   private lastEmit: number = 0; // timestamp, when status was emitted last
 
-  constructor(testing = false) {
+  constructor(
+    testing = false,
+    opts?: { client?: ConatClient; project_id?: string },
+  ) {
     super();
     this.testing = testing;
     this.dbg = (...msg) => logger.debug(...msg);
-    this.project_info = get_ProjectInfoServer();
+    this.project_info = get_ProjectInfoServer(opts);
   }
 
   private async init(): Promise<void> {
@@ -328,12 +332,13 @@ let status: ProjectStatusServer | undefined = undefined;
 
 export function init(opts?) {
   logger.debug("initializing project status server, and enabling publishing");
+  const identity = getIdentity(opts);
   if (status == null) {
-    status = new ProjectStatusServer();
+    status = new ProjectStatusServer(false, identity);
   }
   createPublisher({
     projectStatusServer: status,
-    ...getIdentity(opts),
+    ...identity,
   });
   status.start();
 }
