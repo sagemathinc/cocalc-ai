@@ -63,7 +63,7 @@ const BROWSER_EXEC_API_DECLARATION = `/**
  *   await api.openFiles(stats.slice(0, 3).map((x) => x.p));
  *
  *   // Install hello-world extension editor and open a demo file:
- *   api.extensions.installHelloWorld({ ext: ".hello" });
+ *   await api.extensions.installHelloWorld({ ext: ".hello" });
  *   await api.fs.writeFile("/root/demo.hello", "hello extension runtime\\n");
  *   await api.openFiles(["/root/demo.hello"]);
  *
@@ -426,7 +426,7 @@ export type BrowserExecApi = {
     list: () => BrowserExtensionSummary[];
     installHelloWorld: (
       options?: BrowserInstallHelloWorldOptions,
-    ) => BrowserExtensionSummary;
+    ) => Promise<BrowserExtensionSummary>;
     uninstall: (id: string) => { ok: true; id: string };
   };
 };`;
@@ -1105,7 +1105,7 @@ type BrowserExecApi = {
     list: () => BrowserExtensionApiSummary[];
     installHelloWorld: (
       options?: BrowserInstallHelloOptions,
-    ) => BrowserExtensionApiSummary;
+    ) => Promise<BrowserExtensionApiSummary>;
     uninstall: (id: string) => { ok: true; id: string };
   };
 };
@@ -2713,11 +2713,11 @@ export function createBrowserSessionAutomation({
           assertExecNotCanceled(isCanceled);
           return extensionsRuntime.list();
         },
-        installHelloWorld: (
+        installHelloWorld: async (
           options?: BrowserInstallHelloOptions,
-        ): BrowserExtensionApiSummary => {
+        ): Promise<BrowserExtensionApiSummary> => {
           assertExecNotCanceled(isCanceled);
-          return extensionsRuntime.installHelloWorld(options);
+          return await extensionsRuntime.installHelloWorld(options);
         },
         uninstall: (id: string): { ok: true; id: string } => {
           assertExecNotCanceled(isCanceled);

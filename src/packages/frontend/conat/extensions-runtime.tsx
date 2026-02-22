@@ -139,8 +139,20 @@ function makeHelloWorldEditor({
   return HelloWorldEditor;
 }
 
-function getProjectFileApi(): ProjectFileApi {
-  return require("@cocalc/frontend/project-file") as ProjectFileApi;
+let projectFileApiPromise: Promise<ProjectFileApi> | undefined;
+
+async function getProjectFileApi(): Promise<ProjectFileApi> {
+  if (projectFileApiPromise == null) {
+    projectFileApiPromise = import("@cocalc/frontend/project-file").then(
+      (mod) =>
+        ({
+          register_file_editor: mod.register_file_editor,
+          unregister_file_editor: mod.unregister_file_editor,
+          has_file_editor: mod.has_file_editor,
+        }) as ProjectFileApi,
+    );
+  }
+  return await projectFileApiPromise;
 }
 
 export class BrowserExtensionsRuntime {
@@ -152,7 +164,9 @@ export class BrowserExtensionsRuntime {
     }));
   }
 
-  installHelloWorld(options?: BrowserInstallHelloWorldOptions): BrowserExtensionSummary {
+  async installHelloWorld(
+    options?: BrowserInstallHelloWorldOptions,
+  ): Promise<BrowserExtensionSummary> {
     const id = `${options?.id ?? DEFAULT_EXTENSION_ID}`.trim();
     if (!id) {
       throw Error("extension id must be specified");
@@ -168,7 +182,7 @@ export class BrowserExtensionsRuntime {
       "This editor was registered dynamically through the browser extension runtime.";
     const replace = !!options?.replace;
     const file_extensions = normalizeExtensions(options?.ext);
-    const projectFile = getProjectFileApi();
+    const projectFile = await getProjectFileApi();
 
     const existing = this.installed.get(id);
     if (existing) {
@@ -194,7 +208,7 @@ export class BrowserExtensionsRuntime {
     });
 
     const uninstall = () => {
-      getProjectFileApi().unregister_file_editor(file_extensions);
+      projectFile.unregister_file_editor(file_extensions);
     };
 
     const installed: InstalledExtension = {
