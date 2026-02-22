@@ -5,10 +5,8 @@
 
 import { uptime } from "node:os";
 import { ProcessStats } from "@cocalc/backend/process-stats";
-import { getLogger } from "@cocalc/project/logger";
 import type { Processes, ProjectInfoScope } from "@cocalc/util/types/project-info/types";
-
-const logger = getLogger("project-info:snapshot");
+import { OwnedLinuxProcessSnapshotProvider } from "./owned-linux-snapshot-provider";
 
 export interface ProcessSnapshot {
   procs?: Processes;
@@ -75,11 +73,7 @@ class OffProcessSnapshotProvider implements ProcessSnapshotProvider {
 export function getProjectInfoScopeFromEnv(): ProjectInfoScope {
   const scope = process.env.COCALC_PROJECT_INFO_SCOPE?.trim().toLowerCase();
   if (scope === "off") return "off";
-  if (scope === "owned") {
-    logger.debug(
-      "COCALC_PROJECT_INFO_SCOPE=owned requested; falling back to all until owned provider is enabled",
-    );
-  }
+  if (scope === "owned") return "owned";
   return "all";
 }
 
@@ -90,6 +84,7 @@ export function createProcessSnapshotProvider(opts?: {
     case "off":
       return new OffProcessSnapshotProvider();
     case "owned":
+      return new OwnedLinuxProcessSnapshotProvider();
     case "all":
     default:
       return new AllProcessSnapshotProvider();
