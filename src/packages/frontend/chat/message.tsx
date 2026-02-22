@@ -1023,7 +1023,7 @@ export default function Message({
           inlineCodeLinks={
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
-          inlineCodeWorkspaceRoot={threadWorkingDirectory}
+          inlineCodeWorkspaceRoot={activityBasePath}
         />
       </>
     );
