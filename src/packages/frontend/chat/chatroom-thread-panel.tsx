@@ -211,35 +211,6 @@ export function ChatRoomThreadPanel({
                 ]}
               />
             </div>
-            {newThreadSetup.agentMode !== "human" && (
-              <div>
-                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                  Default model
-                </div>
-                <Input
-                  placeholder={DEFAULT_CODEX_MODEL}
-                  value={newThreadSetup.model}
-                  onChange={(e) => {
-                    const model = e.target.value;
-                    if (newThreadSetup.agentMode === "codex") {
-                      update({
-                        model,
-                        codexConfig: {
-                          ...newThreadSetup.codexConfig,
-                          model,
-                          reasoning: getReasoningForModel({
-                            modelValue: model,
-                            desired: newThreadSetup.codexConfig.reasoning,
-                          }),
-                        },
-                      });
-                    } else {
-                      update({ model });
-                    }
-                  }}
-                />
-              </div>
-            )}
             <div>
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
               <ChatIconPicker
