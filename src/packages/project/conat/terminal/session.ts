@@ -19,6 +19,7 @@ import { delay } from "awaiting";
 import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
 import { data } from "@cocalc/backend/data";
 import { randomId } from "@cocalc/conat/names";
+import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 
 const logger = getLogger("project:conat:terminal:session");
 
@@ -75,6 +76,7 @@ export class Session {
   public pid: number;
   private messageSpool?: SpoolWatcher;
   private spoolDirectory?: string;
+  private readonly ownedRootId: string;
 
   constructor({
     termPath,
@@ -89,6 +91,11 @@ export class Session {
     this.options = options;
     this.streamName = `terminal-${termPath}`;
     this.spoolDirectory = join(data, "term-spool", randomId());
+    this.ownedRootId = getOwnedProcessRegistry().registerRoot({
+      kind: "terminal",
+      path: options.path,
+      session_id: termPath,
+    }).root_id;
   }
 
   kill = async () => {
@@ -128,6 +135,9 @@ export class Session {
   };
 
   restart = async () => {
+    if (this.pid != null) {
+      getOwnedProcessRegistry().markExited(this.ownedRootId, { pid: this.pid });
+    }
     this.pty?.destroy();
     this.stream?.close();
     this.messageSpool?.close();
@@ -155,6 +165,10 @@ export class Session {
     delete this.spoolDirectory;
     this.state = "closed";
     this.clientSizes = {};
+    if (this.pid != null) {
+      getOwnedProcessRegistry().markExited(this.ownedRootId, { pid: this.pid });
+    }
+    getOwnedProcessRegistry().removeRoot(this.ownedRootId);
   };
 
   private getHome = () => {
@@ -237,6 +251,7 @@ export class Session {
       handleFlowControl: true,
     });
     this.pid = this.pty.pid;
+    getOwnedProcessRegistry().attachPid(this.ownedRootId, this.pid);
     if (command.endsWith("bash")) {
       this.pty.write(PROJECT_INIT);
     }
@@ -260,6 +275,11 @@ export class Session {
     this.pty.onExit(() => {
       this.stream?.publish(EXIT_MESSAGE);
       this.state = "off";
+      if (this.pid != null) {
+        getOwnedProcessRegistry().markExited(this.ownedRootId, {
+          pid: this.pid,
+        });
+      }
     });
 
     await this.initMessageSpool();

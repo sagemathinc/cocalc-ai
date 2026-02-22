@@ -39,6 +39,8 @@ function getSubject({ project_id }: { project_id: string }) {
 
 export interface Options {
   cwd?: string;
+  // path of the primary terminal tab (typically a .term file) for UI linking
+  path?: string;
   env?: { [key: string]: string };
   // env0 is merged into existing environment, whereas env makes a new environment
   env0?: { [key: string]: string };

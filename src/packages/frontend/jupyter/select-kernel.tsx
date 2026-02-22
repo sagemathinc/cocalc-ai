@@ -14,9 +14,10 @@ import {
   Descriptions,
   Popover,
   Spin,
+  Space,
   Tabs,
   Tooltip,
-  Typography, Space,
+  Typography,
 } from "antd";
 import { Map as ImmutableMap, List, OrderedMap } from "immutable";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -327,13 +328,26 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
             />
           }
         >
-          <div style={{ display: "flex", alignItems: "center" }}>
-            <FormattedMessage
-              id="jupyter.select-kernel.quick-select.text"
-              defaultMessage={"Your most recently selected kernel"}
-              description={"Kernel in a Jupyter Notebook"}
-            />{" "}
-            <div style={{ width: "15px" }} /> {render_kernel_button(name)}
+          <div
+            style={{
+              display: "grid",
+              rowGap: "8px",
+              alignItems: "start",
+            }}
+          >
+            <Typography.Text
+              style={{
+                wordBreak: "normal",
+                overflowWrap: "normal",
+              }}
+            >
+              <FormattedMessage
+                id="jupyter.select-kernel.quick-select.text"
+                defaultMessage={"Your most recently selected kernel"}
+                description={"Kernel in a Jupyter Notebook"}
+              />
+            </Typography.Text>
+            <div>{render_kernel_button(name)}</div>
           </div>
         </Descriptions.Item>
         <Descriptions.Item

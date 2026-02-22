@@ -31,6 +31,7 @@ import { argsJoin } from "@cocalc/util/args";
 import LRUCache from "lru-cache";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import { trackProcessRoot } from "@cocalc/backend/process-tracker";
 import type { AcpEvaluateRequest, AcpAgent, AcpStreamHandler } from "./types";
 import { getCodexProjectSpawner } from "./codex-project";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
@@ -263,6 +264,15 @@ export class CodexExecAgent implements AcpAgent {
           },
         });
       }
+      const trackedRoot = trackProcessRoot({
+        kind: "codex",
+        path: cwd,
+        thread_id: request.chat?.thread_id,
+        session_id: session.sessionId,
+      });
+      if (proc.pid != null) {
+        trackedRoot.attachPid(proc.pid);
+      }
 
       if (LOG_OUTPUT) {
         proc.stdout?.on("data", (chunk) => {
@@ -451,6 +461,8 @@ export class CodexExecAgent implements AcpAgent {
         const finish = () => {
           if (settled) return;
           settled = true;
+          trackedRoot.markExited({ pid: proc.pid ?? undefined });
+          trackedRoot.close();
           resolve();
         };
         proc.on("exit", (code, signal) => {

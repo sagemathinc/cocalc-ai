@@ -26,6 +26,7 @@ import {
   type UsageInfoService,
 } from "@cocalc/conat/project/usage-info";
 import { getIdentity } from "@cocalc/project/conat/connection";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 
 export const UPDATE_INTERVAL_S = 2;
 
@@ -41,9 +42,10 @@ function is_diff(prev: UsageInfo, next: UsageInfo, key: keyof UsageInfo) {
 
 let server: UsageInfoService | null = null;
 export function init(opts?) {
+  const identity = getIdentity(opts);
   server = createUsageInfoService({
-    ...getIdentity(opts),
-    createUsageInfoServer: (path) => new UsageInfoServer(path),
+    ...identity,
+    createUsageInfoServer: (path) => new UsageInfoServer(path, identity),
   });
 }
 
@@ -60,11 +62,11 @@ export class UsageInfoServer extends EventEmitter {
   private usage?: UsageInfo;
   private last?: UsageInfo;
 
-  constructor(path: string) {
+  constructor(path: string, opts?: { client?: ConatClient; project_id?: string }) {
     super();
     this.path = path;
     this.dbg = (...args) => logger.debug(this.path, ...args);
-    this.project_info = get_ProjectInfoServer();
+    this.project_info = get_ProjectInfoServer(opts);
     this.project_info.on("info", this.handleUpdate);
   }
 

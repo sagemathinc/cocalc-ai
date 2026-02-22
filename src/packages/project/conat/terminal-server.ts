@@ -8,6 +8,7 @@ import { data } from "@cocalc/backend/data";
 import { randomId } from "@cocalc/conat/names";
 import { join } from "path";
 import { debounce } from "lodash";
+import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 
 const logger = getLogger("project:conat:terminal-server");
 
@@ -39,6 +40,20 @@ async function preHook({ options }: { options: Options }) {
 }
 
 async function postHook({ options, pty }) {
+  const registry = getOwnedProcessRegistry();
+  const root = registry.registerRoot({
+    kind: "terminal",
+    path: options?.path,
+    session_id: options?.id,
+  });
+  if (pty?.pid != null) {
+    registry.attachPid(root.root_id, pty.pid);
+  }
+  pty.once("exit", () => {
+    registry.markExited(root.root_id, { pid: pty?.pid });
+    registry.removeRoot(root.root_id);
+  });
+
   const spoolDir = options?.env?.COCALC_CONTROL_DIR;
   if (!spoolDir) {
     return;

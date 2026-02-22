@@ -11,7 +11,7 @@ import {
   ALERT_HIGH_PCT,
   ALERT_MEDIUM_PCT,
 } from "@cocalc/comm/project-status/const";
-import { separate_file_extension, trunc } from "@cocalc/util/misc";
+import { separate_file_extension } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { DUState, PTStats, ProcessRow } from "./types";
 const { ANTD_RED, ANTD_ORANGE, ANTD_GREEN } = COLORS;
@@ -24,7 +24,7 @@ export const DETAILS_BTN_TEXT = "Details";
 export function filename(path) {
   const fn = basename(path);
   const name = separate_file_extension(fn).name;
-  return trunc(name, 12);
+  return name;
 }
 
 // this is always normalized for 0 to 100
@@ -164,6 +164,36 @@ export function process_tree(
 }
 
 /**
+ * Build a forest of process trees from a possibly-partial process set.
+ *
+ * In owned-scope snapshots we often only have a subset of the full process
+ * hierarchy, so roots are nodes whose parent PID is not present in `procs`.
+ */
+export function process_forest(
+  procs: Processes,
+  pchildren: string[],
+  stats: PTStats,
+): ProcessRow[] {
+  const parentIds = new Set<number>();
+  for (const proc of Object.values(procs)) {
+    if (procs[proc.ppid] == null) {
+      parentIds.add(proc.ppid);
+    }
+  }
+  if (parentIds.size === 0) {
+    parentIds.add(1);
+  }
+  const forest: ProcessRow[] = [];
+  for (const parentid of parentIds) {
+    const trees = process_tree(procs, parentid, pchildren, stats);
+    if (trees != null) {
+      forest.push(...trees);
+    }
+  }
+  return forest;
+}
+
+/**
  * A linear list of processes, where each process is a row in the table.
  */
 export function linearList(procs: Processes): ProcessRow[] | undefined {
@@ -188,6 +218,17 @@ export function linearList(procs: Processes): ProcessRow[] | undefined {
     }
   });
   return data.length > 0 ? data : undefined;
+}
+
+type SummedProcessField = "mem" | "cpu_tot" | "cpu_pct";
+
+// Inclusive value for sorting/aggregations in tree views:
+// process' own metric + all descendants.
+export function process_inclusive_value(
+  proc: ProcessRow,
+  field: SummedProcessField,
+): number {
+  return proc[field] + (proc.chldsum?.[field] ?? 0);
 }
 
 function sum_children_val(proc, index): number {
