@@ -103,6 +103,49 @@ export function ChatRoomComposer({
   const threadIcon = selectedThread?.threadIcon;
   const threadImage = selectedThread?.threadImage;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const contextThread = useMemo(() => {
+    if (combinedFeedSelected) {
+      if (!targetValue) return undefined;
+      return threads.find((thread) => thread.key === targetValue);
+    }
+    return selectedThread ?? undefined;
+  }, [combinedFeedSelected, targetValue, threads, selectedThread]);
+  const composerPlaceholder = useMemo(() => {
+    if (combinedFeedSelected && targetOptions.length > 0 && !contextThread) {
+      return "Write a message (choose a target chat)...";
+    }
+    if (!contextThread) {
+      return "Ask anything...";
+    }
+    const metadata = actions?.getThreadMetadata?.(contextThread.key);
+    if (metadata?.agent_kind === "none") {
+      return "Write a message...";
+    }
+    if (metadata?.agent_kind === "acp") {
+      return "Ask Codex...";
+    }
+    if (metadata?.agent_kind === "llm") {
+      const model = metadata?.agent_model?.trim();
+      return model ? `Ask ${model}...` : "Ask AI...";
+    }
+    const threadMs = parseInt(contextThread.key, 10);
+    if (
+      Number.isFinite(threadMs) &&
+      actions?.isCodexThread?.(new Date(threadMs))
+    ) {
+      return "Ask Codex...";
+    }
+    if (contextThread.isAI) {
+      const model = metadata?.agent_model?.trim();
+      return model ? `Ask ${model}...` : "Ask AI...";
+    }
+    return "Write a message...";
+  }, [
+    combinedFeedSelected,
+    targetOptions.length,
+    contextThread,
+    actions,
+  ]);
   const presenceThreadKey = useMemo(() => {
     if (combinedFeedSelected) {
       return composerTargetKey ?? null;
@@ -434,6 +477,7 @@ export function ChatRoomComposer({
             date={composerDraftKey}
             sessionToken={composerSession}
             editBarStyle={{ overflow: "auto" }}
+            placeholder={composerPlaceholder}
           />
         </div>
       </div>
