@@ -24,6 +24,23 @@ const logger = getLogger("sandbox:watch");
 export { type WatchOptions };
 export type WatchIterator = EventIterator<ChangeEvent>;
 
+const PSEUDO_FS_PREFIXES = ["/dev", "/proc", "/sys"];
+
+function normalizeWatchPath(path: string): string {
+  if (path === "/") return "/";
+  return path.replace(/\/+$/, "");
+}
+
+function isPseudoFsPath(path: string): boolean {
+  const normalized = normalizeWatchPath(path);
+  for (const prefix of PSEUDO_FS_PREFIXES) {
+    if (normalized === prefix || normalized.startsWith(prefix + "/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const DEFAULT_POLL_INTERVAL = (() => {
   const raw = process.env.COCALC_SANDBOX_WATCH_POLL_INTERVAL_MS;
   if (raw == null || raw === "") {
@@ -82,6 +99,7 @@ class Watcher extends EventEmitter {
   private readonly readyPromise: Promise<void>;
   private readyResolve: (() => void) | null = null;
   private patchSeq: number = 0;
+  private watchErrorCount = 0;
   private stopTrackingWatcher?: () => void;
 
   constructor(
@@ -101,19 +119,39 @@ class Watcher extends EventEmitter {
       options.pollInterval ?? DEFAULT_POLL_INTERVAL,
     );
     const usePolling = pollInterval > 0;
+    const normalizedPath = normalizeWatchPath(path);
+    const pseudoFsWatch = isPseudoFsPath(normalizedPath);
+    const ignoredPseudoFsEntries = pseudoFsWatch
+      ? (candidatePath: string) => {
+          const candidate = normalizeWatchPath(candidatePath);
+          if (candidate === normalizedPath) {
+            return false;
+          }
+          return candidate.startsWith(`${normalizedPath}/`);
+        }
+      : undefined;
     const trackerInfo: Record<string, unknown> = {
       usePolling,
       pollInterval,
       stabilityThreshold,
       closeOnUnlink: !!options.closeOnUnlink,
       patch: !!options.patch,
+      pseudoFsWatch,
     };
+    if (pseudoFsWatch) {
+      trackerInfo.mode = "pseudo-fs-root-only";
+      logger.warn("sandbox watcher in pseudo filesystem root-only mode", {
+        path,
+      });
+    }
     const chokidarConfig = {
       depth: 0,
       ignoreInitial: true,
       followSymlinks: false,
       alwaysStat: options.stats ?? false,
       atomic: true,
+      ignorePermissionErrors: true,
+      ignored: ignoredPseudoFsEntries,
       usePolling,
       interval: usePolling ? pollInterval : undefined,
       awaitWriteFinish: stabilityThreshold
@@ -170,7 +208,17 @@ class Watcher extends EventEmitter {
       }
     });
     this.watcher.on("error", (error) => {
-      logger.debug(path, "got error", error);
+      this.watchErrorCount += 1;
+      if (this.watchErrorCount <= 3 || this.watchErrorCount % 100 === 0) {
+        logger.debug(path, "got error", {
+          count: this.watchErrorCount,
+          error,
+        });
+      } else if (this.watchErrorCount === 4) {
+        logger.warn("sandbox watcher: suppressing repetitive errors", {
+          path,
+        });
+      }
     });
   }
 
