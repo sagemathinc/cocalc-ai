@@ -205,7 +205,7 @@ export function ChatRoomSidebarContent({
     items: [
       {
         key: "rename",
-        label: "Thread settings",
+        label: "Settings",
       },
       {
         key: isPinned ? "unpin" : "pin",
@@ -316,8 +316,8 @@ export function ChatRoomSidebarContent({
     const dotColor = COLORS.BLUE;
     const dotTitle = "Recent activity";
     const iconTooltip = thread.isAI
-      ? "This thread started with an AI request, so the AI responds automatically."
-      : "This thread started as human-only. AI replies only when explicitly mentioned.";
+      ? "This chat started with an AI request, so the AI responds automatically."
+      : "This chat started as human-only. AI replies only when explicitly mentioned.";
     return {
       key,
       label: (
