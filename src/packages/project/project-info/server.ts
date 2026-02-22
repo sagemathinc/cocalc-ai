@@ -19,7 +19,6 @@ import { check as df } from "diskusage";
 import { EventEmitter } from "node:events";
 import { access, readFile } from "node:fs/promises";
 
-import { ProcessStats } from "@cocalc/backend/process-stats";
 import { pidToPath as terminalPidToPath } from "@cocalc/project/conat/terminal/manager";
 import { getLogger } from "@cocalc/project/logger";
 import { get_path_for_pid as x11_pid2path } from "@cocalc/project/x11/server";
@@ -31,6 +30,11 @@ import type {
   Processes,
   ProjectInfo,
 } from "@cocalc/util/types/project-info/types";
+import {
+  createProcessSnapshotProvider,
+  getProjectInfoScopeFromEnv,
+  type ProcessSnapshotProvider,
+} from "./snapshot-provider";
 
 const L = getLogger("project-info:server").debug;
 const DEFAULT_INTERVAL_S = 7;
@@ -82,7 +86,7 @@ export class ProjectInfoServer extends EventEmitter {
   private delay_s: number;
   private tmpIsMemoryBased?: boolean;
   private cgroupFilesAreMissing: boolean = false;
-  private processStats: ProcessStats;
+  private readonly snapshotProvider: ProcessSnapshotProvider;
   private cgroupVersion: "v1" | "v2" | "unknown" | null;
 
   constructor(testing = false) {
@@ -96,12 +100,14 @@ export class ProjectInfoServer extends EventEmitter {
     );
     this.testing = testing;
     this.dbg = L;
+    const scope = getProjectInfoScopeFromEnv();
+    this.snapshotProvider = createProcessSnapshotProvider({ scope });
     // cgroup version will be detected lazily
     this.cgroupVersion = null;
   }
 
   private async processes(timestamp: number) {
-    return await this.processStats.processes(timestamp);
+    return await this.snapshotProvider.snapshot(timestamp);
   }
 
   // delta-time for this and the previous process information
@@ -538,8 +544,10 @@ export class ProjectInfoServer extends EventEmitter {
         this.cgroup({ timestamp }),
         this.disk_usage(),
       ]);
-      const { procs, boottime, uptime } = processes;
-      await this.lookupCoCalcInfo(procs);
+      const { procs, boottime, uptime, scope, process_count } = processes;
+      if (procs != null) {
+        await this.lookupCoCalcInfo(procs);
+      }
       const info: ProjectInfo = {
         timestamp,
         processes: procs,
@@ -547,6 +555,8 @@ export class ProjectInfoServer extends EventEmitter {
         boottime,
         cgroup,
         disk_usage,
+        scope,
+        process_count,
       };
       return info;
     } catch (err) {
@@ -586,11 +596,7 @@ export class ProjectInfoServer extends EventEmitter {
     try {
       // Initialize tmpfs detection once at startup
       this.tmpIsMemoryBased = await isTmpMemoryBased();
-      this.processStats = ProcessStats.getInstance();
-      if (this.testing) {
-        this.processStats.setTesting(true);
-      }
-      await this.processStats.init();
+      await this.snapshotProvider.init({ testing: this.testing });
       while (true) {
         //this.dbg(`listeners on 'info': ${this.listenerCount("info")}`);
         const info = await this.get_info();

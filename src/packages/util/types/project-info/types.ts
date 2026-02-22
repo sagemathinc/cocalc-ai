@@ -93,9 +93,16 @@ export type DiskUsage = Record<"tmp" | "project", DiskUsageInfo>;
 
 export type Processes = { [pid: string]: Process };
 
+export type ProjectInfoScope = "all" | "owned" | "off";
+
 export interface ProjectInfo {
   timestamp: number;
   processes?: Processes;
+  scope?: ProjectInfoScope;
+  process_count?: {
+    visible: number;
+    total?: number;
+  };
   cgroup?: CGroup; // only in "kucalc" mode
   disk_usage: DiskUsage;
   uptime: number; // secs, uptime of the machine
