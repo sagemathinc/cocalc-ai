@@ -32,7 +32,8 @@ export function initChat(project_id: string, path: string): ChatActions {
   const syncdb = sync.immer({
     project_id,
     path,
-    primary_keys: ["date", "sender_id", "event"],
+    // Include v2 identity keys so chat lookups can be index-based.
+    primary_keys: ["date", "sender_id", "event", "message_id", "thread_id"],
     cursors: !lite,
     // used only for drafts, since store lots of versions as user types:
     string_cols: ["input"],

@@ -9,6 +9,7 @@ import {
   Button,
   Dropdown,
   Layout,
+  Modal,
   Menu,
   Popconfirm,
   Space,
@@ -152,6 +153,7 @@ interface ChatRoomSidebarContentProps {
   setAllowAutoSelectThread: (value: boolean) => void;
   setSidebarVisible: (value: boolean) => void;
   threadSections: ThreadSectionWithUnread[];
+  archivedThreads: ThreadMeta[];
   combinedThread?: ThreadMeta;
   openRenameModal: (
     threadKey: string,
@@ -173,6 +175,7 @@ export function ChatRoomSidebarContent({
   setAllowAutoSelectThread,
   setSidebarVisible,
   threadSections,
+  archivedThreads,
   combinedThread,
   openRenameModal,
   openExportModal,
@@ -184,6 +187,7 @@ export function ChatRoomSidebarContent({
     string | null
   >(null);
   const [activityNow, setActivityNow] = React.useState<number>(Date.now());
+  const [archivedOpen, setArchivedOpen] = React.useState<boolean>(false);
   React.useEffect(() => {
     const id = setInterval(() => setActivityNow(Date.now()), 30 * 1000);
     return () => clearInterval(id);
@@ -201,11 +205,15 @@ export function ChatRoomSidebarContent({
     items: [
       {
         key: "rename",
-        label: "Rename chat",
+        label: "Settings",
       },
       {
         key: isPinned ? "unpin" : "pin",
         label: isPinned ? "Unpin chat" : "Pin chat",
+      },
+      {
+        key: "archive",
+        label: "Archive chat",
       },
       {
         type: "divider",
@@ -251,6 +259,17 @@ export function ChatRoomSidebarContent({
         openExportModal(threadKey, plainLabel, isAI);
       } else if (key === "fork") {
         openForkModal(threadKey, plainLabel, isAI);
+      } else if (key === "archive") {
+        if (!actions?.setThreadArchived) {
+          antdMessage.error("Archiving chats is not available.");
+          return;
+        }
+        const success = actions.setThreadArchived(threadKey, true);
+        if (!success) {
+          antdMessage.error("Unable to archive chat.");
+          return;
+        }
+        antdMessage.success("Chat archived.");
       } else if (key === "delete") {
         confirmDeleteThread(threadKey, plainLabel);
       }
@@ -281,6 +300,7 @@ export function ChatRoomSidebarContent({
       isPinned,
       threadColor,
       threadIcon,
+      threadImage,
       hasCustomAppearance,
     } = thread;
     const plainLabel = stripHtml(displayLabel);
@@ -296,8 +316,8 @@ export function ChatRoomSidebarContent({
     const dotColor = COLORS.BLUE;
     const dotTitle = "Recent activity";
     const iconTooltip = thread.isAI
-      ? "This thread started with an AI request, so the AI responds automatically."
-      : "This thread started as human-only. AI replies only when explicitly mentioned.";
+      ? "This chat started with an AI request, so the AI responds automatically."
+      : "This chat started as human-only. AI replies only when explicitly mentioned.";
     return {
       key,
       label: (
@@ -316,7 +336,12 @@ export function ChatRoomSidebarContent({
           }
         >
           {hasCustomAppearance ? (
-            <ThreadBadge icon={threadIcon} color={threadColor} size={22} />
+            <ThreadBadge
+              icon={threadIcon}
+              color={threadColor}
+              image={threadImage}
+              size={22}
+            />
           ) : (
             <Tooltip title={iconTooltip}>
               <Icon name={isAI ? "robot" : "users"} style={{ color: "#888" }} />
@@ -531,6 +556,86 @@ export function ChatRoomSidebarContent({
       ) : (
         threadSections.map((section) => renderThreadSection(section))
       )}
+      <div style={{ marginTop: "auto", padding: "0 20px 12px" }}>
+        <Button
+          block
+          size="small"
+          onClick={() => setArchivedOpen(true)}
+          disabled={archivedThreads.length === 0}
+        >
+          Archived… ({archivedThreads.length})
+        </Button>
+      </div>
+      <Modal
+        title="Archived chats"
+        open={archivedOpen}
+        onCancel={() => setArchivedOpen(false)}
+        footer={null}
+        destroyOnHidden
+      >
+        {archivedThreads.length === 0 ? (
+          <div style={{ color: COLORS.GRAY_M }}>No archived chats.</div>
+        ) : (
+          <Space
+            orientation="vertical"
+            size={8}
+            style={{ width: "100%", maxHeight: "50vh", overflow: "auto" }}
+          >
+            {archivedThreads.map((thread) => {
+              const label = stripHtml(thread.displayLabel || thread.label);
+              return (
+                <div
+                  key={thread.key}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    border: "1px solid #eee",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                  }}
+                >
+                  <div
+                    style={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {label}
+                  </div>
+                  <Space size={6}>
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        const ok = actions.setThreadArchived?.(thread.key, false);
+                        if (ok) {
+                          antdMessage.success("Chat unarchived.");
+                        } else {
+                          antdMessage.error("Unable to unarchive chat.");
+                        }
+                      }}
+                    >
+                      Unarchive
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      onClick={() => {
+                        confirmDeleteThread(thread.key, label);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </Space>
+                </div>
+              );
+            })}
+          </Space>
+        )}
+      </Modal>
     </>
   );
 }

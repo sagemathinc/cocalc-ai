@@ -1,260 +1,256 @@
-# Chat Hardening Plan (Thread/Message Integrity, Codex Safety, Migration)
+# Chat Hardening Plan (Greenfield-First, Minimal Backward Compatibility)
 
-## 1. Problem Summary
+## 1. Scope and Assumptions
 
-We have a class of integrity failures where thread identity or codex configuration can be lost/corrupted during normal operation (especially around ACP turn finalization and concurrent updates). This is a release blocker for chat/codex-first workflows.
+This plan is optimized for current reality:
 
-Recent symptoms:
+- CoCalc-AI chat is effectively greenfield.
+- Backward compatibility is minimal and explicit, not open-ended.
+- There is exactly one active operator/deployer right now.
+- We can break compatibility if needed, as long as a one-off migration path exists for a few important legacy `.chat` files.
 
-- A codex thread intermittently loses codex controls/UI identity.
-- Root-level thread metadata (`acp_config`, title/icon/color/pin) can be overwritten unexpectedly.
-- Some operations still implicitly identify rows by timestamp/date, which is brittle under collisions/races.
-- Finalization/recovery paths can update wrong rows if identity is ambiguous.
+Primary objective: make chat/codex data integrity robust enough that thread identity/config corruption is effectively impossible in normal operation.
 
-## 2. Root Causes (Current Architecture)
+## 2. Non-Negotiable Outcomes
 
-### 2.1 Identity model is too implicit
+1. Thread identity is explicit and immutable (not inferred from timestamp).
+2. Message identity is explicit and immutable (not inferred from timestamp).
+3. Thread config (title/icon/color/image/agent config) is separate from message content rows.
+4. ACP finalize/recovery/interrupt flows never target rows by date-only.
+5. A one-off migration tool exists for the few legacy files that matter.
+6. Integrity checks and watchdog logs can prove invariants hold.
 
-- Thread identity is derived from a root message timestamp.
-- Message identity is effectively a timestamp (or timestamp-centric lookup/cache).
-- Timestamp collisions and date-only targeting can cause cross-row contamination.
+## 3. Target Schema (v2)
 
-### 2.2 Thread metadata is co-located with mutable message rows
+Use explicit typed records within one `.chat` syncdoc.
 
-- Root message doubles as both content row and thread-identity/config row.
-- Any bad write to root row risks wiping thread config (`acp_config`) and therefore codex thread behavior.
+### 3.1 `thread`
 
-### 2.3 Partial-key writes/readbacks still exist
+Immutable thread identity record.
 
-- Even with existing hardening, the overall model allows accidental writes keyed by insufficient identity in some flows.
+- `thread_id` (UUID/ULID)
+- `created_at`
+- `created_by`
+- `root_message_id`
+- `schema_version`
 
-### 2.4 Races across frontend/backend writers
+### 3.2 `thread_config`
 
-- Frontend and backend both operate on chat records during turn lifecycle.
-- Robustness depends on convention, not strict schema/invariant guarantees.
+Mutable thread-level settings and agent config.
 
-## 3. Hard Requirements
+- `thread_id`
+- `name`
+- `thread_color`
+- `thread_icon`
+- `thread_image` (blobstore URL or external URL)
+- `pin`
+- `agent` / `acp_config` (codex thread settings)
+- `updated_at`
+- `updated_by`
 
-1. Thread identity must be explicit, immutable, and independent of timestamps.
-2. Message identity must be explicit, immutable, and unique.
-3. Thread metadata/config must be in dedicated records, never inferred from mutable message content rows.
-4. Codex session metadata must survive any normal finalize/retry/recovery flow.
-5. Corruption must be detectable quickly and repairable automatically when possible.
-6. Migration from legacy `.chat` data must be deterministic and auditable.
+Note: this enables converting a normal thread into a codex thread by updating thread config, not by mutating message structure.
 
-## 4. Proposed Data Model (Schema v2)
+### 3.3 `message`
 
-Use explicit record types inside a single chat syncdoc.
+One row per chat message.
 
-### 4.1 Record types
+- `message_id`
+- `thread_id`
+- `sender_id`
+- `date`
+- `reply_to_message_id?`
+- `history`
+- `generating`
+- `acp_thread_id?`
+- `acp_usage?`
+- `acp_interrupted_*?`
 
-- `thread`
-  - Immutable identity row.
-  - Fields: `thread_id`, `created_at`, `created_by`, `root_message_id`, `schema_version`.
+### 3.4 `thread_state` (persisted)
 
-- `thread_config`
-  - Mutable thread-level UI + codex config row.
-  - Fields: `thread_id`, `name`, `thread_color`, `thread_icon`, `pin`, `acp_config`, `updated_at`, `updated_by`.
+Persisted lightweight runtime state for restart-safe UX.
 
-- `message`
-  - One row per message.
-  - Fields: `message_id`, `thread_id`, `sender_id`, `date`, `reply_to_message_id?`, `history`, `generating`, `acp_thread_id?`, `acp_usage?`, `acp_interrupted_*?`.
+- `thread_id`
+- `state` (`idle|queued|running|interrupted|error|complete`)
+- `active_message_id?`
+- `updated_at`
 
-- `thread_state` (optional but recommended)
-  - Runtime/convenience status not required for canonical history.
-  - Fields: `thread_id`, `state` (`idle|queued|running|interrupted|error|complete`), `active_message_id?`, `updated_at`.
+## 4. Identity and Ordering
 
-### 4.2 Identity keys
+- IDs are canonical identity (`thread_id`, `message_id`).
+- Timestamps are ordering metadata only.
+- UI ordering can still sort by `message.date`.
+- Reply linkage is by `reply_to_message_id`, not thread-root timestamp.
 
-- `thread_id`: UUID/ULID (stable forever).
-- `message_id`: UUID/ULID (stable forever).
-- Timestamps are ordering metadata only, never identity.
+ID format:
 
-### 4.3 Primary key strategy
+- Prefer ULID for natural ordering ergonomics; UUIDv4 is also acceptable.
+- If UUIDv4 is used, always sort by `date` for display.
 
-For chat doctype, move toward a canonical primary key on explicit ID fields (or `event + id`).
+## 5. Invariants
 
-Current descriptor is in [src/packages/sync/editor/doctypes.ts](./src/packages/sync/editor/doctypes.ts). This must be updated as part of schema-v2 rollout so row targeting does not depend on timestamp identity.
+1. Every `message.thread_id` resolves to an existing `thread`.
+2. Exactly one root message per thread, and it matches `thread.root_message_id`.
+3. Exactly one `thread_config` per `thread_id` (or a deterministic default if absent).
+4. Message writes never mutate thread config fields.
+5. ACP lifecycle updates target rows by explicit IDs.
+6. Codex-thread UI state is derived from `thread_config.agent/acp_config`, not message-content heuristics.
 
-## 5. Compatibility Strategy
+## 6. Backward Compatibility Policy
 
-### 5.1 Dual-read, staged write
+No dual-read/dual-write framework.
 
-Phase migration with compatibility:
+Instead:
 
-- Read path understands both legacy message-only schema and v2 schema.
-- New writes go to v2 only once migration for a document is confirmed complete.
+- Build a one-off migration script (`scripts/chat-migrate-v1-to-v2.ts` or `.js`).
+- Run it manually on the handful of legacy files that matter.
+- Keep a pre-migration backup copy of each file.
 
-### 5.2 On-open migration
+Target legacy set (currently):
 
-When a legacy `.chat` is opened:
+- `/home/wstein/build/cocalc-lite*/lite*.chat`
 
-1. Build thread groups from legacy rows.
-2. Generate deterministic `thread_id` and `message_id` mapping.
-3. Create `thread` + `thread_config` + `message` records.
-4. Preserve legacy row data in a backup snapshot for rollback.
+If migration fails for a file, fix script or hand-repair that file. No generalized compatibility machinery is required.
 
-### 5.3 Idempotent migration
+## 7. Migration Tool Requirements (One-Off)
 
-- Migration can be rerun safely.
-- Records include `schema_version` and migration markers.
-- Verify-then-commit pattern with explicit integrity checks.
+Input: legacy `.chat` syncdoc.
+Output: v2 `.chat` syncdoc.
 
-## 6. Invariants (Must Always Hold)
+The script must:
 
-1. Every `message.thread_id` refers to an existing `thread.thread_id`.
-2. Exactly one root message per thread (`reply_to_message_id == null` and matches `thread.root_message_id`).
-3. `thread_config.thread_id` is unique; absent config means defaults, not loss.
-4. No write path may update thread config via message row except explicit migration tooling.
-5. ACP finalize/recovery must target message row by `message_id` (or full canonical key), never by date-only lookup.
-6. UI codex-thread detection must use `thread_config.acp_config` first, not heuristics on message content.
+1. Assign deterministic `thread_id` and `message_id` mapping.
+2. Split root metadata into `thread_config`.
+3. Preserve message history and ordering.
+4. Rewrite reply links to `reply_to_message_id`.
+5. Emit a verification report:
+   - thread count
+   - message count
+   - invariant check result
+   - list of anomalies fixed
+6. Write backup (`.bak`) before replacing original.
 
-## 7. Implementation Plan (Phased)
+## 8. Implementation Plan (Phases)
 
-## Phase 0 (already started, keep)
+## Phase A: Stabilize current path while v2 is built
 
-Goal: reduce immediate corruption risk in legacy model.
+Keep existing hardening that prevents immediate corruption in current architecture.
 
-- Keep strict timestamp de-collision in ACP frontend writes.
-- Keep sender-qualified backend writes/reads where applicable.
-- Add warnings when duplicate date rows are detected.
-
-Relevant current files:
+Relevant files:
 
 - [src/packages/frontend/chat/acp-api.ts](./src/packages/frontend/chat/acp-api.ts)
 - [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts)
 
-## Phase 1: Introduce explicit IDs in current records
+## Phase B: Introduce explicit IDs in message flow
 
-Goal: stop relying on date as identity before full schema separation.
+1. Add `message_id` and `thread_id` to all new messages.
+2. Refactor cache/index to key by `message_id`.
+3. Keep date-based ordering as derived view only.
 
-1. Add `message_id` and `thread_id` fields to chat message rows (legacy-compatible).
-2. Update cache/index to key by `message_id` (not ms-date string).
-3. Preserve date-based map only as derived view for ordering.
-4. Update all write paths to include and target `message_id`.
-
-Likely touch points:
+Likely files:
 
 - [src/packages/frontend/chat/message-cache.ts](./src/packages/frontend/chat/message-cache.ts)
 - [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts)
 - [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts)
 - [src/packages/chat/src/index.ts](./src/packages/chat/src/index.ts)
 
-## Phase 2: Introduce `thread` + `thread_config` records
+## Phase C: Add `thread` and `thread_config` records
 
-Goal: separate thread identity/config from message content rows.
+1. Add typed constructors/accessors in `@cocalc/chat`.
+2. Move thread UI + codex config writes to `thread_config`.
+3. Add thread-level agent mode conversion actions (normal <-> codex).
 
-1. Add new row constructors and typed accessors in `@cocalc/chat`.
-2. Move codex config reads/writes to `thread_config` record.
-3. Keep rendering compatible with old root metadata for migrated docs only.
-
-Likely touch points:
+Likely files:
 
 - [src/packages/chat/src/index.ts](./src/packages/chat/src/index.ts)
 - [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts)
 - [src/packages/frontend/chat/codex.tsx](./src/packages/frontend/chat/codex.tsx)
 
-## Phase 3: ACP protocol and finalization hardening on IDs
+## Phase D: ACP protocol on IDs
 
-Goal: ACP lifecycle references immutable IDs end-to-end.
+1. Pass `thread_id` + `message_id` in ACP chat metadata.
+2. Backend writer/finalizer/recovery paths use IDs exclusively.
+3. `persistSessionId` writes only to `thread_config`.
 
-1. Extend chat metadata passed to ACP stream with `thread_id` + `message_id`.
-2. Backend writer and recovery paths locate rows by IDs.
-3. `persistSessionId` writes only `thread_config`.
-4. Finalize/interrupt/recovery update `thread_state` and message row by ID.
-
-Likely touch points:
+Likely files:
 
 - [src/packages/frontend/chat/acp-api.ts](./src/packages/frontend/chat/acp-api.ts)
 - [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts)
 
-## Phase 4: Migration + cleanup
+## Phase E: One-off migration and cutover
 
-Goal: remove legacy unsafe behavior.
+1. Implement and run migration script on legacy files.
+2. Validate invariants and smoke-test codex workflows.
+3. Remove remaining date-identity assumptions from runtime paths.
 
-1. Document-level migration and verification command.
-2. Remove date-key assumptions from caches/selectors.
-3. Remove legacy root-message-as-thread-config writes.
-4. Keep read-only importer for legacy backup files.
+## 9. Observability and Debuggability
 
-## 8. Observability and Diagnostics
+Add watchdog fields and counters:
 
-Add targeted watchdog diagnostics for chat integrity:
-
-- `chat.integrity.duplicate_date_rows`
-- `chat.integrity.missing_thread_config`
 - `chat.integrity.orphan_messages`
-- `chat.integrity.multi_root_per_thread`
-- `chat.acp.finalize_mismatch` (ACP completed but thread state not terminal)
+- `chat.integrity.duplicate_root_messages`
+- `chat.integrity.missing_thread_config`
+- `chat.integrity.invalid_reply_targets`
+- `chat.acp.finalize_mismatch`
 
-And include periodic sampling logs with top offending thread/message IDs.
+Add periodic top-N diagnostics by affected thread/message IDs.
 
-## 9. Test Plan
+## 10. Testing Strategy
 
-## 9.1 Unit tests
+## 10.1 Unit tests
 
-- ID generation uniqueness and determinism.
-- Thread root invariants.
-- Thread config persistence independent of message edits.
-- ACP finalize/recovery cannot change `thread_config` unintentionally.
+- ID generation and uniqueness.
+- Thread/message invariant checks.
+- Thread config isolation from message mutations.
+- ACP finalize/recovery ID-targeting behavior.
 
-## 9.2 Property/fuzz tests
+## 10.2 Integration tests
 
-Randomized sequences of:
+- Interrupt/continue/immediate-send flows.
+- Backend restart during active codex turn.
+- Multiple concurrent codex threads in one chat.
+- Convert normal thread to codex thread and back.
 
-- send/edit/reply/delete/fork/interruption/finalize/recovery
-- concurrent frontend/backend update streams
+## 10.3 Migration tests (minimal)
 
-Invariant check after each step.
+Given very small migration scope:
 
-## 9.3 Migration tests
+- Test script against representative fixtures.
+- Verify before/after counts and invariants.
+- Manual inspection acceptable for the few real files.
 
-- Golden legacy `.chat` fixtures.
-- Migration idempotence.
-- Backward compatibility reads.
-- Corrupted input handling (partial/bad rows).
+## 11. Rollout
 
-## 9.4 Integration tests
+Single-operator simplified rollout:
 
-- Restart during running codex turn.
-- Interrupt + immediate send + continue flows.
-- Multiple simultaneous codex threads in one chat document.
+1. Implement phases B/C/D.
+2. Run migration script on legacy files.
+3. Use and monitor with extra watchdog logs.
+4. If stable, delete dead compatibility code and lock v2 schema.
 
-## 10. Rollout Plan
+## 12. Future Scaling Notes (Optional)
 
-1. Feature flag `COCALC_CHAT_SCHEMA_V2=1` in lite first.
-2. Auto-migrate local dev docs, keep backup snapshots.
-3. Burn-in period with elevated integrity logging.
-4. Promote to default once corruption counters stay zero.
-5. Keep importer for old snapshots; remove dual-write after stabilization.
+When chat files become very large:
 
-## 11. Open Design Decisions
+- Add archive/rotation of old messages to companion files, or
+- Provide explicit prune/export tooling for old history.
 
-1. Single `.chat` file with typed records vs per-thread hidden files.
-   - Recommendation now: stay single-file with explicit typed records.
-   - Reason: simpler search/time-travel/export semantics and less filesystem complexity.
+Given current timetravel behavior, keep single-file design for now.
 
-2. ID format: UUIDv4 vs ULID.
-   - Recommendation: ULID if ordering convenience is useful; otherwise UUIDv4.
+## 13. Acceptance Criteria
 
-3. Should `thread_state` be persisted or derived?
-   - Recommendation: persisted lightweight state for robust restart UX.
+Complete when all are true:
 
-## 12. Acceptance Criteria
+1. No known path can wipe codex-thread config via message writes.
+2. All runtime row targeting is ID-based.
+3. Thread identity/config survives restart/finalize/interrupt/continue.
+4. One-off migration script exists and has been run on required legacy files.
+5. Watchdog/invariant logs show no integrity violations in normal use.
 
-This work is complete only when all are true:
+## 14. Immediate Next Tasks
 
-1. No known code path can remove codex-thread identity/config by modifying message rows.
-2. Thread identity survives restarts, finalize, interrupts, continues, and migrations.
-3. Message and thread updates are ID-addressed, not date-addressed.
-4. Integrity checks run continuously and report zero violations in burn-in.
-5. Legacy chats migrate automatically with rollback artifacts and pass invariant checks.
-
-## 13. Immediate Next Work Items (Concrete)
-
-1. Add `message_id` + `thread_id` fields and plumb them through chat send/reply paths.
-2. Refactor [src/packages/frontend/chat/message-cache.ts](./src/packages/frontend/chat/message-cache.ts) to key by `message_id`.
-3. Introduce `thread_config` record type and migrate codex config accessors in [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts).
-4. Update ACP metadata and writer logic to target message rows via IDs in [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts).
-5. Add integrity watchdog counters and invariant-check utility callable from tests and debug UI.
-
+1. Add `message_id` + `thread_id` to send/reply paths.
+2. Re-key message cache to `message_id` in [src/packages/frontend/chat/message-cache.ts](./src/packages/frontend/chat/message-cache.ts).
+3. Introduce `thread_config` record and move codex config writes there.
+4. Add thread-level action to set/unset codex agent config.
+5. Update ACP metadata and backend writer paths to use IDs.
+6. Implement one-off migration script and run it on legacy files.

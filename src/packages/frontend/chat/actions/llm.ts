@@ -37,6 +37,36 @@ const ACP_IMMEDIATE_MODE_PREFIX = [
   "[/CoCalc UI immediate-send note]",
 ].join(" ");
 
+function findChatRecord({
+  actions,
+  syncdb,
+  messageId,
+  dateIso,
+  senderId,
+}: {
+  actions: ChatActions;
+  syncdb: any;
+  messageId?: string;
+  dateIso?: string;
+  senderId?: string;
+}): any {
+  if (messageId) {
+    const cached = actions.getMessageById(messageId);
+    if (cached) return cached;
+    const byId = syncdb?.get_one?.({
+      event: "chat",
+      message_id: messageId,
+    });
+    if (byId) return byId;
+  }
+  if (!dateIso || !senderId) return undefined;
+  return syncdb.get_one({
+    event: "chat",
+    date: dateIso,
+    sender_id: senderId,
+  });
+}
+
 export async function processLLM({
   actions,
   message,
@@ -68,6 +98,9 @@ export async function processLLM({
 
   const model = resolveLLMModel({ message, reply_to, tag, llm, threadModel });
   if (model === false || model == null) return;
+  if (reply_to) {
+    actions.recordThreadAgentModel(reply_to, model);
+  }
 
   let input = stripMentions(inputRaw);
 
@@ -129,6 +162,11 @@ export async function processLLM({
   let content = "";
   const dateIso =
     toISOString(date) ?? (typeof date === "string" ? date : undefined);
+  const messageId = (message as any)?.message_id as string | undefined;
+  const threadId = (message as any)?.thread_id as string | undefined;
+  const replyToMessageId = (message as any)?.reply_to_message_id as
+    | string
+    | undefined;
   try {
     chatStream = webapp_client.openai_client.queryStream({
       input,
@@ -152,6 +190,9 @@ export async function processLLM({
       }),
       generating: false,
       reply_to: toISOString(reply_to),
+      message_id: messageId,
+      thread_id: threadId,
+      reply_to_message_id: replyToMessageId,
     });
     actions.syncdb.commit();
     return;
@@ -159,20 +200,33 @@ export async function processLLM({
 
   // Adjust sender_id when regenerating with explicit model
   if (tag === "regenerate" && llm != null && message.sender_id !== sender_id) {
-    const cur = syncdb.get_one({ event: "chat", date });
+    const cur = findChatRecord({
+      actions,
+      syncdb,
+      messageId,
+      dateIso,
+      senderId: message.sender_id,
+    });
     if (cur) {
       const messagesMap = actions.getAllMessages();
       const replyRoot = getReplyToRoot({
         message: cur as any as ChatMessage,
         messages: messagesMap,
       });
-      syncdb.delete({ event: "chat", date });
+      syncdb.delete({
+        event: "chat",
+        date: dateIso ?? date,
+        sender_id: (cur as any)?.sender_id ?? message.sender_id,
+      });
       syncdb.set({
-        date,
+        date: dateIso ?? date,
         history: (cur as any)?.history ?? [],
         event: "chat",
         sender_id,
         reply_to: replyRoot,
+        message_id: (cur as any)?.message_id ?? messageId,
+        thread_id: (cur as any)?.thread_id ?? threadId,
+        reply_to_message_id: (cur as any)?.reply_to_message_id ?? replyToMessageId,
       });
     }
   }
@@ -184,9 +238,12 @@ export async function processLLM({
       return;
     }
 
-    const cur = actions.syncdb.get_one({
-      event: "chat",
-      date: dateIso ?? date,
+    const cur = findChatRecord({
+      actions,
+      syncdb: actions.syncdb,
+      messageId,
+      dateIso,
+      senderId: sender_id,
     });
     if ((cur as any)?.generating === false) {
       halted = true;
@@ -206,6 +263,9 @@ export async function processLLM({
       }),
       generating: token != null,
       reply_to: toISOString(reply_to),
+      message_id: messageId,
+      thread_id: threadId,
+      reply_to_message_id: replyToMessageId,
     });
 
     if (token == null) {
@@ -237,6 +297,9 @@ export async function processLLM({
       }),
       generating: false,
       reply_to: toISOString(reply_to),
+      message_id: messageId,
+      thread_id: threadId,
+      reply_to_message_id: replyToMessageId,
     });
     actions.syncdb.commit();
   });

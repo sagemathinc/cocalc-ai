@@ -7,6 +7,10 @@ export interface AcpChatContext {
   message_date: string;
   sender_id: string;
   reply_to?: string;
+  // Schema-v2 identities for robust row targeting.
+  message_id?: string;
+  thread_id?: string;
+  reply_to_message_id?: string;
   // Marks that this user message was sent via "Send Immediately" while an ACP
   // turn was active, so the backend can preserve continue semantics.
   send_mode?: "immediate";

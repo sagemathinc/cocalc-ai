@@ -85,6 +85,7 @@ export function ChatRoomComposer({
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
+  const IDLE_COLLAPSED_HEIGHT = 60;
 
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
@@ -100,7 +101,51 @@ export function ChatRoomComposer({
   const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
   const threadColor = selectedThread?.threadColor;
   const threadIcon = selectedThread?.threadIcon;
+  const threadImage = selectedThread?.threadImage;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const contextThread = useMemo(() => {
+    if (combinedFeedSelected) {
+      if (!targetValue) return undefined;
+      return threads.find((thread) => thread.key === targetValue);
+    }
+    return selectedThread ?? undefined;
+  }, [combinedFeedSelected, targetValue, threads, selectedThread]);
+  const composerPlaceholder = useMemo(() => {
+    if (combinedFeedSelected && targetOptions.length > 0 && !contextThread) {
+      return "Write a message (choose a target chat)...";
+    }
+    if (!contextThread) {
+      return "Ask anything...";
+    }
+    const metadata = actions?.getThreadMetadata?.(contextThread.key);
+    if (metadata?.agent_kind === "none") {
+      return "Write a message...";
+    }
+    if (metadata?.agent_kind === "acp") {
+      return "Ask Codex...";
+    }
+    if (metadata?.agent_kind === "llm") {
+      const model = metadata?.agent_model?.trim();
+      return model ? `Ask ${model}...` : "Ask AI...";
+    }
+    const threadMs = parseInt(contextThread.key, 10);
+    if (
+      Number.isFinite(threadMs) &&
+      actions?.isCodexThread?.(new Date(threadMs))
+    ) {
+      return "Ask Codex...";
+    }
+    if (contextThread.isAI) {
+      const model = metadata?.agent_model?.trim();
+      return model ? `Ask ${model}...` : "Ask AI...";
+    }
+    return "Write a message...";
+  }, [
+    combinedFeedSelected,
+    targetOptions.length,
+    contextThread,
+    actions,
+  ]);
   const presenceThreadKey = useMemo(() => {
     if (combinedFeedSelected) {
       return composerTargetKey ?? null;
@@ -123,6 +168,7 @@ export function ChatRoomComposer({
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
   const zenContainerRef = useRef<HTMLDivElement | null>(null);
   const inputContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(
@@ -240,14 +286,19 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
+  const collapseWhenIdle = !isZenMode && !hasInput && !isInputFocused;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
-    : manualHeightPx != null
-      ? `${manualHeightPx}px`
-      : INPUT_HEIGHT;
-  const autoGrowMaxHeight = isZenMode
-    ? zenHeight
-    : Math.max(defaultMaxHeight, manualHeightPx ?? 0);
+    : collapseWhenIdle
+      ? `${IDLE_COLLAPSED_HEIGHT}px`
+      : manualHeightPx != null
+        ? `${manualHeightPx}px`
+        : INPUT_HEIGHT;
+  const autoGrowMaxHeight = collapseWhenIdle
+    ? IDLE_COLLAPSED_HEIGHT
+    : isZenMode
+      ? zenHeight
+      : Math.max(defaultMaxHeight, manualHeightPx ?? 0);
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -333,7 +384,7 @@ export function ChatRoomComposer({
           minWidth: 0,
         }}
       >
-        {!IS_MOBILE && (
+        {!IS_MOBILE && (hasInput || isInputFocused || isZenMode) && (
           <Tooltip
             title={
               isZenMode
@@ -390,7 +441,12 @@ export function ChatRoomComposer({
               marginBottom: 6,
             }}
           >
-            <ThreadBadge icon={threadIcon} color={threadColor} size={18} />
+            <ThreadBadge
+              icon={threadIcon}
+              color={threadColor}
+              image={threadImage}
+              size={18}
+            />
             <span>{stripHtml(threadLabel)}</span>
           </div>
         )}
@@ -408,13 +464,20 @@ export function ChatRoomComposer({
             onChange={(value) => {
               setInput(value, composerSession);
             }}
-            onFocus={() => onComposerFocusChange(true)}
-            onBlur={() => onComposerFocusChange(false)}
+            onFocus={() => {
+              setIsInputFocused(true);
+              onComposerFocusChange(true);
+            }}
+            onBlur={() => {
+              setIsInputFocused(false);
+              onComposerFocusChange(false);
+            }}
             submitMentionsRef={submitMentionsRef}
             syncdb={actions.syncdb}
             date={composerDraftKey}
             sessionToken={composerSession}
             editBarStyle={{ overflow: "auto" }}
+            placeholder={composerPlaceholder}
           />
         </div>
       </div>

@@ -7,8 +7,7 @@ import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "./actions";
 import { COMBINED_FEED_KEY, type ThreadMeta } from "./threads";
 import type { ChatMessages } from "./types";
-import { dateValue } from "./access";
-import { getThreadRootDate } from "./utils";
+import { getMessageAtDate, getThreadRootDate } from "./utils";
 
 interface ThreadSelectionOptions {
   actions: ChatActions;
@@ -93,17 +92,7 @@ export function useChatThreadSelection({
     if (!isFinite(parsed)) {
       return;
     }
-    const keyStr = `${parsed}`;
-    let message = messages.get(keyStr);
-    if (message == null) {
-      for (const [, msg] of messages) {
-        const dateField = dateValue(msg);
-        if (dateField?.valueOf?.() === parsed) {
-          message = msg;
-          break;
-        }
-      }
-    }
+    const message = getMessageAtDate({ messages, date: parsed });
     if (message == null) return;
     const root = getThreadRootDate({ date: parsed, messages }) || parsed;
     const threadKey = `${root}`;

@@ -55,7 +55,6 @@ import {
   replyTo,
   editingArray,
 } from "./access";
-import type { CodexThreadConfig } from "@cocalc/chat";
 import { SyncOutlined } from "@ant-design/icons";
 import { AgentMessageStatus } from "./agent-message-status";
 
@@ -65,7 +64,6 @@ const MARKDOWN_STYLE = undefined;
 
 const BORDER = "2px solid #ccc";
 
-const SHOW_EDIT_BUTTON_MS = 15000;
 
 const THREAD_STYLE_SINGLE: CSS = {
   marginLeft: "15px",
@@ -105,6 +103,34 @@ const MARGIN_TOP_VIEWER = "17px";
 const AVATAR_MARGIN_LEFTRIGHT = "15px";
 
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
+const NON_RUNNING_USER_ONLY_STATES = new Set([
+  "queue",
+  "sending",
+  "sent",
+  "not-sent",
+]);
+
+export function computeAcpStateToRender({
+  acpState,
+  latestThreadInterrupted,
+  isViewersMessage,
+  generating,
+}: {
+  acpState?: string;
+  latestThreadInterrupted: boolean;
+  isViewersMessage: boolean;
+  generating?: boolean;
+}): string {
+  const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
+  if (!state) return "";
+  if (NON_RUNNING_USER_ONLY_STATES.has(state) && !isViewersMessage) {
+    return "";
+  }
+  if (state === "running" && !isViewersMessage && generating !== true) {
+    return "";
+  }
+  return state;
+}
 
 interface Props {
   index: number;
@@ -212,8 +238,6 @@ export default function Message({
     return dateValue(message)?.valueOf() ?? 0;
   }, [message]);
 
-  const showEditButton = Date.now() - date < SHOW_EDIT_BUTTON_MS;
-
   const generating = field<boolean>(message, "generating");
 
   const history_size = historyEntries.length;
@@ -222,6 +246,8 @@ export default function Message({
     () => is_editing(message, account_id),
     [message, account_id],
   );
+  const showEditButton =
+    project_id != null && path != null && actions != null && !isEditing;
 
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
@@ -274,8 +300,22 @@ export default function Message({
     () => actions?.isLanguageModelThread(dateValue(message)),
     [message, actions],
   );
+  // Thread identity/model now comes from thread_config metadata.
   const isCodexThread =
     typeof isLLMThread === "string" && isLLMThread.includes("codex");
+  const acpStateActive = useMemo(
+    () =>
+      acpState === "running" ||
+      acpState === "sending" ||
+      acpState === "sent" ||
+      acpState === "queue",
+    [acpState],
+  );
+  const effectiveGenerating = useMemo(() => {
+    if (generating !== true) return false;
+    if (!isCodexThread) return true;
+    return acpStateActive;
+  }, [generating, isCodexThread, acpStateActive]);
 
   useEffect(() => {
     if (isEditing) return;
@@ -285,7 +325,7 @@ export default function Message({
   }, [isEditing, message]);
 
   useEffect(() => {
-    if (generating === true && date > 0) {
+    if (effectiveGenerating && date > 0) {
       const start = date;
       const update = () => {
         setElapsedMs(Date.now() - start);
@@ -296,7 +336,7 @@ export default function Message({
     } else {
       setElapsedMs(0);
     }
-  }, [generating, date]);
+  }, [effectiveGenerating, date]);
 
   const elapsedLabel = useMemo(() => {
     if (!elapsedMs || elapsedMs < 0) return "";
@@ -364,18 +404,28 @@ export default function Message({
 
   useEffect(() => {
     if (!actions?.store) return;
-    if (!acpInterrupted || generating === true) return;
+    if (!acpInterrupted || effectiveGenerating) return;
     if (acpState !== "running") return;
-    const msgDate = dateValue(message);
-    if (!msgDate) return;
-    const key = `${msgDate.valueOf()}`;
+    const messageId = field<string>(message, "message_id");
+    if (!messageId) return;
+    const keys = new Set<string>([`message:${messageId}`]);
+    const threadId = field<string>(message, "thread_id");
+    if (threadId) {
+      keys.add(`thread:${threadId}`);
+    }
     const acpMap = actions.store.get("acpState");
-    const current = acpMap?.get?.(key);
-    if (current !== "running") return;
+    const hasRunning = Array.from(keys).some(
+      (key) => acpMap?.get?.(key) === "running",
+    );
+    if (!hasRunning) return;
+    let next = acpMap;
+    for (const key of keys) {
+      next = next.delete(key);
+    }
     actions.store.setState({
-      acpState: acpMap.set(key, ""),
+      acpState: next,
     });
-  }, [actions, acpInterrupted, generating, acpState, message]);
+  }, [actions, acpInterrupted, effectiveGenerating, acpState, message]);
 
   // Resolve log identifiers deterministically (shared with backend) so we never
   // invent subjects/keys in multiple places.
@@ -423,12 +473,9 @@ export default function Message({
   );
 
   const threadCodexConfig = useMemo(() => {
-    const rootMessage =
-      threadKeyForSession != null
-        ? messages?.get(threadKeyForSession)
-        : undefined;
-    return field<CodexThreadConfig>(rootMessage, "acp_config");
-  }, [messages, threadKeyForSession]);
+    if (threadKeyForSession == null) return undefined;
+    return actions?.getThreadMetadata(threadKeyForSession)?.acp_config ?? undefined;
+  }, [actions, threadKeyForSession]);
 
   // Prefer the persisted sessionId on the thread root's acp_config; fall back
   // to the thread id we get from the ACP payload, then the thread key.
@@ -454,7 +501,7 @@ export default function Message({
     }
   }, [replying]);
 
-  const durationLabel = generating
+  const durationLabel = effectiveGenerating
     ? elapsedLabel
     : formatTurnDuration({
         startMs: date,
@@ -852,9 +899,8 @@ export default function Message({
           key="edit"
           title={
             <>
-              Edit this message. You can edit <b>any</b> past message at any
-              time by double clicking on it. Fix other people's typos. All
-              versions are stored.
+              Edit this message. You can edit <b>any</b> past message using
+              this button. Fix other people's typos. All versions are stored.
             </>
           }
           placement="bottom"
@@ -863,9 +909,9 @@ export default function Message({
             size="small"
             type="text"
             style={{ color: COLORS.GRAY_M }}
-            onClick={() => actions?.setEditing(message, true)}
+            onClick={edit_message}
+            icon={<Icon name="pencil" />}
           >
-            <Icon name="pencil" /> Edit
           </Button>
         </Tip>,
       );
@@ -952,7 +998,7 @@ export default function Message({
         {renderForkNotice()}
         <AgentMessageStatus
           show={showCodexActivity}
-          generating={generating === true}
+          generating={effectiveGenerating}
           durationLabel={durationLabel}
           fontSize={font_size}
           project_id={project_id}
@@ -994,7 +1040,7 @@ export default function Message({
   }
 
   function renderBottomControls() {
-    if (generating !== true || actions == null) {
+    if (!effectiveGenerating || actions == null) {
       return null;
     }
     const interruptLabel = isCodexThread ? "Interrupt" : "Stop Generating";
@@ -1028,6 +1074,7 @@ export default function Message({
             actions?.languageModelStopGenerating(new Date(date), {
               threadId: sessionIdForInterrupt,
               replyTo: replyTo(message),
+              senderId: field<string>(message, "sender_id"),
             });
           }}
         >
@@ -1046,7 +1093,7 @@ export default function Message({
     if (
       actions == null ||
       !acpInterrupted ||
-      generating === true ||
+      effectiveGenerating ||
       !isCodexThread ||
       !isLastMessageInThread
     ) {
@@ -1177,7 +1224,6 @@ export default function Message({
         <div
           style={messageStyle}
           className="smc-chat-message"
-          onDoubleClick={edit_message}
         >
           {renderMessageHeader(lighten)}
           {isEditing
@@ -1469,8 +1515,14 @@ export default function Message({
     cancelQueuedAcpTurn({ actions, message });
   };
 
-  const acpStateToRender =
-    acpState === "running" && latestThreadInterrupted ? "" : acpState;
+  const acpStateToRender = useMemo(() => {
+    return computeAcpStateToRender({
+      acpState,
+      latestThreadInterrupted,
+      isViewersMessage: is_viewers_message,
+      generating,
+    });
+  }, [acpState, latestThreadInterrupted, is_viewers_message, generating]);
 
   const renderAcpState = () => {
     if (!acpStateToRender) return null;
