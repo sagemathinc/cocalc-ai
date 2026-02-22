@@ -1024,6 +1024,7 @@ export default function Message({
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
           inlineCodeWorkspaceRoot={activityBasePath}
+          inlineCodeProjectId={project_id}
         />
       </>
     );

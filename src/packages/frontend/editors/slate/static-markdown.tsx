@@ -11,6 +11,7 @@ application.
 
 import { CSSProperties, useEffect, useState } from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import "./elements/init-ssr";
 import { getStaticRender } from "./elements/register";
 import Leaf from "./leaf";
@@ -23,6 +24,7 @@ interface Props {
   className?: string;
   inlineCodeLinks?: InlineCodeLink[];
   inlineCodeWorkspaceRoot?: string;
+  inlineCodeProjectId?: string;
 }
 
 type PartialSlateEditor = any; // TODO
@@ -33,11 +35,13 @@ export default function StaticMarkdown({
   className,
   inlineCodeLinks,
   inlineCodeWorkspaceRoot,
+  inlineCodeProjectId,
 }: Props) {
   const [editor, setEditor] = useState<PartialSlateEditor>({
     children: applyInlineCodeLinks(markdownToSlate(value), {
       inlineCodeLinks,
       inlineCodeWorkspaceRoot,
+      inlineCodeProjectId,
     }),
   });
   const [change, setChange] = useState<number>(0);
@@ -50,10 +54,11 @@ export default function StaticMarkdown({
         children: applyInlineCodeLinks(markdownToSlate(value), {
           inlineCodeLinks,
           inlineCodeWorkspaceRoot,
+          inlineCodeProjectId,
         }),
       });
     }
-  }, [value, inlineCodeLinks, inlineCodeWorkspaceRoot]);
+  }, [value, inlineCodeLinks, inlineCodeWorkspaceRoot, inlineCodeProjectId]);
 
   if (editor == null) {
     return null;
@@ -84,14 +89,17 @@ function applyInlineCodeLinks(
   {
     inlineCodeLinks,
     inlineCodeWorkspaceRoot,
+    inlineCodeProjectId,
   }: {
     inlineCodeLinks?: InlineCodeLink[];
     inlineCodeWorkspaceRoot?: string;
+    inlineCodeProjectId?: string;
   },
 ): any[] {
   const lookup = createInlineCodeLinkLookup(
     inlineCodeLinks,
     inlineCodeWorkspaceRoot,
+    inlineCodeProjectId,
   );
   if (lookup.size === 0) return children;
   return transformInlineCodeNodes(children, lookup);
@@ -126,6 +134,7 @@ function transformInlineCodeNodes(
 function createInlineCodeLinkLookup(
   inlineCodeLinks?: InlineCodeLink[],
   inlineCodeWorkspaceRoot?: string,
+  inlineCodeProjectId?: string,
 ): Map<string, { href: string; display: string; title: string }> {
   const lookup = new Map<
     string,
@@ -137,10 +146,14 @@ function createInlineCodeLinkLookup(
     if (!codeKey || !projectPath) continue;
     const display = formatInlineCodeDisplay(link, inlineCodeWorkspaceRoot);
     const title = formatInlineCodeTitle(link);
-    let href = `./${projectPath}`;
-    if (link.line != null && Number.isFinite(link.line) && link.line > 0) {
-      href += `#line=${link.line}`;
-    }
+    const href = buildInlineCodeHref({
+      projectPath,
+      projectId: inlineCodeProjectId,
+      line:
+        link.line != null && Number.isFinite(link.line) && link.line > 0
+          ? Math.trunc(link.line)
+          : undefined,
+    });
     lookup.set(codeKey, { href, display, title });
   }
   return lookup;
@@ -155,6 +168,30 @@ function normalizeProjectPath(value: unknown): string {
   if (typeof value !== "string") return "";
   const normalized = value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
   return normalized;
+}
+
+function buildInlineCodeHref({
+  projectPath,
+  projectId,
+  line,
+}: {
+  projectPath: string;
+  projectId?: string;
+  line?: number;
+}): string {
+  const encodedPath = projectPath
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  if (!projectId) {
+    let fallback = `./${projectPath}`;
+    if (line != null) fallback += `#line=${line}`;
+    return fallback;
+  }
+  const base = `${appBasePath}/projects/${projectId}/files/${encodedPath}`;
+  if (line == null) return base;
+  return `${base}#line=${line}`;
 }
 
 function formatInlineCodeDisplay(
