@@ -6,6 +6,7 @@
 import { uptime } from "node:os";
 import { ProcessStats } from "@cocalc/backend/process-stats";
 import type { Processes, ProjectInfoScope } from "@cocalc/util/types/project-info/types";
+import { OwnedDarwinProcessSnapshotProvider } from "./owned-darwin-snapshot-provider";
 import { OwnedLinuxProcessSnapshotProvider } from "./owned-linux-snapshot-provider";
 
 export interface ProcessSnapshot {
@@ -84,6 +85,9 @@ export function createProcessSnapshotProvider(opts?: {
     case "off":
       return new OffProcessSnapshotProvider();
     case "owned":
+      if (process.platform === "darwin") {
+        return new OwnedDarwinProcessSnapshotProvider();
+      }
       return new OwnedLinuxProcessSnapshotProvider();
     case "all":
     default:
