@@ -54,6 +54,18 @@ function topCounters(map: CounterMap, topN: number, keyName: string) {
     .map(([key, count]) => ({ [keyName]: key, count }));
 }
 
+function infoNumber(
+  info: Record<string, unknown> | undefined,
+  key: string,
+): number {
+  if (info == null) return 0;
+  const value = info[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return 0;
+}
+
 export function trackBackendWatcher(opts: TrackOptions): () => void {
   const source = opts.source || "unknown";
   const type = opts.type || "unknown";
@@ -117,15 +129,42 @@ export function getBackendWatcherDebugStats({
       ageMs: Math.max(0, now - w.createdAt),
       info: w.info,
     }));
+  let watchedEntriesTotal = 0;
+  let watchedDirsTotal = 0;
+  const watchedEntriesByPathTop = Array.from(active.values())
+    .map((w) => {
+      const watchedEntries = infoNumber(w.info, "watchedEntries");
+      const watchedDirs = infoNumber(w.info, "watchedDirs");
+      watchedEntriesTotal += watchedEntries;
+      watchedDirsTotal += watchedDirs;
+      return {
+        id: w.id,
+        source: w.source,
+        type: w.type,
+        path: w.path,
+        watchedEntries,
+        watchedDirs,
+      };
+    })
+    .filter((w) => w.watchedEntries > 0 || w.watchedDirs > 0)
+    .sort((a, b) => {
+      if (b.watchedEntries !== a.watchedEntries) {
+        return b.watchedEntries - a.watchedEntries;
+      }
+      return b.watchedDirs - a.watchedDirs;
+    })
+    .slice(0, top);
   return {
     ...counters,
     sourcesActive: activeBySource.size,
     activeBySourceTop: topCounters(activeBySource, top, "source"),
     activeByTypeTop: topCounters(activeByType, top, "type"),
     activeByPathTop: topCounters(activeByPath, top, "path"),
+    watchedEntriesTotal,
+    watchedDirsTotal,
+    watchedEntriesByPathTop,
     createdBySourceTop: topCounters(createdBySource, top, "source"),
     closedBySourceTop: topCounters(closedBySource, top, "source"),
     oldestActiveTop,
   };
 }
-

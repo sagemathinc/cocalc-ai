@@ -8,17 +8,45 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import type { ChatMessage } from "./types";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import { dateValue } from "./access";
+import { dateValue, field } from "./access";
 import { type ChatActions } from "./actions";
 
 type QueueKey = string;
 type QueueItem = {
-  messageDateMs: number;
+  messageId: string;
   run: () => Promise<void>;
   canceled: boolean;
 };
 type QueueState = { running: boolean; items: QueueItem[] };
 const turnQueues: Map<QueueKey, QueueState> = new Map();
+let lastGeneratedAcpMessageMs = 0;
+
+function nextAcpMessageDate({
+  actions,
+  minMs,
+}: {
+  actions: ChatActions;
+  minMs: number;
+}): Date {
+  let candidate = Math.max(Date.now(), minMs, lastGeneratedAcpMessageMs + 1);
+  let collisions = 0;
+  while (
+    actions.getMessageByDate?.(candidate) ??
+    actions.getAllMessages?.().has(`${candidate}`)
+  ) {
+    collisions += 1;
+    candidate += 1;
+  }
+  if (collisions > 0) {
+    console.warn("ACP message_date collision avoided", {
+      minMs,
+      collisions,
+      candidate,
+    });
+  }
+  lastGeneratedAcpMessageMs = candidate;
+  return new Date(candidate);
+}
 
 function getQueue(key: QueueKey): QueueState {
   let q = turnQueues.get(key);
@@ -35,7 +63,7 @@ function makeQueueKey({ project_id, path, threadKey }): QueueKey {
 
 type ThreadQueueRef = {
   queueKey: QueueKey;
-  threadKey: string;
+  threadToken: string;
   project_id: string;
   path: string;
 };
@@ -52,11 +80,14 @@ function resolveThreadQueueRef({
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return undefined;
-  const threadKey = actions.computeThreadKey(threadRootDate.valueOf());
-  if (!threadKey) return undefined;
+  const rootMessage =
+    actions.getMessageByDate?.(threadRootDate) ??
+    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
+  const threadToken = field<string>(rootMessage, "thread_id");
+  if (!threadToken) return undefined;
   return {
-    queueKey: makeQueueKey({ project_id, path, threadKey }),
-    threadKey,
+    queueKey: makeQueueKey({ project_id, path, threadKey: threadToken }),
+    threadToken,
     project_id,
     path,
   };
@@ -91,9 +122,14 @@ export function resetAcpThreadState({
   const threadMessages = actions.getMessagesInThread(threadIso) ?? [];
   let nextState = store.get("acpState");
   for (const msg of threadMessages) {
-    const d = dateValue(msg);
-    if (!d) continue;
-    nextState = nextState.delete(`${d.valueOf()}`);
+    const messageId = field<string>(msg, "message_id");
+    if (messageId) {
+      nextState = nextState.delete(`message:${messageId}`);
+    }
+    const threadId = field<string>(msg, "thread_id");
+    if (threadId) {
+      nextState = nextState.delete(`thread:${threadId}`);
+    }
   }
   store.setState({ acpState: nextState });
 }
@@ -147,32 +183,18 @@ export async function processAcpLLM({
     return;
   }
 
-  let baseDate: number;
-  if (reply_to) {
-    baseDate = reply_to.valueOf();
-  } else {
-    baseDate =
-      message.date instanceof Date
-        ? message.date.valueOf()
-        : new Date(message.date ?? Date.now()).valueOf();
-  }
-  const threadKey: string | undefined = actions.computeThreadKey(baseDate);
-  if (!threadKey) {
-    return;
-  }
-
   const sender_id = model || "openai-codex-agent";
 
   // Determine the thread root date from the message itself.
   // - For replies, `message.reply_to` is the thread root (ISO string).
-  // - For a root message, the thread root is `message.date`.
+  // - Otherwise use explicit caller context, then fallback to `message.date`.
   const messageDate = dateValue(message);
   if (!messageDate) {
     throw Error("invalid message");
   }
   const threadRootDate = message.reply_to
     ? new Date(message.reply_to)
-    : messageDate;
+    : reply_to ?? messageDate;
   if (Number.isNaN(threadRootDate?.valueOf())) {
     throw new Error("ACP turn missing thread root date");
   }
@@ -180,6 +202,51 @@ export async function processAcpLLM({
   const config = actions.getCodexConfig?.(threadRootDate);
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
+  // If thread_config.sessionId has not been persisted yet, recover it from the
+  // most recent ACP assistant message in this thread so follow-up turns still
+  // resume the same Codex session.
+  const inferredSessionId = (() => {
+    const threadIso = threadRootDate.toISOString();
+    const threadMessages = actions.getMessagesInThread?.(threadIso) ?? [];
+    for (let i = threadMessages.length - 1; i >= 0; i--) {
+      const sessionId = field<string>(threadMessages[i], "acp_thread_id");
+      if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+        return sessionId.trim();
+      }
+    }
+    return undefined;
+  })();
+  const effectiveSessionId = config?.sessionId ?? inferredSessionId;
+  const threadRootMessage =
+    actions.getMessageByDate?.(threadRootDate) ??
+    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
+  const project_id = store.get("project_id");
+  const path = store.get("path");
+  const thread_id =
+    (message as any)?.thread_id ?? (threadRootMessage as any)?.thread_id;
+  const user_message_id = (message as any)?.message_id;
+  if (!user_message_id) {
+    console.warn("ACP turn missing user message_id; skipping", {
+      project_id,
+      path,
+      message_date: messageDate.toISOString(),
+    });
+    return;
+  }
+  if (!thread_id) {
+    console.warn("ACP turn missing thread_id; skipping", {
+      project_id,
+      path,
+      message_id: user_message_id,
+    });
+    return;
+  }
+  // Backend chat writer must own a distinct assistant row for this turn.
+  // Reusing the user's message_id can cause backend updates to overwrite the
+  // input message history instead of writing assistant output.
+  const message_id = uuid();
+  const reply_to_message_id =
+    (threadRootMessage as any)?.message_id ?? user_message_id;
 
   const id = uuid();
   chatStreams.add(id);
@@ -189,63 +256,70 @@ export async function processAcpLLM({
   setTimeout(() => chatStreams.delete(id), 3 * 60 * 1000);
 
   const setState = (state) => {
+    const messageIdKey = `message:${user_message_id}`;
+    const threadStateKey = `thread:${thread_id}`;
+    let next = store.get("acpState");
+    if (state) {
+      next = next.set(messageIdKey, state);
+      next = next.set(threadStateKey, state);
+    } else {
+      next = next.delete(messageIdKey);
+      next = next.delete(threadStateKey);
+    }
     store.setState({
-      acpState: store.get("acpState").set(`${messageDate.valueOf()}`, state),
+      acpState: next,
     });
   };
 
-  const project_id = store.get("project_id");
-  const path = store.get("path");
-
-  const sessionKey = config?.sessionId ?? threadKey;
-  const queueKey = makeQueueKey({ project_id, path, threadKey });
+  const threadToken = thread_id;
+  const sessionKey = effectiveSessionId ?? threadToken;
+  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const job = async (): Promise<void> => {
     try {
       setState("sending");
       // Generate a stable assistant-reply key for this turn, but do NOT write any
       // corresponding chat row here. The backend is the sole writer of the assistant
       // reply row (avoids frontend/backend sync races on the same row).
-      let newMessageDate = new Date();
-      if (newMessageDate.valueOf() <= messageDate.valueOf()) {
-        // ensure ai response message is after the message we're
-        // responding to.
-        newMessageDate = new Date(
-          messageDate.valueOf() + Math.round(100 * Math.random()),
-        );
-      }
+      // Chat cache and thread lookup currently key by millisecond timestamp.
+      // Never allow ACP assistant rows to reuse an existing timestamp.
+      const newMessageDate = nextAcpMessageDate({
+        actions,
+        minMs: Math.max(messageDate.valueOf(), threadRootDate.valueOf()) + 1,
+      });
       const chatMetadata = buildChatMetadata({
         project_id,
         path,
         sender_id,
         messageDate: newMessageDate,
         reply_to: threadRootDate,
+        thread_id,
+        message_id,
+        reply_to_message_id,
         sendMode,
       });
-      console.log("Starting ACP turn for", { message, chatMetadata });
       const stream = await webapp_client.conat_client.streamAcp({
         project_id,
         prompt: workingInput,
         session_id: sessionKey,
         config: buildAcpConfig({
           path,
-          config,
+          config:
+            effectiveSessionId != null
+              ? { ...(config ?? {}), sessionId: effectiveSessionId }
+              : config,
           model: normalizedModel,
         }),
         chat: chatMetadata,
       });
       setState("sent");
-      console.log("Sent ACP turn request for", message);
       for await (const response of stream) {
         setState("running");
-        // TODO: this is excess logging for development purposes
-        console.log("ACP message response", response);
         // when something goes wrong, the stream may send this sort of message:
         // {seq: 0, error: 'Error: ACP agent is already processing a request', type: 'error'}
         if (response?.type == "error") {
           throw Error(response.error);
         }
       }
-      console.log("ACP message responses done");
     } catch (err) {
       chatStreams.delete(id);
       console.error("ACP turn failed", err);
@@ -275,7 +349,7 @@ export async function processAcpLLM({
 
   const q = getQueue(queueKey);
   q.items.push({
-    messageDateMs: messageDate.valueOf(),
+    messageId: user_message_id,
     run: job,
     canceled: false,
   });
@@ -294,18 +368,18 @@ export function cancelQueuedAcpTurn({
 }): boolean {
   const { store } = actions;
   if (!store) return false;
-  const messageDate = dateValue(message);
-  if (!messageDate) return false;
-  const threadKey = actions.computeThreadKey(messageDate.valueOf());
-  if (!threadKey) return false;
+  const messageId = field<string>(message, "message_id");
+  if (!messageId) return false;
+  const threadToken = field<string>(message, "thread_id");
+  if (!threadToken) return false;
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
-  const queueKey = makeQueueKey({ project_id, path, threadKey });
+  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const q = turnQueues.get(queueKey);
   if (!q) return false;
   const targetIndex = q.items.findIndex(
-    (item) => item.messageDateMs === messageDate.valueOf(),
+    (item) => item.messageId === messageId,
   );
   if (targetIndex < 0) return false;
   const [item] = q.items.splice(targetIndex, 1);
@@ -314,7 +388,14 @@ export function cancelQueuedAcpTurn({
     turnQueues.delete(queueKey);
   }
   store.setState({
-    acpState: store.get("acpState").set(`${messageDate.valueOf()}`, "not-sent"),
+    acpState: (() => {
+      let next = store.get("acpState").set(`message:${messageId}`, "not-sent");
+      const threadId = field<string>(message, "thread_id");
+      if (threadId) {
+        next = next.set(`thread:${threadId}`, "not-sent");
+      }
+      return next;
+    })(),
   });
   return true;
 }
@@ -390,6 +471,9 @@ function buildChatMetadata({
   sender_id,
   messageDate,
   reply_to,
+  thread_id,
+  message_id,
+  reply_to_message_id,
   sendMode,
 }: {
   project_id?: string;
@@ -397,6 +481,9 @@ function buildChatMetadata({
   sender_id: string;
   messageDate: Date;
   reply_to?: Date;
+  thread_id?: string;
+  message_id?: string;
+  reply_to_message_id?: string;
   sendMode?: "immediate";
 }): AcpChatContext {
   if (!project_id) {
@@ -414,6 +501,9 @@ function buildChatMetadata({
     sender_id,
     message_date: messageDate.toISOString(),
     reply_to: reply_to?.toISOString(),
+    thread_id,
+    message_id,
+    reply_to_message_id,
     send_mode: sendMode,
   };
 }

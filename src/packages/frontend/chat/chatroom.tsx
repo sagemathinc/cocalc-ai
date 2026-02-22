@@ -26,10 +26,18 @@ import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
+import {
+  DEFAULT_NEW_THREAD_SETUP,
+  type NewThreadSetup,
+} from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
 import type { ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
-import { markChatAsReadIfUnseen, toMsString } from "./utils";
+import {
+  getMessageByLookup,
+  markChatAsReadIfUnseen,
+  toMsString,
+} from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import { useChatComposerDraft } from "./use-chat-composer-draft";
@@ -50,6 +58,7 @@ const GRID_STYLE: React.CSSProperties = {
 
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const COMBINED_FEED_MAX_PER_THREAD = 5;
+const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
 type MessageKeyWithTime = { key: string; time: number };
 
@@ -61,7 +70,7 @@ function pickNewestMessageKeys(
   if (!messages || limit <= 0) return [];
   const newest: MessageKeyWithTime[] = [];
   for (const key of entry.messageKeys) {
-    const message = messages.get(key);
+    const message = getMessageByLookup({ messages, key });
     if (!message) continue;
     const d = dateValue(message);
     if (!d) continue;
@@ -99,6 +108,7 @@ export interface ChatPanelProps {
   path: string;
   messages?: ChatMessages;
   threadIndex?: Map<string, ThreadIndexEntry>;
+  docVersion?: number;
   fontSize?: number;
   desc?: NodeDesc;
   variant?: "default" | "compact";
@@ -119,6 +129,7 @@ export function ChatPanel({
   path,
   messages,
   threadIndex,
+  docVersion,
   fontSize = 13,
   desc,
   variant = "default",
@@ -164,12 +175,13 @@ export function ChatPanel({
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
 
-  const { threads, combinedThread, threadSections } = useThreadSections({
+  const { threads, archivedThreads, combinedThread, threadSections } = useThreadSections({
     messages,
     threadIndex,
     activity,
     accountId: account_id,
     actions,
+    version: docVersion,
   });
 
   const {
@@ -191,6 +203,8 @@ export function ChatPanel({
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
+  const [newThreadSetup, setNewThreadSetup] =
+    useState<NewThreadSetup>(DEFAULT_NEW_THREAD_SETUP);
 
   const composerDraftKey = useMemo(() => {
     if (
@@ -251,17 +265,32 @@ export function ChatPanel({
   );
   const hasActiveAcpTurn = useMemo(() => {
     if (!isSelectedThreadAI) return false;
-    if (!selectedThreadMessages.length) return false;
     const activeStates = new Set(["queue", "sending", "sent", "running"]);
+    const selectedThreadId = field<string>(selectedThread?.rootMessage, "thread_id");
+    if (selectedThreadId) {
+      const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
+      if (typeof byThread === "string" && activeStates.has(byThread)) {
+        return true;
+      }
+    }
+    if (!selectedThreadMessages.length) return false;
     for (const msg of selectedThreadMessages) {
       const d = dateValue(msg);
       if (!d) continue;
       if (field<boolean>(msg, "generating") === true) return true;
-      const state = acpState?.get?.(`${d.valueOf()}`);
+      const threadId = field<string>(msg, "thread_id");
+      if (threadId) {
+        const threadState = acpState?.get?.(`thread:${threadId}`);
+        if (threadState && activeStates.has(threadState)) return true;
+      }
+      const messageId = field<string>(msg, "message_id");
+      const state =
+        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+        acpState?.get?.(`${d.valueOf()}`);
       if (state && activeStates.has(state)) return true;
     }
     return false;
-  }, [isSelectedThreadAI, selectedThreadMessages, acpState]);
+  }, [isSelectedThreadAI, selectedThreadMessages, acpState, selectedThread]);
 
   const {
     paymentSource: codexPaymentSource,
@@ -403,16 +432,28 @@ export function ChatPanel({
     const rootIso = reply_to.toISOString();
     const threadMessages = actions.getMessagesInThread(rootIso) ?? [];
     const sessionId =
-      field<any>(selectedThread?.rootMessage, "acp_config")?.sessionId ??
-      `${reply_to.valueOf()}`;
+      actions.getCodexConfig(reply_to)?.sessionId ?? `${reply_to.valueOf()}`;
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);
       if (!msgDate) continue;
-      const threadId = field<string>(msg, "acp_thread_id") ?? sessionId;
+      const threadId = field<string>(msg, "thread_id");
+      const threadState =
+        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+      const messageId = field<string>(msg, "message_id");
+      const msgState =
+        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+        acpState?.get?.(`${msgDate.valueOf()}`);
+      const isActive =
+        (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
+        (typeof msgState === "string" && ACP_ACTIVE_STATES.has(msgState));
+      if (!isActive) continue;
+      const interruptTargetThreadId =
+        field<string>(msg, "acp_thread_id") ?? sessionId;
       actions.languageModelStopGenerating(new Date(msgDate.valueOf()), {
-        threadId,
+        threadId: interruptTargetThreadId,
         replyTo: reply_to,
+        senderId: field<string>(msg, "sender_id"),
       });
     }
   }
@@ -445,9 +486,50 @@ export function ChatPanel({
       reply_to,
       extraInput,
       send_mode: opts?.immediate ? "immediate" : undefined,
+      name:
+        !reply_to && newThreadSetup.title.trim()
+          ? newThreadSetup.title.trim()
+          : undefined,
+      threadAgent:
+        !reply_to && newThreadSetup.agentMode
+          ? {
+              mode: newThreadSetup.agentMode,
+              model: newThreadSetup.model?.trim(),
+              codexConfig:
+                newThreadSetup.agentMode === "codex"
+                  ? {
+                      ...newThreadSetup.codexConfig,
+                      model:
+                        newThreadSetup.codexConfig.model?.trim() ||
+                        newThreadSetup.model?.trim(),
+                    }
+                  : undefined,
+            }
+          : undefined,
+      threadAppearance:
+        !reply_to
+          ? {
+              color: newThreadSetup.color?.trim(),
+              icon: newThreadSetup.icon?.trim(),
+              image: newThreadSetup.image?.trim(),
+            }
+          : undefined,
       preserveSelectedThread: isCombinedFeedSelected,
     });
     const threadKey = timeStamp ? toMsString(timeStamp) ?? timeStamp : null;
+    if (!reply_to && threadKey) {
+      if (
+        newThreadSetup.color?.trim() ||
+        newThreadSetup.icon?.trim() ||
+        newThreadSetup.image?.trim()
+      ) {
+        actions.setThreadAppearance?.(threadKey, {
+          color: newThreadSetup.color?.trim(),
+          icon: newThreadSetup.icon?.trim(),
+          image: newThreadSetup.image?.trim(),
+        });
+      }
+    }
     if (!reply_to && threadKey && !isCombinedFeedSelected) {
       setSelectedThreadKey(threadKey);
       setTimeout(() => {
@@ -475,6 +557,7 @@ export function ChatPanel({
     void clearComposerDraft(0);
     setAllowAutoSelectThread(false);
     setSelectedThreadKey(null);
+    setNewThreadSetup(DEFAULT_NEW_THREAD_SETUP);
   }
 
   const renderChatContent = () => (
@@ -504,6 +587,8 @@ export function ChatPanel({
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
+        newThreadSetup={newThreadSetup}
+        onNewThreadSetupChange={setNewThreadSetup}
       />
       <ChatRoomComposer
         actions={actions}
@@ -563,6 +648,7 @@ export function ChatPanel({
             setAllowAutoSelectThread={setAllowAutoSelectThread}
             setSidebarVisible={setSidebarVisible}
             threadSections={threadSections}
+            archivedThreads={archivedThreads}
             combinedThread={combinedThread}
             openRenameModal={
               modalHandlers?.openRenameModal ??
@@ -609,7 +695,7 @@ function ChatRoomInner({
   font_size,
   desc,
 }: EditorComponentProps) {
-  const { messages, threadIndex } = useChatDoc();
+  const { messages, threadIndex, version } = useChatDoc();
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
@@ -620,6 +706,7 @@ function ChatRoomInner({
       path={path}
       messages={messages}
       threadIndex={threadIndex}
+      docVersion={version}
       fontSize={font_size}
       desc={desc}
       variant="default"

@@ -7,7 +7,7 @@ import type { Map as ImmutableMap } from "immutable";
 
 import type { ChatMessageTyped, ChatMessages } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
-import { newest_content } from "./utils";
+import { getMessageByLookup, newest_content } from "./utils";
 import { field } from "./access";
 import type { ChatActions } from "./actions";
 
@@ -39,11 +39,13 @@ export type ThreadMeta = ThreadListItem & {
   hasCustomName: boolean;
   threadColor?: string;
   threadIcon?: string;
+  threadImage?: string;
   hasCustomAppearance: boolean;
   readCount: number;
   unreadCount: number;
   isAI: boolean;
   isPinned: boolean;
+  isArchived: boolean;
   lastActivityAt?: number;
 };
 
@@ -56,6 +58,7 @@ const COMBINED_FEED_LABEL = "Combined feed";
 export function useThreadList(
   messages?: ChatMessages,
   threadIndex?: Map<string, ThreadIndexEntry>,
+  version?: number,
 ): ThreadListItem[] {
   return React.useMemo(() => {
     if (threadIndex == null) {
@@ -66,7 +69,7 @@ export function useThreadList(
     for (const entry of threadIndex.values()) {
       let rootMessage = entry.rootMessage;
       if (!rootMessage && messages) {
-        rootMessage = messages.get(entry.key);
+        rootMessage = getMessageByLookup({ messages, key: entry.key });
       }
       items.push({
         key: entry.key,
@@ -79,7 +82,7 @@ export function useThreadList(
 
     items.sort((a, b) => b.newestTime - a.newestTime);
     return items;
-  }, [threadIndex, messages]);
+  }, [threadIndex, messages, version]);
 }
 
 export function deriveThreadLabel(
@@ -174,6 +177,7 @@ interface ThreadDerivationOptions {
   activity?: ImmutableMap<string, number>;
   accountId?: string;
   actions?: ChatActions;
+  version?: number;
 }
 
 export function useThreadSections({
@@ -182,29 +186,28 @@ export function useThreadSections({
   activity,
   accountId,
   actions,
+  version,
 }: ThreadDerivationOptions): {
   threads: ThreadMeta[];
+  archivedThreads: ThreadMeta[];
   combinedThread?: ThreadMeta;
   threadSections: ThreadSectionWithUnread[];
 } {
-  const rawThreads = useThreadList(messages, threadIndex);
-  const llmCacheRef = React.useRef<Map<string, boolean>>(new Map());
+  const rawThreads = useThreadList(messages, threadIndex, version);
 
   const threads = React.useMemo<ThreadMeta[]>(() => {
     return rawThreads.map((thread) => {
       const rootMessage = thread.rootMessage;
-      const storedName = field<string>(rootMessage, "name")?.trim();
+      const threadMeta = actions?.getThreadMetadata?.(thread.key);
+      const storedName = threadMeta?.name;
       const hasCustomName = !!storedName;
-      const threadColor = field<string>(rootMessage, "thread_color")?.trim();
-      const threadIcon = field<string>(rootMessage, "thread_icon")?.trim();
-      const hasCustomAppearance = Boolean(threadColor || threadIcon);
+      const threadColor = threadMeta?.thread_color;
+      const threadIcon = threadMeta?.thread_icon;
+      const threadImage = threadMeta?.thread_image;
+      const hasCustomAppearance = Boolean(threadColor || threadIcon || threadImage);
       const displayLabel = storedName || thread.label;
-      const pinValue = field<any>(rootMessage, "pin");
-      const isPinned =
-        pinValue === true ||
-        pinValue === "true" ||
-        pinValue === 1 ||
-        pinValue === "1";
+      const isPinned = threadMeta?.pin ?? false;
+      const isArchived = threadMeta?.archived ?? false;
       const readField =
         accountId && rootMessage
           ? field<any>(rootMessage, `read-${accountId}`)
@@ -218,17 +221,16 @@ export function useThreadSections({
       const readCount =
         Number.isFinite(readValue) && readValue > 0 ? readValue : 0;
       const unreadCount = Math.max(thread.messageCount - readCount, 0);
-      let isAI = llmCacheRef.current.get(thread.key);
-      if (isAI == null) {
-        if (actions?.isLanguageModelThread) {
-          const result = actions.isLanguageModelThread(
-            new Date(parseInt(thread.key, 10)),
-          );
-          isAI = result !== false;
-        } else {
-          isAI = false;
-        }
-        llmCacheRef.current.set(thread.key, isAI);
+      const metadataIsAI =
+        threadMeta?.agent_kind === "acp" ||
+        threadMeta?.agent_kind === "llm" ||
+        threadMeta?.acp_config != null;
+      let isAI = metadataIsAI;
+      if (!isAI && actions?.isLanguageModelThread) {
+        const result = actions.isLanguageModelThread(
+          new Date(parseInt(thread.key, 10)),
+        );
+        isAI = result !== false;
       }
       const lastActivityAt = activity?.get(thread.key);
       return {
@@ -237,29 +239,45 @@ export function useThreadSections({
         hasCustomName,
         threadColor,
         threadIcon,
+        threadImage,
         hasCustomAppearance,
         readCount,
         unreadCount,
         isAI: !!isAI,
         isPinned,
+        isArchived,
         lastActivityAt,
       };
     });
-  }, [rawThreads, accountId, actions, activity]);
+  }, [rawThreads, accountId, actions, activity, version]);
+
+  const visibleThreads = React.useMemo(
+    () => threads.filter((thread) => !thread.isArchived),
+    [threads],
+  );
+  const archivedThreads = React.useMemo(
+    () => threads.filter((thread) => thread.isArchived),
+    [threads],
+  );
 
   const combinedThread = React.useMemo<ThreadMeta | undefined>(() => {
-    if (threads.length === 0) return undefined;
-    const newestTime = Math.max(...threads.map((thread) => thread.newestTime));
-    const messageCount = threads.reduce(
+    if (visibleThreads.length === 0) return undefined;
+    const newestTime = Math.max(
+      ...visibleThreads.map((thread) => thread.newestTime),
+    );
+    const messageCount = visibleThreads.reduce(
       (sum, thread) => sum + thread.messageCount,
       0,
     );
-    const readCount = threads.reduce((sum, thread) => sum + thread.readCount, 0);
-    const unreadCount = threads.reduce(
+    const readCount = visibleThreads.reduce(
+      (sum, thread) => sum + thread.readCount,
+      0,
+    );
+    const unreadCount = visibleThreads.reduce(
       (sum, thread) => sum + thread.unreadCount,
       0,
     );
-    const lastActivityAt = threads.reduce<number | undefined>(
+    const lastActivityAt = visibleThreads.reduce<number | undefined>(
       (latest, thread) => {
         if (thread.lastActivityAt == null) return latest;
         return latest == null
@@ -278,17 +296,19 @@ export function useThreadSections({
       hasCustomName: false,
       threadColor: undefined,
       threadIcon: undefined,
+      threadImage: undefined,
       hasCustomAppearance: false,
       readCount,
       unreadCount,
       isAI: false,
       isPinned: false,
+      isArchived: false,
       lastActivityAt,
     };
-  }, [threads]);
+  }, [visibleThreads]);
 
   const threadSections = React.useMemo<ThreadSectionWithUnread[]>(() => {
-    const grouped = groupThreadsByRecency(threads);
+    const grouped = groupThreadsByRecency(visibleThreads);
     return grouped.map((section) => ({
       ...section,
       unreadCount: section.threads.reduce(
@@ -296,7 +316,7 @@ export function useThreadSections({
         0,
       ),
     }));
-  }, [threads]);
+  }, [visibleThreads]);
 
-  return { threads, combinedThread, threadSections };
+  return { threads: visibleThreads, archivedThreads, combinedThread, threadSections };
 }

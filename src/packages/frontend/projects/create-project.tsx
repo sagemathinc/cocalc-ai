@@ -25,6 +25,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import track from "@cocalc/frontend/user-tracking";
 import {
   DEFAULT_R2_REGION,
+  mapCountryRegionToR2Region,
   mapCloudRegionToR2Region,
   R2_REGION_LABELS,
   R2_REGIONS,
@@ -61,8 +62,19 @@ export function NewProjectCreator({
   const [saving, setSaving] = useState<boolean>(false);
   const new_project_title_ref = useRef<any>(null);
   const [selectedHost, setSelectedHost] = useState<Host | undefined>();
+  const cloudflareCountry = useTypedRedux("customize", "country");
+  const cloudflareRegionCode = useTypedRedux(
+    "customize",
+    "cloudflare_region_code",
+  );
+  const preferredProjectRegion = useMemo(
+    () =>
+      mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode) ??
+      DEFAULT_R2_REGION,
+    [cloudflareCountry, cloudflareRegionCode],
+  );
   const [projectRegion, setProjectRegion] =
-    useState<R2Region>(DEFAULT_R2_REGION);
+    useState<R2Region>(preferredProjectRegion);
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
   const [rootfsTouched, setRootfsTouched] = useState<boolean>(false);
   const [rootfsImage, setRootfsImage] = useState<string | undefined>();
@@ -181,7 +193,7 @@ export function NewProjectCreator({
 
   function reset_form(): void {
     set_title_text(default_value || getDefaultTitle());
-    setProjectRegion(DEFAULT_R2_REGION);
+    setProjectRegion(preferredProjectRegion);
     setSelectedHost(undefined);
     setShowAdvanced(false);
     set_error("");

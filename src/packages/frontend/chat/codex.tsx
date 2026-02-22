@@ -1,6 +1,5 @@
 import {
   Button,
-  Collapse,
   Divider,
   Form,
   Input,
@@ -17,6 +16,7 @@ import {
   useMemo,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
@@ -36,6 +36,9 @@ import {
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
+const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
+  ? "read-only"
+  : "workspace-write";
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -142,9 +145,7 @@ export function CodexConfigButton({
       sessionId: "",
       model: baseModel,
       reasoning: baseReasoning,
-      envHome: "",
-      envPath: "",
-      sessionMode: "workspace-write" as CodexSessionMode,
+      sessionMode: DEFAULT_CODEX_SESSION_MODE,
     };
     const saved = actions?.getCodexConfig?.(new Date(ms));
     const merged: CodexThreadConfig = { ...defaults, ...saved };
@@ -156,7 +157,7 @@ export function CodexConfigButton({
       modelValue: model,
       desired: merged.reasoning,
     });
-    const sessionMode = resolveCodexSessionMode(merged);
+    const sessionMode = normalizeSessionMode(merged) ?? DEFAULT_CODEX_SESSION_MODE;
     form.resetFields();
     const currentValue = {
       ...merged,
@@ -196,7 +197,7 @@ export function CodexConfigButton({
   const saveConfig = () => {
     const values = form.getFieldsValue();
     const sessionMode: CodexSessionMode =
-      values.sessionMode ?? resolveCodexSessionMode(values);
+      normalizeSessionMode(values) ?? DEFAULT_CODEX_SESSION_MODE;
     const finalValues = {
       ...values,
       sessionMode,
@@ -214,7 +215,7 @@ export function CodexConfigButton({
     const base = value ?? form.getFieldsValue();
     const next = { ...base, ...patch };
     const sessionMode: CodexSessionMode =
-      next.sessionMode ?? resolveCodexSessionMode(next);
+      normalizeSessionMode(next) ?? DEFAULT_CODEX_SESSION_MODE;
     const finalValues = {
       ...next,
       sessionMode,
@@ -300,12 +301,10 @@ export function CodexConfigButton({
               <Form.Item
                 label="Working directory"
                 name="workingDirectory"
+                tooltip="Optional. If set, Codex runs in this directory for subsequent turns."
                 style={formItemStyle}
               >
-                <Input
-                  placeholder="Derived from the directory containing this chat"
-                  disabled
-                />
+                <Input placeholder="Derived from the directory containing this chat" />
               </Form.Item>
               <Form.Item
                 label="Session ID"
@@ -369,34 +368,6 @@ export function CodexConfigButton({
                 />
               </Form.Item>
             </div>
-            <Divider style={{ margin: "12px 0" }} />
-            <SectionTitle>Advanced options</SectionTitle>
-            <Collapse size="small" bordered={false}>
-              <Collapse.Panel
-                header="Environment overrides"
-                key="env"
-                style={{ border: "none" }}
-              >
-                <Form.Item
-                  label="HOME override"
-                  name="envHome"
-                  tooltip="Optional. Overrides HOME for the Codex CLI."
-                  extra="Useful if Codex needs a different HOME than this notebook."
-                  style={formItemStyle}
-                >
-                  <Input placeholder="Use logged-in Codex HOME if needed" />
-                </Form.Item>
-                <Form.Item
-                  label="PATH override"
-                  name="envPath"
-                  tooltip="Optional. Ensures the codex CLI is on PATH."
-                  extra="Provide a PATH string containing the codex binary."
-                  style={formItemStyle}
-                >
-                  <Input placeholder="Custom PATH for codex binary" />
-                </Form.Item>
-              </Collapse.Panel>
-            </Collapse>
             <Divider style={{ margin: "12px 0" }} />
             <Form.Item
               label="Execution mode"
@@ -511,6 +482,20 @@ function renderOptionWithDescription({
       ) : null}
     </div>
   );
+}
+
+function normalizeSessionMode(
+  config?: Partial<CodexThreadConfig>,
+): CodexSessionMode | undefined {
+  const mode = resolveCodexSessionMode(config as CodexThreadConfig);
+  if (
+    mode === "read-only" ||
+    mode === "workspace-write" ||
+    mode === "full-access"
+  ) {
+    return mode;
+  }
+  return undefined;
 }
 
 function defaultWorkingDir(chatPath: string): string {
