@@ -1015,6 +1015,9 @@ export default function Message({
             project_id,
             path,
           }}
+          inlineCodeLinks={
+            Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+          }
         />
         <StaticMarkdown
           style={MARKDOWN_STYLE}

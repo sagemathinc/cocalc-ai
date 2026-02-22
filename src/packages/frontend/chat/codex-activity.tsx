@@ -7,9 +7,10 @@ import {
   Tooltip,
   Typography,
 } from "antd";
+import type { InlineCodeLink } from "@cocalc/chat";
 import type {
   AcpStreamEvent,
-  AcpStreamMessage,
+  AcpStreamMessage as AcpLogStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
@@ -87,13 +88,14 @@ type ActivityEntry =
     };
 
 export interface CodexActivityProps {
-  events?: AcpStreamMessage[];
+  events?: AcpLogStreamMessage[];
   generating?: boolean;
   fontSize?: number;
   durationLabel?: string;
   persistKey?: string;
   projectId?: string;
   basePath?: string;
+  inlineCodeLinks?: InlineCodeLink[];
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
   onJumpToBottom?: () => void;
@@ -113,6 +115,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   persistKey,
   projectId,
   basePath,
+  inlineCodeLinks,
   onDeleteEvents,
   onDeleteAllEvents,
   onJumpToBottom,
@@ -299,6 +302,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
                   fontSize={baseFontSize}
                   projectId={projectId}
                   basePath={resolvedBasePath}
+                  inlineCodeLinks={inlineCodeLinks}
                 />
               );
             }}
@@ -311,6 +315,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
               fontSize={baseFontSize}
               projectId={projectId}
               basePath={resolvedBasePath}
+              inlineCodeLinks={inlineCodeLinks}
             />
           ))
         )}
@@ -325,11 +330,13 @@ function ActivityRow({
   fontSize,
   projectId,
   basePath,
+  inlineCodeLinks,
 }: {
   entry: ActivityEntry;
   fontSize: number;
   projectId?: string;
   basePath?: string;
+  inlineCodeLinks?: InlineCodeLink[];
 }) {
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
@@ -344,6 +351,8 @@ function ActivityRow({
             <StaticMarkdown
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
+              inlineCodeLinks={inlineCodeLinks}
+              inlineCodeWorkspaceRoot={basePath}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -364,6 +373,8 @@ function ActivityRow({
             <StaticMarkdown
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
+              inlineCodeLinks={inlineCodeLinks}
+              inlineCodeWorkspaceRoot={basePath}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -424,7 +435,7 @@ function ActivityRow({
   }
 }
 
-function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
+function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
   const rows: ActivityEntry[] = [];
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
@@ -632,7 +643,9 @@ function createEventEntry({
   };
 }
 
-function formatSummaryDetail(message: AcpStreamMessage & { type: "summary" }) {
+function formatSummaryDetail(
+  message: AcpLogStreamMessage & { type: "summary" },
+) {
   const parts: string[] = [];
   if (message.finalResponse) {
     parts.push(truncate(message.finalResponse, 60));
@@ -829,13 +842,14 @@ function resolvePath(
       ? normalizeAbsolutePath(normalizedPath.slice(2), homePath)
       : undefined;
   }
-  // Codex file events are currently HOME-relative, so resolve against HOME first.
+  const normalizedBase = normalizeAbsoluteMaybe(basePath);
+  if (normalizedBase) {
+    return normalizeAbsolutePath(normalizedPath, normalizedBase);
+  }
   if (homePath) {
     return normalizeAbsolutePath(normalizedPath, homePath);
   }
-  const normalizedBase = normalizeAbsoluteMaybe(basePath);
-  if (!normalizedBase) return undefined;
-  return normalizeAbsolutePath(normalizedPath, normalizedBase);
+  return undefined;
 }
 
 function normalizeSlashPath(path?: string): string | undefined {
@@ -1172,7 +1186,7 @@ function formatReadScope(entry: {
 }
 
 // Convert Codex activity events into markdown for exports.
-export function codexEventsToMarkdown(events: AcpStreamMessage[]): string {
+export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
   const entries = normalizeEvents(events ?? []);
   if (!entries.length) return "";
   const lines: string[] = [];
@@ -1249,11 +1263,8 @@ export function codexEventsToMarkdown(events: AcpStreamMessage[]): string {
 }
 
 function formatPathMarkdown(path: string, line?: number): string {
-  const clean = path.replace(/^[./]+/, "");
-  const label = line != null ? `${clean}#L${line}` : clean;
-  const href = clean ? `./${clean}` : ".";
-  const link = line != null ? `${href}#L${line}` : href;
-  return `[${label}](${link})`;
+  const clean = normalizeSlashPath(path) || path;
+  return line != null ? `\`${clean}#L${line}\`` : `\`${clean}\``;
 }
 
 export default CodexActivity;

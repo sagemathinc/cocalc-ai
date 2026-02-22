@@ -5,6 +5,7 @@
 
 import { Badge, Button, Drawer } from "antd";
 import { useEffect, useRef, useState } from "@cocalc/frontend/app-framework";
+import type { InlineCodeLink } from "@cocalc/chat";
 import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
 import type { ActivityLogContext } from "./actions/activity-logs";
@@ -38,6 +39,7 @@ interface AgentMessageStatusProps {
   date: number;
   fallbackLogRefs: LogRefs;
   activityContext: ActivityLogContext;
+  inlineCodeLinks?: InlineCodeLink[];
 }
 
 export function AgentMessageStatus({
@@ -51,6 +53,7 @@ export function AgentMessageStatus({
   date,
   fallbackLogRefs,
   activityContext,
+  inlineCodeLinks,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -215,6 +218,7 @@ export function AgentMessageStatus({
             onEventsChange={() => setContentVersion((prev) => prev + 1)}
             durationLabel={generating === true ? durationLabel : durationLabel}
             projectId={project_id}
+            inlineCodeLinks={inlineCodeLinks}
             virtualizeEntries
             scrollParent={scrollParent}
           />
