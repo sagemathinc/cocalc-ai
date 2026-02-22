@@ -75,6 +75,14 @@ export function getProjectInfoScopeFromEnv(): ProjectInfoScope {
   const scope = process.env.COCALC_PROJECT_INFO_SCOPE?.trim().toLowerCase();
   if (scope === "off") return "off";
   if (scope === "owned") return "owned";
+  if (scope === "all") return "all";
+  const product = (process.env.COCALC_PRODUCT ?? "").trim().toLowerCase();
+  if (product === "launchpad") {
+    return "all";
+  }
+  if (process.env.COCALC_LITE_SQLITE_FILENAME != null) {
+    return "owned";
+  }
   return "all";
 }
 

@@ -283,3 +283,18 @@ Rule:
 
 1. Decide the initial top-N default for history process samples (`N=50` proposed).
 2. Decide whether adaptive idle cadence should be request-count based, or a simple \"last viewer seen at\" timeout model (`60s` proposed).
+
+## 12. Implementation Progress
+
+- [x] Commit 1: scope plumbing + provider abstraction.
+- [x] Commit 2: owned-process registry core.
+- [x] Commit 3: linux owned-scope collector.
+- [x] Commit 4: terminal + jupyter launch-point wiring.
+- [x] Commit 5: remaining launch-point wiring (exec/codex/x11 via backend bridge).
+- [x] Commit 6: history writer + AKV retention.
+- [x] Commit 7: conat `getHistory` API.
+- [x] Commit 8: frontend history hook + trend charts.
+- [x] Commit 9: darwin owned-scope provider + tests.
+- [~] Commit 10: defaults/cutover.
+  - [x] Scope default now resolves to `owned` for lite and `all` for launchpad.
+  - [ ] Lite still explicitly disables process-info services in `lite/main.ts` for performance unless re-enabled.
