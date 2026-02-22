@@ -489,10 +489,11 @@ export function registerBrowserCommand(
     );
 
   browser
-    .command("exec <workspace> [code...]")
+    .command("exec [code...]")
     .description(
       "execute javascript in the target browser session with a limited browser API (use 'cocalc browser exec-api' to inspect the API); provide code inline, with --file, or with --stdin",
     )
+    .option("-w, --workspace <workspace>", "workspace id or name")
     .option("--browser <id>", "browser id (or unique prefix)")
     .option(
       "--file <path>",
@@ -518,9 +519,9 @@ export function registerBrowserCommand(
     )
     .action(
       async (
-        workspace: string,
         code: string[],
         opts: {
+          workspace?: string;
           browser?: string;
           file?: string;
           stdin?: boolean;
@@ -532,13 +533,29 @@ export function registerBrowserCommand(
         command: Command,
       ) => {
         await deps.withContext(command, "browser exec", async (ctx) => {
-          const workspaceRow = await deps.resolveWorkspace(ctx, workspace);
           const profileSelection = loadProfileSelection(deps, command);
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint: opts.browser,
             fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0,
           });
+          const workspaceRow = workspaceHint
+            ? await deps.resolveWorkspace(ctx, workspaceHint)
+            : sessionInfo.active_project_id
+              ? await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)
+              : sessionInfo.open_projects?.length === 1 &&
+                  sessionInfo.open_projects[0]?.project_id
+                ? await deps.resolveWorkspace(
+                    ctx,
+                    sessionInfo.open_projects[0].project_id,
+                  )
+                : (() => {
+                    throw new Error(
+                      "workspace is required; pass -w/--workspace or focus a workspace tab in the target browser session",
+                    );
+                  })();
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
