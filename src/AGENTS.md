@@ -1,30 +1,20 @@
-# CLAUDE.md and GEMINI.md
+# AGENTS.md, CLAUDE.md and GEMINI.md
 
 This file provides guidance to Claude Code (claude.ai/code), Gemini CLI (https://github.com/google-gemini/gemini-cli) and OpenAI Codex when working with code in this repository.
 
 # CoCalc Source Repository
 
-- This is the source code of CoCalc in a Git repository
-- It is a complex JavaScript/TypeScript SaaS application
+- This is the source code of CoCalc-ai in a Git repository
+- It is a complex TypeScript web application
 - CoCalc is organized as a monorepository (multi-packages) in the subdirectory "./packages"
 - The packages are managed as a pnpm workspace in "./packages/pnpm-workspace.yaml"
 
 ## Code Style
 
-- Everything is written in TypeScript code
-- Indentation: 2-spaces
-- Run `prettier -w [filename]` after modifying a file (ts, tsx, md, json, ...) to format it correctly.
-- All .js and .ts files are formatted by the tool prettier
-- Add suitable types when you write code
-- Follow DRY principles!
-- TypeScript: prefer `var1 ?? var2` for fallbacks. only use `var1 || var2` in explicit or-chains or when necessary.
-- TypeScript: avoid using "foo as any" to get around Typescript issues.
-- Variable name styles are `camelCase` for local and `FOO_BAR` for global variables. React Components and Classes are `FooBar`. If you edit older code not following these guidelines, adjust this rule to fit the file's style.
-- Some older code is JavaScript or CoffeeScript, which will be translated to TypeScript
+- Run `prettier -w [filename]` after modifying a file
 - Use ES modules (import/export) syntax, not CommonJS (require)
-- Organize the list of imports in such a way: installed npm packages are on top, newline, then are imports from @cocalc's code base. Sorted alphabetically.
-- **Colors**: Always use the `COLORS` dictionary from `@cocalc/util/theme` for all color values. Never hardcode colors like `#f0f0f0` or `rgb(...)`. Import with `import { COLORS } from "@cocalc/util/theme";` and use predefined constants like `COLORS.GRAY_M`, `COLORS.GRAY_L`, `COLORS.GRAY_LL`, etc.
-- **Backend Logging**: Use `getLogger` from `@cocalc/project/logger` for logging in backend code. Do NOT use `console.log`. Example: `const L = getLogger("module:name").debug;`
+- Use the `COLORS` dictionary from `@cocalc/util/theme` for color values.
+- Use `getLogger`for logging (check usage in the package your modifying for how to import this). Do not use `console.log`, except for temporary debugging. 
 
 ## Development Commands
 
@@ -34,10 +24,6 @@ This file provides guidance to Claude Code (claude.ai/code), Gemini CLI (https:/
 - `pnpm clean` - Clean all `node_modules` and `dist` directories
 - `pnpm test` - Run full test suite
 - `pnpm depcheck` - Check for dependency issues
-- `pnpm tsc` - Typecheck all packages (the src directory) or any package directory
-- `python3 ./scripts/check_npm_packages.py` - Check npm package consistency across packages
-- `prettier -w [filename]` to format the style of a file after editing it
-- After creating a file, run `git add [filename]` to start tracking it
 - `pnpm tsc` at top level (the src directory) to build all TypeScript; in `src/packages/[package_name]` use `pnpm tsc --build` for a fast typecheck. `pnpm build` is fine when it only runs `tsc`, but avoid it for packages like `next` or `static` where `build` runs full bundlers.
 
 ### Package-Specific Commands
@@ -46,47 +32,25 @@ This file provides guidance to Claude Code (claude.ai/code), Gemini CLI (https:/
   - For packages/next and packages/static, run `cd packages/[package] && pnpm build-dev`
   - For a quick typecheck in any package, prefer `pnpm tsc --build`
 - `cd packages/[package] && pnpm test` - Run tests for a specific package
-- To typecheck the frontend, it is best to run `cd packages/static && pnpm build` - this implicitly compiles the frontend and reports TypeScript errors
-- **IMPORTANT**: When modifying packages like `util` that other packages depend on, you must run `pnpm build` in the modified package before typechecking dependent packages
 
 ### Dependency Management
 
-**Package versions must be uniform across all CoCalc packages in the monorepo.**
+Package versions must be uniform across all CoCalc packages in the monorepo.
 
 When updating npm packages:
 
-- **ALWAYS update associated `@types/[name]` packages** when updating an npm package `[name]` if `@types/[name]` is installed
-- **Check all packages in the workspace** that depend on the package being updated
-- **Ensure version consistency** across all packages - the same package must use the same version everywhere
+- **Always update associated `@types/[name]` packages** when updating an npm package `[name]` if `@types/[name]` is installed
 - Run `pnpm version-check` from the root directory (`cocalc/src/`) to verify version consistency
 - Run `pnpm install` after updating dependencies in any package
-- Use `pnpm list [package]` to verify the installed version across the workspace
 - Example: When updating `pg` from `^8.7.1` to `^8.16.3`, also update `@types/pg` from `^8.6.1` to `^8.16.0` in **all packages** that use them
-
-### Development
-
-- **IMPORTANT**: Always run `prettier -w [filename]` immediately after editing any .ts, .tsx, .md, or .json file to ensure consistent styling
-- After TypeScript or `*.tsx` changes, run `pnpm tsc --build` in the relevant package directory
-
-#### Modernizing Legacy Callback Code
-
-When working with legacy callback-based code (using `async.series`, `defaults()`, nested callbacks), follow the comprehensive modernization guide:
-
-**📖 See [dev/MODERNIZE_CODE.md](./dev/MODERNIZE_CODE.md)** for the complete step-by-step process to convert callback-based code to modern async/await TypeScript.
-
-This guide covers:
-
-- Converting `async.series`/`async.parallel` to native async/await
-- Replacing `defaults()` with TypeScript destructuring
-- Proper error handling with try/catch
-- Maintaining backwards compatibility
-- Updating callers to use direct async/await
 
 ## Architecture Overview
 
+See ../docs/ for extensive documentation about the architecture of cocalc.
+
 ### Package Structure
 
-CoCalc is organized as a monorepo with key packages:
+CoCalc is organized as a monorepo with key packages, including these:
 
 - **frontend** - React/TypeScript frontend application using Redux-style stores and actions
 - **backend** - Node.js backend services and utilities
@@ -105,66 +69,37 @@ CoCalc is organized as a monorepo with key packages:
 #### Frontend Architecture
 
 - **Redux-style State Management**: Uses custom stores and actions pattern (see `packages/frontend/app-framework/actions-and-stores.ts`)
-- **TypeScript React Components**: All frontend code is TypeScript with proper typing
-- **Modular Store System**: Each feature has its own store/actions (AccountStore, BillingStore, etc.)
-- **WebSocket Communication**: Real-time communication with backend via WebSocket messages
-- **Authentication Waiting**: When frontend code needs to wait for user authentication, use `redux.getStore("account").async_wait({ until: () => store.get_account_id() != null, timeout: 0 })` to wait indefinitely until authentication completes
-- **Conat DKV Usage**: For key-value storage with real-time sync, use `webapp_client.conat_client.dkv({ account_id, name: "store-name" })` to get a distributed key-value store that syncs across sessions
+- **Typescript React Components**: All frontend code is TypeScript and we use react functions.
+- **Store System**: Each feature has its own store/actions (AccountStore, BillingStore, etc.)
+- **WebSocket Communication**: Real-time communication with backend via WebSocket messages via conat (src/packages/conat)
 
-#### Backend Architecture
+#### Backend Architecture (Cocalc Launchpad)
 
-- **PostgreSQL Database**: Primary data store with sophisticated querying system
-- **WebSocket Messaging**: Real-time communication between frontend and backend
+- **PostgreSQL Database**: Primary data store with custom querying system
 - **Conat System**: Messaging and routing for projects and hosts
-- **Event-Driven Architecture**: Extensive use of EventEmitter patterns
-- **Microservice-like Packages**: Each package handles specific functionality
 - **Database Access**: Use `getPool()` from `@cocalc/database/pool` for direct database queries in hub/backend code. Example: `const pool = getPool(); const { rows } = await pool.query('SELECT * FROM table WHERE id = $1', [id]);`
-- **Hub Migration Functions**: Migration functions in hub should be designed to run once at startup, use batch processing with delays between batches to avoid database saturation
 
 #### Communication Patterns
 
-- **WebSocket Messages**: Primary communication method (see `packages/comm/websocket/types.ts`)
-- **Database Queries**: Structured query system with typed interfaces
-- **Event Emitters**: Inter-service communication within backend
-- **REST-like APIs**: Some HTTP endpoints for specific operations
-- **API Schema**: API endpoints in `packages/next/pages/api/v2/` use Zod schemas in `packages/next/lib/api/schema/` for validation. These schemas must be kept in harmony with the TypeScript types sent from frontend applications using `apiPost` (in `packages/next/lib/api/post.ts`) or `api` (in `packages/frontend/client/api.ts`). When adding new fields to API requests, both the frontend types and the API schema validation must be updated.
-- **Conat Frontend → Hub Communication**: CoCalc uses a custom distributed messaging system called "Conat" for frontend-to-hub communication:
+- **API Schema**: http API endpoints in `packages/next/pages/api/v2/` use Zod schemas in `packages/next/lib/api/schema/` for validation. **Avoid these** in favor of the rpc endpoints defined in packages/conat/hub/api
+- **Conat Frontend &lt;--&gt; Hub Communication**: CoCalc uses a custom pub/sub system called "Conat" (inspired by NATS.io) for most communication:
   1. **Frontend ConatClient** (`packages/frontend/conat/client.ts`): Manages WebSocket connection to hub, handles authentication, reconnection, and provides API interfaces
-  2. **Core Protocol** (`packages/conat/core/client.ts`): NATS-like pub/sub/request/response messaging with automatic chunking, multiple encoding formats (MsgPack, JSON), and delivery confirmation
+  2. **Core Protocol** (`packages/conat/core/client.ts`): NATS-like pub/sub/request/response messaging with automatic chunking, and delivery confirmation
   3. **Hub API Structure** (`packages/conat/hub/api/`): Typed interfaces for different services (system, projects, db, purchases, jupyter) that map function calls to conat subjects
   4. **Message Flow**: Frontend calls like `hub.projects.setQuotas()` → ConatClient.callHub() → conat request to subject `hub.account.{account_id}.api` → Hub API dispatcher → actual service implementation
-  5. **Authentication**: Each conat request includes account_id and is subject to permission checks at the hub level
-  6. **Subjects**: Messages are routed using hierarchical subjects like `hub.account.{uuid}.{service}` or `project.{uuid}.{service}`
-
-### Config And Paths Source Of Truth
-
-- Before adding a new env-var default or filesystem path, check `packages/backend/data.ts`.
-- If config is shared across packages (secrets paths, auth cache roots, data dirs), define/export a constant in `packages/backend/data.ts` and reuse it.
-- Prefer paths under `secrets` from `packages/backend/data.ts` for secret/auth-related storage.
-- Only use package-local hardcoded defaults when there is a clear package boundary reason; add a short comment when doing so.
-
-### Key Technologies
-
-- **TypeScript**: Primary language for all new code
-- **React**: Frontend framework
-- **PostgreSQL**: Database
-- **Node.js**: Backend runtime
-- **WebSockets**: Real-time communication
-- **pnpm**: Package manager and workspace management
-- **Jest**: Testing framework
-- **SASS**: CSS preprocessing
+  5. **Subjects**: Messages are routed using hierarchical subjects like `hub.account.{uuid}.{service}` or `project.{uuid}.{service}`
 
 ### Database Schema
 
 - Comprehensive schema in `packages/util/db-schema`
 - Query abstractions in `packages/database/postgres/`
-- Type-safe database operations with TypeScript interfaces
 
 ### Testing
 
 - **Jest**: Primary testing framework
 - **ts-jest**: TypeScript support for Jest
 - **jsdom**: Browser environment simulation for frontend tests
+- **playwright**: Full browser environment
 - Test files use `.test.ts` or `.spec.ts` extensions
 - Each package has its own jest.config.js
 
@@ -173,15 +108,6 @@ CoCalc is organized as a monorepo with key packages:
 - Use absolute imports with `@cocalc/` prefix for cross-package imports
 - Example: `import { cmp } from "@cocalc/util/misc"`
 - Type imports: `import type { Foo } from "./bar"`
-- Destructure imports when possible
-
-### Development Workflow
-
-1. Changes to TypeScript require compilation (`pnpm build` in relevant package)
-2. Database must be running before starting hub
-3. Hub coordinates all services and should be restarted after changes
-4. Use `pnpm clean && pnpm build-dev` when switching branches or after major changes
-5. **IMPORTANT**: After any frontend code changes, run `pnpm build-dev` in the `packages/static` directory to compile the frontend
 
 # Workflow
 
@@ -190,12 +116,7 @@ CoCalc is organized as a monorepo with key packages:
 
 ## Git Workflow
 
-- Never modify a file when in the `master` or `main` branch
-- All changes happen through feature branches.
-- When creating a new file, run `git add [filename]` to track the file.
 - Prefix git commits with the package and general area. e.g. 'frontend/latex: ...' if it concerns latex editor changes in the packages/frontend/... code.
-- When pushing a new branch to Github, track it upstream. e.g. `git push --set-upstream origin feature-foo` for branch "feature-foo".
-- Only automatically commit when I explicitly ask.  I will review ALL code before committing it.
 
 ## React-intl / Internationalization (i18n)
 
@@ -208,19 +129,6 @@ CoCalc uses react-intl for internationalization with SimpleLocalize as the trans
 - **Supported Languages**: 19+ languages including German, Chinese, Spanish, French, Italian, Dutch, Russian, Japanese, Portuguese, Korean, Polish, Turkish, Hebrew, Hindi, Hungarian, Arabic, and Basque
 - **Translation Platform**: SimpleLocalize with OpenAI GPT-4o for automatic translations
 
-### Translation ID Naming Convention
-
-Translation IDs follow a hierarchical pattern: `[directory].[subdir].[filename].[aspect].[label|title|tooltip|...]`
-
-Examples:
-
-- `labels.masked_files` - for common UI labels
-- `account.sign-out.button.title` - for account sign-out dialog
-- `command.generic.force_build.label` - for command labels
-
-Also we use the term "project" most everywhere in the code for the containers 
-users work in, but the word "workspace" in user facing text.
-
 ### Usage Patterns
 
 - **TSX Components**: `<FormattedMessage id="..." defaultMessage="..." />`
@@ -230,37 +138,4 @@ users work in, but the word "workspace" in user facing text.
 
 ### Translation Workflow
 
-**For new translation keys:**
-
-1. Add the translation to source code (e.g., `packages/frontend/i18n/common.ts`)
-2. Run `pnpm i18n:extract` - updates `extracted.json` from source code
-3. Run `pnpm i18n:upload` - sends new strings to SimpleLocalize
-4. New keys are automatically translated to all languages
-5. Run `pnpm i18n:download` - fetches translations
-6. Run `pnpm i18n:compile` - compiles translation files
-
-**For editing existing translation keys:**
-Same flow as above, but **before 3. i18n:upload**, delete the key. Only new keys are auto-translated. `pnpm i18n:delete [id]`.
-
-### Translation File Structure
-
-- `packages/frontend/i18n/README.md` - detailed documentation
-- `packages/frontend/i18n/common.ts` - shared translation definitions (labels, menus, editor, jupyter, etc.)
-- `packages/frontend/i18n/extracted.json` - auto-extracted messages from source code
-- `packages/frontend/i18n/trans/[locale].json` - downloaded translations from SimpleLocalize
-- `packages/frontend/i18n/trans/[locale].compiled.json` - compiled translation files for runtime
-- `packages/frontend/i18n/index.ts` - exports and locale loading logic
-
-# Ignore
-
-- Ignore files covered by `.gitignore`
-- Ignore everything in `node_modules` or `dist` directories
-- Ignore all files not tracked by Git, unless they are newly created files
-- DO NOT DELETE ANY FILES NOT TRACKED BY GIT.
-
-# Important Instruction Reminders
-
-- Do what has been asked; nothing more, nothing less
-- REFUSE to modify files when the git repository is on the `master` or `main` branch
-- NEVER proactively create documentation files (`*.md`) or README files. Only create documentation files if explicitly requested by the User
-- When modifying a file with a copyright banner at the top, make sure to fix/add the current year to indicate the copyright year
+See ../docs/translation.md
