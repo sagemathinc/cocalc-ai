@@ -21,7 +21,7 @@ import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
 import { A, Loading, Tip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
-import { field_cmp, seconds2hms } from "@cocalc/util/misc";
+import { cmp, field_cmp, seconds2hms } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   Process,
@@ -39,7 +39,11 @@ import {
   SignalButtons,
 } from "./components";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
-import { DETAILS_BTN_TEXT, SSH_KEYS_DOC } from "./utils";
+import {
+  DETAILS_BTN_TEXT,
+  SSH_KEYS_DOC,
+  process_inclusive_value,
+} from "./utils";
 
 interface Props {
   any_alerts: () => boolean;
@@ -167,6 +171,11 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   const headerRef = useRef<HTMLDivElement>(null);
   const generalStatusRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState<number>(400);
+
+  const inclusiveCmp = (field: "cpu_pct" | "cpu_tot" | "mem") => {
+    return (a: ProcessRow, b: ProcessRow) =>
+      cmp(process_inclusive_value(a, field), process_inclusive_value(b, field));
+  };
 
   useEffect(() => {
     const calculateTableHeight = () => {
@@ -534,7 +543,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               align={"right"}
               render={onCellProps("cpu_pct", (val) => `${val.toFixed(1)}%`)}
               onCell={onCellProps("cpu_pct")}
-              sorter={field_cmp("cpu_pct")}
+              sorter={inclusiveCmp("cpu_pct")}
             />
             <Table.Column<ProcessRow>
               key="cpu_tot"
@@ -544,7 +553,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               align={"right"}
               render={onCellProps("cpu_pct", (val) => seconds2hms(val))}
               onCell={onCellProps("cpu_tot")}
-              sorter={field_cmp("cpu_tot")}
+              sorter={inclusiveCmp("cpu_tot")}
             />
             <Table.Column<ProcessRow>
               key="mem"
@@ -554,7 +563,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               align={"right"}
               render={onCellProps("cpu_pct", (val) => `${val.toFixed(0)} MiB`)}
               onCell={onCellProps("mem")}
-              sorter={field_cmp("mem")}
+              sorter={inclusiveCmp("mem")}
             />
           </Table>
         </Row>

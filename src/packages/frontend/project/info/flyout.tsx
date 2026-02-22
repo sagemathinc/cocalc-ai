@@ -14,7 +14,7 @@ import {
   Process,
   ProjectInfo as ProjectInfoType,
 } from "@cocalc/util/types/project-info/types";
-import { field_cmp } from "@cocalc/util/misc";
+import { cmp, field_cmp } from "@cocalc/util/misc";
 import {
   AboutContent,
   CGroup,
@@ -23,6 +23,7 @@ import {
   SignalButtons,
 } from "./components";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
+import { process_inclusive_value } from "./utils";
 
 interface Props {
   wrap?: Function;
@@ -76,6 +77,11 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
 
   // this is a list of pid strings, used as indices
   const [pidExpanded, setPidExpanded] = useState<string[]>([]);
+
+  const inclusiveCmp = (field: "cpu_pct" | "mem") => {
+    return (a: ProcessRow, b: ProcessRow) =>
+      cmp(process_inclusive_value(a, field), process_inclusive_value(b, field));
+  };
 
   function renderExpandedProc(procRow: ProcessRow) {
     if (info?.processes == null) return;
@@ -156,7 +162,7 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
           align={"right"}
           render={onCellProps("cpu_pct", (val) => `${Math.round(val)}%`)}
           onCell={onCellProps("cpu_pct")}
-          sorter={field_cmp("cpu_pct")}
+          sorter={inclusiveCmp("cpu_pct")}
         />
         <Table.Column<ProcessRow>
           key="mem"
@@ -166,7 +172,7 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
           align={"right"}
           render={onCellProps("mem", (val) => `${val.toFixed(0)}M`)}
           onCell={onCellProps("mem")}
-          sorter={field_cmp("mem")}
+          sorter={inclusiveCmp("mem")}
         />
       </Table>
     );

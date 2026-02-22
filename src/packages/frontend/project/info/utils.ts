@@ -220,6 +220,17 @@ export function linearList(procs: Processes): ProcessRow[] | undefined {
   return data.length > 0 ? data : undefined;
 }
 
+type SummedProcessField = "mem" | "cpu_tot" | "cpu_pct";
+
+// Inclusive value for sorting/aggregations in tree views:
+// process' own metric + all descendants.
+export function process_inclusive_value(
+  proc: ProcessRow,
+  field: SummedProcessField,
+): number {
+  return proc[field] + (proc.chldsum?.[field] ?? 0);
+}
+
 function sum_children_val(proc, index): number {
   if (proc.children == null) return 0;
   return proc.children
