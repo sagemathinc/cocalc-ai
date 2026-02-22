@@ -78,6 +78,7 @@ type SuppressWriteMarker = {
 export class SyncFsService extends EventEmitter {
   private store: SyncFsWatchStore;
   private watchers: Map<string, WatchEntry> = new Map();
+  private watcherInFlight: Map<string, Promise<WatchEntry>> = new Map();
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private metaByPath: Map<string, WatchMeta> = new Map();
   private patchWriters: Map<string, AStream<any>> = new Map();
@@ -163,6 +164,7 @@ export class SyncFsService extends EventEmitter {
   }
 
   close(): void {
+    this.watcherInFlight.clear();
     for (const { watcher, stopTrackingWatcher } of this.watchers.values()) {
       stopTrackingWatcher?.();
       watcher.close();
@@ -246,73 +248,35 @@ export class SyncFsService extends EventEmitter {
     meta?: WatchMeta,
   ): Promise<void> {
     const dir = dirname(path);
-    const existing = this.watchers.get(dir);
     if (active) {
       if (meta) {
         // Record metadata
         this.metaByPath.set(path, meta);
       }
 
-      if (!existing?.paths.has(path)) {
+      let entry = this.watchers.get(dir);
+
+      if (!entry?.paths.has(path)) {
         await this.initPath(path, meta);
       }
 
-      if (existing) {
-        existing.lastHeartbeat = Date.now();
-        existing.paths.add(path);
-        return;
-      }
-      const watcher = chokidarWatch(dir, {
-        depth: 0,
-        ignoreInitial: true,
-        awaitWriteFinish: {
-          stabilityThreshold: 200,
-          pollInterval: 100,
-        },
-      });
-      const stopTrackingWatcher = trackBackendWatcher({
-        source: "backend:sandbox/sync-fs-service",
-        type: "chokidar",
-        path: dir,
-        info: {
-          depth: 0,
-          ignoreInitial: true,
-          stabilityThreshold: 200,
-          pollInterval: 100,
-        },
-      });
-      this.watchers.set(dir, {
-        watcher,
-        lastHeartbeat: Date.now(),
-        paths: new Set([path]),
-        stopTrackingWatcher,
-      });
-
-      // Wait until the watcher is ready before returning so callers know the
-      // backend is actively watching.
-      const ready = new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const settle = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
-          fn();
-        };
-        watcher.once("ready", () => settle(resolve));
-        watcher.once("error", (err) => settle(() => reject(err)));
-      });
-      if (process.env.SYNC_FS_DEBUG) {
-        console.log("sync-fs heartbeat: start watcher", { dir, path });
+      if (!entry) {
+        entry = await this.ensureWatcher(dir, path);
       }
 
-      watcher.on("add", (p) => this.onFsEvent(dir, p, "add"));
-      watcher.on("change", (p) => this.onFsEvent(dir, p, "change"));
-      watcher.on("unlink", (p) => this.onFsEvent(dir, p, "unlink"));
-      watcher.on("error", (err) => {
-        this.emit("error", err);
-      });
-
-      await ready;
+      entry.lastHeartbeat = Date.now();
+      entry.paths.add(path);
     } else {
+      let existing = this.watchers.get(dir);
+      if (!existing) {
+        const inflight = this.watcherInFlight.get(dir);
+        if (!inflight) return;
+        try {
+          existing = await inflight;
+        } catch {
+          return;
+        }
+      }
       if (!existing) return;
       existing.paths.delete(path);
       this.metaByPath.delete(path);
@@ -536,6 +500,91 @@ export class SyncFsService extends EventEmitter {
     entry.stopTrackingWatcher?.();
     entry.watcher.close();
     this.watchers.delete(dir);
+  }
+
+  private async ensureWatcher(dir: string, path: string): Promise<WatchEntry> {
+    const existing = this.watchers.get(dir);
+    if (existing) {
+      return existing;
+    }
+    const inflight = this.watcherInFlight.get(dir);
+    if (inflight) {
+      return await inflight;
+    }
+
+    const create = (async () => {
+      const watcher = chokidarWatch(dir, {
+        depth: 0,
+        ignoreInitial: true,
+        awaitWriteFinish: {
+          stabilityThreshold: 200,
+          pollInterval: 100,
+        },
+      });
+      const stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:sandbox/sync-fs-service",
+        type: "chokidar",
+        path: dir,
+        info: {
+          depth: 0,
+          ignoreInitial: true,
+          stabilityThreshold: 200,
+          pollInterval: 100,
+        },
+      });
+      const entry: WatchEntry = {
+        watcher,
+        lastHeartbeat: Date.now(),
+        paths: new Set(),
+        stopTrackingWatcher,
+      };
+      this.watchers.set(dir, entry);
+
+      const ready = new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          fn();
+        };
+        watcher.once("ready", () => settle(resolve));
+        watcher.once("error", (err) => settle(() => reject(err)));
+      });
+
+      if (process.env.SYNC_FS_DEBUG) {
+        console.log("sync-fs heartbeat: start watcher", { dir, path });
+      }
+
+      watcher.on("add", (p) => this.onFsEvent(dir, p, "add"));
+      watcher.on("change", (p) => this.onFsEvent(dir, p, "change"));
+      watcher.on("unlink", (p) => this.onFsEvent(dir, p, "unlink"));
+      watcher.on("error", (err) => {
+        this.emit("error", err);
+      });
+
+      try {
+        await ready;
+        return entry;
+      } catch (err) {
+        // Ensure partially-created entries are not leaked on startup errors.
+        if (this.watchers.get(dir) === entry) {
+          this.closeEntry(dir);
+        } else {
+          stopTrackingWatcher?.();
+          watcher.close();
+        }
+        throw err;
+      }
+    })();
+
+    this.watcherInFlight.set(dir, create);
+    try {
+      return await create;
+    } finally {
+      if (this.watcherInFlight.get(dir) === create) {
+        this.watcherInFlight.delete(dir);
+      }
+    }
   }
 
   private async appendPatch(

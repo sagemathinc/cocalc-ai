@@ -24,7 +24,32 @@ const logger = getLogger("sandbox:watch");
 export { type WatchOptions };
 export type WatchIterator = EventIterator<ChangeEvent>;
 
+const ALLOW_HIGH_FANOUT_SYSTEM_WATCH = (() => {
+  const raw = process.env.COCALC_SANDBOX_WATCH_ALLOW_HIGH_FANOUT_SYSTEM_DIRS;
+  if (raw == null) return false;
+  const v = raw.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(v);
+})();
+
 const PSEUDO_FS_PREFIXES = ["/dev", "/proc", "/sys"];
+const HIGH_FANOUT_SYSTEM_DIRS = new Set([
+  "/@tmp",
+  "/tmp",
+  "/etc",
+  "/boot",
+  "/btrfs",
+  "/usr",
+  "/var",
+  "/opt",
+  "/lib",
+  "/lib64",
+  "/bin",
+  "/sbin",
+  "/run",
+  "/media",
+  "/mnt",
+  "/lost+found",
+]);
 
 function normalizeWatchPath(path: string): string {
   if (path === "/") return "/";
@@ -39,6 +64,19 @@ function isPseudoFsPath(path: string): boolean {
     }
   }
   return false;
+}
+
+function isHighFanoutSystemDir(path: string, options: WatchOptions): boolean {
+  if (ALLOW_HIGH_FANOUT_SYSTEM_WATCH) {
+    return false;
+  }
+  // Only guard directory-listing style watches. File watches and patch watches
+  // keep normal behavior.
+  if (!options.closeOnUnlink || !options.stats || options.patch) {
+    return false;
+  }
+  const normalized = normalizeWatchPath(path);
+  return HIGH_FANOUT_SYSTEM_DIRS.has(normalized);
 }
 
 const DEFAULT_POLL_INTERVAL = (() => {
@@ -121,7 +159,9 @@ class Watcher extends EventEmitter {
     const usePolling = pollInterval > 0;
     const normalizedPath = normalizeWatchPath(path);
     const pseudoFsWatch = isPseudoFsPath(normalizedPath);
-    const ignoredPseudoFsEntries = pseudoFsWatch
+    const highFanoutSystemWatch = isHighFanoutSystemDir(normalizedPath, options);
+    const rootOnlyWatch = pseudoFsWatch || highFanoutSystemWatch;
+    const ignoredSubpaths = rootOnlyWatch
       ? (candidatePath: string) => {
           const candidate = normalizeWatchPath(candidatePath);
           if (candidate === normalizedPath) {
@@ -137,12 +177,20 @@ class Watcher extends EventEmitter {
       closeOnUnlink: !!options.closeOnUnlink,
       patch: !!options.patch,
       pseudoFsWatch,
+      highFanoutSystemWatch,
+      rootOnlyWatch,
     };
     if (pseudoFsWatch) {
       trackerInfo.mode = "pseudo-fs-root-only";
       logger.warn("sandbox watcher in pseudo filesystem root-only mode", {
         path,
       });
+    } else if (highFanoutSystemWatch) {
+      trackerInfo.mode = "system-dir-root-only";
+      logger.warn(
+        "sandbox watcher in guarded system-dir root-only mode (set COCALC_SANDBOX_WATCH_ALLOW_HIGH_FANOUT_SYSTEM_DIRS=1 to disable guard)",
+        { path },
+      );
     }
     const chokidarConfig = {
       depth: 0,
@@ -151,7 +199,7 @@ class Watcher extends EventEmitter {
       alwaysStat: options.stats ?? false,
       atomic: true,
       ignorePermissionErrors: true,
-      ignored: ignoredPseudoFsEntries,
+      ignored: ignoredSubpaths,
       usePolling,
       interval: usePolling ? pollInterval : undefined,
       awaitWriteFinish: stabilityThreshold
