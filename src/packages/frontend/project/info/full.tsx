@@ -276,6 +276,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
 
   const problemsRef = useRef<HTMLDivElement>(null);
   const cgroupRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const generalStatusRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState<number>(400);
@@ -313,6 +314,9 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       // Add height of CGroup component
       usedHeight += cgroupRef.current?.offsetHeight ?? 0;
 
+      // Add height of history charts/caption block.
+      usedHeight += historyRef.current?.offsetHeight ?? 0;
+
       // Add height of header row
       usedHeight += headerRef.current?.offsetHeight ?? 0;
 
@@ -321,10 +325,11 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
         usedHeight += generalStatusRef.current?.offsetHeight ?? 0;
       }
 
-      // Add more buffer for table header, margins, and other spacing
-      usedHeight += 100;
+      // Buffer for table header, margins, and spacing so only the table body
+      // scrolls and this page does not need a second scrollbar.
+      usedHeight += 120;
 
-      const availableHeight = Math.max(300, parentHeight - usedHeight);
+      const availableHeight = Math.max(120, parentHeight - usedHeight);
       setTableHeight(availableHeight);
     };
 
@@ -333,7 +338,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     // Recalculate on window resize
     window.addEventListener("resize", calculateTableHeight);
     return () => window.removeEventListener("resize", calculateTableHeight);
-  }, [ptree, contentSize.height, contentSize.width]);
+  }, [ptree, history?.samples?.length, contentSize.height, contentSize.width]);
 
   function render_help_content() {
     const scopeDescription =
@@ -415,7 +420,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
         ? `${requestedMinutes.toFixed(0)} minutes`
         : `${coveredMinutes.toFixed(1)} of ${requestedMinutes.toFixed(0)} minutes`;
     return (
-      <>
+      <div ref={historyRef}>
         <Row style={{ marginTop: "8px", marginBottom: "8px" }}>
           <Col md={6} sm={12} xs={24}>
             <HistoryCard
@@ -442,7 +447,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
             </div>
           </Col>
         </Row>
-      </>
+      </div>
     );
   }
 
@@ -743,9 +748,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       </Tip>
     );
 
-    const table_style: CSS = {
-      marginBottom: "2rem",
-    };
+    const table_style: CSS = { marginBottom: 0 };
 
     return (
       <>
@@ -965,7 +968,14 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   }
 
   return (
-    <div style={{ ...ROOT_STYLE, maxWidth: undefined }}>
+    <div
+      style={{
+        ...ROOT_STYLE,
+        maxWidth: undefined,
+        height: "100%",
+        overflow: "hidden",
+      }}
+    >
       {render_not_running()}
       {error}
       {render_body()}
