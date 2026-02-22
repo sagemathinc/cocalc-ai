@@ -213,6 +213,10 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   }, [ptree, contentSize.height, contentSize.width]);
 
   function render_help_content() {
+    const scopeDescription =
+      info?.scope === "owned"
+        ? "In this view, the process list includes processes that were started by this workspace (and their descendants)."
+        : "In this view, the process list includes all visible processes in the workspace environment.";
     return (
       <div style={{ maxWidth: "560px" }}>
         <p>
@@ -222,24 +226,28 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           information or links to the associated file.
         </p>
         <p>
-          By selecting a process via the checkbox on the left hand side, you can
-          obtain more detailed information via the "{DETAILS_BTN_TEXT}" button
-          or even issue commands like sending a signal to the selected job(s).
+          {scopeDescription}
+        </p>
+        <p>
+          Use the checkboxes on the left to select one or more processes (or use
+          the header checkbox to select all visible rows). Then use{" "}
+          "{DETAILS_BTN_TEXT}" for detailed process information, or send a
+          signal to the selected process(es).
         </p>
         <p>
           Sub-processes are shown as a tree. When you collapse a branch, the
           values you see are the sum of that particular process and all its
-          children. Note that because of this tree structure, sorting happens in
-          each branch, since the tree structure must also be preserved.
+          children. CPU and memory sorting use this inclusive value, so heavy
+          process trees bubble up even if the parent itself is mostly idle.
         </p>
         <p style={{ marginBottom: 0 }}>
           If there are any issues detected, there will be highlights in red.
           They could be caused by individual processes using CPU non-stop, the
           total of all processes hitting the overall memory limit, or even the
-          disk space running low. You can use the signals to fix some of these
-          issues by interrupting/terminating a job, or restarting the project.
-          If you're low on disk space, you either have to delete some files or
-          purchase disk space upgrades.
+          disk space running low. You can often resolve these by interrupting,
+          terminating, pausing, or resuming processes. If disk space is low, you
+          must free space (or increase available disk quota in environments that
+          support upgrades).
         </p>
       </div>
     );
@@ -434,7 +442,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     const rowSelection = {
       selectedRowKeys: selected,
       onChange: select_proc,
-      hideSelectAll: true,
     };
 
     const cocalc_title = (

@@ -43,7 +43,7 @@ async function postHook({ options, pty }) {
   const registry = getOwnedProcessRegistry();
   const root = registry.registerRoot({
     kind: "terminal",
-    path: options?.cwd,
+    path: options?.path,
     session_id: options?.id,
   });
   if (pty?.pid != null) {
