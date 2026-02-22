@@ -1,5 +1,8 @@
 #!/usr/bin/env ts-node
 import { setTimeout as delay } from "node:timers/promises";
+import os from "node:os";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import type {
   AcpChatContext,
   AcpStreamMessage,
@@ -802,6 +805,56 @@ describe("ChatStreamWriter", () => {
     expect(final.thread_id).toBe("thread-1");
     expect(final.reply_to_message_id).toBe("root-msg-1");
     writer.dispose?.(true);
+  });
+
+  it("persists verified inline code links from assistant markdown", async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-inline-links-"),
+    );
+    try {
+      const workspaceRoot = path.join(tempRoot, "work");
+      await fs.mkdir(path.join(workspaceRoot, "src"), { recursive: true });
+      await fs.writeFile(path.join(workspaceRoot, "src", "exists.ts"), "x\n");
+      await fs.mkdir(path.join(tempRoot, "rooms"), { recursive: true });
+      await fs.writeFile(path.join(tempRoot, "rooms", "chat.chat"), "");
+
+      const { syncdb, sets } = makeFakeSyncDB();
+      const writer: any = new ChatStreamWriter({
+        metadata: {
+          ...baseMetadata,
+          path: "rooms/chat.chat",
+          message_id: "msg-inline-links",
+        } as any,
+        client: makeFakeClient(),
+        approverAccountId: "u",
+        hostWorkspaceRoot: workspaceRoot,
+        syncdbOverride: syncdb as any,
+        logStoreFactory: () =>
+          ({
+            set: async () => {},
+          }) as any,
+      });
+
+      await (writer as any).handle({
+        type: "summary",
+        finalResponse:
+          "Use `src/exists.ts:12` and ignore `a=7` and `src/missing.ts`.",
+        seq: 0,
+      } as AcpStreamMessage);
+      await flush(writer);
+
+      const final = sets[sets.length - 1] as any;
+      expect(Array.isArray(final.inline_code_links)).toBe(true);
+      expect(final.inline_code_links).toHaveLength(1);
+      expect(final.inline_code_links[0]).toMatchObject({
+        code: "src/exists.ts:12",
+        project_path: "work/src/exists.ts",
+        line: 12,
+      });
+      writer.dispose?.(true);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("resolves chat row by message_id when sender/date changed", async () => {

@@ -8,6 +8,14 @@ export interface MessageHistory {
   date: string;
 }
 
+export interface InlineCodeLink {
+  code: string;
+  abs_path: string;
+  project_path: string;
+  line?: number;
+  col?: number;
+}
+
 export interface ChatMessage {
   event: "chat";
   sender_id: string;
@@ -33,6 +41,7 @@ export interface ChatMessage {
   message_id?: string;
   thread_id?: string;
   reply_to_message_id?: string;
+  inline_code_links?: InlineCodeLink[];
 }
 
 export interface HistoryEntryInput {
@@ -71,6 +80,7 @@ export interface BuildChatMessageOptions {
   message_id?: string;
   thread_id?: string;
   reply_to_message_id?: string;
+  inline_code_links?: InlineCodeLink[];
 }
 
 export function buildChatMessage(
@@ -100,6 +110,7 @@ export function buildChatMessage(
     message_id: options.message_id,
     thread_id: options.thread_id,
     reply_to_message_id: options.reply_to_message_id,
+    inline_code_links: options.inline_code_links,
   };
 }
 
