@@ -158,6 +158,10 @@ export class ProjectInfoServer extends EventEmitter {
     // iterate over all processes keys (pid) and call this.cocalc({pid, cmdline})
     // to update the processes coclc field
     for (const pid in processes) {
+      // Owned-scope providers can attach authoritative classification directly.
+      if (processes[pid].cocalc != null) {
+        continue;
+      }
       processes[pid].cocalc = await this.cocalc({
         pid: parseInt(pid),
         cmdline: processes[pid].cmdline,

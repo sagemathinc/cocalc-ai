@@ -4,6 +4,7 @@
  */
 
 import {
+  collectDescendantsByRoot,
   collectDescendantsFromMap,
   staleRootIds,
 } from "./owned-linux-snapshot-provider";
@@ -43,6 +44,37 @@ describe("owned linux snapshot helpers", () => {
     });
     expect(pids.size).toBe(4);
     expect(pids.has(10)).toBe(true);
+  });
+
+  it("tracks root metadata for descendants", () => {
+    const childrenByPid = new Map<number, number[]>([
+      [10, [11]],
+      [11, [12]],
+      [20, [21]],
+      [21, []],
+    ]);
+    const { pids, rootByPid } = collectDescendantsByRoot({
+      roots: [
+        {
+          root_id: "r1",
+          kind: "terminal",
+          pid: 10,
+          spawned_at: 0,
+          path: "a.term",
+        },
+        {
+          root_id: "r2",
+          kind: "jupyter",
+          pid: 20,
+          spawned_at: 0,
+          path: "b.ipynb",
+        },
+      ],
+      childrenByPid,
+    });
+    expect(Array.from(pids).sort((a, b) => a - b)).toEqual([10, 11, 12, 20, 21]);
+    expect(rootByPid.get(12)?.root_id).toBe("r1");
+    expect(rootByPid.get(21)?.root_id).toBe("r2");
   });
 
   it("finds stale roots by pid", () => {

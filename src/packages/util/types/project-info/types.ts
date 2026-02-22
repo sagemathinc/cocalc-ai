@@ -68,6 +68,13 @@ export interface Process {
   stat: Stat;
   cpu: Cpu;
   uptime: number;
+  origin?: {
+    root_id: string;
+    kind: string;
+    path?: string;
+    thread_id?: string;
+    session_id?: string;
+  };
   // additional CoCalc specific information
   cocalc?: CoCalcInfo;
 }

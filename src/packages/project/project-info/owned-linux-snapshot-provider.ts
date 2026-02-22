@@ -7,12 +7,19 @@ import { exec as cp_exec } from "node:child_process";
 import { readFile, readlink } from "node:fs/promises";
 import { uptime } from "node:os";
 import { promisify } from "node:util";
-import type { Process, Processes, Stat, State } from "@cocalc/util/types/project-info/types";
+import type {
+  CoCalcInfo,
+  Process,
+  Processes,
+  Stat,
+  State,
+} from "@cocalc/util/types/project-info/types";
 import {
   getOwnedProcessRegistry,
   type OwnedRootProcess,
 } from "./owned-process-registry";
 import type { ProcessSnapshot, ProcessSnapshotProvider } from "./snapshot-provider";
+import { ensureJupyterOwnedRootBridge } from "./jupyter-owned-roots";
 
 const exec = promisify(cp_exec);
 const DEFAULT_PROCESS_LIMIT = 1024;
@@ -37,6 +44,41 @@ export function collectDescendantsFromMap(opts: {
   return seen;
 }
 
+export function collectDescendantsByRoot(opts: {
+  roots: (OwnedRootProcess & { pid: number })[];
+  childrenByPid: Map<number, number[]>;
+  limit?: number;
+}): {
+  pids: Set<number>;
+  rootByPid: Map<number, OwnedRootProcess & { pid: number }>;
+} {
+  const { roots, childrenByPid, limit = DEFAULT_PROCESS_LIMIT } = opts;
+  const pids = new Set<number>();
+  const rootByPid = new Map<number, OwnedRootProcess & { pid: number }>();
+  for (const root of roots) {
+    const queue = [root.pid];
+    const seen = new Set<number>();
+    while (queue.length > 0) {
+      const pid = queue.shift()!;
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      if (!pids.has(pid)) {
+        pids.add(pid);
+      }
+      if (!rootByPid.has(pid)) {
+        rootByPid.set(pid, root);
+      }
+      if (pids.size >= limit) {
+        return { pids, rootByPid };
+      }
+      for (const child of childrenByPid.get(pid) ?? []) {
+        if (!seen.has(child)) queue.push(child);
+      }
+    }
+  }
+  return { pids, rootByPid };
+}
+
 export function staleRootIds(opts: {
   roots: OwnedRootProcess[];
   alivePids: Set<number>;
@@ -48,6 +90,32 @@ export function staleRootIds(opts: {
     if (!alivePids.has(root.pid)) stale.push(root.root_id);
   }
   return stale;
+}
+
+function cocalcInfoFromRoot(root: OwnedRootProcess): CoCalcInfo | undefined {
+  switch (root.kind) {
+    case "project":
+      return { type: "project" };
+    case "sshd":
+      return { type: "sshd" };
+    case "terminal":
+      if (root.path != null) {
+        return { type: "terminal", path: root.path };
+      }
+      return;
+    case "jupyter":
+      if (root.path != null) {
+        return { type: "jupyter", path: root.path };
+      }
+      return;
+    case "x11":
+      if (root.path != null) {
+        return { type: "x11", path: root.path };
+      }
+      return;
+    default:
+      return;
+  }
 }
 
 export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvider {
@@ -63,6 +131,7 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
   }
 
   async init(_opts: { testing: boolean }) {
+    ensureJupyterOwnedRootBridge();
     const [p_ticks, p_pagesize] = await Promise.all([
       exec("getconf CLK_TCK"),
       exec("getconf PAGESIZE"),
@@ -112,14 +181,20 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
       this.registry.markExited(root_id);
     }
 
-    const pidSet = collectDescendantsFromMap({
-      rootPids,
+    const liveRootPidSet = new Set(rootPids);
+    const { pids: pidSet, rootByPid } = collectDescendantsByRoot({
+      roots: roots.filter((root) => liveRootPidSet.has(root.pid)),
       childrenByPid,
       limit: this.procLimit,
     });
     const procs: Processes = {};
     for (const pid of pidSet) {
-      const proc = await this.readProcess({ pid, timestamp, uptime: up });
+      const proc = await this.readProcess({
+        pid,
+        timestamp,
+        uptime: up,
+        root: rootByPid.get(pid),
+      });
       if (proc != null) {
         procs[proc.pid] = proc;
       }
@@ -222,8 +297,9 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
     pid: number;
     timestamp: number;
     uptime: number;
+    root?: OwnedRootProcess;
   }): Promise<Process | undefined> {
-    const { pid, timestamp, uptime } = opts;
+    const { pid, timestamp, uptime, root } = opts;
     const [stat, cmdline, exe] = await Promise.all([
       this.readStat(pid),
       this.readCmdline(pid),
@@ -247,6 +323,17 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
       stat,
       cpu: { pct, secs: cpuSecs },
       uptime: uptime - stat.starttime,
+      cocalc: root == null ? undefined : cocalcInfoFromRoot(root),
+      origin:
+        root == null
+          ? undefined
+          : {
+              root_id: root.root_id,
+              kind: root.kind,
+              path: root.path,
+              thread_id: root.thread_id,
+              session_id: root.session_id,
+            },
     };
   }
 
