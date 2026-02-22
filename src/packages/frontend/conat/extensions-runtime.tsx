@@ -12,12 +12,7 @@ MVP scope:
 - provide introspection via list()
 */
 
-import { React } from "@cocalc/frontend/app-framework";
-import {
-  register_file_editor,
-  unregister_file_editor,
-  has_file_editor,
-} from "@cocalc/frontend/project-file";
+import React from "react";
 
 export type BrowserExtensionSummary = {
   id: string;
@@ -41,6 +36,16 @@ export type BrowserInstallHelloWorldOptions = {
 
 type InstalledExtension = BrowserExtensionSummary & {
   uninstall: () => void;
+};
+
+type ProjectFileApi = {
+  register_file_editor: (opts: {
+    ext: string | readonly string[];
+    component: React.ComponentType<any>;
+    icon?: string;
+  }) => void;
+  unregister_file_editor: (ext: string | readonly string[]) => void;
+  has_file_editor: (ext: string) => boolean;
 };
 
 const DEFAULT_EXTENSION_ID = "com.cocalc.hello-world";
@@ -134,6 +139,10 @@ function makeHelloWorldEditor({
   return HelloWorldEditor;
 }
 
+function getProjectFileApi(): ProjectFileApi {
+  return require("@cocalc/frontend/project-file") as ProjectFileApi;
+}
+
 export class BrowserExtensionsRuntime {
   private readonly installed = new Map<string, InstalledExtension>();
 
@@ -159,6 +168,7 @@ export class BrowserExtensionsRuntime {
       "This editor was registered dynamically through the browser extension runtime.";
     const replace = !!options?.replace;
     const file_extensions = normalizeExtensions(options?.ext);
+    const projectFile = getProjectFileApi();
 
     const existing = this.installed.get(id);
     if (existing) {
@@ -170,7 +180,7 @@ export class BrowserExtensionsRuntime {
     }
 
     for (const ext of file_extensions) {
-      if (has_file_editor(ext)) {
+      if (projectFile.has_file_editor(ext)) {
         throw Error(
           `cannot register '*.${ext}' for extension '${id}' because an editor is already registered`,
         );
@@ -178,13 +188,13 @@ export class BrowserExtensionsRuntime {
     }
 
     const component = makeHelloWorldEditor({ title, message });
-    register_file_editor({
+    projectFile.register_file_editor({
       ext: file_extensions,
       component,
     });
 
     const uninstall = () => {
-      unregister_file_editor(file_extensions);
+      getProjectFileApi().unregister_file_editor(file_extensions);
     };
 
     const installed: InstalledExtension = {
