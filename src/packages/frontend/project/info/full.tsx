@@ -7,7 +7,7 @@
 
 declare let DEBUG;
 
-import { Alert, Button, Form, Modal, Popconfirm, Switch, Table } from "antd";
+import { Alert, Button, Card, Form, Modal, Popconfirm, Switch, Table } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -23,6 +23,7 @@ import {
   Process,
   ProjectInfo as ProjectInfoType,
 } from "@cocalc/util/types/project-info/types";
+import type { ProjectInfoHistory } from "@cocalc/conat/project/project-info";
 import { useProjectContext } from "../context";
 import { ROOT_STYLE } from "../servers/consts";
 import { RestartProject } from "../settings/restart-project";
@@ -46,6 +47,7 @@ interface Props {
   error: React.JSX.Element | null;
   status: string;
   info: ProjectInfoType | null;
+  history: ProjectInfoHistory | null;
   loading: boolean;
   modal: string | Process | undefined;
   project_actions: ProjectActions | undefined;
@@ -66,6 +68,64 @@ interface Props {
   onCellProps;
 }
 
+function sparklinePoints(values: number[], width = 240, height = 56): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) {
+    return `0,${height / 2} ${width},${height / 2}`;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  const dx = width / (values.length - 1);
+  return values.map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+}
+
+function HistoryCard({
+  title,
+  values,
+  unit,
+  color,
+}: {
+  title: string;
+  values: number[];
+  unit: string;
+  color: string;
+}) {
+  if (values.length === 0) return null;
+  const latest = values[values.length - 1];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const points = sparklinePoints(values);
+  return (
+    <Card
+      size="small"
+      title={title}
+      style={{ marginBottom: "8px" }}
+      extra={
+        <span style={{ color: COLORS.GRAY_D }}>
+          now <b>{latest.toFixed(1)}</b> {unit}
+        </span>
+      }
+    >
+      <svg width="100%" height="64" viewBox="0 0 240 56" preserveAspectRatio="none">
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          points={points}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
+        range: {min.toFixed(1)} to {max.toFixed(1)} {unit}
+      </div>
+    </Card>
+  );
+}
+
 export function Full(props: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -79,6 +139,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     error,
     status,
     info,
+    history,
     loading,
     modal,
     project_actions,
@@ -156,6 +217,33 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           }
         />
       </Form.Item>
+    );
+  }
+
+  function render_history() {
+    const samples = history?.samples ?? [];
+    if (samples.length < 2) return;
+    const cpu = samples.map((sample) => sample.project.cpu_pct);
+    const mem = samples.map((sample) => sample.project.mem_rss);
+    return (
+      <Row style={{ marginTop: "8px", marginBottom: "8px" }}>
+        <Col md={6} sm={12} xs={24}>
+          <HistoryCard
+            title="CPU Trend"
+            values={cpu}
+            unit="%"
+            color={COLORS.BLUE_D}
+          />
+        </Col>
+        <Col md={6} sm={12} xs={24}>
+          <HistoryCard
+            title="Memory Trend"
+            values={mem}
+            unit="MiB"
+            color={COLORS.ANTD_GREEN_D}
+          />
+        </Col>
+      </Row>
     );
   }
 
@@ -552,6 +640,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
             project_status={project_status}
           />
         </div>
+        {render_history()}
         {render_top()}
         {render_modals()}
         {DEBUG && render_general_status()}

@@ -31,6 +31,7 @@ import { Flyout } from "./flyout";
 import { Full } from "./full";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
 import useProjectInfo from "./use-project-info";
+import useProjectInfoHistory from "./use-project-info-history";
 import { grid_warning, linearList, process_tree, sum_children } from "./utils";
 
 interface Props {
@@ -68,6 +69,9 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const intl = useIntl();
     const projectLabel = intl.formatMessage(labels.project);
     const { disconnected, info, error, setError } = useProjectInfo({
+      project_id,
+    });
+    const { history, error: historyError } = useProjectInfoHistory({
       project_id,
     });
     const loading = info == null;
@@ -305,7 +309,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const showError = (
       <ShowError
         style={{ margin: "15px 0" }}
-        error={error}
+        error={error || historyError}
         setError={setError}
       />
     );
@@ -349,6 +353,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
             disk_usage={disk_usage}
             error={showError}
             info={info}
+            history={history}
             loading={loading}
             modal={modal}
             project_actions={project_actions}
