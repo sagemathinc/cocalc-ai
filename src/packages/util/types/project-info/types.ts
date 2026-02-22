@@ -116,6 +116,37 @@ export interface ProjectInfo {
   boottime: Date; // when VM booted (might be derived from uptime)
 }
 
+export interface ProjectInfoHistoryProcessSample {
+  id: string; // stable process id, e.g., "pid:starttime"
+  pid: number;
+  cpu_pct: number;
+  mem_rss: number; // MiB
+  kind?: string;
+  path?: string;
+  root_id?: string;
+}
+
+export interface ProjectInfoHistoryProjectSample {
+  cpu_pct: number;
+  mem_rss: number; // MiB
+  mem_tot?: number; // MiB
+  disk_usage?: number; // MiB
+  nprocs: number;
+}
+
+export interface ProjectInfoHistorySample {
+  timestamp: number;
+  scope?: ProjectInfoScope;
+  project: ProjectInfoHistoryProjectSample;
+  processes: Record<string, ProjectInfoHistoryProcessSample>;
+}
+
+export interface ProjectInfoHistory {
+  generated_at: number;
+  minutes: number;
+  samples: ProjectInfoHistorySample[];
+}
+
 export enum Signal {
   Kill = 9,
   Interrupt = 2,
