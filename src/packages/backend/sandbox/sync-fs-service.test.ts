@@ -7,6 +7,7 @@ import { tmpNameSync } from "tmp-promise";
 import { SyncFsWatchStore } from "./sync-fs-watch";
 import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { decodePatchId, legacyPatchId } from "patchflow";
+import { getBackendWatcherDebugStats } from "../watcher-debug";
 
 class FakeAStream {
   public messages: { mesg: any; seq: number }[] = [];
@@ -109,6 +110,30 @@ describe("SyncFsService", () => {
 
     const [evt] = (await once(svc, "event")) as any[];
     expect(evt.type).toBe("delete");
+    svc.close();
+  }, 10_000);
+
+  it("dedupes concurrent directory watcher creation", async () => {
+    const a = join(dir, "race-a.txt");
+    const b = join(dir, "race-b.txt");
+    writeFileSync(a, "a");
+    writeFileSync(b, "b");
+
+    const svc = new SyncFsService();
+    await Promise.all([svc.heartbeat(a), svc.heartbeat(b)]);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const watchers = (svc as any).watchers as Map<string, any>;
+    expect(watchers.size).toBe(1);
+    const entry = Array.from(watchers.values())[0];
+    expect(entry.paths.has(a)).toBe(true);
+    expect(entry.paths.has(b)).toBe(true);
+
+    const stats = getBackendWatcherDebugStats({ topN: 200 });
+    const countForDir =
+      stats.activeByPathTop.find((x: any) => x.path === dir)?.count ?? 0;
+    expect(countForDir).toBe(1);
+
     svc.close();
   }, 10_000);
 
