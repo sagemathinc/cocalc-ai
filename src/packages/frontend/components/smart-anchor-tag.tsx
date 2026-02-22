@@ -52,7 +52,13 @@ export default function SmartAnchorTag({
 }: Options) {
   // compare logic here with frontend/misc/process-links/generic.ts
   let body;
-  if (isCoCalcURL(href)) {
+  if (isInternalFileHref(href)) {
+    body = (
+      <InternalFileLink project_id={project_id} href={href} title={title}>
+        {children}
+      </InternalFileLink>
+    );
+  } else if (isCoCalcURL(href)) {
     body = (
       <CoCalcURL project_id={project_id} href={href} title={title}>
         {children}
@@ -94,6 +100,32 @@ export default function SmartAnchorTag({
       {body}
     </span>
   );
+}
+
+const INTERNAL_FILE_LINK_PREFIX = "cocalc-file://";
+
+function isInternalFileHref(href?: string): boolean {
+  return typeof href === "string" && href.startsWith(INTERNAL_FILE_LINK_PREFIX);
+}
+
+function parseInternalFileHref(href: string): {
+  path?: string;
+  line?: number;
+} {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "cocalc-file:") return {};
+    const rawPath = url.searchParams.get("path");
+    if (!rawPath) return {};
+    const lineRaw = url.searchParams.get("line");
+    const line =
+      lineRaw != null && /^\d+$/.test(lineRaw) && Number(lineRaw) > 0
+        ? Number(lineRaw)
+        : undefined;
+    return { path: rawPath, line };
+  } catch {
+    return {};
+  }
 }
 
 // href starts with cocalc URL or is absolute,
@@ -341,6 +373,30 @@ function NonCoCalcURL({ href, title, children }) {
     >
       {children}
     </A>
+  );
+}
+
+function InternalFileLink({ project_id, href, title, children }) {
+  return (
+    <a
+      href={href}
+      title={title}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!project_id) return;
+        const target = parseInternalFileHref(href);
+        if (!target.path) return;
+        redux.getProjectActions(project_id).open_file({
+          path: target.path,
+          line: target.line,
+          foreground: true,
+          explicit: true,
+        });
+      }}
+    >
+      {children}
+    </a>
   );
 }
 
