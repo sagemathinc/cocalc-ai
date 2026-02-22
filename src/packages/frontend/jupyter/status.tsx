@@ -5,7 +5,7 @@
 
 // Kernel display
 
-import { CSS, React, useRedux } from "@cocalc/frontend/app-framework";
+import { CSS, React, useActions, useRedux } from "@cocalc/frontend/app-framework";
 import { A, Icon, IconName, Loading } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import type {
@@ -140,6 +140,7 @@ export function Kernel({
   const kernels: undefined | immutable.List<any> = useRedux([name, "kernels"]);
   const runProgress = useRedux([name, "runProgress"]);
   const project_id: string = useRedux([name, "project_id"]);
+  const project_actions = useActions({ project_id });
   const kernel_info: undefined | immutable.Map<string, any> = useRedux([
     name,
     "kernel_info",
@@ -489,6 +490,18 @@ export function Kernel({
 
   // detailed kernel information displayed in the kernel drawer.
   function renderKernelDetails() {
+    const openProcessInfo = () => {
+      if (actions.path == null) return;
+      project_actions?.setState({
+        project_info_focus: {
+          kind: "jupyter",
+          path: actions.path,
+          requested_at: Date.now(),
+        },
+      });
+      project_actions?.set_active_tab("info");
+    };
+
     const backend_tip =
       backend_state == null ? (
         ""
@@ -559,6 +572,13 @@ export function Kernel({
         {kernel_tip}
         <Divider style={{ margin: "8px 0" }} />
         {render_usage_text()}
+        {actions.path != null ? (
+          <div style={{ marginBottom: "8px" }}>
+            <Button size="small" onClick={openProcessInfo}>
+              Open in Processes
+            </Button>
+          </div>
+        ) : undefined}
         {usage_tip}
       </span>
     );

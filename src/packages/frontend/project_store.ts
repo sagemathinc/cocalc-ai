@@ -158,6 +158,12 @@ export interface ProjectStoreState {
 
   // Project Info
   show_project_info_explanation?: boolean;
+  project_info_focus?: {
+    kind?: "jupyter" | "terminal";
+    path?: string;
+    pid?: number;
+    requested_at: number;
+  };
 
   // Project Status
   status?: immutable.Map<string, any>; // this is @cocalc/comm/project-status/types::ProjectStatus;

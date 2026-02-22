@@ -97,6 +97,10 @@ export const ProjectInfo: React.FC<Props> = React.memo(
 
     const show_explanation =
       useTypedRedux({ project_id }, "show_project_info_explanation") ?? false;
+    const project_info_focus = useTypedRedux(
+      { project_id },
+      "project_info_focus",
+    );
     // this is @cocalc/conn/project-status/types::ProjectStatus
     const project_status = useTypedRedux({ project_id }, "status");
     const project_map = useTypedRedux("projects", "project_map");
@@ -190,6 +194,33 @@ export const ProjectInfo: React.FC<Props> = React.memo(
         set_disk_usage({ pct, usage: p.usage, total });
       }
     }, [info]);
+
+    React.useEffect(() => {
+      if (project_info_focus == null || info?.processes == null) return;
+      let proc: Process | undefined;
+      if (project_info_focus.pid != null) {
+        proc = info.processes[project_info_focus.pid];
+      }
+      if (
+        proc == null &&
+        project_info_focus.kind != null &&
+        project_info_focus.path != null
+      ) {
+        for (const p of Object.values(info.processes)) {
+          if (
+            p.cocalc?.type === project_info_focus.kind &&
+            p.cocalc.path === project_info_focus.path
+          ) {
+            proc = p;
+            break;
+          }
+        }
+      }
+      if (proc == null) return;
+      set_modal(proc);
+      set_selected([proc.pid]);
+      project_actions?.setState({ project_info_focus: undefined });
+    }, [info, project_actions, project_info_focus]);
 
     function select_proc(pids: number[]) {
       set_selected(pids);
