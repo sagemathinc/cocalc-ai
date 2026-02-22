@@ -35,6 +35,7 @@ import type {
 } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
 import {
+  getMessageAtDate,
   getRootMessage,
   getThreadRootDate,
   newest_content,
@@ -45,6 +46,7 @@ import { COMBINED_FEED_KEY } from "./threads";
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
 // become basically impossible.
 const USE_VIRTUOSO = true;
+const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
 function stripHtml(value: string): string {
   if (!value) return "";
@@ -174,7 +176,10 @@ export function ChatLog({
     const index = sortedDates.indexOf(scrollToDate);
     if (index == -1) {
       // didn't find it?
-      const message = messages.get(scrollToDate);
+      const message = getMessageAtDate({
+        messages,
+        date: parseFloat(scrollToDate),
+      });
       if (message == null) {
         // the message really doesn't exist.  Weird.  Give up.
         actions.clearScrollRequest();
@@ -215,13 +220,27 @@ export function ChatLog({
   const generating = useMemo(() => {
     if (!messages) return false;
     for (const date of sortedDates) {
-      const msg = messages.get(date);
-      if (field(msg, "generating") === true) {
+      const msg = getMessageAtDate({ messages, date: parseFloat(date) });
+      if (field(msg, "generating") !== true) continue;
+      const isAcpTurn = !!field<string>(msg, "acp_account_id");
+      if (!isAcpTurn) return true;
+      const msgDate = dateValue(msg);
+      if (!msgDate) continue;
+      const messageId = field<string>(msg, "message_id");
+      const threadId = field<string>(msg, "thread_id");
+      const byThread =
+        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+      if (
+        ACP_ACTIVE_STATES.has(byThread) ||
+        ACP_ACTIVE_STATES.has(
+          messageId != null ? acpState?.get?.(`message:${messageId}`) : undefined,
+        )
+      ) {
         return true;
       }
     }
     return false;
-  }, [messages, sortedDates]);
+  }, [messages, sortedDates, acpState]);
 
   useEffect(() => {
     if (!generating) return;
@@ -295,8 +314,14 @@ function isNextMessageSender(
   if (index + 1 === dates.length) {
     return false;
   }
-  const currentMessage = messages.get(dates[index]);
-  const nextMessage = messages.get(dates[index + 1]);
+  const currentMessage = getMessageAtDate({
+    messages,
+    date: parseFloat(dates[index]),
+  });
+  const nextMessage = getMessageAtDate({
+    messages,
+    date: parseFloat(dates[index + 1]),
+  });
   return (
     currentMessage != null &&
     nextMessage != null &&
@@ -312,8 +337,14 @@ function isPrevMessageSender(
   if (index === 0) {
     return false;
   }
-  const currentMessage = messages.get(dates[index]);
-  const prevMessage = messages.get(dates[index - 1]);
+  const currentMessage = getMessageAtDate({
+    messages,
+    date: parseFloat(dates[index]),
+  });
+  const prevMessage = getMessageAtDate({
+    messages,
+    date: parseFloat(dates[index - 1]),
+  });
   return (
     currentMessage != null &&
     prevMessage != null &&
@@ -345,12 +376,9 @@ function isFolded(
   return Boolean(folding?.includes?.(account_id));
 }
 
-// messages is a Javascript map from
-//   - timestamps (ms since epoch as string)
-// to
-//   - message objects {date: , event:, history, sender_id, reply_to}
-//
-// It was very easy to sort these before reply_to, which complicates things.
+// Messages are sorted using each message record's `date` value.
+// We avoid relying on Map key shape, since cache internals are migrating
+// away from date-keyed storage.
 export function getSortedDates(
   messages: ChatMessages,
   account_id: string,
@@ -374,8 +402,12 @@ export function getSortedDates(
   // Do a linear pass through all messages to divide into threads, so that
   // getSortedDates is O(n) instead of O(n^2) !
   const numChildren: NumChildren = {};
-  for (const [key, message] of m) {
-    if (visibleKeys && !visibleKeys.has(`${key}`)) continue;
+  for (const [, message] of m) {
+    if (message == null) continue;
+    const messageDate = dateValue(message);
+    if (!messageDate) continue;
+    const messageKey = `${messageDate.valueOf()}`;
+    if (visibleKeys && !visibleKeys.has(messageKey)) continue;
     const parent = replyTo(message);
     if (parent != null) {
       const d = new Date(parent).valueOf();
@@ -384,9 +416,12 @@ export function getSortedDates(
   }
 
   const v: [date: number, reply_to: number | undefined][] = [];
-  for (const [date, message] of m) {
-    if (visibleKeys && !visibleKeys.has(`${date}`)) continue;
+  for (const [, message] of m) {
     if (message == null) continue;
+    const messageDate = dateValue(message);
+    if (!messageDate) continue;
+    const date = messageDate.valueOf();
+    if (visibleKeys && !visibleKeys.has(`${date}`)) continue;
 
     if (!disableFolding) {
       const is_thread = isThread(message, numChildren);
@@ -401,7 +436,7 @@ export function getSortedDates(
 
     const reply_to = replyTo(message);
     v.push([
-      typeof date === "string" ? parseInt(date) : date,
+      date,
       reply_to != null ? new Date(reply_to).valueOf() : undefined,
     ]);
   }
@@ -548,7 +583,10 @@ export function MessageList({
 
   const renderMessage = (index: number) => {
     const date = sortedDates[index];
-    const message: ChatMessageTyped | undefined = messages.get(date);
+    const message: ChatMessageTyped | undefined = getMessageAtDate({
+      messages,
+      date: parseFloat(date),
+    });
     if (message == null) {
       console.warn("empty message", { date, index, sortedDates });
       return <div style={{ height: "30px" }} />;
@@ -562,7 +600,13 @@ export function MessageList({
     const prevThreadKey =
       showThreadHeaders && index > 0
         ? `${getThreadRootDate({
-            date: dateValue(messages.get(sortedDates[index - 1]))?.valueOf() ?? 0,
+            date:
+              dateValue(
+                getMessageAtDate({
+                  messages,
+                  date: parseFloat(sortedDates[index - 1]),
+                }),
+              )?.valueOf() ?? 0,
             messages,
           })}`
         : undefined;
@@ -621,13 +665,22 @@ export function MessageList({
             allowReply={
               !singleThreadView &&
               (() => {
-                const next = messages.get(sortedDates[index + 1]);
+                const next = getMessageAtDate({
+                  messages,
+                  date: parseFloat(sortedDates[index + 1]),
+                });
                 return next == null ? true : replyTo(next) == null;
               })()
             }
             threadViewMode={singleThreadView}
             onForceScrollToBottom={forceScrollToBottom}
-            acpState={acpState?.get(date)}
+            acpState={
+              (() => {
+                const messageId = field<string>(message, "message_id");
+                if (!messageId) return undefined;
+                return acpState?.get(`message:${messageId}`);
+              })()
+            }
             dim={shouldDim}
           />
         </DivTempHeight>

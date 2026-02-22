@@ -5,7 +5,11 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { ChatStreamWriter, recoverOrphanedAcpTurns } from "../index";
+import {
+  ChatStreamWriter,
+  getAcpWatchdogStats,
+  recoverOrphanedAcpTurns,
+} from "../index";
 import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
 import * as chatServer from "@cocalc/chat/server";
@@ -117,6 +121,70 @@ async function flush(writer: ChatStreamWriter) {
 }
 
 describe("ChatStreamWriter", () => {
+  it("tracks thread-id fallback usage in watchdog stats", async () => {
+    const before =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.missing_thread_id_fallbacks"
+      ] ?? 0;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_id: "msg-watchdog-1",
+        thread_id: undefined,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady?.();
+    const after =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.missing_thread_id_fallbacks"
+      ] ?? 0;
+    expect(after).toBeGreaterThanOrEqual(before + 1);
+    writer.dispose?.(true);
+  });
+
+  it("tracks date+sender lookup fallback usage when message_id is missing", async () => {
+    const before =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.date_sender_lookup_fallbacks"
+      ] ?? 0;
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "123",
+      sender_id: "u",
+      generating: true,
+      history: [],
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_id: undefined,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady?.();
+    const after =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.date_sender_lookup_fallbacks"
+      ] ?? 0;
+    expect(after).toBeGreaterThanOrEqual(before + 1);
+    writer.dispose?.(true);
+  });
+
   it("clears generating on summary", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({
@@ -704,27 +772,139 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("persists session id onto the actual thread root sender row", async () => {
+  it("persists message and thread ids on chat updates", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        reply_to_message_id: "root-msg-1",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.message_id).toBe("msg-1");
+    expect(final.thread_id).toBe("thread-1");
+    expect(final.reply_to_message_id).toBe("root-msg-1");
+    writer.dispose?.(true);
+  });
+
+  it("resolves chat row by message_id when sender/date changed", async () => {
+    const rowDate = new Date("2026-02-21T10:11:12.000Z").toISOString();
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: rowDate,
+        sender_id: "legacy-codex",
+        history: [],
+        generating: true,
+        message_id: "msg-lookup-1",
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_date: new Date("2026-02-21T10:11:13.000Z").toISOString(),
+        sender_id: "new-codex-sender",
+        message_id: "msg-lookup-1",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.date).toBe(rowDate);
+    expect(final.sender_id).toBe("legacy-codex");
+    writer.dispose?.(true);
+  });
+
+  it("persists session id into thread-config without mutating root rows", async () => {
+    const rootIso = new Date(100).toISOString();
+    const turnIso = new Date(200).toISOString();
     const metadata = {
       ...baseMetadata,
-      message_date: "200",
+      message_date: turnIso,
       sender_id: "codex-agent",
-      reply_to: "100",
+      reply_to: rootIso,
     } as AcpChatContext;
     const rows: any[] = [
       {
         event: "chat",
-        date: "100",
+        date: rootIso,
         sender_id: "user-1",
         history: [],
         acp_config: { model: "gpt-5.3-codex" },
       },
       {
         event: "chat",
-        date: "100",
+        date: rootIso,
         sender_id: "codex-agent",
         history: [],
-        reply_to: "100",
+        reply_to: rootIso,
+      },
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: rootIso,
+        thread_id: "legacy-thread-100",
+        acp_config: { model: "gpt-5.3-codex" },
       },
     ];
     const sets: any[] = [];
@@ -769,11 +949,16 @@ describe("ChatStreamWriter", () => {
     await writer.persistSessionId("session-123");
     await delay(0);
 
-    const rootUpdate = sets.find(
-      (x) => x.date === "100" && x.sender_id === "user-1" && x.acp_config,
+    const threadCfgUpdate = sets.find(
+      (x) =>
+        x.event === "chat-thread-config" &&
+        x.sender_id === "__thread_config__" &&
+        x.date === rootIso,
     );
-    expect(rootUpdate).toBeTruthy();
-    expect(rootUpdate.acp_config).toEqual({
+    expect(
+      sets.find((x) => x.event === "chat" && x.date === rootIso && x.acp_config),
+    ).toBeUndefined();
+    expect(threadCfgUpdate?.acp_config).toEqual({
       model: "gpt-5.3-codex",
       sessionId: "session-123",
     });
@@ -810,7 +995,13 @@ describe("recoverOrphanedAcpTurns", () => {
     const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
 
     expect(recovered).toBe(1);
-    const final = sets[sets.length - 1] as any;
+    const final = sets.find(
+      (row: any) => row.event === "chat" && row.generating === false,
+    ) as any;
+    const threadState = sets.find(
+      (row: any) =>
+        row.event === "chat-thread-state" && row.state === "interrupted",
+    ) as any;
     expect(final.generating).toBe(false);
     expect(final.sender_id).toBe("codex-agent");
     expect(final.acp_interrupted).toBe(true);
@@ -818,6 +1009,7 @@ describe("recoverOrphanedAcpTurns", () => {
     expect(final.history?.[0]?.content).toContain(
       "Conversation interrupted because the backend server restarted.",
     );
+    expect(threadState).toBeTruthy();
     expect((queue.clearAcpPayloads as any).mock.calls.length).toBe(1);
     expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
       expect.arrayContaining([
@@ -829,5 +1021,164 @@ describe("recoverOrphanedAcpTurns", () => {
         ],
       ]),
     );
+  });
+
+  it("recovers by message_id when lease sender/date are stale", async () => {
+    const rowDate = new Date("2026-02-21T11:00:00.000Z").toISOString();
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: rowDate,
+        sender_id: "legacy-codex",
+        generating: true,
+        message_id: "msg-stale-1",
+        history: [
+          {
+            author_id: "codex-agent",
+            content: "partial answer",
+            date: rowDate,
+          },
+        ],
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        // intentionally stale identity:
+        message_date: new Date("2026-02-21T11:00:10.000Z").toISOString(),
+        sender_id: "new-codex",
+        message_id: "msg-stale-1",
+      },
+    ]);
+
+    const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
+    expect(recovered).toBe(1);
+    const final = sets.find(
+      (row: any) => row.event === "chat" && row.generating === false,
+    ) as any;
+    expect(final.date).toBe(rowDate);
+    expect(final.sender_id).toBe("legacy-codex");
+    expect(final.acp_interrupted).toBe(true);
+  });
+
+  it("does not mutate thread-config session metadata during restart recovery", async () => {
+    const rootIso = new Date("2026-01-01T00:00:00.000Z").toISOString();
+    const turnIso = new Date("2026-01-01T00:01:00.000Z").toISOString();
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: turnIso,
+        sender_id: "codex-agent",
+        generating: true,
+        history: [
+          {
+            author_id: "codex-agent",
+            content: "partial output",
+            date: turnIso,
+          },
+        ],
+        message_id: "msg-1",
+        thread_id: "thread-1",
+      },
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: rootIso,
+        thread_id: "thread-1",
+        acp_config: {
+          model: "gpt-5.3-codex",
+          sessionId: "session-keep",
+        },
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get: () => rows,
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        message_date: turnIso,
+        sender_id: "codex-agent",
+        reply_to: rootIso,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+      },
+    ]);
+
+    const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
+
+    expect(recovered).toBe(1);
+    expect(
+      sets.find((row) => row.event === "chat-thread-config"),
+    ).toBeUndefined();
+    const cfg = rows.find(
+      (row) =>
+        row.event === "chat-thread-config" &&
+        row.sender_id === "__thread_config__" &&
+        row.date === rootIso,
+    );
+    expect(cfg?.acp_config).toEqual({
+      model: "gpt-5.3-codex",
+      sessionId: "session-keep",
+    });
   });
 });

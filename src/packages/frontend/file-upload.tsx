@@ -383,6 +383,9 @@ export function FileUploadWrapper({
         handlers = [handlers];
       }
       for (let handler of handlers) {
+        if (typeof handler !== "function") {
+          continue;
+        }
         if (name === "init") {
           // Init handler:
           handler(dropzone.current);
@@ -522,39 +525,45 @@ export function UploadLink({
 
 export function BlobUpload(props) {
   const url = `${join(appBasePath, "blobs")}?project_id=${props.project_id}`;
+  const handlers = {
+    ...props.event_handlers,
+    complete: (file) => {
+      if (file.xhr?.responseText) {
+        let uuid;
+        try {
+          ({ uuid } = JSON.parse(file.xhr.responseText));
+        } catch (err) {
+          // this will happen if the server is down/broken, e.g., instead of proper json, we get
+          // back an error from cloudflare.
+          console.warn("WARNING: upload failure", file.xhr.responseText);
+          alert_message({
+            type: "error",
+            message:
+              "Failed to upload. Server may be down.  Please try again later.",
+          });
+          return;
+        }
+        const url = `${BASE_URL}/blobs/${encodeURIComponent(
+          file.upload.filename,
+        )}?uuid=${uuid}`;
+        props.event_handlers?.complete({ ...file, uuid, url });
+      } else {
+        // e.g., if there was an error
+        props.event_handlers?.complete(file);
+      }
+    },
+  };
+  // Avoid registering undefined handlers; Dropzone will crash when trying to emit them.
+  if (handlers.sending == null) {
+    delete handlers.sending;
+  }
+  if (handlers.removedfile == null) {
+    delete handlers.removedfile;
+  }
   return (
     <FileUploadWrapper
       {...props}
-      event_handlers={{
-        ...props.event_handlers,
-        sending: props.event_handlers?.sending,
-        removedfile: props.event_handlers?.removedfile,
-        complete: (file) => {
-          if (file.xhr?.responseText) {
-            let uuid;
-            try {
-              ({ uuid } = JSON.parse(file.xhr.responseText));
-            } catch (err) {
-              // this will happen if the server is down/broken, e.g., instead of proper json, we get
-              // back an error from cloudflare.
-              console.warn("WARNING: upload failure", file.xhr.responseText);
-              alert_message({
-                type: "error",
-                message:
-                  "Failed to upload. Server may be down.  Please try again later.",
-              });
-              return;
-            }
-            const url = `${BASE_URL}/blobs/${encodeURIComponent(
-              file.upload.filename,
-            )}?uuid=${uuid}`;
-            props.event_handlers?.complete({ ...file, uuid, url });
-          } else {
-            // e.g., if there was an error
-            props.event_handlers?.complete(file);
-          }
-        },
-      }}
+      event_handlers={handlers}
       dest_path={""}
       config={{
         url,

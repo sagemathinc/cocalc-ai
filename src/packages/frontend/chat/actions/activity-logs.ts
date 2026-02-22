@@ -38,6 +38,7 @@ export async function deleteActivityLog({
   actions.syncdb.set({
     event: "chat",
     date: d.toISOString(),
+    sender_id: message.sender_id,
     acp_events: null,
     codex_events: null,
   });
@@ -53,7 +54,7 @@ export async function deleteAllActivityLogs({
   path,
 }: ActivityLogContext): Promise<void> {
   if (!actions?.syncdb) return;
-  const dates: Date[] = [];
+  const targets: { date: Date; sender_id?: string }[] = [];
   const logRefs: { store: string; key: string }[] = [];
   const rootIso =
     threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined;
@@ -62,7 +63,10 @@ export async function deleteAllActivityLogs({
     for (const msg of seq ?? []) {
       const d = dateValue(msg);
       if (!(d instanceof Date)) continue;
-      dates.push(d);
+      targets.push({
+        date: d,
+        sender_id: (msg as any)?.sender_id,
+      });
       if (!project_id || !path) continue;
       const refs = deriveAcpLogRefs({
         project_id,
@@ -82,7 +86,10 @@ export async function deleteAllActivityLogs({
       });
       const rootMs = root?.valueOf?.();
       if (rootMs != null && rootMs === threadRootMs) {
-        dates.push(d);
+        targets.push({
+          date: d,
+          sender_id: (msg as any)?.sender_id,
+        });
         if (!project_id || !path || !rootIso) return;
         const refs = deriveAcpLogRefs({
           project_id,
@@ -94,9 +101,14 @@ export async function deleteAllActivityLogs({
       }
     });
   }
-  if (!dates.length) {
+  if (!targets.length) {
     const d = dateValue(message);
-    if (d instanceof Date) dates.push(d);
+    if (d instanceof Date) {
+      targets.push({
+        date: d,
+        sender_id: message.sender_id,
+      });
+    }
   }
   if (project_id) {
     for (const ref of logRefs) {
@@ -110,14 +122,15 @@ export async function deleteAllActivityLogs({
     }
   }
   let i = 0;
-  for (const d of dates) {
+  for (const target of targets) {
     i += 1;
     if (i % 20 == 0) {
       await delay(200);
     }
     actions.syncdb.set({
       event: "chat",
-      date: d.toISOString(),
+      date: target.date.toISOString(),
+      sender_id: target.sender_id,
       acp_events: null,
       codex_events: null,
     });

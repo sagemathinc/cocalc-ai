@@ -69,6 +69,7 @@ function makeActions(): {
     },
     chatStreams: new Set<string>(),
     getAllMessages: () => new Map(),
+    getMessageById: jest.fn(() => undefined),
     sendReply,
     saveHistory: jest.fn((message) => ({
       date: "2025-01-01T00:00:00.000Z",
@@ -76,6 +77,7 @@ function makeActions(): {
     })),
     getLLMHistory: jest.fn(() => []),
     getCodexConfig: jest.fn(),
+    recordThreadAgentModel: jest.fn(),
     setCodexConfig: jest.fn(),
     computeThreadKey: jest.fn(() => "1700000000000"),
     project_id: "proj",
@@ -189,6 +191,83 @@ describe("processLLM guards", () => {
     emitter?.emit("token", "A");
     expect(actions.chatStreams.size).toBe(0);
   });
+
+  it("looks up active record by message_id before date/sender fallback", async () => {
+    const { actions, syncdb } = makeActions();
+    const message = {
+      ...makeMessage(),
+      message_id: "msg-stream-1",
+      thread_id: "thread-stream-1",
+    } as any;
+    syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat" && where?.message_id === "msg-stream-1") {
+        return {
+          event: "chat",
+          message_id: "msg-stream-1",
+          generating: true,
+        };
+      }
+      return undefined;
+    });
+
+    await processLLM({
+      actions,
+      message,
+      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      threadModel: "gpt-4",
+    });
+
+    emitter?.emit("token", "A");
+    expect(syncdb.get_one).toHaveBeenCalledWith({
+      event: "chat",
+      message_id: "msg-stream-1",
+    });
+    expect(syncdb.get_one.mock.calls[0]?.[0]).toEqual({
+      event: "chat",
+      message_id: "msg-stream-1",
+    });
+  });
+
+  it("uses sender-qualified delete when regenerating with a different model sender", async () => {
+    const { actions, syncdb } = makeActions();
+    const message = makeMessage();
+    message.sender_id = "legacy-assistant";
+    message.history[0].content = "regenerate this";
+
+    syncdb.get_one.mockImplementation((where: any) => ({
+      event: "chat",
+      date: where?.date,
+      sender_id: where?.sender_id ?? "legacy-assistant",
+      history: [],
+      reply_to: new Date("2025-02-02T01:00:00.000Z").toISOString(),
+      generating: true,
+    }));
+    actions.getLLMHistory.mockReturnValue([
+      {
+        role: "user",
+        content: "previous prompt",
+        date: new Date("2025-02-02T00:59:00.000Z"),
+      },
+      {
+        role: "assistant",
+        content: "previous answer",
+        date: new Date("2025-02-02T00:59:30.000Z"),
+      },
+    ]);
+
+    await processLLM({
+      actions,
+      message,
+      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      tag: "regenerate",
+      llm: "gpt-4",
+    });
+
+    expect(syncdb.delete).toHaveBeenCalled();
+    const deleteArg = syncdb.delete.mock.calls[0]?.[0];
+    expect(deleteArg?.event).toBe("chat");
+    expect(deleteArg?.sender_id).toBe("legacy-assistant");
+  });
 });
 
 describe("processLLM model resolution and Codex dispatch", () => {
@@ -201,15 +280,17 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const { actions } = makeActions();
     const message = makeMessage();
     message.history[0].content = "please do something";
+    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      reply_to,
       threadModel: "gpt-4",
     });
     expect(mockQueryStream).toHaveBeenCalled();
     const args = mockQueryStream.mock.calls[0][0];
     expect(args.model).toBe("gpt-4");
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(reply_to, "gpt-4");
   });
 
   it("routes codex models through processAcpLLM", async () => {
@@ -217,13 +298,18 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const message = makeMessage();
     message.history[0].content = "@codex do something";
     const { processAcpLLM } = require("../acp-api");
+    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      reply_to,
       threadModel: "codex-agent",
     });
     expect(processAcpLLM).toHaveBeenCalled();
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
+      reply_to,
+      "codex-agent",
+    );
   });
 
   it("adds immediate-send guidance for Codex turns", async () => {
