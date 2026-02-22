@@ -488,6 +488,63 @@ export async function setSingleDocCellCodeViaRuntime(
   );
 }
 
+export async function setSingleDocSelectionViaRuntime(
+  page: Page,
+  index: number,
+  where: "start" | "end",
+): Promise<void> {
+  await page.evaluate(
+    ({ idx, pos }) => {
+      const runtime = (window as any).__cocalcJupyterRuntime;
+      if (typeof runtime?.set_single_doc_selection_for_test === "function") {
+        runtime.set_single_doc_selection_for_test(idx, pos);
+        return;
+      }
+      const cells = Array.from(
+        document.querySelectorAll('[data-cocalc-test="jupyter-singledoc-code-cell"]'),
+      );
+      const cell = cells[idx] as HTMLElement | undefined;
+      if (!cell) throw new Error(`missing single-doc code cell at index ${idx}`);
+      const lines = Array.from(cell.querySelectorAll(".cocalc-slate-code-line"));
+      const line =
+        pos === "start"
+          ? (lines[0] as HTMLElement | undefined)
+          : (lines[lines.length - 1] as HTMLElement | undefined);
+      if (!line) throw new Error(`missing code line for cell ${idx}`);
+
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      let firstText: Text | null = null;
+      let lastText: Text | null = null;
+      while (walker.nextNode()) {
+        const n = walker.currentNode as Text;
+        if (firstText == null) firstText = n;
+        lastText = n;
+      }
+
+      const range = document.createRange();
+      if (pos === "start") {
+        if (firstText) {
+          range.setStart(firstText, 0);
+        } else {
+          range.setStart(line, 0);
+        }
+      } else {
+        if (lastText) {
+          range.setStart(lastText, lastText.textContent?.length ?? 0);
+        } else {
+          range.setStart(line, line.childNodes.length);
+        }
+      }
+      range.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      line.focus?.();
+    },
+    { idx: index, pos: where },
+  );
+}
+
 export async function blurSingleDocEditor(page: Page): Promise<void> {
   await page.evaluate(() => {
     const active = document.activeElement as HTMLElement | null;

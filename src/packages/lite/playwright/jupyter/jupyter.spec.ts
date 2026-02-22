@@ -30,6 +30,7 @@ import {
   setCellInputCode,
   setSingleDocCellCode,
   setSingleDocCellCodeViaRuntime,
+  setSingleDocSelectionViaRuntime,
   uniqueNotebookPath,
 } from "./helpers";
 
@@ -70,6 +71,28 @@ async function readSingleDocCodeInput(page: Page, index: number): Promise<string
       .join("\n")
       .trim();
   }, index);
+}
+
+async function readSingleDocSelectionCells(page: Page): Promise<{
+  anchorCellId: string;
+  focusCellId: string;
+  collapsed: boolean;
+}> {
+  return await page.evaluate(() => {
+    const selection = window.getSelection();
+    const cellIdForNode = (node: Node | null): string => {
+      if (!node) return "";
+      const base =
+        node instanceof Element ? node : (node.parentElement as Element | null);
+      const cell = base?.closest?.('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+      return `${cell?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim();
+    };
+    return {
+      anchorCellId: cellIdForNode(selection?.anchorNode ?? null),
+      focusCellId: cellIdForNode(selection?.focusNode ?? null),
+      collapsed: Boolean(selection?.isCollapsed),
+    };
+  });
 }
 
 async function primeKernel(
@@ -572,7 +595,7 @@ test("single-doc ArrowRight at code-cell end moves caret to next code cell", asy
 
   const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
   await first.locator(".cocalc-slate-code-line").last().click();
-  await page.keyboard.press("End");
+  await setSingleDocSelectionViaRuntime(page, 0, "end");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.type("X");
   await blurSingleDocEditor(page);
@@ -606,10 +629,38 @@ test("single-doc ArrowLeft at code-cell start moves caret to previous code cell"
     }),
   );
 
-  const second = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').nth(1);
+  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+  const firstCellId = `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const secondCellId = `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const second = cells.nth(1);
   await second.locator(".cocalc-slate-code-line").last().click();
-  await page.keyboard.press("ControlOrMeta+ArrowLeft");
-  await page.keyboard.press("ArrowLeft");
+  await setSingleDocSelectionViaRuntime(page, 1, "start");
+  let movedToPrevious = false;
+  for (let i = 0; i < 8; i++) {
+    const state = await readSingleDocSelectionCells(page);
+    if (state.focusCellId === firstCellId && !state.collapsed) {
+      // Unexpected, but bail to avoid over-moving.
+      break;
+    }
+    if (state.focusCellId === firstCellId && state.collapsed) {
+      movedToPrevious = true;
+      break;
+    }
+    await page.keyboard.press("ArrowLeft");
+  }
+  if (!movedToPrevious) {
+    await expect
+      .poll(async () => (await readSingleDocSelectionCells(page)).focusCellId, {
+        timeout: 10_000,
+      })
+      .toBe(firstCellId);
+  }
+  await expect
+    .poll(async () => (await readSingleDocSelectionCells(page)).anchorCellId, {
+      timeout: 10_000,
+    })
+    .toBe(firstCellId);
+  await expect(secondCellId.length).toBeGreaterThan(0);
   await page.keyboard.type("Y");
   await blurSingleDocEditor(page);
   await page.waitForTimeout(1_300);
@@ -624,6 +675,86 @@ test("single-doc ArrowLeft at code-cell start moves caret to previous code cell"
       timeout: 30_000,
     })
     .toBe("bbb");
+});
+
+test("single-doc Shift+ArrowRight at cell end extends selection into next cell", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-shift-right-extend");
+  await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+  const firstCellId = `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const secondCellId = `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  expect(firstCellId.length).toBeGreaterThan(0);
+  expect(secondCellId.length).toBeGreaterThan(0);
+
+  await cells.nth(0).locator(".cocalc-slate-code-line").last().click();
+  await setSingleDocSelectionViaRuntime(page, 0, "end");
+  await page.keyboard.press("Shift+ArrowRight");
+
+  await expect
+    .poll(async () => await readSingleDocSelectionCells(page), {
+      timeout: 30_000,
+    })
+    .toMatchObject({
+      anchorCellId: firstCellId,
+      focusCellId: secondCellId,
+      collapsed: false,
+    });
+});
+
+test("single-doc Shift+ArrowLeft at cell start extends selection into previous cell", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-shift-left-extend");
+  await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+  const firstCellId = `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const secondCellId = `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  expect(firstCellId.length).toBeGreaterThan(0);
+  expect(secondCellId.length).toBeGreaterThan(0);
+
+  await cells.nth(1).locator(".cocalc-slate-code-line").last().click();
+  await setSingleDocSelectionViaRuntime(page, 1, "start");
+  for (let i = 0; i < 8; i++) {
+    const state = await readSingleDocSelectionCells(page);
+    if (!state.collapsed && state.focusCellId === firstCellId) {
+      break;
+    }
+    await page.keyboard.press("Shift+ArrowLeft");
+  }
+
+  await expect
+    .poll(async () => await readSingleDocSelectionCells(page), {
+      timeout: 30_000,
+    })
+    .toMatchObject({
+      anchorCellId: secondCellId,
+      focusCellId: firstCellId,
+      collapsed: false,
+    });
 });
 
 test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {

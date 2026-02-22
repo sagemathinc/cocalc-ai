@@ -941,6 +941,58 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         }
         applyNotebookSlateRef.current(next);
       },
+      set_single_doc_selection_for_test: (
+        cellIndex: number,
+        where: "start" | "end" = "start",
+      ) => {
+        if (!Number.isInteger(cellIndex) || cellIndex < 0) {
+          throw new Error(`invalid cellIndex: ${cellIndex}`);
+        }
+        const setSelection = controlRef.current?.setSelection;
+        if (typeof setSelection !== "function") {
+          throw new Error("single-doc setSelection helper unavailable");
+        }
+        let topIndex = -1;
+        let codeCell: any = null;
+        let seen = -1;
+        for (let i = 0; i < slateValue.length; i++) {
+          const node = slateValue[i] as any;
+          if (SlateElement.isElement(node) && node.type === "jupyter_code_cell") {
+            seen += 1;
+            if (seen === cellIndex) {
+              topIndex = i;
+              codeCell = node;
+              break;
+            }
+          }
+        }
+        if (topIndex < 0 || codeCell == null) {
+          throw new Error(`single-doc code cell ${cellIndex} not found`);
+        }
+        const lines = Array.isArray(codeCell.children) ? codeCell.children : [];
+        const lastLineIndex = Math.max(0, lines.length - 1);
+        const lineForEnd = lines[lastLineIndex] as any;
+        const textChildren = Array.isArray(lineForEnd?.children)
+          ? lineForEnd.children
+          : [];
+        const lastText = textChildren[textChildren.length - 1] as any;
+        const endOffset =
+          typeof lastText?.text === "string" ? lastText.text.length : 0;
+        const selection =
+          where === "start"
+            ? {
+                anchor: { path: [topIndex, 0, 0], offset: 0 },
+                focus: { path: [topIndex, 0, 0], offset: 0 },
+              }
+            : {
+                anchor: { path: [topIndex, lastLineIndex, 0], offset: endOffset },
+                focus: { path: [topIndex, lastLineIndex, 0], offset: endOffset },
+              };
+        const ok = setSelection(selection);
+        if (!ok) {
+          throw new Error("setSelection rejected requested selection");
+        }
+      },
       apply_single_doc_stale_structural_for_test: (input = "print('stale')") => {
         const next = JSON.parse(JSON.stringify(slateValue)) as Descendant[];
         next.push({

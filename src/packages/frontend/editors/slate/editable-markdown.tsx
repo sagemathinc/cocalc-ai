@@ -1127,42 +1127,56 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   );
 
   const moveAcrossJupyterCellBoundary = useCallback(
-    (direction: "left" | "right"): boolean => {
+    (direction: "left" | "right", extendSelection = false): boolean => {
       const entry = getTopLevelJupyterCell();
       if (entry == null || editor.selection == null) return false;
-      if (!Range.isCollapsed(editor.selection)) return false;
+      const activePoint = editor.selection.focus;
+      if (!extendSelection && !Range.isCollapsed(editor.selection)) return false;
       const topPath = [entry.topIndex];
       let atBoundary = false;
       try {
         if (direction === "left") {
-          const anchor = editor.selection.anchor;
+          const focus = activePoint;
           const canonicalStart = Editor.start(editor, topPath);
           const nestedStartPath =
-            anchor.path.length >= 2 &&
-            anchor.path[0] === entry.topIndex &&
-            anchor.offset === 0 &&
-            anchor.path.slice(1).every((x) => x === 0);
-          atBoundary = Point.equals(anchor, canonicalStart) || nestedStartPath;
+            focus.path.length >= 2 &&
+            focus.path[0] === entry.topIndex &&
+            focus.offset === 0 &&
+            focus.path.slice(1).every((x) => x === 0);
+          atBoundary = Point.equals(focus, canonicalStart) || nestedStartPath;
         } else {
           const boundaryPoint = Editor.end(editor, topPath);
-          atBoundary = Point.equals(editor.selection.anchor, boundaryPoint);
+          atBoundary = Point.equals(activePoint, boundaryPoint);
         }
       } catch {
         atBoundary =
           direction === "left"
-            ? control.isAtBeginningOfBlock(editor, { mode: "highest" })
-            : control.isAtEndOfBlock(editor, { mode: "highest" });
+            ? control.isAtBeginningOfBlock(editor, {
+                mode: "highest",
+                at: activePoint,
+              })
+            : control.isAtEndOfBlock(editor, {
+                mode: "highest",
+                at: activePoint,
+              });
       }
       if (!atBoundary) return false;
       const targetIndex =
         direction === "left" ? entry.topIndex - 1 : entry.topIndex + 1;
       if (targetIndex < 0 || targetIndex >= editor.children.length) return false;
       const targetPath = [targetIndex];
-      const point =
+      const nextFocus =
         direction === "left"
           ? pointAtPath(editor, targetPath, undefined, "end")
           : pointAtPath(editor, targetPath, undefined, "start");
-      Transforms.select(editor, { anchor: point, focus: point });
+      if (extendSelection) {
+        Transforms.select(editor, {
+          anchor: editor.selection.anchor,
+          focus: nextFocus,
+        });
+      } else {
+        Transforms.select(editor, { anchor: nextFocus, focus: nextFocus });
+      }
       ReactEditor.focus(editor);
       return true;
     },
@@ -1316,6 +1330,30 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       (e.key === "v" || e.key === "V")
     ) {
       (editor as any).__forcePlainTextPaste = true;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      e.shiftKey &&
+      e.key === "ArrowLeft" &&
+      moveAcrossJupyterCellBoundary("left", true)
+    ) {
+      e.preventDefault();
+      return;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      e.shiftKey &&
+      e.key === "ArrowRight" &&
+      moveAcrossJupyterCellBoundary("right", true)
+    ) {
+      e.preventDefault();
+      return;
     }
 
     if (
