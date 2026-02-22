@@ -36,12 +36,70 @@ import { filename, warning_color_disk, warning_color_pct } from "./utils";
 import { useProjectContext } from "../context";
 import ShowError from "@cocalc/frontend/components/error";
 import { useState } from "react";
+import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 
 interface AboutContentProps {
   proc?: Process;
   buttons?: React.ReactNode;
   mode?: "full" | "flyout";
   closePid?: (pid: number) => void;
+  trend?: {
+    cpu: number[];
+    mem: number[];
+    timestamps: number[];
+  };
+}
+
+function sparklinePoints(values: number[], width = 240, height = 56): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) {
+    return `0,${height / 2} ${width},${height / 2}`;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  const dx = width / (values.length - 1);
+  return values.map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+}
+
+function ProcessTrendChart({
+  title,
+  values,
+  unit,
+  color,
+}: {
+  title: string;
+  values: number[];
+  unit: string;
+  color: string;
+}) {
+  if (values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const latest = values[values.length - 1];
+  const points = sparklinePoints(values, 360, 96);
+  return (
+    <div style={{ marginBottom: "6px" }}>
+      <div style={{ fontWeight: 600 }}>
+        {title}: {latest.toFixed(1)} {unit}
+      </div>
+      <svg width="100%" height="96" viewBox="0 0 360 96" preserveAspectRatio="none">
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          points={points}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
+        range: {min.toFixed(1)} to {max.toFixed(1)} {unit}
+      </div>
+    </div>
+  );
 }
 
 export const AboutContent: React.FC<AboutContentProps> = ({
@@ -49,6 +107,7 @@ export const AboutContent: React.FC<AboutContentProps> = ({
   buttons,
   mode = "full",
   closePid,
+  trend,
 }: AboutContentProps) => {
   const isFlyout = mode === "flyout";
   const [raw, set_raw] = React.useState<boolean>(false);
@@ -79,6 +138,20 @@ export const AboutContent: React.FC<AboutContentProps> = ({
     const cpu_time = proc.stat.stime + proc.stat.utime;
     const mem = proc.stat.mem.rss.toFixed(1);
     const cpu_time_ch = proc.stat.cstime + proc.stat.cutime;
+    const t = trend;
+    const timeCaption =
+      t != null && t.timestamps.length >= 2
+        ? (() => {
+            const start = t.timestamps[0];
+            const end = t.timestamps[t.timestamps.length - 1];
+            const coveredMinutes = Math.max(0, (end - start) / (60 * 1000));
+            const cadence = (end - start) / 1000 / Math.max(1, t.timestamps.length - 1);
+            return `X-axis: oldest to newest sample, ${t.timestamps.length} samples covering ${coveredMinutes.toFixed(
+              1,
+            )} minutes (about every ${cadence.toFixed(0)}s).`;
+          })()
+        : undefined;
+
     return (
       <>
         <Descriptions.Item label="Executable" span={2}>
@@ -107,6 +180,33 @@ export const AboutContent: React.FC<AboutContentProps> = ({
         <Descriptions.Item label="Threads">
           <code>{proc.stat.num_threads}</code>
         </Descriptions.Item>
+        {t != null && t.cpu.length >= 2 && t.mem.length >= 2 ? (
+          <Descriptions.Item label="History" span={2}>
+            <Row gutter={[12, 0]}>
+              <Col md={12} xs={24}>
+                <ProcessTrendChart
+                  title="CPU Trend"
+                  values={t.cpu}
+                  unit="%"
+                  color={COLORS.BLUE_D}
+                />
+              </Col>
+              <Col md={12} xs={24}>
+                <ProcessTrendChart
+                  title="Memory Trend"
+                  values={t.mem}
+                  unit="MiB"
+                  color={COLORS.ANTD_GREEN_D}
+                />
+              </Col>
+            </Row>
+            {timeCaption != null ? (
+              <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
+                {timeCaption}
+              </div>
+            ) : undefined}
+          </Descriptions.Item>
+        ) : undefined}
       </>
     );
   }

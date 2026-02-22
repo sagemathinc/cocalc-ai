@@ -7,13 +7,14 @@
 
 declare let DEBUG;
 
-import { Alert, Button, Card, Form, Modal, Popover, Table } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Card, Form, Modal, Popover, Table, Tooltip } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
 import {
   InfoCircleOutlined,
   QuestionCircleOutlined,
+  ReloadOutlined,
   ScheduleOutlined,
 } from "@ant-design/icons";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
@@ -55,6 +56,7 @@ interface Props {
   status: string;
   info: ProjectInfoType | null;
   history: ProjectInfoHistory | null;
+  refresh: () => Promise<void>;
   loading: boolean;
   modal: string | Process | undefined;
   project_actions: ProjectActions | undefined;
@@ -133,6 +135,110 @@ function HistoryCard({
   );
 }
 
+function MiniTrend({
+  values,
+  timestamps,
+  color,
+  unit,
+  label,
+}: {
+  values: number[];
+  timestamps: number[];
+  color: string;
+  unit: string;
+  label: string;
+}): React.JSX.Element | null {
+  const filtered: Array<{ value: number; timestamp: number }> = [];
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    const timestamp = timestamps[i];
+    if (Number.isFinite(value) && Number.isFinite(timestamp)) {
+      filtered.push({ value, timestamp });
+    }
+  }
+  if (filtered.length < 2) {
+    return null;
+  }
+  const trendValues = filtered.map(({ value }) => value);
+  const trendTimestamps = filtered.map(({ timestamp }) => timestamp);
+  const latest = trendValues[trendValues.length - 1];
+  const min = Math.min(...trendValues);
+  const max = Math.max(...trendValues);
+  const startTs = trendTimestamps[0];
+  const endTs = trendTimestamps[trendTimestamps.length - 1];
+  const coveredMinutes = Math.max(0, (endTs - startTs) / (60 * 1000));
+  const sampleSeconds =
+    trendTimestamps.length > 1
+      ? (endTs - startTs) / 1000 / (trendTimestamps.length - 1)
+      : 0;
+  const coveredLabel =
+    coveredMinutes >= 1
+      ? `${coveredMinutes.toFixed(1)} minutes`
+      : `${Math.max(0, (endTs - startTs) / 1000).toFixed(0)} seconds`;
+
+  const width = 64;
+  const height = 16;
+  const points = sparklinePoints(trendValues, width, height);
+  const bigWidth = 280;
+  const bigHeight = 88;
+  const bigPoints = sparklinePoints(trendValues, bigWidth, bigHeight);
+  const tooltip = (
+    <div style={{ maxWidth: "300px" }}>
+      <div>
+        <strong>{label} history</strong>
+      </div>
+      <div>
+        X-axis: oldest to newest visible sample for this process, covering{" "}
+        {coveredLabel}.
+      </div>
+      <div>
+        {trendValues.length} samples, about every {sampleSeconds.toFixed(0)}s.
+      </div>
+      <div>
+        range: {min.toFixed(1)} to {max.toFixed(1)} {unit}; now{" "}
+        {latest.toFixed(1)} {unit}.
+      </div>
+      <div style={{ marginTop: "8px" }}>
+        <svg
+          width="100%"
+          height={bigHeight}
+          viewBox={`0 0 ${bigWidth} ${bigHeight}`}
+          preserveAspectRatio="none"
+        >
+          <polyline
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            points={bigPoints}
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+  return (
+    <Tooltip title={tooltip} placement="top">
+      <span style={{ display: "inline-flex", cursor: "help" }}>
+        <svg
+          width={width}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          style={{ marginTop: "1px" }}
+        >
+          <polyline
+            fill="none"
+            stroke={color}
+            strokeWidth="1.6"
+            points={points}
+            strokeLinecap="round"
+          />
+        </svg>
+      </span>
+    </Tooltip>
+  );
+}
+
 export function Full(props: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -146,6 +252,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     status,
     info,
     history,
+    refresh,
     loading,
     modal,
     project_actions,
@@ -171,6 +278,21 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   const headerRef = useRef<HTMLDivElement>(null);
   const generalStatusRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState<number>(400);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  const historyByProcessId = useMemo(() => {
+    const byId = new Map<string, { cpu: number[]; mem: number[]; timestamps: number[] }>();
+    for (const sample of history?.samples ?? []) {
+      for (const proc of Object.values(sample.processes ?? {})) {
+        const cur = byId.get(proc.id) ?? { cpu: [], mem: [], timestamps: [] };
+        cur.cpu.push(proc.cpu_pct);
+        cur.mem.push(proc.mem_rss);
+        cur.timestamps.push(sample.timestamp);
+        byId.set(proc.id, cur);
+      }
+    }
+    return byId;
+  }, [history]);
 
   const inclusiveCmp = (field: "cpu_pct" | "cpu_tot" | "mem") => {
     return (a: ProcessRow, b: ProcessRow) =>
@@ -239,6 +361,8 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           values you see are the sum of that particular process and all its
           children. CPU and memory sorting use this inclusive value, so heavy
           process trees bubble up even if the parent itself is mostly idle.
+          Small trend lines in CPU and Memory columns show per-process history
+          when enough samples are available.
         </p>
         <p style={{ marginBottom: 0 }}>
           If there are any issues detected, there will be highlights in red.
@@ -279,25 +403,45 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     if (samples.length < 2) return;
     const cpu = samples.map((sample) => sample.project.cpu_pct);
     const mem = samples.map((sample) => sample.project.mem_rss);
+    const startTs = samples[0].timestamp;
+    const endTs = samples[samples.length - 1].timestamp;
+    const coveredMinutes = Math.max(0, (endTs - startTs) / (60 * 1000));
+    const sampleSeconds =
+      samples.length > 1 ? (endTs - startTs) / 1000 / (samples.length - 1) : 0;
+    const requestedMinutes = history?.minutes ?? coveredMinutes;
+    const coveredLabel =
+      coveredMinutes >= requestedMinutes - 0.25
+        ? `${requestedMinutes.toFixed(0)} minutes`
+        : `${coveredMinutes.toFixed(1)} of ${requestedMinutes.toFixed(0)} minutes`;
     return (
-      <Row style={{ marginTop: "8px", marginBottom: "8px" }}>
-        <Col md={6} sm={12} xs={24}>
-          <HistoryCard
-            title="CPU Trend"
-            values={cpu}
-            unit="%"
-            color={COLORS.BLUE_D}
-          />
-        </Col>
-        <Col md={6} sm={12} xs={24}>
-          <HistoryCard
-            title="Memory Trend"
-            values={mem}
-            unit="MiB"
-            color={COLORS.ANTD_GREEN_D}
-          />
-        </Col>
-      </Row>
+      <>
+        <Row style={{ marginTop: "8px", marginBottom: "8px" }}>
+          <Col md={6} sm={12} xs={24}>
+            <HistoryCard
+              title="CPU Trend"
+              values={cpu}
+              unit="%"
+              color={COLORS.BLUE_D}
+            />
+          </Col>
+          <Col md={6} sm={12} xs={24}>
+            <HistoryCard
+              title="Memory Trend"
+              values={mem}
+              unit="MiB"
+              color={COLORS.ANTD_GREEN_D}
+            />
+          </Col>
+        </Row>
+        <Row style={{ marginBottom: "8px" }}>
+          <Col md={12}>
+            <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
+              X-axis: oldest to newest sample, covering {coveredLabel} (
+              {samples.length} samples, about every {sampleSeconds.toFixed(0)}s).
+            </div>
+          </Col>
+        </Row>
+      </>
     );
   }
 
@@ -336,6 +480,55 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       </>
     );
   }
+
+  function render_refresh_button() {
+    const refreshNow = async () => {
+      if (refreshing) return;
+      setRefreshing(true);
+      try {
+        await refresh();
+      } finally {
+        setRefreshing(false);
+      }
+    };
+    return (
+      <Form.Item>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => void refreshNow()}
+          loading={refreshing}
+        >
+          Refresh
+        </Button>
+      </Form.Item>
+    );
+  }
+
+  function processHistory(
+    proc: ProcessRow,
+  ): { cpu: number[]; mem: number[]; timestamps: number[] } | undefined {
+    const live = info?.processes?.[proc.pid];
+    if (live == null) return;
+    const id = `${live.pid}:${live.stat.starttime}`;
+    return historyByProcessId.get(id);
+  }
+
+  function processHistoryForProcess(
+    proc: Process | undefined,
+  ): { cpu: number[]; mem: number[]; timestamps: number[] } | undefined {
+    if (proc == null) return;
+    const id = `${proc.pid}:${proc.stat.starttime}`;
+    return historyByProcessId.get(id);
+  }
+
+  const renderCpuCell = onCellProps(
+    "cpu_pct",
+    (value) => value as unknown as number,
+  );
+  const renderMemCell = onCellProps(
+    "mem",
+    (value) => value as unknown as number,
+  );
 
   function has_children(proc: ProcessRow): boolean {
     return proc.children != null && proc.children.length > 0;
@@ -392,7 +585,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               footer={render_modal_footer()}
               onCancel={() => set_modal(undefined)}
             >
-              <AboutContent proc={modal} />;
+              <AboutContent proc={modal} trend={processHistoryForProcess(modal)} />
             </Modal>
           );
         }
@@ -477,6 +670,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           <Col md={9}>
             <Form layout="inline">
               <Form.Item label="Table of Processes" />
+              {render_refresh_button()}
               {render_action_buttons()}
               {render_disconnected()}
             </Form>
@@ -548,7 +742,28 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               width="10%"
               dataIndex="cpu_pct"
               align={"right"}
-              render={onCellProps("cpu_pct", (val) => `${val.toFixed(1)}%`)}
+              render={(value, proc) => {
+                const display = renderCpuCell(value, proc) as number;
+                const trend = processHistory(proc)?.cpu ?? [];
+                return (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "end",
+                    }}
+                  >
+                    <span>{display.toFixed(1)}%</span>
+                    <MiniTrend
+                      values={trend}
+                      timestamps={processHistory(proc)?.timestamps ?? []}
+                      color={COLORS.BLUE_D}
+                      unit="%"
+                      label="CPU"
+                    />
+                  </div>
+                );
+              }}
               onCell={onCellProps("cpu_pct")}
               sorter={inclusiveCmp("cpu_pct")}
             />
@@ -568,7 +783,28 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               dataIndex="mem"
               width="10%"
               align={"right"}
-              render={onCellProps("cpu_pct", (val) => `${val.toFixed(0)} MiB`)}
+              render={(value, proc) => {
+                const display = renderMemCell(value, proc) as number;
+                const trend = processHistory(proc)?.mem ?? [];
+                return (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "end",
+                    }}
+                  >
+                    <span>{display.toFixed(0)} MiB</span>
+                    <MiniTrend
+                      values={trend}
+                      timestamps={processHistory(proc)?.timestamps ?? []}
+                      color={COLORS.ANTD_GREEN_D}
+                      unit="MiB"
+                      label="Memory"
+                    />
+                  </div>
+                );
+              }}
               onCell={onCellProps("mem")}
               sorter={inclusiveCmp("mem")}
             />

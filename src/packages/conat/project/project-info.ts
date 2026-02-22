@@ -20,7 +20,7 @@ const logger = getLogger("project:project-info");
 const HISTORY_PREFIX = "v1/history/sample/";
 const HISTORY_STORE_NAME = "project-info-history";
 const DEFAULT_HISTORY_WINDOW_MINUTES = 60;
-const DEFAULT_HISTORY_SAMPLE_SECONDS = 60;
+const DEFAULT_HISTORY_SAMPLE_SECONDS = 30;
 const DEFAULT_HISTORY_TTL_SECONDS = 2 * 60 * 60;
 const DEFAULT_HISTORY_TOP_N = 50;
 

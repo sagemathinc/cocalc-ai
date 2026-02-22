@@ -68,12 +68,25 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     const { project_id } = useProjectContext();
     const intl = useIntl();
     const projectLabel = intl.formatMessage(labels.project);
-    const { disconnected, info, error, setError } = useProjectInfo({
+    const {
+      disconnected,
+      info,
+      error,
+      setError,
+      refresh: refreshInfo,
+    } = useProjectInfo({
       project_id,
     });
-    const { history, error: historyError } = useProjectInfoHistory({
+    const {
+      history,
+      error: historyError,
+      refresh: refreshHistory,
+    } = useProjectInfoHistory({
       project_id,
     });
+    const refresh = React.useCallback(async () => {
+      await Promise.all([refreshInfo(), refreshHistory()]);
+    }, [refreshInfo, refreshHistory]);
     const loading = info == null;
     const status = disconnected ? "Connecting..." : "Connected";
     const project_actions = useActions({ project_id });
@@ -353,6 +366,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
             error={showError}
             info={info}
             history={history}
+            refresh={refresh}
             loading={loading}
             modal={modal}
             project_actions={project_actions}
