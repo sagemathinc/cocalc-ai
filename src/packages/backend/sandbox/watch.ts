@@ -69,13 +69,17 @@ function isPseudoFsPath(path: string): boolean {
   return false;
 }
 
+function isDirectoryListingWatch(options: WatchOptions): boolean {
+  return !!options.closeOnUnlink && !!options.stats && !options.patch;
+}
+
 function isHighFanoutSystemDir(path: string, options: WatchOptions): boolean {
   if (ALLOW_HIGH_FANOUT_SYSTEM_WATCH) {
     return false;
   }
   // Only guard directory-listing style watches. File watches and patch watches
   // keep normal behavior.
-  if (!options.closeOnUnlink || !options.stats || options.patch) {
+  if (!isDirectoryListingWatch(options)) {
     return false;
   }
   const normalized = normalizeWatchPath(path);
@@ -176,9 +180,11 @@ class Watcher extends EventEmitter {
 
     const stabilityThreshold = options.stabilityThreshold ?? 500;
     const normalizedPath = normalizeWatchPath(path);
+    const directoryListingWatch = isDirectoryListingWatch(options);
     const pseudoFsWatch = isPseudoFsPath(normalizedPath);
     const highFanoutSystemWatch = isHighFanoutSystemDir(normalizedPath, options);
-    const useNativeWatcher = pseudoFsWatch || highFanoutSystemWatch;
+    const useNativeWatcher =
+      directoryListingWatch || pseudoFsWatch || highFanoutSystemWatch;
     const trackerInfo: Record<string, unknown> = {
       usePolling: false,
       pollInterval: 0,
@@ -186,17 +192,25 @@ class Watcher extends EventEmitter {
       stabilityThreshold,
       closeOnUnlink: !!options.closeOnUnlink,
       patch: !!options.patch,
+      directoryListingWatch,
       pseudoFsWatch,
       highFanoutSystemWatch,
       useNativeWatcher,
     };
     if (useNativeWatcher) {
-      trackerInfo.mode = "native-fs-watch-guarded";
-      logger.warn("sandbox watcher in guarded native fs.watch mode", {
-        path,
-        pseudoFsWatch,
-        highFanoutSystemWatch,
-      });
+      if (pseudoFsWatch || highFanoutSystemWatch) {
+        trackerInfo.mode = "native-fs-watch-guarded";
+        logger.warn("sandbox watcher in guarded native fs.watch mode", {
+          path,
+          pseudoFsWatch,
+          highFanoutSystemWatch,
+        });
+      } else {
+        trackerInfo.mode = "native-fs-watch-listing";
+        logger.debug("sandbox listing watcher in native fs.watch mode", {
+          path,
+        });
+      }
     }
     if (useNativeWatcher) {
       this.stopTrackingWatcher = trackBackendWatcher({
