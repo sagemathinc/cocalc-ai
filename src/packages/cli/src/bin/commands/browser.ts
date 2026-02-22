@@ -81,6 +81,21 @@ function normalizeBrowserId(value: unknown): string | undefined {
   return id.length > 0 ? id : undefined;
 }
 
+function isLikelyExactBrowserId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{8,}$/.test(value);
+}
+
+function directBrowserSessionInfo(browser_id: string): BrowserSessionInfo {
+  const now = new Date().toISOString();
+  return {
+    browser_id,
+    open_projects: [],
+    stale: false,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 function resolveBrowserSession(
   sessions: BrowserSessionInfo[],
   browserHint: string,
@@ -155,26 +170,41 @@ async function chooseBrowserSession({
   ctx,
   browserHint,
   fallbackBrowserId,
+  requireDiscovery = false,
 }: {
   ctx: any;
   browserHint?: string;
   fallbackBrowserId?: string;
+  requireDiscovery?: boolean;
 }): Promise<BrowserSessionInfo> {
-  const sessions = (await ctx.hub.system.listBrowserSessions({
-    include_stale: true,
-  })) as BrowserSessionInfo[];
+  let sessions: BrowserSessionInfo[] | undefined;
+  const getSessions = async (): Promise<BrowserSessionInfo[]> => {
+    if (sessions) return sessions;
+    sessions = (await ctx.hub.system.listBrowserSessions({
+      include_stale: true,
+    })) as BrowserSessionInfo[];
+    return sessions;
+  };
+
   const explicitHint = normalizeBrowserId(browserHint);
+  if (explicitHint && !requireDiscovery && isLikelyExactBrowserId(explicitHint)) {
+    return directBrowserSessionInfo(explicitHint);
+  }
   if (explicitHint) {
-    return resolveBrowserSession(sessions, explicitHint);
+    return resolveBrowserSession(await getSessions(), explicitHint);
   }
   const savedHint = normalizeBrowserId(fallbackBrowserId);
+  if (savedHint && !requireDiscovery) {
+    return directBrowserSessionInfo(savedHint);
+  }
+  const resolvedSessions = await getSessions();
   if (savedHint) {
-    const saved = resolveBrowserSession(sessions, savedHint);
+    const saved = resolveBrowserSession(resolvedSessions, savedHint);
     if (!saved.stale) {
       return saved;
     }
   }
-  const active = sessions.filter((s) => !s.stale);
+  const active = resolvedSessions.filter((s) => !s.stale);
   if (active.length === 1) {
     return active[0];
   }

@@ -24,12 +24,22 @@ import { init as initHubApi } from "./hub/api";
 import { init as initLLM } from "./hub/llm";
 import { init as initAcp } from "./hub/acp";
 import { initWatchdog, closeWatchdog } from "./watchdog";
-import { account_id } from "@cocalc/backend/data";
+import {
+  account_id,
+  conatPassword,
+  setConatPassword,
+} from "@cocalc/backend/data";
 import { getAuthToken } from "./auth-token";
 import getLogger from "@cocalc/backend/logger";
 import compression from "compression";
 import { enableMemoryUseLogger } from "@cocalc/backend/memory";
 import { connectionInfoPath } from "./connection-info";
+import { secureRandomString } from "@cocalc/backend/misc";
+import {
+  allowUnauthenticatedConat,
+  createLiteConatAuth,
+} from "./conat-auth";
+import { isLoopbackHost } from "@cocalc/backend/network/policy";
 
 const logger = getLogger("lite:main");
 
@@ -40,7 +50,11 @@ function conat(opts?): Client {
   if (conatServer == null) {
     throw Error("not initialized");
   }
-  return conatServer.client({ path: "/", ...opts });
+  return conatServer.client({
+    path: "/",
+    systemAccountPassword: conatPassword,
+    ...opts,
+  });
 }
 
 export async function main(opts?: {
@@ -53,22 +67,51 @@ export async function main(opts?: {
   initBugCounter();
 
   const AUTH_TOKEN = await getAuthToken();
+  const AGENT_TOKEN = await getAgentToken(AUTH_TOKEN);
+  if (!conatPassword) {
+    setConatPassword(await secureRandomString(24));
+  }
 
   logger.debug("start http server");
   const { httpServer, app, port, isHttps, hostname } = await initHttpServer({
     AUTH_TOKEN,
   });
+  if (!AUTH_TOKEN) {
+    if (isLoopbackHost(hostname)) {
+      logger.warn(
+        "lite auth warning: AUTH_TOKEN is not set; conat access is unauthenticated on loopback.",
+      );
+    } else if (allowUnauthenticatedConat()) {
+      logger.warn(
+        "lite auth warning: AUTH_TOKEN is not set on non-loopback host and unauthenticated conat is explicitly enabled.",
+      );
+    }
+  }
 
-  await writeConnectionInfo({ port, AUTH_TOKEN, isHttps, hostname });
+  await writeConnectionInfo({
+    port,
+    AUTH_TOKEN,
+    AGENT_TOKEN,
+    isHttps,
+    hostname,
+  });
 
   logger.debug("create server");
+  const conatAuth = createLiteConatAuth({
+    account_id,
+    project_id,
+    bindHost: hostname,
+    AUTH_TOKEN,
+    AGENT_TOKEN,
+    hub_password: conatPassword,
+  });
   const options = {
     httpServer,
     ssl: isHttps,
     port,
-    getUser: async () => {
-      return { account_id };
-    },
+    getUser: conatAuth.getUser,
+    isAllowed: conatAuth.isAllowed,
+    systemAccountPassword: conatPassword,
   };
   conatServer = createConatServer(options);
   if (conatServer.state != "ready") {
@@ -145,11 +188,13 @@ export async function main(opts?: {
 async function writeConnectionInfo({
   port,
   AUTH_TOKEN,
+  AGENT_TOKEN,
   isHttps,
   hostname,
 }: {
   port: number;
   AUTH_TOKEN?: string;
+  AGENT_TOKEN?: string;
   isHttps: boolean;
   hostname: string;
 }) {
@@ -160,6 +205,7 @@ async function writeConnectionInfo({
     const info = {
       port,
       token: AUTH_TOKEN ?? "",
+      agent_token: AGENT_TOKEN ?? "",
       protocol: isHttps ? "https" : "http",
       host: hostname,
       url: `${isHttps ? "https" : "http"}://${hostname}:${port}`,
@@ -173,4 +219,11 @@ async function writeConnectionInfo({
   } catch (err) {
     logger.warn("failed to write connection info", err);
   }
+}
+
+async function getAgentToken(AUTH_TOKEN?: string): Promise<string | undefined> {
+  const value = `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  if (value) return value;
+  if (!AUTH_TOKEN) return undefined;
+  return await secureRandomString(40);
 }
