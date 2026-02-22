@@ -495,6 +495,15 @@ export function ChatPanel({
           ? {
               mode: newThreadSetup.agentMode,
               model: newThreadSetup.model?.trim(),
+              codexConfig:
+                newThreadSetup.agentMode === "codex"
+                  ? {
+                      ...newThreadSetup.codexConfig,
+                      model:
+                        newThreadSetup.codexConfig.model?.trim() ||
+                        newThreadSetup.model?.trim(),
+                    }
+                  : undefined,
             }
           : undefined,
       threadAppearance:

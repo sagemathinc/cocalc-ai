@@ -8,9 +8,15 @@ import { React } from "@cocalc/frontend/app-framework";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
-import { BlobUpload } from "@cocalc/frontend/file-upload";
+import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
-import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
+import {
+  DEFAULT_CODEX_MODELS,
+  resolveCodexSessionMode,
+  type CodexReasoningId,
+  type CodexSessionMode,
+} from "@cocalc/util/ai/codex";
+import type { CodexThreadConfig } from "@cocalc/chat";
 import { ChatLog } from "./chat-log";
 import CodexConfigButton from "./codex";
 import { ThreadBadge } from "./thread-badge";
@@ -21,6 +27,7 @@ import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import { THREAD_ICON_OPTIONS } from "./chatroom-modals";
+import { ThreadImageUpload } from "./thread-image-upload";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -31,6 +38,14 @@ const CHAT_LOG_STYLE: React.CSSProperties = {
 } as const;
 
 const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
+  ? "read-only"
+  : "workspace-write";
+const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
+  { value: "read-only", label: "Read only" },
+  { value: "workspace-write", label: "Workspace write" },
+  { value: "full-access", label: "Full access" },
+];
 
 export type NewThreadAgentMode = "codex" | "human" | "model";
 export interface NewThreadSetup {
@@ -40,6 +55,7 @@ export interface NewThreadSetup {
   image?: string;
   agentMode: NewThreadAgentMode;
   model: string;
+  codexConfig: Partial<CodexThreadConfig>;
 }
 
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup = {
@@ -49,6 +65,11 @@ export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup = {
   image: "",
   agentMode: "codex",
   model: DEFAULT_CODEX_MODEL,
+  codexConfig: {
+    model: DEFAULT_CODEX_MODEL,
+    sessionMode: DEFAULT_CODEX_SESSION_MODE,
+    reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
+  },
 };
 
 interface ChatRoomThreadPanelProps {
@@ -111,7 +132,14 @@ export function ChatRoomThreadPanel({
       value: icon,
       label: icon,
     }));
-    const imageUploadClass = "chat-new-thread-image-upload";
+    const codexModel = newThreadSetup.codexConfig.model ?? DEFAULT_CODEX_MODEL;
+    const codexReasoningOptions = (
+      DEFAULT_CODEX_MODELS.find((model) => model.name === codexModel)?.reasoning ??
+      []
+    ).map((r) => ({
+      value: r.id,
+      label: r.label,
+    }));
     return (
       <div
         className="smc-vfill"
@@ -132,9 +160,9 @@ export function ChatRoomThreadPanel({
             background: "#fcfcfc",
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>New thread setup</div>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>New chat setup</div>
           <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
-            All fields are optional and can be edited later from thread settings.
+            All fields are optional and can be edited later from settings.
             Codex is selected by default.
           </div>
           <div
@@ -155,14 +183,36 @@ export function ChatRoomThreadPanel({
             </div>
             <div>
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                Thread type
+                Chat type
               </div>
               <Select
                 value={newThreadSetup.agentMode}
                 style={{ width: "100%" }}
-                onChange={(value) =>
-                  update({ agentMode: value as NewThreadAgentMode })
-                }
+                onChange={(value) => {
+                  const mode = value as NewThreadAgentMode;
+                  if (mode === "codex") {
+                    const model = isCodexModelName(newThreadSetup.model)
+                      ? newThreadSetup.model
+                      : DEFAULT_CODEX_MODEL;
+                    update({
+                      agentMode: mode,
+                      model,
+                      codexConfig: {
+                        ...newThreadSetup.codexConfig,
+                        model,
+                        sessionMode:
+                          normalizeSessionMode(newThreadSetup.codexConfig) ??
+                          DEFAULT_CODEX_SESSION_MODE,
+                        reasoning: getReasoningForModel({
+                          modelValue: model,
+                          desired: newThreadSetup.codexConfig.reasoning,
+                        }),
+                      },
+                    });
+                    return;
+                  }
+                  update({ agentMode: mode });
+                }}
                 options={[
                   { value: "codex", label: "Codex (agent)" },
                   { value: "human", label: "Human only" },
@@ -182,7 +232,24 @@ export function ChatRoomThreadPanel({
                       : "e.g. gpt-4o"
                   }
                   value={newThreadSetup.model}
-                  onChange={(e) => update({ model: e.target.value })}
+                  onChange={(e) => {
+                    const model = e.target.value;
+                    if (newThreadSetup.agentMode === "codex") {
+                      update({
+                        model,
+                        codexConfig: {
+                          ...newThreadSetup.codexConfig,
+                          model,
+                          reasoning: getReasoningForModel({
+                            modelValue: model,
+                            desired: newThreadSetup.codexConfig.reasoning,
+                          }),
+                        },
+                      });
+                    } else {
+                      update({ model });
+                    }
+                  }}
                 />
               </div>
             )}
@@ -221,7 +288,7 @@ export function ChatRoomThreadPanel({
                 />
                 <ColorButton
                   onChange={(value) => update({ color: value })}
-                  title="Select thread color"
+                  title="Select chat color"
                 />
                 <Button
                   size="small"
@@ -232,9 +299,7 @@ export function ChatRoomThreadPanel({
               </Space>
             </div>
             <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                Thread image URL
-              </div>
+              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Chat image</div>
               <Input
                 style={{ width: "100%", marginBottom: 8 }}
                 placeholder="Paste or drag image URL (optional)"
@@ -250,58 +315,96 @@ export function ChatRoomThreadPanel({
                   }
                 }}
               />
-              {project_id ? (
-                <BlobUpload
-                  project_id={project_id}
-                  show_upload={false}
-                  config={{
-                    clickable: `.${imageUploadClass}`,
-                    acceptedFiles: "image/*",
-                    maxFiles: 1,
-                  }}
-                  event_handlers={{
-                    complete: (file) => {
-                      if (file?.url) {
-                        update({ image: file.url });
-                      }
-                    },
-                  }}
-                >
-                  <div
-                    className={imageUploadClass}
-                    style={{
-                      border: "1px dashed #cfcfcf",
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                      color: "#666",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                    }}
-                  >
-                    <span>
-                      <Icon name="upload" /> Click or drag image here to upload
-                    </span>
-                    {newThreadSetup.image ? (
-                      <img
-                        src={newThreadSetup.image}
-                        alt="Thread image preview"
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 6,
-                          objectFit: "cover",
-                          border: "1px solid #ddd",
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                </BlobUpload>
-              ) : null}
+              <ThreadImageUpload
+                projectId={project_id}
+                value={newThreadSetup.image}
+                onChange={(value) => update({ image: value })}
+                modalTitle="Edit Chat Image"
+                uploadText="Click or drag chat image"
+                size={72}
+              />
             </div>
           </div>
+          {newThreadSetup.agentMode === "codex" && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Codex model
+                </div>
+                <Select
+                  value={codexModel}
+                  style={{ width: "100%" }}
+                  options={DEFAULT_CODEX_MODELS.map((model) => ({
+                    value: model.name,
+                    label: model.name,
+                  }))}
+                  showSearch
+                  optionFilterProp="label"
+                  onChange={(value) => {
+                    const model = String(value);
+                    update({
+                      model,
+                      codexConfig: {
+                        ...newThreadSetup.codexConfig,
+                        model,
+                        reasoning: getReasoningForModel({
+                          modelValue: model,
+                          desired: newThreadSetup.codexConfig.reasoning,
+                        }),
+                      },
+                    });
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Reasoning
+                </div>
+                <Select
+                  allowClear
+                  value={newThreadSetup.codexConfig.reasoning}
+                  style={{ width: "100%" }}
+                  options={codexReasoningOptions}
+                  onChange={(value) =>
+                    update({
+                      codexConfig: {
+                        ...newThreadSetup.codexConfig,
+                        reasoning: value as CodexReasoningId,
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div>
+                <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  Execution mode
+                </div>
+                <Select
+                  value={
+                    normalizeSessionMode(newThreadSetup.codexConfig) ??
+                    DEFAULT_CODEX_SESSION_MODE
+                  }
+                  style={{ width: "100%" }}
+                  options={MODE_OPTIONS}
+                  onChange={(value) =>
+                    update({
+                      codexConfig: {
+                        ...newThreadSetup.codexConfig,
+                        sessionMode: value as CodexSessionMode,
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+          )}
           <div
             style={{
               display: "flex",
@@ -322,7 +425,7 @@ export function ChatRoomThreadPanel({
               <span style={{ color: "#666", fontSize: 13 }}>
                 {threadsCount === 0
                   ? "No chats yet. Send your first message below."
-                  : "Use these defaults for the next new thread you send."}
+                  : "Use these defaults for the next new chat you send."}
               </span>
             </div>
             <Button size="small" onClick={onNewChat}>
@@ -393,7 +496,7 @@ export function ChatRoomThreadPanel({
         >
           <img
             src={threadImagePreview}
-            alt="Thread image"
+            alt="Chat image"
             style={{ width: 84, height: 84, objectFit: "cover", display: "block" }}
           />
         </div>
@@ -445,4 +548,39 @@ export function ChatRoomThreadPanel({
       />
     </div>
   );
+}
+
+function getReasoningForModel({
+  modelValue,
+  desired,
+}: {
+  modelValue?: string;
+  desired?: CodexReasoningId;
+}): CodexReasoningId | undefined {
+  const model =
+    DEFAULT_CODEX_MODELS.find((m) => m.name === modelValue) ??
+    DEFAULT_CODEX_MODELS[0];
+  const options = model?.reasoning ?? [];
+  if (!options.length) return undefined;
+  const match = options.find((r) => r.id === desired);
+  return match?.id ?? options.find((r) => r.default)?.id ?? options[0]?.id;
+}
+
+function normalizeSessionMode(
+  config?: Partial<CodexThreadConfig>,
+): CodexSessionMode | undefined {
+  const mode = resolveCodexSessionMode(config as CodexThreadConfig);
+  if (
+    mode === "read-only" ||
+    mode === "workspace-write" ||
+    mode === "full-access"
+  ) {
+    return mode;
+  }
+  return undefined;
+}
+
+function isCodexModelName(value?: string): boolean {
+  if (!value) return false;
+  return DEFAULT_CODEX_MODELS.some((model) => model.name === value);
 }

@@ -7,6 +7,7 @@ import { fromJS } from "immutable";
 import { debounce } from "lodash";
 import { setDefaultLLM } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 import { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import type { BaseEditorActions as CodeEditorActions } from "@cocalc/frontend/frame-editors/base-editor/actions-base";
 import {
@@ -42,6 +43,10 @@ import type {
   MessageHistory,
 } from "./types";
 import { CHAT_SCHEMA_V2, addToHistory, type CodexThreadConfig } from "@cocalc/chat";
+import {
+  resolveCodexSessionMode,
+  type CodexSessionMode,
+} from "@cocalc/util/ai/codex";
 import {
   getMessageAtDate,
   getThreadRootDate,
@@ -101,6 +106,20 @@ function identityFromModel(model: string): {
     return { agent_kind: "acp", agent_mode: "interactive" };
   }
   return { agent_kind: "llm", agent_mode: "single_turn" };
+}
+
+function normalizeSessionMode(
+  config?: Partial<CodexThreadConfig>,
+): CodexSessionMode | undefined {
+  const mode = resolveCodexSessionMode(config as CodexThreadConfig);
+  if (
+    mode === "read-only" ||
+    mode === "workspace-write" ||
+    mode === "full-access"
+  ) {
+    return mode;
+  }
+  return undefined;
 }
 
 export function collectThreadMessages({
@@ -416,6 +435,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAgent?: {
       mode: "codex" | "human" | "model";
       model?: string;
+      codexConfig?: Partial<CodexThreadConfig>;
     };
     // optional thread-level appearance defaults for new root threads
     threadAppearance?: {
@@ -535,7 +555,18 @@ export class ChatActions extends Actions<ChatState> {
         threadConfigPatch.agent_mode = null;
       } else if (agentMode === "codex") {
         const model = agentModel || "gpt-5.3-codex";
-        threadConfigPatch.acp_config = { model };
+        const defaultSessionMode: CodexSessionMode = lite
+          ? "read-only"
+          : "workspace-write";
+        const codexConfig = {
+          ...(threadAgent?.codexConfig ?? {}),
+          model,
+        } as CodexThreadConfig;
+        const normalizedSessionMode = normalizeSessionMode(codexConfig);
+        const sessionMode = normalizedSessionMode ?? defaultSessionMode;
+        codexConfig.sessionMode = sessionMode;
+        codexConfig.allowWrite = sessionMode !== "read-only";
+        threadConfigPatch.acp_config = codexConfig;
         threadConfigPatch.agent_kind = "acp";
         threadConfigPatch.agent_model = model;
         threadConfigPatch.agent_mode = "interactive";

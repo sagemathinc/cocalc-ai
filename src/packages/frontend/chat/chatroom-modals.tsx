@@ -9,7 +9,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { BlobUpload } from "@cocalc/frontend/file-upload";
+import { lite } from "@cocalc/frontend/lite";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { capitalize } from "@cocalc/util/misc";
 import type { CodexThreadConfig } from "@cocalc/chat";
@@ -20,6 +20,7 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
+import { ThreadImageUpload } from "./thread-image-upload";
 
 export interface ChatRoomModalHandlers {
   openRenameModal: (
@@ -41,6 +42,9 @@ interface ChatRoomModalsProps {
 
 type ThreadAgentMode = "codex" | "human" | "model";
 const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
+  ? "read-only"
+  : "workspace-write";
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
   { value: "workspace-write", label: "Workspace write" },
@@ -61,7 +65,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     Partial<CodexThreadConfig>
   >({
     model: DEFAULT_CODEX_MODEL,
-    sessionMode: "workspace-write",
+    sessionMode: DEFAULT_CODEX_SESSION_MODE,
     workingDirectory: defaultWorkingDir(path),
   });
   const [exportThread, setExportThread] = useState<{
@@ -76,11 +80,6 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     isAI: boolean;
   } | null>(null);
   const [forkName, setForkName] = useState<string>("");
-  const renameImageUploadClass = useMemo(
-    () => `thread-image-upload-${Math.random().toString(36).slice(2)}`,
-    [],
-  );
-
   const openRenameModal = (
     threadKey: string,
     currentLabel: string,
@@ -118,7 +117,9 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
       model: currentModel,
       workingDirectory:
         savedConfig.workingDirectory?.trim() || defaultWorkingDir(path),
-      sessionMode: resolveCodexSessionMode(savedConfig as CodexThreadConfig),
+      sessionMode:
+        normalizeSessionMode(savedConfig as CodexThreadConfig) ??
+        DEFAULT_CODEX_SESSION_MODE,
       reasoning: getReasoningForModel({
         modelValue: currentModel,
         desired: savedConfig.reasoning,
@@ -136,7 +137,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     setRenameModel(DEFAULT_CODEX_MODEL);
     setRenameCodexConfig({
       model: DEFAULT_CODEX_MODEL,
-      sessionMode: "workspace-write",
+      sessionMode: DEFAULT_CODEX_SESSION_MODE,
       workingDirectory: defaultWorkingDir(path),
       reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
     });
@@ -145,7 +146,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
   const handleRenameSave = () => {
     if (!renamingThread) return;
     if (actions?.setThreadAppearance == null) {
-      antdMessage.error("Thread settings are not available.");
+      antdMessage.error("Chat settings are not available.");
       return;
     }
     const success = actions.setThreadAppearance(renamingThread, {
@@ -155,16 +156,15 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
       image: renameImage.trim(),
     });
     if (!success) {
-      antdMessage.error("Unable to save thread settings.");
+      antdMessage.error("Unable to save chat settings.");
       return;
     }
     if (renameAgentMode === "human") {
       actions.setThreadAgentMode?.(renamingThread, "none");
     } else if (renameAgentMode === "codex") {
       const model = renameCodexConfig.model?.trim() || DEFAULT_CODEX_MODEL;
-      const sessionMode: CodexSessionMode = resolveCodexSessionMode(
-        renameCodexConfig as CodexThreadConfig,
-      );
+      const sessionMode: CodexSessionMode =
+        normalizeSessionMode(renameCodexConfig) ?? DEFAULT_CODEX_SESSION_MODE;
       actions.setCodexConfig?.(renamingThread, {
         ...renameCodexConfig,
         model,
@@ -178,8 +178,6 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
           renameCodexConfig.workingDirectory?.trim() ||
           defaultWorkingDir(path),
         sessionId: renameCodexConfig.sessionId?.trim(),
-        envHome: renameCodexConfig.envHome?.trim(),
-        envPath: renameCodexConfig.envPath?.trim(),
       });
     } else {
       if (renameModel.trim()) {
@@ -188,7 +186,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         actions.setThreadAgentMode?.(renamingThread, "none");
       }
     }
-    antdMessage.success("Thread settings saved.");
+    antdMessage.success("Settings saved.");
     closeRenameModal();
   };
 
@@ -327,7 +325,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         </Space>
       </Modal>
       <Modal
-        title="Thread settings"
+        title="Settings"
         open={renamingThread != null}
         onCancel={closeRenameModal}
         onOk={handleRenameSave}
@@ -381,7 +379,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
               />
               <ColorButton
                 onChange={(value) => setRenameColor(value)}
-                title="Select thread color"
+                title="Select chat color"
               />
               <Button size="small" onClick={() => setRenameColor(undefined)}>
                 Clear
@@ -390,7 +388,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
           </div>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-              Thread image URL
+              Chat image
             </div>
             <Input
               style={{ width: "100%", marginBottom: 8 }}
@@ -407,62 +405,18 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
                 }
               }}
             />
-            {project_id ? (
-              <BlobUpload
-                project_id={project_id}
-                show_upload={false}
-                config={{
-                  clickable: `.${renameImageUploadClass}`,
-                  acceptedFiles: "image/*",
-                  maxFiles: 1,
-                }}
-                event_handlers={{
-                  complete: (file) => {
-                    if (file?.url) {
-                      setRenameImage(file.url);
-                    } else {
-                      antdMessage.error("Image upload failed.");
-                    }
-                  },
-                }}
-              >
-                <div
-                  className={renameImageUploadClass}
-                  style={{
-                    border: "1px dashed #cfcfcf",
-                    borderRadius: 8,
-                    padding: "10px 12px",
-                    color: "#666",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <span>
-                    <Icon name="upload" /> Click or drag image here to upload
-                  </span>
-                  {renameImage ? (
-                    <img
-                      src={renameImage}
-                      alt="Thread image preview"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: 6,
-                        objectFit: "cover",
-                        border: "1px solid #ddd",
-                      }}
-                    />
-                  ) : null}
-                </div>
-              </BlobUpload>
-            ) : null}
+            <ThreadImageUpload
+              projectId={project_id}
+              value={renameImage}
+              onChange={setRenameImage}
+              modalTitle="Edit Chat Image"
+              uploadText="Click or drag chat image"
+              size={64}
+            />
           </div>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-              Thread behavior
+              Chat behavior
             </div>
             <Select
               value={renameAgentMode}
@@ -528,9 +482,10 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
                     Execution mode
                   </div>
                   <Select
-                    value={resolveCodexSessionMode(
-                      renameCodexConfig as CodexThreadConfig,
-                    )}
+                    value={
+                      normalizeSessionMode(renameCodexConfig) ??
+                      DEFAULT_CODEX_SESSION_MODE
+                    }
                     style={{ width: "100%" }}
                     options={MODE_OPTIONS}
                     onChange={(value) =>
@@ -567,36 +522,6 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
                       setRenameCodexConfig((prev) => ({
                         ...prev,
                         sessionId: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                    Environment HOME
-                  </div>
-                  <Input
-                    value={renameCodexConfig.envHome ?? ""}
-                    placeholder="Optional"
-                    onChange={(e) =>
-                      setRenameCodexConfig((prev) => ({
-                        ...prev,
-                        envHome: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                    Environment PATH
-                  </div>
-                  <Input
-                    value={renameCodexConfig.envPath ?? ""}
-                    placeholder="Optional"
-                    onChange={(e) =>
-                      setRenameCodexConfig((prev) => ({
-                        ...prev,
-                        envPath: e.target.value,
                       }))
                     }
                   />
@@ -641,8 +566,8 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
             />
           </div>
           <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-            This creates a new thread and links it to the current one. For
-            Codex threads, the agent session will be forked with the same
+            This creates a new chat and links it to the current one. For
+            Codex chats, the agent session will be forked with the same
             context.
           </div>
         </Space>
@@ -692,6 +617,20 @@ function getReasoningForModel({
   if (!options.length) return undefined;
   const match = options.find((r) => r.id === desired);
   return match?.id ?? options.find((r) => r.default)?.id ?? options[0]?.id;
+}
+
+function normalizeSessionMode(
+  config?: Partial<CodexThreadConfig>,
+): CodexSessionMode | undefined {
+  const mode = resolveCodexSessionMode(config as CodexThreadConfig);
+  if (
+    mode === "read-only" ||
+    mode === "workspace-write" ||
+    mode === "full-access"
+  ) {
+    return mode;
+  }
+  return undefined;
 }
 
 function defaultWorkingDir(chatPath: string): string {
