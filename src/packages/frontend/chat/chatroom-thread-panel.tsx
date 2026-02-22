@@ -24,7 +24,6 @@ import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
-import { ThreadImageUpload } from "./thread-image-upload";
 import { ChatIconPicker } from "./chat-icon-picker";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
@@ -139,9 +138,8 @@ export function ChatRoomThreadPanel({
         className="smc-vfill"
         style={{
           ...CHAT_LOG_STYLE,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          overflowY: "auto",
+          padding: "14px 10px",
         }}
       >
         <div
@@ -274,32 +272,6 @@ export function ChatRoomThreadPanel({
                   Clear
                 </Button>
               </Space>
-            </div>
-            <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Chat image</div>
-              <Input
-                style={{ width: "100%", marginBottom: 8 }}
-                placeholder="Paste or drag image URL (optional)"
-                value={newThreadSetup.image}
-                onChange={(e) => update({ image: e.target.value })}
-                onDrop={(e) => {
-                  const uri =
-                    e.dataTransfer.getData("text/uri-list") ||
-                    e.dataTransfer.getData("text/plain");
-                  if (uri?.trim()) {
-                    e.preventDefault();
-                    update({ image: uri.trim() });
-                  }
-                }}
-              />
-              <ThreadImageUpload
-                projectId={project_id}
-                value={newThreadSetup.image}
-                onChange={(value) => update({ image: value })}
-                modalTitle="Edit Chat Image"
-                uploadText="Click or drag chat image"
-                size={72}
-              />
             </div>
           </div>
           {newThreadSetup.agentMode === "codex" && (
