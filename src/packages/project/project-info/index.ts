@@ -4,4 +4,10 @@
  */
 
 export { get_ProjectInfoServer } from "./project-info";
-export { ProjectInfoServer } from "./server"
+export { ProjectInfoServer } from "./server";
+export {
+  getOwnedProcessRegistry,
+  closeOwnedProcessRegistry,
+  type OwnedRootProcess,
+  type OwnedRootProcessMeta,
+} from "./owned-process-registry";
