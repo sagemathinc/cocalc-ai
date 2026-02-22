@@ -485,7 +485,7 @@ export function ChatRoomThreadPanel({
           style={{
             position: "absolute",
             top: 8,
-            right: 8,
+            right: 16,
             zIndex: 10,
             borderRadius: 10,
             overflow: "hidden",

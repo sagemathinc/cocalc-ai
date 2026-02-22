@@ -301,12 +301,10 @@ export function CodexConfigButton({
               <Form.Item
                 label="Working directory"
                 name="workingDirectory"
+                tooltip="Optional. If set, Codex runs in this directory for subsequent turns."
                 style={formItemStyle}
               >
-                <Input
-                  placeholder="Derived from the directory containing this chat"
-                  disabled
-                />
+                <Input placeholder="Derived from the directory containing this chat" />
               </Form.Item>
               <Form.Item
                 label="Session ID"
