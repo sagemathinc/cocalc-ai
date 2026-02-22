@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { watch as chokidarWatch } from "chokidar";
+import { watch as nativeFsWatch, type FSWatcher as NativeFsWatcher } from "node:fs";
+import { join } from "node:path";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { type WatchOptions, type ChangeEvent } from "@cocalc/conat/files/watch";
 import { EventEmitter } from "events";
@@ -33,6 +35,7 @@ const ALLOW_HIGH_FANOUT_SYSTEM_WATCH = (() => {
 
 const PSEUDO_FS_PREFIXES = ["/dev", "/proc", "/sys"];
 const HIGH_FANOUT_SYSTEM_DIRS = new Set([
+  "/",
   "/@tmp",
   "/tmp",
   "/etc",
@@ -132,7 +135,7 @@ export default async function watch(
 }
 
 class Watcher extends EventEmitter {
-  private watcher: ReturnType<typeof chokidarWatch>;
+  private watcher: ReturnType<typeof chokidarWatch> | NativeFsWatcher;
   private ready: boolean = false;
   private readonly readyPromise: Promise<void>;
   private readyResolve: (() => void) | null = null;
@@ -160,16 +163,7 @@ class Watcher extends EventEmitter {
     const normalizedPath = normalizeWatchPath(path);
     const pseudoFsWatch = isPseudoFsPath(normalizedPath);
     const highFanoutSystemWatch = isHighFanoutSystemDir(normalizedPath, options);
-    const rootOnlyWatch = pseudoFsWatch || highFanoutSystemWatch;
-    const ignoredSubpaths = rootOnlyWatch
-      ? (candidatePath: string) => {
-          const candidate = normalizeWatchPath(candidatePath);
-          if (candidate === normalizedPath) {
-            return false;
-          }
-          return candidate.startsWith(`${normalizedPath}/`);
-        }
-      : undefined;
+    const useNativeWatcher = pseudoFsWatch || highFanoutSystemWatch;
     const trackerInfo: Record<string, unknown> = {
       usePolling,
       pollInterval,
@@ -178,96 +172,135 @@ class Watcher extends EventEmitter {
       patch: !!options.patch,
       pseudoFsWatch,
       highFanoutSystemWatch,
-      rootOnlyWatch,
+      useNativeWatcher,
     };
-    if (pseudoFsWatch) {
-      trackerInfo.mode = "pseudo-fs-root-only";
-      logger.warn("sandbox watcher in pseudo filesystem root-only mode", {
+    if (useNativeWatcher) {
+      trackerInfo.mode = "native-fs-watch-guarded";
+      logger.warn("sandbox watcher in guarded native fs.watch mode", {
+        path,
+        pseudoFsWatch,
+        highFanoutSystemWatch,
+      });
+    }
+    if (useNativeWatcher) {
+      this.stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:sandbox/watch",
+        type: "fs.watch",
+        path,
+        info: trackerInfo,
+      });
+      this.watcher = nativeFsWatch(
+        path,
+        { persistent: true },
+        (eventType, filename) => {
+          const child =
+            typeof filename === "string" && filename.length > 0
+              ? join(path, filename)
+              : path;
+          void this.emitChangeFromWatch(eventType as string, child, undefined);
+        },
+      );
+      this.watcher.on("error", (error) => {
+        this.logWatchError(path, error);
+      });
+      // fs.watch has no "ready" event.
+      queueMicrotask(() => {
+        this.ready = true;
+        this.readyResolve?.();
+        this.readyResolve = null;
+      });
+    } else {
+      const chokidarConfig = {
+        depth: 0,
+        ignoreInitial: true,
+        followSymlinks: false,
+        alwaysStat: options.stats ?? false,
+        atomic: true,
+        ignorePermissionErrors: true,
+        usePolling,
+        interval: usePolling ? pollInterval : undefined,
+        awaitWriteFinish: stabilityThreshold
+          ? {
+              stabilityThreshold,
+              pollInterval: stabilityThreshold / 2,
+            }
+          : undefined,
+      };
+      this.stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:sandbox/watch",
+        type: "chokidar",
+        path,
+        info: trackerInfo,
+      });
+      this.watcher = chokidarWatch(path, chokidarConfig);
+
+      this.watcher.once("ready", () => {
+        this.ready = true;
+        const getWatched = (this.watcher as any).getWatched;
+        if (typeof getWatched === "function") {
+          try {
+            const watched = getWatched.call(this.watcher) as Record<
+              string,
+              string[]
+            >;
+            let watchedDirs = 0;
+            let watchedEntries = 0;
+            for (const names of Object.values(watched)) {
+              watchedDirs += 1;
+              watchedEntries += Array.isArray(names) ? names.length : 0;
+            }
+            trackerInfo.watchedDirs = watchedDirs;
+            trackerInfo.watchedEntries = watchedEntries;
+            if (usePolling && watchedEntries >= 500) {
+              logger.warn("polling sandbox watcher has large watch-set", {
+                path,
+                pollInterval,
+                watchedDirs,
+                watchedEntries,
+              });
+            }
+          } catch (err) {
+            trackerInfo.watchedStatsError = `${err}`;
+          }
+        }
+        this.readyResolve?.();
+        this.readyResolve = null;
+      });
+      this.watcher.on("all", async (...args) => {
+        const change = await this.handle(...args);
+        if (change !== undefined) {
+          this.emit("change", change);
+        }
+      });
+      this.watcher.on("error", (error) => {
+        this.logWatchError(path, error);
+      });
+    }
+  }
+
+  private async emitChangeFromWatch(
+    event: string,
+    path: string,
+    stats: any,
+  ): Promise<void> {
+    const change = await this.handle(event, path, stats);
+    if (change !== undefined) {
+      this.emit("change", change);
+    }
+  }
+
+  private logWatchError(path: string, error: unknown): void {
+    this.watchErrorCount += 1;
+    if (this.watchErrorCount <= 3 || this.watchErrorCount % 100 === 0) {
+      logger.debug(path, "got error", {
+        count: this.watchErrorCount,
+        error,
+      });
+    } else if (this.watchErrorCount === 4) {
+      logger.warn("sandbox watcher: suppressing repetitive errors", {
         path,
       });
-    } else if (highFanoutSystemWatch) {
-      trackerInfo.mode = "system-dir-root-only";
-      logger.warn(
-        "sandbox watcher in guarded system-dir root-only mode (set COCALC_SANDBOX_WATCH_ALLOW_HIGH_FANOUT_SYSTEM_DIRS=1 to disable guard)",
-        { path },
-      );
     }
-    const chokidarConfig = {
-      depth: 0,
-      ignoreInitial: true,
-      followSymlinks: false,
-      alwaysStat: options.stats ?? false,
-      atomic: true,
-      ignorePermissionErrors: true,
-      ignored: ignoredSubpaths,
-      usePolling,
-      interval: usePolling ? pollInterval : undefined,
-      awaitWriteFinish: stabilityThreshold
-        ? {
-            stabilityThreshold,
-            pollInterval: stabilityThreshold / 2,
-          }
-        : undefined,
-    };
-    this.stopTrackingWatcher = trackBackendWatcher({
-      source: "backend:sandbox/watch",
-      type: "chokidar",
-      path,
-      info: trackerInfo,
-    });
-    this.watcher = chokidarWatch(path, chokidarConfig);
-
-    this.watcher.once("ready", () => {
-      this.ready = true;
-      const getWatched = (this.watcher as any).getWatched;
-      if (typeof getWatched === "function") {
-        try {
-          const watched = getWatched.call(this.watcher) as Record<
-            string,
-            string[]
-          >;
-          let watchedDirs = 0;
-          let watchedEntries = 0;
-          for (const names of Object.values(watched)) {
-            watchedDirs += 1;
-            watchedEntries += Array.isArray(names) ? names.length : 0;
-          }
-          trackerInfo.watchedDirs = watchedDirs;
-          trackerInfo.watchedEntries = watchedEntries;
-          if (usePolling && watchedEntries >= 500) {
-            logger.warn("polling sandbox watcher has large watch-set", {
-              path,
-              pollInterval,
-              watchedDirs,
-              watchedEntries,
-            });
-          }
-        } catch (err) {
-          trackerInfo.watchedStatsError = `${err}`;
-        }
-      }
-      this.readyResolve?.();
-      this.readyResolve = null;
-    });
-    this.watcher.on("all", async (...args) => {
-      const change = await this.handle(...args);
-      if (change !== undefined) {
-        this.emit("change", change);
-      }
-    });
-    this.watcher.on("error", (error) => {
-      this.watchErrorCount += 1;
-      if (this.watchErrorCount <= 3 || this.watchErrorCount % 100 === 0) {
-        logger.debug(path, "got error", {
-          count: this.watchErrorCount,
-          error,
-        });
-      } else if (this.watchErrorCount === 4) {
-        logger.warn("sandbox watcher: suppressing repetitive errors", {
-          path,
-        });
-      }
-    });
   }
 
   handle = async (event, path, stats): Promise<undefined | ChangeEvent> => {
