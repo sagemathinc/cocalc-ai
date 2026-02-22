@@ -20,6 +20,7 @@ import {
 } from "./owned-process-registry";
 import type { ProcessSnapshot, ProcessSnapshotProvider } from "./snapshot-provider";
 import { ensureJupyterOwnedRootBridge } from "./jupyter-owned-roots";
+import { ensureBackendOwnedRootBridge } from "./backend-owned-roots";
 
 const exec = promisify(cp_exec);
 const DEFAULT_PROCESS_LIMIT = 1024;
@@ -132,6 +133,7 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
 
   async init(_opts: { testing: boolean }) {
     ensureJupyterOwnedRootBridge();
+    ensureBackendOwnedRootBridge();
     const [p_ticks, p_pagesize] = await Promise.all([
       exec("getconf CLK_TCK"),
       exec("getconf PAGESIZE"),
