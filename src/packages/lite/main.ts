@@ -48,6 +48,9 @@ export async function main(opts?: {
   reflectUi?: any;
 }): Promise<number> {
   logger.debug("main");
+  // Lite doesn't expose the project process-info UI, so disable expensive
+  // project-info/project-status/usage-info background collection entirely.
+  process.env.COCALC_ENABLE_PROJECT_INFO = "0";
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");
   initBugCounter();
