@@ -17,10 +17,9 @@ import {
 } from "react";
 import { useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
-import { CSS, redux } from "@cocalc/frontend/app-framework";
+import { CSS } from "@cocalc/frontend/app-framework";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
-import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { lite } from "@cocalc/frontend/lite";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import { SubmitMentionsRef } from "./types";
@@ -89,7 +88,6 @@ export default function ChatInput({
   fixedMode,
 }: Props) {
   const intl = useIntl();
-  const { project_id } = useFrameContext();
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
   const mountedRef = useRef<boolean>(true);
@@ -179,15 +177,11 @@ export default function ChatInput({
 
   function getPlaceholder(): string {
     if (placeholder != null) return placeholder;
-    const have_llm =
-      project_id != null &&
-      redux.getStore("projects").hasLanguageModelEnabled(project_id);
     return intl.formatMessage(
       {
         id: "chat.input.placeholder",
-        defaultMessage: "Message (@mention)...",
+        defaultMessage: "Ask anything...",
       },
-      { have_llm },
     );
   }
 
@@ -227,6 +221,19 @@ export default function ChatInput({
       onChange={(value) => {
         if (!mountedRef.current) return;
         if (isStaleSessionCallback(sessionToken)) {
+          return;
+        }
+        if (value === input) {
+          if (!applyingHistoryRef.current) {
+            const history = historyRef.current;
+            const idx = historyIndexRef.current;
+            const current = history[idx];
+            if (current) {
+              current.cursor = controlRef.current?.getMarkdownPositionForSelection?.();
+              current.at = Date.now();
+            }
+          }
+          savePresence(value);
           return;
         }
         setInput(value);

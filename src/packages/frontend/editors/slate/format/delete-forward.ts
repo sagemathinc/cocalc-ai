@@ -8,6 +8,7 @@ import { getNodeAt } from "../slate-util";
 
 const FORWARD_DELETE_BLOCK_TYPES = new Set<string>([
   "code_block",
+  "jupyter_code_cell",
   "html_block",
   "meta",
   "math_block",
@@ -56,4 +57,3 @@ function customDeleteForward(editor: Editor): boolean | undefined {
     return true;
   }
 }
-

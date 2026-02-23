@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Node } from "slate";
+import { Element, Node } from "slate";
 import type { CodeBlock, CodeLine } from "./types";
 
 export function toCodeLines(value: string): CodeLine[] {
@@ -28,3 +28,10 @@ export function getCodeBlockLineCount(block: CodeBlock): number {
   return getCodeBlockText(block).split("\n").length;
 }
 
+export function isCodeLikeBlockType(type: string | undefined | null): boolean {
+  return type === "code_block" || type === "jupyter_code_cell";
+}
+
+export function isCodeLikeBlock(node: unknown): boolean {
+  return Element.isElement(node) && isCodeLikeBlockType((node as any).type);
+}

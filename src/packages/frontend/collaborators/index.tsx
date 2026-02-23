@@ -5,3 +5,4 @@
 
 export { AddCollaborators } from "./add-collaborators";
 export { CurrentCollaboratorsPanel } from "./current-collabs";
+export { InviteInboxPanel } from "./invite-inbox";

@@ -18,11 +18,16 @@ likely break this assumption and things will go to hell.  Be careful.""
 
 import { Editor, Element, Node, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
+import { uuid } from "@cocalc/util/misc";
 
 import { getNodeAt } from "./slate-util";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { isListElement } from "./elements/list";
-import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
+import {
+  getCodeBlockText,
+  isCodeLikeBlockType,
+  toCodeLines,
+} from "./elements/code-block/utils";
 
 interface NormalizeInputs {
   editor?: Editor;
@@ -40,6 +45,78 @@ function spacerParagraph(): Element {
     type: "paragraph",
     spacer: true,
     children: [{ text: "" }],
+  } as Element;
+}
+
+function newJupyterCellId(): string {
+  return uuid().slice(0, 6);
+}
+
+const NOTEBOOK_CELL_TYPES = new Set<string>([
+  "jupyter_code_cell",
+  "jupyter_markdown_cell",
+]);
+
+function isNotebookCellElement(
+  node: Node | undefined | null,
+): node is Element & { type: string } {
+  return (
+    Element.isElement(node) &&
+    typeof (node as any).type === "string" &&
+    NOTEBOOK_CELL_TYPES.has((node as any).type)
+  );
+}
+
+function paragraphFromText(text: string): Element {
+  return {
+    type: "paragraph",
+    children: [{ text }],
+  } as Element;
+}
+
+function toMarkdownCellChild(editor: Editor, node: Node): Node {
+  if (Text.isText(node)) {
+    return paragraphFromText(node.text);
+  }
+  if (!Element.isElement(node)) {
+    return paragraphFromText(Node.string(node));
+  }
+  if (isNotebookCellElement(node)) {
+    return paragraphFromText(
+      node.type === "jupyter_code_cell"
+        ? getCodeBlockText(node as any)
+        : Node.string(node),
+    );
+  }
+  if (Editor.isBlock(editor, node)) {
+    return node;
+  }
+  return {
+    type: "paragraph",
+    children: [node],
+  } as Element;
+}
+
+function emptyJupyterMarkdownCell(): Element {
+  return {
+    type: "jupyter_markdown_cell",
+    cell_id: newJupyterCellId(),
+    cell_meta: { cell_type: "markdown" },
+    children: [emptyParagraph()],
+  } as Element;
+}
+
+function codeBlockToJupyterCodeCell(
+  node: Element,
+  cellId?: string,
+): Element {
+  return {
+    type: "jupyter_code_cell",
+    fence: true,
+    info: `${(node as any).info ?? ""}`,
+    cell_id: `${cellId ?? ""}`.trim() || newJupyterCellId(),
+    cell_meta: { cell_type: "code" },
+    children: toCodeLines(getCodeBlockText(node as any)),
   } as Element;
 }
 
@@ -83,6 +160,64 @@ NORMALIZERS.push(function ensureDocumentNonempty({ editor }) {
     Editor.insertNode(editor, emptyParagraph());
   }
 });
+
+// In notebook mode, every top-level node must be a notebook cell element.
+// Wrap contiguous non-cell top-level blocks into jupyter_markdown_cell elements.
+NORMALIZERS.push(function ensureNotebookTopLevelCellStructure({
+  editor,
+  node,
+  path,
+}) {
+  if (path.length !== 0) return;
+  const children = (node as any)?.children;
+  if (!Array.isArray(children) || children.length === 0) return;
+  const hasNotebookCell = children.some((child) => isNotebookCellElement(child));
+  if (hasNotebookCell) {
+    (editor as any).__enforceNotebookTopLevel = true;
+  }
+  if (!(editor as any).__enforceNotebookTopLevel) return;
+  if (children.every((child) => isNotebookCellElement(child))) return;
+
+  const nextTopLevel: Node[] = [];
+  let markdownChildren: Node[] = [];
+  const flushMarkdown = () => {
+    if (markdownChildren.length === 0) return;
+    nextTopLevel.push({
+      type: "jupyter_markdown_cell",
+      cell_id: newJupyterCellId(),
+      cell_meta: { cell_type: "markdown" },
+      children: markdownChildren,
+    } as Element);
+    markdownChildren = [];
+  };
+
+  for (const child of children as Node[]) {
+    if (isNotebookCellElement(child)) {
+      flushMarkdown();
+      nextTopLevel.push(child);
+      continue;
+    }
+    if (Element.isElement(child) && child.type === "code_block") {
+      flushMarkdown();
+      nextTopLevel.push(codeBlockToJupyterCodeCell(child));
+      continue;
+    }
+    markdownChildren.push(toMarkdownCellChild(editor, child));
+  }
+  flushMarkdown();
+
+  if (nextTopLevel.length === 0) {
+    nextTopLevel.push(emptyJupyterMarkdownCell());
+  }
+
+  Editor.withoutNormalizing(editor, () => {
+    for (let i = children.length - 1; i >= 0; i--) {
+      Transforms.removeNodes(editor, { at: [i] });
+    }
+    Transforms.insertNodes(editor, nextTopLevel, { at: [0] });
+  });
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
 // Ensure every list_item is contained in a list.
 NORMALIZERS.push(function ensureListItemInAList({ editor, node, path }) {
@@ -136,17 +271,101 @@ NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
   if (!Element.isElement(node)) return;
   if (!Editor.isBlock(editor, node)) return;
   if (node.children.length > 0) return;
+  if (node.type === "jupyter_markdown_cell") {
+    Transforms.insertNodes(editor, emptyParagraph(), { at: path.concat(0) });
+    return;
+  }
   Transforms.insertNodes(editor, { text: "" }, { at: path.concat(0) });
 });
 
+// Ensure jupyter_markdown_cell children are always block-level non-cell nodes.
+NORMALIZERS.push(function normalizeJupyterMarkdownCellChildren({
+  editor,
+  node,
+  path,
+}) {
+  if (!(Element.isElement(node) && node.type === "jupyter_markdown_cell")) return;
+  if ((node.children ?? []).length === 0) {
+    Transforms.insertNodes(editor, emptyParagraph(), { at: path.concat(0) });
+    return;
+  }
+  for (let i = 0; i < node.children.length; i += 1) {
+    const child = node.children[i] as any;
+    if (Text.isText(child)) {
+      Transforms.wrapNodes(editor, { type: "paragraph" } as Element, {
+        at: path.concat(i),
+      });
+      return;
+    }
+    if (!Element.isElement(child)) {
+      Transforms.removeNodes(editor, { at: path.concat(i) });
+      Transforms.insertNodes(editor, emptyParagraph(), { at: path.concat(i) });
+      return;
+    }
+    if (child.type === "code_block" && path.length === 1) {
+      const children = node.children ?? [];
+      const before = children
+        .slice(0, i)
+        .map((n) => toMarkdownCellChild(editor, n as Node));
+      const after = children
+        .slice(i + 1)
+        .map((n) => toMarkdownCellChild(editor, n as Node));
+      const originalId = `${(node as any).cell_id ?? ""}`.trim() || newJupyterCellId();
+      const replacement: Element[] = [];
+      if (before.length > 0) {
+        replacement.push({
+          type: "jupyter_markdown_cell",
+          cell_id: originalId,
+          cell_meta: { cell_type: "markdown" },
+          children: before,
+        } as Element);
+        replacement.push(codeBlockToJupyterCodeCell(child));
+      } else {
+        replacement.push(codeBlockToJupyterCodeCell(child, originalId));
+      }
+      if (after.length > 0) {
+        replacement.push({
+          type: "jupyter_markdown_cell",
+          cell_id: newJupyterCellId(),
+          cell_meta: { cell_type: "markdown" },
+          children: after,
+        } as Element);
+      }
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.removeNodes(editor, { at: path });
+        Transforms.insertNodes(editor, replacement, { at: path });
+      });
+      return;
+    }
+    if (isNotebookCellElement(child)) {
+      const text =
+        child.type === "jupyter_code_cell"
+          ? getCodeBlockText(child as any)
+          : Node.string(child);
+      Transforms.removeNodes(editor, { at: path.concat(i) });
+      Transforms.insertNodes(editor, paragraphFromText(text), {
+        at: path.concat(i),
+      });
+      return;
+    }
+    if (!Editor.isBlock(editor, child)) {
+      Transforms.wrapNodes(editor, { type: "paragraph" } as Element, {
+        at: path.concat(i),
+      });
+      return;
+    }
+  }
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
+
 // Normalize code blocks to use code_line children instead of legacy value.
 NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
-  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  if (!(Element.isElement(node) && isCodeLikeBlockType(node.type))) return;
   const children = node.children ?? [];
   const hasOnlyCodeLines = children.every(
     (child) => Element.isElement(child) && child.type === "code_line"
   );
-  if (hasOnlyCodeLines && node.value == null) return;
+  if (hasOnlyCodeLines && (node as any).value == null) return;
 
   const code = getCodeBlockText(node as any);
   const nextLines = toCodeLines(code);
@@ -156,6 +375,32 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   });
   Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
+
+// Ensure every notebook top-level cell has a non-empty unique id.
+NORMALIZERS.push(function ensureUniqueJupyterCellIds({ editor, path }) {
+  if (path.length !== 0) return;
+  const seen = new Set<string>();
+  const children = editor.children ?? [];
+  for (let i = 0; i < children.length; i += 1) {
+    const node = children[i] as Node;
+    if (!isNotebookCellElement(node)) {
+      continue;
+    }
+    const id = `${(node as any).cell_id ?? ""}`.trim();
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      continue;
+    }
+    let next = newJupyterCellId();
+    while (seen.has(next)) {
+      next = newJupyterCellId();
+    }
+    seen.add(next);
+    Transforms.setNodes(editor, { cell_id: next } as any, { at: [i] });
+    return;
+  }
 });
 SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
@@ -247,7 +492,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
       codePath = Path.next(path);
       if ((editor as any).__autoformatDidBlock) {
         const nextNode = getNodeAt(editor, codePath);
-        if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+        if (Element.isElement(nextNode) && isCodeLikeBlockType(nextNode.type)) {
           const focus = Editor.start(editor, codePath);
           Transforms.setSelection(editor, { anchor: focus, focus });
           (editor as any).__autoformatSelection = { anchor: focus, focus };
@@ -265,7 +510,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
     codePath = Path.next(path);
     if ((editor as any).__autoformatDidBlock) {
       const nextNode = getNodeAt(editor, codePath);
-      if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+      if (Element.isElement(nextNode) && isCodeLikeBlockType(nextNode.type)) {
         const focus = Editor.start(editor, codePath);
         Transforms.setSelection(editor, { anchor: focus, focus });
         (editor as any).__autoformatSelection = { anchor: focus, focus };
@@ -281,7 +526,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
     Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
   }
-  if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+  if ((editor as any).__autoformatDidBlock && isCodeLikeBlockType(node.type)) {
     (editor as any).__autoformatDidBlock = false;
   }
 });

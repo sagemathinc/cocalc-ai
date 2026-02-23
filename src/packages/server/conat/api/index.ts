@@ -1,5 +1,5 @@
 /*
-This is meant to be similar to the nexts pages http api/v2, but using NATS instead of HTTPS.
+This is meant to be similar to the nexts pages http api/v2, but using Conat instead of HTTPS.
 
 To do development:
 

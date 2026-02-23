@@ -10,6 +10,7 @@ const KIND_LABELS: Record<string, string> = {
   "host-start": "Start",
   "host-stop": "Stop",
   "host-restart": "Restart",
+  "host-drain": "Drain",
   "host-upgrade-software": "Upgrade",
   "host-deprovision": "Deprovision",
   "host-delete": "Delete",

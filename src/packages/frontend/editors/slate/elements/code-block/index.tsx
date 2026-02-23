@@ -200,7 +200,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   if (element.type === "code_line") {
     return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
   }
-  if (element.type != "code_block") {
+  if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
   }
 
@@ -237,7 +237,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     setTemporaryInfo(null);
   }, [element.info]);
 
-  const codeValue = newValue ?? getCodeBlockText(element);
+  const codeValue = newValue ?? getCodeBlockText(element as any);
   const lineCount = codeValue.split("\n").length;
   const characterCount = codeValue.length;
   const shouldCollapse =
@@ -474,7 +474,7 @@ export function toSlate({ token }) {
   } as Element;
 }
 
-function sizeEstimator({ node, fontSize }): number {
+export function sizeEstimator({ node, fontSize }): number {
   return getCodeBlockLineCount(node as any) * (fontSize + 2) + 10 + fontSize;
 }
 

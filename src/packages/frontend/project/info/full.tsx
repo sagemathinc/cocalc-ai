@@ -7,25 +7,31 @@
 
 declare let DEBUG;
 
-import { Alert, Button, Form, Modal, Popconfirm, Switch, Table } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Card, Form, Modal, Popover, Table, Tooltip } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
-import { InfoCircleOutlined, ScheduleOutlined } from "@ant-design/icons";
+import {
+  InfoCircleOutlined,
+  QuestionCircleOutlined,
+  ReloadOutlined,
+  ScheduleOutlined,
+} from "@ant-design/icons";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
-import { CSS, ProjectActions, redux } from "@cocalc/frontend/app-framework";
-import { A, Loading, Tip } from "@cocalc/frontend/components";
+import { CSS, ProjectActions } from "@cocalc/frontend/app-framework";
+import { A, Icon, Loading, Tip } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
-import { field_cmp, seconds2hms } from "@cocalc/util/misc";
+import { cmp, field_cmp, seconds2hms } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   Process,
+  Processes,
   ProjectInfo as ProjectInfoType,
 } from "@cocalc/util/types/project-info/types";
+import type { ProjectInfoHistory } from "@cocalc/conat/project/project-info";
 import { useProjectContext } from "../context";
 import { ROOT_STYLE } from "../servers/consts";
-import { RestartProject } from "../settings/restart-project";
 import {
   AboutContent,
   CGroup,
@@ -35,7 +41,11 @@ import {
   SignalButtons,
 } from "./components";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
-import { DETAILS_BTN_TEXT, SSH_KEYS_DOC } from "./utils";
+import {
+  DETAILS_BTN_TEXT,
+  SSH_KEYS_DOC,
+  process_inclusive_value,
+} from "./utils";
 
 interface Props {
   any_alerts: () => boolean;
@@ -46,6 +56,8 @@ interface Props {
   error: React.JSX.Element | null;
   status: string;
   info: ProjectInfoType | null;
+  history: ProjectInfoHistory | null;
+  refresh: () => Promise<void>;
   loading: boolean;
   modal: string | Process | undefined;
   project_actions: ProjectActions | undefined;
@@ -66,12 +78,173 @@ interface Props {
   onCellProps;
 }
 
+function sparklinePoints(values: number[], width = 240, height = 56): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) {
+    return `0,${height / 2} ${width},${height / 2}`;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  const dx = width / (values.length - 1);
+  return values.map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+}
+
+function HistoryCard({
+  title,
+  values,
+  unit,
+  color,
+}: {
+  title: string;
+  values: number[];
+  unit: string;
+  color: string;
+}) {
+  if (values.length === 0) return null;
+  const latest = values[values.length - 1];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const points = sparklinePoints(values);
+  return (
+    <Card
+      size="small"
+      title={title}
+      style={{ marginBottom: "8px" }}
+      extra={
+        <span style={{ color: COLORS.GRAY_D }}>
+          now <b>{latest.toFixed(1)}</b> {unit}
+        </span>
+      }
+    >
+      <svg width="100%" height="64" viewBox="0 0 240 56" preserveAspectRatio="none">
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          points={points}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
+        range: {min.toFixed(1)} to {max.toFixed(1)} {unit}
+      </div>
+    </Card>
+  );
+}
+
+function MiniTrend({
+  values,
+  timestamps,
+  color,
+  unit,
+  label,
+}: {
+  values: number[];
+  timestamps: number[];
+  color: string;
+  unit: string;
+  label: string;
+}): React.JSX.Element | null {
+  const filtered: Array<{ value: number; timestamp: number }> = [];
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    const timestamp = timestamps[i];
+    if (Number.isFinite(value) && Number.isFinite(timestamp)) {
+      filtered.push({ value, timestamp });
+    }
+  }
+  if (filtered.length < 2) {
+    return null;
+  }
+  const trendValues = filtered.map(({ value }) => value);
+  const trendTimestamps = filtered.map(({ timestamp }) => timestamp);
+  const latest = trendValues[trendValues.length - 1];
+  const min = Math.min(...trendValues);
+  const max = Math.max(...trendValues);
+  const startTs = trendTimestamps[0];
+  const endTs = trendTimestamps[trendTimestamps.length - 1];
+  const coveredMinutes = Math.max(0, (endTs - startTs) / (60 * 1000));
+  const sampleSeconds =
+    trendTimestamps.length > 1
+      ? (endTs - startTs) / 1000 / (trendTimestamps.length - 1)
+      : 0;
+  const coveredLabel =
+    coveredMinutes >= 1
+      ? `${coveredMinutes.toFixed(1)} minutes`
+      : `${Math.max(0, (endTs - startTs) / 1000).toFixed(0)} seconds`;
+
+  const width = 64;
+  const height = 16;
+  const points = sparklinePoints(trendValues, width, height);
+  const bigWidth = 280;
+  const bigHeight = 88;
+  const bigPoints = sparklinePoints(trendValues, bigWidth, bigHeight);
+  const tooltip = (
+    <div style={{ maxWidth: "300px" }}>
+      <div>
+        <strong>{label} history</strong>
+      </div>
+      <div>
+        X-axis: oldest to newest visible sample for this process, covering{" "}
+        {coveredLabel}.
+      </div>
+      <div>
+        {trendValues.length} samples, about every {sampleSeconds.toFixed(0)}s.
+      </div>
+      <div>
+        range: {min.toFixed(1)} to {max.toFixed(1)} {unit}; now{" "}
+        {latest.toFixed(1)} {unit}.
+      </div>
+      <div style={{ marginTop: "8px" }}>
+        <svg
+          width="100%"
+          height={bigHeight}
+          viewBox={`0 0 ${bigWidth} ${bigHeight}`}
+          preserveAspectRatio="none"
+        >
+          <polyline
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            points={bigPoints}
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+  return (
+    <Tooltip title={tooltip} placement="top">
+      <span style={{ display: "inline-flex", cursor: "help" }}>
+        <svg
+          width={width}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          style={{ marginTop: "1px" }}
+        >
+          <polyline
+            fill="none"
+            stroke={color}
+            strokeWidth="1.6"
+            points={points}
+            strokeLinecap="round"
+          />
+        </svg>
+      </span>
+    </Tooltip>
+  );
+}
+
 export function Full(props: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const {
-    any_alerts,
     cg_info,
     render_disconnected,
     disconnected,
@@ -79,10 +252,11 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     error,
     status,
     info,
+    history,
+    refresh,
     loading,
     modal,
     project_actions,
-    project_id,
     project_state,
     project_status,
     pt_stats,
@@ -92,7 +266,6 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     set_expanded,
     set_modal,
     set_selected,
-    show_explanation,
     show_long_loading,
     start_ts,
     render_cocalc,
@@ -103,10 +276,30 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
 
   const problemsRef = useRef<HTMLDivElement>(null);
   const cgroupRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
-  const explanationRef = useRef<HTMLDivElement>(null);
   const generalStatusRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState<number>(400);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  const historyByProcessId = useMemo(() => {
+    const byId = new Map<string, { cpu: number[]; mem: number[]; timestamps: number[] }>();
+    for (const sample of history?.samples ?? []) {
+      for (const proc of Object.values(sample.processes ?? {})) {
+        const cur = byId.get(proc.id) ?? { cpu: [], mem: [], timestamps: [] };
+        cur.cpu.push(proc.cpu_pct);
+        cur.mem.push(proc.mem_rss);
+        cur.timestamps.push(sample.timestamp);
+        byId.set(proc.id, cur);
+      }
+    }
+    return byId;
+  }, [history]);
+
+  const inclusiveCmp = (field: "cpu_pct" | "cpu_tot" | "mem") => {
+    return (a: ProcessRow, b: ProcessRow) =>
+      cmp(process_inclusive_value(a, field), process_inclusive_value(b, field));
+  };
 
   useEffect(() => {
     const calculateTableHeight = () => {
@@ -121,21 +314,22 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       // Add height of CGroup component
       usedHeight += cgroupRef.current?.offsetHeight ?? 0;
 
+      // Add height of history charts/caption block.
+      usedHeight += historyRef.current?.offsetHeight ?? 0;
+
       // Add height of header row
       usedHeight += headerRef.current?.offsetHeight ?? 0;
-
-      // Add height of explanation row if visible
-      usedHeight += explanationRef.current?.offsetHeight ?? 0;
 
       // Add height of general status row if DEBUG is enabled
       if (DEBUG) {
         usedHeight += generalStatusRef.current?.offsetHeight ?? 0;
       }
 
-      // Add more buffer for table header, margins, and other spacing
-      usedHeight += 100;
+      // Buffer for table header, margins, and spacing so only the table body
+      // scrolls and this page does not need a second scrollbar.
+      usedHeight += 120;
 
-      const availableHeight = Math.max(300, parentHeight - usedHeight);
+      const availableHeight = Math.max(120, parentHeight - usedHeight);
       setTableHeight(availableHeight);
     };
 
@@ -144,31 +338,116 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     // Recalculate on window resize
     window.addEventListener("resize", calculateTableHeight);
     return () => window.removeEventListener("resize", calculateTableHeight);
-  }, [show_explanation, ptree, contentSize.height, contentSize.width]);
+  }, [ptree, history?.samples?.length, contentSize.height, contentSize.width]);
+
+  function render_help_content() {
+    const scopeDescription =
+      info?.scope === "owned"
+        ? "In this view, the process list includes processes that were started by this workspace (and their descendants)."
+        : "In this view, the process list includes all visible processes in the workspace environment.";
+    return (
+      <div style={{ maxWidth: "560px" }}>
+        <p>
+          This panel shows <strong>real-time information about this project</strong>{" "}
+          and its resource usage. In particular, you can see which processes are
+          running, and if available, also get a button to <SiteName /> specific
+          information or links to the associated file.
+        </p>
+        <p>
+          {scopeDescription}
+        </p>
+        <p>
+          Use the checkboxes on the left to select one or more processes (or use
+          the header checkbox to select all visible rows). Then use{" "}
+          "{DETAILS_BTN_TEXT}" for detailed process information, or send a
+          signal to the selected process(es).
+        </p>
+        <p>
+          Sub-processes are shown as a tree. When you collapse a branch, the
+          values you see are the sum of that particular process and all its
+          children. CPU and memory sorting use this inclusive value, so heavy
+          process trees bubble up even if the parent itself is mostly idle.
+          Small trend lines in CPU and Memory columns show per-process history
+          when enough samples are available.
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          If there are any issues detected, there will be highlights in red.
+          They could be caused by individual processes using CPU non-stop, the
+          total of all processes hitting the overall memory limit, or even the
+          disk space running low. You can often resolve these by interrupting,
+          terminating, pausing, or resuming processes. If disk space is low, you
+          must free space (or increase available disk quota in environments that
+          support upgrades).
+        </p>
+      </div>
+    );
+  }
 
   function render_help() {
     return (
-      <Form.Item label="Help:">
-        <Switch
-          checked={show_explanation}
-          onChange={(val) =>
-            project_actions?.setState({ show_project_info_explanation: val })
-          }
-        />
+      <Form.Item>
+        <Popover
+          trigger={["click"]}
+          placement="bottomRight"
+          content={render_help_content()}
+          title="Help"
+          overlayStyle={{ maxWidth: "620px" }}
+        >
+          <Button
+            type="text"
+            size="small"
+            icon={<QuestionCircleOutlined />}
+            aria-label="Show help"
+          />
+        </Popover>
       </Form.Item>
     );
   }
 
-  function render_restart_project() {
+  function render_history() {
+    const samples = history?.samples ?? [];
+    if (samples.length < 2) return;
+    const cpu = samples.map((sample) => sample.project.cpu_pct);
+    const mem = samples.map((sample) => sample.project.mem_rss);
+    const startTs = samples[0].timestamp;
+    const endTs = samples[samples.length - 1].timestamp;
+    const coveredMinutes = Math.max(0, (endTs - startTs) / (60 * 1000));
+    const sampleSeconds =
+      samples.length > 1 ? (endTs - startTs) / 1000 / (samples.length - 1) : 0;
+    const requestedMinutes = history?.minutes ?? coveredMinutes;
+    const coveredLabel =
+      coveredMinutes >= requestedMinutes - 0.25
+        ? `${requestedMinutes.toFixed(0)} minutes`
+        : `${coveredMinutes.toFixed(1)} of ${requestedMinutes.toFixed(0)} minutes`;
     return (
-      <Form.Item>
-        <RestartProject
-          project_id={project_id}
-          text={"Restart…"}
-          size={"small"}
-          danger={any_alerts()}
-        />
-      </Form.Item>
+      <div ref={historyRef}>
+        <Row style={{ marginTop: "8px", marginBottom: "8px" }}>
+          <Col md={6} sm={12} xs={24}>
+            <HistoryCard
+              title="CPU Trend"
+              values={cpu}
+              unit="%"
+              color={COLORS.BLUE_D}
+            />
+          </Col>
+          <Col md={6} sm={12} xs={24}>
+            <HistoryCard
+              title="Memory Trend"
+              values={mem}
+              unit="MiB"
+              color={COLORS.ANTD_GREEN_D}
+            />
+          </Col>
+        </Row>
+        <Row style={{ marginBottom: "8px" }}>
+          <Col md={12}>
+            <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
+              X-axis: oldest to newest sample, covering {coveredLabel} (
+              {samples.length} samples, about every {sampleSeconds.toFixed(0)}s).
+            </div>
+          </Col>
+        </Row>
+      </div>
     );
   }
 
@@ -208,24 +487,57 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     );
   }
 
-  function has_children(proc: ProcessRow): boolean {
-    return proc.children != null && proc.children.length > 0;
+  function render_refresh_button() {
+    const refreshNow = async () => {
+      if (refreshing) return;
+      setRefreshing(true);
+      try {
+        await refresh();
+      } finally {
+        setRefreshing(false);
+      }
+    };
+    return (
+      <Form.Item>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => void refreshNow()}
+          loading={refreshing}
+        >
+          Refresh
+        </Button>
+      </Form.Item>
+    );
   }
 
-  function restart_project() {
-    return (
-      <Popconfirm
-        title={`Are you sure to restart this ${projectLabelLower}?`}
-        onConfirm={() => {
-          const actions = redux.getActions("projects");
-          actions?.restart_project(project_id);
-        }}
-        okText="Restart"
-        cancelText="No"
-      >
-        <a href="#">restart this {projectLabelLower}</a>
-      </Popconfirm>
-    );
+  function processHistory(
+    proc: ProcessRow,
+  ): { cpu: number[]; mem: number[]; timestamps: number[] } | undefined {
+    const live = info?.processes?.[proc.pid];
+    if (live == null) return;
+    const id = `${live.pid}:${live.stat.starttime}`;
+    return historyByProcessId.get(id);
+  }
+
+  function processHistoryForProcess(
+    proc: Process | undefined,
+  ): { cpu: number[]; mem: number[]; timestamps: number[] } | undefined {
+    if (proc == null) return;
+    const id = `${proc.pid}:${proc.stat.starttime}`;
+    return historyByProcessId.get(id);
+  }
+
+  const renderCpuCell = onCellProps(
+    "cpu_pct",
+    (value) => value as unknown as number,
+  );
+  const renderMemCell = onCellProps(
+    "mem",
+    (value) => value as unknown as number,
+  );
+
+  function has_children(proc: ProcessRow): boolean {
+    return proc.children != null && proc.children.length > 0;
   }
 
   function render_modal_footer() {
@@ -237,6 +549,55 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   }
 
   function render_modals() {
+    const renderModalFileLink = (proc: Process): React.JSX.Element | undefined => {
+      const cocalc = proc.cocalc;
+      if (cocalc == null) return;
+      if (
+        cocalc.type !== "jupyter" &&
+        cocalc.type !== "terminal" &&
+        cocalc.type !== "x11"
+      ) {
+        return;
+      }
+      const openPath = cocalc.path;
+      const sourcePath = proc.origin?.path ?? openPath;
+      const displayPath =
+        sourcePath.startsWith("/") ? sourcePath : `/${sourcePath}`;
+      const icon =
+        cocalc.type === "jupyter"
+          ? "ipynb"
+          : cocalc.type === "terminal"
+            ? "terminal"
+            : "window-restore";
+      return (
+        <Button
+          shape="round"
+          icon={<Icon name={icon} />}
+          onClick={() =>
+            project_actions?.open_file({
+              path: openPath,
+              foreground: true,
+            })
+          }
+          style={{ maxWidth: "100%" }}
+        >
+          <span
+            style={{
+              display: "inline-block",
+              maxWidth: "52vw",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              verticalAlign: "bottom",
+            }}
+            title={displayPath}
+          >
+            {displayPath}
+          </span>
+        </Button>
+      );
+    };
+
     switch (modal) {
       case "ssh":
         return (
@@ -264,13 +625,25 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           >
             <div>
               This is the {projectLabelLower}'s own management process. Do not
-              terminate it! If it uses too much resources, you can{" "}
-              {restart_project()}.
+              terminate it! If it uses too much resources, use the workspace
+              controls outside this page.
             </div>
           </Modal>
         );
       default:
         if (modal != null && typeof modal !== "string") {
+          const processes: Processes = info?.processes ?? { [modal.pid]: modal };
+          const signalControls = (
+            <div style={{ marginBottom: "8px" }}>
+              <SignalButtons
+                pid={modal.pid}
+                loading={loading}
+                processes={processes}
+                project_actions={project_actions}
+              />
+            </div>
+          );
+          const modalFileLink = renderModalFileLink(modal);
           return (
             <Modal
               title="Process info"
@@ -279,7 +652,14 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               footer={render_modal_footer()}
               onCancel={() => set_modal(undefined)}
             >
-              <AboutContent proc={modal} />;
+              {signalControls}
+              {modalFileLink != null ? (
+                <div style={{ marginBottom: "10px" }}>{modalFileLink}</div>
+              ) : undefined}
+              <AboutContent
+                proc={modal}
+                trend={processHistoryForProcess(modal)}
+              />
             </Modal>
           );
         }
@@ -299,10 +679,8 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               <div>
                 <p>
                   If the Table of Processes does not load, the project might be
-                  malfunctioning or saturated by load. Try restarting the
-                  project to make it work again.
+                  malfunctioning or saturated by load.
                 </p>
-                {render_restart_project()}
               </div>
             }
           />
@@ -331,7 +709,23 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     const rowSelection = {
       selectedRowKeys: selected,
       onChange: select_proc,
-      hideSelectAll: true,
+    };
+
+    const openRowProcessModal = (proc: ProcessRow) => {
+      const live = info?.processes?.[proc.pid];
+      if (live == null) return;
+      set_selected([live.pid]);
+      set_modal(live);
+    };
+
+    const shouldIgnoreRowClick = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.closest("[data-cocalc-role-cell='1']")) return true;
+      if (target.closest(".ant-table-selection-column")) return true;
+      if (target.closest(".ant-checkbox-wrapper")) return true;
+      if (target.closest(".ant-table-row-expand-icon")) return true;
+      if (target.closest("button,a,input,label")) return true;
+      return false;
     };
 
     const cocalc_title = (
@@ -354,9 +748,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       </Tip>
     );
 
-    const table_style: CSS = {
-      marginBottom: "2rem",
-    };
+    const table_style: CSS = { marginBottom: 0 };
 
     return (
       <>
@@ -367,34 +759,40 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           <Col md={9}>
             <Form layout="inline">
               <Form.Item label="Table of Processes" />
+              {render_refresh_button()}
               {render_action_buttons()}
               {render_disconnected()}
             </Form>
           </Col>
           <Col md={3}>
             <Form layout="inline" style={{ float: "right" }}>
-              {render_restart_project()}
               {render_help()}
             </Form>
           </Col>
         </Row>
-        <Row ref={explanationRef}>{render_explanation()}</Row>
         <Row>
           <Table<ProcessRow>
             key={`table-${contentSize.width}-${contentSize.height}`}
             dataSource={ptree}
             size={"small"}
             pagination={false}
+            tableLayout="fixed"
             scroll={{ y: tableHeight }}
             style={table_style}
             expandable={expandable}
             rowSelection={rowSelection}
             loading={disconnected || loading}
+            onRow={(proc) => ({
+              onClick: (event) => {
+                if (shouldIgnoreRowClick(event.target)) return;
+                openRowProcessModal(proc);
+              },
+            })}
           >
             <Table.Column<ProcessRow>
               key="process"
               title="Process"
-              width="40%"
+              width="35%"
               align={"left"}
               ellipsis={true}
               render={(proc) => (
@@ -407,10 +805,14 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
             <Table.Column<ProcessRow>
               key="cocalc"
               title={cocalc_title}
-              width="15%"
+              width="20%"
               align={"left"}
               render={(proc) => (
-                <div style={{ width: "100%", overflow: "hidden" }}>
+                <div
+                  data-cocalc-role-cell="1"
+                  onClick={(event) => event.stopPropagation()}
+                  style={{ width: "100%", overflow: "hidden" }}
+                >
                   {render_cocalc(proc)}
                 </div>
               )}
@@ -440,9 +842,30 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               width="10%"
               dataIndex="cpu_pct"
               align={"right"}
-              render={onCellProps("cpu_pct", (val) => `${val.toFixed(1)}%`)}
+              render={(value, proc) => {
+                const display = renderCpuCell(value, proc) as number;
+                const trend = processHistory(proc)?.cpu ?? [];
+                return (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "end",
+                    }}
+                  >
+                    <span>{display.toFixed(1)}%</span>
+                    <MiniTrend
+                      values={trend}
+                      timestamps={processHistory(proc)?.timestamps ?? []}
+                      color={COLORS.BLUE_D}
+                      unit="%"
+                      label="CPU"
+                    />
+                  </div>
+                );
+              }}
               onCell={onCellProps("cpu_pct")}
-              sorter={field_cmp("cpu_pct")}
+              sorter={inclusiveCmp("cpu_pct")}
             />
             <Table.Column<ProcessRow>
               key="cpu_tot"
@@ -452,7 +875,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               align={"right"}
               render={onCellProps("cpu_pct", (val) => seconds2hms(val))}
               onCell={onCellProps("cpu_tot")}
-              sorter={field_cmp("cpu_tot")}
+              sorter={inclusiveCmp("cpu_tot")}
             />
             <Table.Column<ProcessRow>
               key="mem"
@@ -460,63 +883,34 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
               dataIndex="mem"
               width="10%"
               align={"right"}
-              render={onCellProps("cpu_pct", (val) => `${val.toFixed(0)} MiB`)}
+              render={(value, proc) => {
+                const display = renderMemCell(value, proc) as number;
+                const trend = processHistory(proc)?.mem ?? [];
+                return (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "end",
+                    }}
+                  >
+                    <span>{display.toFixed(0)} MiB</span>
+                    <MiniTrend
+                      values={trend}
+                      timestamps={processHistory(proc)?.timestamps ?? []}
+                      color={COLORS.ANTD_GREEN_D}
+                      unit="MiB"
+                      label="Memory"
+                    />
+                  </div>
+                );
+              }}
               onCell={onCellProps("mem")}
-              sorter={field_cmp("mem")}
+              sorter={inclusiveCmp("mem")}
             />
           </Table>
         </Row>
       </>
-    );
-  }
-
-  function render_explanation() {
-    if (!show_explanation) return;
-    const msg = (
-      <div>
-        <p>
-          This panel shows{" "}
-          <strong>real-time information about this project</strong> and its
-          resource usage. In particular, you can see which processes are
-          running, and if available, also get a button to <SiteName /> specific
-          information or links to the associated file.
-        </p>
-        <p>
-          By selecting a process via the checkbox on the left hand side, you can
-          obtain more detailed information via the "{DETAILS_BTN_TEXT}" button
-          or even issue commands like sending a signal to the selected job(s).
-        </p>
-        <p>
-          Sub-processes are shown as a tree. When you collapse a branch, the
-          values you see are the sum of that particular process and all its
-          children. Note that because of this tree structure, sorting happens in
-          each branch, since the tree structure must also be preserved.
-        </p>
-        <p>
-          If there are any issues detected, there will be highlights in red.
-          They could be caused by individual processes using CPU non-stop, the
-          total of all processes hitting the overall memory limit, or even the
-          disk space running low. You can use the signals to fix some of these
-          issues by interrupting/terminating a job, or restarting the project.
-          If you're low on disk space, you either have to delete some files or
-          purchase disk space upgrades.
-        </p>
-      </div>
-    );
-    return (
-      <Col md={12} mdOffset={0}>
-        <Alert
-          title={msg}
-          style={{ margin: "10px 0" }}
-          type={"info"}
-          closable
-          onClose={() =>
-            project_actions?.setState({
-              show_project_info_explanation: false,
-            })
-          }
-        />
-      </Col>
     );
   }
 
@@ -552,6 +946,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
             project_status={project_status}
           />
         </div>
+        {render_history()}
         {render_top()}
         {render_modals()}
         {DEBUG && render_general_status()}
@@ -573,7 +968,14 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   }
 
   return (
-    <div style={{ ...ROOT_STYLE, maxWidth: undefined }}>
+    <div
+      style={{
+        ...ROOT_STYLE,
+        maxWidth: undefined,
+        height: "100%",
+        overflow: "hidden",
+      }}
+    >
       {render_not_running()}
       {error}
       {render_body()}

@@ -26,6 +26,7 @@ import { Footer } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 import { HostCreatePanel } from "@cocalc/frontend/hosts/components/host-create-panel";
+import { InviteInboxPanel } from "@cocalc/frontend/collaborators";
 import { capitalize } from "@cocalc/util/misc";
 
 import { NewProjectCreator } from "./create-project";
@@ -130,6 +131,7 @@ export const ProjectsPage: React.FC = () => {
   const titleRef = useRef<HTMLDivElement>(null);
   const starredBarRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
+  const inviteInboxRef = useRef<HTMLDivElement>(null);
   const operationsRef = useRef<HTMLDivElement>(null);
   const loadAllRef = useRef<HTMLDivElement>(null);
 
@@ -137,6 +139,7 @@ export const ProjectsPage: React.FC = () => {
   const refs = [
     titleRef,
     starredBarRef,
+    inviteInboxRef,
     controlsRef,
     operationsRef,
     loadAllRef,
@@ -440,6 +443,10 @@ export const ProjectsPage: React.FC = () => {
                       />
                     </div>
                   )}
+
+                  <div ref={inviteInboxRef}>
+                    <InviteInboxPanel mode="global" />
+                  </div>
 
                   {/* Table Controls (Search, Filters, Create Button) */}
                   <div ref={controlsRef}>

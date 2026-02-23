@@ -31,6 +31,7 @@ import { argsJoin } from "@cocalc/util/args";
 import LRUCache from "lru-cache";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import { trackProcessRoot } from "@cocalc/backend/process-tracker";
 import type { AcpEvaluateRequest, AcpAgent, AcpStreamHandler } from "./types";
 import { getCodexProjectSpawner } from "./codex-project";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
@@ -46,8 +47,10 @@ const LOG_OUTPUT = Boolean(process.env.COCALC_LOG_CODEX_OUTPUT);
 const DEFAULT_PRECONTENT_CACHE_MB = 16;
 const DEFAULT_PRECONTENT_MAX_FILE_MB = 2;
 const COMPRESS_THRESHOLD_BYTES = 64 * 1024;
-const FILE_LINK_GUIDANCE =
-  "When referencing workspace files, output markdown links relative to the project root so they stay clickable in CoCalc, e.g., foo.py -> [foo.py](./foo.py) (no backticks around the link). For images use ![](./image.png).";
+const START_EVENT_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_CODEX_EXEC_START_EVENT_TIMEOUT_MS ?? 20_000),
+);
 const IMMEDIATE_SEND_GUIDANCE = [
   "[CoCalc immediate-send behavior]",
   "This user message was sent with 'Send Immediately' during an active run.",
@@ -201,7 +204,7 @@ export class CodexExecAgent implements AcpAgent {
     void this.capturePreContentsFromText(prompt, cwd, preContentCache);
     const args = this.buildArgs(config, cwd);
     const projectSpawner = getCodexProjectSpawner();
-    const projectId = request.chat?.project_id;
+    const projectId = request.chat?.project_id ?? request.project_id;
     const accountId = request.account_id;
     const model = config?.model;
     const siteKeyGovernor = getCodexSiteKeyGovernor();
@@ -258,6 +261,15 @@ export class CodexExecAgent implements AcpAgent {
             ...(HOME ? { HOME } : {}),
           },
         });
+      }
+      const trackedRoot = trackProcessRoot({
+        kind: "codex",
+        path: cwd,
+        thread_id: request.chat?.thread_id,
+        session_id: session.sessionId,
+      });
+      if (proc.pid != null) {
+        trackedRoot.attachPid(proc.pid);
       }
 
       if (LOG_OUTPUT) {
@@ -362,6 +374,22 @@ export class CodexExecAgent implements AcpAgent {
       }
 
       const rl = createInterface({ input: proc.stdout as Readable });
+      let sawStreamEvent = false;
+      let startEventTimer: NodeJS.Timeout | undefined;
+      if (START_EVENT_TIMEOUT_MS > 0) {
+        startEventTimer = setTimeout(() => {
+          if (sawStreamEvent) return;
+          const msg = `Codex did not emit startup events within ${START_EVENT_TIMEOUT_MS}ms. This usually means container startup/auth is stuck.`;
+          errors.push(msg);
+          logger.warn("codex-exec: startup event timeout", {
+            session_id: session.sessionId,
+            timeoutMs: START_EVENT_TIMEOUT_MS,
+            authSource,
+          });
+          this.kill(proc);
+        }, START_EVENT_TIMEOUT_MS);
+        startEventTimer.unref?.();
+      }
 
       const handleEvent = async (evt: ThreadEvent) => {
         switch (evt.type) {
@@ -410,6 +438,11 @@ export class CodexExecAgent implements AcpAgent {
       const linePromises: Promise<void>[] = [];
       rl.on("line", (line) => {
         if (!line.trim()) return;
+        sawStreamEvent = true;
+        if (startEventTimer) {
+          clearTimeout(startEventTimer);
+          startEventTimer = undefined;
+        }
         try {
           const evt = JSON.parse(line) as ThreadEvent;
           linePromises.push(handleEvent(evt));
@@ -422,6 +455,14 @@ export class CodexExecAgent implements AcpAgent {
       proc.stderr?.on("data", (chunk) => stderrBuf.push(chunk.toString()));
 
       const exitPromise = new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          trackedRoot.markExited({ pid: proc.pid ?? undefined });
+          trackedRoot.close();
+          resolve();
+        };
         proc.on("exit", (code, signal) => {
           interrupted = !!this.running.get(session.sessionId)?.interrupted;
           if (code !== 0 && !interrupted) {
@@ -445,15 +486,29 @@ export class CodexExecAgent implements AcpAgent {
               authSource,
             });
           }
-          resolve();
+          finish();
+        });
+        proc.on("close", () => {
+          finish();
         });
         proc.on("error", (err) => {
-          errors.push(`spawn error: ${err}`);
+          const errno = `${(err as NodeJS.ErrnoException)?.code ?? ""}`;
+          if (errno === "EACCES") {
+            errors.push(
+              `spawn error: cannot execute codex binary (EACCES) -- check codex binary permissions/path`,
+            );
+          } else {
+            errors.push(`spawn error: ${err}`);
+          }
           logger.warn("codex-exec: spawn error", err);
+          finish();
         });
       });
 
       await exitPromise;
+      if (startEventTimer) {
+        clearTimeout(startEventTimer);
+      }
       await Promise.all(linePromises);
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
@@ -683,11 +738,10 @@ export class CodexExecAgent implements AcpAgent {
   ): string {
     const isSlashCommand = /^\s*\/\w+/.test(prompt);
     if (isSlashCommand) return prompt;
-    const prefix =
-      opts?.sendMode === "immediate"
-        ? `${FILE_LINK_GUIDANCE}\n\n${IMMEDIATE_SEND_GUIDANCE}`
-        : FILE_LINK_GUIDANCE;
-    return `${prefix}\n\n${prompt}`;
+    if (opts?.sendMode === "immediate") {
+      return `${IMMEDIATE_SEND_GUIDANCE}\n\n${prompt}`;
+    }
+    return prompt;
   }
 
   private async handleItem(

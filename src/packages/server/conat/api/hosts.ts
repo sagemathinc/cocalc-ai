@@ -3,9 +3,13 @@ import type {
   Host,
   HostBackupStatus,
   HostConnectionInfo,
+  HostDrainResult,
   HostMachine,
   HostStatus,
   HostCatalog,
+  HostSoftwareArtifact,
+  HostSoftwareAvailableVersion,
+  HostSoftwareChannel,
   HostSoftwareUpgradeTarget,
   HostSoftwareUpgradeResponse,
   HostLroResponse,
@@ -90,6 +94,8 @@ import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
 import { saveResponse } from "@cocalc/server/llm/save-response";
 import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import { moveProjectToHost } from "@cocalc/server/projects/move";
+import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
 function pool() {
   return getPool();
 }
@@ -98,6 +104,7 @@ const SELF_HOST_RESIZE_TIMEOUT_MS = 5 * 60 * 1000;
 const HOST_START_LRO_KIND = "host-start";
 const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
+const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
@@ -107,6 +114,12 @@ const logger = getLogger("server:conat:api:hosts");
 
 const HOST_PROJECTS_DEFAULT_LIMIT = 200;
 const HOST_PROJECTS_MAX_LIMIT = 5000;
+const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
+const SOFTWARE_HISTORY_MAX_LIMIT = 50;
+const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
+const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
+const HOST_DRAIN_DEFAULT_PARALLEL = 10;
+const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
 
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
@@ -123,6 +136,57 @@ function requireAccount(account_id?: string): string {
     throw new Error("must be signed in to manage hosts");
   }
   return account_id;
+}
+
+function parseDrainParallel(parallel?: number): number {
+  if (parallel == null) {
+    return HOST_DRAIN_DEFAULT_PARALLEL;
+  }
+  const n = Math.floor(Number(parallel));
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error("drain parallel must be a positive integer");
+  }
+  return n;
+}
+
+async function resolveDrainParallel(owner: string, parallel?: number): Promise<number> {
+  const requested = parseDrainParallel(parallel);
+  if (!(await isAdmin(owner)) && requested > HOST_DRAIN_OWNER_MAX_PARALLEL) {
+    throw new Error(
+      `drain parallel cannot exceed ${HOST_DRAIN_OWNER_MAX_PARALLEL} for non-admin users`,
+    );
+  }
+  return requested;
+}
+
+async function resolveDrainMoveAccount({
+  project_id,
+  fallback_account_id,
+}: {
+  project_id: string;
+  fallback_account_id: string;
+}): Promise<string> {
+  const { rows } = await pool().query<{ account_id: string }>(
+    `
+      SELECT u.key AS account_id
+      FROM projects p
+      JOIN LATERAL jsonb_each(COALESCE(p.users, '{}'::jsonb)) u(key, value) ON true
+      WHERE p.project_id=$1
+        AND p.deleted IS NOT true
+        AND (u.value ->> 'group') IN ('owner', 'collaborator')
+      ORDER BY
+        CASE (u.value ->> 'group')
+          WHEN 'owner' THEN 0
+          WHEN 'collaborator' THEN 1
+          ELSE 2
+        END,
+        u.key
+      LIMIT 1
+    `,
+    [project_id],
+  );
+  const account_id = `${rows[0]?.account_id ?? ""}`.trim();
+  return account_id || fallback_account_id;
 }
 
 function parseRow(
@@ -232,6 +296,20 @@ async function loadHostBackupStatus(
   return map;
 }
 
+async function loadProjectIdsAssignedToHost(host_id: string): Promise<string[]> {
+  const { rows } = await pool().query<{ project_id: string }>(
+    `
+      SELECT project_id
+      FROM projects
+      WHERE host_id=$1
+        AND deleted IS NOT true
+      ORDER BY COALESCE(last_edited, created) DESC NULLS LAST, project_id DESC
+    `,
+    [host_id],
+  );
+  return rows.map((row) => row.project_id);
+}
+
 async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
@@ -241,6 +319,25 @@ async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   const row = rows[0];
   if (!row) {
     throw new Error("host not found");
+  }
+  if (row.metadata?.owner && row.metadata.owner !== owner) {
+    throw new Error("not authorized");
+  }
+  return row;
+}
+
+async function loadHostForDrain(id: string, account_id?: string): Promise<any> {
+  const owner = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  if (await isAdmin(owner)) {
+    return row;
   }
   if (row.metadata?.owner && row.metadata.owner !== owner) {
     throw new Error("not authorized");
@@ -1608,6 +1705,129 @@ export async function getHostLog({
   }));
 }
 
+function normalizeHostRuntimeLogLines(lines?: number): number {
+  const n = Number(lines ?? 200);
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(5000, Math.floor(n)));
+}
+
+export async function getHostRuntimeLog({
+  account_id,
+  id,
+  lines,
+}: {
+  account_id?: string;
+  id: string;
+  lines?: number;
+}): Promise<{ host_id: string; source: string; lines: number; text: string }> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.getRuntimeLog({
+    lines: normalizeHostRuntimeLogLines(lines),
+  });
+  return {
+    host_id: id,
+    source: response.source,
+    lines: response.lines,
+    text: response.text,
+  };
+}
+
+export async function listHostSshAuthorizedKeys({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<{
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+}> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.listHostSshAuthorizedKeys();
+  return {
+    host_id: id,
+    user: response.user,
+    home: response.home,
+    path: response.path,
+    keys: response.keys ?? [],
+  };
+}
+
+export async function addHostSshAuthorizedKey({
+  account_id,
+  id,
+  public_key,
+}: {
+  account_id?: string;
+  id: string;
+  public_key: string;
+}): Promise<{
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+  added: boolean;
+}> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.addHostSshAuthorizedKey({ public_key });
+  return {
+    host_id: id,
+    user: response.user,
+    home: response.home,
+    path: response.path,
+    keys: response.keys ?? [],
+    added: !!response.added,
+  };
+}
+
+export async function removeHostSshAuthorizedKey({
+  account_id,
+  id,
+  public_key,
+}: {
+  account_id?: string;
+  id: string;
+  public_key: string;
+}): Promise<{
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+  removed: boolean;
+}> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.removeHostSshAuthorizedKey({ public_key });
+  return {
+    host_id: id,
+    user: response.user,
+    home: response.home,
+    path: response.path,
+    keys: response.keys ?? [],
+    removed: !!response.removed,
+  };
+}
+
 export async function createHost({
   account_id,
   name,
@@ -2075,6 +2295,258 @@ export async function restartHostInternal({
   );
   if (!rows[0]) throw new Error("host not found");
   return parseRow(rows[0]);
+}
+
+export async function drainHost({
+  account_id,
+  id,
+  dest_host_id,
+  force,
+  allow_offline,
+  parallel,
+}: {
+  account_id?: string;
+  id: string;
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+  parallel?: number;
+}): Promise<HostLroResponse> {
+  const owner = requireAccount(account_id);
+  const row = await loadHostForDrain(id, owner);
+  const destination = `${dest_host_id ?? ""}`.trim() || undefined;
+  const drainParallel = await resolveDrainParallel(owner, parallel);
+  if (destination === row.id) {
+    throw new Error("destination host must differ from source host");
+  }
+  if (destination) {
+    await loadHostForListing(destination, owner);
+  }
+  return await createHostLro({
+    kind: HOST_DRAIN_LRO_KIND,
+    row,
+    account_id: owner,
+    input: {
+      id: row.id,
+      account_id: owner,
+      dest_host_id: destination,
+      force: !!force,
+      allow_offline: !!allow_offline,
+      parallel: drainParallel,
+    },
+    dedupe_key: `${HOST_DRAIN_LRO_KIND}:${row.id}:${destination ?? "auto"}:${force ? "force" : "safe"}:${allow_offline ? "allow-offline" : "strict"}:p${drainParallel}`,
+  });
+}
+
+export async function drainHostInternal({
+  account_id,
+  id,
+  dest_host_id,
+  force,
+  allow_offline,
+  parallel,
+  shouldCancel,
+  onProgress,
+}: {
+  account_id?: string;
+  id: string;
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+  parallel?: number;
+  shouldCancel?: () => Promise<boolean>;
+  onProgress?: (update: {
+    message: string;
+    detail?: Record<string, any>;
+    progress?: number;
+  }) => Promise<void> | void;
+}): Promise<HostDrainResult> {
+  const owner = requireAccount(account_id);
+  const row = await loadHostForDrain(id, owner);
+  const drainParallel = await resolveDrainParallel(owner, parallel);
+  const destination = `${dest_host_id ?? ""}`.trim() || undefined;
+  if (destination === row.id) {
+    throw new Error("destination host must differ from source host");
+  }
+  if (destination) {
+    await loadHostForListing(destination, owner);
+  }
+
+  const projectIds = await loadProjectIdsAssignedToHost(row.id);
+  const total = projectIds.length;
+  const resultBase = {
+    host_id: row.id,
+    mode: force ? "force" : "move",
+    total,
+    moved: 0,
+    unassigned: 0,
+    failed: 0,
+    parallel: drainParallel,
+    ...(destination ? { dest_host_id: destination } : {}),
+  } satisfies HostDrainResult;
+
+  if (!total) {
+    await onProgress?.({
+      message: "host already drained",
+      detail: { host_id: row.id, total: 0 },
+      progress: 100,
+    });
+    return resultBase;
+  }
+
+  const canceled = async () => {
+    if (!shouldCancel) return false;
+    return await shouldCancel();
+  };
+
+  if (force) {
+    if (await canceled()) {
+      throw new Error("host drain canceled");
+    }
+    await onProgress?.({
+      message: "force-unassigning workspaces",
+      detail: { host_id: row.id, total },
+      progress: 20,
+    });
+    const { rows } = await pool().query<{ project_id: string }>(
+      `
+        UPDATE projects
+        SET host_id=NULL
+        WHERE host_id=$1
+          AND deleted IS NOT true
+        RETURNING project_id
+      `,
+      [row.id],
+    );
+    for (const moved of rows) {
+      await notifyProjectHostUpdate({ project_id: moved.project_id });
+    }
+    await onProgress?.({
+      message: "force-unassign complete",
+      detail: { host_id: row.id, total, unassigned: rows.length },
+      progress: 100,
+    });
+    return {
+      ...resultBase,
+      unassigned: rows.length,
+      failed: Math.max(0, total - rows.length),
+    };
+  }
+
+  const maxParallel = Math.max(1, Math.min(drainParallel, total));
+  let moved = 0;
+  let completed = 0;
+  let nextIndex = 0;
+  let firstError: Error | undefined;
+
+  await onProgress?.({
+    message: "starting host drain",
+    detail: {
+      host_id: row.id,
+      total,
+      parallel: maxParallel,
+      dest_host_id: destination,
+    },
+    progress: 5,
+  });
+
+  const worker = async () => {
+    while (true) {
+      if (firstError) return;
+      if (await canceled()) {
+        firstError = new Error("host drain canceled");
+        return;
+      }
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= total) return;
+      const project_id = projectIds[index];
+      try {
+        const moveAccountId = await resolveDrainMoveAccount({
+          project_id,
+          fallback_account_id: owner,
+        });
+        await moveProjectToHost(
+          {
+            project_id,
+            account_id: moveAccountId,
+            dest_host_id: destination,
+            allow_offline: !!allow_offline,
+            start_dest: true,
+            stop_dest_after_start: true,
+          },
+          { shouldCancel },
+        );
+        moved += 1;
+        completed += 1;
+        const started = Math.min(total, nextIndex);
+        const in_flight = Math.max(0, started - completed);
+        await onProgress?.({
+          message: `drained ${completed}/${total}`,
+          detail: {
+            host_id: row.id,
+            project_id,
+            moved,
+            completed,
+            total,
+            parallel: maxParallel,
+            in_flight,
+            dest_host_id: destination,
+          },
+          progress: Math.min(95, Math.max(5, Math.round((completed / total) * 95))),
+        });
+      } catch (err) {
+        completed += 1;
+        if (await canceled()) {
+          firstError = new Error("host drain canceled");
+        } else if (!firstError) {
+          firstError = new Error(
+            `failed to drain workspace ${project_id}: ${
+              err instanceof Error ? err.message : `${err}`
+            }`,
+          );
+        }
+        await onProgress?.({
+          message: "host drain failed",
+          detail: {
+            host_id: row.id,
+            project_id,
+            completed,
+            total,
+            parallel: maxParallel,
+            error: `${err}`,
+          },
+          progress: Math.min(95, Math.max(5, Math.round((completed / total) * 95))),
+        });
+        return;
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: maxParallel }, () => worker()),
+  );
+
+  if (firstError) {
+    throw firstError;
+  }
+
+  await onProgress?.({
+    message: "host drain complete",
+    detail: {
+      host_id: row.id,
+      total,
+      moved,
+      parallel: maxParallel,
+      dest_host_id: destination,
+    },
+    progress: 100,
+  });
+  return {
+    ...resultBase,
+    moved,
+    failed: Math.max(0, total - moved),
+  };
 }
 
 export async function forceDeprovisionHost({
@@ -2687,19 +3159,277 @@ function mapUpgradeArtifact(
   return undefined;
 }
 
-export async function upgradeHostSoftwareInternal({
-  account_id,
-  id,
-  targets,
-  base_url,
+function canonicalizeSoftwareArtifact(
+  artifact: HostSoftwareArtifact,
+): "project-host" | "project" | "tools" {
+  if (artifact === "project-bundle") return "project";
+  return artifact;
+}
+
+function extractVersionFromSoftwareUrl(
+  artifact: "project-host" | "project" | "tools",
+  url?: string,
+): string | undefined {
+  if (!url) return undefined;
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(new RegExp(`/${artifact}/([^/]+)/`));
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeSoftwareOs(value?: string): "linux" | "darwin" {
+  const raw = `${value ?? "linux"}`.trim().toLowerCase();
+  if (raw === "darwin" || raw === "macos" || raw === "osx") return "darwin";
+  return "linux";
+}
+
+function normalizeSoftwareArch(value?: string): "amd64" | "arm64" {
+  const raw = `${value ?? "amd64"}`.trim().toLowerCase();
+  if (raw === "arm64" || raw === "aarch64") return "arm64";
+  return "amd64";
+}
+
+function normalizeSoftwareChannels(
+  channels?: HostSoftwareChannel[],
+): HostSoftwareChannel[] {
+  const values = (channels ?? ["latest"]).map((channel) =>
+    channel === "staging" ? "staging" : "latest",
+  );
+  return Array.from(new Set(values));
+}
+
+function normalizeSoftwareArtifacts(
+  artifacts?: HostSoftwareArtifact[],
+): HostSoftwareArtifact[] {
+  const defaults: HostSoftwareArtifact[] = [
+    "project-host",
+    "project",
+    "tools",
+  ];
+  if (!artifacts?.length) return defaults;
+  const out: HostSoftwareArtifact[] = [];
+  for (const artifact of artifacts) {
+    if (
+      artifact === "project-host" ||
+      artifact === "project" ||
+      artifact === "project-bundle" ||
+      artifact === "tools"
+    ) {
+      out.push(artifact);
+    }
+  }
+  return out.length ? Array.from(new Set(out)) : defaults;
+}
+
+async function fetchSoftwareManifest(url: string): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return await response.json();
+}
+
+async function fetchSoftwareManifestMaybe(url: string): Promise<any | undefined> {
+  try {
+    return await fetchSoftwareManifest(url);
+  } catch {
+    return undefined;
+  }
+}
+
+function softwareVersionsIndexUrl({
+  baseUrl,
+  artifact,
+  channel,
+  os,
+  arch,
 }: {
-  account_id?: string;
-  id: string;
-  targets: HostSoftwareUpgradeTarget[];
-  base_url?: string;
-}): Promise<HostSoftwareUpgradeResponse> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
+  baseUrl: string;
+  artifact: "project-host" | "project" | "tools";
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+}): string {
+  if (artifact === "tools") {
+    return `${baseUrl}/${artifact}/versions-${channel}-${os}-${arch}.json`;
+  }
+  return `${baseUrl}/${artifact}/versions-${channel}-${os}.json`;
+}
+
+function normalizePublishedVersionRows(index: any): any[] {
+  if (Array.isArray(index?.versions)) {
+    return index.versions;
+  }
+  if (Array.isArray(index)) {
+    return index;
+  }
+  return [];
+}
+
+function softwareVersionRowKey({
+  version,
+  url,
+}: {
+  version?: string;
+  url?: string;
+}): string {
+  const v = `${version ?? ""}`.trim();
+  if (v) return `v:${v}`;
+  const u = `${url ?? ""}`.trim();
+  if (u) return `u:${u}`;
+  return "";
+}
+
+function mapPublishedVersionRow({
+  artifact,
+  channel,
+  os,
+  arch,
+  canonical,
+  row,
+}: {
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  canonical: "project-host" | "project" | "tools";
+  row: any;
+}): HostSoftwareAvailableVersion | undefined {
+  const url = typeof row?.url === "string" ? row.url : undefined;
+  let version = typeof row?.version === "string" ? row.version : undefined;
+  if (!version && url) {
+    version = extractVersionFromSoftwareUrl(canonical, url);
+  }
+  const available = !!url;
+  if (!available && !version) return undefined;
+  return {
+    artifact,
+    channel,
+    os,
+    arch,
+    version,
+    url,
+    sha256: typeof row?.sha256 === "string" ? row.sha256 : undefined,
+    available,
+    error: available ? undefined : "version entry missing url",
+  };
+}
+
+async function resolvePublishedSoftwareRows({
+  baseUrl,
+  artifact,
+  channel,
+  os,
+  arch,
+  limit,
+  latest,
+}: {
+  baseUrl: string;
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  limit: number;
+  latest: HostSoftwareAvailableVersion;
+}): Promise<HostSoftwareAvailableVersion[]> {
+  if (limit <= 1) return [latest];
+  const canonical = canonicalizeSoftwareArtifact(artifact);
+  const indexUrl = softwareVersionsIndexUrl({
+    baseUrl,
+    artifact: canonical,
+    channel,
+    os,
+    arch,
+  });
+  const index = await fetchSoftwareManifestMaybe(indexUrl);
+  if (!index) return [latest];
+  const rows: HostSoftwareAvailableVersion[] = [latest];
+  const seen = new Set<string>();
+  const latestKey = softwareVersionRowKey(latest);
+  if (latestKey) seen.add(latestKey);
+  for (const candidate of normalizePublishedVersionRows(index)) {
+    const mapped = mapPublishedVersionRow({
+      artifact,
+      channel,
+      os,
+      arch,
+      canonical,
+      row: candidate,
+    });
+    if (!mapped) continue;
+    const key = softwareVersionRowKey(mapped);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    rows.push(mapped);
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
+async function resolveLatestSoftwareRow({
+  softwareBaseUrl,
+  artifact,
+  channel,
+  targetOs,
+  targetArch,
+}: {
+  softwareBaseUrl: string;
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  targetOs: "linux" | "darwin";
+  targetArch: "amd64" | "arm64";
+}): Promise<HostSoftwareAvailableVersion> {
+  const canonical = canonicalizeSoftwareArtifact(artifact);
+  const manifestUrl =
+    canonical === "tools"
+      ? `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}-${targetArch}.json`
+      : `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}.json`;
+  try {
+    const manifest = await fetchSoftwareManifest(manifestUrl);
+    const resolvedUrl =
+      typeof manifest?.url === "string" ? manifest.url : undefined;
+    const resolvedVersion = extractVersionFromSoftwareUrl(canonical, resolvedUrl);
+    return {
+      artifact,
+      channel,
+      os: targetOs,
+      arch: targetArch,
+      version: resolvedVersion,
+      url: resolvedUrl,
+      sha256:
+        typeof manifest?.sha256 === "string" ? manifest.sha256 : undefined,
+      available: !!resolvedUrl,
+      error: resolvedUrl ? undefined : "manifest missing url",
+    };
+  } catch (err) {
+    return {
+      artifact,
+      channel,
+      os: targetOs,
+      arch: targetArch,
+      available: false,
+      error: `${err instanceof Error ? err.message : err}`,
+    };
+  }
+}
+
+function normalizeSoftwareHistoryLimit(value?: number): number {
+  const n = Number(value ?? SOFTWARE_HISTORY_DEFAULT_LIMIT);
+  if (!Number.isFinite(n)) return SOFTWARE_HISTORY_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(SOFTWARE_HISTORY_MAX_LIMIT, Math.floor(n)));
+}
+
+async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
   let requestedBaseUrl = base_url;
   if (requestedBaseUrl) {
     try {
@@ -2713,33 +3443,169 @@ export async function upgradeHostSoftwareInternal({
       ) {
         const publicSite = (await siteURL()).replace(/\/+$/, "");
         requestedBaseUrl = `${publicSite}/software`;
-        logger.warn("upgrade host: replaced loopback software base url", {
-          host_id: id,
-          requested: base_url,
-          effective: requestedBaseUrl,
-        });
+      } else {
+        const path = parsed.pathname.replace(/\/+$/, "");
+        if (!path) {
+          parsed.pathname = "/software";
+          parsed.search = "";
+          parsed.hash = "";
+          requestedBaseUrl = parsed.toString();
+        }
       }
     } catch {
-      // keep provided value as-is if it is not a valid URL
+    // keep provided value as-is if it is not a valid URL
     }
   }
   const { project_hosts_software_base_url } = await getServerSettings();
   const forcedSoftwareBaseUrl =
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() ||
     undefined;
-  const resolvedBaseUrl =
+  return (
     requestedBaseUrl ??
     forcedSoftwareBaseUrl ??
     project_hosts_software_base_url ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
-    undefined;
+    DEFAULT_SOFTWARE_BASE_URL
+  );
+}
+
+function isLoopbackHostName(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]"
+  );
+}
+
+function isLoopbackSoftwareBaseUrl(value: string): boolean {
+  try {
+    return isLoopbackHostName(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalSelfHost(row: any): boolean {
+  const machine: HostMachine = row?.metadata?.machine ?? {};
+  if (machine.cloud !== "self-host") return false;
+  const mode = machine.metadata?.self_host_mode;
+  return !mode || mode === "local";
+}
+
+async function resolveReachableUpgradeBaseUrl({
+  row,
+  baseUrl,
+}: {
+  row: any;
+  baseUrl: string;
+}): Promise<string> {
+  if (!isLoopbackSoftwareBaseUrl(baseUrl)) {
+    return baseUrl;
+  }
+  if (isLocalSelfHost(row)) {
+    return baseUrl;
+  }
+  let replacement = DEFAULT_SOFTWARE_BASE_URL;
+  try {
+    const publicSite = (await siteURL()).replace(/\/+$/, "");
+    const candidate = `${publicSite}/software`;
+    if (!isLoopbackSoftwareBaseUrl(candidate)) {
+      replacement = candidate;
+    }
+  } catch {
+    // keep default replacement
+  }
+  logger.warn("upgrade host software: replaced loopback base url for remote host", {
+    host_id: row.id,
+    requested: baseUrl,
+    effective: replacement,
+  });
+  return replacement;
+}
+
+export async function listHostSoftwareVersions({
+  account_id,
+  base_url,
+  artifacts,
+  channels,
+  os,
+  arch,
+  history_limit,
+}: {
+  account_id?: string;
+  base_url?: string;
+  artifacts?: HostSoftwareArtifact[];
+  channels?: HostSoftwareChannel[];
+  os?: "linux" | "darwin";
+  arch?: "amd64" | "arm64";
+  history_limit?: number;
+}): Promise<HostSoftwareAvailableVersion[]> {
+  requireAccount(account_id);
+  const softwareBaseUrl = (await resolveHostSoftwareBaseUrl(base_url)).replace(
+    /\/+$/,
+  "",
+  );
+  const targetOs = normalizeSoftwareOs(os);
+  const targetArch = normalizeSoftwareArch(arch);
+  const artifactList = normalizeSoftwareArtifacts(artifacts);
+  const channelList = normalizeSoftwareChannels(channels);
+  const historyLimit = normalizeSoftwareHistoryLimit(history_limit);
+  const rows: HostSoftwareAvailableVersion[] = [];
+  for (const artifact of artifactList) {
+    for (const channel of channelList) {
+      const latest = await resolveLatestSoftwareRow({
+        softwareBaseUrl,
+        artifact,
+        channel,
+        targetOs,
+        targetArch,
+      });
+      if (!latest.available) {
+        rows.push(latest);
+        continue;
+      }
+      const resolved = await resolvePublishedSoftwareRows({
+        baseUrl: softwareBaseUrl,
+        artifact,
+        channel,
+        os: targetOs,
+        arch: targetArch,
+        limit: historyLimit,
+        latest,
+      });
+      rows.push(...resolved);
+    }
+  }
+  return rows;
+}
+
+export async function upgradeHostSoftwareInternal({
+  account_id,
+  id,
+  targets,
+  base_url,
+}: {
+  account_id?: string;
+  id: string;
+  targets: HostSoftwareUpgradeTarget[];
+  base_url?: string;
+}): Promise<HostSoftwareUpgradeResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
+  const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
+    row,
+    baseUrl: resolvedBaseUrl,
+  });
   const client = createHostControlClient({
     host_id: id,
     client: conatWithProjectRouting(),
   });
   const response = await client.upgradeSoftware({
     targets,
-    base_url: resolvedBaseUrl,
+    base_url: effectiveBaseUrl,
   });
   const results = response.results ?? [];
   if (results.length) {

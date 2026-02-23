@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
+import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type Fileserver } from "@cocalc/conat/files/file-server";
 import {
@@ -17,7 +18,10 @@ const OWNER_TYPE = "hub" as const;
 const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
-const MAX_PARALLEL = 1;
+const MAX_PARALLEL = Math.max(
+  1,
+  Math.min(100, envToInt("COCALC_BACKUP_LRO_MAX_PARALLEL", 10)),
+);
 const MAX_BACKUPS_PER_PROJECT = 30;
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
@@ -231,7 +235,10 @@ export function startBackupLroWorker({
 } = {}) {
   if (running) return () => undefined;
   running = true;
-  logger.info("starting backup LRO worker", { worker_id: WORKER_ID });
+  logger.info("starting backup LRO worker", {
+    worker_id: WORKER_ID,
+    max_parallel: maxParallel,
+  });
 
   const tick = async () => {
     if (inFlight >= maxParallel) return;

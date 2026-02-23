@@ -55,16 +55,37 @@ export const withSelectionSafety = (editor) => {
   editor.apply = (op) => {
     if (op.type === "set_selection" && op.newProperties != null) {
       try {
-        const next = op.newProperties as Range;
-        const safe = ensureRange(editor, next);
-        if (!Range.equals(next, safe)) {
-          op = { ...op, newProperties: safe };
+        const next = op.newProperties as Range | null;
+        if (next == null) {
+          op = { ...op, newProperties: null };
+        } else {
+          const base = editor.selection ?? ensureRange(editor, null);
+          const merged = { ...base, ...next } as Range;
+          const safe = ensureRange(editor, merged);
+          if (!Range.equals(merged, safe)) {
+            op = { ...op, newProperties: safe };
+          }
         }
       } catch {
         // fall back to original op
       }
     }
-    return apply(op);
+    const out = apply(op);
+    // Selection can become stale after non-selection operations that change the
+    // tree (e.g., remote merges, normalization). Keep it leaf-safe at all times.
+    try {
+      if (editor.selection != null) {
+        const safe = ensureRange(editor, editor.selection);
+        if (!Range.equals(editor.selection, safe)) {
+          editor.selection = safe;
+        }
+      }
+    } catch {
+      const anchor = pointAtPath(editor, []);
+      editor.selection = { anchor, focus: anchor };
+      editor.marks = null;
+    }
+    return out;
   };
 
   return editor;

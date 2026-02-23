@@ -117,9 +117,6 @@ export default function Home(props: Props) {
               <A href="/features/" style={TOP_LINK_STYLE}>
                 Features
               </A>{" "}
-              <A href="/software" style={TOP_LINK_STYLE}>
-                Software
-              </A>{" "}
               {isCommercial && (
                 <>
                   <A href="/pricing" style={TOP_LINK_STYLE}>

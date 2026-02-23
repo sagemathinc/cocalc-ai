@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
@@ -39,11 +40,16 @@ import {
 import { getBlobstore } from "../blobs/download";
 import {
   buildChatMessage,
+  computeChatIntegrityReport,
   deriveAcpLogRefs,
   type MessageHistory,
 } from "@cocalc/chat";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import { appendStreamMessage, extractEventText } from "@cocalc/chat";
+import {
+  resolveInlineCodeLinks,
+  type InlineCodeLink,
+} from "./inline-code-links";
 import type { SyncDB } from "@cocalc/conat/sync-doc/syncdb";
 import type { AcpStreamUsage } from "@cocalc/ai/acp";
 import { once } from "@cocalc/util/async-utils";
@@ -67,6 +73,11 @@ import { akv, type AKV } from "@cocalc/conat/sync/akv";
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
+const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
+const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
+const MESSAGE_ID_LOOKUP_WARN_EVERY = 100;
+const ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK = false;
+const ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK = false;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -78,9 +89,26 @@ let conatClient: ConatClient | null = null;
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the backend server restarted.**";
+const THREAD_CONFIG_EVENT = "chat-thread-config";
+const THREAD_CONFIG_SENDER = "__thread_config__";
+const THREAD_STATE_EVENT = "chat-thread-state";
+const THREAD_STATE_SENDER = "__thread_state__";
+const THREAD_STATE_SCHEMA_VERSION = 2;
 
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
+let acpFinalizeMismatchCount = 0;
+let acpFinalizeRecoveredAfterRetryCount = 0;
+let acpLookupByMessageIdScans = 0;
+let acpLookupByMessageIdHits = 0;
+let acpLookupByMessageIdMisses = 0;
+let acpLookupByMessageIdRowsScanned = 0;
+let acpLookupByMessageIdRowsScannedMax = 0;
+let acpLookupByMessageIdLargeScanWarnings = 0;
+let acpLookupByMessageIdIndexHits = 0;
+let acpLookupByMessageIdIndexMisses = 0;
+let acpMissingThreadIdFallbacks = 0;
+let acpDateSenderLookupFallbacks = 0;
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -115,6 +143,36 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     (sum, x) => sum + x.inflightLoads,
     0,
   );
+  const integrityTotals = snapshots.reduce(
+    (acc, snapshot) => {
+      const counters = snapshot.integrity;
+      if (!counters) return acc;
+      acc.orphan_messages += counters.orphan_messages ?? 0;
+      acc.duplicate_root_messages += counters.duplicate_root_messages ?? 0;
+      acc.missing_thread_config += counters.missing_thread_config ?? 0;
+      acc.invalid_reply_targets += counters.invalid_reply_targets ?? 0;
+      acc.missing_identity_fields += counters.missing_identity_fields ?? 0;
+      return acc;
+    },
+    {
+      orphan_messages: 0,
+      duplicate_root_messages: 0,
+      missing_thread_config: 0,
+      invalid_reply_targets: 0,
+      missing_identity_fields: 0,
+    },
+  );
+  const integrityChatsWithViolations = snapshots.filter((snapshot) => {
+    const counters = snapshot.integrity;
+    if (!counters) return false;
+    return (
+      (counters.orphan_messages ?? 0) > 0 ||
+      (counters.duplicate_root_messages ?? 0) > 0 ||
+      (counters.missing_thread_config ?? 0) > 0 ||
+      (counters.invalid_reply_targets ?? 0) > 0 ||
+      (counters.missing_identity_fields ?? 0) > 0
+    );
+  }).length;
   const topWritersByEvents = [...snapshots]
     .sort((a, b) => b.events - a.events)
     .slice(0, top)
@@ -126,6 +184,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       finished: x.finished,
       disposeScheduled: x.disposeScheduled,
       threadIds: x.threadIds,
+      integrity: x.integrity,
       timeTravel: x.timeTravel,
     }));
   return {
@@ -141,6 +200,34 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     timeTravelPendingOps,
     timeTravelSyncDocs,
     timeTravelInflightLoads,
+    integrityChatsWithViolations,
+    integrityTotals: {
+      "chat.integrity.orphan_messages": integrityTotals.orphan_messages,
+      "chat.integrity.duplicate_root_messages":
+        integrityTotals.duplicate_root_messages,
+      "chat.integrity.missing_thread_config":
+        integrityTotals.missing_thread_config,
+      "chat.integrity.invalid_reply_targets":
+        integrityTotals.invalid_reply_targets,
+      "chat.integrity.missing_identity_fields":
+        integrityTotals.missing_identity_fields,
+      "chat.acp.finalize_mismatch": acpFinalizeMismatchCount,
+      "chat.acp.finalize_recovered_after_retry":
+        acpFinalizeRecoveredAfterRetryCount,
+      "chat.acp.lookup_message_id_scans": acpLookupByMessageIdScans,
+      "chat.acp.lookup_message_id_hits": acpLookupByMessageIdHits,
+      "chat.acp.lookup_message_id_misses": acpLookupByMessageIdMisses,
+      "chat.acp.lookup_message_id_index_hits": acpLookupByMessageIdIndexHits,
+      "chat.acp.lookup_message_id_index_misses":
+        acpLookupByMessageIdIndexMisses,
+      "chat.acp.lookup_message_id_rows_scanned": acpLookupByMessageIdRowsScanned,
+      "chat.acp.lookup_message_id_rows_scanned_max":
+        acpLookupByMessageIdRowsScannedMax,
+      "chat.acp.lookup_message_id_large_scan_warnings":
+        acpLookupByMessageIdLargeScanWarnings,
+      "chat.acp.missing_thread_id_fallbacks": acpMissingThreadIdFallbacks,
+      "chat.acp.date_sender_lookup_fallbacks": acpDateSenderLookupFallbacks,
+    },
     topWritersByEvents,
   };
 }
@@ -187,7 +274,14 @@ export class ChatStreamWriter {
   private usePool: boolean;
   private metadata: AcpChatContext;
   private readonly chatKey: string;
+  private readonly workspaceRoot?: string;
+  private readonly hostWorkspaceRoot?: string;
+  private inlineCodeLinksCache?: {
+    content: string;
+    links: InlineCodeLink[];
+  };
   private threadKeys = new Set<string>();
+  private resolvedChatKey?: { date: string; sender_id: string };
   private prevHistory: MessageHistory[] = [];
   private ready: Promise<void>;
   private closed = false;
@@ -240,6 +334,99 @@ export class ChatStreamWriter {
     if (record == null) return undefined;
     if (typeof record.get === "function") return record.get(key) as T;
     return (record as any)[key] as T;
+  }
+
+  private chatPrimaryWhere(): Record<string, unknown> {
+    return {
+      event: "chat",
+      date: this.resolvedChatKey?.date ?? this.metadata.message_date,
+      sender_id: this.resolvedChatKey?.sender_id ?? this.metadata.sender_id,
+    };
+  }
+
+  private setResolvedChatKey(record: any): void {
+    const date = normalizeIsoDateString(syncdbField(record, "date"));
+    const sender_id = syncdbField<string>(record, "sender_id");
+    if (!date || !sender_id) return;
+    this.resolvedChatKey = { date, sender_id };
+  }
+
+  private findChatRow(): any {
+    if (!this.syncdb) return undefined;
+    if (this.metadata.message_id) {
+      const byMessageId = findChatRowByMessageId(
+        this.syncdb,
+        this.metadata.message_id,
+      );
+      if (byMessageId != null) {
+        this.setResolvedChatKey(byMessageId);
+        return byMessageId;
+      }
+    }
+    if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && this.metadata.message_id) {
+      return undefined;
+    }
+    acpDateSenderLookupFallbacks += 1;
+    const current = this.syncdb.get_one(this.chatPrimaryWhere());
+    if (current != null) {
+      this.setResolvedChatKey(current);
+      return current;
+    }
+    return undefined;
+  }
+
+  private threadRootIso(): string {
+    const raw = this.metadata.reply_to ?? this.metadata.message_date;
+    const d = new Date(raw);
+    if (Number.isNaN(d.valueOf())) {
+      return new Date(this.metadata.message_date).toISOString();
+    }
+    return d.toISOString();
+  }
+
+  private resolvedThreadId(): string {
+    if (this.metadata.thread_id) return this.metadata.thread_id;
+    if (this.threadId) return this.threadId;
+    if (this.sessionKey) return this.sessionKey;
+    const root = this.threadRootIso();
+    acpMissingThreadIdFallbacks += 1;
+    if (
+      acpMissingThreadIdFallbacks <= 3 ||
+      acpMissingThreadIdFallbacks % 100 === 0
+    ) {
+      logger.warn("acp chat metadata missing thread_id; using legacy fallback", {
+        chatKey: this.chatKey,
+        message_id: this.metadata.message_id,
+        message_date: this.metadata.message_date,
+        fallbackCount: acpMissingThreadIdFallbacks,
+      });
+    }
+    return `legacy-thread-${root}`;
+  }
+
+  private setThreadState(
+    state: "idle" | "queued" | "running" | "interrupted" | "error" | "complete",
+  ): void {
+    if (this.closed || this.syncdbError || !this.syncdb) return;
+    try {
+      this.syncdb.set({
+        event: THREAD_STATE_EVENT,
+        sender_id: THREAD_STATE_SENDER,
+        date: this.threadRootIso(),
+        thread_id: this.resolvedThreadId(),
+        state,
+        active_message_id: this.metadata.message_id,
+        updated_at: new Date().toISOString(),
+        schema_version: THREAD_STATE_SCHEMA_VERSION,
+      });
+      this.syncdb.commit();
+    } catch (err) {
+      logger.debug("failed to update chat thread state", {
+        chatKey: this.chatKey,
+        state,
+        err,
+      });
+    }
   }
 
   private leaseKey() {
@@ -318,6 +505,7 @@ export class ChatStreamWriter {
     approverAccountId,
     sessionKey,
     workspaceRoot,
+    hostWorkspaceRoot,
     syncdbOverride,
     logStoreFactory,
   }: {
@@ -326,6 +514,7 @@ export class ChatStreamWriter {
     approverAccountId: string;
     sessionKey?: string;
     workspaceRoot?: string;
+    hostWorkspaceRoot?: string;
     syncdbOverride?: any;
     logStoreFactory?: () => AKV<AcpStreamMessage[]>;
   }) {
@@ -333,6 +522,8 @@ export class ChatStreamWriter {
     this.approverAccountId = approverAccountId;
     this.client = client;
     this.chatKey = chatKey(metadata);
+    this.workspaceRoot = workspaceRoot;
+    this.hostWorkspaceRoot = hostWorkspaceRoot ?? workspaceRoot;
     this.usePool = syncdbOverride == null;
     this.syncdbPromise =
       syncdbOverride != null
@@ -351,6 +542,16 @@ export class ChatStreamWriter {
       this.syncdbError = err;
       this.closed = true;
     });
+    const existing = chatWritersByChatKey.get(this.chatKey);
+    if (existing != null && existing !== this) {
+      logger.warn("duplicate chat writer detected; replacing existing writer", {
+        chatKey: this.chatKey,
+        existingClosed: existing.isClosed(),
+        existingThreadIds: existing.getKnownThreadIds(),
+        replacingSessionKey: sessionKey,
+      });
+      existing.dispose(true);
+    }
     chatWritersByChatKey.set(this.chatKey, this);
     logWriterCounts("create", { chatKey: this.chatKey });
     this.sessionKey = sessionKey;
@@ -428,10 +629,7 @@ export class ChatStreamWriter {
         throw err;
       }
     }
-    let current = db.get_one({
-      event: "chat",
-      date: this.metadata.message_date,
-    });
+    let current = this.findChatRow();
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
       const placeholder = buildChatMessage({
@@ -441,6 +639,9 @@ export class ChatStreamWriter {
         content: ":robot: Thinking...",
         generating: true,
         reply_to: this.metadata.reply_to,
+        message_id: this.metadata.message_id,
+        thread_id: this.metadata.thread_id,
+        reply_to_message_id: this.metadata.reply_to_message_id,
       } as any);
       db.set(placeholder);
       db.commit();
@@ -449,10 +650,7 @@ export class ChatStreamWriter {
       } catch (err) {
         logger.warn("chat syncdb save failed during init", err);
       }
-      current = db.get_one({
-        event: "chat",
-        date: this.metadata.message_date,
-      });
+      current = this.findChatRow();
     }
     const history = this.recordField(current, "history");
     const arr = this.historyToArray(history);
@@ -463,6 +661,7 @@ export class ChatStreamWriter {
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
     }
+    this.setThreadState("running");
   }
 
   private historyToArray(value: any): MessageHistory[] {
@@ -493,6 +692,9 @@ export class ChatStreamWriter {
       // Ensure the final "generating: false" state hits SyncDB immediately,
       // even if the throttle window is large.
       this.commit.flush();
+      await this.ensureTerminalChatCommitApplied(
+        message.type === "error" ? "error" : "summary",
+      );
     }
   }
 
@@ -511,6 +713,10 @@ export class ChatStreamWriter {
       } catch (err) {
         logger.warn("failed to enqueue acp payload", err);
       }
+    }
+    if (payload.type === "status") {
+      this.setThreadState(payload.state === "running" ? "running" : "queued");
+      return;
     }
     if ((payload as any).type === "usage") {
       // Live usage updates from Codex; stash for commit and don't treat as a user-visible event.
@@ -591,6 +797,7 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
+      this.setThreadState(this.interruptNotified ? "interrupted" : "complete");
       this.finalizeLease("completed");
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
@@ -604,12 +811,142 @@ export class ChatStreamWriter {
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
+      this.setThreadState("error");
       this.finalizeLease("error", payload.error);
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
       void this.persistLog();
     }
+  }
+
+  private buildChatUpdate(generating: boolean): Record<string, unknown> {
+    const rowDate = this.resolvedChatKey?.date ?? this.metadata.message_date;
+    const rowSender = this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
+    const message = buildChatMessage({
+      sender_id: rowSender,
+      date: rowDate,
+      prevHistory: this.prevHistory,
+      content: this.content,
+      generating,
+      reply_to: this.metadata.reply_to,
+      acp_thread_id: this.threadId,
+      acp_usage: this.usage,
+      acp_account_id: this.approverAccountId,
+      message_id: this.metadata.message_id,
+      thread_id: this.metadata.thread_id,
+      reply_to_message_id: this.metadata.reply_to_message_id,
+      inline_code_links: generating ? undefined : this.resolveInlineCodeLinks(),
+    });
+    const update: any = { ...message };
+    if (this.interruptNotified) {
+      update.acp_interrupted = true;
+      update.acp_interrupted_reason = "interrupt";
+      update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
+    }
+    return update;
+  }
+
+  private resolveInlineCodeLinks(): InlineCodeLink[] | undefined {
+    const content = this.content ?? "";
+    if (!content.trim()) return undefined;
+    if (this.inlineCodeLinksCache?.content === content) {
+      return this.inlineCodeLinksCache.links.length
+        ? this.inlineCodeLinksCache.links
+        : undefined;
+    }
+    const links = resolveInlineCodeLinks({
+      markdown: content,
+      workspaceRoot: this.workspaceRoot,
+      hostWorkspaceRoot: this.hostWorkspaceRoot,
+    });
+    this.inlineCodeLinksCache = { content, links };
+    return links.length ? links : undefined;
+  }
+
+  private commitNow(
+    generating: boolean,
+    reason: "throttled" | "terminal-verify" | "dispose" = "throttled",
+  ): boolean {
+    if (this.closed || this.syncdbError) return false;
+    if (!this.syncdb) {
+      logger.warn("chat stream writer commit skipped: syncdb not ready", {
+        chatKey: this.chatKey,
+        reason,
+      });
+      return false;
+    }
+    try {
+      this.syncdb.set(this.buildChatUpdate(generating));
+      this.syncdb.commit();
+    } catch (err) {
+      logger.warn("chat syncdb commit failed", {
+        chatKey: this.chatKey,
+        reason,
+        generating,
+        err,
+      });
+      return false;
+    }
+    (async () => {
+      try {
+        await this.syncdb!.save();
+      } catch (err) {
+        logger.warn("chat syncdb save failed", {
+          chatKey: this.chatKey,
+          reason,
+          generating,
+          err,
+        });
+      }
+    })();
+    return true;
+  }
+
+  private async ensureTerminalChatCommitApplied(
+    source: "summary" | "error",
+  ): Promise<void> {
+    if (this.closed || this.syncdbError || !this.syncdb) return;
+    let lastGenerating: boolean | undefined;
+    for (let i = 0; i < TERMINAL_CHAT_VERIFY_DELAYS_MS.length; i++) {
+      const delayMs = TERMINAL_CHAT_VERIFY_DELAYS_MS[i];
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+      if (this.closed || this.syncdbError || !this.syncdb) return;
+      try {
+        const current = this.findChatRow();
+        lastGenerating = this.recordField<boolean>(current, "generating");
+      } catch (err) {
+        logger.warn("chat syncdb readback failed during terminal verification", {
+          chatKey: this.chatKey,
+          source,
+          attempt: i + 1,
+          err,
+        });
+      }
+      if (lastGenerating === false) {
+        if (i > 0) {
+          acpFinalizeRecoveredAfterRetryCount += 1;
+          logger.warn("chat terminal state recovered after verification retry", {
+            chatKey: this.chatKey,
+            source,
+            attempts: i + 1,
+          });
+        }
+        return;
+      }
+      this.commitNow(false, "terminal-verify");
+    }
+    acpFinalizeMismatchCount += 1;
+    logger.warn("chat terminal verification failed; chat remains generating", {
+      chatKey: this.chatKey,
+      source,
+      events: this.events.length,
+      finishedBy: this.finishedBy,
+      lastGenerating,
+      retries: TERMINAL_CHAT_VERIFY_DELAYS_MS.length,
+    });
   }
 
   private commit = throttle((generating: boolean): void => {
@@ -621,37 +958,7 @@ export class ChatStreamWriter {
       events: this.events.length,
       metadata: this.metadata,
     });
-    if (this.closed || this.syncdbError) return;
-    if (!this.syncdb) {
-      logger.warn("chat stream writer commit skipped: syncdb not ready");
-      return;
-    }
-    const message = buildChatMessage({
-      sender_id: this.metadata.sender_id,
-      date: this.metadata.message_date,
-      prevHistory: this.prevHistory,
-      content: this.content,
-      generating,
-      reply_to: this.metadata.reply_to,
-      acp_thread_id: this.threadId,
-      acp_usage: this.usage,
-      acp_account_id: this.approverAccountId,
-    });
-    const update: any = { ...message, reply_to2: this.metadata.reply_to };
-    if (this.interruptNotified) {
-      update.acp_interrupted = true;
-      update.acp_interrupted_reason = "interrupt";
-      update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
-    }
-    this.syncdb!.set(update);
-    this.syncdb!.commit();
-    (async () => {
-      try {
-        await this.syncdb!.save();
-      } catch (err) {
-        logger.warn("chat syncdb save failed", err);
-      }
-    })();
+    this.commitNow(generating, "throttled");
   }, COMMIT_INTERVAL);
 
   dispose(forceImmediate: boolean = false): void {
@@ -679,10 +986,13 @@ export class ChatStreamWriter {
         : this.interruptNotified
           ? INTERRUPT_STATUS_TEXT
           : "writer disposed before terminal payload";
+      if (!this.finished) {
+        this.setThreadState(this.interruptNotified ? "interrupted" : "error");
+      }
       this.finalizeLease("aborted", reason);
     }
 
-    this.commit(false);
+    this.commitNow(false, "dispose");
     this.commit.flush();
     this.closed = true;
     this.startTimeTravelDispose();
@@ -819,6 +1129,7 @@ export class ChatStreamWriter {
     this.interruptedMessage = text;
     this.content = text;
     this.finishedBy = "interrupt";
+    this.setThreadState("interrupted");
     this.addLocalEvent({
       type: "message",
       text,
@@ -834,6 +1145,22 @@ export class ChatStreamWriter {
 
   watchdogSnapshot() {
     const timeTravelStats = this.timeTravel?.debugStats();
+    let integrity:
+      | ReturnType<typeof computeChatIntegrityReport>["counters"]
+      | undefined;
+    if (this.syncdb && typeof (this.syncdb as any).get === "function") {
+      try {
+        const rows = (this.syncdb as any).get();
+        if (Array.isArray(rows) && rows.length > 0) {
+          integrity = computeChatIntegrityReport(rows).counters;
+        }
+      } catch (err) {
+        logger.debug("failed to compute chat integrity snapshot", {
+          chatKey: this.chatKey,
+          err,
+        });
+      }
+    }
     return {
       chatKey: this.chatKey,
       path: this.metadata.path,
@@ -844,6 +1171,7 @@ export class ChatStreamWriter {
       disposeScheduled: this.disposeTimer != null,
       hasSyncdbError: this.syncdbError != null,
       threadIds: this.getKnownThreadIds(),
+      integrity,
       timeTravel:
         timeTravelStats == null
           ? undefined
@@ -903,24 +1231,48 @@ export class ChatStreamWriter {
     }
   }
 
-  // Persist the session/thread id into the thread root's acp_config so
-  // the frontend can display and reuse it across turns/refreshes.
+  // Persist the session/thread id into the dedicated thread-config record so
+  // finalize/recovery never mutates chat message rows.
   private async persistSessionId(sessionId: string): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
     const threadRoot = this.metadata.reply_to ?? this.metadata.message_date;
-    try {
-      const current = this.syncdb.get_one({
-        event: "chat",
-        date: threadRoot,
+    const normalizeDate = (value: unknown): string | undefined => {
+      if (value == null) return undefined;
+      const d = value instanceof Date ? value : new Date(value as any);
+      if (!Number.isFinite(d.valueOf())) return undefined;
+      return d.toISOString();
+    };
+    const threadRootIso = normalizeDate(threadRoot);
+    if (!threadRootIso) {
+      logger.warn("persistSessionId skipped: invalid thread root date", {
+        chatKey: this.chatKey,
+        threadRoot,
       });
-      const prevCfg = this.recordField<any>(current, "acp_config");
-      const cfg = prevCfg ?? {};
-      if (cfg.sessionId === sessionId) return;
+      return;
+    }
+    try {
+      const threadCfgCurrent = this.syncdb.get_one({
+        event: THREAD_CONFIG_EVENT,
+        sender_id: THREAD_CONFIG_SENDER,
+        date: threadRootIso,
+      });
+      const threadPrevCfg = this.recordField<any>(threadCfgCurrent, "acp_config");
+      const threadCfg =
+        threadPrevCfg && typeof threadPrevCfg.toJS === "function"
+          ? threadPrevCfg.toJS()
+          : (threadPrevCfg ?? {});
+      if (threadCfg.sessionId === sessionId) return;
+      const nextCfg = { ...threadCfg, sessionId };
       this.syncdb.set({
-        event: "chat",
-        date: threadRoot,
-        acp_config: { ...cfg, sessionId },
+        event: THREAD_CONFIG_EVENT,
+        sender_id: THREAD_CONFIG_SENDER,
+        date: threadRootIso,
+        thread_id: this.resolvedThreadId(),
+        acp_config: { ...threadCfg, ...nextCfg },
+        updated_at: new Date().toISOString(),
+        updated_by: this.approverAccountId,
+        schema_version: THREAD_STATE_SCHEMA_VERSION,
       });
       this.syncdb.commit();
       await this.syncdb.save();
@@ -967,6 +1319,117 @@ function syncdbField<T = unknown>(record: any, key: string): T | undefined {
   if (record == null) return undefined;
   if (typeof record.get === "function") return record.get(key) as T;
   return (record as any)[key] as T;
+}
+
+function normalizeIsoDateString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.valueOf())) return undefined;
+    return value.toISOString();
+  }
+  if (typeof value === "string") {
+    const d = new Date(value);
+    if (Number.isNaN(d.valueOf())) return value;
+    return d.toISOString();
+  }
+  return undefined;
+}
+
+function syncdbRows(syncdb: any, where: Record<string, unknown>): any[] {
+  if (syncdb == null || typeof syncdb.get !== "function") return [];
+  const rows = syncdb.get(where);
+  if (rows == null) return [];
+  if (Array.isArray(rows)) return rows;
+  if (typeof rows.toJS === "function") return rows.toJS();
+  return [];
+}
+
+function findChatRowByMessageId(syncdb: any, message_id?: string): any {
+  if (!message_id) return undefined;
+  try {
+    const row = syncdb?.get_one?.({
+      event: "chat",
+      message_id,
+    });
+    if (row != null) {
+      acpLookupByMessageIdIndexHits += 1;
+      return row;
+    }
+    acpLookupByMessageIdIndexMisses += 1;
+    if (!ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK) {
+      acpLookupByMessageIdMisses += 1;
+      return undefined;
+    }
+  } catch (err) {
+    logger.warn("chat message_id indexed lookup failed; checking fallback", {
+      project_id: syncdb?.metadata?.project_id,
+      path: syncdb?.metadata?.path,
+      err,
+    });
+    if (!ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK) {
+      acpLookupByMessageIdMisses += 1;
+      return undefined;
+    }
+  }
+
+  // WARNING: O(n) fallback path for pre-index deployments. This is off by
+  // default and exists only for emergency legacy recovery.
+  acpLookupByMessageIdScans += 1;
+  const rows = syncdbRows(syncdb, { event: "chat" });
+  const rowCount = rows.length;
+  acpLookupByMessageIdRowsScanned += rowCount;
+  acpLookupByMessageIdRowsScannedMax = Math.max(
+    acpLookupByMessageIdRowsScannedMax,
+    rowCount,
+  );
+  if (
+    rowCount >= MESSAGE_ID_LOOKUP_WARN_ROWS &&
+    (acpLookupByMessageIdScans <= 3 ||
+      acpLookupByMessageIdScans % MESSAGE_ID_LOOKUP_WARN_EVERY === 0)
+  ) {
+    acpLookupByMessageIdLargeScanWarnings += 1;
+    logger.warn("chat message_id fallback using O(n) scan (legacy mode)", {
+      rowCount,
+      scans: acpLookupByMessageIdScans,
+      project_id: syncdb?.metadata?.project_id,
+      path: syncdb?.metadata?.path,
+      message_id_prefix: `${message_id}`.slice(0, 12),
+      flag: "ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK",
+    });
+  }
+  for (const row of rows) {
+    if (syncdbField<string>(row, "message_id") === message_id) {
+      acpLookupByMessageIdHits += 1;
+      return row;
+    }
+  }
+  acpLookupByMessageIdMisses += 1;
+  return undefined;
+}
+
+function findRecoverableChatRow(
+  syncdb: any,
+  context: {
+    message_date: string;
+    sender_id: string;
+    message_id?: string;
+  },
+): any {
+  if (context.message_id) {
+    const byMessageId = findChatRowByMessageId(syncdb, context.message_id);
+    if (byMessageId != null) return byMessageId;
+  }
+  if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && context.message_id) {
+    return undefined;
+  }
+  acpDateSenderLookupFallbacks += 1;
+  const byDate = syncdb?.get_one?.({
+    event: "chat",
+    date: context.message_date,
+    sender_id: context.sender_id,
+  });
+  if (byDate != null) return byDate;
+  return undefined;
 }
 
 function historyToArray(value: any): MessageHistory[] {
@@ -1024,6 +1487,9 @@ export async function recoverOrphanedAcpTurns(
       message_date: turn.message_date,
       sender_id: turn.sender_id ?? "openai-codex-agent",
       reply_to: turn.reply_to ?? undefined,
+      message_id: turn.message_id ?? undefined,
+      thread_id: turn.thread_id ?? undefined,
+      reply_to_message_id: turn.reply_to_message_id ?? undefined,
     };
     try {
       clearAcpPayloads(context);
@@ -1043,25 +1509,63 @@ export async function recoverOrphanedAcpTurns(
         if (!syncdb.isReady()) {
           await once(syncdb, "ready");
         }
-        const current = syncdb.get_one({
-          event: "chat",
-          date: turn.message_date,
+        const senderId = turn.sender_id ?? "openai-codex-agent";
+        const current = findRecoverableChatRow(syncdb, {
+          message_date: turn.message_date,
+          sender_id: senderId,
+          message_id: turn.message_id ?? undefined,
         });
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
+          const rowDate =
+            normalizeIsoDateString(syncdbField(current, "date")) ??
+            normalizeIsoDateString(turn.message_date) ??
+            turn.message_date;
+          const rowSender = syncdbField<string>(current, "sender_id") ?? senderId;
           const update: any = {
             event: "chat",
-            date: turn.message_date,
+            date: rowDate,
+            sender_id: rowSender,
             generating: false,
             acp_interrupted: true,
             acp_interrupted_reason: "server_restart",
             acp_interrupted_text: RESTART_INTERRUPTED_NOTICE,
           };
+          if (turn.message_id) {
+            update.message_id = turn.message_id;
+          }
+          if (turn.thread_id) {
+            update.thread_id = turn.thread_id;
+          }
+          if (turn.reply_to_message_id) {
+            update.reply_to_message_id = turn.reply_to_message_id;
+          }
           if (history.length > 0) {
             update.history = history;
           }
           syncdb.set(update);
+          const threadRootIso = (() => {
+            const raw = turn.reply_to ?? rowDate;
+            const d = new Date(raw);
+            if (Number.isNaN(d.valueOf())) return rowDate;
+            return d.toISOString();
+          })();
+          const threadId =
+            syncdbField<string>(current, "thread_id") ??
+            turn.thread_id ??
+            turn.session_id ??
+            `legacy-thread-${threadRootIso}`;
+          syncdb.set({
+            event: THREAD_STATE_EVENT,
+            sender_id: THREAD_STATE_SENDER,
+            date: threadRootIso,
+            thread_id: threadId,
+            state: "interrupted",
+            active_message_id: syncdbField<string>(current, "message_id"),
+            updated_at: new Date().toISOString(),
+            schema_version: THREAD_STATE_SCHEMA_VERSION,
+          });
           syncdb.commit();
           await syncdb.save();
         }
@@ -1338,6 +1842,7 @@ export async function evaluate({
         approverAccountId: request.account_id,
         sessionKey: request.session_id,
         workspaceRoot,
+        hostWorkspaceRoot: hostRoot,
       })
     : null;
 

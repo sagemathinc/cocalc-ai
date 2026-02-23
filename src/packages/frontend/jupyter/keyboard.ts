@@ -69,6 +69,22 @@ function evt_to_shortcut(evt: any, mode: NotebookMode): string {
   return json(evt_to_obj(evt, mode))!;
 }
 
+function isInsideSlateSingleDocNotebook(evt: any): boolean {
+  const target = evt?.target as any;
+  if (target != null && typeof target.closest === "function") {
+    if (target.closest("[data-cocalc-jupyter-slate-single-doc]") != null) {
+      return true;
+    }
+  }
+  const active = document.activeElement as any;
+  if (active != null && typeof active.closest === "function") {
+    if (active.closest("[data-cocalc-jupyter-slate-single-doc]") != null) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function create_key_handler(
   jupyter_actions: JupyterActions,
   frame_actions: NotebookFrameActions,
@@ -124,6 +140,15 @@ export function create_key_handler(
     if (jupyter_actions.store == null || frame_actions.store == null) {
       // Could happen after everything has been closed, but key handler isn't
       // quite removed.  https://github.com/sagemathinc/cocalc/issues/4462
+      return;
+    }
+    if (isInsideSlateSingleDocNotebook(evt)) {
+      // Let the Slate editor own keyboard behavior (e.g., Shift+Enter / Alt+Enter)
+      // inside the single-doc notebook frame.
+      if (evt?.which === 13) {
+        // eslint-disable-next-line no-console
+        console.log("jupyter global keyboard skipped Enter inside single-doc slate");
+      }
       return;
     }
     if (jupyter_actions.store.get("complete") != null) {

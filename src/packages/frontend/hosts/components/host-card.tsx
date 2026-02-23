@@ -3,7 +3,11 @@ import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
-import type { HostDeleteOptions, HostStopOptions } from "../types";
+import type {
+  HostDeleteOptions,
+  HostDrainOptions,
+  HostStopOptions,
+} from "../types";
 import {
   STATUS_COLOR,
   getHostOnlineTooltip,
@@ -19,7 +23,11 @@ import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostWorkspaceStatus } from "./host-workspace-status";
-import { confirmHostDeprovision, confirmHostStop } from "./host-confirm";
+import {
+  confirmHostDeprovision,
+  confirmHostDrain,
+  confirmHostStop,
+} from "./host-confirm";
 import { COLORS } from "@cocalc/util/theme";
 
 type HostCardProps = {
@@ -28,6 +36,7 @@ type HostCardProps = {
   onStart: (id: string) => void;
   onStop: (id: string, opts?: HostStopOptions) => void;
   onRestart: (id: string, mode: "reboot" | "hard") => void;
+  onDrain: (id: string, opts?: HostDrainOptions) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onCancelOp?: (op_id: string) => void;
   onDetails: (host: Host) => void;
@@ -46,6 +55,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   onStart,
   onStop,
   onRestart,
+  onDrain,
   onDelete,
   onCancelOp,
   onDetails,
@@ -165,6 +175,19 @@ export const HostCard: React.FC<HostCardProps> = ({
         Restart
       </Button>
     ),
+    <Button
+      key="drain"
+      type="link"
+      disabled={isDeleted || hostOpActive}
+      onClick={() =>
+        confirmHostDrain({
+          host,
+          onConfirm: (opts) => onDrain(host.id, opts),
+        })
+      }
+    >
+      Drain
+    </Button>,
     canCancelBackups && hostOp ? (
       <Popconfirm
         key="cancel"

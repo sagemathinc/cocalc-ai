@@ -71,7 +71,7 @@ export default function Teaching({ customize }) {
           <li>
             CoCalc's massive default{" "}
             <strong>
-              <A href="/software">Software Environment</A>
+              <A href="/features/linux">Software Environment</A>
             </strong>{" "}
             provides nearly everything anybody{" "}
             <strong>has ever asked us to install since 2013!</strong>
@@ -117,12 +117,12 @@ export default function Teaching({ customize }) {
             Support for <strong>many programming languages</strong>:
             <br />
             <A href={"/features/python"}>Python</A> with many pre-installed{" "}
-            <A href={"/software/python"}>Python packages</A>;
+            <A href={"/features/python"}>Python packages</A>;
             <br />
             <A href={"/features/r-statistical-software"}>
               Statistical Software R
             </A>{" "}
-            with many pre-installed <A href={"/software/r"}>R packages</A>;
+            with many pre-installed <A href={"/features/r-statistical-software"}>R packages</A>;
             <br />
             <A href={"/features/julia"}>Julia</A> programming language,{" "}
             <A href={"/features/octave"}>Octave</A>, and{" "}
@@ -130,7 +130,7 @@ export default function Teaching({ customize }) {
           </li>
           <li>
             A <A href={"/features/linux"}>Linux environment</A>, with many{" "}
-            pre-installed <A href={"/software/executables"}>utilities</A> and a{" "}
+            pre-installed <A href={"/features/terminal"}>utilities</A> and a{" "}
             <A href={"/features/terminal"}>terminal</A>.
           </li>
           <li>

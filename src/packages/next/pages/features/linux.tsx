@@ -270,7 +270,7 @@ export function FullLinuxTerminal() {
             <Paragraph>
               Browse the{" "}
               <strong>
-                <A href="/software/executables">installed software</A>
+                <A href="/features/terminal">installed software</A>
               </strong>{" "}
               in CoCalc.
             </Paragraph>
@@ -363,7 +363,7 @@ export function FullLinuxTerminal() {
                   </strong>
                   : due to how CoCalc works, you cannot have root rights.
                   However, there is a wealth of software{" "}
-                  <A href="/software">already installed</A>, including both
+                  <A href="/features/linux">already installed</A>, including both
                   system utilities and packages for specific language
                   environments. Regarding Python, R, Nodejs, and Julia
                   environments, you can{" "}

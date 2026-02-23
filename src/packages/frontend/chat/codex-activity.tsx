@@ -7,16 +7,19 @@ import {
   Tooltip,
   Typography,
 } from "antd";
+import type { InlineCodeLink } from "@cocalc/chat";
 import type {
   AcpStreamEvent,
-  AcpStreamMessage,
+  AcpStreamMessage as AcpLogStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { plural } from "@cocalc/util/misc";
+import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 
 const VIRTUALIZE_THRESHOLD = 20;
@@ -85,13 +88,14 @@ type ActivityEntry =
     };
 
 export interface CodexActivityProps {
-  events?: AcpStreamMessage[];
+  events?: AcpLogStreamMessage[];
   generating?: boolean;
   fontSize?: number;
   durationLabel?: string;
   persistKey?: string;
   projectId?: string;
   basePath?: string;
+  inlineCodeLinks?: InlineCodeLink[];
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
   onJumpToBottom?: () => void;
@@ -111,6 +115,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   persistKey,
   projectId,
   basePath,
+  inlineCodeLinks,
   onDeleteEvents,
   onDeleteAllEvents,
   onJumpToBottom,
@@ -119,6 +124,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   scrollParent,
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
+  const resolvedBasePath = useMemo(
+    () => detectBasePath(basePath, entries),
+    [basePath, entries],
+  );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
       const persisted = expandedState.get(persistKey);
@@ -292,7 +301,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
                   entry={entry}
                   fontSize={baseFontSize}
                   projectId={projectId}
-                  basePath={basePath}
+                  basePath={resolvedBasePath}
+                  inlineCodeLinks={inlineCodeLinks}
                 />
               );
             }}
@@ -304,7 +314,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
               entry={entry}
               fontSize={baseFontSize}
               projectId={projectId}
-              basePath={basePath}
+              basePath={resolvedBasePath}
+              inlineCodeLinks={inlineCodeLinks}
             />
           ))
         )}
@@ -319,11 +330,13 @@ function ActivityRow({
   fontSize,
   projectId,
   basePath,
+  inlineCodeLinks,
 }: {
   entry: ActivityEntry;
   fontSize: number;
   projectId?: string;
   basePath?: string;
+  inlineCodeLinks?: InlineCodeLink[];
 }) {
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
@@ -338,6 +351,8 @@ function ActivityRow({
             <StaticMarkdown
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
+              inlineCodeLinks={inlineCodeLinks}
+              inlineCodeWorkspaceRoot={basePath}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -358,6 +373,8 @@ function ActivityRow({
             <StaticMarkdown
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
+              inlineCodeLinks={inlineCodeLinks}
+              inlineCodeWorkspaceRoot={basePath}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -418,7 +435,7 @@ function ActivityRow({
   }
 }
 
-function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
+function normalizeEvents(events: AcpLogStreamMessage[]): ActivityEntry[] {
   const rows: ActivityEntry[] = [];
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
@@ -626,7 +643,9 @@ function createEventEntry({
   };
 }
 
-function formatSummaryDetail(message: AcpStreamMessage & { type: "summary" }) {
+function formatSummaryDetail(
+  message: AcpLogStreamMessage & { type: "summary" },
+) {
   const parts: string[] = [];
   if (message.finalResponse) {
     parts.push(truncate(message.finalResponse, 60));
@@ -704,7 +723,7 @@ function PathLink({
 }) {
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
-  const resolvedPath = resolvePath(path, basePath);
+  const resolvedPath = resolvePath(path, basePath, projectId);
   const onClick = React.useCallback(
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
@@ -807,22 +826,60 @@ function DiffPreview({
   );
 }
 
-function resolvePath(path?: string, basePath?: string): string | undefined {
-  if (!path) return undefined;
-  const normalized = path.replace(/^\.\\/, "./").replace(/^\.\/+/, "");
-  const hasDrive = /^[a-zA-Z]:[\\/]/.test(normalized);
-  if (
-    normalized.startsWith("/") ||
-    hasDrive ||
-    normalized.startsWith("~") ||
-    normalized.startsWith("../")
-  ) {
-    return normalized;
+function resolvePath(
+  path?: string,
+  basePath?: string,
+  projectId?: string,
+): string | undefined {
+  const normalizedPath = normalizeSlashPath(path);
+  if (!normalizedPath) return undefined;
+  const absolutePath = normalizeAbsoluteMaybe(normalizedPath);
+  if (absolutePath) return absolutePath;
+  const homePath = normalizeAbsoluteMaybe(getProjectHomeDirectory(projectId));
+  if (normalizedPath === "~") return homePath;
+  if (normalizedPath.startsWith("~/")) {
+    return homePath
+      ? normalizeAbsolutePath(normalizedPath.slice(2), homePath)
+      : undefined;
   }
-  if (!basePath) return normalized;
-  const cleanBase = basePath.replace(/\/+$/, "");
-  if (!cleanBase) return normalized;
-  return `${cleanBase}/${normalized}`;
+  const normalizedBase = normalizeAbsoluteMaybe(basePath);
+  if (normalizedBase) {
+    return normalizeAbsolutePath(normalizedPath, normalizedBase);
+  }
+  if (homePath) {
+    return normalizeAbsolutePath(normalizedPath, homePath);
+  }
+  return undefined;
+}
+
+function normalizeSlashPath(path?: string): string | undefined {
+  if (typeof path !== "string") return undefined;
+  const trimmed = path.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\\/g, "/");
+}
+
+function normalizeAbsoluteMaybe(path?: string): string | undefined {
+  const normalized = normalizeSlashPath(path);
+  if (!normalized) return undefined;
+  return isAbsolutePath(normalized)
+    ? normalizeAbsolutePath(normalized)
+    : undefined;
+}
+
+function detectBasePath(
+  configuredBasePath: string | undefined,
+  entries: ActivityEntry[],
+): string | undefined {
+  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
+  if (explicit) return explicit;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry.kind !== "terminal") continue;
+    const cwd = normalizeAbsoluteMaybe(entry.cwd);
+    if (cwd) return cwd;
+  }
+  return undefined;
 }
 
 function TerminalRow({
@@ -1129,7 +1186,7 @@ function formatReadScope(entry: {
 }
 
 // Convert Codex activity events into markdown for exports.
-export function codexEventsToMarkdown(events: AcpStreamMessage[]): string {
+export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
   const entries = normalizeEvents(events ?? []);
   if (!entries.length) return "";
   const lines: string[] = [];
@@ -1206,11 +1263,8 @@ export function codexEventsToMarkdown(events: AcpStreamMessage[]): string {
 }
 
 function formatPathMarkdown(path: string, line?: number): string {
-  const clean = path.replace(/^[./]+/, "");
-  const label = line != null ? `${clean}#L${line}` : clean;
-  const href = clean ? `./${clean}` : ".";
-  const link = line != null ? `${href}#L${line}` : href;
-  return `[${label}](${link})`;
+  const clean = normalizeSlashPath(path) || path;
+  return line != null ? `\`${clean}#L${line}\`` : `\`${clean}\``;
 }
 
 export default CodexActivity;

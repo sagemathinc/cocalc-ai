@@ -1,0 +1,20 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@cocalc/conat": ["../conat"],
+      "@cocalc/conat/*": ["../conat/*"],
+      "@cocalc/util": ["../util"],
+      "@cocalc/util/*": ["../util/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"],
+  "references": [
+    { "path": "../conat" },
+    { "path": "../util" }
+  ]
+}

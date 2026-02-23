@@ -24,9 +24,11 @@ export default async function init(opts?: {
   project_id?: string;
 }) {
   opts = getIdentity(opts);
+  const enableProjectInfo = process.env.COCALC_ENABLE_PROJECT_INFO !== "0";
   logger.debug("starting Conat project services", {
     project_id: opts.project_id,
     address: opts.client?.options.address,
+    enableProjectInfo,
   });
 
   initTerminalServer(opts);
@@ -35,8 +37,14 @@ export default async function init(opts?: {
   initWebsocketApi(opts);
   await initRead(opts);
   await initWrite(opts);
-  initProjectStatus(opts);
-  initUsageInfo(opts);
+  if (enableProjectInfo) {
+    initProjectStatus(opts);
+    initUsageInfo(opts);
+  } else {
+    logger.debug(
+      "project info services disabled by COCALC_ENABLE_PROJECT_INFO=0",
+    );
+  }
   initExecStream();
   await initAuthorizedKeys(opts);
 }

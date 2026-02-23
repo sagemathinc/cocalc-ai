@@ -161,7 +161,7 @@ export default function Terminal({ customize }) {
             <Paragraph>
               Look at our{" "}
               <strong>
-                <A href="/software/executables">list of executables</A>
+                <A href="/features/terminal">list of executables</A>
               </strong>{" "}
               to check what is available!{" "}
             </Paragraph>

@@ -5,6 +5,7 @@
 
 import { Editor, Element, Range, Transforms } from "slate";
 import { register } from "./register";
+import { isCodeLikeBlockType } from "../elements/code-block/utils";
 
 function splitCodeBlock({ editor }) {
   const { selection } = editor;
@@ -12,13 +13,13 @@ function splitCodeBlock({ editor }) {
     return false;
   }
   const entry = Editor.above(editor, {
-    match: (node) => Element.isElement(node) && node.type === "code_block",
+    match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
   });
   if (!entry) return false;
   Editor.withoutNormalizing(editor, () => {
     Transforms.splitNodes(editor, {
       at: selection,
-      match: (node) => Element.isElement(node) && node.type === "code_block",
+      match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
     });
   });
   return true;

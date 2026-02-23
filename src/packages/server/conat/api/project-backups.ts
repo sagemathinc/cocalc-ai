@@ -23,6 +23,9 @@ export async function createBackup({
   project_id: string;
   name?: string;
   tags?: string[];
+},
+opts?: {
+  skip_collab_check?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "project";
@@ -30,7 +33,9 @@ export async function createBackup({
   service: string;
   stream_name: string;
 }> {
-  await assertCollab({ account_id, project_id });
+  if (!opts?.skip_collab_check) {
+    await assertCollab({ account_id, project_id });
+  }
   const op = await createLro({
     kind: "project-backup",
     scope_type: "project",

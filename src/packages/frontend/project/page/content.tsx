@@ -92,9 +92,11 @@ export const Content: React.FC<Props> = (props: Props) => {
   }, [debouncedMeasure]);
 
   // The className below is so we always make this div the remaining height.
-  // The overflowY is hidden for editors (which don't scroll), but auto
-  // otherwise, since some tabs (e.g., settings) *do* need to scroll. See
-  // https://github.com/sagemathinc/cocalc/pull/4708.
+  // The overflowY is hidden for editors and the process-info tab, which each
+  // manage their own internal scrolling. Other tabs (e.g., settings) still use
+  // page-level scrolling. See https://github.com/sagemathinc/cocalc/pull/4708.
+  const hideOuterScroll =
+    tab_name.startsWith("editor-") || tab_name === "info";
   return (
     <div
       ref={contentRef}
@@ -108,7 +110,7 @@ export const Content: React.FC<Props> = (props: Props) => {
               zIndex: 0,
               visibility: "hidden",
             }),
-        ...{ overflowY: tab_name.startsWith("editor-") ? "hidden" : "auto" },
+        ...{ overflowY: hideOuterScroll ? "hidden" : "auto" },
       }}
       aria-hidden={!is_visible}
       className={"smc-vfill"}

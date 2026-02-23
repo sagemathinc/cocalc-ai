@@ -15,7 +15,11 @@ import type { HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostWorkspaceStatus } from "./host-workspace-status";
-import { confirmHostDeprovision, confirmHostStop } from "./host-confirm";
+import {
+  confirmHostDeprovision,
+  confirmHostDrain,
+  confirmHostStop,
+} from "./host-confirm";
 import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { search_match, search_split } from "@cocalc/util/misc";
@@ -25,6 +29,7 @@ import type {
   HostSortField,
   HostStopOptions,
   HostDeleteOptions,
+  HostDrainOptions,
 } from "../types";
 
 const STATUS_ORDER = [
@@ -176,6 +181,7 @@ type HostListViewModel = {
   onStart: (id: string) => void;
   onStop: (id: string, opts?: HostStopOptions) => void;
   onRestart: (id: string, mode: "reboot" | "hard") => void;
+  onDrain: (id: string, opts?: HostDrainOptions) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onToggleCreatePanel?: () => void;
   onRefresh: () => void;
@@ -217,6 +223,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onStart,
     onStop,
     onRestart,
+    onDrain,
     onDelete,
     onToggleCreatePanel,
     onRefresh,
@@ -807,6 +814,20 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               Restart
             </Button>
           ),
+          <Button
+            key="drain"
+            size="small"
+            type="link"
+            disabled={isDeleted || hostOpActive}
+            onClick={() =>
+              confirmHostDrain({
+                host,
+                onConfirm: (opts) => onDrain(host.id, opts),
+              })
+            }
+          >
+            Drain
+          </Button>,
           canCancelBackups && onCancelOp ? (
             <Popconfirm
               key="cancel"
@@ -1212,6 +1233,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                   if (!target) return;
                   setRestartTarget(target);
                 }}
+                onDrain={onDrain}
                 onDelete={onDelete}
                 onCancelOp={onCancelOp}
                 onDetails={onDetails}

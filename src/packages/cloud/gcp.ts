@@ -53,6 +53,31 @@ function isNotFoundError(err: unknown): boolean {
   return /not found/i.test(msg);
 }
 
+function isFingerprintConflictError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as {
+    code?: number;
+    status?: number;
+    statusCode?: number;
+    message?: string;
+    details?: string;
+  };
+  const code = anyErr.code ?? anyErr.status ?? anyErr.statusCode;
+  if (code === 409 || code === 412) return true;
+  const msg = String(anyErr.message ?? anyErr.details ?? "");
+  return /fingerprint/i.test(msg) || /conditionNotMet/i.test(msg);
+}
+
+function isStartResourceNotReadyFingerprintError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as { message?: string; details?: string };
+  const msg = String(anyErr.message ?? anyErr.details ?? "");
+  return (
+    /RESOURCE_NOT_READY/i.test(msg) &&
+    /fingerprint changed during the start operation/i.test(msg)
+  );
+}
+
 function diskTypeFor(spec: HostSpec): string {
   switch (spec.disk_type) {
     case "ssd":
@@ -211,6 +236,17 @@ async function waitUntilOperationComplete({
       project: credentials.projectId,
       zone,
     });
+  }
+  const opError = operation?.error;
+  const opErrors = Array.isArray(opError?.errors) ? opError.errors : [];
+  if (opErrors.length > 0) {
+    const summary = opErrors
+      .map((err: { code?: string; message?: string }) =>
+        [err?.code, err?.message].filter(Boolean).join(": "),
+      )
+      .filter(Boolean)
+      .join("; ");
+    throw new Error(summary || "gcp operation failed");
   }
 }
 
@@ -436,16 +472,34 @@ export class GcpProvider implements CloudProvider {
     }
     const client = new InstancesClient(credentials);
     await ensureSshMetadata(runtime, credentials, client);
-    const [response] = await client.start({
-      project: credentials.projectId,
-      zone: runtime.zone,
-      instance: runtime.instance_id,
-    });
-    await waitUntilOperationComplete({
-      response,
-      zone: runtime.zone,
-      credentials,
-    });
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const [response] = await client.start({
+          project: credentials.projectId,
+          zone: runtime.zone,
+          instance: runtime.instance_id,
+        });
+        await waitUntilOperationComplete({
+          response,
+          zone: runtime.zone,
+          credentials,
+        });
+        return;
+      } catch (err) {
+        const retryable =
+          isStartResourceNotReadyFingerprintError(err) && attempt < maxAttempts;
+        if (!retryable) throw err;
+        logger.warn("gcp.startHost retry after fingerprint race", {
+          instance_id: runtime.instance_id,
+          zone: runtime.zone,
+          attempt,
+          err: String(err),
+        });
+        await ensureSshMetadata(runtime, credentials, client);
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
   }
 
   async stopHost(runtime: HostRuntime, creds: any): Promise<void> {
@@ -710,40 +764,66 @@ async function ensureSshMetadata(
     runtime.metadata?.ssh_public_key,
   );
   if (!sshPublicKeys.length) return;
+  const zone = runtime.zone;
+  if (!zone) return;
   const sshUser = runtime.metadata?.ssh_user ?? "ubuntu";
-  const [instance] = await client.get({
-    project: credentials.projectId,
-    zone: runtime.zone,
-    instance: runtime.instance_id,
-  });
-  const fingerprint = instance?.metadata?.fingerprint;
-  if (!fingerprint) return;
-  const items = instance?.metadata?.items ?? [];
-  const current = items.find((item) => item.key === "ssh-keys");
-  const nextLines = new Set(
-    (current?.value ?? "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => !!line),
-  );
-  for (const key of sshPublicKeys) {
-    const entry = `${sshUser}:${key}`;
-    if (!nextLines.has(entry)) {
-      nextLines.add(entry);
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const [instance] = await client.get({
+        project: credentials.projectId,
+        zone,
+        instance: runtime.instance_id,
+      });
+      const fingerprint = instance?.metadata?.fingerprint;
+      if (!fingerprint) return;
+      const items = instance?.metadata?.items ?? [];
+      const current = items.find((item) => item.key === "ssh-keys");
+      const nextLines = new Set(
+        (current?.value ?? "")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => !!line),
+      );
+      let changed = false;
+      for (const key of sshPublicKeys) {
+        const entry = `${sshUser}:${key}`;
+        if (!nextLines.has(entry)) {
+          nextLines.add(entry);
+          changed = true;
+        }
+      }
+      if (!changed) return;
+      const nextValue = Array.from(nextLines).join("\n");
+      const nextItems = items.filter((item) => item.key !== "ssh-keys");
+      nextItems.push({ key: "ssh-keys", value: nextValue });
+      const [response] = await client.setMetadata({
+        project: credentials.projectId,
+        zone,
+        instance: runtime.instance_id,
+        metadataResource: {
+          fingerprint,
+          items: nextItems,
+        },
+      });
+      await waitUntilOperationComplete({
+        response,
+        zone,
+        credentials,
+      });
+      return;
+    } catch (err) {
+      const retryable = isFingerprintConflictError(err) && attempt < maxAttempts;
+      if (!retryable) throw err;
+      logger.warn("gcp.ensureSshMetadata retry after fingerprint conflict", {
+        instance_id: runtime.instance_id,
+        zone,
+        attempt,
+        err: String(err),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
   }
-  const nextValue = Array.from(nextLines).join("\n");
-  const nextItems = items.filter((item) => item.key !== "ssh-keys");
-  nextItems.push({ key: "ssh-keys", value: nextValue });
-  await client.setMetadata({
-    project: credentials.projectId,
-    zone: runtime.zone,
-    instance: runtime.instance_id,
-    metadataResource: {
-      fingerprint,
-      items: nextItems,
-    },
-  });
 }
 
 function normalizeSshKeys(

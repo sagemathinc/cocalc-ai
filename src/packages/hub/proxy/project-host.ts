@@ -15,7 +15,7 @@ type HostRow = {
 const cache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
 const hostCache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
 
-async function getHost(project_id: string): Promise<HostRow> {
+async function getHost(project_id: string): Promise<HostRow | undefined> {
   const cached = cache.get(project_id);
   if (cached) return cached;
   const { rows } = await getPool().query(
@@ -29,12 +29,14 @@ async function getHost(project_id: string): Promise<HostRow> {
     `,
     [project_id],
   );
-  const row = rows[0] ?? {};
-  cache.set(project_id, row);
+  const row = rows[0];
+  if (row) {
+    cache.set(project_id, row);
+  }
   return row;
 }
 
-async function getHostById(host_id: string): Promise<HostRow> {
+async function getHostById(host_id: string): Promise<HostRow | undefined> {
   const cached = hostCache.get(host_id);
   if (cached) return cached;
   const { rows } = await getPool().query(
@@ -47,8 +49,10 @@ async function getHostById(host_id: string): Promise<HostRow> {
     `,
     [host_id],
   );
-  const row = rows[0] ?? {};
-  hostCache.set(host_id, row);
+  const row = rows[0];
+  if (row) {
+    hostCache.set(host_id, row);
+  }
   return row;
 }
 
@@ -80,6 +84,9 @@ export async function createProjectHostProxyHandlers() {
 
   async function targetForConatHost(host_id: string): Promise<string> {
     const host = await getHostById(host_id);
+    if (!host) {
+      throw Error(`host ${host_id} not found`);
+    }
     const directTunnelPort = host.metadata?.self_host?.http_tunnel_port;
     if (directTunnelPort) {
       return `http://127.0.0.1:${directTunnelPort}`;
@@ -107,6 +114,9 @@ export async function createProjectHostProxyHandlers() {
 
   async function targetForProject(project_id: string): Promise<string> {
     const host = await getHost(project_id);
+    if (!host) {
+      throw Error(`project ${project_id} not found`);
+    }
     const directTunnelPort = host.metadata?.self_host?.http_tunnel_port;
     if (directTunnelPort) {
       return `http://127.0.0.1:${directTunnelPort}`;
@@ -132,6 +142,18 @@ export async function createProjectHostProxyHandlers() {
     return base.replace(/\/+$/, "");
   }
 
+  async function targetForConatRoute(routeId: string): Promise<string> {
+    try {
+      return await targetForConatHost(routeId);
+    } catch (err) {
+      const message = `${(err as any)?.message ?? err ?? ""}`;
+      if (!message.includes("not found")) {
+        throw err;
+      }
+    }
+    return await targetForProject(routeId);
+  }
+
   const handleRequest = async (req, res) => {
     try {
       const parsed = parseReq(req.url ?? "/");
@@ -140,7 +162,7 @@ export async function createProjectHostProxyHandlers() {
       }
       const target =
         parsed.type === "conat"
-          ? await targetForConatHost(parsed.project_id)
+          ? await targetForConatRoute(parsed.project_id)
           : await targetForProject(parsed.project_id);
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {
@@ -162,7 +184,7 @@ export async function createProjectHostProxyHandlers() {
       }
       const target =
         parsed.type === "conat"
-          ? await targetForConatHost(parsed.project_id)
+          ? await targetForConatRoute(parsed.project_id)
           : await targetForProject(parsed.project_id);
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err) {

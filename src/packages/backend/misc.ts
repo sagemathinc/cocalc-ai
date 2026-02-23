@@ -67,6 +67,11 @@ export function envForSpawn() {
   for (const name of ["DEBUG", "DEBUG_CONSOLE", "NODE_ENV", "DEBUG_FILE"]) {
     delete env[name];
   }
+  for (const name in env) {
+    if (name.startsWith("COCALC_")) {
+      delete env[name];
+    }
+  }
   return env;
 }
 

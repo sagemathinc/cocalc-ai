@@ -101,6 +101,7 @@ export const useCursorDecorate = ({
             match: (n) =>
               Element.isElement(n) &&
               (n.type === "code_block" ||
+                n.type === "jupyter_code_cell" ||
                 n.type === "html_block" ||
                 n.type === "meta"),
           });
@@ -110,7 +111,7 @@ export const useCursorDecorate = ({
             const cached = codeBlockCache.get(block);
             const text = block.children.map((line) => Node.string(line)).join("\n");
             const info =
-              block.type === "code_block"
+              block.type === "code_block" || block.type === "jupyter_code_cell"
                 ? (block as CodeBlock).info ?? ""
                 : block.type === "html_block"
                   ? "html"

@@ -3,6 +3,7 @@ import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import getLogger from "@cocalc/backend/logger";
 import { getPersistClientDebugStats } from "@cocalc/conat/persist/client";
 import { getChangefeedServerDebugStats } from "@cocalc/conat/hub/changefeeds";
+import { getBackendWatcherDebugStats } from "@cocalc/backend/watcher-debug";
 import { getAcpWatchdogStats } from "./hub/acp";
 import { info as getRefCacheInfo } from "@cocalc/util/refcache";
 
@@ -17,6 +18,7 @@ const DEFAULT_PERSIST_ACTIVE_WARN = 120;
 const DEFAULT_CHANGEFEED_ACTIVE_WARN = 200;
 const DEFAULT_CHANGEFEED_UNTRACKED_WARN = 100;
 const DEFAULT_ACP_ACTIVE_WRITERS_WARN = 20;
+const DEFAULT_BACKEND_WATCHER_ACTIVE_WARN = 500;
 const DEFAULT_TOP_N = 6;
 
 let timer: NodeJS.Timeout | undefined;
@@ -191,6 +193,10 @@ export function initWatchdog() {
     "COCALC_WATCHDOG_ACP_ACTIVE_WRITERS_WARN",
     DEFAULT_ACP_ACTIVE_WRITERS_WARN,
   );
+  const backendWatcherActiveWarn = envNumber(
+    "COCALC_WATCHDOG_BACKEND_WATCHER_ACTIVE_WARN",
+    DEFAULT_BACKEND_WATCHER_ACTIVE_WARN,
+  );
 
   const loopDelay = monitorEventLoopDelay({ resolution: 20 });
   loopDelay.enable();
@@ -212,6 +218,7 @@ export function initWatchdog() {
     changefeedActiveWarn,
     changefeedUntrackedWarn,
     acpActiveWritersWarn,
+    backendWatcherActiveWarn,
   });
 
   const tick = () => {
@@ -247,6 +254,8 @@ export function initWatchdog() {
       changefeeds.activeSockets - (changefeeds.activeByAccountTotal ?? 0),
     );
     const acp = getAcpWatchdogStats({ topN });
+    const acpIntegrity = acp.integrityTotals ?? {};
+    const backendWatchers = getBackendWatcherDebugStats({ topN });
 
     const reasons: string[] = [];
     if (cpuPct >= cpuWarnPct) reasons.push(`cpu=${cpuPct.toFixed(1)}%`);
@@ -263,6 +272,33 @@ export function initWatchdog() {
       reasons.push(`changefeeds.untracked=${changefeedUntracked}`);
     if (acp.activeWriters >= acpActiveWritersWarn)
       reasons.push(`acp.activeWriters=${acp.activeWriters}`);
+    if ((acpIntegrity["chat.acp.finalize_mismatch"] ?? 0) > 0) {
+      reasons.push(
+        `chat.acp.finalize_mismatch=${acpIntegrity["chat.acp.finalize_mismatch"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.orphan_messages"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.orphan_messages=${acpIntegrity["chat.integrity.orphan_messages"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.duplicate_root_messages"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.duplicate_root_messages=${acpIntegrity["chat.integrity.duplicate_root_messages"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.missing_thread_config"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.missing_thread_config=${acpIntegrity["chat.integrity.missing_thread_config"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.invalid_reply_targets"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.invalid_reply_targets=${acpIntegrity["chat.integrity.invalid_reply_targets"]}`,
+      );
+    }
+    if (backendWatchers.active >= backendWatcherActiveWarn)
+      reasons.push(`backendWatchers.active=${backendWatchers.active}`);
 
     const hot = reasons.length > 0;
     hotStreak = hot ? hotStreak + 1 : 0;
@@ -286,6 +322,7 @@ export function initWatchdog() {
       },
       loadavg: os.loadavg().map((x) => Math.round(x * 100) / 100),
       acp,
+      backendWatchers,
       persist,
       persistRefCache,
       changefeeds,

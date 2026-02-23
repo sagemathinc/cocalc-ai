@@ -72,7 +72,7 @@
         "cocalc": {
           "type": true,
           "note": "1500+ Python libraries preinstalled; extensive R, Julia, Octave, and other packages.",
-          "link": "https://cocalc.com/software/python"
+          "link": "https://cocalc.com/features/python"
         },
         "mybinder": "Limited",
         "deepnote": {

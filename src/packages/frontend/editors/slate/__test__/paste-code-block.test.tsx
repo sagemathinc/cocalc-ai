@@ -186,3 +186,26 @@ test("multiline paste inside code block preserves newlines", () => {
     "def f():\n    \"foo\"\n    print('hi')\n",
   );
 });
+
+test("multiline paste with html type does not force code-block mode", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 0 },
+    focus: { path: [0, 0], offset: 0 },
+  };
+
+  const data = {
+    getData: (type: string) => {
+      if (type === "text/plain") return "alpha\nbeta";
+      if (type === "text/html") return "<p><strong>alpha</strong><br/>beta</p>";
+      return "";
+    },
+    types: ["text/plain", "text/html"],
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  expect(editor.children.find((n: any) => n.type === "code_block")).toBeFalsy();
+});

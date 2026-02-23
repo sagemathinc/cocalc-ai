@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export DEBUG_CONSOLE=yes
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 STATE_DIR_DEFAULT="$SRC_DIR/.local/hub-daemon"
@@ -18,8 +19,56 @@ find_hub_pids() {
   pgrep -f "$SRC_DIR/packages/hub/node_modules/.bin/../@cocalc/hub/run/hub.js" || true
 }
 
+find_pids_listening_on_port() {
+  local port="${1:-}"
+  if [ -z "$port" ]; then
+    return 0
+  fi
+  local pids
+  pids="$(
+    ss -ltnp "( sport = :$port )" 2>/dev/null \
+      | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+      | sort -u || true
+  )"
+  if [ -z "$pids" ] && command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u || true)"
+  fi
+  if [ -n "$pids" ]; then
+    echo "$pids"
+  fi
+}
+
+find_hub_pids_on_config_port() {
+  local port="${HUB_PORT:-9100}"
+  local hub_pids port_pids pid
+  hub_pids="$(find_hub_pids | sort -u)"
+  port_pids="$(find_pids_listening_on_port "$port" || true)"
+  if [ -z "$hub_pids" ] || [ -z "$port_pids" ]; then
+    return 0
+  fi
+  for pid in $port_pids; do
+    if printf "%s\n" "$hub_pids" | grep -qx "$pid"; then
+      echo "$pid"
+    fi
+  done
+}
+
 find_primary_hub_pid() {
-  find_hub_pids | tail -n 1
+  find_hub_pids_on_config_port | tail -n 1
+}
+
+detect_hub_postgres_socket_dir() {
+  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+    return 0
+  fi
+  sed -n "s/.*socketDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+}
+
+detect_hub_postgres_data_dir() {
+  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+    return 0
+  fi
+  sed -n "s/.*dataDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
 }
 
 usage() {
@@ -103,6 +152,7 @@ resolve_node_bin() {
 }
 
 is_running() {
+  load_config
   if [ ! -f "$PID_FILE" ]; then
     local discovered
     discovered="$(find_primary_hub_pid)"
@@ -117,7 +167,9 @@ is_running() {
   if [ -z "$pid" ]; then
     return 1
   fi
-  if kill -0 "$pid" >/dev/null 2>&1; then
+  local port_match
+  port_match="$(find_hub_pids_on_config_port | grep -x "$pid" || true)"
+  if kill -0 "$pid" >/dev/null 2>&1 && [ -n "$port_match" ]; then
     return 0
   fi
   local discovered
@@ -175,12 +227,16 @@ start_daemon() {
     echo $! >"$PID_FILE"
   )
 
-  sleep 2
-  local running_pid
-  running_pid="$(find_primary_hub_pid)"
-  if [ -n "$running_pid" ]; then
-    echo "$running_pid" >"$PID_FILE"
-  fi
+  local running_pid=""
+  local i
+  for i in $(seq 1 30); do
+    running_pid="$(find_primary_hub_pid || true)"
+    if [ -n "$running_pid" ]; then
+      echo "$running_pid" >"$PID_FILE"
+      break
+    fi
+    sleep 1
+  done
   if is_running; then
     echo "hub daemon started (pid $(cat "$PID_FILE"))"
     echo "stdout: $HUB_STDOUT_LOG"
@@ -196,6 +252,7 @@ start_daemon() {
 }
 
 stop_daemon() {
+  load_config
   if ! is_running; then
     echo "hub daemon is not running"
     rm -f "$PID_FILE"
@@ -204,7 +261,7 @@ stop_daemon() {
 
   local pid pids
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-  pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids)" | awk 'NF' | sort -u)"
+  pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids_on_config_port)" | awk 'NF' | sort -u)"
   if [ -n "$pids" ]; then
     echo "$pids" | xargs -r kill >/dev/null 2>&1 || true
   fi
@@ -219,7 +276,7 @@ stop_daemon() {
     sleep 1
   done
 
-  pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids)" | awk 'NF' | sort -u)"
+  pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids_on_config_port)" | awk 'NF' | sort -u)"
   if [ -n "$pids" ]; then
     echo "$pids" | xargs -r kill -9 >/dev/null 2>&1 || true
   fi
@@ -238,6 +295,21 @@ show_status() {
   echo "state:  $STATE_DIR"
   echo "stdout: $HUB_STDOUT_LOG"
   echo "debug:  $HUB_DEBUG_FILE"
+  local pg_host pg_data
+  pg_host="$(detect_hub_postgres_socket_dir || true)"
+  pg_data="$(detect_hub_postgres_data_dir || true)"
+  if [ -n "$pg_host" ]; then
+    echo "postgres socket (PGHOST): $pg_host"
+    echo "postgres user   (PGUSER): smc"
+    echo "psql hint: export PGHOST='$pg_host' PGUSER='smc'"
+  else
+    echo "postgres socket (PGHOST): not detected from $HUB_STDOUT_LOG"
+    echo "postgres user   (PGUSER): smc"
+    echo "hint: grep socketDir in hub log, then export PGHOST and PGUSER=smc"
+  fi
+  if [ -n "$pg_data" ]; then
+    echo "postgres data dir: $pg_data"
+  fi
   if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
     echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
   fi

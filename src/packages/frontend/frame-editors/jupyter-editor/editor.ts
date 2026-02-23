@@ -28,7 +28,9 @@ import { Introspect } from "./introspect/introspect";
 import JSONIPynb from "./json-ipynb";
 import KernelMenuItem from "./kernel-menu-item";
 import { RawIPynb } from "./raw-ipynb";
+import { HIDE_JUPYTER_SINGLE_DOC_MODE } from "./feature-flags";
 import { search } from "./search";
+import { SingleDocNotebook } from "./singledoc-notebook";
 import { Slideshow } from "./slideshow-revealjs/slideshow";
 import { TableOfContents } from "./table-of-contents";
 
@@ -71,6 +73,40 @@ const jupyter_cell_notebook: EditorDescription = {
     "halt_jupyter",
     "show_search",
   ]),
+  customizeCommands: {
+    shell: {
+      label: jupyter.editor.console_label,
+      icon: "ipynb",
+      title: jupyter.editor.console_title,
+    },
+  },
+} as const;
+
+const jupyterSlateCommands = set([
+  "about",
+  "print",
+  "set_zoom",
+  "decrease_font_size",
+  "increase_font_size",
+  "save",
+  "time_travel",
+  "halt_jupyter",
+  "shell",
+  "terminal",
+  "help",
+  "settings",
+  "show_search",
+]);
+
+const jupyter_slate_single_doc_notebook: EditorDescription = {
+  type: "jupyter-singledoc",
+  short: "Slate Doc (exp)",
+  name: "Single Doc (experimental)",
+  icon: "markdown",
+  hide_frame_type: HIDE_JUPYTER_SINGLE_DOC_MODE,
+  component: SingleDocNotebook as any,
+  commands: jupyterSlateCommands,
+  buttons: set(["save", "time_travel", "halt_jupyter", "show_search"]),
   customizeCommands: {
     shell: {
       label: jupyter.editor.console_label,
@@ -128,6 +164,7 @@ const jupyter_raw: EditorDescription = {
 
 export const EDITOR_SPEC = {
   jupyter_cell_notebook,
+  jupyter_slate_single_doc_notebook,
   jupyter_slideshow_revealjs,
   jupyter_table_of_contents,
   introspect,

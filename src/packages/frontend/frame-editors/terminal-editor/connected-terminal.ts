@@ -71,6 +71,26 @@ interface TerminalTransmit {
   kind: TerminalMessageKind;
 }
 
+function normalizeTerminalCommand(command: any): string | undefined {
+  return typeof command === "string" ? command : undefined;
+}
+
+function normalizeTerminalArgs(args: any): string[] | undefined {
+  if (args == null) {
+    return undefined;
+  }
+  const plain =
+    typeof args?.toJS === "function"
+      ? args.toJS()
+      : Array.isArray(args)
+        ? args
+        : undefined;
+  if (!Array.isArray(plain)) {
+    return undefined;
+  }
+  return plain.map((x) => `${x}`);
+}
+
 export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private state: State = "ready";
   private actions: Actions<T> | ConnectedTerminalInterface;
@@ -140,11 +160,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.terminal_settings = Map(); // what was last set.
     this.project_id = actions.project_id;
     this.path = actions.path;
-    this.command = command;
-    this.args = args;
+    this.command = normalizeTerminalCommand(command);
+    this.args = normalizeTerminalArgs(args);
     this.workingDir = workingDir;
     this.rendererType = "canvas";
-    const cmd = command ? "-" + replace_all(command, "/", "-") : "";
+    const cmd = this.command ? "-" + replace_all(this.command, "/", "-") : "";
     // This is the one and only place number is used.
     // It's very important though.
     this.termPath = termPath({ path: this.path, number, cmd });
@@ -454,6 +474,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         this.ignoreData++;
         const options = {
           id: this.termPath,
+          path: this.path,
           cwd: this.workingDir ?? dirname(this.path),
           env0,
           timeout: SPAWN_TIMEOUT,
@@ -969,8 +990,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   set_command(command: string | undefined, args: string[] | undefined): void {
-    this.command = command;
-    this.args = args;
+    this.command = normalizeTerminalCommand(command);
+    this.args = normalizeTerminalArgs(args);
     // TODO: this.conn_write({ cmd: "set_command", command, args });
   }
 

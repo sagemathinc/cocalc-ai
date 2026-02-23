@@ -5,6 +5,7 @@ import type {
   HostSortField,
   HostStopOptions,
   HostDeleteOptions,
+  HostDrainOptions,
 } from "../types";
 import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { HostLroState } from "./use-host-ops";
@@ -18,6 +19,7 @@ type UseHostListViewModelArgs = {
   onStart: (id: string) => void;
   onStop: (id: string, opts?: HostStopOptions) => void;
   onRestart: (id: string, mode: "reboot" | "hard") => void;
+  onDrain: (id: string, opts?: HostDrainOptions) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
@@ -56,6 +58,7 @@ export const useHostListViewModel = ({
   onStart,
   onStop,
   onRestart,
+  onDrain,
   onDelete,
   onRefresh,
   onCancelOp,
@@ -89,6 +92,7 @@ export const useHostListViewModel = ({
     onStart,
     onStop,
     onRestart,
+    onDrain,
     onDelete,
     onRefresh,
     onCancelOp,

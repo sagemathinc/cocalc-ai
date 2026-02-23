@@ -116,6 +116,7 @@ import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { normalizeCpSourcePath } from "@cocalc/frontend/project/copy-paths";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
   moveDestinationPath,
   normalizeDirectoryDestination,
@@ -621,29 +622,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // In launchpad mode HOME is currently stable (/root), while in lite mode it
   // depends on runtime environment and should come from available_features.
   private getHomeDirectoryForPaths = (): string => {
-    if (!lite) {
-      return "/root";
-    }
-    const store = this.get_store();
-    const homeDirectory = store
-      ?.get("available_features")
-      ?.get("homeDirectory");
-    if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
-      return normalizeAbsolutePath(homeDirectory);
-    }
-    const configuredHomeDirectory = store?.getIn([
-      "configuration",
-      "main",
-      "capabilities",
-      "homeDirectory",
-    ]);
-    if (
-      typeof configuredHomeDirectory === "string" &&
-      configuredHomeDirectory.length > 0
-    ) {
-      return normalizeAbsolutePath(configuredHomeDirectory);
-    }
-    return "/";
+    return getProjectHomeDirectory(this.project_id);
   };
 
   // Snapshots/backups/trash currently use virtual listing paths that are not

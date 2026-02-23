@@ -12,12 +12,12 @@ function normalizeCookieHost(host?: string) {
   return host.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function getAuthCookieName(host?: string) {
+export function getAuthCookieName(host?: string) {
   if (!host) return AUTH_COOKIE_NAME;
   return `${AUTH_COOKIE_NAME}-${normalizeCookieHost(host)}`;
 }
 
-function parseCookies(header?: string): Record<string, string> {
+export function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
   for (const part of header.split(";")) {

@@ -119,6 +119,17 @@ export function register_file_editor(opts: FileEditorInfo): void {
   }
 }
 
+export function unregister_file_editor(ext: string | readonly string[]): void {
+  const exts = typeof ext === "string" ? [ext] : [...ext];
+  for (const e of exts) {
+    delete file_editors[e];
+  }
+}
+
+export function has_file_editor(ext: string): boolean {
+  return file_editors[ext] != null;
+}
+
 /**
  * Logs when a file extension falls back to the unknown editor.
  * This helps with debugging why an editor failed to load.

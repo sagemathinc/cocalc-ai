@@ -58,6 +58,7 @@ const MINIMAP_TEXT_LEFT_PADDING_NARROW = 3;
 const MINIMAP_TEXT_RIGHT_PADDING_NARROW = 4;
 const MINIMAP_MAX_PREVIEW_LINES_PER_CELL = 180;
 const MINIMAP_MAX_DRAWN_LINES = 12_000;
+const MINIMAP_USER_SCROLL_SUPPRESS_MS = 900;
 
 const MINIMAP_CODE_TOKEN_RE =
   /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|(\b(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b)/g;
@@ -228,6 +229,29 @@ interface UseNotebookMinimapResult {
   onNotebookScroll: () => void;
 }
 
+function isScrollableElement(el: HTMLElement | null | undefined): boolean {
+  if (el == null) return false;
+  const style = window.getComputedStyle(el);
+  if (!["auto", "scroll", "overlay"].includes(style.overflowY)) return false;
+  return el.scrollHeight - el.clientHeight > 1;
+}
+
+function resolveNotebookScroller(base: HTMLElement | null): HTMLElement | null {
+  if (base == null) return null;
+  if (isScrollableElement(base)) return base;
+  let best: HTMLElement | null = null;
+  let bestScrollable = 0;
+  for (const el of Array.from(base.querySelectorAll<HTMLElement>("*"))) {
+    if (!isScrollableElement(el)) continue;
+    const scrollable = el.scrollHeight - el.clientHeight;
+    if (scrollable > bestScrollable) {
+      best = el;
+      bestScrollable = scrollable;
+    }
+  }
+  return best ?? base;
+}
+
 let minimapSettingsModalOwner: symbol | null = null;
 // Shared listener registry: multiple notebook panes can mount minimaps, but
 // we keep exactly one browser listener per minimap event type.
@@ -386,6 +410,8 @@ export function useNotebookMinimap({
   const minimapScrollRef = useRef<HTMLDivElement>(null);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
   const minimapViewportRafRef = useRef<number | null>(null);
+  const suppressMiniAutoUntilRef = useRef<number>(0);
+  const programmaticMiniScrollRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -400,10 +426,20 @@ export function useNotebookMinimap({
   }, [minimapOptIn, minimapWidth]);
 
   const minimapData = useMemo<MinimapData | null>(() => {
-    const viewportHeight = cellListHeight ?? 0;
+    const layoutNode = layoutRef.current;
+    const layoutHeight = layoutResize.height ?? layoutNode?.clientHeight ?? 0;
+    const viewportHeightRaw = cellListHeight ?? 0;
+    const viewportHeight =
+      layoutHeight > 0
+        ? viewportHeightRaw > 0
+          ? Math.min(viewportHeightRaw, layoutHeight)
+          : layoutHeight
+        : viewportHeightRaw;
+    const measuredLayoutWidth = layoutResize.width ?? layoutNode?.clientWidth ?? 0;
     const layoutWidth =
-      layoutResize.width ??
-      (cellListWidth ?? 0) + minimapWidth + MINIMAP_HORIZONTAL_CHROME;
+      measuredLayoutWidth > 0
+        ? measuredLayoutWidth
+        : (cellListWidth ?? 0) + minimapWidth + MINIMAP_HORIZONTAL_CHROME;
     const showMinimap =
       minimapOptIn &&
       viewportHeight >= MINIMAP_MIN_LAYOUT_HEIGHT &&
@@ -411,7 +447,9 @@ export function useNotebookMinimap({
         minimapWidth + MINIMAP_MIN_CELL_VIEWPORT_WIDTH + MINIMAP_HORIZONTAL_CHROME;
     if (!showMinimap) return null;
 
-    const scroller = cellListDivRef.current as HTMLElement | null;
+    const scroller = resolveNotebookScroller(
+      cellListDivRef.current as HTMLElement | null,
+    );
     const geometryById = new Map<string, { top: number; height: number }>();
     if (scroller != null) {
       const scrollerRect = scroller.getBoundingClientRect();
@@ -496,10 +534,10 @@ export function useNotebookMinimap({
     // content height. Lazy placeholders can temporarily overestimate raw row
     // bottoms; clamping to scrollHeight keeps viewport math stable.
     const measuredScrollHeight = Math.max(1, scroller?.scrollHeight ?? 0);
-    const rawTotalHeight =
-      measuredScrollHeight > 1
-        ? measuredScrollHeight
-        : Math.max(1, maxRawBottom + 1);
+    // Be defensive: some containers can report an undersized non-zero
+    // scrollHeight while row geometry/fallback estimates are much larger.
+    // Taking the max prevents minimap collapse/no-scroll regressions.
+    const rawTotalHeight = Math.max(1, measuredScrollHeight, maxRawBottom + 1);
     let scale = MINIMAP_BASE_SCALE;
     const minScaleForViewport =
       (viewportHeight * MINIMAP_MIN_TRACK_VIEWPORT_MULTIPLIER) / rawTotalHeight;
@@ -648,7 +686,9 @@ export function useNotebookMinimap({
 
   const updateMinimapViewportNow = useCallback(() => {
     if (minimapData == null) return;
-    const scroller = cellListDivRef.current as HTMLElement | null;
+    const scroller = resolveNotebookScroller(
+      cellListDivRef.current as HTMLElement | null,
+    );
     const viewport = minimapViewportRef.current;
     const rail = minimapRailRef.current;
     const miniScroll = minimapScrollRef.current;
@@ -665,7 +705,8 @@ export function useNotebookMinimap({
 
     const notebookContentHeight = Math.max(
       1,
-      scroller.scrollHeight || minimapData.notebookContentHeight,
+      scroller.scrollHeight,
+      minimapData.notebookContentHeight,
     );
     const maxNotebookScroll = Math.max(1, notebookContentHeight - scroller.clientHeight);
     const clampedNotebookScrollTop = Math.min(
@@ -684,7 +725,21 @@ export function useNotebookMinimap({
     );
     const maxMiniScroll = Math.max(0, contentHeight - minimapData.railHeight);
     const miniScrollTop = notebookRatio * maxMiniScroll;
-    miniScroll.scrollTop = miniScrollTop;
+    const now = Date.now();
+    const suppressMiniAuto = now < suppressMiniAutoUntilRef.current;
+    if (!suppressMiniAuto) {
+      if (Math.abs(miniScroll.scrollTop - miniScrollTop) > 0.5) {
+        programmaticMiniScrollRef.current = true;
+        miniScroll.scrollTop = miniScrollTop;
+        if (typeof window !== "undefined") {
+          window.requestAnimationFrame(() => {
+            programmaticMiniScrollRef.current = false;
+          });
+        } else {
+          programmaticMiniScrollRef.current = false;
+        }
+      }
+    }
 
     // Compute viewport size in track-space, then project it into the visible rail
     // window. Using rail-height directly underestimates the thumb for long tracks.
@@ -771,25 +826,34 @@ export function useNotebookMinimap({
   }, [updateMinimapViewport, cellListHeight, cellListWidth]);
 
   const scrollToCellById = useCallback(
-    (id: string) => {
-      const scroller = cellListDivRef.current as HTMLElement | null;
-      if (scroller == null) return;
+    (id: string): boolean => {
+      const scroller = resolveNotebookScroller(
+        cellListDivRef.current as HTMLElement | null,
+      );
+      if (scroller == null) return false;
       const escapedId = id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const node = scroller.querySelector<HTMLElement>(
         `[data-jupyter-lazy-cell-id="${escapedId}"]`,
       );
-      if (node == null) return;
-      scroller.scrollTop = Math.max(0, node.offsetTop - 24);
+      if (node == null) return false;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      const nodeTop = nodeRect.top - scrollerRect.top + scroller.scrollTop;
+      scroller.scrollTop = Math.max(0, nodeTop - 24);
       hydrateVisibleCells();
       updateMinimapViewport();
       saveScrollDebounce();
+      return true;
     },
     [cellListDivRef, hydrateVisibleCells, saveScrollDebounce, updateMinimapViewport],
   );
 
   const onMinimapTrackMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      const scroller = cellListDivRef.current as HTMLElement | null;
+      suppressMiniAutoUntilRef.current = 0;
+      const scroller = resolveNotebookScroller(
+        cellListDivRef.current as HTMLElement | null,
+      );
       const miniScroll = minimapScrollRef.current;
       if (scroller == null || minimapData == null || miniScroll == null) return;
       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
@@ -797,7 +861,8 @@ export function useNotebookMinimap({
       const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
       const notebookContentHeight = Math.max(
         1,
-        scroller.scrollHeight || minimapData.notebookContentHeight,
+        scroller.scrollHeight,
+        minimapData.notebookContentHeight,
       );
       const maxNotebookScroll = Math.max(
         1,
@@ -811,9 +876,8 @@ export function useNotebookMinimap({
       const row = minimapData.rows.find(
         (r) => yContent >= r.top && yContent <= r.top + r.height,
       );
-      if (row != null) {
-        scrollToCellById(row.id);
-      } else {
+      const rowScrolled = row != null ? scrollToCellById(row.id) : false;
+      if (!rowScrolled) {
         const targetRatio = yContent / Math.max(1, minimapData.totalContentHeight);
         scroller.scrollTop = targetRatio * maxNotebookScroll;
         hydrateVisibleCells();
@@ -831,6 +895,33 @@ export function useNotebookMinimap({
       updateMinimapViewport,
     ],
   );
+
+  useEffect(() => {
+    const miniScroll = minimapScrollRef.current;
+    if (miniScroll == null) return;
+    const markUserInteraction = () => {
+      suppressMiniAutoUntilRef.current =
+        Date.now() + MINIMAP_USER_SCROLL_SUPPRESS_MS;
+    };
+    const onMiniScroll = () => {
+      if (programmaticMiniScrollRef.current) return;
+      markUserInteraction();
+    };
+    miniScroll.addEventListener("scroll", onMiniScroll, { passive: true });
+    miniScroll.addEventListener("wheel", markUserInteraction, { passive: true });
+    miniScroll.addEventListener("touchstart", markUserInteraction, {
+      passive: true,
+    });
+    miniScroll.addEventListener("pointerdown", markUserInteraction, {
+      passive: true,
+    });
+    return () => {
+      miniScroll.removeEventListener("scroll", onMiniScroll);
+      miniScroll.removeEventListener("wheel", markUserInteraction);
+      miniScroll.removeEventListener("touchstart", markUserInteraction);
+      miniScroll.removeEventListener("pointerdown", markUserInteraction);
+    };
+  }, [minimapData]);
 
   const minimapNode = minimapData == null ? null : (
     <div

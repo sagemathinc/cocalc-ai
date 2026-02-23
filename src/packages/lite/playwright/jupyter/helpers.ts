@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import type { Page } from "@playwright/test";
@@ -37,6 +37,7 @@ export type NotebookUrlOptions = {
   base_url: string;
   path_ipynb: string;
   auth_token?: string;
+  frame_type?: "jupyter-singledoc";
 };
 
 function trimTrailingSlash(url: string): string {
@@ -79,44 +80,143 @@ function startLiteServerMessage(detail: string): Error {
   );
 }
 
-async function readConnectionInfo(): Promise<ConnectionInfo | undefined> {
-  const path = connectionInfoPath();
-  try {
-    const raw = await readFile(path, "utf8");
-    return JSON.parse(raw);
-  } catch (err: any) {
-    if (err?.code === "ENOENT") {
-      return undefined;
+function candidateConnectionInfoPaths(): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (path?: string) => {
+    const p = path?.trim();
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
+
+  push(process.env.COCALC_JUPYTER_E2E_CONNECTION_INFO);
+  push(process.env.COCALC_WRITE_CONNECTION_INFO);
+
+  const cwd = process.cwd();
+  push(join(cwd, ".local", "lite-daemon", "connection-info.json"));
+  push(join(cwd, "src", ".local", "lite-daemon", "connection-info.json"));
+  push(join(cwd, "..", ".local", "lite-daemon", "connection-info.json"));
+  push(join(cwd, "..", "..", ".local", "lite-daemon", "connection-info.json"));
+  push(connectionInfoPath());
+
+  return out;
+}
+
+function expandShellHome(path: string): string {
+  const home = process.env.HOME?.trim();
+  if (!home) return path;
+  return path.replace(/\$HOME|\$\{HOME\}/g, home);
+}
+
+async function readLiteDaemonConnectionFromConfig(): Promise<string | undefined> {
+  const configCandidates = [
+    join(process.cwd(), ".local", "lite-daemon.env"),
+    join(process.cwd(), "src", ".local", "lite-daemon.env"),
+    join(process.cwd(), "..", ".local", "lite-daemon.env"),
+    join(process.cwd(), "..", "..", ".local", "lite-daemon.env"),
+    join(process.cwd(), "..", "..", "src", ".local", "lite-daemon.env"),
+  ];
+  for (const path of configCandidates) {
+    try {
+      const raw = await readFile(path, "utf8");
+      const m = raw.match(/^\s*LITE_CONNECTION_INFO\s*=\s*(.+?)\s*$/m);
+      if (!m) continue;
+      let v = m[1].trim();
+      if (
+        (v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'"))
+      ) {
+        v = v.slice(1, -1);
+      }
+      v = expandShellHome(v);
+      if (v) return v;
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue;
+      // ignore malformed config read here; resolver still has other candidates
     }
-    throw startLiteServerMessage(`unable to read ${path}: ${err?.message ?? err}`);
   }
+  return;
+}
+
+async function readConnectionInfoCandidates(): Promise<
+  Array<{ path: string; info: ConnectionInfo }>
+> {
+  const candidates = candidateConnectionInfoPaths();
+  const daemonConfigPath = await readLiteDaemonConnectionFromConfig();
+  if (daemonConfigPath) {
+    candidates.unshift(daemonConfigPath);
+  }
+  const resolved: Array<{ path: string; info: ConnectionInfo }> = [];
+  let parseErrors: string[] = [];
+  for (const path of candidates) {
+    try {
+      const raw = await readFile(path, "utf8");
+      const info = JSON.parse(raw) as ConnectionInfo;
+      resolved.push({ path, info });
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue;
+      parseErrors.push(`${path}: ${err?.message ?? err}`);
+    }
+  }
+  if (parseErrors.length > 0 && resolved.length === 0) {
+    throw startLiteServerMessage(
+      `unable to read connection info (${parseErrors.join("; ")})`,
+    );
+  }
+  return resolved;
 }
 
 export async function resolveBaseUrl(): Promise<{
   base_url: string;
   auth_token?: string;
 }> {
-  const info = await readConnectionInfo();
-  if (!info) {
-    throw startLiteServerMessage(`missing ${connectionInfoPath()}`);
+  const explicitBaseUrl = process.env.COCALC_JUPYTER_E2E_BASE_URL?.trim();
+  if (explicitBaseUrl) {
+    return {
+      base_url: explicitBaseUrl,
+      auth_token:
+        process.env.COCALC_JUPYTER_E2E_AUTH_TOKEN?.trim() ??
+        process.env.COCALC_JUPYTER_E2E_TOKEN?.trim() ??
+        undefined,
+    };
   }
-  const pid = Number(info.pid);
-  const port = validatedPort(info.port);
-  if (!Number.isInteger(pid) || pid <= 0) {
-    throw startLiteServerMessage(`invalid pid in ${connectionInfoPath()}`);
+  const byPath = await readConnectionInfoCandidates();
+  if (byPath.length === 0) {
+    const paths = candidateConnectionInfoPaths();
+    throw startLiteServerMessage(
+      `missing connection-info.json (checked: ${paths.join(", ")})`,
+    );
   }
-  if (port == null) {
-    throw startLiteServerMessage(`invalid port in ${connectionInfoPath()}`);
+  let firstInvalid: string | undefined;
+  for (const { path, info } of byPath) {
+    const pid = Number(info.pid);
+    const port = validatedPort(info.port);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      firstInvalid = firstInvalid ?? `invalid pid in ${path}`;
+      continue;
+    }
+    if (port == null) {
+      firstInvalid = firstInvalid ?? `invalid port in ${path}`;
+      continue;
+    }
+    if (!isRunningPid(pid)) {
+      firstInvalid = firstInvalid ?? `pid ${pid} from ${path} is not running`;
+      continue;
+    }
+    const protocol = info.protocol === "https" ? "https" : "http";
+    const host = normalizeLiteHost(info.host);
+    return {
+      base_url: `${protocol}://${host}:${port}`,
+      auth_token: info.token,
+    };
   }
-  if (!isRunningPid(pid)) {
-    throw startLiteServerMessage(`pid ${pid} from ${connectionInfoPath()} is not running`);
-  }
-  const protocol = info.protocol === "https" ? "https" : "http";
-  const host = normalizeLiteHost(info.host);
-  return {
-    base_url: `${protocol}://${host}:${port}`,
-    auth_token: info.token,
-  };
+  throw startLiteServerMessage(
+    firstInvalid ??
+      `no usable running connection info (checked: ${byPath
+        .map(({ path }) => path)
+        .join(", ")})`,
+  );
 }
 
 function encodeNotebookPath(path: string): string {
@@ -130,12 +230,16 @@ export function notebookUrl({
   base_url,
   path_ipynb,
   auth_token,
+  frame_type,
 }: NotebookUrlOptions): string {
   const base = new URL(base_url.endsWith("/") ? base_url : `${base_url}/`);
   const encodedPath = encodeNotebookPath(path_ipynb);
   const url = new URL(`projects/${project_id}/files/${encodedPath}`, base);
   if (auth_token) {
     url.searchParams.set("auth_token", auth_token);
+  }
+  if (frame_type) {
+    url.searchParams.set("cocalc-test-jupyter-frame", frame_type);
   }
   return url.toString();
 }
@@ -219,6 +323,135 @@ export async function openNotebookPage(
   await page.waitForTimeout(8_000);
 }
 
+export async function openSingleDocNotebookPage(
+  page: Page,
+  url: string,
+  timeout_ms: number = 45_000,
+): Promise<void> {
+  await page.goto(trimTrailingSlash(url), {
+    waitUntil: "domcontentloaded",
+    timeout: timeout_ms,
+  });
+  const deadline = Date.now() + timeout_ms;
+  let lastReason = "initializing";
+  while (Date.now() < deadline) {
+    const switched = await page.evaluate(() => {
+      if (
+        document.querySelector('[data-cocalc-jupyter-slate-single-doc="1"]') !=
+        null
+      ) {
+        return { ok: true, mode: "already-singledoc" };
+      }
+      const runtime = (window as any).__cocalcJupyterRuntime;
+      if (typeof runtime?.set_frame_type_for_test === "function") {
+        runtime.set_frame_type_for_test("jupyter_slate_single_doc_notebook");
+        return { ok: true, mode: "runtime-switch" as const };
+      }
+      const redux = (window as any).cocalc?.redux ?? (window as any).redux;
+      const actions = redux?._actions ?? {};
+      const stores = redux?._stores ?? {};
+      const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
+      const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+      const actionNames = Object.keys(actions);
+      const candidates = actionNames.filter((name) => {
+        const action = actions[name];
+        return (
+          action?.jupyter_actions != null ||
+          typeof action?.set_frame_type === "function" ||
+          typeof action?.replace_frame_tree === "function" ||
+          typeof action?.set_frame_tree === "function" ||
+          typeof action?.get_frame_actions === "function"
+        );
+      });
+      if (candidates.length === 0) {
+        return {
+          ok: false,
+          reason: `missing-actions:all=${actionNames.length}`,
+        };
+      }
+      const bestMatch =
+        candidates.find(
+          (name) =>
+            currentPath != null &&
+            (stores[name]?.get?.("path") === currentPath ||
+              actions[name]?.store?.get?.("path") === currentPath),
+        ) ?? candidates[0];
+      const action = actions[bestMatch];
+      const localViewState =
+        stores[bestMatch]?.get?.("local_view_state") ??
+        action?.store?.get?.("local_view_state");
+      const activeId =
+        localViewState?.get?.("active_id") ??
+        localViewState?.getIn?.(["frame_tree", "id"]) ??
+        action?._get_active_id?.();
+      const typeCandidates = [
+        "jupyter_slate_single_doc_notebook",
+        "jupyter-singledoc",
+      ];
+      try {
+        if (activeId != null && typeof action?.set_frame_type === "function") {
+          for (const nextType of typeCandidates) {
+            action.set_frame_type(activeId, nextType);
+          }
+          return { ok: true, mode: "set_frame_type", action: bestMatch, activeId };
+        }
+        if (activeId != null && typeof action?.set_frame_tree === "function") {
+          action.set_frame_tree({ id: activeId, type: "jupyter_slate_single_doc_notebook" });
+          return { ok: true, mode: "set_frame_tree-leaf", action: bestMatch, activeId };
+        }
+        if (typeof action?.replace_frame_tree === "function") {
+          action.replace_frame_tree({ type: "jupyter_slate_single_doc_notebook" });
+          return { ok: true, mode: "replace_frame_tree", action: bestMatch };
+        }
+        if (typeof action?.set_frame_tree === "function") {
+          action.set_frame_tree({
+            type: "jupyter_slate_single_doc_notebook",
+          });
+          return { ok: true, mode: "set_frame_tree-root", action: bestMatch };
+        }
+      } catch (err: any) {
+        return {
+          ok: false,
+          reason: `switch-error:${err?.message ?? err}`,
+          action: bestMatch,
+        };
+      }
+      return {
+        ok: false,
+        reason: `no-switch-method:${bestMatch}:set_frame_type=${
+          typeof action?.set_frame_type
+        }:replace_frame_tree=${typeof action?.replace_frame_tree}:set_frame_tree=${typeof action?.set_frame_tree}:activeId=${
+          activeId ?? "none"
+        }`,
+        action: bestMatch,
+      };
+    });
+    lastReason = switched?.reason ?? switched?.mode ?? "unknown";
+    if (switched?.ok) {
+      try {
+        await page.waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
+          timeout: 2_000,
+        });
+        break;
+      } catch {
+        // keep polling until selector appears
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  await page.waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
+    timeout: 5_000,
+  }).catch(() => {
+    throw new Error(
+      `failed to switch notebook to single-doc frame within ${timeout_ms}ms (${lastReason})`,
+    );
+  });
+  await page.waitForSelector('[data-cocalc-test="jupyter-singledoc-code-cell"]', {
+    timeout: timeout_ms,
+  });
+  await page.waitForTimeout(8_000);
+}
+
 export function cellLocator(page: Page, index: number) {
   return page.locator('[cocalc-test="jupyter-cell"]').nth(index);
 }
@@ -256,6 +489,267 @@ export async function clickRunButton(page: Page, index: number): Promise<void> {
   const input = cell.locator('[cocalc-test="cell-input"] .CodeMirror').first();
   await input.click();
   await page.keyboard.press("Shift+Enter");
+}
+
+export function singleDocCodeCellLocator(page: Page, index: number) {
+  return page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').nth(index);
+}
+
+export async function countSingleDocCodeCells(page: Page): Promise<number> {
+  return await page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').count();
+}
+
+export async function pressSingleDocRunShortcut(
+  page: Page,
+  index: number,
+  shortcut: "Shift+Enter" | "Alt+Enter",
+): Promise<void> {
+  await pressSingleDocShortcut(page, index, shortcut);
+}
+
+export async function pressSingleDocShortcut(
+  page: Page,
+  index: number,
+  shortcut: string,
+): Promise<void> {
+  const cell = singleDocCodeCellLocator(page, index);
+  await cell.scrollIntoViewIfNeeded();
+  const line = cell.locator(".cocalc-slate-code-line").last();
+  if ((await line.count()) > 0) {
+    await line.click();
+  } else {
+    await cell.locator(".cocalc-slate-code-block").first().click();
+  }
+  await page.keyboard.press(shortcut);
+}
+
+export async function setSingleDocCellCode(
+  page: Page,
+  index: number,
+  code: string,
+): Promise<void> {
+  const line = singleDocCodeCellLocator(page, index)
+    .locator(".cocalc-slate-code-line")
+    .last();
+  await line.scrollIntoViewIfNeeded();
+  await line.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
+  const lines = code.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].length > 0) {
+      await page.keyboard.type(lines[i]);
+    }
+    if (i < lines.length - 1) {
+      await page.keyboard.press("Enter");
+    }
+  }
+}
+
+export async function appendSingleDocCellCode(
+  page: Page,
+  index: number,
+  code: string,
+): Promise<void> {
+  const line = singleDocCodeCellLocator(page, index)
+    .locator(".cocalc-slate-code-line")
+    .last();
+  await line.scrollIntoViewIfNeeded();
+  await line.click();
+  await page.keyboard.press("End");
+  const lines = code.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      await page.keyboard.press("Enter");
+    }
+    if (lines[i].length > 0) {
+      await page.keyboard.type(lines[i]);
+    }
+  }
+}
+
+export async function setSingleDocCellCodeViaRuntime(
+  page: Page,
+  index: number,
+  code: string,
+): Promise<void> {
+  await page.evaluate(
+    ({ idx, value }) => {
+      const runtime = (window as any).__cocalcJupyterRuntime;
+      if (typeof runtime?.set_single_doc_cell_input_for_test !== "function") {
+        throw new Error(
+          "single-doc runtime hook unavailable: set_single_doc_cell_input_for_test",
+        );
+      }
+      runtime.set_single_doc_cell_input_for_test(idx, value);
+    },
+    { idx: index, value: code },
+  );
+}
+
+export async function setSingleDocSelectionViaRuntime(
+  page: Page,
+  index: number,
+  where: "start" | "end",
+): Promise<void> {
+  await page.evaluate(
+    ({ idx, pos }) => {
+      const runtime = (window as any).__cocalcJupyterRuntime;
+      if (typeof runtime?.set_single_doc_selection_for_test === "function") {
+        runtime.set_single_doc_selection_for_test(idx, pos);
+        return;
+      }
+      const cells = Array.from(
+        document.querySelectorAll('[data-cocalc-test="jupyter-singledoc-code-cell"]'),
+      );
+      const cell = cells[idx] as HTMLElement | undefined;
+      if (!cell) throw new Error(`missing single-doc code cell at index ${idx}`);
+      const lines = Array.from(cell.querySelectorAll(".cocalc-slate-code-line"));
+      const line =
+        pos === "start"
+          ? (lines[0] as HTMLElement | undefined)
+          : (lines[lines.length - 1] as HTMLElement | undefined);
+      if (!line) throw new Error(`missing code line for cell ${idx}`);
+
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      let firstText: Text | null = null;
+      let lastText: Text | null = null;
+      while (walker.nextNode()) {
+        const n = walker.currentNode as Text;
+        if (firstText == null) firstText = n;
+        lastText = n;
+      }
+
+      const range = document.createRange();
+      if (pos === "start") {
+        if (firstText) {
+          range.setStart(firstText, 0);
+        } else {
+          range.setStart(line, 0);
+        }
+      } else {
+        if (lastText) {
+          range.setStart(lastText, lastText.textContent?.length ?? 0);
+        } else {
+          range.setStart(line, line.childNodes.length);
+        }
+      }
+      range.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      line.focus?.();
+    },
+    { idx: index, pos: where },
+  );
+}
+
+export async function blurSingleDocEditor(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const active = document.activeElement as HTMLElement | null;
+    active?.blur?.();
+  });
+}
+
+export async function readNotebookCellInputFromStore(
+  page: Page,
+  index: number,
+): Promise<string> {
+  return await page.evaluate((idx: number) => {
+    const redux = (window as any).cocalc?.redux ?? (window as any).redux;
+    if (!redux) {
+      throw new Error("unable to locate jupyter store: missing-redux");
+    }
+    const actions = redux?._actions ?? {};
+    const stores = redux?._stores ?? {};
+    const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
+    const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+    const candidates = Object.keys(stores).filter((name) => {
+      const store = stores[name];
+      if (typeof store?.get !== "function") return false;
+      const hasCells = store.get("cells") != null;
+      const hasCellList = store.get("cell_list") != null;
+      return hasCells && hasCellList;
+    });
+    if (candidates.length === 0) {
+      throw new Error("unable to locate jupyter store: missing-candidates");
+    }
+    const actionName =
+      candidates.find(
+        (name) =>
+          currentPath != null &&
+          (stores[name]?.get?.("path") === currentPath ||
+            actions[name]?.store?.get?.("path") === currentPath),
+      ) ?? candidates[0];
+    const storeName = actions[actionName]?.jupyter_actions?.name ?? actionName;
+    const store = redux.getStore(storeName) ?? stores[actionName];
+    const cellList = store?.get?.("cell_list");
+    const cells = store?.get?.("cells");
+    if (cellList == null || cells == null) {
+      return "";
+    }
+    const id = cellList.get?.(idx);
+    if (id == null) {
+      return "";
+    }
+    return `${cells.getIn?.([id, "input"]) ?? ""}`;
+  }, index);
+}
+
+export async function countNotebookCellsFromStore(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const redux = (window as any).cocalc?.redux ?? (window as any).redux;
+    if (!redux) {
+      throw new Error("unable to locate jupyter store: missing-redux");
+    }
+    const actions = redux?._actions ?? {};
+    const stores = redux?._stores ?? {};
+    const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
+    const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+    const candidates = Object.keys(stores).filter((name) => {
+      const store = stores[name];
+      if (typeof store?.get !== "function") return false;
+      return store.get("cell_list") != null;
+    });
+    if (candidates.length === 0) {
+      throw new Error("unable to locate jupyter store: missing-candidates");
+    }
+    const actionName =
+      candidates.find(
+        (name) =>
+          currentPath != null &&
+          (stores[name]?.get?.("path") === currentPath ||
+            actions[name]?.store?.get?.("path") === currentPath),
+      ) ?? candidates[0];
+    const storeName = actions[actionName]?.jupyter_actions?.name ?? actionName;
+    const store = redux.getStore(storeName) ?? stores[actionName];
+    const cellList = store?.get?.("cell_list");
+    return Number(cellList?.size ?? 0);
+  });
+}
+
+export async function readSingleDocOutputText(
+  page: Page,
+  index: number,
+): Promise<string> {
+  const output = page
+    .locator('[data-cocalc-test="jupyter-singledoc-output"]')
+    .nth(index);
+  if ((await output.count()) === 0) {
+    return "";
+  }
+  return await output.innerText();
+}
+
+export async function readSingleDocCellText(
+  page: Page,
+  index: number,
+): Promise<string> {
+  const cell = singleDocCodeCellLocator(page, index);
+  if ((await cell.count()) === 0) {
+    return "";
+  }
+  return await cell.innerText();
 }
 
 export async function killKernelProcessesForE2E(): Promise<void> {
@@ -373,6 +867,25 @@ export async function readCellTimingLastMs(
   return n;
 }
 
+export async function readKernelWarningVisible(page: Page): Promise<boolean> {
+  const value = await page.evaluate(
+    () =>
+      document.documentElement.getAttribute(
+        "data-cocalc-jupyter-kernel-warning-visible",
+      ) ?? "",
+  );
+  return value === "1";
+}
+
+export async function readKernelWarningText(page: Page): Promise<string> {
+  return await page.evaluate(
+    () =>
+      document.documentElement.getAttribute(
+        "data-cocalc-jupyter-kernel-warning-text",
+      ) ?? "",
+  );
+}
+
 async function setKernelErrorInternal(
   page: Page,
   message: string,
@@ -381,6 +894,19 @@ async function setKernelErrorInternal(
   let lastReason = "unknown";
   while (Date.now() < deadline) {
     const result = await page.evaluate((msg: string) => {
+      const hasEventSurface =
+        document.documentElement.getAttribute(
+          "data-cocalc-jupyter-test-set-kernel-error",
+        ) === "1";
+      if (hasEventSurface) {
+        window.dispatchEvent(
+          new CustomEvent("cocalc:jupyter:set-kernel-error-for-test", {
+            detail: { message: msg },
+          }),
+        );
+        return { ok: true, source: "event" as const };
+      }
+
       const runtime = (window as any).__cocalcJupyterRuntime;
       if (typeof runtime?.set_kernel_error_for_test === "function") {
         runtime.set_kernel_error_for_test(msg);
@@ -429,6 +955,13 @@ export async function canSetKernelErrorForE2E(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const canSet = await page.evaluate(() => {
+      if (
+        document.documentElement.getAttribute(
+          "data-cocalc-jupyter-test-set-kernel-error",
+        ) === "1"
+      ) {
+        return true;
+      }
       const runtime = (window as any).__cocalcJupyterRuntime;
       if (typeof runtime?.set_kernel_error_for_test === "function") {
         return true;

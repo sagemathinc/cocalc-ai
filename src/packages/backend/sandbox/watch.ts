@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { watch as chokidarWatch } from "chokidar";
+import { watch as nativeFsWatch, type FSWatcher as NativeFsWatcher } from "node:fs";
+import { join } from "node:path";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { type WatchOptions, type ChangeEvent } from "@cocalc/conat/files/watch";
 import { EventEmitter } from "events";
@@ -8,6 +10,7 @@ import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import { DiffMatchPatch, compressPatch } from "@cocalc/util/dmp";
 import { sha1 } from "@cocalc/backend/sha1";
+import { trackBackendWatcher } from "../watcher-debug";
 
 // this is used specifically for loading from disk, where the patch
 // explaining the last change on disk gets merged into the live version
@@ -22,6 +25,101 @@ const logger = getLogger("sandbox:watch");
 
 export { type WatchOptions };
 export type WatchIterator = EventIterator<ChangeEvent>;
+
+const ALLOW_HIGH_FANOUT_SYSTEM_WATCH = (() => {
+  const raw = process.env.COCALC_SANDBOX_WATCH_ALLOW_HIGH_FANOUT_SYSTEM_DIRS;
+  if (raw == null) return false;
+  const v = raw.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(v);
+})();
+
+const PSEUDO_FS_PREFIXES = ["/dev", "/proc", "/sys"];
+const HIGH_FANOUT_SYSTEM_DIRS = new Set([
+  "/",
+  "/@tmp",
+  "/tmp",
+  "/etc",
+  "/boot",
+  "/btrfs",
+  "/usr",
+  "/var",
+  "/opt",
+  "/lib",
+  "/lib64",
+  "/bin",
+  "/sbin",
+  "/run",
+  "/media",
+  "/mnt",
+  "/lost+found",
+]);
+
+function normalizeWatchPath(path: string): string {
+  if (path === "/") return "/";
+  return path.replace(/\/+$/, "");
+}
+
+function isPseudoFsPath(path: string): boolean {
+  const normalized = normalizeWatchPath(path);
+  for (const prefix of PSEUDO_FS_PREFIXES) {
+    if (normalized === prefix || normalized.startsWith(prefix + "/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isDirectoryListingWatch(options: WatchOptions): boolean {
+  return !!options.closeOnUnlink && !!options.stats && !options.patch;
+}
+
+function isHighFanoutSystemDir(path: string, options: WatchOptions): boolean {
+  if (ALLOW_HIGH_FANOUT_SYSTEM_WATCH) {
+    return false;
+  }
+  // Only guard directory-listing style watches. File watches and patch watches
+  // keep normal behavior.
+  if (!isDirectoryListingWatch(options)) {
+    return false;
+  }
+  const normalized = normalizeWatchPath(path);
+  return HIGH_FANOUT_SYSTEM_DIRS.has(normalized);
+}
+
+const CONFIGURED_POLL_INTERVAL = (() => {
+  const raw = process.env.COCALC_SANDBOX_WATCH_POLL_INTERVAL_MS;
+  if (raw == null || raw === "") {
+    return 0;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    logger.warn(
+      "invalid COCALC_SANDBOX_WATCH_POLL_INTERVAL_MS; expected nonnegative integer",
+      { value: raw },
+    );
+    return 0;
+  }
+  return parsed;
+})();
+
+function getRequestedPollInterval(options: WatchOptions): number {
+  const requested = options.pollInterval ?? CONFIGURED_POLL_INTERVAL;
+  if (!Number.isFinite(requested)) {
+    return 0;
+  }
+  return requested;
+}
+
+function assertPollingDisabled(path: string, options: WatchOptions): void {
+  const requestedPollInterval = getRequestedPollInterval(options);
+  if (requestedPollInterval === 0) {
+    return;
+  }
+  throw new Error(
+    `Polling file watchers are disabled (path='${path}', requested pollInterval=${requestedPollInterval}). ` +
+      "Set pollInterval=0 or omit it.",
+  );
+}
 
 // do NOT use patch for tracking file changes if the file exceeds
 // this size.  The reason is mainly because computing diffs of
@@ -38,6 +136,7 @@ export default async function watch(
   lastOnDiskHash: TTL<string, boolean>,
 ): Promise<WatchIterator> {
   log("watch", path, options);
+  assertPollingDisabled(path, options);
   const watcher = new Watcher(path, options, lastOnDisk, lastOnDiskHash);
   await watcher.waitUntilReady();
 
@@ -60,11 +159,13 @@ export default async function watch(
 }
 
 class Watcher extends EventEmitter {
-  private watcher: ReturnType<typeof chokidarWatch>;
+  private watcher: ReturnType<typeof chokidarWatch> | NativeFsWatcher;
   private ready: boolean = false;
   private readonly readyPromise: Promise<void>;
   private readyResolve: (() => void) | null = null;
   private patchSeq: number = 0;
+  private watchErrorCount = 0;
+  private stopTrackingWatcher?: () => void;
 
   constructor(
     private path: string,
@@ -78,38 +179,156 @@ class Watcher extends EventEmitter {
     });
 
     const stabilityThreshold = options.stabilityThreshold ?? 500;
-    const pollInterval = options.pollInterval ?? 250;
-    const chokidarConfig = {
-      depth: 0,
-      ignoreInitial: true,
-      followSymlinks: false,
-      alwaysStat: options.stats ?? false,
-      atomic: true,
-      usePolling: !!pollInterval,
-      interval: pollInterval,
-      awaitWriteFinish: stabilityThreshold
-        ? {
-            stabilityThreshold,
-            pollInterval: stabilityThreshold / 2,
-          }
-        : undefined,
+    const normalizedPath = normalizeWatchPath(path);
+    const directoryListingWatch = isDirectoryListingWatch(options);
+    const pseudoFsWatch = isPseudoFsPath(normalizedPath);
+    const highFanoutSystemWatch = isHighFanoutSystemDir(normalizedPath, options);
+    const useNativeWatcher =
+      directoryListingWatch || pseudoFsWatch || highFanoutSystemWatch;
+    const trackerInfo: Record<string, unknown> = {
+      usePolling: false,
+      pollInterval: 0,
+      requestedPollInterval: options.pollInterval ?? null,
+      stabilityThreshold,
+      closeOnUnlink: !!options.closeOnUnlink,
+      patch: !!options.patch,
+      directoryListingWatch,
+      pseudoFsWatch,
+      highFanoutSystemWatch,
+      useNativeWatcher,
     };
-    this.watcher = chokidarWatch(path, chokidarConfig);
-
-    this.watcher.once("ready", () => {
-      this.ready = true;
-      this.readyResolve?.();
-      this.readyResolve = null;
-    });
-    this.watcher.on("all", async (...args) => {
-      const change = await this.handle(...args);
-      if (change !== undefined) {
-        this.emit("change", change);
+    if (useNativeWatcher) {
+      if (pseudoFsWatch || highFanoutSystemWatch) {
+        trackerInfo.mode = "native-fs-watch-guarded";
+        logger.warn("sandbox watcher in guarded native fs.watch mode", {
+          path,
+          pseudoFsWatch,
+          highFanoutSystemWatch,
+        });
+      } else {
+        trackerInfo.mode = "native-fs-watch-listing";
+        logger.debug("sandbox listing watcher in native fs.watch mode", {
+          path,
+        });
       }
-    });
-    this.watcher.on("error", (error) => {
-      logger.debug(path, "got error", error);
-    });
+    }
+    if (useNativeWatcher) {
+      this.stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:sandbox/watch",
+        type: "fs.watch",
+        path,
+        info: trackerInfo,
+      });
+      this.watcher = nativeFsWatch(
+        path,
+        { persistent: true },
+        (eventType, filename) => {
+          const child =
+            typeof filename === "string" && filename.length > 0
+              ? join(path, filename)
+              : path;
+          void this.emitChangeFromWatch(eventType as string, child, undefined);
+        },
+      );
+      this.watcher.on("error", (error) => {
+        this.logWatchError(path, error);
+      });
+      // fs.watch has no "ready" event.
+      queueMicrotask(() => {
+        this.ready = true;
+        this.readyResolve?.();
+        this.readyResolve = null;
+      });
+    } else {
+      const chokidarConfig = {
+        depth: 0,
+        ignoreInitial: true,
+        followSymlinks: false,
+        alwaysStat: options.stats ?? false,
+        atomic: true,
+        ignorePermissionErrors: true,
+        usePolling: false,
+        awaitWriteFinish: stabilityThreshold
+          ? {
+              stabilityThreshold,
+              pollInterval: stabilityThreshold / 2,
+            }
+          : undefined,
+      };
+      this.stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:sandbox/watch",
+        type: "chokidar",
+        path,
+        info: trackerInfo,
+      });
+      this.watcher = chokidarWatch(path, chokidarConfig);
+
+      this.watcher.once("ready", () => {
+        this.ready = true;
+        const getWatched = (this.watcher as any).getWatched;
+        if (typeof getWatched === "function") {
+          try {
+            const watched = getWatched.call(this.watcher) as Record<
+              string,
+              string[]
+            >;
+            let watchedDirs = 0;
+            let watchedEntries = 0;
+            for (const names of Object.values(watched)) {
+              watchedDirs += 1;
+              watchedEntries += Array.isArray(names) ? names.length : 0;
+            }
+            trackerInfo.watchedDirs = watchedDirs;
+            trackerInfo.watchedEntries = watchedEntries;
+            if (watchedEntries >= 500) {
+              logger.warn("sandbox watcher has large watch-set", {
+                path,
+                watchedDirs,
+                watchedEntries,
+              });
+            }
+          } catch (err) {
+            trackerInfo.watchedStatsError = `${err}`;
+          }
+        }
+        this.readyResolve?.();
+        this.readyResolve = null;
+      });
+      this.watcher.on("all", async (...args) => {
+        const change = await this.handle(...args);
+        if (change !== undefined) {
+          this.emit("change", change);
+        }
+      });
+      this.watcher.on("error", (error) => {
+        this.logWatchError(path, error);
+      });
+    }
+  }
+
+  private async emitChangeFromWatch(
+    event: string,
+    path: string,
+    stats: any,
+  ): Promise<void> {
+    const change = await this.handle(event, path, stats);
+    if (change !== undefined) {
+      this.emit("change", change);
+    }
+  }
+
+  private logWatchError(path: string, error: unknown): void {
+    this.watchErrorCount += 1;
+    if (this.watchErrorCount <= 3 || this.watchErrorCount % 100 === 0) {
+      logger.debug(path, "got error", {
+        count: this.watchErrorCount,
+        error,
+      });
+    } else if (this.watchErrorCount === 4) {
+      logger.warn("sandbox watcher: suppressing repetitive errors", {
+        path,
+      });
+    }
   }
 
   handle = async (event, path, stats): Promise<undefined | ChangeEvent> => {
@@ -185,6 +404,8 @@ class Watcher extends EventEmitter {
 
   close() {
     log(this.path, "close()");
+    this.stopTrackingWatcher?.();
+    this.stopTrackingWatcher = undefined;
     this.watcher?.close();
     this.emit("close");
     this.removeAllListeners();

@@ -155,7 +155,17 @@ export class WebappConfiguration {
   }
 
   // returns the global configuration + eventually vanity specific site config settings
-  private async get_configuration({ host, country }) {
+  private async get_configuration({
+    host,
+    country,
+    cloudflareRegion,
+    cloudflareRegionCode,
+    cloudflareCity,
+    cloudflareContinent,
+    cloudflareTimezone,
+    cloudflareLatitude,
+    cloudflareLongitude,
+  }) {
     if (this.data == null) {
       // settings not yet initialized
       return {};
@@ -171,6 +181,13 @@ export class WebappConfiguration {
       ...vanity,
       ...{
         country,
+        cloudflare_region: cloudflareRegion,
+        cloudflare_region_code: cloudflareRegionCode,
+        cloudflare_city: cloudflareCity,
+        cloudflare_continent: cloudflareContinent,
+        cloudflare_timezone: cloudflareTimezone,
+        cloudflare_latitude: cloudflareLatitude,
+        cloudflare_longitude: cloudflareLongitude,
         dns: host,
         cocalc_product: getCocalcProduct(),
         is_launchpad: isLaunchpadProduct(),
@@ -210,7 +227,17 @@ export class WebappConfiguration {
     return processCustomLLM(custom_openai, "OpenAI (custom)");
   }
 
-  private async get_config({ country, host }): Promise<Config> {
+  private async get_config({
+    country,
+    host,
+    cloudflareRegion,
+    cloudflareRegionCode,
+    cloudflareCity,
+    cloudflareContinent,
+    cloudflareTimezone,
+    cloudflareLatitude,
+    cloudflareLongitude,
+  }): Promise<Config> {
     while (this.data == null) {
       L.debug("waiting for server settings to be initialized");
       await delay(100);
@@ -218,7 +245,17 @@ export class WebappConfiguration {
 
     const [configuration, registration, software, ollama, custom_openai] =
       await Promise.all([
-        this.get_configuration({ host, country }),
+        this.get_configuration({
+          host,
+          country,
+          cloudflareRegion,
+          cloudflareRegionCode,
+          cloudflareCity,
+          cloudflareContinent,
+          cloudflareTimezone,
+          cloudflareLatitude,
+          cloudflareLongitude,
+        }),
         have_active_registration_tokens(this.db),
         getSoftwareEnvironments("webapp"),
         this.get_ollama_public(),
@@ -236,11 +273,42 @@ export class WebappConfiguration {
   }
 
   // it returns a shallow copy, hence you can modify/add keys in the returned map!
-  public async get({ country, host }): Promise<Config> {
-    const key = `config::${country}::${host}`;
+  public async get({
+    country,
+    host,
+    cloudflareRegion,
+    cloudflareRegionCode,
+    cloudflareCity,
+    cloudflareContinent,
+    cloudflareTimezone,
+    cloudflareLatitude,
+    cloudflareLongitude,
+  }): Promise<Config> {
+    const key = [
+      "config",
+      country ?? "",
+      host ?? "",
+      cloudflareRegionCode ?? "",
+      cloudflareRegion ?? "",
+      cloudflareCity ?? "",
+      cloudflareContinent ?? "",
+      cloudflareTimezone ?? "",
+      cloudflareLatitude ?? "",
+      cloudflareLongitude ?? "",
+    ].join("::");
     let config = CACHE.get(key);
     if (config == null) {
-      config = await this.get_config({ country, host });
+      config = await this.get_config({
+        country,
+        host,
+        cloudflareRegion,
+        cloudflareRegionCode,
+        cloudflareCity,
+        cloudflareContinent,
+        cloudflareTimezone,
+        cloudflareLatitude,
+        cloudflareLongitude,
+      });
       CACHE.set(key, config);
     } else {
       L(`cache hit -- '${key}'`);

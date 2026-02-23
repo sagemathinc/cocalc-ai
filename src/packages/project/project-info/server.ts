@@ -19,7 +19,6 @@ import { check as df } from "diskusage";
 import { EventEmitter } from "node:events";
 import { access, readFile } from "node:fs/promises";
 
-import { ProcessStats } from "@cocalc/backend/process-stats";
 import { pidToPath as terminalPidToPath } from "@cocalc/project/conat/terminal/manager";
 import { getLogger } from "@cocalc/project/logger";
 import { get_path_for_pid as x11_pid2path } from "@cocalc/project/x11/server";
@@ -31,8 +30,14 @@ import type {
   Processes,
   ProjectInfo,
 } from "@cocalc/util/types/project-info/types";
+import {
+  createProcessSnapshotProvider,
+  getProjectInfoScopeFromEnv,
+  type ProcessSnapshotProvider,
+} from "./snapshot-provider";
 
 const L = getLogger("project-info:server").debug;
+const DEFAULT_INTERVAL_S = 7;
 
 const bytes2MiB = (bytes) => bytes / (1024 * 1024);
 
@@ -41,6 +46,9 @@ const bytes2MiB = (bytes) => bytes / (1024 * 1024);
  * Returns true if /tmp is tmpfs, false otherwise.
  */
 async function isTmpMemoryBased(): Promise<boolean> {
+  if (process.platform !== "linux") {
+    return false;
+  }
   try {
     const mounts = await readFile("/proc/mounts", "utf8");
     // Look for lines like: "tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,relatime,size=1024000k 0 0"
@@ -76,24 +84,33 @@ export class ProjectInfoServer extends EventEmitter {
   private last?: ProjectInfo = undefined;
   private readonly dbg: Function;
   private running = false;
+  private starting = false;
   private readonly testing: boolean;
   private delay_s: number;
   private tmpIsMemoryBased?: boolean;
   private cgroupFilesAreMissing: boolean = false;
-  private processStats: ProcessStats;
+  private readonly snapshotProvider: ProcessSnapshotProvider;
   private cgroupVersion: "v1" | "v2" | "unknown" | null;
 
   constructor(testing = false) {
     super();
-    this.delay_s = 2;
+    this.delay_s = Math.max(
+      1,
+      Number.parseInt(
+        process.env.COCALC_PROJECT_INFO_INTERVAL_S ?? `${DEFAULT_INTERVAL_S}`,
+        10,
+      ) || DEFAULT_INTERVAL_S,
+    );
     this.testing = testing;
     this.dbg = L;
+    const scope = getProjectInfoScopeFromEnv();
+    this.snapshotProvider = createProcessSnapshotProvider({ scope });
     // cgroup version will be detected lazily
     this.cgroupVersion = null;
   }
 
   private async processes(timestamp: number) {
-    return await this.processStats.processes(timestamp);
+    return await this.snapshotProvider.snapshot(timestamp);
   }
 
   // delta-time for this and the previous process information
@@ -144,6 +161,10 @@ export class ProjectInfoServer extends EventEmitter {
     // iterate over all processes keys (pid) and call this.cocalc({pid, cmdline})
     // to update the processes coclc field
     for (const pid in processes) {
+      // Owned-scope providers can attach authoritative classification directly.
+      if (processes[pid].cocalc != null) {
+        continue;
+      }
       processes[pid].cocalc = await this.cocalc({
         pid: parseInt(pid),
         cmdline: processes[pid].cmdline,
@@ -157,6 +178,10 @@ export class ProjectInfoServer extends EventEmitter {
    */
   private async detectCGroupVersion(): Promise<"v1" | "v2" | "unknown" | null> {
     if (this.cgroupVersion !== null) {
+      return this.cgroupVersion;
+    }
+    if (process.platform !== "linux") {
+      this.cgroupVersion = "unknown";
       return this.cgroupVersion;
     }
 
@@ -530,8 +555,10 @@ export class ProjectInfoServer extends EventEmitter {
         this.cgroup({ timestamp }),
         this.disk_usage(),
       ]);
-      const { procs, boottime, uptime } = processes;
-      await this.lookupCoCalcInfo(procs);
+      const { procs, boottime, uptime, scope, process_count } = processes;
+      if (procs != null) {
+        await this.lookupCoCalcInfo(procs);
+      }
       const info: ProjectInfo = {
         timestamp,
         processes: procs,
@@ -539,6 +566,8 @@ export class ProjectInfoServer extends EventEmitter {
         boottime,
         cgroup,
         disk_usage,
+        scope,
+        process_count,
       };
       return info;
     } catch (err) {
@@ -555,45 +584,51 @@ export class ProjectInfoServer extends EventEmitter {
   };
 
   public async start(): Promise<void> {
-    if (this.running) {
+    if (this.running || this.starting) {
       this.dbg("project-info/server: already running, cannot be started twice");
     } else {
-      await this._start();
+      this.starting = true;
+      try {
+        await this._start();
+      } finally {
+        this.starting = false;
+      }
     }
   }
 
   private async _start(): Promise<void> {
-    this.dbg("start");
+    this.dbg("start", { interval_s: this.delay_s });
     if (this.running) {
       throw Error("Cannot start ProjectInfoServer twice");
     }
-
-    // Initialize tmpfs detection once at startup
-    this.tmpIsMemoryBased = await isTmpMemoryBased();
+    // This must be set before the first await to prevent concurrent callers
+    // from racing into a second background loop.
     this.running = true;
-    this.processStats = ProcessStats.getInstance();
-    if (this.testing) {
-      this.processStats.setTesting(true);
-    }
-    await this.processStats.init();
-    while (true) {
-      //this.dbg(`listeners on 'info': ${this.listenerCount("info")}`);
-      const info = await this.get_info();
-      if (info != null) this.last = info;
-      this.emit("info", info ?? this.last);
-      if (this.running) {
-        await delay(1000 * this.delay_s);
-      } else {
-        this.dbg("start: no longer running → stopping loop");
-        this.last = undefined;
-        return;
-      }
-      // in test mode just one more, that's enough
-      if (this.last != null && this.testing) {
+    try {
+      // Initialize tmpfs detection once at startup
+      this.tmpIsMemoryBased = await isTmpMemoryBased();
+      await this.snapshotProvider.init({ testing: this.testing });
+      while (true) {
+        //this.dbg(`listeners on 'info': ${this.listenerCount("info")}`);
         const info = await this.get_info();
-        this.dbg(JSON.stringify(info, null, 2));
-        return;
+        if (info != null) this.last = info;
+        this.emit("info", info ?? this.last);
+        if (this.running) {
+          await delay(1000 * this.delay_s);
+        } else {
+          this.dbg("start: no longer running -> stopping loop");
+          return;
+        }
+        // in test mode just one more, that's enough
+        if (this.last != null && this.testing) {
+          const info = await this.get_info();
+          this.dbg(JSON.stringify(info, null, 2));
+          return;
+        }
       }
+    } finally {
+      this.running = false;
+      this.last = undefined;
     }
   }
 }

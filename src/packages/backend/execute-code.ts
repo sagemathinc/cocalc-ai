@@ -40,6 +40,7 @@ import {
   type ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
 import { envForSpawn } from "./misc";
+import { trackProcessRoot } from "./process-tracker";
 import { ProcessStats, sumChildren } from "./process-stats";
 
 const log = getLogger("execute-code");
@@ -388,6 +389,11 @@ function doSpawn(
   let killed = false;
   let callback_done = false; // set in "finish", which is also called in a timeout
   let timer: NodeJS.Timeout | undefined = undefined;
+  const trackedRoot = trackProcessRoot({
+    kind: "exec",
+    path: opts.path,
+    session_id: opts.job_id,
+  });
 
   // periodically check up on the child process tree and record stats
   // this also keeps the entry in the cache alive, when the ttl is less than the duration of the execution
@@ -447,6 +453,9 @@ function doSpawn(
   try {
     child = spawn(opts.command, opts.args, spawnOptions);
     child.unref();
+    if (child.pid != null) {
+      trackedRoot.attachPid(child.pid);
+    }
     if (child.stdout == null || child.stderr == null) {
       const errorMsg =
         "error creating child process -- couldn't spawn child process";
@@ -666,6 +675,8 @@ function doSpawn(
     }
     // finally finish up – this will also terminate the monitor
     callback_done = true;
+    trackedRoot.markExited({ pid: child.pid ?? undefined });
+    trackedRoot.close();
 
     // Flush any remaining buffered stream data before finishing
     if (opts.streamCB) {

@@ -27,6 +27,14 @@ const logger = getLogger("project-host:codex-project");
 const CONTAINER_TTL_MS = Number(
   process.env.COCALC_CODEX_PROJECT_TTL_MS ?? 60_000,
 );
+const CONTAINER_SETUP_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_CONTAINER_SETUP_TIMEOUT_MS ?? 30_000),
+);
+const PODMAN_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_CODEX_PODMAN_TIMEOUT_MS ?? 45_000),
+);
 
 type ContainerInfo = {
   name: string;
@@ -104,18 +112,77 @@ async function getOptionalCertMounts(): Promise<{
   return { mounts: [], env: {} };
 }
 
-async function podman(args: string[]): Promise<void> {
+function truncateForLog(value: string | undefined, max = 500): string {
+  if (!value) return "";
+  const text = value.trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function podman(
+  args: string[],
+  {
+    timeoutMs = PODMAN_TIMEOUT_MS,
+    label,
+  }: { timeoutMs?: number; label?: string } = {},
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    execFile("podman", args, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
+    execFile(
+      "podman",
+      args,
+      {
+        timeout: timeoutMs,
+        maxBuffer: 8 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (!err) {
+          resolve();
+          return;
+        }
+        const detail = truncateForLog(stderr || stdout);
+        const timedOut =
+          (err as any)?.killed === true || `${(err as any)?.code ?? ""}` === "ETIMEDOUT";
+        const context = label ? ` (${label})` : "";
+        reject(
+          new Error(
+            timedOut
+              ? `podman${context} timed out after ${timeoutMs}ms${detail ? `: ${detail}` : ""}`
+              : `podman${context} failed${detail ? `: ${detail}` : ""}`,
+          ),
+        );
+      },
+    );
   });
 }
 
 async function containerExists(name: string): Promise<boolean> {
   try {
-    await podman(["container", "exists", name]);
+    await podman(["container", "exists", name], {
+      label: "container exists",
+    });
     return true;
   } catch {
     return false;
@@ -164,7 +231,9 @@ const containerLeases = new RefcountLeaseManager<string>({
     const { projectId, contextId } = parseLeaseKey(key);
     const name = codexContainerName(projectId, contextId);
     try {
-      await podman(["rm", "-f", "-t", "0", name]);
+      await podman(["rm", "-f", "-t", "0", name], {
+        label: "container rm",
+      });
     } catch (err) {
       logger.debug("codex container rm failed", {
         projectId,
@@ -334,7 +403,7 @@ async function ensureContainer({
     auth: redactCodexAuthRuntime(authRuntime),
     cmd: redactPodmanArgs(args),
   });
-  await podman(args);
+  await podman(args, { label: "container run" });
 
   return { name, rootfs, codexPath: containerPath, home };
 }
@@ -423,7 +492,11 @@ export async function spawnCodexInProjectContainer({
   const release = await containerLeases.acquire(key);
   let info: ContainerInfo | undefined;
   try {
-    info = await ensureContainer({ projectId, authRuntime, extraEnv });
+    info = await withTimeout(
+      ensureContainer({ projectId, authRuntime, extraEnv }),
+      CONTAINER_SETUP_TIMEOUT_MS,
+      `codex container setup (project=${projectId})`,
+    );
   } catch (err) {
     await release();
     throw err;

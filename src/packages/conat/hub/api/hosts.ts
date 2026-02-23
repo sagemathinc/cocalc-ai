@@ -18,6 +18,7 @@ export const HOST_LRO_KINDS = [
   "host-start",
   "host-stop",
   "host-restart",
+  "host-drain",
   "host-upgrade-software",
   "host-deprovision",
   "host-delete",
@@ -34,6 +35,25 @@ export type HostLroResponse = {
   service: string;
   stream_name: string;
   kind: HostLroKind;
+};
+
+export type HostDrainOptions = {
+  id: string;
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+  parallel?: number;
+};
+
+export type HostDrainResult = {
+  host_id: string;
+  mode: "move" | "force";
+  total: number;
+  moved: number;
+  unassigned: number;
+  failed: number;
+  dest_host_id?: string;
+  parallel?: number;
 };
 
 export interface HostMachine {
@@ -197,6 +217,33 @@ export interface HostLogEntry {
   error?: string | null;
 }
 
+export interface HostRuntimeLog {
+  host_id: string;
+  source: string;
+  lines: number;
+  text: string;
+}
+
+export interface HostSshAuthorizedKeys {
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+}
+
+export interface HostSoftwareAvailableVersion {
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  version?: string;
+  url?: string;
+  sha256?: string;
+  available: boolean;
+  error?: string;
+}
+
 export type HostSoftwareArtifact =
   | "project-host"
   | "project"
@@ -257,10 +304,16 @@ export const hosts = {
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
+  getHostRuntimeLog: authFirstRequireAccount,
+  listHostSshAuthorizedKeys: authFirstRequireAccount,
+  addHostSshAuthorizedKey: authFirstRequireAccount,
+  removeHostSshAuthorizedKey: authFirstRequireAccount,
+  listHostSoftwareVersions: authFirstRequireAccount,
   createHost: authFirstRequireAccount,
   startHost: authFirstRequireAccount,
   stopHost: authFirstRequireAccount,
   restartHost: authFirstRequireAccount,
+  drainHost: authFirstRequireAccount,
   forceDeprovisionHost: authFirstRequireAccount,
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
@@ -320,6 +373,34 @@ export interface Hosts {
     id: string;
     limit?: number;
   }) => Promise<HostLogEntry[]>;
+  getHostRuntimeLog: (opts: {
+    account_id?: string;
+    id: string;
+    lines?: number;
+  }) => Promise<HostRuntimeLog>;
+  listHostSshAuthorizedKeys: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostSshAuthorizedKeys>;
+  addHostSshAuthorizedKey: (opts: {
+    account_id?: string;
+    id: string;
+    public_key: string;
+  }) => Promise<HostSshAuthorizedKeys & { added: boolean }>;
+  removeHostSshAuthorizedKey: (opts: {
+    account_id?: string;
+    id: string;
+    public_key: string;
+  }) => Promise<HostSshAuthorizedKeys & { removed: boolean }>;
+  listHostSoftwareVersions: (opts: {
+    account_id?: string;
+    base_url?: string;
+    artifacts?: HostSoftwareArtifact[];
+    channels?: HostSoftwareChannel[];
+    os?: "linux" | "darwin";
+    arch?: "amd64" | "arm64";
+    history_limit?: number;
+  }) => Promise<HostSoftwareAvailableVersion[]>;
 
   // host calls getBackupConfig function to get backup configuration
   getBackupConfig: (opts: {
@@ -431,6 +512,14 @@ export interface Hosts {
     account_id?: string;
     id: string;
     mode?: "reboot" | "hard";
+  }) => Promise<HostLroResponse>;
+  drainHost: (opts: {
+    account_id?: string;
+    id: string;
+    dest_host_id?: string;
+    force?: boolean;
+    allow_offline?: boolean;
+    parallel?: number;
   }) => Promise<HostLroResponse>;
   forceDeprovisionHost: (opts: {
     account_id?: string;

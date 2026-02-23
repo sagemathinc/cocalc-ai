@@ -599,7 +599,7 @@ print(sid_obj.polarity_scores(text))`}
       Each <SiteName /> project is a Docker image running Ubuntu Linux on 64-bit
       x86 hardware, so it is possible for us to install most standard Linux
       software, and we have already installed{" "}
-      <A href="/software">a huge amount</A>. If there is something you need that
+      <A href="/features/linux">a huge amount</A>. If there is something you need that
       is missing, let us know below. You can also{" "}
       <a onClick={() => setShowWestPoint(true)}>
         view a recent ticket from West Point
@@ -609,7 +609,7 @@ print(sid_obj.polarity_scores(text))`}
       <br />
       <b>What software do you need?</b> In particular, if this is a Python
       library, explain which of the{" "}
-      <A href="software/python">many Python environments</A> you need it
+      <A href="/features/python">many Python environments</A> you need it
       installed into and why you can't just{" "}
       <A href="https://doc.cocalc.com/howto/install-python-lib.html">
         install it yourself

@@ -7,6 +7,7 @@ import { useRedux } from "@cocalc/frontend/app-framework";
 import { A } from "@cocalc/frontend/components/A";
 import type { JupyterActions } from "./browser-actions";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { useEffect } from "react";
 
 interface Props {
   name: string; // redux name
@@ -15,12 +16,26 @@ interface Props {
 
 export default function KernelWarning({ name, actions }: Props) {
   let kernelError: undefined | string = useRedux([name, "kernel_error"]);
+  if (kernelError) {
+    const i = kernelError.indexOf("[IPKernelApp]");
+    if (i != -1) {
+      kernelError = kernelError.slice(0, i);
+    }
+  }
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const el = document.documentElement;
+    const visible = kernelError != null && kernelError !== "";
+    el.setAttribute(
+      "data-cocalc-jupyter-kernel-warning-visible",
+      visible ? "1" : "0",
+    );
+    el.setAttribute("data-cocalc-jupyter-kernel-warning-text", kernelError ?? "");
+  }, [kernelError]);
+
   if (!kernelError) {
     return null;
-  }
-  const i = kernelError.indexOf("[IPKernelApp]");
-  if (i != -1) {
-    kernelError = kernelError.slice(0, i);
   }
   return (
     <div cocalc-test="kernel-warning">

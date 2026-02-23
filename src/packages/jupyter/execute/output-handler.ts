@@ -237,7 +237,13 @@ export class OutputHandler extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
-    this._opts.cell.start = (new Date() as any) - 0;
+    // Some kernels can emit multiple "busy"/start lifecycle messages for the
+    // same execution. Preserve the original start timestamp so final walltime
+    // is measured from when the run first became busy.
+    if (this._opts.cell.start == null || this._opts.cell.end != null) {
+      this._opts.cell.start = now();
+    }
+    this._opts.cell.end = null;
     this._opts.cell.state = "busy";
     this.emit("change", true);
   };

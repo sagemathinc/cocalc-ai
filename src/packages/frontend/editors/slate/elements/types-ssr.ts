@@ -12,6 +12,8 @@ import "./heading";
 import "./html";
 import "./hr";
 import "./image";
+import "./jupyter-code-cell";
+import "./jupyter-markdown-cell";
 import "./link";
 import "./list";
 import "./list/list-item";

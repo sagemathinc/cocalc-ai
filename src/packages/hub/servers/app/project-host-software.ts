@@ -14,6 +14,16 @@ type FileMeta = {
   sha256: string;
 };
 
+type SoftwareManifest = {
+  url: string;
+  sha256: string;
+  size_bytes: number;
+  built_at: string;
+  version: string;
+  os: string;
+  arch?: string;
+};
+
 const logger = getLogger("hub:software-endpoint");
 const fileMetaCache = new Map<string, FileMeta>();
 const normalizedBasePath = basePath === "/" ? "" : basePath;
@@ -133,19 +143,21 @@ function validatePlatformTokens(
   return true;
 }
 
-async function sendLatestBundleManifest(
+function normalizeChannel(channel?: string): "latest" | "staging" | undefined {
+  const raw = `${channel ?? "latest"}`.trim().toLowerCase();
+  if (raw === "latest" || raw === "staging") return raw;
+  return undefined;
+}
+
+async function buildLatestBundleManifest(
   req: Request,
-  res: Response,
   opts: { artifact: BundleArtifact; os: string; arch?: string },
-): Promise<void> {
-  if (!validatePlatformTokens(res, opts)) return;
+): Promise<SoftwareManifest> {
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
-    sendNotFound(
-      res,
+    throw new Error(
       "local software artifacts are unavailable (set COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT)",
     );
-    return;
   }
   const bundlePath = resolveBundlePath(
     packagesRoot,
@@ -154,19 +166,17 @@ async function sendLatestBundleManifest(
     opts.arch,
   );
   if (!bundlePath) {
-    sendNotFound(
-      res,
+    throw new Error(
       `missing local artifact for ${opts.artifact} (${opts.os}${
         opts.arch ? `-${opts.arch}` : ""
       })`,
     );
-    return;
   }
   const meta = await getFileMeta(bundlePath);
   const version = versionFromMeta(meta);
   const filename = basename(bundlePath);
   const url = `${softwareBaseFromReq(req)}/${opts.artifact}/${version}/${filename}`;
-  const manifest: Record<string, string | number> = {
+  const manifest: SoftwareManifest = {
     url,
     sha256: meta.sha256,
     size_bytes: meta.sizeBytes,
@@ -177,8 +187,49 @@ async function sendLatestBundleManifest(
   if (opts.arch) {
     manifest.arch = opts.arch;
   }
+  return manifest;
+}
+
+async function sendLatestBundleManifest(
+  req: Request,
+  res: Response,
+  opts: { artifact: BundleArtifact; os: string; arch?: string },
+): Promise<void> {
+  if (!validatePlatformTokens(res, opts)) return;
+  const manifest = await buildLatestBundleManifest(req, opts);
   res.type("application/json");
   res.send(JSON.stringify(manifest, null, 2));
+}
+
+async function sendVersionsIndex(
+  req: Request,
+  res: Response,
+  opts: {
+    artifact: BundleArtifact;
+    channel?: string;
+    os: string;
+    arch?: string;
+  },
+): Promise<void> {
+  if (!validatePlatformTokens(res, opts)) return;
+  const channel = normalizeChannel(opts.channel);
+  if (!channel) {
+    sendNotFound(res, "invalid channel selector");
+    return;
+  }
+  const latest = await buildLatestBundleManifest(req, opts);
+  const body: Record<string, any> = {
+    artifact: opts.artifact,
+    channel,
+    os: opts.os,
+    generated_at: new Date().toISOString(),
+    versions: [latest],
+  };
+  if (opts.arch) {
+    body.arch = opts.arch;
+  }
+  res.type("application/json");
+  res.send(JSON.stringify(body, null, 2));
 }
 
 async function sendBundleFile(
@@ -335,6 +386,54 @@ export default function init(router: Router) {
       sendNotFound(res, "failed creating tools manifest");
     }
   });
+
+  router.get(
+    "/software/project-host/versions-:channel-:os.json",
+    async (req, res) => {
+      try {
+        await sendVersionsIndex(req, res, {
+          artifact: "project-host",
+          channel: req.params.channel,
+          os: req.params.os,
+        });
+      } catch (err) {
+        logger.error("software versions error (project-host)", {
+          err: String(err),
+        });
+        sendNotFound(res, "failed creating project-host versions index");
+      }
+    },
+  );
+
+  router.get("/software/project/versions-:channel-:os.json", async (req, res) => {
+    try {
+      await sendVersionsIndex(req, res, {
+        artifact: "project",
+        channel: req.params.channel,
+        os: req.params.os,
+      });
+    } catch (err) {
+      logger.error("software versions error (project)", { err: String(err) });
+      sendNotFound(res, "failed creating project versions index");
+    }
+  });
+
+  router.get(
+    "/software/tools/versions-:channel-:os-:arch.json",
+    async (req, res) => {
+      try {
+        await sendVersionsIndex(req, res, {
+          artifact: "tools",
+          channel: req.params.channel,
+          os: req.params.os,
+          arch: req.params.arch,
+        });
+      } catch (err) {
+        logger.error("software versions error (tools)", { err: String(err) });
+        sendNotFound(res, "failed creating tools versions index");
+      }
+    },
+  );
 
   router.get("/software/project-host/:version/bundle-:os.tar.xz", async (req, res) => {
     try {

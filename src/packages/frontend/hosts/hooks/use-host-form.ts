@@ -1,6 +1,16 @@
-import { useEffect, useMemo, useRef } from "@cocalc/frontend/app-framework";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd";
 import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import {
+  mapCloudRegionToR2Region,
+  mapCountryRegionToR2Region,
+  rankR2RegionDistance,
+} from "@cocalc/util/consts";
 import type { HostProvider, HostRecommendation } from "../types";
 import { buildCatalogSummary } from "../utils/normalize-catalog";
 import {
@@ -68,6 +78,15 @@ export const useHostForm = ({
 }: UseHostFormArgs) => {
   const prevProviderRef = useRef<HostProvider | undefined>(undefined);
   const provider = selectedProvider ?? "none";
+  const cloudflareCountry = useTypedRedux("customize", "country");
+  const cloudflareRegionCode = useTypedRedux(
+    "customize",
+    "cloudflare_region_code",
+  );
+  const preferredR2Region = useMemo(
+    () => mapCountryRegionToR2Region(cloudflareCountry, cloudflareRegionCode),
+    [cloudflareCountry, cloudflareRegionCode],
+  );
   const providerCaps = useMemo(() => {
     if (!catalog?.provider_capabilities) return undefined;
     return catalog.provider_capabilities[provider];
@@ -102,10 +121,27 @@ export const useHostForm = ({
       selectedGpu,
     ],
   );
-  const fieldOptions: FieldOptionsMap = useMemo(
-    () => getProviderOptions(provider, catalog, selection),
-    [provider, catalog, selection],
-  );
+  const fieldOptions: FieldOptionsMap = useMemo(() => {
+    const options = getProviderOptions(provider, catalog, selection);
+    const regionOptions = options.region ?? [];
+    if (regionOptions.length <= 1) return options;
+    const sortedRegionOptions = [...regionOptions].sort((a, b) => {
+      const aDistance = rankR2RegionDistance(
+        preferredR2Region,
+        mapCloudRegionToR2Region(a.value),
+      );
+      const bDistance = rankR2RegionDistance(
+        preferredR2Region,
+        mapCloudRegionToR2Region(b.value),
+      );
+      if (aDistance !== bDistance) return aDistance - bDistance;
+      return a.label.localeCompare(b.label) || a.value.localeCompare(b.value);
+    });
+    return {
+      ...options,
+      region: sortedRegionOptions,
+    };
+  }, [provider, catalog, selection, preferredR2Region]);
   const fieldLabels = useMemo(
     () => ({
       ...FIELD_LABELS,

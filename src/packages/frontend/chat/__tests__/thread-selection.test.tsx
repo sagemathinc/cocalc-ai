@@ -38,6 +38,7 @@ describe("useChatThreadSelection", () => {
         unreadCount: 1,
         isAI: false,
         isPinned: false,
+        isArchived: false,
       },
     ];
 
@@ -56,4 +57,3 @@ describe("useChatThreadSelection", () => {
     expect(latest.selectedThreadKey).toBe("200");
   });
 });
-

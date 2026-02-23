@@ -17,6 +17,7 @@ import { initHostRegistryService } from "./host-registry";
 import { initHostStatusService } from "./host-status";
 import { startBackupLroWorker } from "@cocalc/server/projects/backup-worker";
 import { startCopyLroWorker } from "@cocalc/server/projects/copy-worker";
+import { startProjectHardDeleteWorker } from "@cocalc/server/projects/hard-delete-worker";
 import { startMoveLroWorker } from "@cocalc/server/projects/move-worker";
 import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
 import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
@@ -50,6 +51,7 @@ export async function initConatApi() {
   }
   startBackupLroWorker();
   startCopyLroWorker();
+  startProjectHardDeleteWorker();
   startMoveLroWorker();
   startRestoreLroWorker();
   startHostLroWorker();

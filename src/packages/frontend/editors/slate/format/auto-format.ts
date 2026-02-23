@@ -27,7 +27,10 @@ import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
-import { toCodeLines } from "../elements/code-block/utils";
+import {
+  isCodeLikeBlockType,
+  toCodeLines,
+} from "../elements/code-block/utils";
 import { ensureRange, getNodeAt, slateDebug } from "../slate-util";
 
 function rememberAutoformatSelection(editor: Editor, selection: Range): void {
@@ -655,6 +658,14 @@ export const withAutoFormat = (editor) => {
         insertData(data);
         return;
       }
+      const dataTypes = Array.isArray(data?.types)
+        ? (data.types as string[])
+        : [];
+      if (dataTypes.includes("text/html")) {
+        // Preserve rich-text/mark payloads when Slate fragment MIME is unavailable.
+        insertData(data);
+        return;
+      }
       const text = data?.getData?.("text/plain");
       if (!text) {
         insertData(data);
@@ -663,11 +674,10 @@ export const withAutoFormat = (editor) => {
       const normalized = text.replace(/\r\n?/g, "\n");
       const lineCount = normalized.split("\n").length;
       const MULTILINE_PASTE_THRESHOLD = 2;
-      const types = data?.types;
-      const hasTypes = Array.isArray(types) && types.length > 0;
+      const hasTypes = dataTypes.length > 0;
       const isPlainTextOnly =
         !hasTypes ||
-        (types.length === 1 && types[0] === "text/plain" && text !== "");
+        (dataTypes.length === 1 && dataTypes[0] === "text/plain" && text !== "");
       if (isPlainTextOnly && lineCount === 1) {
         const trimmed = normalized.trim();
         if (trimmed.length > 0) {
@@ -937,7 +947,7 @@ function isSelectionInCodeBlock(editor: SlateEditor): boolean {
   if (!selection) return false;
   const entry = Editor.above(editor, {
     at: selection.focus,
-    match: (node) => Element.isElement(node) && node.type === "code_block",
+    match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
   });
   return !!entry;
 }

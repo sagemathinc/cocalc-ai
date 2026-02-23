@@ -73,6 +73,10 @@ let interruptSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
 const MAX_CONCURRENCY = Number(process.env.COCALC_ACP_MAX_CONCURRENCY ?? 64);
 const limiter = pLimit(MAX_CONCURRENCY);
+const inFlightChatTurnKeys = new Map<
+  string,
+  { startedAt: number; subject: string }
+>();
 
 async function runLimited(
   label: string,
@@ -179,6 +183,7 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
     subject: mesg.subject,
     hasChat: !!options.chat,
   });
+  let activeChatTurnKey: string | undefined;
 
   let done = false;
   let seq = -1;
@@ -229,6 +234,28 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
     // avoid trusting client-provided IDs. Ensure any provided project_id
     // matches what was derived.
     validateOptions(options, mesg.subject);
+    activeChatTurnKey = chatTurnKey(options);
+    if (activeChatTurnKey != null) {
+      const existing = inFlightChatTurnKeys.get(activeChatTurnKey);
+      if (existing != null) {
+        logger.warn(
+          "duplicate acp evaluate request rejected while turn is in-flight",
+          {
+            chatTurnKey: activeChatTurnKey,
+            subject: mesg.subject,
+            existingSubject: existing.subject,
+            inFlightMs: Date.now() - existing.startedAt,
+          },
+        );
+        throw Error(
+          "duplicate acp evaluate request for this chat turn while it is already running",
+        );
+      }
+      inFlightChatTurnKeys.set(activeChatTurnKey, {
+        startedAt: Date.now(),
+        subject: mesg.subject,
+      });
+    }
 
     await evaluate({
       ...options,
@@ -240,6 +267,10 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
     if (!done) {
       await respond(undefined, `${err}`);
       await end();
+    }
+  } finally {
+    if (activeChatTurnKey != null) {
+      inFlightChatTurnKeys.delete(activeChatTurnKey);
     }
   }
 }
@@ -259,6 +290,19 @@ function validateOptions(options, subject) {
     }
     options.chat.project_id = project_id;
   }
+}
+
+function chatTurnKey(options: AcpRequest): string | undefined {
+  const chat = options.chat;
+  if (
+    !chat ||
+    typeof chat.project_id !== "string" ||
+    typeof chat.path !== "string" ||
+    typeof chat.message_date !== "string"
+  ) {
+    return undefined;
+  }
+  return `${chat.project_id}:${chat.path}:${chat.message_date}`;
 }
 
 async function handleInterruptMessage(

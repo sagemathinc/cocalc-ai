@@ -6,7 +6,11 @@ import {
   hasCloudflareTunnel,
   ensureCloudflareTunnelForHost,
 } from "./cloudflare-tunnel";
-import { enqueueCloudVmWorkOnce, logCloudVmEvent } from "./db";
+import {
+  enqueueCloudVmWork,
+  enqueueCloudVmWorkOnce,
+  logCloudVmEvent,
+} from "./db";
 import { provisionIfNeeded } from "./host-util";
 import type { CloudVmWorkHandlers } from "./worker";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
@@ -18,6 +22,7 @@ import { getProviderContext } from "./provider-context";
 import {
   createProjectHostBootstrapToken,
   revokeProjectHostTokensForHost,
+  restoreProjectHostTokensForRestart,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
@@ -189,6 +194,8 @@ async function ensureDnsForHost(row: any) {
         existing.id !== tunnel.id ||
         existing.hostname !== tunnel.hostname ||
         existing.record_id !== tunnel.record_id ||
+        existing.ssh_hostname !== tunnel.ssh_hostname ||
+        existing.ssh_record_id !== tunnel.ssh_record_id ||
         existing.token !== tunnel.token;
       const nextMetadata = {
         ...(row.metadata ?? {}),
@@ -268,21 +275,27 @@ async function refreshRuntimePublicIp(row: any) {
   return ip;
 }
 
-async function scheduleRuntimeRefresh(row: any) {
+async function scheduleRuntimeRefresh(
+  row: any,
+  opts?: { force?: boolean },
+) {
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(row.metadata?.machine?.cloud);
+  const force = !!opts?.force;
   if (!runtime?.instance_id) {
     logger.debug("scheduleRuntimeRefresh: skip (no instance_id)", {
       host_id: row.id,
       provider: providerId ?? row.metadata?.machine?.cloud,
+      force,
     });
     return;
   }
-  if (runtime.public_ip) {
+  if (runtime.public_ip && !force) {
     logger.debug("scheduleRuntimeRefresh: skip (already has public_ip)", {
       host_id: row.id,
       provider: providerId ?? row.metadata?.machine?.cloud,
       public_ip: runtime.public_ip,
+      force,
     });
     return;
   }
@@ -290,20 +303,24 @@ async function scheduleRuntimeRefresh(row: any) {
     host_id: row.id,
     provider: providerId ?? row.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
+    force,
   });
-  const enqueued = await enqueueCloudVmWorkOnce({
+  const enqueueFn = force ? enqueueCloudVmWork : enqueueCloudVmWorkOnce;
+  const enqueued = await enqueueFn({
     vm_id: row.id,
     action: "refresh_runtime",
     payload: {
       provider: providerId ?? row.metadata?.machine?.cloud,
       attempt: 0,
+      force,
     },
   });
-  if (enqueued) {
+  if (enqueued || force) {
     logger.info("scheduleRuntimeRefresh: enqueue", {
       host_id: row.id,
       provider: providerId ?? row.metadata?.machine?.cloud,
       instance_id: runtime.instance_id,
+      force,
     });
   } else {
     logger.debug("scheduleRuntimeRefresh: already queued", {
@@ -311,6 +328,22 @@ async function scheduleRuntimeRefresh(row: any) {
       provider: providerId ?? row.metadata?.machine?.cloud,
       instance_id: runtime.instance_id,
     });
+  }
+}
+
+function maybeReplaceIpInUrl(
+  urlValue: string | null | undefined,
+  previousIp: string | undefined,
+  nextIp: string,
+): string | null | undefined {
+  if (!urlValue || !previousIp || previousIp === nextIp) return urlValue;
+  try {
+    const parsed = new URL(urlValue);
+    if (parsed.hostname !== previousIp) return urlValue;
+    parsed.hostname = nextIp;
+    return parsed.toString();
+  } catch {
+    return urlValue;
   }
 }
 
@@ -471,6 +504,22 @@ async function handleStart(row: any) {
     runtime,
     reprovision_required: reprovisionRequired,
   });
+  // One-time recovery: if stop previously revoked tokens, restore the latest
+  // unexpired bootstrap/master token so persistent VMs can reconnect on boot.
+  try {
+    const restored = await restoreProjectHostTokensForRestart(row.id);
+    if (restored.restored.length > 0) {
+      logger.info("handleStart: restored host tokens for restart", {
+        host_id: row.id,
+        restored: restored.restored,
+      });
+    }
+  } catch (err) {
+    logger.warn("handleStart: failed restoring host tokens for restart", {
+      host_id: row.id,
+      err,
+    });
+  }
   if (providerId) {
     if (!runtime?.instance_id || reprovisionRequired) {
       // If the VM was deprovisioned, treat "start" as "create" and provision now.
@@ -572,25 +621,31 @@ async function handleStart(row: any) {
       | "stopped"
       | "error"
       | undefined;
-    if (providerId === "nebius" || providerId === "hyperstack") {
+    if (
+      providerId === "gcp" ||
+      providerId === "nebius" ||
+      providerId === "hyperstack"
+    ) {
       statusAfterStart = await waitForProviderStatus({
         entry,
         creds,
         runtime,
         desired: ["running"],
       });
+      const normalizedStatus =
+        statusAfterStart === "stopped" ? "off" : statusAfterStart;
       const observedAtDone = new Date();
       const nextMetadataAfter = setRuntimeObservedAt(
         row.metadata ?? {},
         observedAtDone,
       );
       await updateHostRow(row.id, {
-        status: statusAfterStart ?? "starting",
+        status: normalizedStatus ?? "starting",
         metadata: nextMetadataAfter,
         last_seen: null,
       });
       row.metadata = nextMetadataAfter;
-      if (statusAfterStart !== "running") {
+      if (normalizedStatus !== "running") {
         await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
         return;
       }
@@ -604,7 +659,7 @@ async function handleStart(row: any) {
   });
   const nextRow = { ...row, status: "running", metadata: nextMetadata };
   await ensureDnsForHost(nextRow);
-  await scheduleRuntimeRefresh(nextRow);
+  await scheduleRuntimeRefresh(nextRow, { force: providerId === "gcp" });
   if (providerId) {
     await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
   }
@@ -622,8 +677,9 @@ async function handleStop(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
-  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
+  // Do not revoke bootstrap/master-conat tokens on stop: a stopped VM may
+  // restart from the same persistent disk and must still authenticate.
+  // Token revocation is handled on deprovision/delete.
   let supportsStop = true;
   let stopConfirmed = false;
   if (providerId && runtime?.instance_id) {
@@ -802,7 +858,10 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     status: "running",
     metadata: nextMetadataComplete,
   });
-  await scheduleRuntimeRefresh({ ...row, metadata: nextMetadataComplete });
+  await scheduleRuntimeRefresh(
+    { ...row, metadata: nextMetadataComplete },
+    { force: providerId === "gcp" },
+  );
   await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
   await logCloudVmEvent({
     vm_id: row.id,
@@ -870,19 +929,22 @@ async function handleRefreshRuntime(row: any) {
   const isLocalSelfHost =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   if (isLocalSelfHost) return;
-  if (runtime.public_ip) return;
+  const force = !!row.payload?.force;
+  if (runtime.public_ip && !force) return;
   const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
   logger.debug("handleRefreshRuntime", {
     host_id: host.id,
     provider: providerId ?? host.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
     attempt: row.payload?.attempt ?? 0,
+    force,
   });
   logger.info("handleRefreshRuntime: attempt", {
     host_id: host.id,
     provider: providerId ?? host.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
     attempt: row.payload?.attempt ?? 0,
+    force,
   });
   const public_ip = await refreshRuntimePublicIp(host);
   if (!public_ip) {
@@ -919,8 +981,13 @@ async function handleRefreshRuntime(row: any) {
     ...(host.metadata ?? {}),
     runtime: { ...runtime, public_ip },
   };
-  const publicUrl = host.public_url ?? `http://${public_ip}`;
-  const internalUrl = host.internal_url ?? `http://${public_ip}`;
+  const previousIp = `${runtime.public_ip ?? ""}`.trim() || undefined;
+  const publicUrl =
+    maybeReplaceIpInUrl(host.public_url, previousIp, public_ip) ??
+    `http://${public_ip}`;
+  const internalUrl =
+    maybeReplaceIpInUrl(host.internal_url, previousIp, public_ip) ??
+    `http://${public_ip}`;
   const nextStatus = host.status === "starting" ? "running" : host.status;
   await updateHostRow(host.id, {
     metadata: nextMetadata,

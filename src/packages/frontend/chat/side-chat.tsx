@@ -56,7 +56,7 @@ export default function SideChat({
 }
 
 function SideChatInner(props: Props & { actions: ChatActions }) {
-  const { messages, threadIndex } = useChatDoc();
+  const { messages, threadIndex, version } = useChatDoc();
   return (
     <ChatPanel
       actions={props.actions}
@@ -64,6 +64,7 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       path={props.path}
       messages={messages}
       threadIndex={threadIndex}
+      docVersion={version}
       fontSize={props.fontSize}
       desc={props.desc}
       variant="compact"

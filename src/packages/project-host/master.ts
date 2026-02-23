@@ -1,6 +1,9 @@
 import { createServiceClient } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "crypto";
+import { promises as fsPromises } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { dirname, join } from "node:path";
 import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
 import { createHostControlService } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -25,6 +28,7 @@ import {
   writeProjectHostMasterConatToken,
 } from "./master-conat-token";
 import { assertSecureUrlOrLocal } from "@cocalc/backend/network/policy";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("project-host:master");
 
@@ -76,6 +80,10 @@ const USER_RECONCILE_RECENT_DAYS = Math.max(
 );
 const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const DEFAULT_RUNTIME_LOG_PATH =
+  process.env.COCALC_PROJECT_HOST_LOG?.trim() ||
+  process.env.DEBUG_FILE?.trim() ||
+  "/mnt/cocalc/data/log";
 
 interface HostRegistration {
   id: string;
@@ -90,6 +98,272 @@ interface HostRegistration {
   version?: string;
   capacity?: any;
   metadata?: any;
+}
+
+function normalizeLogLines(value?: number): number {
+  const n = Number(value ?? 200);
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(5000, Math.floor(n)));
+}
+
+function keyIdentity(line: string): string {
+  const parts = line.trim().split(/\s+/);
+  if (parts.length < 2) return "";
+  return `${parts[0]} ${parts[1]}`;
+}
+
+function isPublicKeyType(keyType: string): boolean {
+  return (
+    keyType.startsWith("ssh-") ||
+    keyType.startsWith("ecdsa-") ||
+    keyType.startsWith("sk-")
+  );
+}
+
+function normalizeSshPublicKey(public_key: string): string {
+  const key = `${public_key ?? ""}`.trim();
+  if (!key) {
+    throw new Error("public_key is empty");
+  }
+  if (key.includes("\n") || key.includes("\r")) {
+    throw new Error("public_key must be a single line");
+  }
+  const parts = key.split(/\s+/);
+  if (parts.length < 2 || !isPublicKeyType(parts[0])) {
+    throw new Error("invalid ssh public key");
+  }
+  return key;
+}
+
+function hostSshContext(): { user: string; home: string; path: string } {
+  const user = process.env.USER?.trim() || userInfo().username || "unknown";
+  const home = process.env.HOME?.trim() || homedir();
+  return {
+    user,
+    home,
+    path: join(home, ".ssh", "authorized_keys"),
+  };
+}
+
+async function readAuthorizedKeysFile(path: string): Promise<string[]> {
+  try {
+    const raw = await fsPromises.readFile(path, "utf8");
+    return raw.split(/\r?\n/);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+function listPublicKeys(lines: string[]): string[] {
+  const keys: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 2 || !isPublicKeyType(parts[0])) continue;
+    keys.push(trimmed);
+  }
+  return keys;
+}
+
+async function writeAuthorizedKeysFile(path: string, lines: string[]): Promise<void> {
+  const dir = dirname(path);
+  await fsPromises.mkdir(dir, { recursive: true, mode: 0o700 });
+  const normalized = [...lines];
+  while (normalized.length && normalized[normalized.length - 1].trim() === "") {
+    normalized.pop();
+  }
+  const content = normalized.length ? `${normalized.join("\n")}\n` : "";
+  await fsPromises.writeFile(path, content, { mode: 0o600 });
+  await fsPromises.chmod(dir, 0o700).catch(() => {});
+  await fsPromises.chmod(path, 0o600).catch(() => {});
+}
+
+async function listHostSshAuthorizedKeys() {
+  const ctx = hostSshContext();
+  const lines = await readAuthorizedKeysFile(ctx.path);
+  return {
+    user: ctx.user,
+    home: ctx.home,
+    path: ctx.path,
+    keys: listPublicKeys(lines),
+  };
+}
+
+async function addHostSshAuthorizedKey(public_key: string) {
+  const key = normalizeSshPublicKey(public_key);
+  const identity = keyIdentity(key);
+  const ctx = hostSshContext();
+  const lines = await readAuthorizedKeysFile(ctx.path);
+  const hasKey = lines.some((line) => keyIdentity(line) === identity);
+  if (!hasKey) {
+    lines.push(key);
+    await writeAuthorizedKeysFile(ctx.path, lines);
+  }
+  return {
+    ...(await listHostSshAuthorizedKeys()),
+    added: !hasKey,
+  };
+}
+
+async function removeHostSshAuthorizedKey(public_key: string) {
+  const key = normalizeSshPublicKey(public_key);
+  const identity = keyIdentity(key);
+  const ctx = hostSshContext();
+  const lines = await readAuthorizedKeysFile(ctx.path);
+  const kept = lines.filter((line) => keyIdentity(line) !== identity);
+  const removed = kept.length !== lines.length;
+  if (removed) {
+    await writeAuthorizedKeysFile(ctx.path, kept);
+  }
+  return {
+    ...(await listHostSshAuthorizedKeys()),
+    removed,
+  };
+}
+
+async function readRuntimeLogTail(lines?: number) {
+  const logPath = DEFAULT_RUNTIME_LOG_PATH;
+  const tailLines = normalizeLogLines(lines);
+  const runTail = async (command: string, args: string[]): Promise<string> => {
+    const { stdout, stderr, exit_code } = await executeCode({
+      command,
+      args,
+      timeout: 30,
+    });
+    if (exit_code) {
+      throw new Error(
+        `${command} failed (exit ${exit_code}): ${String(stderr ?? stdout ?? "").trim()}`,
+      );
+    }
+    return String(stdout ?? "");
+  };
+  try {
+    const text = await runTail("tail", ["-n", String(tailLines), logPath]);
+    return { source: logPath, lines: tailLines, text };
+  } catch (err) {
+    try {
+      const text = await runTail("sudo", [
+        "-n",
+        "tail",
+        "-n",
+        String(tailLines),
+        logPath,
+      ]);
+      return { source: logPath, lines: tailLines, text };
+    } catch (sudoErr) {
+      logger.warn("failed to read runtime log", {
+        log_path: logPath,
+        err: `${err}`,
+        sudo_err: `${sudoErr}`,
+      });
+      throw new Error(`failed to read runtime log '${logPath}': ${sudoErr}`);
+    }
+  }
+}
+
+async function runPodmanCommand(
+  args: string[],
+): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+  let result = await executeCode({
+    command: "podman",
+    args,
+    timeout: 30,
+  });
+  if (result.exit_code === 0) return result;
+  result = await executeCode({
+    command: "sudo",
+    args: ["-n", "podman", ...args],
+    timeout: 30,
+  });
+  return result;
+}
+
+function containerMissingError(message: string): boolean {
+  const text = message.toLowerCase();
+  return (
+    text.includes("no such container") ||
+    text.includes("no container with name") ||
+    text.includes("container not known") ||
+    text.includes("cannot find container") ||
+    text.includes("no container found")
+  );
+}
+
+async function readProjectRuntimeLogTail(project_id: string, lines?: number) {
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  const tailLines = normalizeLogLines(lines);
+  const container = `project-${project_id}`;
+
+  const inspect = await runPodmanCommand([
+    "inspect",
+    "--format",
+    "{{.State.Running}}",
+    container,
+  ]);
+  if (inspect.exit_code !== 0) {
+    const inspectMessage = String(inspect.stderr ?? inspect.stdout ?? "").trim();
+    if (containerMissingError(inspectMessage)) {
+      return {
+        project_id,
+        container,
+        lines: tailLines,
+        text: "",
+        found: false,
+        running: false,
+      };
+    }
+    throw new Error(
+      `failed to inspect container ${container}: ${inspectMessage || `exit ${inspect.exit_code}`}`,
+    );
+  }
+
+  const running = String(inspect.stdout ?? "").trim().toLowerCase() === "true";
+  if (!running) {
+    return {
+      project_id,
+      container,
+      lines: tailLines,
+      text: "",
+      found: true,
+      running: false,
+    };
+  }
+
+  const logs = await runPodmanCommand([
+    "logs",
+    "--tail",
+    String(tailLines),
+    container,
+  ]);
+  if (logs.exit_code !== 0) {
+    const logsMessage = String(logs.stderr ?? logs.stdout ?? "").trim();
+    if (containerMissingError(logsMessage)) {
+      return {
+        project_id,
+        container,
+        lines: tailLines,
+        text: "",
+        found: false,
+        running: false,
+      };
+    }
+    throw new Error(
+      `failed to read logs for ${container}: ${logsMessage || `exit ${logs.exit_code}`}`,
+    );
+  }
+
+  return {
+    project_id,
+    container,
+    lines: tailLines,
+    text: String(logs.stdout ?? ""),
+    found: true,
+    running: true,
+  };
 }
 
 export async function startMasterRegistration({
@@ -377,6 +651,21 @@ export async function startMasterRegistration({
           );
         }
         return { ok: true };
+      },
+      async getRuntimeLog({ lines }) {
+        return await readRuntimeLogTail(lines);
+      },
+      async getProjectRuntimeLog({ project_id, lines }) {
+        return await readProjectRuntimeLogTail(project_id, lines);
+      },
+      async listHostSshAuthorizedKeys() {
+        return await listHostSshAuthorizedKeys();
+      },
+      async addHostSshAuthorizedKey({ public_key }) {
+        return await addHostSshAuthorizedKey(public_key);
+      },
+      async removeHostSshAuthorizedKey({ public_key }) {
+        return await removeHostSshAuthorizedKey(public_key);
       },
     },
   });

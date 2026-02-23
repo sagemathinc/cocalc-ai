@@ -59,6 +59,7 @@ type EditorType =
   | "iframe"
   | "jupyter_json_edit"
   | "jupyter_json_view"
+  | "jupyter-singledoc"
   | "jupyter-introspect"
   | "jupyter-toc"
   | "jupyter"
@@ -129,6 +130,7 @@ export interface EditorDescription {
   reload_images?: boolean;
   gutters?: string[]; // I think it's cm gutters
   hide_public?: boolean; // if true, do not show this editor option (in title bar dropdown) when viewing file publicly.
+  hide_frame_type?: boolean; // if true, hide from frame-type/new-frame menus while keeping the editor available.
   clear_info?: { text: string; confirm: string };
   placeholder?: string; // placeholder text to use when empty.
   renderer?: "canvas"; // TODO: is this used at all?

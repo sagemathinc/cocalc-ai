@@ -55,7 +55,7 @@ import { clearProjectHostConatAuthCaches } from "../conat-auth";
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
-const MAX_BACKUPS_PER_PROJECT = 30;
+const MAX_BACKUPS_PER_PROJECT = 50;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;

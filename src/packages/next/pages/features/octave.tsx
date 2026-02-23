@@ -87,7 +87,7 @@ export default function Octave({ customize }) {
                 <Title level={2}>Packages</Title>
                 <Paragraph>
                   Browse a{" "}
-                  <A href="/software/octave">
+                  <A href="/features/octave">
                     list of all installed Octave packages...
                   </A>
                 </Paragraph>

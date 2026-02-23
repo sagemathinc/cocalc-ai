@@ -294,7 +294,7 @@ function Features() {
                 title: "Linux Terminal",
                 link: "/features/terminal",
               },
-              { icon: "servers", title: "Software", link: "/software" },
+              { icon: "servers", title: "Linux", link: "/features/linux" },
             ]}
           >
             <Paragraph>
@@ -305,7 +305,7 @@ function Features() {
               components={{
                 strong: <strong />,
                 A: <A href="/features/terminal" />,
-                A2: <A href="/software/executables" />,
+                A2: <A href="/features/terminal" />,
                 li: <li />,
                 ul: <ul />,
                 p: <Paragraph />,
