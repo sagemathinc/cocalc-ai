@@ -27,7 +27,7 @@ import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
 import { plural, unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { deriveAcpLogRefs } from "@cocalc/chat";
+import { deriveAcpLogRefs, type InlineCodeLink } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
 import { codexEventsToMarkdown } from "./codex-activity";
@@ -992,6 +992,7 @@ export default function Message({
 
   function renderMessageBody({ message_class }) {
     const value = newest_content(message);
+    const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
 
     return (
       <>
@@ -1014,11 +1015,18 @@ export default function Message({
             project_id,
             path,
           }}
+          inlineCodeLinks={
+            Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+          }
         />
         <StaticMarkdown
           style={MARKDOWN_STYLE}
           value={value}
           className={message_class}
+          inlineCodeLinks={
+            Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+          }
+          inlineCodeWorkspaceRoot={activityBasePath}
         />
       </>
     );

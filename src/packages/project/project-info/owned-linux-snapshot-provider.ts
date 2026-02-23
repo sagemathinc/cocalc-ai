@@ -143,11 +143,20 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
   }
 
   async snapshot(timestamp: number): Promise<ProcessSnapshot> {
-    const roots = this.registry
+    const trackedRoots = this.registry
       .listActiveRoots()
       .filter((root) => root.pid != null) as (OwnedRootProcess & {
       pid: number;
     })[];
+    const roots = [...trackedRoots];
+    if (!roots.some((root) => root.pid === process.pid)) {
+      roots.push({
+        root_id: "project-self",
+        kind: "project",
+        pid: process.pid,
+        spawned_at: Date.now(),
+      });
+    }
     const { uptime: up, boottime } = this.nowUptime();
     if (roots.length === 0) {
       this.last.clear();
@@ -179,7 +188,7 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
       await this.loadChildrenGraph(root.pid, childrenByPid, alive);
     }
 
-    for (const root_id of staleRootIds({ roots, alivePids: alive })) {
+    for (const root_id of staleRootIds({ roots: trackedRoots, alivePids: alive })) {
       this.registry.markExited(root_id);
     }
 

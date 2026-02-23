@@ -11,6 +11,8 @@
 export {
   icon,
   register_file_editor,
+  unregister_file_editor,
+  has_file_editor,
   initialize,
   initializeAsync,
   generateAsync,
@@ -30,4 +32,3 @@ export function special_filenames_with_no_extension(): string[] {
   }
   return v;
 }
-

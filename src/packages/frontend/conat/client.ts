@@ -59,6 +59,10 @@ import type {
   LroSummary,
 } from "@cocalc/conat/hub/api/lro";
 import type { Map as ImmutableMap } from "immutable";
+import {
+  createBrowserSessionAutomation,
+  type BrowserSessionAutomation,
+} from "./browser-session";
 
 export interface ConatConnectionStatus {
   state: "connected" | "disconnected";
@@ -97,6 +101,7 @@ export class ConatClient extends EventEmitter {
   private _conatClient: null | ReturnType<typeof connectToConat>;
   private routedHubClients: { [host_id: string]: RoutedHubClientState } = {};
   private projectHostTokens: { [host_id: string]: ProjectHostTokenState } = {};
+  private browserSessionAutomation: BrowserSessionAutomation;
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
   public address: string;
@@ -111,6 +116,11 @@ export class ConatClient extends EventEmitter {
     this.setMaxListeners(100);
     this.client = client;
     this.hub = initHubApi(this.callHub);
+    this.browserSessionAutomation = createBrowserSessionAutomation({
+      client: this.client,
+      hub: this.hub,
+      conat: this.conat,
+    });
     this.initConatClient();
     this.on("state", (state) => {
       this.emit(state);
@@ -456,6 +466,11 @@ export class ConatClient extends EventEmitter {
           account_id: info.user.account_id,
           hub: info.id ?? "",
         });
+        void this.browserSessionAutomation
+          .start(info.user.account_id)
+          .catch((err) =>
+            console.warn(`failed to start browser session automation: ${err}`),
+          );
         const cookie = Cookies.get(ACCOUNT_ID_COOKIE);
         if (!lite && cookie && cookie != client.info.user.account_id) {
           // make sure account_id cookie is set to the actual account we're
@@ -481,6 +496,7 @@ export class ConatClient extends EventEmitter {
       } else {
         console.log("Sign in failed -- ", client.info);
         this.signInFailed(client.info?.user?.error ?? "Failed to sign in.");
+        void this.browserSessionAutomation.stop();
         if (!this.isAuthPage()) {
           this.client.alert_message({
             type: "error",
@@ -523,6 +539,7 @@ export class ConatClient extends EventEmitter {
   standby = () => {
     // @ts-ignore
     this.automaticallyReconnect = false;
+    void this.browserSessionAutomation.stop();
     for (const host_id in this.routedHubClients) {
       try {
         this.routedHubClients[host_id]?.client?.close();

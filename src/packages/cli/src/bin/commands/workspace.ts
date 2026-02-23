@@ -1,0 +1,117 @@
+/**
+ * Workspace command composition layer.
+ *
+ * This file owns shared dependency typing and registers each workspace
+ * subcommand module (basic, ops, sync, codex, collaborators, files, lifecycle).
+ */
+import { Command } from "commander";
+import { registerWorkspaceSyncCommands } from "./workspace/sync";
+import { registerWorkspaceCodexCommands } from "./workspace/codex";
+import { registerWorkspaceCollabCommands } from "./workspace/collab";
+import { registerWorkspaceFileCommands } from "./workspace/file";
+import { registerWorkspaceLifecycleCommands } from "./workspace/lifecycle";
+import { registerWorkspaceOpsCommands } from "./workspace/ops";
+import { registerWorkspaceBasicCommands } from "./workspace/basic";
+
+export type WorkspaceCommandDeps = {
+  withContext: any;
+  resolveHost: any;
+  queryProjects: any;
+  workspaceState: any;
+  toIso: any;
+  resolveWorkspaceFromArgOrContext: any;
+  resolveWorkspace: any;
+  saveWorkspaceContext: any;
+  workspaceContextPath: any;
+  clearWorkspaceContext: any;
+  isValidUUID: any;
+  confirmHardWorkspaceDelete: any;
+  waitForLro: any;
+  waitForWorkspaceNotRunning: any;
+  resolveWorkspaceSshConnection: any;
+  ensureSyncKeyPair: any;
+  installSyncPublicKey: any;
+  runSshCheck: any;
+  isLikelySshAuthFailure: any;
+  runSsh: any;
+  runLocalCommand: any;
+  resolveCloudflaredBinary: any;
+  normalizeWorkspaceSshHostAlias: any;
+  normalizeWorkspaceSshConfigPath: any;
+  workspaceSshConfigBlockMarkers: any;
+  removeWorkspaceSshConfigBlock: any;
+  emitWorkspaceFileCatHumanContent: any;
+  waitForProjectPlacement: any;
+  normalizeSyncKeyBasePath: any;
+  syncKeyPublicPath: any;
+  readSyncPublicKey: any;
+  resolveWorkspaceSshTarget: any;
+  runReflectSyncCli: any;
+  parseCreatedForwardId: any;
+  listReflectForwards: any;
+  reflectSyncHomeDir: any;
+  reflectSyncSessionDbPath: any;
+  formatReflectForwardRow: any;
+  forwardsForWorkspace: any;
+  terminateReflectForwards: any;
+  readAllStdin: any;
+  buildCodexSessionConfig: any;
+  workspaceCodexExecData: any;
+  streamCodexHumanMessage: any;
+  workspaceCodexAuthStatusData: any;
+  durationToMs: any;
+  workspaceCodexDeviceAuthStartData: any;
+  workspaceCodexDeviceAuthStatusData: any;
+  workspaceCodexDeviceAuthCancelData: any;
+  workspaceCodexAuthUploadFileData: any;
+  normalizeUserSearchName: any;
+  resolveAccountByIdentifier: any;
+  serializeInviteRow: any;
+  compactInviteRow: any;
+  globalsFrom: any;
+  shouldUseDaemonForFileOps: any;
+  runDaemonRequestFromCommand: any;
+  emitSuccess: any;
+  isDaemonTransportError: any;
+  emitError: any;
+  cliDebug: any;
+  workspaceFileListData: any;
+  workspaceFileCatData: any;
+  readFileLocal: any;
+  asObject: any;
+  workspaceFilePutData: any;
+  mkdirLocal: any;
+  writeFileLocal: any;
+  workspaceFileGetData: any;
+  workspaceFileRmData: any;
+  workspaceFileMkdirData: any;
+  workspaceFileRgData: any;
+  workspaceFileFdData: any;
+  contextForGlobals: any;
+  runWorkspaceFileCheckBench: any;
+  printArrayTable: any;
+  runWorkspaceFileCheck: any;
+  closeCommandContext: any;
+  resolveProxyUrl: any;
+  parsePositiveInteger: any;
+  isRedirect: any;
+  extractCookie: any;
+  fetchWithTimeout: any;
+  buildCookieHeader: any;
+  PROJECT_HOST_HTTP_AUTH_QUERY_PARAM: string;
+};
+
+export function registerWorkspaceCommand(program: Command, deps: WorkspaceCommandDeps): Command {
+  const workspace = program.command("workspace").alias("ws").description("workspace operations");
+
+registerWorkspaceBasicCommands(workspace, deps);
+
+registerWorkspaceOpsCommands(workspace, deps);
+registerWorkspaceSyncCommands(workspace, deps);
+registerWorkspaceCodexCommands(workspace, deps);
+registerWorkspaceCollabCommands(workspace, deps);
+registerWorkspaceFileCommands(workspace, deps);
+registerWorkspaceLifecycleCommands(workspace, deps);
+
+  return workspace;
+}

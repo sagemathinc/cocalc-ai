@@ -37,6 +37,7 @@ import { type ProjectState } from "@cocalc/conat/project/runner/state";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { podmanLimits } from "./limits";
+import { executeCode } from "@cocalc/backend/execute-code";
 import {
   type LocalPathFunction,
   type SshServersFunction,
@@ -56,6 +57,10 @@ import getPort from "@cocalc/backend/get-port";
 const logger = getLogger("project-runner:podman");
 // Restores can be large; allow the RPC to stay open while rustic runs.
 const RESTORE_RPC_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const STOP_RM_TIMEOUT_S = 10;
+const STOP_RM_PODMAN_TERM_S = 5;
+const STOP_INSPECT_TIMEOUT_S = 10;
+const STOP_FORCE_KILL_SETTLE_MS = 250;
 
 const DEFAULT_PROJECT_SCRIPT = join(
   COCALC_SRC,
@@ -244,6 +249,57 @@ async function containerExists(name: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function isLikelyTimeoutError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("timed out") ||
+    text.includes("timeout") ||
+    text.includes("killed command")
+  );
+}
+
+async function inspectContainerPids(name: string): Promise<number[]> {
+  const { stdout } = await executeCode({
+    command: "podman",
+    args: ["inspect", "--format", "{{.State.Pid}} {{.State.ConmonPid}}", name],
+    timeout: STOP_INSPECT_TIMEOUT_S,
+    err_on_exit: false,
+  });
+  const out = `${stdout ?? ""}`.trim();
+  if (!out) return [];
+  const pids = out
+    .split(/\s+/g)
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n) && n > 1 && n !== process.pid);
+  return [...new Set(pids)];
+}
+
+function tryKillPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch {}
+  try {
+    process.kill(-pid, signal);
+  } catch {}
+}
+
+async function forceKillContainerProcesses(
+  project_id: string,
+  name: string,
+): Promise<void> {
+  const pids = await inspectContainerPids(name);
+  if (!pids.length) return;
+  logger.warn("stop: force-killing container processes after podman hang", {
+    project_id,
+    name,
+    pids,
+  });
+  for (const pid of pids) {
+    tryKillPid(pid, "SIGKILL");
+  }
+  await new Promise((resolve) => setTimeout(resolve, STOP_FORCE_KILL_SETTLE_MS));
 }
 
 interface ScriptResolution {
@@ -977,7 +1033,27 @@ export async function stop({
     try {
       const name = projectContainerName(project_id);
       if (await containerExists(name)) {
-        await podman(["rm", "-f", "-t", "0", name]);
+        try {
+          await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
+            timeout: STOP_RM_TIMEOUT_S,
+          });
+        } catch (err) {
+          if (!isLikelyTimeoutError(err)) {
+            throw err;
+          }
+          // Workaround: we sometimes see podman rm -f hang unexpectedly in production.
+          // Docker did not show this behavior for us; root cause is still unclear.
+          // If rm hangs, force-kill container processes by pid and retry rm once.
+          logger.warn("stop: podman rm timed out; forcing process kill", {
+            project_id,
+            name,
+            err: `${err}`,
+          });
+          await forceKillContainerProcesses(project_id, name);
+          await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
+            timeout: STOP_RM_TIMEOUT_S,
+          });
+        }
         await unmountRootFs(project_id);
       } else {
         logger.debug("stop: container not found; skipping rm/unmount", {
