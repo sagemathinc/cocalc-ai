@@ -4,6 +4,7 @@
  */
 
 import {
+  inferExeFromPs,
   normalizeState,
   parsePsLine,
 } from "./owned-darwin-snapshot-provider";
@@ -46,5 +47,12 @@ describe("owned darwin snapshot helpers", () => {
       "203 1 1.0 1024 2-03:04:05 0 S /bin/bash /bin/bash",
     );
     expect(row3?.etimes).toBe(183845);
+  });
+
+  it("prefers args path over truncated comm for exe", () => {
+    expect(inferExeFromPs("/opt/homebrew/Ce", "/opt/homebrew/Cellar/python@3.12/bin/python3 -i")).toBe(
+      "/opt/homebrew/Cellar/python@3.12/bin/python3",
+    );
+    expect(inferExeFromPs("bash", "bash")).toBe("bash");
   });
 });

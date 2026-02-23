@@ -92,6 +92,16 @@ export function parsePsLine(line: string): PsProc | undefined {
   };
 }
 
+export function inferExeFromPs(comm: string, args: string): string {
+  const cmdline = `${args}`.trim();
+  if (cmdline.length === 0) return comm;
+  const first = cmdline.split(/\s+/, 1)[0];
+  if (first.length === 0) return comm;
+  // On macOS, `comm` can be truncated; prefer the first arg when it is path-like.
+  if (first.includes("/") || first.startsWith(".")) return first;
+  return comm;
+}
+
 function cocalcInfoFromRoot(root: OwnedRootProcess): CoCalcInfo | undefined {
   switch (root.kind) {
     case "project":
@@ -186,11 +196,13 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
       if (row == null) continue;
       const root = rootByPid.get(pid);
       const cpuSecs = (row.cpuPct / 100) * row.etimes;
-      const cmdline = row.args.trim().length > 0 ? row.args.trim().split(/\s+/) : [row.comm];
+      const cmdline =
+        row.args.trim().length > 0 ? row.args.trim().split(/\s+/) : [row.comm];
+      const exe = inferExeFromPs(row.comm, row.args);
       const proc: Process = {
         pid: row.pid,
         ppid: row.ppid,
-        exe: row.comm,
+        exe,
         cmdline,
         stat: {
           ppid: row.ppid,
