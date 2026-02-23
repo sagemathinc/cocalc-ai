@@ -1347,11 +1347,13 @@ export async function listHosts({
   admin_view,
   include_deleted,
   catalog,
+  show_all,
 }: {
   account_id?: string;
   admin_view?: boolean;
   include_deleted?: boolean;
   catalog?: boolean;
+  show_all?: boolean;
 }): Promise<Host[]> {
   const owner = requireAccount(account_id);
   if (admin_view && !(await isAdmin(owner))) {
@@ -1412,7 +1414,7 @@ export async function listHosts({
 
     const can_start = isOwner || (isCollab && !!metadata.host_collab_control);
 
-    const showAll = admin_view || catalog;
+    const showAll = admin_view || catalog || show_all;
     // If catalog=false, filter out what user cannot place
     if (!showAll && !can_place) {
       continue;

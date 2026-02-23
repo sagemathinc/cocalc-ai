@@ -147,6 +147,7 @@ export const useHostsPageViewModel = () => {
     onError: () => console.warn("Unable to load hosts"),
     adminView: isAdmin && showAdmin,
     includeDeleted: showDeleted,
+    showAll: true,
     pollMs: fastPoll ? 5000 : 30000,
   });
   const handleUpgradeComplete = React.useCallback(() => {

@@ -20,6 +20,7 @@ type UseHostsOptions = {
   pollMs?: number;
   adminView?: boolean;
   includeDeleted?: boolean;
+  showAll?: boolean;
 };
 
 const MEMBERSHIP_REFRESH_MS = 5 * 60_000;
@@ -36,6 +37,7 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
     pollMs = 15_000,
     adminView = false,
     includeDeleted = false,
+    showAll = false,
   } = options;
   const [hosts, setHosts] = useState<Host[]>([]);
   const [canCreateHosts, setCanCreateHosts] = useState<boolean>(true);
@@ -73,6 +75,7 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
       const list = await hub.hosts.listHosts({
         admin_view: adminView ? true : undefined,
         include_deleted: includeDeleted ? true : undefined,
+        show_all: showAll ? true : undefined,
       });
       setHosts(list);
       setLoaded(true);
@@ -85,7 +88,7 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
     } finally {
       setLoading(false);
     }
-  }, [hub, adminView, includeDeleted, refreshMembership]);
+  }, [hub, adminView, includeDeleted, showAll, refreshMembership]);
 
   useEffect(() => {
     refresh().catch((err) => {

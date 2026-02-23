@@ -352,6 +352,7 @@ export interface Hosts {
     admin_view?: boolean;
     include_deleted?: boolean;
     catalog?: boolean;
+    show_all?: boolean;
   }) => Promise<Host[]>;
   listHostProjects: (opts: {
     account_id?: string;
