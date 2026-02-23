@@ -9,6 +9,11 @@ export interface JupyterCellChromeInfo {
   execCount?: string;
   runtimeLabel?: string;
   running?: boolean;
+  state?: string;
+  start?: number;
+  end?: number;
+  last?: number;
+  kernel?: string;
 }
 
 export type JupyterGapCursor = {

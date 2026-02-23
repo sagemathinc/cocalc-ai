@@ -979,7 +979,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }
       return (
         <div
-          style={{ margin: "2px 0 10px -15px" }}
+          style={{ margin: "2px 0 10px 0" }}
           data-cocalc-test="jupyter-singledoc-output"
           data-cocalc-cell-id={cellId}
         >
@@ -991,6 +991,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
             directory={directory}
             more_output={more_output?.get(cellId)}
             trust={!!trust}
+            hidePrompt
           />
         </div>
       );
@@ -1014,9 +1015,23 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         Number(cell.get("last_runtime_ms")) ||
         undefined;
       const runtimeLabel = runtimeLabelFromMs(runtimeMs);
-      const state = `${cell.get("state") ?? ""}`.toLowerCase();
-      const running = state === "busy" || state === "running";
-      return { execCount, runtimeLabel, running };
+      const stateRaw = `${cell.get("state") ?? ""}`.toLowerCase();
+      const state = stateRaw === "running" ? "busy" : stateRaw;
+      const running = state === "busy" || state === "run" || state === "start";
+      const start = Number(cell.get("start"));
+      const end = Number(cell.get("end"));
+      const last = Number(cell.get("last"));
+      const kernel = `${cell.get("kernel") ?? ""}`.trim() || undefined;
+      return {
+        execCount,
+        runtimeLabel,
+        running,
+        state,
+        start: Number.isFinite(start) ? start : undefined,
+        end: Number.isFinite(end) ? end : undefined,
+        last: Number.isFinite(last) ? last : undefined,
+        kernel,
+      };
     },
     [cells],
   );

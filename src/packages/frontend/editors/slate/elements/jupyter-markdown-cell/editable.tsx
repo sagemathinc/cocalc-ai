@@ -47,20 +47,30 @@ function JupyterMarkdownCellElement({
     if (!cellId || !focused || !selected) return;
     setSelectedCellId?.(cellId);
     setGapCursor?.(null);
-  }, [cellId, focused, selected, setSelectedCellId]);
+  }, [cellId, focused, selected, setSelectedCellId, setGapCursor]);
   return (
     <div
       {...attributes}
       data-cocalc-test="jupyter-singledoc-markdown-cell"
       data-cocalc-cell-id={cellId}
       data-jupyter-lazy-cell-id={cellId}
-      onMouseDown={() => setGapCursor?.(null)}
+      onMouseDown={() => {
+        if (cellId) {
+          setSelectedCellId?.(cellId);
+        }
+        setGapCursor?.(null);
+      }}
+      onFocusCapture={() => {
+        if (cellId) {
+          setSelectedCellId?.(cellId);
+        }
+        setGapCursor?.(null);
+      }}
       style={
         isSelected
           ? {
               background: "rgba(22, 119, 255, 0.04)",
               borderRadius: "4px",
-              padding: "2px 6px",
             }
           : undefined
       }

@@ -25,6 +25,7 @@ import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import CopyButton from "@cocalc/frontend/components/copy-button";
+import CellTiming from "@cocalc/frontend/jupyter/cell-output-time";
 import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
 import { Editor, Transforms } from "slate";
@@ -612,6 +613,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       }
       onMouseDown={() => {
         if (isJupyterCodeCell) {
+          if (jupyterCellId) {
+            setSelectedCellId?.(jupyterCellId);
+          }
           setGapCursor?.(null);
         }
       }}
@@ -663,6 +667,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
             }}
             onFocusCapture={() => {
               if (!IS_TOUCH) setMenuFocused(true);
+              if (isJupyterCodeCell && jupyterCellId) {
+                setSelectedCellId?.(jupyterCellId);
+                setGapCursor?.(null);
+              }
             }}
             onBlurCapture={(event) => {
               if (IS_TOUCH) return;
@@ -694,15 +702,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   e.stopPropagation();
                 }}
               >
-                {jupyterChromeInfo?.runtimeLabel ? (
-                  <span style={{ color: "#666" }}>{jupyterChromeInfo.runtimeLabel}</span>
-                ) : null}
-                {jupyterChromeInfo?.running ? (
-                  <span style={{ color: "#666" }}>running</span>
-                ) : null}
                 {jupyterChromeInfo?.execCount ? (
-                  <span style={{ color: "#666" }}>{jupyterChromeInfo.execCount}</span>
+                  <span style={{ color: "#D84315" }}>
+                    Out[{jupyterChromeInfo.execCount}]:
+                  </span>
                 ) : null}
+                <CellTiming
+                  start={jupyterChromeInfo?.start}
+                  end={jupyterChromeInfo?.end}
+                  last={jupyterChromeInfo?.last}
+                  state={jupyterChromeInfo?.state}
+                  isLive
+                  kernel={jupyterChromeInfo?.kernel}
+                />
                 <Button
                   size="small"
                   type="text"
