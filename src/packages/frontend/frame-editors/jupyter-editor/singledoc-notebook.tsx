@@ -12,6 +12,7 @@ import { List, Map } from "immutable";
 import React from "react";
 import { Element as SlateElement, type Descendant } from "slate";
 import { Button } from "antd";
+import useResizeObserver from "use-resize-observer";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
@@ -23,6 +24,7 @@ import { JupyterCellContext } from "@cocalc/frontend/editors/slate/jupyter-cell-
 import type { JupyterGapCursor } from "@cocalc/frontend/editors/slate/jupyter-cell-context";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import Logo from "@cocalc/frontend/jupyter/logo";
+import { useNotebookMinimap } from "@cocalc/frontend/jupyter/minimap";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import type { EditorState } from "../frame-tree/types";
 import { JupyterEditorActions } from "./actions";
@@ -59,6 +61,7 @@ type ApplyNotebookSlateOpts = {
 // Keep this noticeably higher than per-keystroke cadence so focus is not
 // disrupted by immediate round-trips back through canonical notebook state.
 const SAVE_DEBOUNCE_MS = 800;
+const MINIMAP_PLACEHOLDER_MIN_HEIGHT = 96;
 
 function normalizeCellSource(text: string): string {
   const source = text.split("\n").map((line) => `${line}\n`);
@@ -344,6 +347,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   ]);
   const directory: string | undefined = useRedux([name, "directory"]);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const editableScrollRef = React.useRef<HTMLDivElement>(null);
   const controlRef = React.useRef<any>(null);
   const [error, setError] = React.useState<string>("");
   const [selectedCellId, setSelectedCellId] = React.useState<string | undefined>(
@@ -355,6 +359,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const [gapCursor, setGapCursor] = React.useState<JupyterGapCursor | null>(
     null,
   );
+  const lazyHeightsRef = React.useRef<Record<string, number>>({});
   const applyNotebookSlateRef = React.useRef<
     (doc: Descendant[], opts?: ApplyNotebookSlateOpts) => void
   >(() => {});
@@ -393,10 +398,59 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     () => notebookCellsSignature(cell_list, cells),
     [cell_list, cells],
   );
+  const minimapCellList = cell_list ?? List<string>();
+  const minimapCells = cells ?? Map<string, Map<string, any>>();
+  const editableScrollElementRef =
+    editableScrollRef as React.RefObject<HTMLDivElement>;
+  const cellListResize = useResizeObserver({
+    ref: editableScrollElementRef as React.RefObject<Element>,
+  });
+  const minimap = useNotebookMinimap({
+    cellList: minimapCellList,
+    cells: minimapCells as any,
+    curId: selectedCellId ?? hoveredCellId,
+    cellListDivRef: editableScrollRef as React.MutableRefObject<any>,
+    cellListWidth: cellListResize.width,
+    cellListHeight: cellListResize.height,
+    lazyHydrationVersion: 0,
+    lazyHeightsRef,
+    placeholderMinHeight: MINIMAP_PLACEHOLDER_MIN_HEIGHT,
+    hydrateVisibleCells: () => {},
+    saveScrollDebounce: () => {},
+  });
 
   React.useEffect(() => {
     notebookSignatureRef.current = notebookSignature;
   }, [notebookSignature]);
+
+  React.useEffect(() => {
+    const next: Record<string, number> = {};
+    if (cell_list != null && cells != null) {
+      for (const id of cell_list.toArray()) {
+        const cell = cells.get(id);
+        const cellType = `${cell?.get("cell_type") ?? "code"}`;
+        const input = `${cell?.get("input") ?? ""}`;
+        const lineCount = Math.max(1, input.split("\n").length);
+        const base = cellType === "markdown" ? 32 : 38;
+        const lineHeight = cellType === "markdown" ? 18 : 16;
+        const output = cell?.get("output");
+        const outputWeight =
+          typeof output === "string"
+            ? output.length
+            : output?.size != null
+              ? output.size * 18
+              : 0;
+        let estimated =
+          base + Math.min(lineCount, 80) * lineHeight + (outputWeight > 0 ? 28 : 0);
+        estimated = Math.max(
+          MINIMAP_PLACEHOLDER_MIN_HEIGHT,
+          Math.min(1200, estimated),
+        );
+        next[id] = estimated;
+      }
+    }
+    lazyHeightsRef.current = next;
+  }, [cell_list, cells]);
 
   React.useEffect(() => {
     if (!selectedCellId || cell_list == null) return;
@@ -411,6 +465,22 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       setHoveredCellId(undefined);
     }
   }, [hoveredCellId, cell_list]);
+
+  React.useEffect(() => {
+    const node = editableScrollRef.current;
+    if (node == null) return;
+    const onScroll = () => {
+      minimap.onNotebookScroll();
+    };
+    node.addEventListener("scroll", onScroll);
+    return () => {
+      node.removeEventListener("scroll", onScroll);
+    };
+  }, [minimap.onNotebookScroll]);
+
+  React.useEffect(() => {
+    minimap.onNotebookScroll();
+  }, [minimap.onNotebookScroll, slateValue]);
 
   React.useEffect(() => {
     const targetId = pendingFocusCellIdRef.current;
@@ -1143,50 +1213,64 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           {error}
         </div>
       ) : null}
-      <div className="smc-vfill" style={{ minHeight: 0 }}>
-        <JupyterCellContext.Provider
-          value={{
-            renderOutput: renderInlineOutput,
-            selectedCellId,
-            setSelectedCellId,
-            hoveredCellId,
-            setHoveredCellId,
-            gapCursor,
-            setGapCursor,
-            runCell: runCellById,
-            openAssistant: openAssistantForCell,
-            getCellChromeInfo,
-          }}
-        >
-          <EditableMarkdown
-            value_slate={slateValue}
-            actions={editorActions}
-            onSlateChange={(doc, opts) => {
-              if (opts.onlySelectionOps || opts.syncCausedUpdate) {
-                return;
-              }
-              const root = containerRef.current;
-              const active =
-                typeof document === "undefined" ? null : document.activeElement;
-              if (root != null && active != null && !root.contains(active)) {
-                return;
-              }
-              debugCountersRef.current.onSlateChangeCalls += 1;
-              scheduleApplyNotebookSlate(doc);
+      <div
+        className="smc-vfill"
+        ref={minimap.layoutRef}
+        style={{
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "stretch",
+        }}
+      >
+        <div className="smc-vfill" style={{ minHeight: 0, minWidth: 0, flex: 1 }}>
+          <JupyterCellContext.Provider
+            value={{
+              renderOutput: renderInlineOutput,
+              selectedCellId,
+              setSelectedCellId,
+              hoveredCellId,
+              setHoveredCellId,
+              gapCursor,
+              setGapCursor,
+              runCell: runCellById,
+              openAssistant: openAssistantForCell,
+              getCellChromeInfo,
             }}
-            is_current={true}
-            read_only={!!read_only}
-            hidePath
-            minimal
-            saveDebounceMs={SAVE_DEBOUNCE_MS}
-            ignoreRemoteMergesWhileFocused
-            style={{ backgroundColor: "transparent", minHeight: 0 }}
-            controlRef={controlRef}
-            jupyterGapCursor={gapCursor}
-            setJupyterGapCursor={setGapCursor}
-          />
-        </JupyterCellContext.Provider>
+          >
+            <EditableMarkdown
+              value_slate={slateValue}
+              actions={editorActions}
+              onSlateChange={(doc, opts) => {
+                if (opts.onlySelectionOps || opts.syncCausedUpdate) {
+                  return;
+                }
+                const root = containerRef.current;
+                const active =
+                  typeof document === "undefined" ? null : document.activeElement;
+                if (root != null && active != null && !root.contains(active)) {
+                  return;
+                }
+                debugCountersRef.current.onSlateChangeCalls += 1;
+                scheduleApplyNotebookSlate(doc);
+              }}
+              is_current={true}
+              read_only={!!read_only}
+              hidePath
+              minimal
+              saveDebounceMs={SAVE_DEBOUNCE_MS}
+              ignoreRemoteMergesWhileFocused
+              style={{ backgroundColor: "transparent", minHeight: 0 }}
+              controlRef={controlRef}
+              divRef={editableScrollElementRef}
+              jupyterGapCursor={gapCursor}
+              setJupyterGapCursor={setGapCursor}
+            />
+          </JupyterCellContext.Provider>
+        </div>
+        {minimap.minimapNode}
       </div>
+      {minimap.settingsModal}
     </div>
   );
 }

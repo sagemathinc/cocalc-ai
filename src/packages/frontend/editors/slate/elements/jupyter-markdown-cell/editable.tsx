@@ -53,6 +53,7 @@ function JupyterMarkdownCellElement({
       {...attributes}
       data-cocalc-test="jupyter-singledoc-markdown-cell"
       data-cocalc-cell-id={cellId}
+      data-jupyter-lazy-cell-id={cellId}
       onMouseDown={() => setGapCursor?.(null)}
       style={
         isSelected

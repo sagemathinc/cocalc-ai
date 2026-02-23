@@ -605,6 +605,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       data-cocalc-cell-id={
         isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
       }
+      data-jupyter-lazy-cell-id={
+        isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
+      }
       onMouseDown={() => {
         if (isJupyterCodeCell) {
           setGapCursor?.(null);
