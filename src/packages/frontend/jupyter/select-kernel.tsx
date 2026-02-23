@@ -62,6 +62,7 @@ interface KernelSelectorProps {
 
 export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
   const intl = useIntl();
+  const sectionStyle: CSS = embedded ? { marginTop: "8px" } : SELECTION_STYLE;
 
   const editor_settings = useTypedRedux("account", "editor_settings");
 
@@ -129,6 +130,7 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
     const btn = (
       <Button
         key={key}
+        size={embedded ? "small" : "middle"}
         onClick={() => {
           actions.select_kernel(name);
           track("jupyter", {
@@ -137,12 +139,15 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
             how: "click-button-in-dialog",
           });
         }}
-        style={{ height: "35px" }}
+        style={{ height: embedded ? "28px" : "35px" }}
       >
         <Logo
           kernel={name}
-          size={30}
-          style={{ marginTop: "-2.5px", marginRight: "5px" }}
+          size={embedded ? 18 : 30}
+          style={{
+            marginTop: embedded ? "-1px" : "-2.5px",
+            marginRight: "5px",
+          }}
         />{" "}
         {kernel_name(name) || name}
         <KernelStar priority={priority} />
@@ -199,22 +204,9 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
         title="Suggested kernels"
         bordered
         column={1}
-        style={SELECTION_STYLE}
+        style={sectionStyle}
       >
         {entries}
-      </Descriptions>
-    );
-  }
-
-  function render_custom(): Rendered {
-    if (kernels_by_language?.size == 0) return;
-    return (
-      <Descriptions bordered column={1} style={SELECTION_STYLE}>
-        <Descriptions.Item label={"Custom kernels"}>
-          <a onClick={() => actions.custom_jupyter_kernel_docs()}>
-            How to create a custom kernel...
-          </a>
-        </Descriptions.Item>
       </Descriptions>
     );
   }
@@ -236,16 +228,12 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
                 </>
               }
             >
-              <Icon
+            <Icon
                 style={{ color: COLORS.GRAY, cursor: "pointer" }}
                 name="question-circle"
               />
             </Popover>{" "}
-            for kernels. You can also define{" "}
-            <a onClick={() => actions.custom_jupyter_kernel_docs()}>
-              a custom kernel
-            </a>
-            .
+            for kernels. Need a new kernel? Ask Codex to install it.
           </Paragraph>
         </Space.Compact>
       </Descriptions.Item>,
@@ -265,9 +253,15 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
 
       all.push(
         <Descriptions.Item key={lang} label={label}>
-          <Space.Compact style={{ display: "flex", flexWrap: "wrap" }}>
-            {kernels}
-          </Space.Compact>
+          {embedded ? (
+            <Space size={[4, 4]} wrap>
+              {kernels}
+            </Space>
+          ) : (
+            <Space.Compact style={{ display: "flex", flexWrap: "wrap" }}>
+              {kernels}
+            </Space.Compact>
+          )}
         </Descriptions.Item>,
       );
       return true;
@@ -286,11 +280,12 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
         key: "all",
         label: (
           <>
-            <Icon name="jupyter" /> All kernels by language
+            <Icon name="jupyter" />{" "}
+            {embedded ? "All Kernels" : "All kernels by language"}
           </>
         ),
         children: (
-          <Descriptions bordered column={1} style={SELECTION_STYLE}>
+          <Descriptions bordered column={1} style={sectionStyle}>
             {all}
           </Descriptions>
         ),
@@ -299,6 +294,7 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
 
     return (
       <Tabs
+        size={embedded ? "small" : "middle"}
         defaultActiveKey="all"
         items={items}
         onTabClick={(key) => {
@@ -317,9 +313,10 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
     if (editor_settings == null) return <Spin />;
     const ask_jupyter_kernel =
       editor_settings.get("ask_jupyter_kernel") ?? true;
+    if (embedded) return;
 
     return (
-      <Descriptions bordered column={1} style={SELECTION_STYLE}>
+      <Descriptions bordered column={1} style={sectionStyle}>
         <Descriptions.Item
           label={
             <FormattedMessage
@@ -397,6 +394,35 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
   }
 
   function render_top() {
+    if (embedded) {
+      if (kernel == null || kernel_info == null) {
+        return (
+          <div style={{ marginBottom: "8px" }}>
+            <Typography.Text type="secondary">
+              {kernel == null
+                ? "No kernel selected."
+                : `Notebook kernel "${kernel}" is unavailable on this workspace.`}
+            </Typography.Text>
+            {kernel == null && (
+              <div>
+                <Button
+                  size="small"
+                  style={{ marginTop: "6px" }}
+                  type={no_kernel ? "primary" : "default"}
+                  onClick={() => actions.select_kernel("")}
+                >
+                  Continue without kernel
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+      }
+      const name = kernel_name(kernel) ?? kernel;
+      return (
+        <Typography.Text type="secondary">Current kernel: {name}</Typography.Text>
+      );
+    }
     if (kernel == null || kernel_info == null) {
       let msg: Rendered;
       // kernel, but no info means it is not known
@@ -477,7 +503,10 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
       <Descriptions
         bordered
         column={1}
-        style={{ backgroundColor: COLORS.ANTD_BG_RED_M }}
+        style={{
+          backgroundColor: COLORS.ANTD_BG_RED_M,
+          marginTop: embedded ? "8px" : undefined,
+        }}
       >
         <Descriptions.Item label={"Unknown Kernel"}>
           A similar kernel might be {render_kernel_button(closestKernelName)}.
@@ -527,6 +556,7 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
     const loading = refreshingKernels;
     return (
       <Button
+        size={embedded ? "small" : "middle"}
         disabled={loading}
         onClick={async () => {
           try {
@@ -551,6 +581,15 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
         </div>
       );
     } else {
+      if (embedded) {
+        return (
+          <>
+            {render_top()}
+            {render_unknown()}
+            {render_select_all()}
+          </>
+        );
+      }
       return (
         <>
           {render_top()}
@@ -558,7 +597,6 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
           {render_last()}
           {render_suggested()}
           {render_select_all()}
-          {render_custom()}
           <hr />
           {render_footer()}
         </>
@@ -567,6 +605,20 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
   }
 
   function render_head(): Rendered {
+    if (embedded) {
+      return (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            marginBottom: "4px",
+          }}
+        >
+          {renderRefreshButton()}
+        </div>
+      );
+    }
     return (
       <div>
         <div style={{ float: "right", display: "flex", alignItems: "center" }}>

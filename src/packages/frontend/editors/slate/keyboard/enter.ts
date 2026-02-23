@@ -96,6 +96,14 @@ register({ key: "Enter" }, ({ editor }) => {
   markdownAutoformat(editor);
   const fragment = editor.getFragment();
   const x = fragment?.[0];
+  const listEntryFromSelection = selection
+    ? (Editor.above(editor, {
+        at: selection,
+        match: (node) =>
+          Element.isElement(node) &&
+          (node.type === "bullet_list" || node.type === "ordered_list"),
+      }) as [Element, any] | undefined)
+    : undefined;
 
   if (isElementOfType(x, "heading")) {
     // If you hit enter in a heading,
@@ -113,7 +121,7 @@ register({ key: "Enter" }, ({ editor }) => {
     return handleBlankLineEnter(editor);
   }
 
-  if (isElementOfType(x, ["bullet_list", "ordered_list"])) {
+  if (listEntryFromSelection || isElementOfType(x, ["bullet_list", "ordered_list"])) {
     const atEnd = isAtEndOfBlock(editor, { mode: "lowest" });
     const atBeginning = isAtBeginningOfBlock(editor, { mode: "lowest" });
     Transforms.insertNodes(

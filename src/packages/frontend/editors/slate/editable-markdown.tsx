@@ -43,6 +43,7 @@ import {
   Editor,
   Element as SlateElement,
   Node,
+  Point,
   Range,
   Text,
   Transforms,
@@ -60,6 +61,7 @@ import { withInsertBreakHack } from "./elements/link/editable";
 import { createMention } from "./elements/mention/editable";
 import { Mention } from "./elements/mention/index";
 import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
+import { getCodeBlockText } from "./elements/code-block/utils";
 import { withAutoFormat } from "./format";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import Leaf from "./leaf-with-cursor";
@@ -97,6 +99,7 @@ import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
 import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
+import type { JupyterGapCursor } from "./jupyter-cell-context";
 
 export type { SlateEditor };
 
@@ -117,6 +120,12 @@ const STYLE: CSS = {
   width: "100%",
   overflow: "auto",
 } as const;
+
+const JUPYTER_CELL_CLIPBOARD_MIME = "application/x-cocalc-jupyter-cells+json";
+
+function newTransientJupyterCellId(): string {
+  return `tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function isBlockPatchEnabled(): boolean {
   return true;
@@ -179,6 +188,7 @@ interface Props {
   ignoreRemoteMergesWhileFocused?: boolean;
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
+  scrollDivRef?: MutableRefObject<HTMLDivElement | null>;
   selectionRef?: MutableRefObject<{
     setSelection: Function;
     getSelection: Function;
@@ -195,6 +205,8 @@ interface Props {
   dirtyRef?: MutableRefObject<boolean>;
   minimal?: boolean;
   controlRef?: MutableRefObject<{
+    setSelection?: (selection: any) => boolean;
+    getSelection?: () => any;
     moveCursorToEndOfLine: () => void;
     allowNextValueUpdateWhileFocused?: () => void;
     setValueNow?: (value: string) => void;
@@ -209,6 +221,12 @@ interface Props {
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
   disableBlockEditor?: boolean;
+  onSlateChange?: (
+    value: Descendant[],
+    opts: { onlySelectionOps: boolean; syncCausedUpdate: boolean },
+  ) => void;
+  jupyterGapCursor?: JupyterGapCursor | null;
+  setJupyterGapCursor?: (cursor: JupyterGapCursor | null) => void;
 }
 
 const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
@@ -219,6 +237,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     dirtyRef,
     disableWindowing = !USE_WINDOWING,
     divRef,
+    scrollDivRef,
     editBar2,
     editBarStyle,
     editor_state,
@@ -243,6 +262,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     registerEditor,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
+    ignoreRemoteMergesWhileFocused,
     selectionRef,
     style,
     submitMentionsRef,
@@ -252,6 +272,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     controlRef,
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
+    onSlateChange,
+    jupyterGapCursor,
+    setJupyterGapCursor,
   } = props;
   const { project_id, path, desc, isVisible } = useFrameContext();
   const isMountedRef = useIsMountedRef();
@@ -274,7 +297,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     typeof window === "undefined"
       ? {}
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
-  const ignoreRemoteWhileFocused = false;
+  const ignoreRemoteWhileFocused = !!ignoreRemoteMergesWhileFocused;
   const mergeIdleMs =
     remoteMergeConfig.idleMs ?? remoteMergeIdleMs ?? saveDebounceMs ?? SAVE_DEBOUNCE_MS;
 
@@ -282,6 +305,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const lastLocalEditAtRef = useRef<number>(0);
   const pendingRemoteRef = useRef<string | null>(null);
   const pendingRemoteTimerRef = useRef<number | null>(null);
+  const pendingSlateValueRef = useRef<Descendant[] | null>(null);
   const mergeIdleMsRef = useRef<number>(mergeIdleMs);
   mergeIdleMsRef.current = mergeIdleMs;
   const [pendingRemoteIndicator, setPendingRemoteIndicator] =
@@ -394,6 +418,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (controlRef != null) {
       controlRef.current = {
         ...(controlRef.current ?? {}),
+        setSelection: (selection: any) => {
+          if (!selection) return false;
+          try {
+            const safe = ensureRange(ed, selection);
+            ReactEditor.focus(ed);
+            Transforms.setSelection(ed, safe);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        getSelection: () => ed.selection ?? null,
         moveCursorToEndOfLine: () => control.moveCursorToEndOfLine(ed),
         allowNextValueUpdateWhileFocused: () => {
           allowFocusedValueUpdateRef.current = true;
@@ -523,6 +559,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (pendingRemoteTimerRef.current != null) {
         window.clearTimeout(pendingRemoteTimerRef.current);
       }
+      pendingSlateValueRef.current = null;
     };
   }, []);
 
@@ -813,7 +850,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [cursorDecorate, codeDecorate],
   );
 
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const internalScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = scrollDivRef ?? internalScrollRef;
   const didRestoreScrollRef = useRef<boolean>(false);
   const restoreScroll = useMemo(() => {
     return async () => {
@@ -858,6 +896,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   useEffect(() => {
     if (value_slate != null) {
+      const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
+      if (
+        ignoreRemoteWhileFocused &&
+        isMergeFocused() &&
+        !allowFocusedValueUpdate &&
+        !isEqual(value_slate, editor.children)
+      ) {
+        pendingSlateValueRef.current = value_slate;
+        return;
+      }
+      pendingSlateValueRef.current = null;
       allowFocusedValueUpdateRef.current = false;
       setEditorToSlateValue(value_slate);
       if (value != "Loading...") {
@@ -946,6 +995,419 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           [],
         );
 
+  const getTopLevelJupyterCell = useCallback(() => {
+    const path = editor.selection?.focus?.path;
+    if (path == null || path.length === 0) return;
+    const rawTopIndex = path[0];
+    if (typeof rawTopIndex !== "number") return;
+    const node = editor.children[rawTopIndex] as any;
+    if (!SlateElement.isElement(node)) return;
+    if (node.type !== "jupyter_code_cell" && node.type !== "jupyter_markdown_cell") {
+      return;
+    }
+    return { node, topIndex: rawTopIndex };
+  }, [editor]);
+
+  const insertJupyterCellBelow = useCallback(
+    (kind: "code" | "markdown"): boolean => {
+      const entry = getTopLevelJupyterCell();
+      if (entry == null) return false;
+      const { node, topIndex } = entry;
+      const cell_id = newTransientJupyterCellId();
+      const info = node.type === "jupyter_code_cell" ? `${(node as any).info ?? ""}` : "";
+      const nextNode =
+        kind === "code"
+          ? ({
+              type: "jupyter_code_cell",
+              cell_id,
+              fence: true,
+              info,
+              cell_meta: { cell_type: "code" },
+              children: [{ type: "code_line", children: [{ text: "" }] }],
+            } as const)
+          : ({
+              type: "jupyter_markdown_cell",
+              cell_id,
+              cell_meta: { cell_type: "markdown" },
+              children: [{ type: "paragraph", children: [{ text: "" }] }],
+            } as const);
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.insertNodes(editor, nextNode as any, { at: [topIndex + 1] });
+      });
+      const path = [topIndex + 1, 0, 0];
+      Transforms.select(editor, {
+        anchor: { path, offset: 0 },
+        focus: { path, offset: 0 },
+      });
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterCell],
+  );
+
+  const insertJupyterCellAtGap = useCallback(
+    (kind: "code" | "markdown", initialText?: string): boolean => {
+      const gap = jupyterGapCursor;
+      if (gap == null) return false;
+      const insertIndexRaw = gap.side === "before" ? gap.index : gap.index + 1;
+      const insertIndex = Math.max(
+        0,
+        Math.min(editor.children.length, insertIndexRaw),
+      );
+      const cell_id = newTransientJupyterCellId();
+      const node =
+        kind === "code"
+          ? ({
+              type: "jupyter_code_cell",
+              cell_id,
+              fence: true,
+              info: "",
+              cell_meta: { cell_type: "code" },
+              children: [{ type: "code_line", children: [{ text: "" }] }],
+            } as const)
+          : ({
+              type: "jupyter_markdown_cell",
+              cell_id,
+              cell_meta: { cell_type: "markdown" },
+              children: [
+                {
+                  type: "paragraph",
+                  children: [{ text: initialText ?? "" }],
+                },
+              ],
+            } as const);
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.insertNodes(editor, node as any, { at: [insertIndex] });
+      });
+      const focusPath = [insertIndex, 0, 0];
+      const focusOffset = kind === "markdown" ? (initialText ?? "").length : 0;
+      Transforms.select(editor, {
+        anchor: { path: focusPath, offset: focusOffset },
+        focus: { path: focusPath, offset: focusOffset },
+      });
+      ReactEditor.focus(editor);
+      setJupyterGapCursor?.(null);
+      return true;
+    },
+    [editor, jupyterGapCursor, setJupyterGapCursor],
+  );
+
+  const splitJupyterCell = useCallback((): boolean => {
+    const entry = getTopLevelJupyterCell();
+    if (entry == null || editor.selection == null) return false;
+    const { node, topIndex } = entry;
+    const nodeType = node.type;
+    const newCellId = newTransientJupyterCellId();
+    Editor.withoutNormalizing(editor, () => {
+      if (Range.isExpanded(editor.selection!)) {
+        Transforms.delete(editor);
+      }
+      Transforms.splitNodes(editor, {
+        at: editor.selection!,
+        match: (n, path) =>
+          SlateElement.isElement(n) && path.length === 1 && (n as any).type === nodeType,
+        always: true,
+      });
+      // The new top-level sibling must get its own transient id so
+      // reconciliation can treat this as an intentional structural insert.
+      Transforms.setNodes(
+        editor,
+        { cell_id: newCellId } as any,
+        { at: [topIndex + 1] },
+      );
+    });
+    const path = [topIndex + 1, 0, 0];
+    Transforms.select(editor, {
+      anchor: { path, offset: 0 },
+      focus: { path, offset: 0 },
+    });
+    ReactEditor.focus(editor);
+    return true;
+  }, [editor, getTopLevelJupyterCell]);
+
+  const joinJupyterCell = useCallback(
+    (direction: "backward" | "forward"): boolean => {
+      const entry = getTopLevelJupyterCell();
+      if (entry == null) return false;
+      const { node, topIndex } = entry;
+      const otherIndex = direction === "backward" ? topIndex - 1 : topIndex + 1;
+      if (otherIndex < 0 || otherIndex >= editor.children.length) return false;
+      const other = editor.children[otherIndex] as any;
+      if (!SlateElement.isElement(other) || other.type !== node.type) {
+        return false;
+      }
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.mergeNodes(editor, {
+          at: [direction === "backward" ? topIndex : otherIndex],
+        });
+      });
+      const targetIndex = direction === "backward" ? otherIndex : topIndex;
+      const point = pointAtPath(editor, [targetIndex], undefined, "end");
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterCell],
+  );
+
+  const moveAcrossJupyterCellBoundary = useCallback(
+    (direction: "left" | "right", extendSelection = false): boolean => {
+      const entry = getTopLevelJupyterCell();
+      if (entry == null || editor.selection == null) return false;
+      const activePoint = editor.selection.focus;
+      if (!extendSelection && !Range.isCollapsed(editor.selection)) return false;
+      const topPath = [entry.topIndex];
+      let atBoundary = false;
+      try {
+        if (direction === "left") {
+          const focus = activePoint;
+          const canonicalStart = Editor.start(editor, topPath);
+          const nestedStartPath =
+            focus.path.length >= 2 &&
+            focus.path[0] === entry.topIndex &&
+            focus.offset === 0 &&
+            focus.path.slice(1).every((x) => x === 0);
+          atBoundary = Point.equals(focus, canonicalStart) || nestedStartPath;
+        } else {
+          const boundaryPoint = Editor.end(editor, topPath);
+          atBoundary = Point.equals(activePoint, boundaryPoint);
+        }
+      } catch {
+        atBoundary =
+          direction === "left"
+            ? control.isAtBeginningOfBlock(editor, {
+                mode: "highest",
+                at: activePoint,
+              })
+            : control.isAtEndOfBlock(editor, {
+                mode: "highest",
+                at: activePoint,
+              });
+      }
+      if (!atBoundary) return false;
+      const targetIndex =
+        direction === "left" ? entry.topIndex - 1 : entry.topIndex + 1;
+      if (targetIndex < 0 || targetIndex >= editor.children.length) return false;
+      const targetPath = [targetIndex];
+      const nextFocus =
+        direction === "left"
+          ? pointAtPath(editor, targetPath, undefined, "end")
+          : pointAtPath(editor, targetPath, undefined, "start");
+      if (extendSelection) {
+        Transforms.select(editor, {
+          anchor: editor.selection.anchor,
+          focus: nextFocus,
+        });
+      } else {
+        Transforms.select(editor, { anchor: nextFocus, focus: nextFocus });
+      }
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterCell],
+  );
+  const isJupyterTopLevelCell = useCallback((node: any): boolean => {
+    return (
+      SlateElement.isElement(node) &&
+      (node.type === "jupyter_code_cell" || node.type === "jupyter_markdown_cell")
+    );
+  }, []);
+
+  const getTopLevelJupyterSelectionRange = useCallback(() => {
+    const selection = editor.selection;
+    if (!selection) return;
+    const a = selection.anchor.path?.[0];
+    const b = selection.focus.path?.[0];
+    if (!Number.isInteger(a) || !Number.isInteger(b)) return;
+    const start = Math.max(0, Math.min(a, b));
+    const end = Math.min(editor.children.length - 1, Math.max(a, b));
+    if (start > end) return;
+    for (let i = start; i <= end; i++) {
+      if (!isJupyterTopLevelCell(editor.children[i] as any)) return;
+    }
+    return { start, end };
+  }, [editor, isJupyterTopLevelCell]);
+
+  const shouldHandleJupyterCellClipboard = useCallback((): boolean => {
+    const selection = editor.selection;
+    if (!selection) return false;
+    const range = getTopLevelJupyterSelectionRange();
+    if (!range) return false;
+    // Keep normal Slate rich-text clipboard semantics for single-cell edits.
+    if (Range.isCollapsed(selection)) return false;
+    return range.start !== range.end;
+  }, [editor.selection, getTopLevelJupyterSelectionRange]);
+
+  const extractClipboardNodes = useCallback(
+    (start: number, end: number): Descendant[] => {
+      const picked = editor.children.slice(start, end + 1);
+      return JSON.parse(JSON.stringify(picked)) as Descendant[];
+    },
+    [editor.children],
+  );
+
+  const clipboardPlainText = useCallback(
+    (nodes: Descendant[]): string => {
+      return nodes
+        .map((node: any) => {
+          if (node?.type === "jupyter_code_cell") {
+            return getCodeBlockText(node);
+          }
+          if (node?.type === "jupyter_markdown_cell") {
+            return slate_to_markdown((node?.children ?? []) as Descendant[], {
+              preserveBlankLines,
+            });
+          }
+          return "";
+        })
+        .join("\n\n")
+        .trim();
+    },
+    [preserveBlankLines],
+  );
+
+  const reidClipboardCells = useCallback(
+    (nodes: Descendant[]): Descendant[] => {
+      const stamp = Date.now().toString(36);
+      return nodes
+        .map((node: any, i: number) => {
+          if (!isJupyterTopLevelCell(node)) return null;
+          const copy = JSON.parse(JSON.stringify(node));
+          copy.cell_id = `tmp-clip-${stamp}-${i.toString(36)}-${Math.random()
+            .toString(36)
+            .slice(2, 6)}`;
+          return copy as Descendant;
+        })
+        .filter((x): x is Descendant => x != null);
+    },
+    [isJupyterTopLevelCell],
+  );
+
+  const copySelectedJupyterCells = useCallback((): Descendant[] | null => {
+    if (!shouldHandleJupyterCellClipboard()) return null;
+    const range = getTopLevelJupyterSelectionRange();
+    if (!range) return null;
+    const nodes = extractClipboardNodes(range.start, range.end);
+    return nodes;
+  }, [
+    shouldHandleJupyterCellClipboard,
+    getTopLevelJupyterSelectionRange,
+    extractClipboardNodes,
+  ]);
+
+  const deleteSelectedJupyterCells = useCallback((): boolean => {
+    const range = getTopLevelJupyterSelectionRange();
+    if (!range) return false;
+    Editor.withoutNormalizing(editor, () => {
+      for (let i = range.end; i >= range.start; i--) {
+        Transforms.removeNodes(editor, { at: [i] });
+      }
+    });
+    const focusIndex = Math.max(
+      0,
+      Math.min(range.start, Math.max(0, editor.children.length - 1)),
+    );
+    const point = pointAtPath(editor, [focusIndex], undefined, "start");
+    Transforms.select(editor, { anchor: point, focus: point });
+    ReactEditor.focus(editor);
+    return true;
+  }, [editor, getTopLevelJupyterSelectionRange]);
+
+  const pasteJupyterCellNodes = useCallback(
+    (nodes: Descendant[]): boolean => {
+      const normalized = reidClipboardCells(nodes);
+      if (normalized.length === 0) return false;
+      const range = getTopLevelJupyterSelectionRange();
+      const fallbackIndex =
+        editor.selection && Number.isInteger(editor.selection.focus.path?.[0])
+          ? editor.selection.focus.path[0] + 1
+          : editor.children.length;
+      const insertIndex =
+        range != null
+          ? Math.min(editor.children.length, range.end + 1)
+          : Math.max(0, Math.min(editor.children.length, fallbackIndex));
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.insertNodes(editor, normalized as any, { at: [insertIndex] });
+      });
+      const point = pointAtPath(editor, [insertIndex], undefined, "start");
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterSelectionRange, reidClipboardCells],
+  );
+
+  const handleJupyterCellCopy = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      if (!event.clipboardData) return false;
+      const nodes = copySelectedJupyterCells();
+      if (nodes) {
+        const payload = { version: 1, cells: nodes };
+        event.preventDefault();
+        event.clipboardData.setData(
+          JUPYTER_CELL_CLIPBOARD_MIME,
+          JSON.stringify(payload),
+        );
+        const plain = clipboardPlainText(nodes);
+        event.clipboardData.setData("text/plain", plain);
+        event.clipboardData.setData("text/markdown", plain);
+        return true;
+      }
+      return false;
+    },
+    [
+      copySelectedJupyterCells,
+      clipboardPlainText,
+    ],
+  );
+
+  const handleJupyterCellCut = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      if (!event.clipboardData) return false;
+      const nodes = copySelectedJupyterCells();
+      if (nodes) {
+        const payload = { version: 1, cells: nodes };
+        event.preventDefault();
+        event.clipboardData.setData(
+          JUPYTER_CELL_CLIPBOARD_MIME,
+          JSON.stringify(payload),
+        );
+        const plain = clipboardPlainText(nodes);
+        event.clipboardData.setData("text/plain", plain);
+        event.clipboardData.setData("text/markdown", plain);
+        deleteSelectedJupyterCells();
+        return true;
+      }
+      return false;
+    },
+    [
+      copySelectedJupyterCells,
+      clipboardPlainText,
+      deleteSelectedJupyterCells,
+    ],
+  );
+
+  const handleJupyterCellPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const raw = event.clipboardData?.getData(JUPYTER_CELL_CLIPBOARD_MIME);
+      if (raw) {
+        let parsed: any;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          return false;
+        }
+        const cells = Array.isArray(parsed?.cells) ? parsed.cells : [];
+        if (cells.length === 0) return false;
+        event.preventDefault();
+        pasteJupyterCellNodes(cells as Descendant[]);
+        return true;
+      }
+      return false;
+    },
+    [pasteJupyterCellNodes],
+  );
+
   function onKeyDown(e) {
     if (read_only) {
       e.preventDefault();
@@ -956,6 +1418,71 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     emojis.onKeyDown(e);
 
     if (e.defaultPrevented) return;
+
+    if (jupyterGapCursor != null) {
+      const isPlainChar =
+        e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+      const isCodeInsertShortcut =
+        e.key === "Enter" &&
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        !e.altKey;
+      if (e.key === "Escape") {
+        setJupyterGapCursor?.(null);
+        e.preventDefault();
+        return;
+      }
+      if (isCodeInsertShortcut && insertJupyterCellAtGap("code")) {
+        e.preventDefault();
+        return;
+      }
+      if (isPlainChar && insertJupyterCellAtGap("markdown", e.key)) {
+        e.preventDefault();
+        return;
+      }
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        insertJupyterCellAtGap("markdown")
+      ) {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    const mod = e.ctrlKey || e.metaKey;
+    const jupyterCellShortcutMode =
+      (mod && e.shiftKey && !e.altKey) ||
+      (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey);
+    if (jupyterCellShortcutMode) {
+      const key = e.key.toLowerCase();
+      if (key === "b" && insertJupyterCellBelow("code")) {
+        e.preventDefault();
+        return;
+      }
+      if (key === "m" && insertJupyterCellBelow("markdown")) {
+        e.preventDefault();
+        return;
+      }
+      if (
+        (key === "-" || key === "_" || key === "s" || e.code === "Minus") &&
+        splitJupyterCell()
+      ) {
+        e.preventDefault();
+        return;
+      }
+      if (key === "k" && joinJupyterCell("backward")) {
+        e.preventDefault();
+        return;
+      }
+      if (key === "j" && joinJupyterCell("forward")) {
+        e.preventDefault();
+        return;
+      }
+    }
 
     const isRunShortcut =
       e.key === "Enter" && (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey);
@@ -1030,11 +1557,61 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       (editor as any).__forcePlainTextPaste = true;
     }
 
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      e.shiftKey &&
+      e.key === "ArrowLeft" &&
+      moveAcrossJupyterCellBoundary("left", true)
+    ) {
+      e.preventDefault();
+      return;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      e.shiftKey &&
+      e.key === "ArrowRight" &&
+      moveAcrossJupyterCellBoundary("right", true)
+    ) {
+      e.preventDefault();
+      return;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      e.key === "ArrowLeft" &&
+      moveAcrossJupyterCellBoundary("left")
+    ) {
+      e.preventDefault();
+      return;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      e.key === "ArrowRight" &&
+      moveAcrossJupyterCellBoundary("right")
+    ) {
+      e.preventDefault();
+      return;
+    }
+
     const handler = getKeyboardHandler(e);
     if (handler != null) {
       const extra = { actions, id, search };
       if (handler({ editor, extra })) {
         e.preventDefault();
+        e.stopPropagation();
+        (e as any).nativeEvent?.stopImmediatePropagation?.();
         // key was handled.
         return;
       }
@@ -1520,6 +2097,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     setEditorValue(newEditorValue);
     setChange(change + 1);
+    onSlateChange?.([...editor.children], {
+      onlySelectionOps,
+      syncCausedUpdate: !!editor.syncCausedUpdate,
+    });
 
     if (
       ignoreRemoteWhileFocused &&
@@ -1642,6 +2223,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           renderElement={renderElement}
           renderLeaf={Leaf}
           onKeyDown={onKeyDown}
+          onCopy={handleJupyterCellCopy}
+          onCut={handleJupyterCellCut}
+          onPaste={handleJupyterCellPaste}
           style={
             useWindowing
               ? editableFillStyle
@@ -1670,6 +2254,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 blurMergeTimerRef.current = null;
                 if (!isMergeFocused()) {
                   flushPendingRemoteMerge();
+                  const pendingSlate = pendingSlateValueRef.current;
+                  if (pendingSlate != null) {
+                    pendingSlateValueRef.current = null;
+                    allowFocusedValueUpdateRef.current = true;
+                    setEditorToSlateValue(pendingSlate);
+                  }
                 }
               }, 150);
             }

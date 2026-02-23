@@ -124,12 +124,18 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
     domPoint: Parameters<typeof UpstreamReactEditor.toSlatePoint>[1],
     options?: Parameters<typeof UpstreamReactEditor.toSlatePoint>[2],
   ) {
-    const point = baseToSlatePoint(editor, domPoint, {
-      exactMatch: false,
-      suppressThrow: false,
-      ...options,
-    });
-    return ensurePoint(editor, point);
+    try {
+      const point = baseToSlatePoint(editor, domPoint, {
+        exactMatch: false,
+        suppressThrow: false,
+        ...options,
+      });
+      return ensurePoint(editor, point);
+    } catch {
+      // Defensive fallback for transient stale DOM points that can occur during
+      // rapid selection-changing operations (e.g., paste + undo).
+      return ensurePoint(editor, editor.selection?.focus ?? null);
+    }
   },
   toSlateRange(
     editor: ReactEditor,

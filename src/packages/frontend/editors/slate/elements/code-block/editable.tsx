@@ -5,6 +5,7 @@
 
 import { Button, Input, Popover } from "antd";
 import {
+  CSSProperties,
   ReactNode,
   useCallback,
   useEffect,
@@ -24,6 +25,7 @@ import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import CopyButton from "@cocalc/frontend/components/copy-button";
+import CellTiming from "@cocalc/frontend/jupyter/cell-output-time";
 import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
 import { Editor, Transforms } from "slate";
@@ -34,6 +36,7 @@ import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
 import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
 import { pointAtPath } from "../../slate-util";
+import { useJupyterCellContext } from "../../jupyter-cell-context";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -222,6 +225,19 @@ function shouldPreferRichText(text: string): boolean {
   return hasMarkdown && !hasCode;
 }
 
+function gapCursorStyle(active: boolean): CSSProperties {
+  return {
+    height: "10px",
+    margin: "2px 0",
+    cursor: "text",
+    position: "relative",
+    zIndex: 2,
+    ...(active
+      ? { borderTop: "2px solid #1677ff" }
+      : { borderTop: "2px solid transparent" }),
+  };
+}
+
 export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
   if (element.type === "code_line") {
     return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
@@ -230,6 +246,24 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     throw Error("bug");
   }
   const isJupyterCodeCell = element.type === "jupyter_code_cell";
+  const {
+    renderOutput: renderJupyterOutput,
+    selectedCellId,
+    setSelectedCellId,
+    hoveredCellId,
+    setHoveredCellId,
+    gapCursor,
+    setGapCursor,
+    runCell,
+    stopCell,
+    openAssistant,
+    insertCellAbove,
+    insertCellAtEnd,
+    getCellChromeInfo,
+  } = useJupyterCellContext();
+  const jupyterCellId = isJupyterCodeCell
+    ? `${(element as any).cell_id ?? ""}`.trim()
+    : "";
   const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
@@ -244,6 +278,11 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     getHistory(editor, element) ?? [],
   );
   const elementPath = ReactEditor.findPath(editor, element);
+  const topIndex = elementPath[0];
+  const beforeGapActive =
+    isJupyterCodeCell && gapCursor?.index === topIndex && gapCursor.side === "before";
+  const afterGapActive =
+    isJupyterCodeCell && gapCursor?.index === topIndex && gapCursor.side === "after";
   const codeValue = getCodeBlockText(element as CodeBlock);
   const expandState =
     (editor as any).codeBlockExpandState ??
@@ -283,6 +322,28 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const shouldCollapse = false;
   const selected = useSelected();
   const selectionInBlock = !!focused && !!selected;
+  const isSelectedJupyterCell =
+    isJupyterCodeCell &&
+    !!jupyterCellId &&
+    `${selectedCellId ?? ""}`.trim() === jupyterCellId;
+  const isHoveredJupyterCell =
+    isJupyterCodeCell &&
+    !!jupyterCellId &&
+    `${hoveredCellId ?? ""}`.trim() === jupyterCellId;
+  const isLastJupyterCell =
+    isJupyterCodeCell &&
+    topIndex === editor.children.length - 1;
+  useEffect(() => {
+    if (!isJupyterCodeCell || !selectionInBlock || !jupyterCellId) return;
+    setSelectedCellId?.(jupyterCellId);
+    setGapCursor?.(null);
+  }, [
+    isJupyterCodeCell,
+    selectionInBlock,
+    jupyterCellId,
+    setSelectedCellId,
+    setGapCursor,
+  ]);
   const syncSelectionFromDom = useCallback(() => {
     if (typeof window === "undefined") return;
     const domSelection = window.getSelection?.();
@@ -313,6 +374,17 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     : null;
   const showPopularGuess =
     !!popularGuess && popularGuess.score >= 4;
+  const projectedJupyterOutput =
+    isJupyterCodeCell && jupyterCellId
+      ? renderJupyterOutput?.(jupyterCellId)
+      : null;
+  const jupyterChromeInfo =
+    isJupyterCodeCell && jupyterCellId ? getCellChromeInfo?.(jupyterCellId) : undefined;
+  const isRunningJupyterCell = !!jupyterChromeInfo?.running;
+  const showJupyterChrome =
+    isJupyterCodeCell &&
+    !!jupyterCellId &&
+    (IS_TOUCH ? isSelectedJupyterCell || menuFocused : isHoveredJupyterCell);
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -513,6 +585,13 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const jupyterCellClipboard = event.clipboardData?.getData(
+        "application/x-cocalc-jupyter-cells+json",
+      );
+      if (jupyterCellClipboard) {
+        // Let parent Editable handler consume jupyter-cell clipboard payload.
+        return;
+      }
       const text = event.clipboardData?.getData("text/plain");
       if (!text) return;
       event.preventDefault();
@@ -534,19 +613,69 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       data-cocalc-cell-id={
         isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
       }
+      data-jupyter-lazy-cell-id={
+        isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
+      }
+      onMouseDown={() => {
+        if (isJupyterCodeCell) {
+          if (jupyterCellId) {
+            setSelectedCellId?.(jupyterCellId);
+          }
+          setGapCursor?.(null);
+        }
+      }}
     >
+      {isJupyterCodeCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-gap-before"
+          data-cocalc-cell-id={jupyterCellId}
+          style={gapCursorStyle(!!beforeGapActive)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setGapCursor?.({ index: topIndex, side: "before" });
+          }}
+        />
+      ) : null}
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
           <div
-            style={{ position: "relative" }}
+            style={{
+              position: "relative",
+              paddingTop: isJupyterCodeCell ? "22px" : undefined,
+              background:
+                isJupyterCodeCell && isSelectedJupyterCell
+                  ? "rgba(22, 119, 255, 0.03)"
+                  : undefined,
+              borderRadius: isJupyterCodeCell ? "4px" : undefined,
+            }}
             onMouseEnter={() => {
-              if (!IS_TOUCH) setMenuHovered(true);
+              if (!IS_TOUCH) {
+                setMenuHovered(true);
+                if (isJupyterCodeCell && jupyterCellId) {
+                  setHoveredCellId?.(jupyterCellId);
+                }
+              }
             }}
             onMouseLeave={() => {
-              if (!IS_TOUCH) setMenuHovered(false);
+              if (!IS_TOUCH) {
+                setMenuHovered(false);
+                if (
+                  isJupyterCodeCell &&
+                  jupyterCellId &&
+                  `${hoveredCellId ?? ""}`.trim() === jupyterCellId
+                ) {
+                  setHoveredCellId?.(undefined);
+                }
+              }
             }}
             onFocusCapture={() => {
               if (!IS_TOUCH) setMenuFocused(true);
+              if (isJupyterCodeCell && jupyterCellId) {
+                setSelectedCellId?.(jupyterCellId);
+                setGapCursor?.(null);
+              }
             }}
             onBlurCapture={(event) => {
               if (IS_TOUCH) return;
@@ -557,7 +686,92 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
               setMenuFocused(false);
             }}
           >
-            {!disableMarkdownCodebar && (
+            {showJupyterChrome && (
+              <div
+                contentEditable={false}
+                data-cocalc-test="jupyter-singledoc-cell-chrome"
+                data-cocalc-cell-id={jupyterCellId}
+                style={{
+                  position: "absolute",
+                  right: 2,
+                  top: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  minHeight: "20px",
+                  fontSize: "12px",
+                  zIndex: 2,
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                {jupyterChromeInfo?.execCount ? (
+                  <span style={{ color: "#D84315" }}>
+                    Out[{jupyterChromeInfo.execCount}]:
+                  </span>
+                ) : null}
+                <CellTiming
+                  start={jupyterChromeInfo?.start}
+                  end={jupyterChromeInfo?.end}
+                  last={jupyterChromeInfo?.last}
+                  state={jupyterChromeInfo?.state}
+                  isLive
+                  kernel={jupyterChromeInfo?.kernel}
+                />
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    if (isRunningJupyterCell) {
+                      stopCell?.(jupyterCellId);
+                    } else {
+                      runCell?.(jupyterCellId, { insertBelow: false });
+                    }
+                  }}
+                >
+                  <Icon name={isRunningJupyterCell ? "stop" : "play"} />{" "}
+                  {isRunningJupyterCell ? "Stop" : "Run"}
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    openAssistant?.(jupyterCellId);
+                  }}
+                >
+                  <Icon name="robot" /> AI
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    insertCellAbove?.(jupyterCellId, "code");
+                  }}
+                >
+                  <Icon name="code" /> Code
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    insertCellAbove?.(jupyterCellId, "markdown");
+                  }}
+                >
+                  <Icon name="file-alt" /> Text
+                </Button>
+              </div>
+            )}
+            {!disableMarkdownCodebar && !isJupyterCodeCell && (
               <div contentEditable={false}>
                 <FloatingActionMenu
                   info={info}
@@ -633,7 +847,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   .join("\n")}
               </pre>
             ) : (
-              <CodeBlockBody onPaste={handlePaste}>
+              <CodeBlockBody
+                onPaste={handlePaste}
+                onInput={() => {
+                  const ed = editor as any;
+                  if (ed._hasUnsavedChanges === false) {
+                    ed._hasUnsavedChanges = undefined;
+                  } else {
+                    ed._hasUnsavedChanges = {};
+                  }
+                  // Uses EditableMarkdown's debounced save path.
+                  ed.saveValue?.();
+                }}
+              >
                 {children}
               </CodeBlockBody>
             )}
@@ -725,6 +951,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                 {output}
               </div>
             )}
+            {projectedJupyterOutput != null && (
+              <div contentEditable={false}>{projectedJupyterOutput}</div>
+            )}
           </div>
         </div>
         {element.info == "mermaid" && (
@@ -733,6 +962,53 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
           </div>
         )}
       </div>
+      {isJupyterCodeCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-gap-after"
+          data-cocalc-cell-id={jupyterCellId}
+          style={gapCursorStyle(!!afterGapActive)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setGapCursor?.({ index: topIndex, side: "after" });
+          }}
+        />
+      ) : null}
+      {isLastJupyterCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-bottom-insert"
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "8px",
+            marginTop: "6px",
+            marginBottom: "2px",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <Button
+            size="small"
+            type="text"
+            style={{ color: "#333", padding: 0, height: "20px" }}
+            onClick={() => insertCellAtEnd?.("code")}
+          >
+            <Icon name="code" /> Code
+          </Button>
+          <Button
+            size="small"
+            type="text"
+            style={{ color: "#333", padding: 0, height: "20px" }}
+            onClick={() => insertCellAtEnd?.("markdown")}
+          >
+            <Icon name="file-alt" /> Text
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

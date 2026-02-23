@@ -43,6 +43,9 @@ import "./image/editable";
 import type { JupyterCodeCell } from "./jupyter-code-cell/types";
 import "./jupyter-code-cell";
 import "./jupyter-code-cell/editable";
+import type { JupyterMarkdownCell } from "./jupyter-markdown-cell/types";
+import "./jupyter-markdown-cell";
+import "./jupyter-markdown-cell/editable";
 import type { Link } from "./link";
 import "./link/editable";
 import type { ListItem } from "./list/list-item";
@@ -85,6 +88,7 @@ declare module "slate" {
       | HtmlBlock
       | HtmlInline
       | JupyterCodeCell
+      | JupyterMarkdownCell
       | Mention
       | Table
       | THead

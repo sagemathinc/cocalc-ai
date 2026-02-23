@@ -254,6 +254,9 @@ export class ManageCommands {
     const items: Partial<Command>[] = [];
     for (const type in this.props.editor_spec) {
       const spec = this.props.editor_spec[type];
+      if (spec?.hide_frame_type) {
+        continue;
+      }
       if (spec == null) {
         // typescript should prevent this but, also double checking
         // makes this easier to debug.

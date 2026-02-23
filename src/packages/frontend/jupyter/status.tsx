@@ -20,9 +20,11 @@ import {
   Button,
   Drawer,
   Divider,
+  Popover,
   Popconfirm,
   Progress,
   Space,
+  Tabs,
   Tooltip,
   Typography,
 } from "antd";
@@ -118,6 +120,8 @@ interface KernelProps {
   expected_cell_runtime?: number;
   style?: CSS;
   is_fullscreen?: boolean;
+  onOpenSingleDoc?: () => void;
+  hideHeader?: boolean;
 }
 
 export function Kernel({
@@ -126,6 +130,8 @@ export function Kernel({
   style,
   usage,
   is_fullscreen,
+  onOpenSingleDoc,
+  hideHeader,
 }: KernelProps) {
   const intl = useIntl();
   const name = actions.name;
@@ -549,6 +555,20 @@ export function Kernel({
       />
     );
 
+    const usage_help = (
+      <div style={{ marginTop: "8px" }}>
+        <Popover
+          trigger="click"
+          placement="left"
+          content={<div style={{ maxWidth: "360px" }}>{usage_tip}</div>}
+        >
+          <Button size="small" type="text" style={{ paddingInline: 6 }}>
+            <Icon name="question-circle" /> Usage help
+          </Button>
+        </Popover>
+      </div>
+    );
+
     const description = kernel_info?.getIn([
       "metadata",
       "cocalc",
@@ -580,10 +600,10 @@ export function Kernel({
             </Button>
           </div>
         ) : undefined}
-        {usage_tip}
+        {usage_help}
       </span>
     );
-    return <div style={{ maxWidth: "100%" }}>{tip}</div>;
+    return <div style={{ maxWidth: "100%", paddingTop: "4px" }}>{tip}</div>;
   }
 
   // show progress bar indicators for memory usage and the progress of the current cell (expected time)
@@ -793,40 +813,53 @@ export function Kernel({
 
   return (
     <>
-      <div
-        style={{
-          overflow: "hidden",
-          width: "100%",
-          padding: "5px",
-          backgroundColor: COLORS.GRAY_LLL,
-          display: "flex",
-          borderBottom: "1px solid #ccc",
-          ...style,
-        }}
-      >
-        <div style={{ flex: 1, display: "flex", maxWidth: "100%" }}>
-          <div>{renderLogo()}</div>
-          <div
-            style={{
-              flex: 1,
-              fontSize: "10pt",
-              textAlign: "center",
-              marginTop: "3.5px",
-            }}
-          >
-            {body}
-          </div>
-          {renderKernelState()}
-          {!IS_MOBILE && (
+      {!hideHeader && (
+        <div
+          style={{
+            overflow: "hidden",
+            width: "100%",
+            padding: "5px",
+            backgroundColor: COLORS.GRAY_LLL,
+            display: "flex",
+            borderBottom: "1px solid #ccc",
+            ...style,
+          }}
+        >
+          <div style={{ flex: 1, display: "flex", maxWidth: "100%" }}>
+            <div>{renderLogo()}</div>
             <div
-              style={{ flex: 1, marginTop: "2.5px", cursor: "pointer" }}
-              onClick={openKernelDrawer}
+              style={{
+                flex: 1,
+                fontSize: "10pt",
+                textAlign: "center",
+                marginTop: "3.5px",
+              }}
             >
-              {renderUsage()}
+              {body}
+            </div>
+            {renderKernelState()}
+            {!IS_MOBILE && (
+              <div
+                style={{ flex: 1, marginTop: "2.5px", cursor: "pointer" }}
+                onClick={openKernelDrawer}
+              >
+                {renderUsage()}
+              </div>
+            )}
+          </div>
+          {onOpenSingleDoc != null && (
+            <div style={{ marginLeft: "6px", marginTop: "1px" }}>
+              <Button
+                size="small"
+                data-cocalc-test="jupyter-open-singledoc"
+                onClick={onOpenSingleDoc}
+              >
+                Single Doc
+              </Button>
             </div>
           )}
         </div>
-      </div>
+      )}
       <Drawer
         open={kernelDrawerOpen}
         onClose={closeKernelDrawer}
@@ -836,9 +869,22 @@ export function Kernel({
         title={get_kernel_name()}
         extra={renderDrawerActions()}
       >
-        {renderKernelDetails()}
-        <Divider />
-        <KernelSelector actions={actions} embedded />
+        <Tabs
+          size="small"
+          defaultActiveKey="kernels"
+          items={[
+            {
+              key: "kernels",
+              label: "Kernels",
+              children: <KernelSelector actions={actions} embedded />,
+            },
+            {
+              key: "info",
+              label: "Info",
+              children: renderKernelDetails(),
+            },
+          ]}
+        />
       </Drawer>
     </>
   );
