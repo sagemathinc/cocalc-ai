@@ -51,8 +51,6 @@ const START_EVENT_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_EXEC_START_EVENT_TIMEOUT_MS ?? 20_000),
 );
-const FILE_LINK_GUIDANCE =
-  "When referencing workspace files, output markdown links relative to the project root so they stay clickable in CoCalc, e.g., foo.py -> [foo.py](./foo.py) (no backticks around the link). For images use ![](./image.png).";
 const IMMEDIATE_SEND_GUIDANCE = [
   "[CoCalc immediate-send behavior]",
   "This user message was sent with 'Send Immediately' during an active run.",
@@ -740,11 +738,10 @@ export class CodexExecAgent implements AcpAgent {
   ): string {
     const isSlashCommand = /^\s*\/\w+/.test(prompt);
     if (isSlashCommand) return prompt;
-    const prefix =
-      opts?.sendMode === "immediate"
-        ? `${FILE_LINK_GUIDANCE}\n\n${IMMEDIATE_SEND_GUIDANCE}`
-        : FILE_LINK_GUIDANCE;
-    return `${prefix}\n\n${prompt}`;
+    if (opts?.sendMode === "immediate") {
+      return `${IMMEDIATE_SEND_GUIDANCE}\n\n${prompt}`;
+    }
+    return prompt;
   }
 
   private async handleItem(

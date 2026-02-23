@@ -36,8 +36,33 @@ type PsProc = {
   args: string;
 };
 
+// macOS `ps` does not support `etimes`; use `etime` and parse it.
 const PS_COMMAND =
-  "ps -axo pid=,ppid=,%cpu=,rss=,etimes=,ni=,state=,comm=,args=";
+  "ps -axo pid=,ppid=,%cpu=,rss=,etime=,ni=,state=,comm=,args=";
+
+function parseEtimeSeconds(etime: string): number {
+  const value = `${etime}`.trim();
+  if (value.length === 0) return 0;
+  const [daysPart, clockPart] = value.includes("-")
+    ? value.split("-", 2)
+    : [undefined, value];
+  const days = daysPart == null ? 0 : Number.parseInt(daysPart, 10) || 0;
+  const parts = clockPart
+    .split(":")
+    .map((part) => Number.parseInt(part, 10));
+  if (parts.some((n) => !Number.isFinite(n))) {
+    return 0;
+  }
+  if (parts.length === 2) {
+    const [mm, ss] = parts;
+    return days * 24 * 60 * 60 + mm * 60 + ss;
+  }
+  if (parts.length === 3) {
+    const [hh, mm, ss] = parts;
+    return days * 24 * 60 * 60 + hh * 60 * 60 + mm * 60 + ss;
+  }
+  return 0;
+}
 
 export function normalizeState(state: string): State {
   const s = (state || "").trim().toUpperCase();
@@ -51,7 +76,7 @@ export function normalizeState(state: string): State {
 
 export function parsePsLine(line: string): PsProc | undefined {
   const m = line.trim().match(
-    /^(\d+)\s+(\d+)\s+([0-9.]+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s+(\S+)\s*(.*)$/,
+    /^(\d+)\s+(\d+)\s+([0-9.]+)\s+(\d+)\s+(\S+)\s+(-?\d+)\s+(\S+)\s+(\S+)\s*(.*)$/,
   );
   if (m == null) return;
   return {
@@ -59,12 +84,22 @@ export function parsePsLine(line: string): PsProc | undefined {
     ppid: Number.parseInt(m[2], 10),
     cpuPct: Number.parseFloat(m[3]) || 0,
     rssMiB: (Number.parseInt(m[4], 10) || 0) / 1024,
-    etimes: Number.parseInt(m[5], 10) || 0,
+    etimes: parseEtimeSeconds(m[5]),
     nice: Number.parseInt(m[6], 10) || 0,
     state: m[7],
     comm: m[8],
     args: m[9] || m[8],
   };
+}
+
+export function inferExeFromPs(comm: string, args: string): string {
+  const cmdline = `${args}`.trim();
+  if (cmdline.length === 0) return comm;
+  const first = cmdline.split(/\s+/, 1)[0];
+  if (first.length === 0) return comm;
+  // On macOS, `comm` can be truncated; prefer the first arg when it is path-like.
+  if (first.includes("/") || first.startsWith(".")) return first;
+  return comm;
 }
 
 function cocalcInfoFromRoot(root: OwnedRootProcess): CoCalcInfo | undefined {
@@ -102,11 +137,20 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
   }
 
   async snapshot(_timestamp: number): Promise<ProcessSnapshot> {
-    const roots = this.registry
+    const trackedRoots = this.registry
       .listActiveRoots()
       .filter((root) => root.pid != null) as (OwnedRootProcess & {
       pid: number;
     })[];
+    const roots = [...trackedRoots];
+    if (!roots.some((root) => root.pid === process.pid)) {
+      roots.push({
+        root_id: "project-self",
+        kind: "project",
+        pid: process.pid,
+        spawned_at: Date.now(),
+      });
+    }
     const { uptime: up, boottime } = this.nowUptime();
     if (roots.length === 0) {
       return {
@@ -120,7 +164,7 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
     const rows = await this.readPsRows();
     const rowByPid = new Map(rows.map((row) => [row.pid, row]));
     const alive = new Set(rowByPid.keys());
-    for (const root_id of staleRootIds({ roots, alivePids: alive })) {
+    for (const root_id of staleRootIds({ roots: trackedRoots, alivePids: alive })) {
       this.registry.markExited(root_id);
     }
     const liveRoots = roots.filter((root) => rowByPid.has(root.pid));
@@ -152,11 +196,13 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
       if (row == null) continue;
       const root = rootByPid.get(pid);
       const cpuSecs = (row.cpuPct / 100) * row.etimes;
-      const cmdline = row.args.trim().length > 0 ? row.args.trim().split(/\s+/) : [row.comm];
+      const cmdline =
+        row.args.trim().length > 0 ? row.args.trim().split(/\s+/) : [row.comm];
+      const exe = inferExeFromPs(row.comm, row.args);
       const proc: Process = {
         pid: row.pid,
         ppid: row.ppid,
-        exe: row.comm,
+        exe,
         cmdline,
         stat: {
           ppid: row.ppid,
@@ -209,4 +255,3 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
       .filter((row): row is PsProc => row != null);
   }
 }
-

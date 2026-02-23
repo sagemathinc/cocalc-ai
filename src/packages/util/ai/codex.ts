@@ -77,6 +77,33 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     ],
   },
   {
+    name: "gpt-5.3-codex-spark",
+    description: "Ultra-fast coding model.",
+    reasoning: [
+      {
+        id: "low",
+        label: "Low",
+        description: "Fast responses with lighter reasoning.",
+      },
+      {
+        id: "medium",
+        label: "Medium",
+        description: "Balances speed and reasoning depth for everyday tasks.",
+      },
+      {
+        id: "high",
+        label: "High",
+        description: "Greater reasoning depth for complex problems.",
+        default: true,
+      },
+      {
+        id: "extra_high",
+        label: "Extra high",
+        description: "Extra high reasoning depth for complex problems.",
+      },
+    ],
+  },
+  {
     name: "gpt-5.2-codex",
     description: "Frontier agentic coding model.",
     reasoning: [
@@ -128,27 +155,9 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     ],
   },
   {
-    name: "gpt-5.1-codex-mini",
-    description: "Optimized for Codex. Cheaper and faster.",
-    reasoning: [
-      {
-        id: "medium",
-        label: "Medium",
-        description: "Dynamically adjusts reasoning based on the task.",
-        default: true,
-      },
-      {
-        id: "high",
-        label: "High",
-        description:
-          "Maximizes reasoning depth for complex or ambiguous problems.",
-      },
-    ],
-  },
-  {
     name: "gpt-5.2",
     description:
-      "Latest frontier model with improvements across knowledge, reasoning, and coding.",
+      "Latest frontier model with improvements across knowledge, reasoning and coding",
     reasoning: [
       {
         id: "low",
@@ -161,6 +170,24 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
         label: "Medium",
         description:
           "Provides a solid balance of reasoning depth and latency for general-purpose tasks.",
+        default: true,
+      },
+      {
+        id: "high",
+        label: "High",
+        description:
+          "Maximizes reasoning depth for complex or ambiguous problems.",
+      },
+    ],
+  },
+  {
+    name: "gpt-5.1-codex-mini",
+    description: "Optimized for codex. Cheaper, faster, but less capable.",
+    reasoning: [
+      {
+        id: "medium",
+        label: "Medium",
+        description: "Dynamically adjusts reasoning based on the task.",
         default: true,
       },
       {

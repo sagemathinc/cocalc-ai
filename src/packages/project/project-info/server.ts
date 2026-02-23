@@ -46,6 +46,9 @@ const bytes2MiB = (bytes) => bytes / (1024 * 1024);
  * Returns true if /tmp is tmpfs, false otherwise.
  */
 async function isTmpMemoryBased(): Promise<boolean> {
+  if (process.platform !== "linux") {
+    return false;
+  }
   try {
     const mounts = await readFile("/proc/mounts", "utf8");
     // Look for lines like: "tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,relatime,size=1024000k 0 0"
@@ -175,6 +178,10 @@ export class ProjectInfoServer extends EventEmitter {
    */
   private async detectCGroupVersion(): Promise<"v1" | "v2" | "unknown" | null> {
     if (this.cgroupVersion !== null) {
+      return this.cgroupVersion;
+    }
+    if (process.platform !== "linux") {
+      this.cgroupVersion = "unknown";
       return this.cgroupVersion;
     }
 

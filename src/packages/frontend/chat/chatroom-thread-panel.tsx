@@ -11,6 +11,7 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
+  type CodexReasoningLevel,
   type CodexReasoningId,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
@@ -123,15 +124,30 @@ export function ChatRoomThreadPanel({
   onNewThreadSetupChange,
 }: ChatRoomThreadPanelProps) {
   if (!selectedThreadKey) {
+    type ModelOption = {
+      value: string;
+      label: string;
+      description?: string;
+      thinking?: string;
+      reasoning?: CodexReasoningLevel[];
+    };
     const update = (patch: Partial<NewThreadSetup>) =>
       onNewThreadSetupChange({ ...newThreadSetup, ...patch });
     const codexModel = newThreadSetup.codexConfig.model ?? DEFAULT_CODEX_MODEL;
+    const codexModelOptions: ModelOption[] = DEFAULT_CODEX_MODELS.map((model) => ({
+      value: model.name,
+      label: model.name,
+      description: model.description,
+      thinking: model.reasoning?.find((r) => r.default)?.label,
+      reasoning: model.reasoning,
+    }));
     const codexReasoningOptions = (
-      DEFAULT_CODEX_MODELS.find((model) => model.name === codexModel)?.reasoning ??
-      []
+      codexModelOptions.find((model) => model.value === codexModel)?.reasoning ?? []
     ).map((r) => ({
       value: r.id,
       label: r.label,
+      description: r.description,
+      default: r.default,
     }));
     return (
       <div
@@ -261,10 +277,15 @@ export function ChatRoomThreadPanel({
                 <Select
                   value={codexModel}
                   style={{ width: "100%" }}
-                  options={DEFAULT_CODEX_MODELS.map((model) => ({
-                    value: model.name,
-                    label: model.name,
-                  }))}
+                  options={codexModelOptions}
+                  optionRender={(option) =>
+                    renderOptionWithDescription({
+                      title: `${option.data.label}${
+                        option.data.thinking ? ` (${option.data.thinking})` : ""
+                      }`,
+                      description: option.data.description,
+                    })
+                  }
                   showSearch
                   optionFilterProp="label"
                   onChange={(value) => {
@@ -292,6 +313,14 @@ export function ChatRoomThreadPanel({
                   value={newThreadSetup.codexConfig.reasoning}
                   style={{ width: "100%" }}
                   options={codexReasoningOptions}
+                  optionRender={(option) =>
+                    renderOptionWithDescription({
+                      title: `${option.data.label}${
+                        option.data.default ? " (default)" : ""
+                      }`,
+                      description: option.data.description,
+                    })
+                  }
                   onChange={(value) =>
                     update({
                       codexConfig: {
@@ -503,4 +532,23 @@ function normalizeSessionMode(
 function isCodexModelName(value?: string): boolean {
   if (!value) return false;
   return DEFAULT_CODEX_MODELS.some((model) => model.name === value);
+}
+
+function renderOptionWithDescription({
+  title,
+  description,
+}: {
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div style={{ lineHeight: "18px" }}>
+      <div>{title}</div>
+      {description ? (
+        <div style={{ fontSize: 11, color: "#888", lineHeight: "14px" }}>
+          {description}
+        </div>
+      ) : null}
+    </div>
+  );
 }

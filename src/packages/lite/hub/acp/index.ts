@@ -46,6 +46,10 @@ import {
 } from "@cocalc/chat";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import { appendStreamMessage, extractEventText } from "@cocalc/chat";
+import {
+  resolveInlineCodeLinks,
+  type InlineCodeLink,
+} from "./inline-code-links";
 import type { SyncDB } from "@cocalc/conat/sync-doc/syncdb";
 import type { AcpStreamUsage } from "@cocalc/ai/acp";
 import { once } from "@cocalc/util/async-utils";
@@ -270,6 +274,12 @@ export class ChatStreamWriter {
   private usePool: boolean;
   private metadata: AcpChatContext;
   private readonly chatKey: string;
+  private readonly workspaceRoot?: string;
+  private readonly hostWorkspaceRoot?: string;
+  private inlineCodeLinksCache?: {
+    content: string;
+    links: InlineCodeLink[];
+  };
   private threadKeys = new Set<string>();
   private resolvedChatKey?: { date: string; sender_id: string };
   private prevHistory: MessageHistory[] = [];
@@ -495,6 +505,7 @@ export class ChatStreamWriter {
     approverAccountId,
     sessionKey,
     workspaceRoot,
+    hostWorkspaceRoot,
     syncdbOverride,
     logStoreFactory,
   }: {
@@ -503,6 +514,7 @@ export class ChatStreamWriter {
     approverAccountId: string;
     sessionKey?: string;
     workspaceRoot?: string;
+    hostWorkspaceRoot?: string;
     syncdbOverride?: any;
     logStoreFactory?: () => AKV<AcpStreamMessage[]>;
   }) {
@@ -510,6 +522,8 @@ export class ChatStreamWriter {
     this.approverAccountId = approverAccountId;
     this.client = client;
     this.chatKey = chatKey(metadata);
+    this.workspaceRoot = workspaceRoot;
+    this.hostWorkspaceRoot = hostWorkspaceRoot ?? workspaceRoot;
     this.usePool = syncdbOverride == null;
     this.syncdbPromise =
       syncdbOverride != null
@@ -822,6 +836,7 @@ export class ChatStreamWriter {
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
       reply_to_message_id: this.metadata.reply_to_message_id,
+      inline_code_links: generating ? undefined : this.resolveInlineCodeLinks(),
     });
     const update: any = { ...message };
     if (this.interruptNotified) {
@@ -830,6 +845,23 @@ export class ChatStreamWriter {
       update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
     }
     return update;
+  }
+
+  private resolveInlineCodeLinks(): InlineCodeLink[] | undefined {
+    const content = this.content ?? "";
+    if (!content.trim()) return undefined;
+    if (this.inlineCodeLinksCache?.content === content) {
+      return this.inlineCodeLinksCache.links.length
+        ? this.inlineCodeLinksCache.links
+        : undefined;
+    }
+    const links = resolveInlineCodeLinks({
+      markdown: content,
+      workspaceRoot: this.workspaceRoot,
+      hostWorkspaceRoot: this.hostWorkspaceRoot,
+    });
+    this.inlineCodeLinksCache = { content, links };
+    return links.length ? links : undefined;
   }
 
   private commitNow(
@@ -1810,6 +1842,7 @@ export async function evaluate({
         approverAccountId: request.account_id,
         sessionKey: request.session_id,
         workspaceRoot,
+        hostWorkspaceRoot: hostRoot,
       })
     : null;
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import CodexActivity from "./codex-activity";
 import {
@@ -25,6 +26,7 @@ interface Props {
   onEventsChange?: (eventCount: number) => void;
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
+  inlineCodeLinks?: InlineCodeLink[];
   virtualizeEntries?: boolean;
   scrollParent?: HTMLElement | null;
 }
@@ -46,6 +48,7 @@ export function CodexLogPanel({
   onEventsChange,
   onDeleteEvents,
   onDeleteAllEvents,
+  inlineCodeLinks,
   virtualizeEntries = false,
   scrollParent,
 }: Props) {
@@ -111,6 +114,7 @@ export function CodexLogPanel({
       onJumpToBottom={onJumpToBottom}
       onDeleteEvents={handleDeleteEvents}
       onDeleteAllEvents={handleDeleteAllEvents}
+      inlineCodeLinks={inlineCodeLinks}
       virtualizeEntries={virtualizeEntries}
       scrollParent={scrollParent}
     />
