@@ -5,8 +5,9 @@ TODO:
 - [x] cleanup - move the "Out[n]" to be only shown on the right when hovered, similar to run/ai. Be sure to not let this cause a reflow of output though.
 - [x] make the time counter change as the cell runs, and include the progress bar that is visible in the classic view; it is a good clear indicator of activity.
 - [x] highlighting the focused cell or markdown cell is pretty flaky. For markdown when it does work, it has extra padding or margin, which makes the entire output jump a bit.
-- [ ] minimap - sync issues
-- [ ] button to easily open singledoc from classic view
+- [x] minimap - sync issues
+- [x] button to easily open singledoc from classic view
+- [x] clicking the kernel shows the Drawer ONLY after switching to classic view.  need to refactor code a bit so drawer shows in either view.
 
 ## Goal
 

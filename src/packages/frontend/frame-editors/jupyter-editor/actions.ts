@@ -23,6 +23,7 @@ import {
   close_jupyter_actions,
   create_jupyter_actions,
 } from "./jupyter-actions";
+import { HIDE_JUPYTER_SINGLE_DOC_MODE } from "./feature-flags";
 import { revealjs_slideshow_html } from "./slideshow-revealjs/nbconvert";
 
 export interface JupyterEditorState extends CodeEditorState {
@@ -56,7 +57,10 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
     if (typeof window !== "undefined") {
       try {
         const params = new URLSearchParams(window.location.search);
-        if (params.get("cocalc-test-jupyter-frame") === "jupyter-singledoc") {
+        if (
+          !HIDE_JUPYTER_SINGLE_DOC_MODE &&
+          params.get("cocalc-test-jupyter-frame") === "jupyter-singledoc"
+        ) {
           return { type: "jupyter_slate_single_doc_notebook" };
         }
       } catch {
@@ -76,6 +80,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
     this.init_new_frame();
     this.init_changes_state();
     this.applyFrameTypeFromUrlForTests();
+    this.normalizeHiddenSingleDocFrames();
 
     this.store.on("close-frame", async ({ id }) => {
       if (this.frame_actions[id] != null) {
@@ -84,6 +89,20 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
         delete this.frame_actions[id];
       }
     });
+  }
+
+  private normalizeHiddenSingleDocFrames(): void {
+    if (!HIDE_JUPYTER_SINGLE_DOC_MODE) return;
+    for (const id in this._get_leaf_ids()) {
+      const node = this._get_frame_node(id);
+      const type = `${node?.get("type") ?? ""}`;
+      if (
+        type === "jupyter_slate_single_doc_notebook" ||
+        type === "jupyter-singledoc"
+      ) {
+        this.set_frame_type(id, "jupyter_cell_notebook");
+      }
+    }
   }
 
   public close(): void {
@@ -316,6 +335,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   }
 
   private applyFrameTypeFromUrlForTests(): void {
+    if (HIDE_JUPYTER_SINGLE_DOC_MODE) return;
     if (typeof window === "undefined") return;
     let requested: string | null = null;
     try {

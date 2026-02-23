@@ -31,6 +31,7 @@ import { LLMTools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { Kernels as KernelsType } from "@cocalc/jupyter/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { JupyterEditorActions } from "../frame-editors/jupyter-editor/actions";
+import { HIDE_JUPYTER_SINGLE_DOC_MODE } from "../frame-editors/jupyter-editor/feature-flags";
 import { About } from "./about";
 import type { JupyterActions } from "./browser-actions";
 import { CellList } from "./cell-list";
@@ -211,6 +212,29 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
 
   // We now always render via lazy-hydrate-once semantics.
   const useLazyRenderOnceRef = useRef<boolean>(true);
+  const setFrameType = React.useCallback(
+    (nextType?: string) => {
+      const localViewState = editor_actions.store?.get?.("local_view_state");
+      const activeId = localViewState?.get?.("active_id");
+      const targetType =
+        nextType === "jupyter-singledoc"
+          ? HIDE_JUPYTER_SINGLE_DOC_MODE
+            ? "jupyter_cell_notebook"
+            : "jupyter_slate_single_doc_notebook"
+          : nextType === "jupyter"
+            ? "jupyter_cell_notebook"
+            : nextType ||
+              (HIDE_JUPYTER_SINGLE_DOC_MODE
+                ? "jupyter_cell_notebook"
+                : "jupyter_slate_single_doc_notebook");
+      if (activeId != null) {
+        editor_actions.set_frame_type(activeId, targetType);
+        return;
+      }
+      editor_actions.replace_frame_tree({ type: targetType });
+    },
+    [editor_actions],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -222,19 +246,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       actions.set_kernel_error(message ?? "");
     };
     const setFrameTypeForTest = (nextType?: string) => {
-      const localViewState = editor_actions.store?.get?.("local_view_state");
-      const activeId = localViewState?.get?.("active_id");
-      const targetType =
-        nextType === "jupyter-singledoc"
-          ? "jupyter_slate_single_doc_notebook"
-          : nextType === "jupyter"
-            ? "jupyter_cell_notebook"
-            : nextType || "jupyter_slate_single_doc_notebook";
-      if (activeId != null) {
-        editor_actions.set_frame_type(activeId, targetType);
-        return;
-      }
-      editor_actions.replace_frame_tree({ type: targetType });
+      setFrameType(nextType);
     };
     const setKernelErrorFromEvent = (event: Event) => {
       const message = (event as CustomEvent<{ message?: string }>).detail
@@ -258,11 +270,11 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       set_kernel_error_for_test: (message?: string) => {
         setKernelErrorForTest(message);
       },
-      clear_kernel_error_for_test: () => {
-        setKernelErrorForTest("");
-      },
-      set_frame_type_for_test: (nextType?: string) => {
-        setFrameTypeForTest(nextType);
+        clear_kernel_error_for_test: () => {
+          setKernelErrorForTest("");
+        },
+        set_frame_type_for_test: (nextType?: string) => {
+          setFrameTypeForTest(nextType);
       },
     };
     document.documentElement.setAttribute(
@@ -305,7 +317,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         "data-cocalc-jupyter-test-set-frame-type",
       );
     };
-  }, [actions, editor_actions]);
+  }, [actions, setFrameType]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
@@ -492,6 +504,11 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
             actions={actions}
             usage={usage}
             expected_cell_runtime={expected_cell_runtime}
+            onOpenSingleDoc={
+              HIDE_JUPYTER_SINGLE_DOC_MODE
+                ? undefined
+                : () => setFrameType("jupyter-singledoc")
+            }
           />
         )}
         {cell_toolbar === "create_assignment" && (

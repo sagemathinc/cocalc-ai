@@ -9,6 +9,8 @@ import { useJupyterCellContext } from "../../jupyter-cell-context";
 import { useEffect } from "react";
 import { useSlate, ReactEditor } from "../../slate-react";
 import { CSSProperties } from "react";
+import { Button } from "antd";
+import { Icon } from "@cocalc/frontend/components";
 
 function gapCursorStyle(active: boolean): CSSProperties {
   return {
@@ -35,11 +37,17 @@ function JupyterMarkdownCellElement({
   const focused = useFocused();
   const selected = useSelected();
   const cellId = `${(element as any).cell_id ?? ""}`.trim();
-  const { selectedCellId, setSelectedCellId, gapCursor, setGapCursor } =
-    useJupyterCellContext();
+  const {
+    selectedCellId,
+    setSelectedCellId,
+    gapCursor,
+    setGapCursor,
+    insertCellAtEnd,
+  } = useJupyterCellContext();
   const isSelected = !!cellId && selectedCellId === cellId;
   const path = ReactEditor.findPath(editor as any, element as any);
   const topIndex = path[0];
+  const isLastCell = topIndex === editor.children.length - 1;
   const beforeActive =
     gapCursor?.index === topIndex && gapCursor.side === "before";
   const afterActive = gapCursor?.index === topIndex && gapCursor.side === "after";
@@ -98,6 +106,40 @@ function JupyterMarkdownCellElement({
           setGapCursor?.({ index: topIndex, side: "after" });
         }}
       />
+      {isLastCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-bottom-insert"
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "8px",
+            marginTop: "6px",
+            marginBottom: "2px",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <Button
+            size="small"
+            type="text"
+            style={{ color: "#333", padding: 0, height: "20px" }}
+            onClick={() => insertCellAtEnd?.("code")}
+          >
+            <Icon name="code" /> Code
+          </Button>
+          <Button
+            size="small"
+            type="text"
+            style={{ color: "#333", padding: 0, height: "20px" }}
+            onClick={() => insertCellAtEnd?.("markdown")}
+          >
+            <Icon name="file-alt" /> Text
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

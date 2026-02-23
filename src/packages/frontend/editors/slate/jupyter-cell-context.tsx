@@ -32,6 +32,8 @@ export interface JupyterCellContextValue {
   runCell?: (cellId: string, opts?: { insertBelow?: boolean }) => void;
   stopCell?: (cellId: string) => void;
   openAssistant?: (cellId: string) => void;
+  insertCellAbove?: (cellId: string, kind: "code" | "markdown") => void;
+  insertCellAtEnd?: (kind: "code" | "markdown") => void;
   getCellChromeInfo?: (cellId: string) => JupyterCellChromeInfo;
 }
 

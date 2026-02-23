@@ -28,6 +28,7 @@ import { Introspect } from "./introspect/introspect";
 import JSONIPynb from "./json-ipynb";
 import KernelMenuItem from "./kernel-menu-item";
 import { RawIPynb } from "./raw-ipynb";
+import { HIDE_JUPYTER_SINGLE_DOC_MODE } from "./feature-flags";
 import { search } from "./search";
 import { SingleDocNotebook } from "./singledoc-notebook";
 import { Slideshow } from "./slideshow-revealjs/slideshow";
@@ -100,8 +101,9 @@ const jupyterSlateCommands = set([
 const jupyter_slate_single_doc_notebook: EditorDescription = {
   type: "jupyter-singledoc",
   short: "Slate Doc (exp)",
-  name: "Jupyter Notebook (Slate single-doc, experimental)",
+  name: "Single Doc (experimental)",
   icon: "markdown",
+  hide_frame_type: HIDE_JUPYTER_SINGLE_DOC_MODE,
   component: SingleDocNotebook as any,
   commands: jupyterSlateCommands,
   buttons: set(["save", "time_travel", "halt_jupyter", "show_search"]),

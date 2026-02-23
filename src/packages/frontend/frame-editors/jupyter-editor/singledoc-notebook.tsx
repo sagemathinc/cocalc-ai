@@ -26,6 +26,7 @@ import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import Logo from "@cocalc/frontend/jupyter/logo";
 import { useNotebookMinimap } from "@cocalc/frontend/jupyter/minimap";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
+import { Kernel } from "@cocalc/frontend/jupyter/status";
 import type { EditorState } from "../frame-tree/types";
 import { JupyterEditorActions } from "./actions";
 
@@ -627,6 +628,26 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     setSelectedCellId(cellId);
   }, []);
 
+  const allowNextFocusedSlateMerge = React.useCallback(() => {
+    controlRef.current?.allowNextValueUpdateWhileFocused?.();
+  }, []);
+
+  const flushPendingSlateSync = React.useCallback(() => {
+    if (pendingSlateSyncTimerRef.current != null) {
+      window.clearTimeout(pendingSlateSyncTimerRef.current);
+      pendingSlateSyncTimerRef.current = null;
+      pendingSlateBaseSignatureRef.current = undefined;
+    }
+    if (pendingSlateDocRef.current != null) {
+      const pending = pendingSlateDocRef.current;
+      pendingSlateDocRef.current = null;
+      pendingSlateBaseSignatureRef.current = undefined;
+      applyNotebookSlateRef.current(pending, {
+        baseSignature: "__stale__",
+      });
+    }
+  }, []);
+
   const runCellAtCursor = React.useCallback(
     ({
       insertBelow,
@@ -639,22 +660,11 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (cell_list == null) {
         return;
       }
-      if (pendingSlateSyncTimerRef.current != null) {
-        window.clearTimeout(pendingSlateSyncTimerRef.current);
-        pendingSlateSyncTimerRef.current = null;
-        pendingSlateBaseSignatureRef.current = undefined;
-      }
+      flushPendingSlateSync();
       if (context?.slateValue != null) {
         pendingSlateDocRef.current = null;
         pendingSlateBaseSignatureRef.current = undefined;
         applyNotebookSlateRef.current(context.slateValue, {
-          baseSignature: "__stale__",
-        });
-      } else if (pendingSlateDocRef.current != null) {
-        const pending = pendingSlateDocRef.current;
-        pendingSlateDocRef.current = null;
-        pendingSlateBaseSignatureRef.current = undefined;
-        applyNotebookSlateRef.current(pending, {
           baseSignature: "__stale__",
         });
       }
@@ -711,6 +721,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         jupyter_actions.runCells([targetId]);
       };
       if (insertBelow) {
+        allowNextFocusedSlateMerge();
         runTarget();
         const newId = jupyter_actions.insert_cell_adjacent(targetId, 1);
         focusCellInSlate(newId);
@@ -721,34 +732,31 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           const nextId = cell_list.get(idx + 1);
           focusCellInSlate(nextId ?? targetId);
         } else {
+          allowNextFocusedSlateMerge();
           const newId = jupyter_actions.insert_cell_adjacent(targetId, 1);
           focusCellInSlate(newId);
         }
       }
     },
-    [jupyter_actions, cell_list, cells, focusCellInSlate],
+    [
+      jupyter_actions,
+      cell_list,
+      cells,
+      focusCellInSlate,
+      flushPendingSlateSync,
+      allowNextFocusedSlateMerge,
+    ],
   );
 
   const runCellById = React.useCallback(
     (cellId: string, opts?: { insertBelow?: boolean }) => {
       if (!cellId) return;
-      if (pendingSlateSyncTimerRef.current != null) {
-        window.clearTimeout(pendingSlateSyncTimerRef.current);
-        pendingSlateSyncTimerRef.current = null;
-        pendingSlateBaseSignatureRef.current = undefined;
-      }
-      if (pendingSlateDocRef.current != null) {
-        const pending = pendingSlateDocRef.current;
-        pendingSlateDocRef.current = null;
-        pendingSlateBaseSignatureRef.current = undefined;
-        applyNotebookSlateRef.current(pending, {
-          baseSignature: "__stale__",
-        });
-      }
+      flushPendingSlateSync();
       const runTarget = () => {
         jupyter_actions.runCells([cellId]);
       };
       if (opts?.insertBelow) {
+        allowNextFocusedSlateMerge();
         runTarget();
         const newId = jupyter_actions.insert_cell_adjacent(cellId, 1);
         focusCellInSlate(newId);
@@ -757,7 +765,70 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         focusCellInSlate(cellId);
       }
     },
-    [jupyter_actions, focusCellInSlate],
+    [
+      jupyter_actions,
+      focusCellInSlate,
+      flushPendingSlateSync,
+      allowNextFocusedSlateMerge,
+    ],
+  );
+
+  const insertCellAbove = React.useCallback(
+    (cellId: string, kind: "code" | "markdown") => {
+      flushPendingSlateSync();
+      allowNextFocusedSlateMerge();
+      const ids = cell_list?.toArray() ?? [];
+      const targetId = ids.includes(cellId) ? cellId : ids[0];
+      let newId: string | undefined;
+      if (!targetId) {
+        newId = jupyter_actions.insert_cell_at(0);
+      } else {
+        const idx = ids.indexOf(targetId);
+        if (idx <= 0) {
+          newId = jupyter_actions.insert_cell_at(0);
+        } else {
+          const prev = ids[idx - 1];
+          newId = prev
+            ? jupyter_actions.insert_cell_adjacent(prev, 1)
+            : jupyter_actions.insert_cell_at(0);
+        }
+      }
+      if (!newId) return;
+      if (kind === "markdown") {
+        jupyter_actions.set_cell_type(newId, "markdown");
+      }
+      focusCellInSlate(newId);
+    },
+    [
+      cell_list,
+      flushPendingSlateSync,
+      jupyter_actions,
+      focusCellInSlate,
+      allowNextFocusedSlateMerge,
+    ],
+  );
+
+  const insertCellAtEnd = React.useCallback(
+    (kind: "code" | "markdown") => {
+      flushPendingSlateSync();
+      allowNextFocusedSlateMerge();
+      const lastId = cell_list?.last();
+      const newId =
+        lastId == null
+          ? jupyter_actions.insert_cell_at(0)
+          : jupyter_actions.insert_cell_adjacent(lastId, 1);
+      if (kind === "markdown") {
+        jupyter_actions.set_cell_type(newId, "markdown");
+      }
+      focusCellInSlate(newId);
+    },
+    [
+      cell_list,
+      flushPendingSlateSync,
+      jupyter_actions,
+      focusCellInSlate,
+      allowNextFocusedSlateMerge,
+    ],
   );
 
   const stopCellById = React.useCallback(
@@ -778,12 +849,11 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   );
 
   const openKernelMenu = React.useCallback(async () => {
-    const frameActions = props.actions.get_frame_actions(props.id) as any;
-    await frameActions?.command?.("change kernel");
-  }, [props.actions, props.id]);
+    await jupyter_actions.show_select_kernel("user request");
+  }, [jupyter_actions]);
 
   const openClassicFrame = React.useCallback(() => {
-    props.actions.split_frame("col", props.id, "jupyter_cell_notebook");
+    props.actions.set_frame_type(props.id, "jupyter_cell_notebook");
   }, [props.actions, props.id]);
 
   const applyNotebookSlate = React.useCallback(
@@ -1288,6 +1358,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }}
       data-cocalc-jupyter-slate-single-doc="1"
     >
+      <Kernel actions={jupyter_actions} hideHeader />
       <div
         style={{
           display: "flex",
@@ -1334,7 +1405,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           onClick={openClassicFrame}
           style={{ color: "#555", padding: 0, height: "24px" }}
         >
-          <Icon name="table" /> Open Classic
+          <Icon name="table" /> Classic Doc
         </Button>
       </div>
       {error ? (
@@ -1378,6 +1449,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
               runCell: runCellById,
               stopCell: stopCellById,
               openAssistant: openAssistantForCell,
+              insertCellAbove,
+              insertCellAtEnd,
               getCellChromeInfo,
             }}
           >

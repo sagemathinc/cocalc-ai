@@ -257,6 +257,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     runCell,
     stopCell,
     openAssistant,
+    insertCellAbove,
+    insertCellAtEnd,
     getCellChromeInfo,
   } = useJupyterCellContext();
   const jupyterCellId = isJupyterCodeCell
@@ -328,6 +330,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     isJupyterCodeCell &&
     !!jupyterCellId &&
     `${hoveredCellId ?? ""}`.trim() === jupyterCellId;
+  const isLastJupyterCell =
+    isJupyterCodeCell &&
+    topIndex === editor.children.length - 1;
   useEffect(() => {
     if (!isJupyterCodeCell || !selectionInBlock || !jupyterCellId) return;
     setSelectedCellId?.(jupyterCellId);
@@ -742,6 +747,28 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                 >
                   <Icon name="robot" /> AI
                 </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    insertCellAbove?.(jupyterCellId, "code");
+                  }}
+                >
+                  <Icon name="code" /> Code
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    insertCellAbove?.(jupyterCellId, "markdown");
+                  }}
+                >
+                  <Icon name="file-alt" /> Text
+                </Button>
               </div>
             )}
             {!disableMarkdownCodebar && !isJupyterCodeCell && (
@@ -947,6 +974,40 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
             setGapCursor?.({ index: topIndex, side: "after" });
           }}
         />
+      ) : null}
+      {isLastJupyterCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-bottom-insert"
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "8px",
+            marginTop: "6px",
+            marginBottom: "2px",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <Button
+            size="small"
+            type="text"
+            style={{ color: "#333", padding: 0, height: "20px" }}
+            onClick={() => insertCellAtEnd?.("code")}
+          >
+            <Icon name="code" /> Code
+          </Button>
+          <Button
+            size="small"
+            type="text"
+            style={{ color: "#333", padding: 0, height: "20px" }}
+            onClick={() => insertCellAtEnd?.("markdown")}
+          >
+            <Icon name="file-alt" /> Text
+          </Button>
+        </div>
       ) : null}
     </div>
   );
