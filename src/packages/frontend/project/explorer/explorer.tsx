@@ -62,6 +62,7 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
   hostLabel,
+  normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { isHostRoutingUnavailableError } from "@cocalc/frontend/projects/host-routing-error";
@@ -385,7 +386,12 @@ export function Explorer() {
     // next, we check if this is a common user (not public)
   } else if (my_group !== "public") {
     project_state = project_map?.getIn([project_id, "state"]) as any;
-    project_is_running = project_state?.get("state") == "running";
+    const displayState = normalizeProjectStateForDisplay({
+      projectState: project_state?.get("state"),
+      hostId: host_id,
+      hostInfo,
+    });
+    project_is_running = displayState === "running";
   } else {
     project_is_running = false;
   }
@@ -423,7 +429,7 @@ export function Explorer() {
   const suppressProjectError =
     hostUnavailable && isHostRoutingUnavailableError(error);
 
-  if (hostUnavailable && project_state?.get("state") !== "running") {
+  if (hostUnavailable && !project_is_running) {
     return (
       <div
         style={{
@@ -435,16 +441,9 @@ export function Explorer() {
       >
         <ShowError
           message={`${projectLabel} host is not available`}
-          error={
-            <>
-              This {projectLabelLower} is assigned to <b>{assignedHostLabel}</b>,
-              which is unavailable ({hostUnavailableReason}).
-              <br />
-              <br />
-              You can either wait for this host to become available again, or
-              move this {projectLabelLower} to another host.
-            </>
-          }
+          error={`This ${projectLabelLower} is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
+
+You can either wait for this host to become available again, or move this ${projectLabelLower} to another host.`}
           style={{ textAlign: "left" }}
         />
         <br />

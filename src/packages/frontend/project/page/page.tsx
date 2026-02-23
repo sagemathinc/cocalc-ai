@@ -4,7 +4,7 @@
  */
 
 import { DndContext, useDraggable } from "@dnd-kit/core";
-import { Button, Modal, Tooltip } from "antd";
+import { Alert, Button, Modal, Space, Tooltip } from "antd";
 import { useIntl } from "react-intl";
 import {
   React,
@@ -58,6 +58,12 @@ import ProjectTabs, {
 import { throttle } from "lodash";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import { TOGGLE_ACTIVITY_BAR_TOGGLE_BUTTON_SPACE } from "./activity-bar-consts";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import {
+  evaluateHostOperational,
+  hostLabel,
+} from "@cocalc/frontend/projects/host-operational";
+import MoveProject from "@cocalc/frontend/project/settings/move-project";
 
 const START_BANNER = false;
 
@@ -93,6 +99,19 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     is_active,
     mainWidthPx,
   });
+  const host_id = useTypedRedux("projects", "project_map")?.getIn([
+    project_id,
+    "host_id",
+  ]) as string | undefined;
+  const hostInfo = useHostInfo(host_id);
+  const hostOperational = useMemo(
+    () => evaluateHostOperational(hostInfo),
+    [hostInfo],
+  );
+  const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const hostUnavailableReason =
+    hostOperational.reason ?? "Assigned host is unavailable.";
+  const assignedHostLabel = hostLabel(hostInfo, host_id);
   const fullscreen = useTypedRedux("page", "fullscreen");
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const modal = useTypedRedux({ project_id }, "modal");
@@ -104,6 +123,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   );
   const [homePageButtonWidth, setHomePageButtonWidth] =
     React.useState<number>(80);
+  const [checkingHost, setCheckingHost] = useState<boolean>(false);
 
   const [flyoutWidth, setFlyoutWidth] = useState<number>(
     getFlyoutWidth(project_id),
@@ -293,6 +313,19 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   function renderTopRow() {
     if (fullscreen && fullscreen !== "project") return;
 
+    if (hostUnavailable) {
+      return (
+        <div style={{ display: "flex", height: "36px" }}>
+          <HomePageButton
+            project_id={project_id}
+            active={active_project_tab == "home"}
+            width={homePageButtonWidth}
+          />
+          <div style={{ flex: 1 }} />
+        </div>
+      );
+    }
+
     // CSS note: the paddingTop is here to not make the tabs touch the top row (looks funny)
     // this was part of the container-content div, which makes little sense for e.g. the banner bars
     return (
@@ -366,6 +399,62 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderMainContent() {
+    if (hostUnavailable) {
+      return (
+        <div
+          ref={mainRef}
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflowX: "auto",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div style={{ maxWidth: "900px", width: "100%", padding: "0 24px" }}>
+            <Alert
+              showIcon
+              type="warning"
+              message="Workspace host is not available"
+              description={`This workspace is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
+
+You can wait for this host to become available again, or move this workspace to another host.`}
+            />
+            <div style={{ marginTop: "12px" }}>
+              <Space wrap>
+                <Button
+                  size="large"
+                  loading={checkingHost}
+                  onClick={async () => {
+                    if (!host_id) return;
+                    try {
+                      setCheckingHost(true);
+                      await redux
+                        .getActions("projects")
+                        ?.ensure_host_info(host_id, true);
+                    } catch (err) {
+                      console.warn("failed to refresh host status", err);
+                    } finally {
+                      setCheckingHost(false);
+                    }
+                  }}
+                >
+                  <Icon name="refresh" /> Check Host Status
+                </Button>
+                <MoveProject
+                  project_id={project_id}
+                  size="large"
+                  label="Move Workspace"
+                  showHostName={false}
+                />
+              </Space>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         ref={mainRef}
@@ -415,8 +504,8 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         {renderTopRow()}
         {is_deleted && <DeletedProjectWarning />}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {renderActivityBarButtons()}
-          {renderFlyout()}
+          {!hostUnavailable && renderActivityBarButtons()}
+          {!hostUnavailable && renderFlyout()}
           {renderMainContent()}
         </div>
       </div>

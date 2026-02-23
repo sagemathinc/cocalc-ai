@@ -179,6 +179,10 @@ export function StartButton({
     return null;
   }
 
+  if (minimal && hostUnavailable) {
+    return null;
+  }
+
   function render_not_allowed() {
     // only show this warning if we got a clear answer that it is not allowed to run
     if (allowed === false)

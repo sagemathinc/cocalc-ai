@@ -46,12 +46,12 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
 
-  ensure_host_info = reuseInFlight(async (host_id?: string) => {
+  ensure_host_info = reuseInFlight(async (host_id?: string, force = false) => {
     if (!host_id) return;
     const hostInfo = store.get("host_info");
     const existing = hostInfo?.get(host_id);
     const now = Date.now();
-    if (existing) {
+    if (existing && !force) {
       const updatedAt = existing.get("updated_at");
       if (typeof updatedAt === "number") {
         if (now - updatedAt < ProjectsActions.HOST_INFO_TTL_MS) {

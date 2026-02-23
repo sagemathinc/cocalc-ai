@@ -224,7 +224,11 @@ export function HostPickerModal({
         <Alert
           type="warning"
           showIcon
-          title="Files in /scratch (if any) will be discarded. Snapshots are not moved; only backups are preserved."
+          title={
+            currentHost?.status === "deprovisioned"
+              ? "Source host is deprovisioned. The host disk no longer exists; this move restores from backups."
+              : "Files in /scratch (if any) will be discarded. Snapshots are not moved; only backups are preserved."
+          }
           style={{ marginBottom: 12 }}
         />
       ) : null}
