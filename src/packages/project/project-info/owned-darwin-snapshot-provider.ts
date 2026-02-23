@@ -102,11 +102,20 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
   }
 
   async snapshot(_timestamp: number): Promise<ProcessSnapshot> {
-    const roots = this.registry
+    const trackedRoots = this.registry
       .listActiveRoots()
       .filter((root) => root.pid != null) as (OwnedRootProcess & {
       pid: number;
     })[];
+    const roots = [...trackedRoots];
+    if (!roots.some((root) => root.pid === process.pid)) {
+      roots.push({
+        root_id: "project-self",
+        kind: "project",
+        pid: process.pid,
+        spawned_at: Date.now(),
+      });
+    }
     const { uptime: up, boottime } = this.nowUptime();
     if (roots.length === 0) {
       return {
@@ -120,7 +129,7 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
     const rows = await this.readPsRows();
     const rowByPid = new Map(rows.map((row) => [row.pid, row]));
     const alive = new Set(rowByPid.keys());
-    for (const root_id of staleRootIds({ roots, alivePids: alive })) {
+    for (const root_id of staleRootIds({ roots: trackedRoots, alivePids: alive })) {
       this.registry.markExited(root_id);
     }
     const liveRoots = roots.filter((root) => rowByPid.has(root.pid));
@@ -209,4 +218,3 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
       .filter((row): row is PsProc => row != null);
   }
 }
-
