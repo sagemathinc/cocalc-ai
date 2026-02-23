@@ -63,6 +63,8 @@ import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { evaluateHostOperational, hostLabel } from "@cocalc/frontend/projects/host-operational";
+import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import { isHostRoutingUnavailableError } from "@cocalc/frontend/projects/host-routing-error";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -226,6 +228,8 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
+  const suppressRoutingError =
+    hostUnavailable && isHostRoutingUnavailableError(effectiveError);
   const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
 
   // active file: current editor is the file in the listing
@@ -673,16 +677,16 @@ export function FilesFlyout({
           description={
             <>
               This workspace is assigned to {assignedHostLabel}, which is
-              unavailable ({hostUnavailableReason}). Open{" "}
-              <a
-                onClick={() => {
-                  redux.getProjectActions(project_id)?.set_active_tab("settings");
-                }}
-              >
-                Settings
-              </a>{" "}
-              to move this workspace to an available host, or start the assigned
-              host.
+              unavailable ({hostUnavailableReason}). You can wait, or move this
+              workspace to an available host.
+              <div style={{ marginTop: "8px" }}>
+                <MoveProject
+                  project_id={project_id}
+                  size="small"
+                  label="Move Workspace"
+                  showHostName={false}
+                />
+              </div>
             </>
           }
         />
@@ -757,7 +761,9 @@ export function FilesFlyout({
       ref={rootRef}
       style={{ flex: "1 0 auto", flexDirection: "column", display: "flex" }}
     >
-      <ShowError error={effectiveError} setError={effectiveRefresh} />
+      {!suppressRoutingError && (
+        <ShowError error={effectiveError} setError={effectiveRefresh} />
+      )}
       <FilesHeader
         activeFile={activeFile}
         getFile={getFile}

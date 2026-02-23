@@ -13,6 +13,8 @@ interface Props {
   disabled?: boolean;
   size?;
   force?: boolean;
+  label?: string;
+  showHostName?: boolean;
 }
 
 export default function MoveProject({
@@ -20,6 +22,8 @@ export default function MoveProject({
   disabled,
   size,
   force,
+  label,
+  showHostName = label == null,
 }: Props) {
   const [moving, setMoving] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -55,18 +59,22 @@ export default function MoveProject({
         }}
       >
         <Icon name="servers" />
-        <span
-          style={{
-            maxWidth: "180px",
-            display: "inline-block",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            verticalAlign: "middle",
-          }}
-          title={hostName || url || "Not Assigned"}
-        >
-          {hostName}
-        </span>
+        {showHostName ? (
+          <span
+            style={{
+              maxWidth: "180px",
+              display: "inline-block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              verticalAlign: "middle",
+            }}
+            title={hostName || url || "Not Assigned"}
+          >
+            {hostName}
+          </span>
+        ) : (
+          <span>{label ?? "Move Workspace"}</span>
+        )}
         {moving && <Spin />}
       </Button>
       <ShowError error={error} setError={setError} />

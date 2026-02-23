@@ -40,6 +40,7 @@ import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
+import MoveProject from "@cocalc/frontend/project/settings/move-project";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -353,6 +354,49 @@ export function StartButton({
   }
 
   function render_normal_view() {
+    if (hostUnavailable) {
+      return (
+        <Alert
+          banner={true}
+          showIcon={false}
+          title={
+            <>
+              <span
+                style={{
+                  fontSize: "20pt",
+                  color: COLORS.GRAY_D,
+                }}
+              >
+                {assignedHostLabel} is unavailable
+              </span>
+              <div
+                style={{
+                  marginTop: "8px",
+                  fontSize: "12px",
+                  color: COLORS.GRAY_D,
+                }}
+              >
+                This {projectLabel.toLowerCase()} is assigned to{" "}
+                {assignedHostLabel} ({hostUnavailableReason}). Wait for this host
+                to come online, or move this {projectLabel.toLowerCase()} to an
+                available host.
+              </div>
+              <div style={{ marginTop: "10px" }}>
+                <MoveProject
+                  project_id={project_id}
+                  size="large"
+                  label="Move Workspace"
+                  showHostName={false}
+                />
+              </div>
+              {render_not_allowed()}
+            </>
+          }
+          type="warning"
+        />
+      );
+    }
+
     return (
       <Alert
         banner={true}
