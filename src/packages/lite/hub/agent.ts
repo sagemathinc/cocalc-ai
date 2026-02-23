@@ -22,7 +22,11 @@ import type {
 } from "@cocalc/conat/hub/api/agent";
 import { conat } from "@cocalc/conat/client";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
-import { callRemoteHub, hasRemote, project_id as REMOTE_PROJECT_ID } from "../remote";
+import {
+  callRemoteHub,
+  hasRemote,
+  project_id as REMOTE_PROJECT_ID,
+} from "../remote";
 import { getLiteServerSettings } from "./settings";
 
 function getProjectId(): string {
@@ -126,9 +130,7 @@ async function getPlannerCodexAgent(): Promise<CodexExecAgent> {
   return await plannerCodexAgent;
 }
 
-function compactManifest(
-  manifest: AgentManifestEntry[],
-): Array<{
+function compactManifest(manifest: AgentManifestEntry[]): Array<{
   actionType: string;
   summary: string;
   argsSchema?: unknown;
@@ -271,9 +273,7 @@ function extractJsonFromText(text: string): unknown {
   }
 }
 
-function normalizeTarget(
-  value: unknown,
-): Record<string, string> | undefined {
+function normalizeTarget(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -357,13 +357,16 @@ function summarizeExecutionObservation(result: AgentExecuteResponse): string {
     return `blocked: ${result.reason ?? result.error ?? "confirmation required"}`;
   }
   const payload =
-    result.result == null ? "" : truncateString(JSON.stringify(result.result), 800);
+    result.result == null
+      ? ""
+      : truncateString(JSON.stringify(result.result), 800);
   return payload ? `completed: ${payload}` : "completed";
 }
 
-function normalizeRunState(
-  opts: AgentRunRequest,
-): { goal: string; state: AgentRunState } {
+function normalizeRunState(opts: AgentRunRequest): {
+  goal: string;
+  state: AgentRunState;
+} {
   const state0 = opts.state;
   const goal =
     (typeof state0?.goal === "string" && state0.goal.trim()) ||
@@ -433,6 +436,7 @@ async function runCodexPrompt({
   let lastError = "";
   await agent.evaluate({
     account_id,
+    project_id: getProjectId(),
     prompt,
     stream: async (payload?: AcpStreamPayload | null) => {
       if (payload == null) return;
