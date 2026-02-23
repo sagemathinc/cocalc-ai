@@ -139,6 +139,159 @@ async function safeNotebookCellCount(page: Page): Promise<number> {
     .count();
 }
 
+type SingleDocMinimapSnapshot = {
+  notebookScrollTop: number;
+  notebookMaxScroll: number;
+  notebookClientHeight: number;
+  railHeight: number;
+  trackHeight: number;
+  miniScrollTop: number;
+  scrollRatio: number;
+};
+
+async function readSingleDocMinimapSnapshot(
+  page: Page,
+): Promise<SingleDocMinimapSnapshot> {
+  return await page.evaluate(() => {
+    const root = document.querySelector(
+      '[data-cocalc-jupyter-slate-single-doc="1"]',
+    ) as HTMLElement | null;
+    const rail = document.querySelector(
+      '[data-cocalc-jupyter-minimap-rail="1"]',
+    ) as HTMLElement | null;
+    const track = document.querySelector(
+      '[data-cocalc-jupyter-minimap-track="1"]',
+    ) as HTMLElement | null;
+    const miniScroll = document.querySelector(
+      '[data-cocalc-jupyter-minimap-scroll="1"]',
+    ) as HTMLElement | null;
+    if (root == null || rail == null || track == null || miniScroll == null) {
+      return {
+        notebookScrollTop: 0,
+        notebookMaxScroll: 0,
+        notebookClientHeight: 0,
+        railHeight: 0,
+        trackHeight: 0,
+        miniScrollTop: 0,
+        scrollRatio: 0,
+      };
+    }
+    const candidates = [root, ...Array.from(root.querySelectorAll("*"))].filter(
+      (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.closest('[data-cocalc-jupyter-minimap-wrapper="1"]')) return false;
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        if (!["auto", "scroll", "overlay"].includes(overflowY)) return false;
+        const scrollable = el.scrollHeight - el.clientHeight;
+        return scrollable > 2;
+      },
+    ) as HTMLElement[];
+    const notebookContentHeight = Number(
+      rail.getAttribute("data-cocalc-jupyter-minimap-notebook-content-height") ?? "0",
+    );
+    let scroller: HTMLElement | undefined;
+    if (Number.isFinite(notebookContentHeight) && notebookContentHeight > 0) {
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (const candidate of candidates) {
+        const score = Math.abs(candidate.scrollHeight - notebookContentHeight);
+        if (score < bestScore) {
+          bestScore = score;
+          scroller = candidate;
+        }
+      }
+    }
+    if (scroller == null) {
+      candidates.sort(
+        (a, b) =>
+          b.scrollHeight - b.clientHeight - (a.scrollHeight - a.clientHeight),
+      );
+      scroller = candidates[0] ?? root;
+    }
+    const notebookMaxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const rawRatio = rail.getAttribute("data-cocalc-jupyter-minimap-scroll-ratio");
+    const scrollRatio = Number(rawRatio ?? 0);
+    return {
+      notebookScrollTop: scroller.scrollTop,
+      notebookMaxScroll,
+      notebookClientHeight: scroller.clientHeight,
+      railHeight: rail.clientHeight,
+      trackHeight: track.clientHeight,
+      miniScrollTop: miniScroll.scrollTop,
+      scrollRatio: Number.isFinite(scrollRatio) ? scrollRatio : 0,
+    };
+  });
+}
+
+async function setSingleDocNotebookScrollRatio(
+  page: Page,
+  ratio: number,
+): Promise<void> {
+  await page.evaluate((targetRatio: number) => {
+    const root = document.querySelector(
+      '[data-cocalc-jupyter-slate-single-doc="1"]',
+    ) as HTMLElement | null;
+    if (root == null) return;
+    const rail = document.querySelector(
+      '[data-cocalc-jupyter-minimap-rail="1"]',
+    ) as HTMLElement | null;
+    const candidates = [root, ...Array.from(root.querySelectorAll("*"))].filter(
+      (el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.closest('[data-cocalc-jupyter-minimap-wrapper="1"]')) return false;
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        if (!["auto", "scroll", "overlay"].includes(overflowY)) return false;
+        const scrollable = el.scrollHeight - el.clientHeight;
+        return scrollable > 2;
+      },
+    ) as HTMLElement[];
+    const notebookContentHeight = Number(
+      rail?.getAttribute("data-cocalc-jupyter-minimap-notebook-content-height") ?? "0",
+    );
+    let scroller: HTMLElement | undefined;
+    if (Number.isFinite(notebookContentHeight) && notebookContentHeight > 0) {
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (const candidate of candidates) {
+        const score = Math.abs(candidate.scrollHeight - notebookContentHeight);
+        if (score < bestScore) {
+          bestScore = score;
+          scroller = candidate;
+        }
+      }
+    }
+    if (scroller == null) {
+      candidates.sort(
+        (a, b) =>
+          b.scrollHeight - b.clientHeight - (a.scrollHeight - a.clientHeight),
+      );
+      scroller = candidates[0] ?? root;
+    }
+    const clamped = Math.min(1, Math.max(0, targetRatio));
+    const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTop = clamped * maxScroll;
+  }, ratio);
+}
+
+async function setSingleDocMinimapScrollRatio(
+  page: Page,
+  ratio: number,
+): Promise<void> {
+  await page.evaluate((targetRatio: number) => {
+    const mini = document.querySelector(
+      '[data-cocalc-jupyter-minimap-scroll="1"]',
+    ) as HTMLElement | null;
+    const track = document.querySelector(
+      '[data-cocalc-jupyter-minimap-track="1"]',
+    ) as HTMLElement | null;
+    if (mini == null || track == null) return;
+    const maxScroll = Math.max(0, track.scrollHeight - mini.clientHeight);
+    const clamped = Math.min(1, Math.max(0, targetRatio));
+    mini.scrollTop = clamped * maxScroll;
+    mini.dispatchEvent(new Event("scroll", { bubbles: true }));
+  }, ratio);
+}
+
 async function readClassicNotebookInputs(page: Page): Promise<string[]> {
   return await page.evaluate(() => {
     const out: string[] = [];
@@ -1505,4 +1658,126 @@ test("kernel kill mid-run attempt still allows rerun", async ({ page }) => {
       timeout: 60_000,
     })
     .toContain("rerun-ok");
+});
+
+test("single-doc minimap scrolls and click-jumps notebook viewport", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("cocalc_jupyter_minimap", "1");
+    window.localStorage.setItem("cocalc_jupyter_minimap_width", "80");
+  });
+  await page.setViewportSize({ width: 1900, height: 1100 });
+
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-minimap-scroll");
+  const cells = Array.from({ length: 220 }, (_, i) =>
+    codeCell(`x_${i} = ${i}\nprint(x_${i})`),
+  );
+  await ensureNotebook(path_ipynb, cells);
+
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  await page.waitForSelector('[data-cocalc-jupyter-minimap-rail="1"]', {
+    timeout: 30_000,
+  });
+
+  await expect
+    .poll(async () => await readSingleDocMinimapSnapshot(page), {
+      timeout: 30_000,
+    })
+    .toMatchObject({
+      notebookClientHeight: expect.any(Number),
+      railHeight: expect.any(Number),
+      trackHeight: expect.any(Number),
+    });
+
+  await expect
+    .poll(async () => {
+      const snap = await readSingleDocMinimapSnapshot(page);
+      return {
+        notebookMaxScroll: snap.notebookMaxScroll,
+        trackMinusRail: snap.trackHeight - snap.railHeight,
+      };
+    }, {
+      timeout: 30_000,
+    })
+    .toEqual(
+      expect.objectContaining({
+        notebookMaxScroll: expect.any(Number),
+        trackMinusRail: expect.any(Number),
+      }),
+    );
+
+  await expect
+    .poll(async () => {
+      const snap = await readSingleDocMinimapSnapshot(page);
+      return snap.notebookMaxScroll > 300 && snap.trackHeight > snap.railHeight + 8;
+    }, {
+      timeout: 30_000,
+    })
+    .toBe(true);
+
+  await setSingleDocNotebookScrollRatio(page, 0.7);
+  await expect
+    .poll(async () => {
+      const snap = await readSingleDocMinimapSnapshot(page);
+      return snap.scrollRatio;
+    }, {
+      timeout: 20_000,
+    })
+    .toBeGreaterThan(0.45);
+
+  // Manual minimap scrolling should not immediately snap back to notebook scroll.
+  await setSingleDocNotebookScrollRatio(page, 0.05);
+  const beforeManualMini = await readSingleDocMinimapSnapshot(page);
+  await setSingleDocMinimapScrollRatio(page, 0.95);
+  await page.waitForTimeout(350);
+  const afterManualMini = await readSingleDocMinimapSnapshot(page);
+  expect(afterManualMini.miniScrollTop).toBeGreaterThan(
+    beforeManualMini.miniScrollTop + 40,
+  );
+  expect(afterManualMini.notebookScrollTop).toBeLessThan(
+    beforeManualMini.notebookScrollTop + 80,
+  );
+
+  const rail = page.locator('[data-cocalc-jupyter-minimap-rail="1"]');
+  await rail.scrollIntoViewIfNeeded();
+  await setSingleDocMinimapScrollRatio(page, 0.0);
+  await page.waitForTimeout(250);
+  const beforeTopClick = await readSingleDocMinimapSnapshot(page);
+  const box = await rail.boundingBox();
+  expect(box).toBeTruthy();
+  if (!box) return;
+  await page.mouse.click(box.x + box.width / 2, box.y + Math.max(8, box.height * 0.1));
+  await expect
+    .poll(async () => {
+      const snap = await readSingleDocMinimapSnapshot(page);
+      return snap.notebookScrollTop < beforeTopClick.notebookScrollTop;
+    }, {
+      timeout: 20_000,
+    })
+    .toBe(true);
+
+  const beforeBottomClick = await readSingleDocMinimapSnapshot(page);
+  await page.mouse.click(
+    box.x + box.width / 2,
+    box.y + Math.min(box.height - 8, box.height * 0.9),
+  );
+  await expect
+    .poll(async () => {
+      const snap = await readSingleDocMinimapSnapshot(page);
+      return snap.notebookScrollTop > beforeBottomClick.notebookScrollTop;
+    }, {
+      timeout: 20_000,
+    })
+    .toBe(true);
 });

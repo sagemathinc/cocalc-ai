@@ -411,21 +411,46 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const editorViewportElementRef =
     editorViewportRef as React.RefObject<HTMLDivElement>;
   const pickMinimapScrollTarget = React.useCallback((): HTMLDivElement | null => {
+    const root = containerRef.current;
     const outer = editableContainerRef.current;
     const inner = editableScrollRef.current;
-    const candidates = [outer, inner].filter(Boolean) as HTMLDivElement[];
+    const candidates: HTMLDivElement[] = [];
+    const seen = new Set<HTMLDivElement>();
+    const push = (el?: HTMLDivElement | null) => {
+      if (el == null || seen.has(el)) return;
+      seen.add(el);
+      candidates.push(el);
+    };
+    push(inner);
+    push(outer);
+    if (root != null) {
+      for (const el of Array.from(root.querySelectorAll<HTMLElement>("*"))) {
+        if (!(el instanceof HTMLDivElement)) continue;
+        const style = window.getComputedStyle(el);
+        if (!["auto", "scroll", "overlay"].includes(style.overflowY)) continue;
+        push(el);
+      }
+    }
     if (candidates.length === 0) return null;
-    let best = candidates[0];
-    let bestScrollable = Math.max(0, best.scrollHeight - best.clientHeight);
-    for (let i = 1; i < candidates.length; i += 1) {
-      const candidate = candidates[i];
+
+    let best: HTMLDivElement | null = null;
+    let bestScrollable = -1;
+    for (const candidate of candidates) {
       const scrollable = Math.max(0, candidate.scrollHeight - candidate.clientHeight);
-      if (scrollable > bestScrollable + 1) {
+      if (scrollable > bestScrollable) {
         best = candidate;
         bestScrollable = scrollable;
       }
     }
-    return best;
+    if (best != null && bestScrollable > 1) {
+      return best;
+    }
+    // If nothing is currently scrollable, prefer a visible container with
+    // overflow behavior so later relayout retries can promote it.
+    for (const candidate of candidates) {
+      if (candidate.clientHeight > 0) return candidate;
+    }
+    return candidates[0];
   }, []);
   const refreshMinimapScrollTarget = React.useCallback(() => {
     const prev = minimapScrollTargetRef.current;
@@ -450,8 +475,16 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     cells: minimapCells as any,
     curId: selectedCellId ?? hoveredCellId,
     cellListDivRef: minimapScrollTargetRef as React.MutableRefObject<any>,
-    cellListWidth: viewportResize.width ?? cellListResize.width,
-    cellListHeight: viewportResize.height ?? cellListResize.height,
+    cellListWidth:
+      minimapScrollTargetRef.current?.clientWidth ??
+      editorViewportRef.current?.clientWidth ??
+      viewportResize.width ??
+      cellListResize.width,
+    cellListHeight:
+      minimapScrollTargetRef.current?.clientHeight ??
+      editorViewportRef.current?.clientHeight ??
+      viewportResize.height ??
+      cellListResize.height,
     lazyHydrationVersion: minimapTargetVersion,
     lazyHeightsRef,
     placeholderMinHeight: MINIMAP_PLACEHOLDER_MIN_HEIGHT,
@@ -518,28 +551,51 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   ]);
 
   React.useEffect(() => {
-    const outer = editableContainerRef.current;
-    const inner = editableScrollRef.current;
-    if (outer == null && inner == null) return;
+    const root = containerRef.current;
+    if (root == null) return;
     const onScroll = () => {
       refreshMinimapScrollTarget();
       minimap.onNotebookScroll();
     };
-    outer?.addEventListener("scroll", onScroll);
-    if (inner != null && inner !== outer) {
-      inner.addEventListener("scroll", onScroll);
-    }
+    root.addEventListener("scroll", onScroll, { capture: true });
     return () => {
-      outer?.removeEventListener("scroll", onScroll);
-      if (inner != null && inner !== outer) {
-        inner.removeEventListener("scroll", onScroll);
-      }
+      root.removeEventListener("scroll", onScroll, { capture: true });
     };
   }, [minimap.onNotebookScroll, refreshMinimapScrollTarget]);
 
   React.useEffect(() => {
     minimap.onNotebookScroll();
   }, [minimap.onNotebookScroll, slateValue]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    let raf1 = 0;
+    let raf2 = 0;
+    let settleTimer: number | undefined;
+    let settleCount = 0;
+    const settleRefresh = () => {
+      refreshMinimapScrollTarget();
+      minimap.onNotebookScroll();
+      settleCount += 1;
+      if (settleCount < 12) {
+        settleTimer = window.setTimeout(settleRefresh, 150);
+      }
+    };
+    raf1 = window.requestAnimationFrame(() => {
+      refreshMinimapScrollTarget();
+      minimap.onNotebookScroll();
+      raf2 = window.requestAnimationFrame(() => {
+        refreshMinimapScrollTarget();
+        minimap.onNotebookScroll();
+        settleRefresh();
+      });
+    });
+    return () => {
+      if (raf1) window.cancelAnimationFrame(raf1);
+      if (raf2) window.cancelAnimationFrame(raf2);
+      if (settleTimer != null) window.clearTimeout(settleTimer);
+    };
+  }, [minimap.onNotebookScroll, refreshMinimapScrollTarget]);
 
   React.useEffect(() => {
     const targetId = pendingFocusCellIdRef.current;
