@@ -9,7 +9,7 @@ import { assertCollab } from "./util";
 
 // just *some* limit to avoid bugs/abuse
 
-const MAX_SNAPSHOTS_PER_PROJECT = 100;
+const MAX_SNAPSHOTS_PER_PROJECT = 250;
 
 export async function createSnapshot({
   account_id,
