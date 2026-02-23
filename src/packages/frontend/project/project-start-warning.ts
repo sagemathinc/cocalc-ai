@@ -7,6 +7,8 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { dialogs } from "@cocalc/frontend/i18n";
 import { getIntl } from "@cocalc/frontend/i18n/get-intl";
 import { lite } from "@cocalc/frontend/lite";
+import { getHostInfo } from "@cocalc/frontend/projects/host-info";
+import { evaluateHostOperational } from "@cocalc/frontend/projects/host-operational";
 
 /* Various actions depend on the project running, so this function currently does the following:
     - Checks whether or not the project is starting or running (assuming project state known -- admins don't know).
@@ -38,7 +40,18 @@ export function is_running_or_starting(project_id: string): boolean {
     return false;
   }
   const state = project_map.getIn([project_id, "state", "state"]);
-  if (state == null || state == "running" || state == "starting") {
+  if (state == null || state == "starting") {
+    return true;
+  }
+  if (state == "running") {
+    const host_id = project_map.getIn([project_id, "host_id"]) as
+      | string
+      | undefined;
+    if (!host_id) return true;
+    const hostState = evaluateHostOperational(getHostInfo(host_id));
+    if (hostState.state === "unavailable") {
+      return false;
+    }
     return true;
   }
 

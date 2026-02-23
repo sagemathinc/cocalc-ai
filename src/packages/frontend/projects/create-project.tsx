@@ -247,7 +247,7 @@ export function NewProjectCreator({
       ...opts,
     });
     // switch_to=true is perhaps suggested by #4088
-    actions.open_project({ project_id, switch_to: true });
+    actions.open_project({ project_id, target: "project-home", switch_to: true });
     cancel_editing();
   }
 

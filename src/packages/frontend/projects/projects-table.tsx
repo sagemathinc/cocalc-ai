@@ -32,6 +32,7 @@ import {
   type SortState,
 } from "./projects-table-columns";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
+import { normalizeProjectStateForDisplay } from "./host-operational";
 
 interface Props {
   visible_projects: string[];
@@ -105,6 +106,18 @@ export function ProjectsTable({
         });
       }
 
+      const hostId = project.get("host_id") as string | undefined;
+      const hostInfo = hostId ? host_info?.get(hostId) : undefined;
+      const rawState = project.get("state");
+      const displayState = normalizeProjectStateForDisplay({
+        projectState: rawState?.get?.("state"),
+        hostId,
+        hostInfo,
+      });
+      const state =
+        displayState && rawState?.get?.("state") !== displayState
+          ? rawState.set("state", displayState)
+          : rawState;
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
@@ -112,13 +125,12 @@ export function ProjectsTable({
         title: project.get("title") ?? "Untitled",
         description: project.get("description") ?? "",
         host: (() => {
-          const hostId = project.get("host_id");
-          const hostName = host_info?.get(hostId)?.get?.("name");
+          const hostName = hostInfo?.get?.("name");
           return typeof hostName === "string" ? hostName : undefined;
         })(),
         last_edited: project.get("last_edited"),
         color: project.get("color"),
-        state: project.get("state"),
+        state,
         deleted: !!project.get("deleted"),
         hidden: !!project.getIn(["users", current_account_id, "hide"]),
         collaborators,

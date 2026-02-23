@@ -61,6 +61,8 @@ import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import { evaluateHostOperational, hostLabel } from "@cocalc/frontend/projects/host-operational";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -98,6 +100,19 @@ export function FilesFlyout({
   );
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
+  const project_map = useTypedRedux("projects", "project_map");
+  const host_id = project_map?.getIn([project_id, "host_id"]) as
+    | string
+    | undefined;
+  const hostInfo = useHostInfo(host_id);
+  const hostOperational = useMemo(
+    () => evaluateHostOperational(hostInfo),
+    [hostInfo],
+  );
+  const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const hostUnavailableReason =
+    hostOperational.reason ?? "Assigned host is unavailable.";
+  const assignedHostLabel = hostLabel(hostInfo, host_id);
   const available_features = useTypedRedux(
     { project_id },
     "available_features",
@@ -648,6 +663,30 @@ export function FilesFlyout({
   function renderLoadingOrStartProject(): React.JSX.Element {
     if (projectIsRunning) {
       return <Loading theme="medium" transparent />;
+    } else if (hostUnavailable) {
+      return (
+        <Alert
+          type="warning"
+          banner
+          showIcon={false}
+          style={{ padding: FLYOUT_PADDING, margin: 0 }}
+          description={
+            <>
+              This workspace is assigned to {assignedHostLabel}, which is
+              unavailable ({hostUnavailableReason}). Open{" "}
+              <a
+                onClick={() => {
+                  redux.getProjectActions(project_id)?.set_active_tab("settings");
+                }}
+              >
+                Settings
+              </a>{" "}
+              to move this workspace to an available host, or start the assigned
+              host.
+            </>
+          }
+        />
+      );
     } else {
       return (
         <Alert

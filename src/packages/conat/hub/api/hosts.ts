@@ -204,6 +204,10 @@ export interface HostConnectionInfo {
   connect_url?: string | null;
   local_proxy?: boolean;
   ready?: boolean;
+  status?: HostStatus | null;
+  last_seen?: string;
+  online?: boolean;
+  reason_unavailable?: string;
 }
 
 export interface HostLogEntry {

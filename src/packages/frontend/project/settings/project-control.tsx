@@ -50,6 +50,12 @@ import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
 import ProjectControlError from "./project-control-error";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import {
+  evaluateHostOperational,
+  hostLabel,
+  normalizeProjectStateForDisplay,
+} from "@cocalc/frontend/projects/host-operational";
 
 interface ReactProps {
   project: Project;
@@ -65,11 +71,34 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const projectLabelLower = projectLabel.toLowerCase();
   const customize_kucalc = useTypedRedux("customize", "kucalc");
   const [computeImgChanging, setComputeImgChanging] = useState<boolean>(false);
+  const hostId = project.get("host_id") as string | undefined;
+  const hostInfo = useHostInfo(hostId);
+  const hostOperational = React.useMemo(
+    () => evaluateHostOperational(hostInfo),
+    [hostInfo],
+  );
+  const hostUnavailable = !!hostId && hostOperational.state === "unavailable";
+  const hostUnavailableReason =
+    hostOperational.reason ?? "Assigned host is unavailable.";
+  const assignedHostLabel = hostLabel(hostInfo, hostId);
+  const displayStateValue =
+    normalizeProjectStateForDisplay({
+      projectState: project.getIn(["state", "state"]),
+      hostId,
+      hostInfo,
+    });
+  const displayProjectState = React.useMemo(() => {
+    const rawState = project.get("state");
+    if (!rawState) return rawState;
+    if (rawState.get("state") !== "running") return rawState;
+    if (displayStateValue !== "opened") return rawState;
+    return rawState.set("state", "opened");
+  }, [project, displayStateValue]);
 
   function render_state() {
     return (
       <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
-        <ProjectState show_desc={true} state={project.get("state")} />
+        <ProjectState show_desc={true} state={displayProjectState} />
       </span>
     );
   }
@@ -122,7 +151,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_action_buttons(): Rendered {
-    const state = project.getIn(["state", "state"]);
+    const state = displayStateValue;
     const commands = (state &&
       COMPUTE_STATES[state] &&
       COMPUTE_STATES[state].commands) || ["save", "stop", "start"];
@@ -143,7 +172,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   }
 
   function render_idle_timeout_row() {
-    if (project.getIn(["state", "state"]) !== "running") {
+    if (displayStateValue !== "running") {
       return;
     }
     if (redux.getStore("projects").is_always_running(project_id)) {
@@ -186,7 +215,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     // start_ts is a timestamp, e.g. 1508576664416
     const start_ts = project.getIn(["status", "start_ts"]);
     if (typeof start_ts !== "number") return;
-    if (project.getIn(["state", "state"]) !== "running") {
+    if (displayStateValue !== "running") {
       return;
     }
 
@@ -214,7 +243,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     if (cpu == undefined) {
       return;
     }
-    if (project.getIn(["state", "state"]) !== "running") {
+    if (displayStateValue !== "running") {
       return;
     }
     const cpu_str = misc.seconds2hms(cpu, true);
@@ -363,6 +392,12 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         >
           {render_state()}
         </LabeledRow>
+        {hostUnavailable && (
+          <Paragraph style={{ color: COLORS.GRAY_D }}>
+            {assignedHostLabel} is unavailable ({hostUnavailableReason}). Move
+            this workspace to an available host, or start the assigned host.
+          </Paragraph>
+        )}
         {render_idle_timeout_row()}
         {render_uptime()}
         {render_cpu_usage()}

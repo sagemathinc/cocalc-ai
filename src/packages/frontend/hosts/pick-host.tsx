@@ -37,6 +37,7 @@ export function HostPickerModal({
   onCancel,
   onSelect,
   currentHostId,
+  selectedHostId,
   regionFilter,
   lockRegion,
   showOfflineMoveWarning,
@@ -44,6 +45,7 @@ export function HostPickerModal({
 }: {
   open: boolean;
   currentHostId?: string;
+  selectedHostId?: string;
   onCancel: () => void;
   onSelect: (host_id: string, host?: Host) => void;
   regionFilter?: string;
@@ -156,11 +158,13 @@ export function HostPickerModal({
         catalog: true,
       });
       setHosts(list);
-      // default select the first placeable non-current host
+      // default select currently selected host in create mode, then current host in
+      // move mode, then first placeable host.
       const first =
+        list.find((h) => h.id === selectedHostId) ??
         list.find((h) => h.id === currentHostId) ??
         list.find((h) => h.id !== currentHostId && h.can_place !== false);
-      setSelected((prev) => prev ?? first?.id);
+      setSelected(first?.id);
     } catch (err) {
       console.error("failed to load hosts", err);
     } finally {
@@ -175,7 +179,7 @@ export function HostPickerModal({
         setRegionFilterState(regionFilter);
       }
     }
-  }, [open, regionFilter]);
+  }, [open, regionFilter, selectedHostId]);
 
   return (
     <Modal
@@ -284,7 +288,8 @@ export function HostPickerModal({
             }
             const host = item.host as Host;
             const disabled =
-              host.id === currentHostId || host.can_place === false;
+              (!isCreate && host.id === currentHostId) ||
+              host.can_place === false;
             const muted = !host.can_place;
             return (
               <List.Item style={muted ? { opacity: 0.6 } : undefined}>
@@ -334,7 +339,7 @@ export function HostPickerModal({
                   <Typography.Text type="secondary">
                     {projectsLabel}: {host.projects ?? 0}
                   </Typography.Text>
-                  {host.id === currentHostId && (
+                  {!isCreate && host.id === currentHostId && (
                     <Typography.Text type="secondary">
                       This {projectLabel.toLowerCase()} is already on this host.
                     </Typography.Text>

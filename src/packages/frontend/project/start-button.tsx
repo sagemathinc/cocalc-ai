@@ -34,6 +34,12 @@ import { lite } from "@cocalc/frontend/lite";
 import Bootlog from "./bootlog";
 import type { StartLroState } from "./start-ops";
 import type { MoveLroState } from "./move-ops";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import {
+  evaluateHostOperational,
+  hostLabel,
+  normalizeProjectStateForDisplay,
+} from "@cocalc/frontend/projects/host-operational";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -72,6 +78,18 @@ export function StartButton({
     return null;
   }
   const project_map = useTypedRedux("projects", "project_map");
+  const host_id = project_map?.get(project_id)?.get("host_id") as
+    | string
+    | undefined;
+  const hostInfo = useHostInfo(host_id);
+  const hostOperational = useMemo(
+    () => evaluateHostOperational(hostInfo),
+    [hostInfo],
+  );
+  const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const hostUnavailableReason =
+    hostOperational.reason ?? "Assigned host is unavailable.";
+  const assignedHostLabel = hostLabel(hostInfo, host_id);
   const lastNotRunningRef = useRef<null | number>(null);
   const allowed = useAllowedFreeProjectToRun(project_id);
   const startLro = redux.useProjectStore(
@@ -101,13 +119,24 @@ export function StartButton({
       moveLro.summary.status === "running");
 
   const state = useMemo(() => {
-    const state = project_map?.get(project_id)?.get("state");
+    const rawState = project_map?.get(project_id)?.get("state");
+    const displayState = normalizeProjectStateForDisplay({
+      projectState: rawState?.get?.("state"),
+      hostId: host_id,
+      hostInfo,
+    });
+    const state =
+      rawState != null &&
+      displayState &&
+      rawState.get("state") !== displayState
+        ? rawState.set("state", displayState)
+        : rawState;
     if (state != null) {
       lastNotRunningRef.current =
         state.get("state") === "running" ? null : Date.now();
     }
     return state;
-  }, [project_map]);
+  }, [project_map, project_id, host_id, hostInfo]);
 
   // start_requested is true precisely if a start of this project
   // is currently requested, and obviously didn't get done.
@@ -203,7 +232,8 @@ export function StartButton({
     const enabled =
       state == null ||
       !state?.get("state") ||
-      (allowed &&
+      (!hostUnavailable &&
+        allowed &&
         ["opened", "closed", "archived"].includes(
           state?.get("state"),
         ));
@@ -229,6 +259,11 @@ export function StartButton({
               <div style={{ fontSize: "12px", color: "#fff" }}>
                 {membership_hint}
               </div>
+              {hostUnavailable && (
+                <div style={{ fontSize: "12px", color: "#fff" }}>
+                  Host unavailable: {hostUnavailableReason}
+                </div>
+              )}
               {render_not_allowed()}
               {starting && (
                 <div style={{ background: "white" }}>
@@ -333,6 +368,19 @@ export function StartButton({
               <ProjectState state={state} show_desc={allowed} />
             </span>
             <div>{render_start_project_button()}</div>
+            {hostUnavailable && (
+              <div
+                style={{
+                  marginTop: "8px",
+                  fontSize: "12px",
+                  color: COLORS.GRAY_D,
+                }}
+              >
+                {assignedHostLabel} is unavailable ({hostUnavailableReason}). Open
+                Settings and move this workspace to an available host, or start
+                the assigned host.
+              </div>
+            )}
             {render_not_allowed()}
           </>
         }

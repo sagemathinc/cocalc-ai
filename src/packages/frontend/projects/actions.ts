@@ -29,6 +29,10 @@ import { ProjectsState, store } from "./store";
 import { load_all_projects, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
+import {
+  evaluateHostOperational,
+  hostLabel,
+} from "./host-operational";
 
 import type {
   CourseInfo,
@@ -801,6 +805,23 @@ export class ProjectsActions extends Actions<ProjectsState> {
       !store.getIn(["project_map", project_id])
     ) {
       return false;
+    }
+    const assignedHostId = store.getIn(["project_map", project_id, "host_id"]) as
+      | string
+      | undefined;
+    if (assignedHostId) {
+      const hostInfo = await this.ensure_host_info(assignedHostId);
+      const hostState = evaluateHostOperational(hostInfo as any);
+      if (hostState.state === "unavailable") {
+        const hostName = hostLabel(hostInfo as any, assignedHostId);
+        const reason = hostState.reason ?? "Assigned host is unavailable.";
+        const message =
+          `Cannot start workspace because ${hostName} is unavailable (${reason}). ` +
+          "Open Settings and move this workspace to an available host, or start the assigned host.";
+        redux.getProjectActions(project_id)?.setState({ control_error: message });
+        alert_message({ type: "error", message, timeout: 20 });
+        return false;
+      }
     }
 
     const t0 = webapp_client.server_time().getTime();

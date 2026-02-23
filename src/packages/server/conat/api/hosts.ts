@@ -120,6 +120,8 @@ const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
 const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
 const HOST_DRAIN_DEFAULT_PARALLEL = 10;
 const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
+const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
 
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
@@ -129,6 +131,64 @@ function logStatusUpdate(id: string, status: string, source: string) {
     source,
     stack,
   });
+}
+
+function hostStatusValue(row: any): string {
+  return `${row?.status ?? ""}`.trim().toLowerCase();
+}
+
+function hostLastSeenMs(row: any): number | undefined {
+  if (!row?.last_seen) return undefined;
+  const ts = new Date(row.last_seen as any).getTime();
+  return Number.isFinite(ts) ? ts : undefined;
+}
+
+function computeHostOperationalAvailability(row: any): {
+  operational: boolean;
+  online: boolean;
+  status: string;
+  reason_unavailable?: string;
+} {
+  if (!row || row.deleted) {
+    return {
+      operational: false,
+      online: false,
+      status: hostStatusValue(row),
+      reason_unavailable: "Host is deleted.",
+    };
+  }
+
+  const status = hostStatusValue(row);
+  if (!HOST_RUNNING_STATUSES.has(status)) {
+    return {
+      operational: false,
+      online: false,
+      status,
+      reason_unavailable: `Host is ${status || "unknown"}; it must be running.`,
+    };
+  }
+
+  const seenMs = hostLastSeenMs(row);
+  if (seenMs == null) {
+    return {
+      operational: false,
+      online: false,
+      status,
+      reason_unavailable: "Host has not sent a heartbeat recently.",
+    };
+  }
+
+  const online = Date.now() - seenMs <= HOST_ONLINE_WINDOW_MS;
+  if (!online) {
+    return {
+      operational: false,
+      online: false,
+      status,
+      reason_unavailable: "Host heartbeat is stale; host appears offline.",
+    };
+  }
+
+  return { operational: true, online: true, status };
 }
 
 function requireAccount(account_id?: string): string {
@@ -1338,12 +1398,17 @@ export async function listHosts({
           ? "pool"
           : "shared";
 
-    const { can_place, reason_unavailable } = computePlacementPermission({
+    const placement = computePlacementPermission({
       tier,
       userTier,
       isOwner,
       isCollab,
     });
+    const availability = computeHostOperationalAvailability(row);
+    const can_place = placement.can_place && availability.operational;
+    const reason_unavailable =
+      placement.reason_unavailable ??
+      (availability.operational ? undefined : availability.reason_unavailable);
 
     const can_start = isOwner || (isCollab && !!metadata.host_collab_control);
 
@@ -1379,7 +1444,7 @@ export async function resolveHostConnection({
     throw new Error("host_id must be specified");
   }
   const { rows } = await pool().query(
-    `SELECT id, name, public_url, internal_url, ssh_server, metadata, tier
+    `SELECT id, name, public_url, internal_url, ssh_server, metadata, tier, status, last_seen
      FROM project_hosts
      WHERE id=$1 AND deleted IS NULL`,
     [host_id],
@@ -1417,6 +1482,12 @@ export async function resolveHostConnection({
   let ssh_server: string | null = row.ssh_server ?? null;
   let local_proxy = false;
   let ready = false;
+  const availability = computeHostOperationalAvailability(row);
+  const normalizedStatus =
+    row.status === "active" ? "running" : (row.status ?? null);
+  const lastSeenIso = row.last_seen
+    ? new Date(row.last_seen).toISOString()
+    : undefined;
   if (isLocalSelfHost) {
     local_proxy = true;
     ready = !!metadata?.self_host?.http_tunnel_port;
@@ -1430,14 +1501,21 @@ export async function resolveHostConnection({
     ready = !!connect_url;
   }
 
-  return {
+  const response = {
     host_id: row.id,
     name: row.name ?? null,
     ssh_server,
     connect_url,
     local_proxy,
     ready,
+    status: normalizedStatus,
+    last_seen: lastSeenIso,
+    online: availability.online,
+    reason_unavailable: availability.operational
+      ? undefined
+      : availability.reason_unavailable,
   };
+  return response as HostConnectionInfo;
 }
 
 export async function listHostProjects({
