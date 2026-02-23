@@ -1,5 +1,11 @@
 # Jupyter + Slate Plan
 
+TODO:
+
+- [ ] cleanup - move the "Out[n]" to be only shown on the right when hovered, similar to run/ai. Be sure to not let this cause a reflow of output though.
+- [ ] make the time counter change as the cell runs, and include the progress bar that is visible in the classic view; it is a good clear indicator of activity.
+- highlighting the focused cell or markdown cell is pretty flaky. For markdown when it does work, it has extra padding or margin, which makes the entire output jump a bit.
+
 ## Goal
 
 Build a Slate-based Jupyter frame that feels like editing one continuous document, while keeping `.ipynb` cell data canonical.

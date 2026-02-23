@@ -254,6 +254,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     gapCursor,
     setGapCursor,
     runCell,
+    stopCell,
     openAssistant,
     getCellChromeInfo,
   } = useJupyterCellContext();
@@ -373,6 +374,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       : null;
   const jupyterChromeInfo =
     isJupyterCodeCell && jupyterCellId ? getCellChromeInfo?.(jupyterCellId) : undefined;
+  const isRunningJupyterCell = !!jupyterChromeInfo?.running;
   const showJupyterChrome =
     isJupyterCodeCell &&
     !!jupyterCellId &&
@@ -707,10 +709,15 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   style={{ color: "#333", padding: 0, height: "20px" }}
                   onClick={() => {
                     if (!jupyterCellId) return;
-                    runCell?.(jupyterCellId, { insertBelow: false });
+                    if (isRunningJupyterCell) {
+                      stopCell?.(jupyterCellId);
+                    } else {
+                      runCell?.(jupyterCellId, { insertBelow: false });
+                    }
                   }}
                 >
-                  <Icon name="play" /> Run
+                  <Icon name={isRunningJupyterCell ? "stop" : "play"} />{" "}
+                  {isRunningJupyterCell ? "Stop" : "Run"}
                 </Button>
                 <Button
                   size="small"

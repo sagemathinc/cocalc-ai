@@ -400,7 +400,14 @@ export function useNotebookMinimap({
   }, [minimapOptIn, minimapWidth]);
 
   const minimapData = useMemo<MinimapData | null>(() => {
-    const viewportHeight = cellListHeight ?? 0;
+    const layoutHeight = layoutResize.height ?? 0;
+    const viewportHeightRaw = cellListHeight ?? 0;
+    const viewportHeight =
+      layoutHeight > 0
+        ? viewportHeightRaw > 0
+          ? Math.min(viewportHeightRaw, layoutHeight)
+          : layoutHeight
+        : viewportHeightRaw;
     const layoutWidth =
       layoutResize.width ??
       (cellListWidth ?? 0) + minimapWidth + MINIMAP_HORIZONTAL_CHROME;
@@ -496,10 +503,10 @@ export function useNotebookMinimap({
     // content height. Lazy placeholders can temporarily overestimate raw row
     // bottoms; clamping to scrollHeight keeps viewport math stable.
     const measuredScrollHeight = Math.max(1, scroller?.scrollHeight ?? 0);
-    const rawTotalHeight =
-      measuredScrollHeight > 1
-        ? measuredScrollHeight
-        : Math.max(1, maxRawBottom + 1);
+    // Be defensive: some containers can report an undersized non-zero
+    // scrollHeight while row geometry/fallback estimates are much larger.
+    // Taking the max prevents minimap collapse/no-scroll regressions.
+    const rawTotalHeight = Math.max(1, measuredScrollHeight, maxRawBottom + 1);
     let scale = MINIMAP_BASE_SCALE;
     const minScaleForViewport =
       (viewportHeight * MINIMAP_MIN_TRACK_VIEWPORT_MULTIPLIER) / rawTotalHeight;
@@ -665,7 +672,8 @@ export function useNotebookMinimap({
 
     const notebookContentHeight = Math.max(
       1,
-      scroller.scrollHeight || minimapData.notebookContentHeight,
+      scroller.scrollHeight,
+      minimapData.notebookContentHeight,
     );
     const maxNotebookScroll = Math.max(1, notebookContentHeight - scroller.clientHeight);
     const clampedNotebookScrollTop = Math.min(
@@ -797,7 +805,8 @@ export function useNotebookMinimap({
       const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
       const notebookContentHeight = Math.max(
         1,
-        scroller.scrollHeight || minimapData.notebookContentHeight,
+        scroller.scrollHeight,
+        minimapData.notebookContentHeight,
       );
       const maxNotebookScroll = Math.max(
         1,

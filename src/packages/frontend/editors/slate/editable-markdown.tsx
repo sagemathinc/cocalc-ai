@@ -188,6 +188,7 @@ interface Props {
   ignoreRemoteMergesWhileFocused?: boolean;
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
+  scrollDivRef?: MutableRefObject<HTMLDivElement | null>;
   selectionRef?: MutableRefObject<{
     setSelection: Function;
     getSelection: Function;
@@ -236,6 +237,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     dirtyRef,
     disableWindowing = !USE_WINDOWING,
     divRef,
+    scrollDivRef,
     editBar2,
     editBarStyle,
     editor_state,
@@ -848,7 +850,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [cursorDecorate, codeDecorate],
   );
 
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const internalScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = scrollDivRef ?? internalScrollRef;
   const didRestoreScrollRef = useRef<boolean>(false);
   const restoreScroll = useMemo(() => {
     return async () => {

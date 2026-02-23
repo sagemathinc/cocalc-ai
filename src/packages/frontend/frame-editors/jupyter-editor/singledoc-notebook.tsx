@@ -347,8 +347,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   ]);
   const directory: string | undefined = useRedux([name, "directory"]);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const editorViewportRef = React.useRef<HTMLDivElement>(null);
+  const editableContainerRef = React.useRef<HTMLDivElement>(null);
   const editableScrollRef = React.useRef<HTMLDivElement>(null);
+  const minimapScrollTargetRef = React.useRef<HTMLDivElement | null>(null);
   const controlRef = React.useRef<any>(null);
+  const [minimapTargetVersion, setMinimapTargetVersion] = React.useState(0);
   const [error, setError] = React.useState<string>("");
   const [selectedCellId, setSelectedCellId] = React.useState<string | undefined>(
     undefined,
@@ -400,19 +404,55 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   );
   const minimapCellList = cell_list ?? List<string>();
   const minimapCells = cells ?? Map<string, Map<string, any>>();
+  const editableContainerElementRef =
+    editableContainerRef as React.RefObject<HTMLDivElement>;
   const editableScrollElementRef =
     editableScrollRef as React.RefObject<HTMLDivElement>;
+  const editorViewportElementRef =
+    editorViewportRef as React.RefObject<HTMLDivElement>;
+  const pickMinimapScrollTarget = React.useCallback((): HTMLDivElement | null => {
+    const outer = editableContainerRef.current;
+    const inner = editableScrollRef.current;
+    const candidates = [outer, inner].filter(Boolean) as HTMLDivElement[];
+    if (candidates.length === 0) return null;
+    let best = candidates[0];
+    let bestScrollable = Math.max(0, best.scrollHeight - best.clientHeight);
+    for (let i = 1; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      const scrollable = Math.max(0, candidate.scrollHeight - candidate.clientHeight);
+      if (scrollable > bestScrollable + 1) {
+        best = candidate;
+        bestScrollable = scrollable;
+      }
+    }
+    return best;
+  }, []);
+  const refreshMinimapScrollTarget = React.useCallback(() => {
+    const prev = minimapScrollTargetRef.current;
+    const next =
+      pickMinimapScrollTarget() ??
+      editableContainerRef.current ??
+      editableScrollRef.current ??
+      null;
+    minimapScrollTargetRef.current = next;
+    if (prev !== next) {
+      setMinimapTargetVersion((n) => n + 1);
+    }
+  }, [pickMinimapScrollTarget]);
   const cellListResize = useResizeObserver({
-    ref: editableScrollElementRef as React.RefObject<Element>,
+    ref: editableContainerElementRef as React.RefObject<Element>,
+  });
+  const viewportResize = useResizeObserver({
+    ref: editorViewportElementRef as React.RefObject<Element>,
   });
   const minimap = useNotebookMinimap({
     cellList: minimapCellList,
     cells: minimapCells as any,
     curId: selectedCellId ?? hoveredCellId,
-    cellListDivRef: editableScrollRef as React.MutableRefObject<any>,
-    cellListWidth: cellListResize.width,
-    cellListHeight: cellListResize.height,
-    lazyHydrationVersion: 0,
+    cellListDivRef: minimapScrollTargetRef as React.MutableRefObject<any>,
+    cellListWidth: viewportResize.width ?? cellListResize.width,
+    cellListHeight: viewportResize.height ?? cellListResize.height,
+    lazyHydrationVersion: minimapTargetVersion,
     lazyHeightsRef,
     placeholderMinHeight: MINIMAP_PLACEHOLDER_MIN_HEIGHT,
     hydrateVisibleCells: () => {},
@@ -467,16 +507,35 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   }, [hoveredCellId, cell_list]);
 
   React.useEffect(() => {
-    const node = editableScrollRef.current;
-    if (node == null) return;
+    refreshMinimapScrollTarget();
+  }, [
+    refreshMinimapScrollTarget,
+    slateValue,
+    cellListResize.width,
+    cellListResize.height,
+    viewportResize.width,
+    viewportResize.height,
+  ]);
+
+  React.useEffect(() => {
+    const outer = editableContainerRef.current;
+    const inner = editableScrollRef.current;
+    if (outer == null && inner == null) return;
     const onScroll = () => {
+      refreshMinimapScrollTarget();
       minimap.onNotebookScroll();
     };
-    node.addEventListener("scroll", onScroll);
+    outer?.addEventListener("scroll", onScroll);
+    if (inner != null && inner !== outer) {
+      inner.addEventListener("scroll", onScroll);
+    }
     return () => {
-      node.removeEventListener("scroll", onScroll);
+      outer?.removeEventListener("scroll", onScroll);
+      if (inner != null && inner !== outer) {
+        inner.removeEventListener("scroll", onScroll);
+      }
     };
-  }, [minimap.onNotebookScroll]);
+  }, [minimap.onNotebookScroll, refreshMinimapScrollTarget]);
 
   React.useEffect(() => {
     minimap.onNotebookScroll();
@@ -643,6 +702,13 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }
     },
     [jupyter_actions, focusCellInSlate],
+  );
+
+  const stopCellById = React.useCallback(
+    (_cellId: string) => {
+      void jupyter_actions.signal("SIGINT");
+    },
+    [jupyter_actions],
   );
 
   const openAssistantForCell = React.useCallback(
@@ -948,7 +1014,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         Number(cell.get("last_runtime_ms")) ||
         undefined;
       const runtimeLabel = runtimeLabelFromMs(runtimeMs);
-      const running = `${cell.get("state") ?? ""}` === "running";
+      const state = `${cell.get("state") ?? ""}`.toLowerCase();
+      const running = state === "busy" || state === "running";
       return { execCount, runtimeLabel, running };
     },
     [cells],
@@ -1223,7 +1290,11 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           alignItems: "stretch",
         }}
       >
-        <div className="smc-vfill" style={{ minHeight: 0, minWidth: 0, flex: 1 }}>
+        <div
+          ref={editorViewportElementRef}
+          className="smc-vfill"
+          style={{ minHeight: 0, minWidth: 0, flex: 1 }}
+        >
           <JupyterCellContext.Provider
             value={{
               renderOutput: renderInlineOutput,
@@ -1234,6 +1305,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
               gapCursor,
               setGapCursor,
               runCell: runCellById,
+              stopCell: stopCellById,
               openAssistant: openAssistantForCell,
               getCellChromeInfo,
             }}
@@ -1262,7 +1334,10 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
               ignoreRemoteMergesWhileFocused
               style={{ backgroundColor: "transparent", minHeight: 0 }}
               controlRef={controlRef}
-              divRef={editableScrollElementRef}
+              divRef={editableContainerElementRef}
+              scrollDivRef={editableScrollElementRef as React.MutableRefObject<
+                HTMLDivElement | null
+              >}
               jupyterGapCursor={gapCursor}
               setJupyterGapCursor={setGapCursor}
             />
