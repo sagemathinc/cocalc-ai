@@ -57,10 +57,9 @@ function JupyterMarkdownCellElement({
       style={
         isSelected
           ? {
-              border: "1px solid #91caff",
-              borderRadius: "6px",
-              padding: "2px 8px",
-              background: "#fff",
+              background: "rgba(22, 119, 255, 0.04)",
+              borderRadius: "4px",
+              padding: "2px 6px",
             }
           : undefined
       }

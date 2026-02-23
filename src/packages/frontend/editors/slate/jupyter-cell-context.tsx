@@ -25,6 +25,7 @@ export interface JupyterCellContextValue {
   gapCursor?: JupyterGapCursor | null;
   setGapCursor?: (cursor: JupyterGapCursor | null) => void;
   runCell?: (cellId: string, opts?: { insertBelow?: boolean }) => void;
+  openAssistant?: (cellId: string) => void;
   getCellChromeInfo?: (cellId: string) => JupyterCellChromeInfo;
 }
 

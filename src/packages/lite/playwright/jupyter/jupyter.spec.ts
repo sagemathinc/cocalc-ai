@@ -139,6 +139,24 @@ async function safeNotebookCellCount(page: Page): Promise<number> {
     .count();
 }
 
+async function readClassicNotebookInputs(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    const out: string[] = [];
+    const editors = Array.from(
+      document.querySelectorAll('[cocalc-test="cell-input"] .CodeMirror'),
+    ) as any[];
+    for (const element of editors) {
+      const cm = element?.CodeMirror;
+      if (cm && typeof cm.getValue === "function") {
+        out.push(String(cm.getValue()));
+      } else {
+        out.push("");
+      }
+    }
+    return out;
+  });
+}
+
 async function appendSingleDocPlainTextNearTop(
   page: Page,
   text: string,
@@ -407,6 +425,72 @@ test("single-doc debounce sync settles without feedback-loop growth", async ({ p
   );
 });
 
+test.fixme("single-doc and classic jupyter mixed edits do not duplicate cells", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-classic-mixed-stable");
+  await ensureNotebook(path_ipynb, [codeCell("a = 5\nb = 10"), codeCell("a*b")]);
+  const classicUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+  });
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  await openNotebookPage(page, classicUrl);
+  const initialClassicCount = await countCells(page);
+  const slatePage = await page.context().newPage();
+  try {
+    await openSingleDocNotebookPage(slatePage, singleDocUrl);
+    await expect
+      .poll(async () => await countSingleDocCodeCells(slatePage), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(1);
+    await setCellInputCode(page, 0, "a = 5\nb = 10");
+    await setSingleDocCellCodeViaRuntime(slatePage, 1, "a*b");
+    const beforeRunInputs = await readClassicNotebookInputs(page);
+    expect(beforeRunInputs.filter((x) => x.trim() === "a*b").length).toBe(1);
+    await setSingleDocSelectionViaRuntime(slatePage, 1, "end");
+    await slatePage.keyboard.press("Shift+Enter");
+
+    await expect
+      .poll(async () => await countCells(page), {
+        timeout: 30_000,
+      })
+      .toBe(initialClassicCount + 1);
+    await expect
+      .poll(async () => await safeNotebookCellCount(slatePage), {
+        timeout: 30_000,
+      })
+      .toBe(initialClassicCount + 1);
+
+    await page.waitForTimeout(2_500);
+    await expect
+      .poll(async () => await countCells(page), {
+        timeout: 30_000,
+      })
+      .toBe(initialClassicCount + 1);
+    await expect
+      .poll(async () => await safeNotebookCellCount(slatePage), {
+        timeout: 30_000,
+      })
+      .toBe(initialClassicCount + 1);
+
+    const classicInputs = await readClassicNotebookInputs(page);
+    expect(classicInputs.filter((x) => x.trim() === "a*b").length).toBe(1);
+    expect(classicInputs.filter((x) => x.trim() === "a = 5\nb = 10").length).toBe(1);
+  } finally {
+    await slatePage.close();
+  }
+});
+
 test("single-doc stale structural apply is rejected without creating cells", async ({
   page,
 }) => {
@@ -456,7 +540,7 @@ test("single-doc stale structural apply is rejected without creating cells", asy
   );
 });
 
-test("single-doc duplicate cell-id insert remaps to unique canonical ids", async ({
+test("single-doc duplicate canonical cell-id insert is ignored", async ({
   page,
 }) => {
   const conn = await resolveBaseUrl();
@@ -492,14 +576,14 @@ test("single-doc duplicate cell-id insert remaps to unique canonical ids", async
     .poll(async () => await safeNotebookCellCount(page), {
       timeout: 30_000,
     })
-    .toBe(initialCount + 1);
+    .toBe(initialCount);
 
   const ids = await page.evaluate(() => {
     const runtime = (window as any).__cocalcJupyterRuntime;
     return runtime?.get_single_doc_canonical_cell_ids_for_test?.() ?? [];
   });
   expect(Array.isArray(ids)).toBe(true);
-  expect(ids.length).toBe(initialCount + 1);
+  expect(ids.length).toBe(initialCount);
   expect(new Set(ids).size).toBe(ids.length);
 });
 
@@ -755,6 +839,86 @@ test("single-doc Shift+ArrowLeft at cell start extends selection into previous c
       focusCellId: firstCellId,
       collapsed: false,
     });
+});
+
+test.fixme("single-doc collapsed copy+paste duplicates current jupyter cell", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-cell-copy-paste");
+  await ensureNotebook(path_ipynb, [codeCell("alpha"), codeCell("beta")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  await first.locator(".cocalc-slate-code-line").last().click();
+  await setSingleDocSelectionViaRuntime(page, 0, "end");
+  await page.keyboard.press("ControlOrMeta+C");
+  await page.keyboard.press("ControlOrMeta+V");
+  await blurSingleDocEditor(page);
+  await page.waitForTimeout(1_300);
+
+  await expect
+    .poll(async () => await countSingleDocCodeCells(page), {
+      timeout: 30_000,
+    })
+    .toBe(3);
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 0), { timeout: 30_000 })
+    .toBe("alpha");
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 1), { timeout: 30_000 })
+    .toBe("alpha");
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 2), { timeout: 30_000 })
+    .toBe("beta");
+});
+
+test.fixme("single-doc paste then undo does not crash and restores cell count", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-paste-undo-stable");
+  await ensureNotebook(path_ipynb, [codeCell("x = 1"), codeCell("y = 2")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  await first.locator(".cocalc-slate-code-line").last().click();
+  await setSingleDocSelectionViaRuntime(page, 0, "end");
+  await page.keyboard.press("ControlOrMeta+C");
+  await page.keyboard.press("ControlOrMeta+V");
+  await expect
+    .poll(async () => await countSingleDocCodeCells(page), { timeout: 30_000 })
+    .toBe(3);
+
+  await page.keyboard.press("ControlOrMeta+Z");
+  await blurSingleDocEditor(page);
+  await page.waitForTimeout(1_300);
+
+  await expect
+    .poll(async () => await countSingleDocCodeCells(page), { timeout: 30_000 })
+    .toBe(2);
+  await expect(
+    page.locator('[data-cocalc-jupyter-slate-single-doc="1"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator("text=CoCalc Crashed"),
+  ).toHaveCount(0);
 });
 
 test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {

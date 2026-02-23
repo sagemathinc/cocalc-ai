@@ -11,7 +11,9 @@ Canonical Jupyter cells remain source of truth; Slate is the interaction layer.
 import { List, Map } from "immutable";
 import React from "react";
 import { Element as SlateElement, type Descendant } from "slate";
+import { Button } from "antd";
 import { useRedux } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import { getCodeBlockText, toCodeLines } from "@cocalc/frontend/editors/slate/elements/code-block/utils";
 import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-slate";
@@ -20,6 +22,7 @@ import type { Actions as SlateActions } from "@cocalc/frontend/editors/slate/typ
 import { JupyterCellContext } from "@cocalc/frontend/editors/slate/jupyter-cell-context";
 import type { JupyterGapCursor } from "@cocalc/frontend/editors/slate/jupyter-cell-context";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
+import Logo from "@cocalc/frontend/jupyter/logo";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import type { EditorState } from "../frame-tree/types";
 import { JupyterEditorActions } from "./actions";
@@ -282,6 +285,10 @@ function notebookCellsSignature(
   return cellsSignature(parsed);
 }
 
+function isTransientCellId(id: string): boolean {
+  return /^tmp[-_]/.test(id);
+}
+
 function firstTextPath(node: any, pathPrefix: number[]): number[] | undefined {
   if (node == null) return;
   if (typeof node.text === "string") {
@@ -329,6 +336,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const read_only: boolean | undefined = useRedux([name, "read_only"]);
   const more_output: Map<string, any> | undefined = useRedux([name, "more_output"]);
   const kernel: string | undefined = useRedux([name, "kernel"]);
+  const kernelState: string | undefined = useRedux([name, "kernel_state"]);
+  const kernelDisplayName: string | undefined = useRedux([
+    name,
+    "kernel_info",
+    "display_name",
+  ]);
   const directory: string | undefined = useRedux([name, "directory"]);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const controlRef = React.useRef<any>(null);
@@ -349,6 +362,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const pendingSlateDocRef = React.useRef<Descendant[] | null>(null);
   const pendingSlateBaseSignatureRef = React.useRef<string | undefined>(undefined);
   const pendingFocusCellIdRef = React.useRef<string | undefined>(undefined);
+  const recentRunRef = React.useRef<{
+    targetId: string;
+    insertBelow: boolean;
+    signature: string;
+    ts: number;
+  } | null>(null);
   const transientIdMapRef = React.useRef<globalThis.Map<string, string>>(
     new globalThis.Map(),
   );
@@ -361,6 +380,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     rejectedStaleCells: 0,
     pendingFocusSkips: 0,
     onSlateChangeCalls: 0,
+    runCellAtCursorCalls: 0,
+    runCellAtCursorDroppedDuplicates: 0,
   });
 
   const slateValue = React.useMemo(() => {
@@ -429,6 +450,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       insertBelow: boolean;
       context?: RunContext;
     }) => {
+      debugCountersRef.current.runCellAtCursorCalls += 1;
       if (cell_list == null) {
         return;
       }
@@ -440,26 +462,23 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (context?.slateValue != null) {
         pendingSlateDocRef.current = null;
         pendingSlateBaseSignatureRef.current = undefined;
-        applyNotebookSlateRef.current(context.slateValue);
+        applyNotebookSlateRef.current(context.slateValue, {
+          baseSignature: "__stale__",
+        });
       } else if (pendingSlateDocRef.current != null) {
         const pending = pendingSlateDocRef.current;
         pendingSlateDocRef.current = null;
         pendingSlateBaseSignatureRef.current = undefined;
-        applyNotebookSlateRef.current(pending);
+        applyNotebookSlateRef.current(pending, {
+          baseSignature: "__stale__",
+        });
       }
-      const frameActions = props.actions.get_frame_actions(props.id);
       const fromSlate = findCellIdFromSlateContext({
         context,
         cell_list,
         idMap: transientIdMapRef.current,
       });
       let targetId = fromSlate;
-      if (targetId == null) {
-        const currentId = `${frameActions?.store?.get("cur_id") ?? ""}`.trim();
-        if (currentId && cell_list.includes(currentId)) {
-          targetId = currentId;
-        }
-      }
       if (targetId == null) {
         targetId =
           cell_list.find((id) => {
@@ -477,56 +496,52 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         });
         return;
       }
+      const now = Date.now();
+      const signature = notebookSignatureRef.current;
+      const recent = recentRunRef.current;
+      if (
+        recent != null &&
+        recent.targetId === targetId &&
+        recent.insertBelow === insertBelow &&
+        recent.signature === signature &&
+        now - recent.ts < 80
+      ) {
+        debugCountersRef.current.runCellAtCursorDroppedDuplicates += 1;
+        return;
+      }
+      recentRunRef.current = {
+        targetId,
+        insertBelow,
+        signature,
+        ts: now,
+      };
       // eslint-disable-next-line no-console
       console.log("jupyter-singledoc: run dispatch", {
         targetId,
         insertBelow,
         fromSlate,
-        hasFrameActions: frameActions != null,
       });
-      if (frameActions != null) {
-        frameActions.set_cur_id(targetId);
-      }
       focusCellInSlate(targetId);
       const runTarget = () => {
-        if (frameActions != null) {
-          frameActions.run_cell(targetId);
-        } else {
-          jupyter_actions.runCells([targetId]);
-        }
+        jupyter_actions.runCells([targetId]);
       };
       if (insertBelow) {
         runTarget();
-        const newId =
-          frameActions != null
-            ? frameActions.insert_cell(1)
-            : jupyter_actions.insert_cell_adjacent(targetId, 1);
-        if (frameActions != null) {
-          frameActions.set_cur_id(newId);
-        }
+        const newId = jupyter_actions.insert_cell_adjacent(targetId, 1);
         focusCellInSlate(newId);
       } else {
         runTarget();
         const idx = cell_list.indexOf(targetId);
         if (idx >= 0 && idx < cell_list.size - 1) {
           const nextId = cell_list.get(idx + 1);
-          if (frameActions != null && nextId != null) {
-            frameActions.set_cur_id(nextId);
-          }
           focusCellInSlate(nextId ?? targetId);
         } else {
-          const newId =
-            frameActions != null
-              ? frameActions.insert_cell(1)
-              : jupyter_actions.insert_cell_adjacent(targetId, 1);
-          if (frameActions != null) {
-            frameActions.set_cur_id(newId);
-          }
+          const newId = jupyter_actions.insert_cell_adjacent(targetId, 1);
           focusCellInSlate(newId);
         }
       }
     },
-    [props.actions, props.id, jupyter_actions, cell_list, cells, focusCellInSlate],
+    [jupyter_actions, cell_list, cells, focusCellInSlate],
   );
 
   const runCellById = React.useCallback(
@@ -541,36 +556,43 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         const pending = pendingSlateDocRef.current;
         pendingSlateDocRef.current = null;
         pendingSlateBaseSignatureRef.current = undefined;
-        applyNotebookSlateRef.current(pending);
-      }
-      const frameActions = props.actions.get_frame_actions(props.id);
-      if (frameActions != null) {
-        frameActions.set_cur_id(cellId);
+        applyNotebookSlateRef.current(pending, {
+          baseSignature: "__stale__",
+        });
       }
       const runTarget = () => {
-        if (frameActions != null) {
-          frameActions.run_cell(cellId);
-        } else {
-          jupyter_actions.runCells([cellId]);
-        }
+        jupyter_actions.runCells([cellId]);
       };
       if (opts?.insertBelow) {
         runTarget();
-        const newId =
-          frameActions != null
-            ? frameActions.insert_cell(1)
-            : jupyter_actions.insert_cell_adjacent(cellId, 1);
-        if (frameActions != null) {
-          frameActions.set_cur_id(newId);
-        }
+        const newId = jupyter_actions.insert_cell_adjacent(cellId, 1);
         focusCellInSlate(newId);
       } else {
         runTarget();
         focusCellInSlate(cellId);
       }
     },
-    [props.actions, props.id, jupyter_actions, focusCellInSlate],
+    [jupyter_actions, focusCellInSlate],
   );
+
+  const openAssistantForCell = React.useCallback(
+    async (cellId: string) => {
+      if (!cellId) return;
+      setSelectedCellId(cellId);
+      const frameActions = props.actions.get_frame_actions(props.id) as any;
+      await frameActions?.command?.("chatgpt");
+    },
+    [props.actions, props.id],
+  );
+
+  const openKernelMenu = React.useCallback(async () => {
+    const frameActions = props.actions.get_frame_actions(props.id) as any;
+    await frameActions?.command?.("change kernel");
+  }, [props.actions, props.id]);
+
+  const openClassicFrame = React.useCallback(() => {
+    props.actions.split_frame("col", props.id, "jupyter_cell_notebook");
+  }, [props.actions, props.id]);
 
   const applyNotebookSlate = React.useCallback(
     (doc: Descendant[], opts?: ApplyNotebookSlateOpts) => {
@@ -652,17 +674,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       const resolvedIds: string[] = [];
       const transientIdMap = transientIdMapRef.current;
       const existingIdSet = new Set(ids);
-
-      const getCellType = (id: string): string => `${cells.getIn([id, "cell_type"]) ?? "code"}`;
-      const takeExistingIdByType = (cellType: ParsedSlateCell["cell_type"]): string | undefined => {
-        for (const id of ids) {
-          if (used.has(id)) continue;
-          if (getCellType(id) !== cellType) continue;
-          used.add(id);
-          return id;
-        }
-        return;
-      };
+      let ambiguousStructure = false;
 
       const makeNewCell = (cellType: ParsedSlateCell["cell_type"]): string => {
         const prev = resolvedIds[resolvedIds.length - 1];
@@ -672,8 +684,6 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
             : jupyter_actions.insert_cell_adjacent(prev, 1, false);
         ids.push(newId);
         existingIdSet.add(newId);
-        used.add(newId);
-        resolvedIds.push(newId);
         if (cellType !== "code") {
           jupyter_actions.set_cell_type(newId, cellType, false);
         }
@@ -681,56 +691,46 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         return newId;
       };
 
-      const allowDropTransientBlankMarkdown = parsed.length > 1;
+      const allowDropBlankMarkdown = parsed.length > 1;
       for (const cell of parsed) {
         const rawId = `${cell.cell_id ?? ""}`.trim();
         const mappedFromTemp = rawId ? transientIdMap.get(rawId) : undefined;
         const requestedId = mappedFromTemp ?? rawId;
         const emptyMarkdown = cell.cell_type === "markdown" && !cell.input.trim();
+        let resolvedId: string | undefined;
+
         if (requestedId && existingIdSet.has(requestedId) && !used.has(requestedId)) {
-          used.add(requestedId);
-          resolvedIds.push(requestedId);
-          parsedToApply.push(cell);
-          continue;
-        }
-        if (allowDropTransientBlankMarkdown && emptyMarkdown) {
-          // Slate can expose transient empty markdown wrappers while editing near
-          // boundaries; avoid turning those into persistent new notebook cells.
-          if (!rawId || !existingIdSet.has(requestedId) || used.has(requestedId)) {
+          resolvedId = requestedId;
+          if (rawId && requestedId !== rawId) {
+            transientIdMap.set(rawId, requestedId);
+          }
+        } else if (rawId && isTransientCellId(rawId)) {
+          // Structural creation is only allowed for explicit transient ids that
+          // are introduced by single-doc editing actions (insert/split/paste).
+          resolvedId = makeNewCell(cell.cell_type);
+          transientIdMap.set(rawId, resolvedId);
+        } else if (!rawId) {
+          if (allowDropBlankMarkdown && emptyMarkdown) {
+            // Ignore transient blank wrappers that can appear around boundaries.
             continue;
           }
-        }
-        const reused = takeExistingIdByType(cell.cell_type);
-        if (reused != null) {
-          resolvedIds.push(reused);
-          parsedToApply.push(cell);
-          if (rawId && reused !== requestedId) {
-            transientIdMap.set(rawId, reused);
-          }
+          ambiguousStructure = true;
+          continue;
+        } else if (!existingIdSet.has(rawId)) {
+          // Unknown non-transient ids are ambiguous.  Do not remap them onto
+          // canonical ids, since that can duplicate content across cells.
+          ambiguousStructure = true;
+          continue;
+        } else {
+          // Duplicate use of an existing canonical id is ambiguous; skip this
+          // node and avoid structural mutations in this apply.
+          ambiguousStructure = true;
           continue;
         }
-        if (parsedToApply.length < originalIds.length) {
-          // Never create new cells while there are unmatched existing cells.
-          // This prevents create/delete churn and feedback loops.
-          const fallback = ids.find((id) => !used.has(id));
-          if (fallback != null) {
-            used.add(fallback);
-            resolvedIds.push(fallback);
-            parsedToApply.push(cell);
-            if (rawId && fallback !== requestedId) {
-              transientIdMap.set(rawId, fallback);
-            }
-            continue;
-          }
-        }
-        if (rawId) {
-          // Explicit/duplicated/temporary code cell id: allocate a fresh canonical cell id.
-          const newId = makeNewCell(cell.cell_type);
-          transientIdMap.set(rawId, newId);
-          parsedToApply.push(cell);
-          continue;
-        }
-        makeNewCell(cell.cell_type);
+
+        if (resolvedId == null) continue;
+        used.add(resolvedId);
+        resolvedIds.push(resolvedId);
         parsedToApply.push(cell);
       }
 
@@ -751,24 +751,26 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         }
       }
 
-      const idsToDelete = originalIds.filter((id) => !used.has(id));
-      if (idsToDelete.length > 0) {
-        jupyter_actions.delete_cells(idsToDelete, false);
-        didMutate = true;
-      }
+      if (!ambiguousStructure) {
+        const idsToDelete = originalIds.filter((id) => !used.has(id));
+        if (idsToDelete.length > 0) {
+          jupyter_actions.delete_cells(idsToDelete, false);
+          didMutate = true;
+        }
 
-      // Keep notebook order aligned with top-level Slate order.
-      const orderChanged =
-        resolvedIds.length !== originalIds.length ||
-        resolvedIds.some((id, i) => originalIds[i] !== id);
-      if (orderChanged) {
-        for (let i = 0; i < resolvedIds.length; i++) {
-          const id = resolvedIds[i];
-          const currentPos = Number(cells.getIn([id, "pos"]));
-          const nextPos = i + 1;
-          if (!Number.isFinite(currentPos) || currentPos !== nextPos) {
-            jupyter_actions.set_cell_pos(id, nextPos, false);
-            didMutate = true;
+        // Keep notebook order aligned with top-level Slate order.
+        const orderChanged =
+          resolvedIds.length !== originalIds.length ||
+          resolvedIds.some((id, i) => originalIds[i] !== id);
+        if (orderChanged) {
+          for (let i = 0; i < resolvedIds.length; i++) {
+            const id = resolvedIds[i];
+            const currentPos = Number(cells.getIn([id, "pos"]));
+            const nextPos = i + 1;
+            if (!Number.isFinite(currentPos) || currentPos !== nextPos) {
+              jupyter_actions.set_cell_pos(id, nextPos, false);
+              didMutate = true;
+            }
           }
         }
       }
@@ -1054,6 +1056,14 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     };
   }, [slateValue, kernel, cell_list]);
 
+  React.useEffect(() => {
+    const frameActions = props.actions.get_frame_actions(props.id) as any;
+    frameActions?.disable_key_handler?.();
+    return () => {
+      frameActions?.enable_key_handler?.(true);
+    };
+  }, [props.actions, props.id, cell_list]);
+
   if (cell_list == null || cells == null) {
     return <div style={{ padding: "12px" }}>Loading notebook...</div>;
   }
@@ -1070,8 +1080,54 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }}
       data-cocalc-jupyter-slate-single-doc="1"
     >
-      <div style={{ color: "#888", fontSize: "11px", marginBottom: "8px" }}>
-        Single-document Slate notebook editor (experimental)
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "8px",
+          minHeight: "24px",
+        }}
+      >
+        <Button
+          size="small"
+          type="text"
+          onClick={() => void openKernelMenu()}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            color: "#555",
+            padding: 0,
+            height: "24px",
+          }}
+        >
+          <Logo kernel={kernel ?? null} size={18} style={{ marginRight: "2px" }} />
+          <span>{kernelDisplayName ?? kernel ?? "No Kernel"}</span>
+          <span
+            style={{
+              color:
+                kernelState === "busy"
+                  ? "#d46b08"
+                  : kernelState === "idle"
+                    ? "#389e0d"
+                    : "#999",
+            }}
+          >
+            {kernelState ?? ""}
+          </span>
+          <span style={{ color: trust ? "#389e0d" : "#999" }}>
+            {trust ? "Trusted" : "Untrusted"}
+          </span>
+        </Button>
+        <Button
+          size="small"
+          type="text"
+          onClick={openClassicFrame}
+          style={{ color: "#555", padding: 0, height: "24px" }}
+        >
+          <Icon name="table" /> Open Classic
+        </Button>
       </div>
       {error ? (
         <div
@@ -1098,25 +1154,26 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
             gapCursor,
             setGapCursor,
             runCell: runCellById,
+            openAssistant: openAssistantForCell,
             getCellChromeInfo,
           }}
         >
           <EditableMarkdown
             value_slate={slateValue}
             actions={editorActions}
-          onSlateChange={(doc, opts) => {
-            if (opts.onlySelectionOps || opts.syncCausedUpdate) {
-              return;
-            }
-            const root = containerRef.current;
+            onSlateChange={(doc, opts) => {
+              if (opts.onlySelectionOps || opts.syncCausedUpdate) {
+                return;
+              }
+              const root = containerRef.current;
               const active =
                 typeof document === "undefined" ? null : document.activeElement;
               if (root != null && active != null && !root.contains(active)) {
                 return;
               }
-            debugCountersRef.current.onSlateChangeCalls += 1;
-            scheduleApplyNotebookSlate(doc);
-          }}
+              debugCountersRef.current.onSlateChangeCalls += 1;
+              scheduleApplyNotebookSlate(doc);
+            }}
             is_current={true}
             read_only={!!read_only}
             hidePath

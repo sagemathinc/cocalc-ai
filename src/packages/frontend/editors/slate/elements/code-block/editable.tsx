@@ -254,6 +254,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     gapCursor,
     setGapCursor,
     runCell,
+    openAssistant,
     getCellChromeInfo,
   } = useJupyterCellContext();
   const jupyterCellId = isJupyterCodeCell
@@ -375,8 +376,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const showJupyterChrome =
     isJupyterCodeCell &&
     !!jupyterCellId &&
-    (isHoveredJupyterCell ||
-      (!hoveredCellId && (selectionInBlock || menuFocused || isSelectedJupyterCell)));
+    (IS_TOUCH ? isSelectedJupyterCell || menuFocused : isHoveredJupyterCell);
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -577,6 +577,13 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const jupyterCellClipboard = event.clipboardData?.getData(
+        "application/x-cocalc-jupyter-cells+json",
+      );
+      if (jupyterCellClipboard) {
+        // Let parent Editable handler consume jupyter-cell clipboard payload.
+        return;
+      }
       const text = event.clipboardData?.getData("text/plain");
       if (!text) return;
       event.preventDefault();
@@ -622,14 +629,12 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
           <div
             style={{
               position: "relative",
-              border: isJupyterCodeCell
-                ? isSelectedJupyterCell
-                  ? "1px solid #91caff"
-                  : "1px solid #d9d9d9"
-                : undefined,
-              borderRadius: isJupyterCodeCell ? "6px" : undefined,
-              paddingTop: isJupyterCodeCell ? "28px" : undefined,
-              background: isJupyterCodeCell ? "#fff" : undefined,
+              paddingTop: isJupyterCodeCell ? "22px" : undefined,
+              background:
+                isJupyterCodeCell && isSelectedJupyterCell
+                  ? "rgba(22, 119, 255, 0.03)"
+                  : undefined,
+              borderRadius: isJupyterCodeCell ? "4px" : undefined,
             }}
             onMouseEnter={() => {
               if (!IS_TOUCH) {
@@ -670,65 +675,51 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                 data-cocalc-cell-id={jupyterCellId}
                 style={{
                   position: "absolute",
-                  left: 0,
-                  right: 0,
+                  right: 2,
                   top: 0,
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "space-between",
-                  minHeight: "26px",
-                  borderBottom: "1px solid #f0f0f0",
-                  background: "#fafafa",
-                  borderTopLeftRadius: "6px",
-                  borderTopRightRadius: "6px",
-                  padding: "2px 8px",
+                  gap: "8px",
+                  minHeight: "20px",
                   fontSize: "12px",
-                  zIndex: 1,
+                  zIndex: 2,
                 }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                 }}
               >
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                  <Button
-                    size="small"
-                    type="text"
-                    style={{ color: "#333", padding: 0 }}
-                    onClick={() => {
-                      if (!jupyterCellId) return;
-                      runCell?.(jupyterCellId, { insertBelow: false });
-                    }}
-                  >
-                    <Icon name="play" /> Run
-                  </Button>
-                  <Button
-                    size="small"
-                    type="text"
-                    style={{ color: "#333", padding: 0 }}
-                    onClick={() => {
-                      if (!jupyterCellId) return;
-                      runCell?.(jupyterCellId, { insertBelow: true });
-                    }}
-                  >
-                    <Icon name="caret-down" />
-                  </Button>
-                  <span style={{ color: "#666" }}>
-                    <Icon name="robot" /> Assistant
-                  </span>
-                  <span style={{ color: "#666" }}>
-                    <Icon name="table" /> Format
-                  </span>
-                </div>
-                <div style={{ display: "flex", gap: "10px", color: "#666" }}>
-                  {jupyterChromeInfo?.runtimeLabel ? (
-                    <span>{jupyterChromeInfo.runtimeLabel}</span>
-                  ) : null}
-                  {jupyterChromeInfo?.running ? <span>running</span> : null}
-                  {jupyterChromeInfo?.execCount ? (
-                    <span>{jupyterChromeInfo.execCount}</span>
-                  ) : null}
-                </div>
+                {jupyterChromeInfo?.runtimeLabel ? (
+                  <span style={{ color: "#666" }}>{jupyterChromeInfo.runtimeLabel}</span>
+                ) : null}
+                {jupyterChromeInfo?.running ? (
+                  <span style={{ color: "#666" }}>running</span>
+                ) : null}
+                {jupyterChromeInfo?.execCount ? (
+                  <span style={{ color: "#666" }}>{jupyterChromeInfo.execCount}</span>
+                ) : null}
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    runCell?.(jupyterCellId, { insertBelow: false });
+                  }}
+                >
+                  <Icon name="play" /> Run
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#333", padding: 0, height: "20px" }}
+                  onClick={() => {
+                    if (!jupyterCellId) return;
+                    openAssistant?.(jupyterCellId);
+                  }}
+                >
+                  <Icon name="robot" /> AI
+                </Button>
               </div>
             )}
             {!disableMarkdownCodebar && !isJupyterCodeCell && (
