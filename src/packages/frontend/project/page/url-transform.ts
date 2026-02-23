@@ -13,6 +13,10 @@ export default function getUrlTransform({ project_id, path }: Options) {
   const dir = containingPath(path);
   return (href: string, tag: string) => {
     if (href.startsWith("data:")) return; // never change data: urls in any way.
+    if (href.startsWith("/")) {
+      // Absolute paths are host-root resources; do not reinterpret as project files.
+      return href;
+    }
     if (tag == "a" || href.includes("://")) {
       // Anchor tags are dealt with via AnchorTagComponent
       // We also only modify local urls and cloud urls (only on frontend -- they will fail on share server).

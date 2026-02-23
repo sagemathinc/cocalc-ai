@@ -2,7 +2,6 @@ import { Alert, Upload } from "antd";
 import ImgCrop from "antd-img-crop";
 import { InboxOutlined } from "@ant-design/icons";
 import { React, useState } from "@cocalc/frontend/app-framework";
-import { BASE_URL } from "@cocalc/frontend/misc";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
 
@@ -120,7 +119,9 @@ async function uploadCroppedImage({
     if (!uuid) {
       throw Error("missing upload uuid");
     }
-    const url = `${BASE_URL}/blobs/${encodeURIComponent(filename)}?uuid=${uuid}`;
+    const url = `${join(appBasePath, "blobs", encodeURIComponent(
+      filename,
+    ))}?uuid=${uuid}`;
     onChange(url);
   } catch (err) {
     setError(`Image upload failed: ${err}`);
