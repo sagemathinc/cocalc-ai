@@ -31,6 +31,10 @@ import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import {
+  makeOfflineMoveConfirmationPayload,
+  offlineMoveConfirmationError,
+} from "@cocalc/server/projects/offline-move-confirmation";
 import { assertCollab } from "./util";
 import type {
   ProjectCopyRow,
@@ -736,7 +740,6 @@ export async function moveProject({
 }
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;
-const OFFLINE_MOVE_CONFIRM_CODE = "MOVE_OFFLINE_CONFIRMATION_REQUIRED";
 
 async function ensureMoveOfflineAllowed({
   project_id,
@@ -785,10 +788,13 @@ async function ensureMoveOfflineAllowed({
     return;
   }
   if (!lastBackup || lastEdited > lastBackup) {
-    const detail = `source host is offline (status=${status || "unknown"}) and last backup is older than last edit (last_backup=${
-      row.last_backup ? row.last_backup.toISOString?.() ?? row.last_backup : "none"
-    }, last_edited=${row.last_edited?.toISOString?.() ?? row.last_edited})`;
-    throw new Error(`${OFFLINE_MOVE_CONFIRM_CODE}: ${detail}`);
+    throw offlineMoveConfirmationError(
+      makeOfflineMoveConfirmationPayload({
+        source_status: status || "unknown",
+        last_backup: row.last_backup,
+        last_edited: row.last_edited,
+      }),
+    );
   }
 }
 

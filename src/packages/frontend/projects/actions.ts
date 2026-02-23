@@ -33,6 +33,10 @@ import {
   evaluateHostOperational,
   hostLabel,
 } from "./host-operational";
+import {
+  buildOfflineMoveConfirmationDialog,
+  parseOfflineMoveConfirmationError,
+} from "./offline-move-confirmation";
 
 import type {
   CourseInfo,
@@ -941,26 +945,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
   };
 
-  private isOfflineMoveConfirmError = (err: unknown): string | null => {
-    const message = `${err ?? ""}`;
-    const code = "MOVE_OFFLINE_CONFIRMATION_REQUIRED";
-    if (!message.includes(code)) {
-      return null;
-    }
-    const parts = message.split(code);
-    const detail = parts.slice(1).join(code).replace(/^[:\s-]+/, "");
-    return detail || message;
-  };
-
-  private confirmOfflineMove = async (detail?: string): Promise<boolean> => {
-    const base =
-      "The source host appears to be offline, so this move will use the most recent backup and may miss newer changes.";
-    const content = detail ? `${base}\n\n${detail}` : base;
+  private confirmOfflineMove = async (
+    payload: ReturnType<typeof parseOfflineMoveConfirmationError>,
+  ): Promise<boolean> => {
+    if (payload == null) return false;
+    const dialog = buildOfflineMoveConfirmationDialog(payload);
     return await new Promise((resolve) => {
       Modal.confirm({
-        title: "Move from offline host?",
-        content,
-        okText: "Move anyway",
+        title: dialog.title,
+        content: dialog.content,
+        okText: dialog.okText,
+        okButtonProps: dialog.okButtonProps,
         cancelText: "Cancel",
         onOk: () => resolve(true),
         onCancel: () => resolve(false),
@@ -985,9 +980,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
     } catch (err) {
       if (!allow_offline) {
-        const detail = this.isOfflineMoveConfirmError(err);
-        if (detail != null) {
-          const proceed = await this.confirmOfflineMove(detail);
+        const payload = parseOfflineMoveConfirmationError(err);
+        if (payload != null) {
+          const proceed = await this.confirmOfflineMove(payload);
           if (!proceed) {
             return null;
           }

@@ -16,6 +16,10 @@ import {
 } from "../project-host/control";
 import { start as startProjectLro } from "../conat/api/projects";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
+import {
+  makeOfflineMoveConfirmationPayload,
+  offlineMoveConfirmationError,
+} from "./offline-move-confirmation";
 
 const log = getLogger("server:projects:move");
 const MAX_BACKUPS_PER_PROJECT = 30;
@@ -204,8 +208,6 @@ async function buildMoveProjectContext(
 }
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;
-const OFFLINE_MOVE_CONFIRM_CODE = "MOVE_OFFLINE_CONFIRMATION_REQUIRED";
-
 function isSourceHostAvailable(context: MoveProjectContext): boolean {
   if (!context.project_host_id) return false;
   if (context.source_host_deleted) return false;
@@ -360,12 +362,13 @@ export async function moveProjectToHost(
         },
       });
     } else if (hasStaleBackup(context) && !input.allow_offline) {
-      const detail = `source host is offline (status=${status}) and last backup is older than last edit (last_backup=${
-        context.last_backup?.toISOString?.() ?? context.last_backup ?? "none"
-      }, last_edited=${
-        context.last_edited?.toISOString?.() ?? context.last_edited ?? "unknown"
-      })`;
-      throw new Error(`${OFFLINE_MOVE_CONFIRM_CODE}: ${detail}`);
+      throw offlineMoveConfirmationError(
+        makeOfflineMoveConfirmationPayload({
+          source_status: status,
+          last_backup: context.last_backup,
+          last_edited: context.last_edited,
+        }),
+      );
     }
     progress({
       step: "backup",
