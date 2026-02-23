@@ -29,8 +29,19 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 });
 
 describe("SmartAnchorTag", () => {
+  let openMock: jest.SpyInstance;
+
+  beforeAll(() => {
+    openMock = jest.spyOn(window, "open").mockImplementation(() => null);
+  });
+
+  afterAll(() => {
+    openMock.mockRestore();
+  });
+
   beforeEach(() => {
     openFile.mockReset();
+    openMock.mockReset();
   });
 
   it("opens internal cocalc-file links via project open_file", () => {
@@ -51,5 +62,27 @@ describe("SmartAnchorTag", () => {
       foreground: true,
       explicit: true,
     });
+  });
+
+  it("treats absolute slash links as host-root navigation", () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="room.chat"
+        href="/blobs/file.png?uuid=123"
+      >
+        blob
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "blob" }), {
+      ctrlKey: true,
+    });
+    expect(openMock).toHaveBeenCalledWith(
+      "/blobs/file.png?uuid=123",
+      "_blank",
+      "noopener",
+    );
+    expect(openFile).not.toHaveBeenCalled();
   });
 });

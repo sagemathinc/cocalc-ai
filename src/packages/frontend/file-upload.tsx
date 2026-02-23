@@ -16,7 +16,6 @@ import { Icon, Tip } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
-import { BASE_URL } from "@cocalc/frontend/misc";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import { defaults, is_array, merge } from "@cocalc/util/misc";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -543,9 +542,9 @@ export function BlobUpload(props) {
           });
           return;
         }
-        const url = `${BASE_URL}/blobs/${encodeURIComponent(
+        const url = `${join(appBasePath, "blobs", encodeURIComponent(
           file.upload.filename,
-        )}?uuid=${uuid}`;
+        ))}?uuid=${uuid}`;
         props.event_handlers?.complete({ ...file, uuid, url });
       } else {
         // e.g., if there was an error

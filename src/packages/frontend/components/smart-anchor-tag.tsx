@@ -410,6 +410,16 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
         e.preventDefault();
         e.stopPropagation();
 
+        if (href.startsWith("/")) {
+          const openInSameTab = !((e as any).which === 2 || e.ctrlKey || e.metaKey);
+          if (openInSameTab) {
+            window.location.assign(href);
+          } else {
+            window.open(href, "_blank", "noopener");
+          }
+          return;
+        }
+
         if (!project_id) {
           // link is being opened outside of any specific project, e.g.,
           // opening /settings outside of a project will open cocalc-wide
