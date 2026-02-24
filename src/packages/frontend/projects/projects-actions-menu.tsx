@@ -148,9 +148,6 @@ export function ProjectActionsMenu({ record }: Props) {
       case "users":
         openProjectTab("users");
         break;
-      case "servers":
-        openProjectTab("servers");
-        break;
       case "move":
         setMoveOpen(true);
         break;
@@ -258,11 +255,6 @@ export function ProjectActionsMenu({ record }: Props) {
       key: "users",
       label: "Users",
       icon: <Icon name={FIXED_PROJECT_TABS.users.icon} />,
-    },
-    {
-      key: "servers",
-      label: "Servers",
-      icon: <Icon name={FIXED_PROJECT_TABS.servers.icon} />,
     },
     {
       key: "settings",

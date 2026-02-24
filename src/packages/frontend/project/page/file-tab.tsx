@@ -30,7 +30,6 @@ import track from "@cocalc/frontend/user-tracking";
 import { filename_extension, path_split, path_to_tab } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
-import { TITLE as SERVERS_TITLE } from "../servers";
 import {
   AgentsFlyout,
   CollabsFlyout,
@@ -39,7 +38,6 @@ import {
   NewFlyout,
   ProjectInfoFlyout,
   SearchFlyout,
-  ServersFlyout,
   SettingsFlyout,
 } from "./flyouts";
 import { ActiveFlyout } from "./flyouts/active";
@@ -55,7 +53,6 @@ export type FixedTab =
   | "new"
   | "log"
   | "search"
-  | "servers"
   | "settings"
   | "info"
   | "users";
@@ -139,13 +136,6 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
       defaultMessage: "Recent Files",
     }),
     noAnonymous: false,
-  },
-  servers: {
-    label: SERVERS_TITLE,
-    icon: "server",
-    flyout: ServersFlyout,
-    noAnonymous: false,
-    noLite: false,
   },
   users: {
     label: labels.users,

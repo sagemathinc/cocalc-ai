@@ -37,7 +37,6 @@ import { ProjectLog } from "@cocalc/frontend/project/history";
 import { ProjectInfo } from "@cocalc/frontend/project/info";
 import { ProjectNew } from "@cocalc/frontend/project/new";
 import { ProjectSearch } from "@cocalc/frontend/project/search/search";
-import { ProjectServers } from "@cocalc/frontend/project/servers";
 import { ProjectSettings } from "@cocalc/frontend/project/settings";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -176,7 +175,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "search":
       return <ProjectSearch />;
     case "servers":
-      return <ProjectServers />;
+      // Backward compatibility for old links/history; server launch is under +New now.
+      return <ProjectNew project_id={project_id} />;
     case "settings":
       return <ProjectSettings project_id={project_id} />;
     case "info":

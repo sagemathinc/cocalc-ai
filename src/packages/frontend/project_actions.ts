@@ -777,6 +777,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   ): void => {
     const store = this.get_store();
     if (store == undefined) return; // project closed
+    if (key === "servers") {
+      // The dedicated Servers page was removed; launch/manage servers via +New.
+      key = "new";
+    }
     const prev_active_project_tab = store.get("active_project_tab");
     if (!opts.change_history && prev_active_project_tab === key) {
       // already active -- nothing further to do
@@ -834,12 +838,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             this.toAuxTabPath("search", store.get("current_path_abs") ?? "/"),
             "",
           );
-        }
-        break;
-
-      case "servers":
-        if (opts.change_history) {
-          this.push_state("servers", "");
         }
         break;
 
@@ -2902,10 +2900,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         this.set_active_tab("settings", { change_history: change_history });
         break;
 
-      case "servers":
-        this.set_active_tab("servers", { change_history: change_history });
-        break;
-
       case "search":
         this.set_current_path(
           this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
@@ -3102,7 +3096,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   setServerTab = (_name: string) => {
-    this.set_active_tab("servers", {
+    this.set_active_tab("new", {
       change_history: true,
     });
   };
