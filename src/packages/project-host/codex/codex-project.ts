@@ -40,6 +40,7 @@ type ContainerInfo = {
   name: string;
   rootfs: string;
   codexPath: string;
+  cliPath?: string;
   home: string;
 };
 
@@ -225,6 +226,47 @@ async function resolveCodexBinary(): Promise<{
   return { hostPath, containerPath, mount: hostDir };
 }
 
+async function resolveOptionalCliBinary(): Promise<
+  | {
+      hostPath: string;
+      containerPath: string;
+      mount: string;
+    }
+  | undefined
+> {
+  const requested = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+  const candidates = [
+    requested,
+    process.env.COCALC_BIN_PATH
+      ? join(process.env.COCALC_BIN_PATH, "cocalc")
+      : "",
+    process.env.COCALC_BIN_PATH
+      ? join(process.env.COCALC_BIN_PATH, "cocalc-cli")
+      : "",
+    "cocalc",
+    "cocalc-cli",
+  ].filter((value) => !!value);
+  for (const candidate of candidates) {
+    let hostPath = candidate;
+    if (!isAbsolute(hostPath)) {
+      const resolved = await which(candidate);
+      if (!resolved) continue;
+      hostPath = resolved;
+    }
+    try {
+      const stat = await fs.stat(hostPath);
+      if (!stat.isFile()) continue;
+    } catch {
+      continue;
+    }
+    const hostDir = dirname(hostPath);
+    const mount = "/opt/cocalc-cli/bin";
+    const containerPath = join(mount, basename(hostPath));
+    return { hostPath, containerPath, mount: hostDir };
+  }
+  return undefined;
+}
+
 const containerLeases = new RefcountLeaseManager<string>({
   delayMs: CONTAINER_TTL_MS,
   disposer: async (key: string) => {
@@ -259,6 +301,7 @@ async function ensureContainer({
   const rootfs = await mountRootFs({ project_id: projectId, home, config: { image } });
   const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
+  const cliBinary = await resolveOptionalCliBinary();
   const codexHome =
     authRuntime.codexHome ??
     (authRuntime.source === "shared-home" ? resolveSharedCodexHome() : undefined);
@@ -269,7 +312,13 @@ async function ensureContainer({
     (projectRow?.run_quota?.gpu_count ?? 0) > 0;
 
   if (await containerExists(name)) {
-    return { name, rootfs, codexPath: containerPath, home };
+    return {
+      name,
+      rootfs,
+      codexPath: containerPath,
+      cliPath: cliBinary?.containerPath,
+      home,
+    };
   }
 
   const args: string[] = [];
@@ -301,6 +350,10 @@ async function ensureContainer({
   }
   for (const key in authRuntime.env) {
     env[key] = authRuntime.env[key];
+  }
+  if (cliBinary?.containerPath) {
+    env.COCALC_CLI_BIN = cliBinary.containerPath;
+    env.PATH = `${dirname(cliBinary.containerPath)}:${env.PATH ?? ""}`;
   }
   if (extraEnv) {
     for (const key in extraEnv) {
@@ -341,6 +394,15 @@ async function ensureContainer({
     }
   }
   args.push(mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }));
+  if (cliBinary) {
+    args.push(
+      mountArg({
+        source: cliBinary.mount,
+        target: "/opt/cocalc-cli/bin",
+        readOnly: true,
+      }),
+    );
+  }
   if (codexHome && authRuntime.source === "shared-home") {
     try {
       const stat = await fs.stat(codexHome);
@@ -405,7 +467,13 @@ async function ensureContainer({
   });
   await podman(args, { label: "container run" });
 
-  return { name, rootfs, codexPath: containerPath, home };
+  return {
+    name,
+    rootfs,
+    codexPath: containerPath,
+    cliPath: cliBinary?.containerPath,
+    home,
+  };
 }
 
 function toStringEnv(env?: NodeJS.ProcessEnv): Record<string, string> {

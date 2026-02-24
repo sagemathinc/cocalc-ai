@@ -211,6 +211,17 @@ export class CodexExecAgent implements AcpAgent {
       ...(this.opts.env ?? {}),
       ...(request.runtime_env ?? {}),
     };
+    const runtimeCliBin = `${runtimeEnv.COCALC_CLI_BIN ?? ""}`.trim();
+    if (runtimeCliBin && path.isAbsolute(runtimeCliBin)) {
+      const cliDir = path.dirname(runtimeCliBin);
+      const pathParts = `${runtimeEnv.PATH ?? process.env.PATH ?? ""}`
+        .split(path.delimiter)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      if (!pathParts.includes(cliDir)) {
+        runtimeEnv.PATH = [cliDir, ...pathParts].join(path.delimiter);
+      }
+    }
     const siteKeyGovernor = getCodexSiteKeyGovernor();
     const executeAttempt = async (
       {

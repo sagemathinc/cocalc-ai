@@ -1789,9 +1789,11 @@ function resolveCodexApiUrl(): string {
 function buildCodexRuntimeEnv({
   request,
   projectId,
+  includeCliBin,
 }: {
   request: AcpRequest;
   projectId: string;
+  includeCliBin: boolean;
 }): Record<string, string> {
   const out: Record<string, string> = {};
   const accountId = `${request.account_id ?? ""}`.trim();
@@ -1804,8 +1806,10 @@ function buildCodexRuntimeEnv({
     `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
     `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
   if (bearer) out.COCALC_BEARER_TOKEN = bearer;
-  const cliBin = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
-  if (cliBin) out.COCALC_CLI_BIN = cliBin;
+  if (includeCliBin) {
+    const cliBin = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+    if (cliBin) out.COCALC_CLI_BIN = cliBin;
+  }
   return out;
 }
 
@@ -1833,7 +1837,6 @@ export async function evaluate({
   if (!projectId) {
     throw Error("project_id must be set");
   }
-  const runtimeEnv = buildCodexRuntimeEnv({ request, projectId });
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -1846,6 +1849,11 @@ export async function evaluate({
     workingDirectory: workspaceRoot,
   };
   const useContainer = preferContainerExecutor();
+  const runtimeEnv = buildCodexRuntimeEnv({
+    request,
+    projectId,
+    includeCliBin: !useContainer,
+  });
   const hostRoot =
     useContainer && executor instanceof ContainerExecutor
       ? executor.getMountPoint()
