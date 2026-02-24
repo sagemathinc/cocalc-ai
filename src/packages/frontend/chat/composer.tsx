@@ -18,7 +18,6 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc";
-import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
 import ChatInput from "./input";
 import type { ChatActions } from "./actions";
 import type { SubmitMentionsFn } from "./types";
@@ -26,10 +25,6 @@ import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
-import {
-  getCodexPaymentSourceLongLabel,
-  getCodexPaymentSourceShortLabel,
-} from "./use-codex-payment-source";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -77,8 +72,8 @@ export function ChatRoomComposer({
   selectedThread,
   onComposerTargetChange,
   onComposerFocusChange,
-  codexPaymentSource,
-  codexPaymentSourceLoading = false,
+  codexPaymentSource: _codexPaymentSource,
+  codexPaymentSourceLoading: _codexPaymentSourceLoading = false,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -363,14 +358,6 @@ export function ChatRoomComposer({
     boxSizing: "border-box",
   };
 
-  const codexSourceShortLabel = codexPaymentSourceLoading
-    ? "Checking…"
-    : getCodexPaymentSourceShortLabel(codexPaymentSource?.source);
-  const codexSourceLongLabel = getCodexPaymentSourceLongLabel(
-    codexPaymentSource?.source,
-  );
-  const showSiteUsage = codexPaymentSource?.source === "site-api-key";
-
   return (
     <div ref={zenContainerRef} style={composerStyle}>
       <div
@@ -492,40 +479,6 @@ export function ChatRoomComposer({
         <div style={{ flex: 1 }} />
         {hasInput && (
           <>
-            {isSelectedThreadAI ? (
-              <div
-                style={{
-                  height: "47.5px",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                {showSiteUsage ? (
-                  <LLMUsageStatus
-                    variant="compact"
-                    showHelp={false}
-                    compactWidth={115}
-                  />
-                ) : (
-                  <Tooltip title={`Likely source: ${codexSourceLongLabel}`}>
-                    <Button
-                      size="small"
-                      style={{
-                        height: "auto",
-                        padding: "4px 6px",
-                        fontSize: "11px",
-                        minWidth: "115px",
-                      }}
-                    >
-                      {codexSourceShortLabel}
-                    </Button>
-                  </Tooltip>
-                )}
-              </div>
-            ) : (
-              <div />
-            )}
-            <div style={{ height: "5px" }} />
             <Tooltip
               title={
                 isZenMode
