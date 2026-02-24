@@ -42,6 +42,7 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
+    "@cocalc/cli": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/lite": "workspace:*",
     "ascii-table3": "^1.0.1",

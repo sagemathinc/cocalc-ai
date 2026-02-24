@@ -17,6 +17,7 @@ const dynamicImport = new Function(
 function usage() {
   console.log(`Usage:
   cocalc-plus version
+  cocalc-plus cli [args...]
   cocalc-plus reflect --version
   cocalc-plus reflect-sync [args...]
   cocalc-plus ssh user@host[:port] [options]
@@ -25,6 +26,7 @@ function usage() {
 
 Examples:
   cocalc-plus
+  cocalc-plus cli --help
   cocalc-plus reflect --version
   cocalc-plus reflect-sync --version
   cocalc-plus ssh list
@@ -198,6 +200,42 @@ function getPackageVersion() {
   return "unknown";
 }
 
+function runCliCommand(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let cliEntry: string;
+    try {
+      const pkgPath = require.resolve("@cocalc/cli/package.json");
+      cliEntry = path.join(path.dirname(pkgPath), "dist", "bin", "cocalc.js");
+      if (!fs.existsSync(cliEntry)) {
+        throw new Error(`missing CLI entrypoint at ${cliEntry}`);
+      }
+    } catch (err) {
+      reject(
+        new Error(
+          `unable to resolve @cocalc/cli runtime: ${(err as Error)?.message ?? err}`,
+        ),
+      );
+      return;
+    }
+    const child = spawn(process.execPath, [cliEntry, ...args], {
+      stdio: "inherit",
+      env: process.env,
+    });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`cocalc cli terminated by signal ${signal}`));
+        return;
+      }
+      if (code && code !== 0) {
+        reject(new Error(`cocalc cli exited with code ${code}`));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function writeVersionInfo() {
   const dataDir =
     process.env.COCALC_DATA_DIR ||
@@ -244,6 +282,7 @@ async function runCli() {
   const isCommand = (arg?: string) =>
     arg &&
     (arg.startsWith("-") ||
+      arg === "cli" ||
       arg === "ssh" ||
       arg === "version" ||
       arg === "reflect" ||
@@ -281,6 +320,10 @@ async function runCli() {
   }
   if (argv[0] === "ssh") {
     await sshMain(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "cli") {
+    await runCliCommand(argv.slice(1));
     return;
   }
   if (argv[0] === "reflect") {
