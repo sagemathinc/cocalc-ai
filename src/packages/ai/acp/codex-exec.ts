@@ -60,6 +60,20 @@ const IMMEDIATE_SEND_GUIDANCE = [
   "[/CoCalc immediate-send behavior]",
 ].join(" ");
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
+const COCALC_RUNTIME_GUIDANCE_HEADER = [
+  "[CoCalc runtime capabilities]",
+  "This turn may run with CoCalc CLI/browser automation context.",
+  "If relevant, you can use `cocalc` CLI to inspect browser state and run browser exec scripts.",
+  "Prefer scoped variables already provided in environment, e.g.:",
+  "- COCALC_PROJECT_ID",
+  "- COCALC_BROWSER_ID",
+  "- COCALC_API_URL",
+  "- COCALC_BEARER_TOKEN",
+  "Typical safe pattern:",
+  "1) Inspect API: cocalc browser exec-api --browser \"$COCALC_BROWSER_ID\"",
+  "2) Execute in browser: cocalc browser exec --project-id \"$COCALC_PROJECT_ID\" --browser \"$COCALC_BROWSER_ID\" --file <script.js>",
+  "[/CoCalc runtime capabilities]",
+].join("\n");
 
 function redactArgsForLog(args: string[]): string {
   const out = [...args];
@@ -207,10 +221,12 @@ export class CodexExecAgent implements AcpAgent {
     const projectId = request.chat?.project_id ?? request.project_id;
     const accountId = request.account_id;
     const model = config?.model;
-    const runtimeEnv = {
-      ...(this.opts.env ?? {}),
-      ...(request.runtime_env ?? {}),
-    };
+    const runtimeEnv = Object.fromEntries(
+      Object.entries({
+        ...(this.opts.env ?? {}),
+        ...(request.runtime_env ?? {}),
+      }).filter(([, value]) => typeof value === "string"),
+    ) as Record<string, string>;
     const runtimeCliBin = `${runtimeEnv.COCALC_CLI_BIN ?? ""}`.trim();
     if (runtimeCliBin && path.isAbsolute(runtimeCliBin)) {
       const cliDir = path.dirname(runtimeCliBin);
@@ -360,7 +376,10 @@ export class CodexExecAgent implements AcpAgent {
       if (!this.running.get(session.sessionId)?.interrupted) {
         // send prompt
         proc.stdin?.write(
-          this.decoratePrompt(prompt, { sendMode: request.chat?.send_mode }),
+          this.decoratePrompt(prompt, {
+            sendMode: request.chat?.send_mode,
+            runtimeEnv,
+          }),
         );
       }
       proc.stdin?.end();
@@ -749,14 +768,36 @@ export class CodexExecAgent implements AcpAgent {
 
   private decoratePrompt(
     prompt: string,
-    opts?: { sendMode?: "immediate" },
+    opts?: {
+      sendMode?: "immediate";
+      runtimeEnv?: Record<string, string>;
+    },
   ): string {
     const isSlashCommand = /^\s*\/\w+/.test(prompt);
     if (isSlashCommand) return prompt;
+    const withRuntimeGuidance = this.addCoCalcRuntimeGuidance({
+      prompt,
+      runtimeEnv: opts?.runtimeEnv,
+    });
     if (opts?.sendMode === "immediate") {
-      return `${IMMEDIATE_SEND_GUIDANCE}\n\n${prompt}`;
+      return `${IMMEDIATE_SEND_GUIDANCE}\n\n${withRuntimeGuidance}`;
     }
-    return prompt;
+    return withRuntimeGuidance;
+  }
+
+  private addCoCalcRuntimeGuidance({
+    prompt,
+    runtimeEnv,
+  }: {
+    prompt: string;
+    runtimeEnv?: Record<string, string>;
+  }): string {
+    const hasProject = `${runtimeEnv?.COCALC_PROJECT_ID ?? ""}`.trim();
+    const hasBrowser = `${runtimeEnv?.COCALC_BROWSER_ID ?? ""}`.trim();
+    if (!hasProject || !hasBrowser) {
+      return prompt;
+    }
+    return `${COCALC_RUNTIME_GUIDANCE_HEADER}\n\n${prompt}`;
   }
 
   private async handleItem(
