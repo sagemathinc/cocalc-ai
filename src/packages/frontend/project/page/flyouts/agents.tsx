@@ -47,6 +47,7 @@ const STATUS_COLORS: Record<AgentSessionStatus, string> = {
 };
 const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
+const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
 
 function formatUpdated(iso?: string): string {
   if (!iso) return "";
@@ -71,6 +72,21 @@ function dateMs(value?: string): number {
   if (!value) return 0;
   const ms = new Date(value).valueOf();
   return Number.isFinite(ms) ? ms : 0;
+}
+
+function isMissingPathError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.toUpperCase();
+  if (code === "ENOENT" || code === "404") return true;
+  const message = `${(err as any)?.message ?? err ?? ""}`.toUpperCase();
+  return message.includes("ENOENT") || message.includes("NO SUCH FILE");
+}
+
+function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
 }
 
 function normalizedTitle(record: AgentSessionRecord): string {
@@ -103,6 +119,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
+  const [missingChatPaths, setMissingChatPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [showArchived, setShowArchived] = useState(false);
@@ -145,15 +164,80 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }, [account_id, project_id]);
 
+  const knownChatPaths = useMemo(() => {
+    return Array.from(
+      new Set(
+        sessions
+          .map((session) => session.chat_path)
+          .filter(
+            (path): path is string =>
+              typeof path === "string" && path.trim().length > 0,
+          ),
+      ),
+    );
+  }, [sessions]);
+
+  useEffect(() => {
+    const fs = actions?.fs?.();
+    if (typeof fs?.stat !== "function") return;
+    let closed = false;
+    let inFlight = false;
+
+    async function scanChatPaths(): Promise<void> {
+      if (closed || inFlight) return;
+      inFlight = true;
+      try {
+        const missing = new Set<string>();
+        for (const path of knownChatPaths) {
+          try {
+            await fs.stat(path);
+          } catch (err) {
+            // Only hide entries when we are certain the file is missing.
+            if (isMissingPathError(err)) {
+              missing.add(path);
+            }
+          }
+        }
+        if (closed) return;
+        setMissingChatPaths((prev) => {
+          const next = new Set(prev);
+          for (const path of knownChatPaths) {
+            next.delete(path);
+          }
+          for (const path of missing) {
+            next.add(path);
+          }
+          return areSetsEqual(prev, next) ? prev : next;
+        });
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    void scanChatPaths();
+    const timer = setInterval(() => {
+      void scanChatPaths();
+    }, CHAT_PATH_SCAN_INTERVAL_MS);
+
+    return () => {
+      closed = true;
+      clearInterval(timer);
+    };
+  }, [actions, knownChatPaths, project_id]);
+
+  const sessionsWithExistingChat = useMemo(() => {
+    return sessions.filter((session) => !missingChatPaths.has(session.chat_path));
+  }, [sessions, missingChatPaths]);
+
   const scopedSessions = useMemo(() => {
-    let filtered = sessions;
+    let filtered = sessionsWithExistingChat;
     if (scope === "mine" && typeof account_id === "string" && account_id.trim()) {
       filtered = filtered.filter((session) => session.account_id === account_id);
     }
     return [...filtered].sort(
       (a, b) => dateMs(b.updated_at) - dateMs(a.updated_at),
     );
-  }, [sessions, scope, account_id]);
+  }, [sessionsWithExistingChat, scope, account_id]);
 
   const visibleSections = useMemo(() => {
     const activeItems: SessionListItem[] = scopedSessions
@@ -178,7 +262,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   useEffect(() => {
     if (!inlineSession) return;
-    const updated = sessions.find(
+    const updated = sessionsWithExistingChat.find(
       (session) => session.session_id === inlineSession.session_id,
     );
     if (updated) {
@@ -186,7 +270,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       return;
     }
     setInlineSession(null);
-  }, [inlineSession, sessions]);
+  }, [inlineSession, sessionsWithExistingChat]);
 
   useEffect(() => {
     if (!inlineSession) {
