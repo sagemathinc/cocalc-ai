@@ -354,11 +354,13 @@ export function NavigatorShell({
       const threadKey =
         (evt as CustomEvent<{ threadKey?: string }>).detail?.threadKey?.trim() ||
         null;
+      if (!threadKey) {
+        preferredThreadKeyRef.current = undefined;
+        return;
+      }
       preferredThreadKeyRef.current = threadKey ?? undefined;
       if (!actions) {
-        if (threadKey) {
-          setSelectedThreadKey(threadKey);
-        }
+        setSelectedThreadKey(threadKey);
         return;
       }
       setSelectedThreadKey(chooseThreadKey(actions, threadKey));
