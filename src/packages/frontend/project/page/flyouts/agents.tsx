@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
+import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 
@@ -201,6 +202,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setInlineError("");
   }
 
+  function openFloatingSession(record: AgentSessionRecord): void {
+    openFloatingAgentSession(project_id, record);
+  }
+
   async function toggleArchive(record: AgentSessionRecord): Promise<void> {
     setUpdatingSessionId(record.session_id);
     try {
@@ -294,6 +299,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               size="small"
               type="link"
               style={{ paddingLeft: 0 }}
+              onClick={() => openFloatingSession(record)}
+            >
+              Float
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
               onClick={() => openNavigatorSession(record)}
             >
               Resume
@@ -375,6 +388,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               onClick={() => openNavigatorSession(inlineSession)}
             >
               Resume
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => openFloatingSession(inlineSession)}
+            >
+              Float
             </Button>
             <Button
               size="small"

@@ -40,6 +40,7 @@ import { OOMWarning } from "../warnings/oom";
 import { RamWarning } from "../warnings/ram";
 import { FIX_BORDERS } from "./common";
 import { Content } from "./content";
+import { AgentDock } from "./agent-dock";
 import { isFixedTab } from "./file-tab";
 import { FlyoutBody } from "./flyouts/body";
 import { FLYOUT_DEFAULT_WIDTH_PX } from "./flyouts/consts";
@@ -387,6 +388,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         >
           {renderEditorContent()}
           {render_project_content()}
+          <AgentDock project_id={project_id} is_active={is_active} />
         </div>
         {render_project_modal()}
       </div>
