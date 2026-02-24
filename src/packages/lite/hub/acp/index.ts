@@ -1776,6 +1776,39 @@ async function ensureAgent(
   }
 }
 
+function resolveCodexApiUrl(): string {
+  const explicit =
+    `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const port = `${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim();
+  return `http://127.0.0.1:${port || "9100"}`;
+}
+
+function buildCodexRuntimeEnv({
+  request,
+  projectId,
+}: {
+  request: AcpRequest;
+  projectId: string;
+}): Record<string, string> {
+  const out: Record<string, string> = {};
+  const accountId = `${request.account_id ?? ""}`.trim();
+  if (accountId) out.COCALC_ACCOUNT_ID = accountId;
+  if (projectId) out.COCALC_PROJECT_ID = projectId;
+  const browserId = `${request.chat?.browser_id ?? ""}`.trim();
+  if (browserId) out.COCALC_BROWSER_ID = browserId;
+  out.COCALC_API_URL = resolveCodexApiUrl();
+  const bearer =
+    `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
+    `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  if (bearer) out.COCALC_BEARER_TOKEN = bearer;
+  const cliBin = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+  if (cliBin) out.COCALC_CLI_BIN = cliBin;
+  return out;
+}
+
 export async function evaluate({
   stream,
   ...request
@@ -1800,6 +1833,7 @@ export async function evaluate({
   if (!projectId) {
     throw Error("project_id must be set");
   }
+  const runtimeEnv = buildCodexRuntimeEnv({ request, projectId });
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -1876,6 +1910,7 @@ export async function evaluate({
       await currentAgent.evaluate({
         ...request,
         prompt,
+        runtime_env: runtimeEnv,
         config: effectiveConfig,
         stream: wrappedStream,
       });

@@ -68,6 +68,9 @@ export async function main(opts?: {
 
   const AUTH_TOKEN = await getAuthToken();
   const AGENT_TOKEN = await getAgentToken(AUTH_TOKEN);
+  if (AGENT_TOKEN) {
+    process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
+  }
   if (!conatPassword) {
     setConatPassword(await secureRandomString(24));
   }

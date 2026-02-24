@@ -207,6 +207,10 @@ export class CodexExecAgent implements AcpAgent {
     const projectId = request.chat?.project_id ?? request.project_id;
     const accountId = request.account_id;
     const model = config?.model;
+    const runtimeEnv = {
+      ...(this.opts.env ?? {}),
+      ...(request.runtime_env ?? {}),
+    };
     const siteKeyGovernor = getCodexSiteKeyGovernor();
     const executeAttempt = async (
       {
@@ -232,7 +236,7 @@ export class CodexExecAgent implements AcpAgent {
           accountId,
           args,
           cwd,
-          env: this.opts.env,
+          env: runtimeEnv,
           forceRefreshSiteKey,
         });
         proc = spawned.proc;
@@ -257,7 +261,7 @@ export class CodexExecAgent implements AcpAgent {
           cwd,
           env: {
             ...process.env,
-            ...this.opts.env,
+            ...runtimeEnv,
             ...(HOME ? { HOME } : {}),
           },
         });

@@ -39,6 +39,7 @@ export interface AcpEvaluateRequest {
   account_id: string;
   prompt: string;
   session_id?: string;
+  runtime_env?: Record<string, string>;
   stream: AcpStreamHandler;
   config?: CodexSessionConfig;
   chat?: AcpChatContext;

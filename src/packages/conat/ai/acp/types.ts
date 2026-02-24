@@ -24,6 +24,7 @@ export type AcpRequest = {
   prompt: string;
   session_id?: string;
   config?: CodexSessionConfig;
+  runtime_env?: Record<string, string>;
   chat?: AcpChatContext;
 };
 
