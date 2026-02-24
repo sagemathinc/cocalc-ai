@@ -4,6 +4,7 @@
  */
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Alert, Typography } from "antd";
 import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
@@ -17,6 +18,18 @@ export function AccountPreferencesAI() {
   if (lite) {
     return (
       <>
+        <Typography.Title level={4} style={{ marginBottom: 8 }}>
+          Choose one: ChatGPT Plan or OpenAI API key
+        </Typography.Title>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Configure one Codex payment method for Lite.
+        </Typography.Paragraph>
+        <Alert
+          type="info"
+          showIcon
+          message="If both are configured, ChatGPT Plan is used."
+          style={{ marginBottom: 12 }}
+        />
         <CodexCredentialsPanel />
         <LiteAISettings />
       </>

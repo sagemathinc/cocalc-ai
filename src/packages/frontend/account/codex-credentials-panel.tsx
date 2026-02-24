@@ -157,23 +157,39 @@ function CodexCredentialsPanelBody({
       setLoading(true);
       setError("");
       try {
-        const systemApi: any = webapp_client.conat_client.hub.system as any;
-        const [payment, list, keyStatus] = await Promise.all([
-          webapp_client.conat_client.hub.system.getCodexPaymentSource({
-            project_id: workspaceId.trim() || undefined,
-          }),
-          webapp_client.conat_client.hub.system.listExternalCredentials({
-            provider: "openai",
-            kind: "codex-subscription-auth-json",
-            scope: "account",
-          }),
-          systemApi.getOpenAiApiKeyStatus({
-            project_id: workspaceId.trim() || undefined,
-          }),
-        ]);
+        const project_id = workspaceId.trim() || undefined;
+        let payment: CodexPaymentSourceInfo;
+        let list: ExternalCredentialInfo[] = [];
+        let keyStatus: any = {};
+
+        if (lite) {
+          payment = await webapp_client.conat_client.hub.system.getCodexPaymentSource(
+            {
+              project_id,
+            },
+          );
+        } else {
+          const systemApi: any = webapp_client.conat_client.hub.system as any;
+          const result = await Promise.all([
+            webapp_client.conat_client.hub.system.getCodexPaymentSource({
+              project_id,
+            }),
+            webapp_client.conat_client.hub.system.listExternalCredentials({
+              provider: "openai",
+              kind: "codex-subscription-auth-json",
+              scope: "account",
+            }),
+            systemApi.getOpenAiApiKeyStatus({
+              project_id,
+            }),
+          ]);
+          payment = result[0] as CodexPaymentSourceInfo;
+          list = (result[1] as ExternalCredentialInfo[]) ?? [];
+          keyStatus = result[2] ?? {};
+        }
         if (!isMounted()) return;
         setPaymentSource(payment as CodexPaymentSourceInfo);
-        setCredentials((list as ExternalCredentialInfo[]) ?? []);
+        setCredentials(list);
         setApiKeyStatus(keyStatus ?? {});
       } catch (err) {
         if (!isMounted()) return;
@@ -437,7 +453,9 @@ function CodexCredentialsPanelBody({
         items={[
           {
             key: "subscription-auth",
-            label: "Connect ChatGPT subscription",
+            label: lite
+              ? "Option A: Connect ChatGPT Plan"
+              : "Connect ChatGPT subscription",
             children: (
               <Space direction="vertical" size={8} style={{ width: "100%" }}>
                 <Text type="secondary">

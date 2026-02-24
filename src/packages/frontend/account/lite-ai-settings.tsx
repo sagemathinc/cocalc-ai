@@ -101,10 +101,10 @@ export default function LiteAISettings() {
   return (
     <div>
       <Typography.Title level={4} style={{ marginBottom: 8 }}>
-        OpenAI API Key
+        Option B: OpenAI API Key
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        Use this if you want Codex billed through your OpenAI API key.
+        Choose this if you want Codex billed through your OpenAI API key.
       </Typography.Paragraph>
       {error && (
         <Alert type="error" title="Error" description={error} closable />
