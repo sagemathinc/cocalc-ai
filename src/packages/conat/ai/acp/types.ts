@@ -6,6 +6,8 @@ export interface AcpChatContext {
   path: string;
   message_date: string;
   sender_id: string;
+  // Browser session initiating this turn (for agent/browser automation routing).
+  browser_id?: string;
   reply_to?: string;
   // Schema-v2 identities for robust row targeting.
   message_id?: string;
