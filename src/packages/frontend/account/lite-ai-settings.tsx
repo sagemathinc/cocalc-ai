@@ -23,7 +23,15 @@ const OPENAI_PROVIDER: ProviderKey = {
 
 type State = "load" | "ready" | "save" | "error";
 
-export default function LiteAISettings() {
+export interface LiteAISettingsProps {
+  onSaved?: () => void;
+  showTitle?: boolean;
+}
+
+export default function LiteAISettings({
+  onSaved,
+  showTitle = true,
+}: LiteAISettingsProps = {}) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [savedValues, setSavedValues] = useState<Record<string, string>>({});
   const [state, setState] = useState<State>("load");
@@ -91,6 +99,7 @@ export default function LiteAISettings() {
       await redux.getActions("customize")?.reload();
       setSavedValues(values);
       setState("ready");
+      onSaved?.();
     } catch (err) {
       log.info("failed to save llm settings", err);
       setError(`${err}`);
@@ -100,12 +109,16 @@ export default function LiteAISettings() {
 
   return (
     <div>
-      <Typography.Title level={4} style={{ marginBottom: 8 }}>
-        Option B: OpenAI API Key
-      </Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        Choose this if you want Codex billed through your OpenAI API key.
-      </Typography.Paragraph>
+      {showTitle ? (
+        <>
+          <Typography.Title level={4} style={{ marginBottom: 8 }}>
+            Option B: OpenAI API Key
+          </Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            Choose this if you want Codex billed through your OpenAI API key.
+          </Typography.Paragraph>
+        </>
+      ) : null}
       {error && (
         <Alert type="error" title="Error" description={error} closable />
       )}

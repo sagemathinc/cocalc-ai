@@ -1,4 +1,5 @@
 import {
+  Alert,
   Button,
   Divider,
   Form,
@@ -18,6 +19,8 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
   DEFAULT_CODEX_MODELS,
@@ -86,6 +89,14 @@ type ModelOption = {
   reasoning?: CodexReasoningLevel[];
 };
 
+type LiteCodexLocalStatus = {
+  installed: boolean;
+  binaryPath?: string;
+  version?: string;
+  error?: string;
+  checkedAt?: number;
+};
+
 const SectionTitle = ({ children }: { children: React.ReactNode }) => (
   <Text strong style={{ color: COLORS.GRAY_D }}>
     {children}
@@ -109,9 +120,12 @@ export function CodexConfigButton({
   paymentSourceLoading = false,
   refreshPaymentSource,
 }: CodexConfigButtonProps): React.ReactElement {
-  void refreshPaymentSource;
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [liteCodexStatus, setLiteCodexStatus] = useState<
+    LiteCodexLocalStatus | undefined
+  >(undefined);
+  const [liteCodexStatusLoading, setLiteCodexStatusLoading] = useState(false);
   const [form] = Form.useForm();
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
@@ -225,6 +239,40 @@ export function CodexConfigButton({
     value: option.value,
     label: option.label,
   }));
+
+  useEffect(() => {
+    if (!lite || !paymentOpen) return;
+    let cancelled = false;
+    const loadStatus = async () => {
+      setLiteCodexStatusLoading(true);
+      try {
+        const systemApi: any = webapp_client.conat_client.hub.system as any;
+        if (typeof systemApi.getCodexLocalStatus !== "function") {
+          if (!cancelled) {
+            setLiteCodexStatus(undefined);
+          }
+          return;
+        }
+        const result = await systemApi.getCodexLocalStatus();
+        if (cancelled) return;
+        setLiteCodexStatus(result as LiteCodexLocalStatus);
+      } catch (err) {
+        if (cancelled) return;
+        setLiteCodexStatus({
+          installed: false,
+          error: `${err}`,
+        });
+      } finally {
+        if (!cancelled) {
+          setLiteCodexStatusLoading(false);
+        }
+      }
+    };
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentOpen]);
 
   return (
     <>
@@ -423,11 +471,53 @@ export function CodexConfigButton({
         width={760}
         bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
       >
-        <CodexCredentialsPanel
-          embedded
-          hidePanelChrome
-          defaultWorkspaceId={projectId}
-        />
+        {lite ? (
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Text strong>Choose one: ChatGPT Plan or OpenAI API key</Text>
+            <Text type="secondary">
+              Configure Codex from this modal. If both are configured, ChatGPT
+              Plan is used.
+            </Text>
+            {liteCodexStatusLoading ? (
+              <Alert type="info" showIcon message="Checking local Codex install..." />
+            ) : liteCodexStatus?.installed === false ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="Codex CLI not detected"
+                description={
+                  liteCodexStatus.error
+                    ? `Install Codex CLI and restart CoCalc Lite. Details: ${liteCodexStatus.error}`
+                    : "Install Codex CLI and restart CoCalc Lite."
+                }
+              />
+            ) : liteCodexStatus?.installed ? (
+              <Alert
+                type="success"
+                showIcon
+                message="Codex CLI detected"
+                description={`${liteCodexStatus.binaryPath ?? "codex"}${
+                  liteCodexStatus.version
+                    ? ` (${liteCodexStatus.version})`
+                    : ""
+                }`}
+              />
+            ) : null}
+            <CodexCredentialsPanel
+              embedded
+              hidePanelChrome
+              defaultWorkspaceId={projectId}
+            />
+            <Divider style={{ margin: "8px 0" }} />
+            <LiteAISettings onSaved={refreshPaymentSource} showTitle />
+          </Space>
+        ) : (
+          <CodexCredentialsPanel
+            embedded
+            hidePanelChrome
+            defaultWorkspaceId={projectId}
+          />
+        )}
       </Modal>
     </>
   );

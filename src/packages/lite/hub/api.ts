@@ -14,6 +14,8 @@ import {
 import { callRemoteHub, hasRemote, project_id } from "../remote";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { setSshUi, ssh } from "./ssh";
 import { setReflectUi, reflect } from "./reflect";
 import * as agent from "./agent";
@@ -29,6 +31,7 @@ import {
 import { getLiteServerSettings } from "./settings";
 
 const logger = getLogger("lite:hub:api");
+const execFile = promisify(execFileCb);
 
 function parseMap(raw?: string): Record<string, string> {
   if (!raw) return {};
@@ -128,6 +131,47 @@ async function getCodexPaymentSource(opts?: {
     sharedHomeMode: "always",
     project_id,
   };
+}
+
+async function getCodexLocalStatus(): Promise<{
+  installed: boolean;
+  binaryPath?: string;
+  version?: string;
+  error?: string;
+  checkedAt: number;
+}> {
+  const configured = `${process.env.COCALC_CODEX_BIN ?? ""}`.trim();
+  const binaryPath = configured || "codex";
+  const checkedAt = Date.now();
+  try {
+    const { stdout, stderr } = await execFile(binaryPath, ["--version"], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    const output = `${stdout ?? ""}\n${stderr ?? ""}`.trim();
+    const version = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => !!line);
+    return {
+      installed: true,
+      binaryPath,
+      version,
+      checkedAt,
+    };
+  } catch (err) {
+    const details =
+      (err as any)?.stderr ||
+      (err as any)?.message ||
+      (err as any)?.code ||
+      `${err}`;
+    return {
+      installed: false,
+      binaryPath,
+      error: `${details}`.trim(),
+      checkedAt,
+    };
+  }
 }
 
 export async function init({
@@ -315,6 +359,7 @@ export const hubApi: HubApi = {
   system: {
     getNames,
     getCodexPaymentSource,
+    getCodexLocalStatus,
     logClientError,
     userTracking,
     webappError,
