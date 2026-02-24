@@ -698,18 +698,25 @@ export async function moveProject({
   stream_name: string;
 }> {
   await assertCollab({ account_id, project_id });
+  const movePrecheck = await getMoveOfflinePrecheck({ project_id });
   if (!allow_offline) {
-    await ensureMoveOfflineAllowed({ project_id });
+    await ensureMoveOfflineAllowed({
+      movePrecheck,
+    });
   }
+  const lroInput = {
+    project_id,
+    allow_offline,
+    source_host_id: movePrecheck.source_host_id,
+    ...(dest_host_id ? { dest_host_id } : {}),
+  };
   const op = await createLro({
     kind: "project-move",
     scope_type: "project",
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: dest_host_id
-      ? { project_id, dest_host_id, allow_offline }
-      : { project_id, allow_offline },
+    input: lroInput,
     status: "queued",
   });
   await publishLroSummary({
@@ -741,11 +748,17 @@ export async function moveProject({
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;
 
-async function ensureMoveOfflineAllowed({
+type MoveOfflinePrecheck = {
+  source_host_id?: string;
+  last_edited: Date | null;
+  last_backup: Date | null;
+};
+
+async function getMoveOfflinePrecheck({
   project_id,
 }: {
   project_id: string;
-}): Promise<void> {
+}): Promise<MoveOfflinePrecheck> {
   const pool = getPool();
   const { rows } = await pool.query<{
     host_id: string | null;
@@ -756,15 +769,29 @@ async function ensureMoveOfflineAllowed({
     [project_id],
   );
   const row = rows[0];
-  if (!row?.host_id) {
+  return {
+    source_host_id: row?.host_id ?? undefined,
+    last_edited: row?.last_edited ?? null,
+    last_backup: row?.last_backup ?? null,
+  };
+}
+
+async function ensureMoveOfflineAllowed({
+  movePrecheck,
+}: {
+  movePrecheck: MoveOfflinePrecheck;
+}): Promise<void> {
+  const source_host_id = movePrecheck.source_host_id;
+  if (!source_host_id) {
     return;
   }
+  const pool = getPool();
   const hostRow = await pool.query<{
     status: string | null;
     deleted: Date | null;
     last_seen: Date | null;
   }>("SELECT status, deleted, last_seen FROM project_hosts WHERE id=$1", [
-    row.host_id,
+    source_host_id,
   ]);
   const host = hostRow.rows[0];
   const status = String(host?.status ?? "");
@@ -782,8 +809,12 @@ async function ensureMoveOfflineAllowed({
   if (hostAvailable) {
     return;
   }
-  const lastEdited = row.last_edited ? new Date(row.last_edited).getTime() : 0;
-  const lastBackup = row.last_backup ? new Date(row.last_backup).getTime() : 0;
+  const lastEdited = movePrecheck.last_edited
+    ? new Date(movePrecheck.last_edited).getTime()
+    : 0;
+  const lastBackup = movePrecheck.last_backup
+    ? new Date(movePrecheck.last_backup).getTime()
+    : 0;
   if (!lastEdited) {
     return;
   }
@@ -791,8 +822,8 @@ async function ensureMoveOfflineAllowed({
     throw offlineMoveConfirmationError(
       makeOfflineMoveConfirmationPayload({
         source_status: status || "unknown",
-        last_backup: row.last_backup,
-        last_edited: row.last_edited,
+        last_backup: movePrecheck.last_backup,
+        last_edited: movePrecheck.last_edited,
       }),
     );
   }
