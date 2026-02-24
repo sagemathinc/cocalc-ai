@@ -107,7 +107,10 @@ function topProcessesByUsage(
   return out;
 }
 
-function makeHistorySample(info: ProjectInfo, topN: number): ProjectInfoHistorySample {
+function makeHistorySample(
+  info: ProjectInfo,
+  topN: number,
+): ProjectInfoHistorySample {
   const rows = Object.values(info.processes ?? {});
   const cpu_pct = rows.reduce((sum, proc) => sum + proc.cpu.pct, 0);
   const mem_rss = rows.reduce((sum, proc) => sum + proc.stat.mem.rss, 0);
@@ -297,8 +300,14 @@ class ProjectInfoService {
     logger.debug("started project info service ", { subject: this.subject });
     const client = this.client ?? (await conat());
     this.service = await client.service<Api>(this.subject, {
-      get: async () => this.info ?? null,
-      getHistory: async ({ minutes } = {}) => await this.getHistory({ minutes }),
+      get: async () => {
+        this.infoServer?.noteClientActivity();
+        return this.info ?? null;
+      },
+      getHistory: async ({ minutes } = {}) => {
+        this.infoServer?.noteClientActivity();
+        return await this.getHistory({ minutes });
+      },
     });
   };
 

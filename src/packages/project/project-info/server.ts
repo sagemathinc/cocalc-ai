@@ -38,6 +38,8 @@ import {
 
 const L = getLogger("project-info:server").debug;
 const DEFAULT_INTERVAL_S = 7;
+const DEFAULT_IDLE_INTERVAL_S = 45;
+const DEFAULT_ACTIVE_GRACE_S = 30;
 
 const bytes2MiB = (bytes) => bytes / (1024 * 1024);
 
@@ -70,7 +72,7 @@ async function safeReadFile(path: string): Promise<string | null> {
     return await readFile(path, "utf8");
   } catch (error: any) {
     if (error.code === "ENOENT") {
-      if(!warned.has(path)) {
+      if (!warned.has(path)) {
         warned.add(path);
         L(`safeReadFile: ${path} not found, skipping`);
       }
@@ -87,6 +89,10 @@ export class ProjectInfoServer extends EventEmitter {
   private starting = false;
   private readonly testing: boolean;
   private delay_s: number;
+  private readonly idle_delay_s: number;
+  private readonly active_grace_ms: number;
+  private lastClientActivityMs: number;
+  private pollMode: "active" | "idle" = "active";
   private tmpIsMemoryBased?: boolean;
   private cgroupFilesAreMissing: boolean = false;
   private readonly snapshotProvider: ProcessSnapshotProvider;
@@ -101,6 +107,25 @@ export class ProjectInfoServer extends EventEmitter {
         10,
       ) || DEFAULT_INTERVAL_S,
     );
+    this.idle_delay_s = Math.max(
+      this.delay_s,
+      Number.parseInt(
+        process.env.COCALC_PROJECT_INFO_IDLE_INTERVAL_S ??
+          `${DEFAULT_IDLE_INTERVAL_S}`,
+        10,
+      ) || DEFAULT_IDLE_INTERVAL_S,
+    );
+    this.active_grace_ms =
+      1000 *
+      Math.max(
+        1,
+        Number.parseInt(
+          process.env.COCALC_PROJECT_INFO_ACTIVE_GRACE_S ??
+            `${DEFAULT_ACTIVE_GRACE_S}`,
+          10,
+        ) || DEFAULT_ACTIVE_GRACE_S,
+      );
+    this.lastClientActivityMs = Date.now();
     this.testing = testing;
     this.dbg = L;
     const scope = getProjectInfoScopeFromEnv();
@@ -120,6 +145,24 @@ export class ProjectInfoServer extends EventEmitter {
 
   public latest(): ProjectInfo | undefined {
     return this.last;
+  }
+
+  // Called by request/response APIs to indicate there is active UI interest.
+  public noteClientActivity(timestamp = Date.now()): void {
+    this.lastClientActivityMs = timestamp;
+  }
+
+  private currentDelaySeconds(now = Date.now()): number {
+    const isActive = now - this.lastClientActivityMs <= this.active_grace_ms;
+    const mode: "active" | "idle" = isActive ? "active" : "idle";
+    if (mode !== this.pollMode) {
+      this.pollMode = mode;
+      this.dbg("polling mode changed", {
+        mode,
+        interval_s: mode === "active" ? this.delay_s : this.idle_delay_s,
+      });
+    }
+    return mode === "active" ? this.delay_s : this.idle_delay_s;
   }
 
   // for a process we know (pid, etc.) we try to map to cocalc specific information
@@ -597,7 +640,11 @@ export class ProjectInfoServer extends EventEmitter {
   }
 
   private async _start(): Promise<void> {
-    this.dbg("start", { interval_s: this.delay_s });
+    this.dbg("start", {
+      interval_s: this.delay_s,
+      idle_interval_s: this.idle_delay_s,
+      active_grace_s: Math.round(this.active_grace_ms / 1000),
+    });
     if (this.running) {
       throw Error("Cannot start ProjectInfoServer twice");
     }
@@ -614,7 +661,7 @@ export class ProjectInfoServer extends EventEmitter {
         if (info != null) this.last = info;
         this.emit("info", info ?? this.last);
         if (this.running) {
-          await delay(1000 * this.delay_s);
+          await delay(1000 * this.currentDelaySeconds());
         } else {
           this.dbg("start: no longer running -> stopping loop");
           return;
