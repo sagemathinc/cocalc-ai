@@ -1205,13 +1205,8 @@ export class CodexExecAgent implements AcpAgent {
   private toHomeRelative(pathAbs: string, cwd: string): string {
     if (!pathAbs) return pathAbs;
     if (!pathAbs.startsWith("/")) return pathAbs;
-    const home = process.env.HOME || "";
-    if (home && pathAbs.startsWith(home + path.sep)) {
-      const relHome = path.relative(home, pathAbs);
-      if (relHome && !relHome.startsWith("..") && !path.isAbsolute(relHome)) {
-        return relHome;
-      }
-    }
+    // Prefer cwd-relative paths so frontend links remain unambiguous and don't
+    // accidentally get re-resolved against a different base.
     const rel = path.relative(cwd, pathAbs);
     if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
       return pathAbs;
