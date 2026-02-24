@@ -6,13 +6,13 @@ import {
   Modal,
   Space,
   Tag,
+  Tooltip,
   Typography,
   message as antdMessage,
 } from "antd";
 import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  redux,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -27,14 +27,16 @@ import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { Loading } from "@cocalc/frontend/components";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { lite } from "@cocalc/frontend/lite";
 import {
+  getChatActions,
   initChat,
-  removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
+import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { path_split } from "@cocalc/util/misc";
@@ -224,23 +226,8 @@ export function NavigatorShell({
 
   const projectActions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
+  const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
   const available_features = useTypedRedux({ project_id }, "available_features");
-  const [actions, setActions] = useState<ChatActions | null>(null);
-  const [error, setError] = useState<string>("");
-  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
-  const [cacheVersion, setCacheVersion] = useState(0);
-  const [isArchiving, setIsArchiving] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [settingsName, setSettingsName] = useState("");
-  const [settingsColor, setSettingsColor] = useState<string | undefined>(undefined);
-  const [settingsIcon, setSettingsIcon] = useState<string | undefined>(undefined);
-  const [settingsImage, setSettingsImage] = useState("");
-  const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
-  const lastIndexedValueRef = useRef<string>("");
-  const preferredThreadKeyRef = useRef<string | undefined>(
-    loadNavigatorSelectedThreadKey(project_id),
-  );
 
   const homeDirectory = useMemo(() => {
     if (!lite) {
@@ -256,28 +243,68 @@ export function NavigatorShell({
     return normalizeAbsolutePath(navigatorChatPath(account_id), homeDirectory);
   }, [account_id, homeDirectory]);
 
+  const [actions, setActions] = useState<ChatActions | null>(() => {
+    if (!navigatorPath) return null;
+    return (
+      getChatActions(project_id, navigatorPath, {
+        instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+      }) ?? null
+    );
+  });
+  const [error, setError] = useState<string>("");
+  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [cacheVersion, setCacheVersion] = useState(0);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsName, setSettingsName] = useState("");
+  const [settingsColor, setSettingsColor] = useState<string | undefined>(undefined);
+  const [settingsIcon, setSettingsIcon] = useState<string | undefined>(undefined);
+  const [settingsImage, setSettingsImage] = useState("");
+  const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
+  const lastIndexedValueRef = useRef<string>("");
+  const preferredThreadKeyRef = useRef<string | undefined>(
+    loadNavigatorSelectedThreadKey(project_id),
+  );
+  const {
+    fontSize,
+    increaseFontSize,
+    decreaseFontSize,
+    canIncreaseFontSize,
+    canDecreaseFontSize,
+  } = useAgentChatFontSize(accountFontSize);
+
   useEffect(() => {
     if (!navigatorPath || !projectActions) return;
     let mounted = true;
-    let chatActions: ChatActions | undefined;
     setError("");
-    setActions(null);
-    setSelectedThreadKey(null);
+    const sharedActions = getChatActions(project_id, navigatorPath, {
+      instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+    });
+    if (sharedActions) {
+      setActions((current) => (current === sharedActions ? current : sharedActions));
+      return () => {
+        mounted = false;
+      };
+    }
+
+    setActions((current) => {
+      const currentPath = current?.store?.get?.("path");
+      if (typeof currentPath === "string" && currentPath !== navigatorPath) {
+        return null;
+      }
+      return current;
+    });
 
     const run = async () => {
       try {
         const fs = projectActions.fs();
         await fs.mkdir(path_split(navigatorPath).head, { recursive: true });
         if (!mounted) return;
-        chatActions = initChat(project_id, navigatorPath, {
+        const chatActions = initChat(project_id, navigatorPath, {
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
-        if (!mounted) {
-          removeChatWithInstance(navigatorPath, redux, project_id, {
-            instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-          });
-          return;
-        }
+        if (!mounted) return;
         setActions(chatActions);
       } catch (err) {
         if (!mounted) return;
@@ -289,12 +316,6 @@ export function NavigatorShell({
 
     return () => {
       mounted = false;
-      if (chatActions) {
-        setActions((current) => (current === chatActions ? null : current));
-        removeChatWithInstance(navigatorPath, redux, project_id, {
-          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-        });
-      }
     };
   }, [projectActions, project_id, navigatorPath]);
 
@@ -782,6 +803,38 @@ export function NavigatorShell({
     return <Loading theme="medium" />;
   }
 
+  const fontControls = (
+    <Space size={[4, 0]} wrap>
+      <Tooltip title="Decrease chat font size">
+        <Button
+          size="small"
+          type="text"
+          disabled={!canDecreaseFontSize}
+          onClick={decreaseFontSize}
+          style={{ minWidth: 24, padding: "0 4px" }}
+        >
+          <Icon name="minus" />
+        </Button>
+      </Tooltip>
+      <Tooltip title={`Agent chat font size: ${fontSize}px`}>
+        <Typography.Text style={{ minWidth: 28, textAlign: "center" }}>
+          {fontSize}
+        </Typography.Text>
+      </Tooltip>
+      <Tooltip title="Increase chat font size">
+        <Button
+          size="small"
+          type="text"
+          disabled={!canIncreaseFontSize}
+          onClick={increaseFontSize}
+          style={{ minWidth: 24, padding: "0 4px" }}
+        >
+          <Icon name="plus" />
+        </Button>
+      </Tooltip>
+    </Space>
+  );
+
   return (
     <div>
       <Space
@@ -797,6 +850,7 @@ export function NavigatorShell({
           <Typography.Text strong>{threadTitle}</Typography.Text>
         </Space>
         <Space size={[4, 4]} wrap>
+          {fontControls}
           <Dropdown
             trigger={["click"]}
             menu={{ items: actionItems, onClick: onActionMenuClick }}
@@ -894,6 +948,7 @@ export function NavigatorShell({
               path={navigatorPath}
               hideSidebar
               desc={desc}
+              fontSize={fontSize}
             />
           </FileContext.Provider>
         ) : (
