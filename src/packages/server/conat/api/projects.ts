@@ -719,11 +719,19 @@ export async function moveProject({
     input: lroInput,
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
-  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("moveProject: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  }
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -735,7 +743,13 @@ export async function moveProject({
       message: "queued",
       progress: 0,
     },
-  }).catch(() => {});
+  }).catch((err) => {
+    log.warn("moveProject: unable to publish queued progress event", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  });
 
   return {
     op_id: op.op_id,

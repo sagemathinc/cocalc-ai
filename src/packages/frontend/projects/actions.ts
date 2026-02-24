@@ -1000,7 +1000,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
-  }) => {
+  }): Promise<
+    | {
+        op_id?: string;
+        scope_type?: LroSummary["scope_type"];
+        scope_id?: string;
+      }
+    | null
+  > => {
     try {
       return await webapp_client.conat_client.hub.projects.moveProject({
         project_id,
@@ -1022,7 +1029,88 @@ export class ProjectsActions extends Actions<ProjectsState> {
           });
         }
       }
+      if (this.isTimeoutError(err)) {
+        const op = await this.findRecentMoveOp({
+          project_id,
+          dest_host_id,
+        });
+        if (op) {
+          console.warn(
+            "requestMoveProject timed out but recovered recent move operation",
+            { project_id, dest_host_id, op_id: op.op_id },
+          );
+          return op;
+        }
+      }
       throw err;
+    }
+  };
+
+  private isTimeoutError(err: unknown): boolean {
+    const text = `${err}`.toLowerCase();
+    return (
+      text.includes("timeout") ||
+      text.includes("timed out") ||
+      text.includes("code='408'") ||
+      text.includes("code=408")
+    );
+  }
+
+  private lroTime(summary: LroSummary): number {
+    const candidate =
+      summary.updated_at ?? summary.started_at ?? summary.created_at;
+    const ts = new Date(candidate as any).getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  private findRecentMoveOp = async ({
+    project_id,
+    dest_host_id,
+  }: {
+    project_id: string;
+    dest_host_id?: string;
+  }): Promise<
+    | {
+        op_id: string;
+        scope_type: LroSummary["scope_type"];
+        scope_id: string;
+      }
+    | undefined
+  > => {
+    try {
+      const ops = await webapp_client.conat_client.hub.lro.list({
+        scope_type: "project",
+        scope_id: project_id,
+        include_completed: true,
+      });
+      const now = Date.now();
+      const candidates = ops
+        .filter((op) => op.kind === "project-move")
+        .filter((op) => !op.dismissed_at)
+        .filter((op) =>
+          dest_host_id
+            ? op.input?.dest_host_id == null ||
+              op.input?.dest_host_id === dest_host_id
+            : true,
+        )
+        .sort((a, b) => this.lroTime(b) - this.lroTime(a));
+      const latest = candidates[0];
+      if (!latest) return;
+      if (now - this.lroTime(latest) > 3 * 60 * 1000) {
+        return;
+      }
+      return {
+        op_id: latest.op_id,
+        scope_type: latest.scope_type,
+        scope_id: latest.scope_id,
+      };
+    } catch (lookupErr) {
+      console.warn("findRecentMoveOp failed", {
+        project_id,
+        dest_host_id,
+        err: `${lookupErr}`,
+      });
+      return;
     }
   };
 

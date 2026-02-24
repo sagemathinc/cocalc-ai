@@ -52,6 +52,22 @@ function publishSummary(summary: LroSummary) {
   });
 }
 
+async function publishSummarySafe(
+  summary: LroSummary | undefined,
+  context: { op_id: string; when: string },
+) {
+  if (!summary) return;
+  try {
+    await publishSummary(summary);
+  } catch (err) {
+    logger.warn("move op publish summary failed", {
+      op_id: context.op_id,
+      when: context.when,
+      err,
+    });
+  }
+}
+
 function progressEvent({
   op,
   update,
@@ -99,9 +115,10 @@ async function updateProgressSummary(op: LroSummary, update: MoveProjectProgress
       ...(update.detail ?? {}),
     },
   });
-  if (updated) {
-    await publishSummary(updated);
-  }
+  await publishSummarySafe(updated, {
+    op_id: op.op_id,
+    when: "progress",
+  });
 }
 
 async function handleMoveOp(op: LroSummary): Promise<void> {
@@ -117,9 +134,10 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
       status: "failed",
       error: "move op missing project_id or account",
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "invalid-input",
+    });
     return;
   }
 
@@ -201,9 +219,10 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
       result: { project_id, dest_host_id },
       error: null,
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "succeeded",
+    });
   } catch (err) {
     const isCanceled = (err as any)?.code === MOVE_CANCELED_CODE;
     if (isCanceled) {
@@ -213,9 +232,10 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
         status: "canceled",
         error: "canceled",
       });
-      if (updated) {
-        await publishSummary(updated);
-      }
+      await publishSummarySafe(updated, {
+        op_id,
+        when: "canceled",
+      });
       await progress({ step: "done", message: "canceled" });
       return;
     }
@@ -225,9 +245,10 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
       status: "failed",
       error: `${err}`,
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "failed",
+    });
     await progress({ step: "done", message: "failed", detail: { error: `${err}` } });
   } finally {
     clearInterval(heartbeat);
@@ -243,6 +264,15 @@ async function markMoveOpFailedFromWorker({
   err: unknown;
 }): Promise<void> {
   try {
+    const current = await getLro(op_id);
+    if (current?.status === "succeeded" || current?.status === "canceled") {
+      logger.warn("move op worker error ignored because op is already terminal", {
+        op_id,
+        status: current.status,
+        err,
+      });
+      return;
+    }
     const updated = await updateLro({
       op_id,
       status: "failed",
