@@ -65,6 +65,27 @@ export function useChatThreadSelection({
 
   useEffect(() => {
     if (threads.length === 0) {
+      const explicitRequestedThread =
+        storedThreadFromDesc != null &&
+        storedThreadFromDesc !== "" &&
+        storedThreadFromDesc !== COMBINED_FEED_KEY;
+      if (explicitRequestedThread) {
+        if (selectedThreadKey !== storedThreadFromDesc) {
+          setSelectedThreadKey(storedThreadFromDesc);
+        }
+        setAllowAutoSelectThread(false);
+        return;
+      }
+      // Preserve a concrete selected thread while metadata hydrates.
+      // Embedded/flyout agent views pass a specific thread key and should not
+      // briefly fall back to "new chat" during transient empty-thread states.
+      if (
+        selectedThreadKey != null &&
+        selectedThreadKey !== "" &&
+        selectedThreadKey !== COMBINED_FEED_KEY
+      ) {
+        return;
+      }
       if (selectedThreadKey !== null) {
         setSelectedThreadKey(null);
       }
