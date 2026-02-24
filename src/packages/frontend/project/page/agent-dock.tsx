@@ -23,7 +23,6 @@ import {
 import {
   getChatActions,
   initChat,
-  isChatActions,
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
@@ -33,7 +32,6 @@ import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
-import { NAVIGATOR_CHAT_INSTANCE_KEY } from "@cocalc/frontend/project/new/navigator-shell";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import {
   AGENT_DOCK_CLOSE_EVENT,
@@ -136,18 +134,6 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       if (!detail || detail.projectId !== project_id) return;
       setSession(detail.session);
       setError("");
-      const directActions = redux.getEditorActions(
-        project_id,
-        detail.session.chat_path,
-      );
-      const sharedActions =
-        (isChatActions(directActions) ? directActions : undefined) ??
-        getChatActions(project_id, detail.session.chat_path, {
-          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-        });
-      if (sharedActions) {
-        setChatActions(sharedActions);
-      }
     };
     const onClose = (evt: Event) => {
       const detail = (evt as CustomEvent<AgentDockCloseDetail>).detail;
@@ -175,14 +161,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     let ownsChatInstance = false;
     setError("");
     try {
-      const directActions = redux.getEditorActions(project_id, chatPath);
-      const sharedActions =
-        (isChatActions(directActions) ? directActions : undefined) ??
-        getChatActions(project_id, chatPath, {
-          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-        });
-      if (sharedActions) {
-        setChatActions(sharedActions);
+      const existingDockActions = getChatActions(project_id, chatPath, {
+        instanceKey: AGENT_DOCK_CHAT_INSTANCE_KEY,
+      });
+      if (existingDockActions) {
+        setChatActions(existingDockActions);
         return () => {
           mounted = false;
         };

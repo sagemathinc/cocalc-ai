@@ -55,7 +55,6 @@ import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-do
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
-import { NAVIGATOR_CHAT_INSTANCE_KEY } from "@cocalc/frontend/project/new/navigator-shell";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
@@ -374,14 +373,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setInlineError("");
 
     try {
-      const directActions = redux.getEditorActions(project_id, chatPath);
-      const sharedActions =
-        (isChatActions(directActions) ? directActions : undefined) ??
-        getChatActions(project_id, chatPath, {
-          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-        });
-      if (sharedActions) {
-        setInlineActions(sharedActions);
+      const existingInlineActions = getChatActions(project_id, chatPath, {
+        instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+      });
+      if (existingInlineActions) {
+        setInlineActions(existingInlineActions);
         return () => {
           mounted = false;
         };
@@ -459,14 +455,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   function openInlineSession(record: AgentSessionRecord): void {
     setInlineSessionId(record.session_id);
     setInlineError("");
-    const directActions = redux.getEditorActions(project_id, record.chat_path);
-    const sharedActions =
-      (isChatActions(directActions) ? directActions : undefined) ??
-      getChatActions(project_id, record.chat_path, {
-        instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-      });
-    if (sharedActions) {
-      setInlineActions(sharedActions);
+    const existingInlineActions = getChatActions(project_id, record.chat_path, {
+      instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+    });
+    if (existingInlineActions) {
+      setInlineActions(existingInlineActions);
     }
   }
 
@@ -653,10 +646,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const sharedActions =
       (isChatActions(directActions) ? directActions : undefined) ??
       getChatActions(project_id, record.chat_path, {
-        instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
       }) ??
       getChatActions(project_id, record.chat_path, {
-        instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+        instanceKey: AGENTS_PIN_CHAT_INSTANCE_KEY,
       });
     if (sharedActions) {
       return { chatActions: sharedActions };
