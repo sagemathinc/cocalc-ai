@@ -471,7 +471,7 @@ export async function moveProjectToHost(
   }
   progress({
     step: "placement",
-    message: "updating project placement",
+    message: "updating workspace placement",
     detail: { dest_host_id: context.dest_host_id },
   });
   try {
@@ -495,7 +495,7 @@ export async function moveProjectToHost(
   if (startDest) {
     progress({
       step: "start-dest",
-      message: "starting project on destination host",
+      message: "starting workspace on destination host",
       detail: { dest_host_id: context.dest_host_id },
     });
     try {
@@ -524,7 +524,7 @@ export async function moveProjectToHost(
       }
       progress({
         step: "start-dest",
-        message: "destination project started",
+        message: "destination workspace started",
         detail: { dest_host_id: context.dest_host_id },
       });
       log.info("moveProjectToHost started project on destination host", {
@@ -535,7 +535,7 @@ export async function moveProjectToHost(
       if (stopDestAfterStart) {
         progress({
           step: "start-dest",
-          message: "stopping destination project after restore",
+          message: "stopping destination workspace after restore",
           detail: { dest_host_id: context.dest_host_id },
         });
         await stopProjectOnHost(context.project_id, {
@@ -543,7 +543,7 @@ export async function moveProjectToHost(
         });
         progress({
           step: "start-dest",
-          message: "destination project stopped after restore",
+          message: "destination workspace stopped after restore",
           detail: { dest_host_id: context.dest_host_id },
         });
         log.info("moveProjectToHost stopped destination project after restore", {
