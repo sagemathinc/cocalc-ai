@@ -12,9 +12,37 @@ import { ChatActions } from "./actions";
 import { ChatStore } from "./store";
 import { ChatMessageCache } from "@cocalc/frontend/chat/message-cache";
 
+interface ChatInstanceOptions {
+  instanceKey?: string;
+}
+
+function chatReduxName({
+  project_id,
+  path,
+  instanceKey,
+}: {
+  project_id: string;
+  path: string;
+  instanceKey?: string;
+}): string {
+  const keyPath =
+    typeof instanceKey === "string" && instanceKey.trim().length > 0
+      ? `${path}#${instanceKey.trim()}`
+      : path;
+  return redux_name(project_id, keyPath);
+}
+
 // it is fine to call this more than once.
-export function initChat(project_id: string, path: string): ChatActions {
-  const name = redux_name(project_id, path);
+export function initChat(
+  project_id: string,
+  path: string,
+  opts?: ChatInstanceOptions,
+): ChatActions {
+  const name = chatReduxName({
+    project_id,
+    path,
+    instanceKey: opts?.instanceKey,
+  });
   if (redux.getActions(name) != null) {
     return redux.getActions(name); // already initialized
   }
@@ -62,7 +90,28 @@ export function initChat(project_id: string, path: string): ChatActions {
 }
 
 export function remove(path: string, redux, project_id: string): string {
-  const name = redux_name(project_id, path);
+  const name = chatReduxName({
+    project_id,
+    path,
+  });
+  return removeByName(name, redux);
+}
+
+export function removeWithInstance(
+  path: string,
+  redux,
+  project_id: string,
+  opts?: ChatInstanceOptions,
+): string {
+  const name = chatReduxName({
+    project_id,
+    path,
+    instanceKey: opts?.instanceKey,
+  });
+  return removeByName(name, redux);
+}
+
+function removeByName(name: string, redux): string {
   const actions = redux.getActions(name);
   // Dispose per-chat resources before tearing down redux.
   actions?.dispose?.();

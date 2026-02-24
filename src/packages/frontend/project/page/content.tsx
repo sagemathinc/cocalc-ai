@@ -184,7 +184,7 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "users":
       return <ProjectCollaboratorsPage />;
     case "agents":
-      return <AgentsPanel project_id={project_id} />;
+      return <AgentsPanel project_id={project_id} layout="page" />;
     default:
       // check for "editor-[filename]"
       if (!tab_name.startsWith("editor-")) {

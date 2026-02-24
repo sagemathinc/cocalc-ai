@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Empty, List, Space, Tag, Typography } from "antd";
+import { Alert, Button, Empty, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
@@ -15,6 +15,7 @@ import {
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
+import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 
@@ -39,6 +40,12 @@ function shortAccountId(accountId?: string): string {
   return `${accountId.slice(0, 8)}...`;
 }
 
+function ellipsize(value: string, max = 72): string {
+  if (!value) return "";
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1)}...`;
+}
+
 interface AgentsFlyoutProps {
   project_id: string;
   wrap: (content: React.JSX.Element, style?: React.CSSProperties) => React.JSX.Element;
@@ -46,9 +53,10 @@ interface AgentsFlyoutProps {
 
 interface AgentsPanelProps {
   project_id: string;
+  layout?: "flyout" | "page";
 }
 
-export function AgentsPanel({ project_id }: AgentsPanelProps) {
+export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
@@ -57,13 +65,9 @@ export function AgentsPanel({ project_id }: AgentsPanelProps) {
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string>("");
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
+  const isFlyout = layout === "flyout";
 
   useEffect(() => {
-    if (typeof account_id !== "string" || account_id.trim().length === 0) {
-      setSessions([]);
-      setLoading(false);
-      return;
-    }
     let closed = false;
     let unsubscribe: (() => void) | undefined;
     setError("");
@@ -126,58 +130,97 @@ export function AgentsPanel({ project_id }: AgentsPanelProps) {
   }
 
   function renderSession(record: AgentSessionRecord): React.JSX.Element {
+    const image = record.thread_image?.trim() || undefined;
+    const icon = record.thread_icon?.trim() || undefined;
+    const color = record.thread_color?.trim() || undefined;
     return (
-      <List.Item
-        key={record.session_id}
-        actions={[
-          <Button
-            key="resume"
-            size="small"
-            type="link"
-            onClick={() => openNavigatorSession(record)}
+      <div key={record.session_id}>
+        <div
+          style={{
+            width: "100%",
+            border: "1px solid #e8e8e8",
+            borderRadius: 8,
+            padding: isFlyout ? 10 : 12,
+            background: "#fff",
+            borderLeft: color ? `4px solid ${color}` : undefined,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              marginBottom: 6,
+            }}
           >
-            Resume
-          </Button>,
-          <Button
-            key="open-chat"
-            size="small"
-            type="link"
-            onClick={() => actions?.open_file({ path: record.chat_path })}
-          >
-            Open Chat File
-          </Button>,
-          <Button
-            key="archive"
-            size="small"
-            type="link"
-            disabled={updatingSessionId === record.session_id}
-            onClick={() => void toggleArchive(record)}
-          >
-            {record.status === "archived" ? "Unarchive" : "Archive"}
-          </Button>,
-        ]}
-      >
-        <List.Item.Meta
-          title={
-            <Space size="small">
-              <Typography.Text strong>{record.title || "Navigator session"}</Typography.Text>
-              <Tag color={STATUS_COLORS[record.status] ?? "default"}>
-                {record.status}
-              </Tag>
-            </Space>
-          }
-          description={
-            <Space size="small" wrap>
-              <Tag>{shortAccountId(record.account_id)}</Tag>
-              {record.model ? <Tag>{record.model}</Tag> : null}
-              {record.mode ? <Tag>{record.mode}</Tag> : null}
-              <Typography.Text type="secondary">
-                Updated: {formatUpdated(record.updated_at)}
-              </Typography.Text>
-            </Space>
-          }
-        />
-      </List.Item>
+            <ThreadBadge
+              image={image}
+              icon={icon}
+              color={color}
+              fallbackIcon="comment"
+              size={isFlyout ? 24 : 26}
+              style={{ marginTop: 1 }}
+            />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <Typography.Text strong title={record.title || "Navigator session"}>
+                  {ellipsize(record.title || "Navigator session", isFlyout ? 48 : 72)}
+                </Typography.Text>
+                <Tag
+                  color={STATUS_COLORS[record.status] ?? "default"}
+                  style={{ marginInlineEnd: 0 }}
+                >
+                  {record.status}
+                </Tag>
+              </div>
+              <Space size={[6, 6]} wrap style={{ marginTop: 6 }}>
+                <Tag>{shortAccountId(record.account_id)}</Tag>
+                {record.model ? (
+                  <Tag title={record.model}>{ellipsize(record.model, isFlyout ? 28 : 36)}</Tag>
+                ) : null}
+                {record.mode ? <Tag>{record.mode}</Tag> : null}
+              </Space>
+            </div>
+          </div>
+          <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
+            Updated: {formatUpdated(record.updated_at)}
+          </Typography.Text>
+          <Space size={[6, 0]} wrap>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => openNavigatorSession(record)}
+            >
+              Resume
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => actions?.open_file({ path: record.chat_path })}
+            >
+              Open Chat File
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              disabled={updatingSessionId === record.session_id}
+              onClick={() => void toggleArchive(record)}
+            >
+              {record.status === "archived" ? "Unarchive" : "Archive"}
+            </Button>
+          </Space>
+        </div>
+      </div>
     );
   }
 
@@ -186,7 +229,17 @@ export function AgentsPanel({ project_id }: AgentsPanelProps) {
   }
 
   return (
-    <div>
+    <div
+      style={
+        isFlyout
+          ? undefined
+          : {
+              maxWidth: 1200,
+              margin: "0 auto",
+              padding: "12px 16px 24px",
+            }
+      }
+    >
       {error ? (
         <Alert
           type="error"
@@ -195,9 +248,11 @@ export function AgentsPanel({ project_id }: AgentsPanelProps) {
           style={{ marginBottom: 8 }}
         />
       ) : null}
-      <div style={{ marginBottom: 8 }}>
-        <Space>
-          <Typography.Text strong>Recent agent sessions</Typography.Text>
+      <div style={{ marginBottom: 12 }}>
+        <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+          Recent agent sessions
+        </Typography.Text>
+        <Space size={[6, 6]} wrap>
           <Button
             size="small"
             type={scope === "mine" ? "primary" : "default"}
@@ -215,6 +270,7 @@ export function AgentsPanel({ project_id }: AgentsPanelProps) {
           <Button
             size="small"
             type="link"
+            style={{ paddingLeft: 0 }}
             onClick={() => setShowArchived((v) => !v)}
           >
             {showArchived ? "Hide archived" : "Show archived"}
@@ -227,16 +283,22 @@ export function AgentsPanel({ project_id }: AgentsPanelProps) {
           description={"No indexed sessions yet"}
         />
       ) : (
-        <List
-          dataSource={visibleSessions}
-          renderItem={(session) => renderSession(session)}
-          size="small"
-        />
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isFlyout
+              ? "1fr"
+              : "repeat(auto-fill, minmax(360px, 1fr))",
+            gap: isFlyout ? 8 : 12,
+          }}
+        >
+          {visibleSessions.map((session) => renderSession(session))}
+        </div>
       )}
     </div>
   );
 }
 
 export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
-  return wrap(<AgentsPanel project_id={project_id} />);
+  return wrap(<AgentsPanel project_id={project_id} layout="flyout" />);
 }

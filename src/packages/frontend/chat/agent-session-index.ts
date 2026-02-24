@@ -33,6 +33,9 @@ export interface AgentSessionRecord {
   mode?: "read-only" | "workspace-write" | "full-access";
   model?: string;
   reasoning?: string;
+  thread_color?: string;
+  thread_icon?: string;
+  thread_image?: string;
   last_error?: string;
 }
 
@@ -74,10 +77,14 @@ async function getStore(project_id: string): Promise<DKV<AgentSessionRecord>> {
 export async function upsertAgentSessionRecord(
   record: AgentSessionRecord,
 ): Promise<void> {
-  const store = await getStore(record.project_id);
   const key = sessionKey(record.project_id, record.session_id);
-  const prev = store.get(key);
-  store.set(key, prev ? { ...prev, ...record } : record);
+  try {
+    const store = await getStore(record.project_id);
+    const prev = store.get(key);
+    store.set(key, prev ? { ...prev, ...record } : record);
+  } catch (err) {
+    throw err;
+  }
 }
 
 export async function deleteAgentSessionRecord(opts: {

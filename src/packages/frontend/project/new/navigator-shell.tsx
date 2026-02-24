@@ -1,4 +1,16 @@
-import { Alert, Button, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Input,
+  Modal,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+  message as antdMessage,
+} from "antd";
+import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   redux,
@@ -6,14 +18,22 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import { ChatIconPicker } from "@cocalc/frontend/chat/chat-icon-picker";
 import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
   type AgentSessionStatus,
 } from "@cocalc/frontend/chat/agent-session-index";
+import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
+import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { Loading } from "@cocalc/frontend/components";
+import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { Icon } from "@cocalc/frontend/components/icon";
 import { lite } from "@cocalc/frontend/lite";
-import { initChat, remove as removeChat } from "@cocalc/frontend/chat/register";
+import {
+  initChat,
+  removeWithInstance as removeChatWithInstance,
+} from "@cocalc/frontend/chat/register";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { path_split } from "@cocalc/util/misc";
@@ -35,6 +55,8 @@ interface NavigatorShellProps {
   project_id: string;
   defaultTargetProjectId?: string;
 }
+
+const NAVIGATOR_CHAT_INSTANCE_KEY = "navigator-shell";
 
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -120,6 +142,7 @@ function buildSessionRecord({
   navigatorPath,
   threadKey,
   thread,
+  threadMetadata,
   status,
 }: {
   project_id: string;
@@ -127,10 +150,13 @@ function buildSessionRecord({
   navigatorPath: string;
   threadKey: string;
   thread: any;
+  threadMetadata?: any;
   status: AgentSessionStatus;
 }): AgentSessionRecord {
   const rootMessage: any = thread?.rootMessage ?? {};
-  const acpConfig: any = rootMessage?.acp_config ?? {};
+  const acpConfig: any = threadMetadata?.acp_config ?? rootMessage?.acp_config ?? {};
+  const titleFromMetadata =
+    typeof threadMetadata?.name === "string" ? threadMetadata.name.trim() : "";
   const sessionIdRaw =
     typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
       ? acpConfig.sessionId.trim()
@@ -149,7 +175,7 @@ function buildSessionRecord({
     account_id,
     chat_path: navigatorPath,
     thread_key: threadKey,
-    title: summarizeTitle(rootMessage),
+    title: titleFromMetadata || summarizeTitle(rootMessage),
     created_at: createdAt,
     updated_at: updatedAt,
     status,
@@ -167,6 +193,18 @@ function buildSessionRecord({
     model: typeof acpConfig?.model === "string" ? acpConfig.model : undefined,
     reasoning:
       typeof acpConfig?.reasoning === "string" ? acpConfig.reasoning : undefined,
+    thread_color:
+      typeof threadMetadata?.thread_color === "string"
+        ? threadMetadata.thread_color
+        : undefined,
+    thread_icon:
+      typeof threadMetadata?.thread_icon === "string"
+        ? threadMetadata.thread_icon
+        : undefined,
+    thread_image:
+      typeof threadMetadata?.thread_image === "string"
+        ? threadMetadata.thread_image
+        : undefined,
   };
 }
 
@@ -184,6 +222,13 @@ export function NavigatorShell({
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
   const [cacheVersion, setCacheVersion] = useState(0);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsName, setSettingsName] = useState("");
+  const [settingsColor, setSettingsColor] = useState<string | undefined>(undefined);
+  const [settingsIcon, setSettingsIcon] = useState<string | undefined>(undefined);
+  const [settingsImage, setSettingsImage] = useState("");
+  const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
   const lastIndexedValueRef = useRef<string>("");
   const preferredThreadKeyRef = useRef<string | undefined>(
     loadNavigatorSelectedThreadKey(project_id),
@@ -216,9 +261,13 @@ export function NavigatorShell({
         const fs = projectActions.fs();
         await fs.mkdir(path_split(navigatorPath).head, { recursive: true });
         if (!mounted) return;
-        chatActions = initChat(project_id, navigatorPath);
+        chatActions = initChat(project_id, navigatorPath, {
+          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        });
         if (!mounted) {
-          removeChat(navigatorPath, redux, project_id);
+          removeChatWithInstance(navigatorPath, redux, project_id, {
+            instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+          });
           return;
         }
         setActions(chatActions);
@@ -234,32 +283,61 @@ export function NavigatorShell({
       mounted = false;
       if (chatActions) {
         setActions((current) => (current === chatActions ? null : current));
-        removeChat(navigatorPath, redux, project_id);
+        removeChatWithInstance(navigatorPath, redux, project_id, {
+          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        });
       }
     };
   }, [projectActions, project_id, navigatorPath]);
 
   useEffect(() => {
-    if (!actions?.messageCache) return;
-    const onVersion = () => {
-      const preferred = preferredThreadKeyRef.current;
-      setSelectedThreadKey((current) => {
-        if (current === "") {
-          return current;
-        }
-        const index = actions.messageCache?.getThreadIndex();
-        if (current && index?.has(current)) {
-          return current;
-        }
-        return chooseThreadKey(actions, preferred);
-      });
-      preferredThreadKeyRef.current = undefined;
-      setCacheVersion((v) => v + 1);
+    if (!actions) return;
+    let detached = false;
+    let poller: ReturnType<typeof setInterval> | undefined;
+    let detachListener: (() => void) | undefined;
+
+    const attach = (): boolean => {
+      if (detached || detachListener) return true;
+      const cache = actions.messageCache;
+      if (!cache) return false;
+      const onVersion = () => {
+        const index = cache.getThreadIndex();
+        const preferred = preferredThreadKeyRef.current;
+        setSelectedThreadKey((current) => {
+          if (current === "") {
+            return current;
+          }
+          if (current && index?.has(current)) {
+            return current;
+          }
+          return chooseThreadKey(actions, preferred);
+        });
+        preferredThreadKeyRef.current = undefined;
+        setCacheVersion((v) => v + 1);
+      };
+      cache.on("version", onVersion);
+      onVersion();
+      detachListener = () => {
+        cache.removeListener("version", onVersion);
+      };
+      return true;
     };
-    actions.messageCache.on("version", onVersion);
-    onVersion();
+
+    if (!attach()) {
+      poller = setInterval(() => {
+        if (attach() && poller) {
+          clearInterval(poller);
+          poller = undefined;
+        }
+      }, 250);
+    }
+
     return () => {
-      actions.messageCache?.removeListener("version", onVersion);
+      detached = true;
+      if (poller) {
+        clearInterval(poller);
+      }
+      detachListener?.();
     };
   }, [actions]);
 
@@ -312,11 +390,37 @@ export function NavigatorShell({
   }, [selectedThread]);
 
   const selectedAcpConfig = useMemo(() => {
-    return selectedRootMessage?.acp_config ?? {};
-  }, [selectedRootMessage]);
+    if (!actions || !selectedThreadKey) {
+      return selectedRootMessage?.acp_config ?? {};
+    }
+    const threadId =
+      typeof selectedRootMessage?.thread_id === "string"
+        ? selectedRootMessage.thread_id
+        : undefined;
+    const metadata = actions.getThreadMetadata(selectedThreadKey, {
+      threadId,
+    });
+    return metadata?.acp_config ?? selectedRootMessage?.acp_config ?? {};
+  }, [actions, selectedRootMessage, selectedThreadKey]);
+
+  const selectedThreadMetadata = useMemo(() => {
+    if (!actions || !selectedThreadKey) return undefined;
+    const threadId =
+      typeof selectedRootMessage?.thread_id === "string"
+        ? selectedRootMessage.thread_id
+        : undefined;
+    return actions.getThreadMetadata(selectedThreadKey, {
+      threadId,
+    });
+  }, [actions, selectedRootMessage, selectedThreadKey]);
 
   const selectedSessionRecord = useMemo(() => {
-    if (!selectedThreadKey || !selectedThread || typeof account_id !== "string") {
+    if (
+      !selectedThreadKey ||
+      !selectedThread ||
+      typeof account_id !== "string" ||
+      account_id.trim().length === 0
+    ) {
       return;
     }
     const status: AgentSessionStatus = selectedRootMessage?.generating
@@ -328,12 +432,14 @@ export function NavigatorShell({
       navigatorPath,
       threadKey: selectedThreadKey,
       thread: selectedThread,
+      threadMetadata: selectedThreadMetadata,
       status,
     });
   }, [
     account_id,
     navigatorPath,
     project_id,
+    selectedThreadMetadata,
     selectedRootMessage,
     selectedThread,
     selectedThreadKey,
@@ -343,11 +449,33 @@ export function NavigatorShell({
     if (!selectedSessionRecord) return;
     const serialized = JSON.stringify(selectedSessionRecord);
     if (lastIndexedValueRef.current === serialized) return;
-    lastIndexedValueRef.current = serialized;
-    void upsertAgentSessionRecord(selectedSessionRecord).catch((err) => {
-      console.warn("unable to update agent session index", err);
-    });
-  }, [selectedSessionRecord]);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        setSessionIndexRetry((v) => v + 1);
+      }
+    }, 2000);
+    void upsertAgentSessionRecord(selectedSessionRecord)
+      .then(() => {
+        if (cancelled) return;
+        clearTimeout(timer);
+        lastIndexedValueRef.current = serialized;
+      })
+      .catch(() => {
+        if (cancelled) return;
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    account_id,
+    project_id,
+    selectedSessionRecord,
+    selectedThread,
+    selectedThreadKey,
+    sessionIndexRetry,
+  ]);
 
   const submitIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
@@ -431,8 +559,59 @@ export function NavigatorShell({
 
   const threadTitle = useMemo(() => {
     if (!selectedThreadKey) return "New chat";
+    const name =
+      typeof selectedThreadMetadata?.name === "string"
+        ? selectedThreadMetadata.name.trim()
+        : "";
+    if (name) return name;
     return summarizeTitle(selectedRootMessage);
-  }, [selectedRootMessage, selectedThreadKey]);
+  }, [selectedRootMessage, selectedThreadKey, selectedThreadMetadata]);
+
+  function openThreadSettings(): void {
+    if (!selectedThreadKey) return;
+    const name =
+      typeof selectedThreadMetadata?.name === "string"
+        ? selectedThreadMetadata.name
+        : "";
+    setSettingsName(name || "");
+    setSettingsColor(
+      typeof selectedThreadMetadata?.thread_color === "string"
+        ? selectedThreadMetadata.thread_color
+        : undefined,
+    );
+    setSettingsIcon(
+      typeof selectedThreadMetadata?.thread_icon === "string"
+        ? selectedThreadMetadata.thread_icon
+        : undefined,
+    );
+    setSettingsImage(
+      typeof selectedThreadMetadata?.thread_image === "string"
+        ? selectedThreadMetadata.thread_image
+        : "",
+    );
+    setSettingsOpen(true);
+  }
+
+  async function saveThreadSettings(): Promise<void> {
+    if (!actions || !selectedThreadKey) return;
+    setSettingsSaving(true);
+    try {
+      const ok = actions.setThreadAppearance(selectedThreadKey, {
+        name: settingsName,
+        color: settingsColor,
+        icon: settingsIcon,
+        image: settingsImage,
+      });
+      if (!ok) {
+        antdMessage.error("Unable to save thread settings.");
+        return;
+      }
+      antdMessage.success("Thread settings saved.");
+      setSettingsOpen(false);
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
 
   async function archiveCurrentSession(): Promise<void> {
     if (!selectedSessionRecord) return;
@@ -474,6 +653,68 @@ export function NavigatorShell({
     });
   }
 
+  const actionItems = useMemo<MenuProps["items"]>(
+    () => [
+      { key: "new", label: "New Thread" },
+      {
+        key: "settings",
+        label: "Thread Settings...",
+        disabled: !selectedThreadKey,
+      },
+      { type: "divider" },
+      {
+        key: "clear",
+        label: "Clear Thread",
+        disabled: !selectedThreadKey,
+      },
+      {
+        key: "archive",
+        label:
+          selectedSessionRecord?.status === "archived"
+            ? "Archived"
+            : "Archive Thread",
+        disabled: !selectedSessionRecord || isArchiving,
+      },
+      { type: "divider" },
+      { key: "open-chat-file", label: "Open Chat File" },
+    ],
+    [isArchiving, selectedSessionRecord, selectedThreadKey],
+  );
+
+  const onActionMenuClick = useCallback<
+    NonNullable<MenuProps["onClick"]>
+  >(
+    ({ key }) => {
+      if (key === "new") {
+        startNewThread();
+        return;
+      }
+      if (key === "settings") {
+        openThreadSettings();
+        return;
+      }
+      if (key === "clear") {
+        Modal.confirm({
+          title: "Clear the current thread?",
+          content: "This deletes all messages in the selected thread.",
+          okText: "Clear",
+          okType: "danger",
+          cancelText: "Cancel",
+          onOk: clearCurrentThread,
+        });
+        return;
+      }
+      if (key === "archive") {
+        void archiveCurrentSession();
+        return;
+      }
+      if (key === "open-chat-file") {
+        openChatFile();
+      }
+    },
+    [archiveCurrentSession, clearCurrentThread, openChatFile, openThreadSettings, startNewThread],
+  );
+
   if (!navigatorPath) {
     return <Loading theme="medium" />;
   }
@@ -513,33 +754,17 @@ export function NavigatorShell({
           ) : null}
         </Space>
         <Space size={[4, 4]} wrap>
-          <Button size="small" onClick={startNewThread}>
-            New
-          </Button>
-          <Popconfirm
-            title="Clear the current thread?"
-            description="This deletes all messages in the selected thread."
-            okText="Clear"
-            okType="danger"
-            cancelText="Cancel"
-            onConfirm={clearCurrentThread}
-            disabled={!selectedThreadKey}
+          <Dropdown
+            trigger={["click"]}
+            menu={{ items: actionItems, onClick: onActionMenuClick }}
           >
-            <Button size="small" disabled={!selectedThreadKey}>
-              Clear
+            <Button size="small">
+              <Space size={6}>
+                <Icon name="ellipsis" />
+                Actions
+              </Space>
             </Button>
-          </Popconfirm>
-          <Button
-            size="small"
-            disabled={!selectedSessionRecord}
-            loading={isArchiving}
-            onClick={() => void archiveCurrentSession()}
-          >
-            Archive
-          </Button>
-          <Button size="small" onClick={openChatFile}>
-            Open Chat File
-          </Button>
+          </Dropdown>
         </Space>
       </Space>
       {selectedAcpConfig?.workingDirectory ? (
@@ -551,6 +776,75 @@ export function NavigatorShell({
           Working directory: {selectedAcpConfig.workingDirectory}
         </Typography.Text>
       ) : null}
+      <Modal
+        title="Thread Settings"
+        open={settingsOpen}
+        onCancel={() => setSettingsOpen(false)}
+        onOk={() => void saveThreadSettings()}
+        okText="Save"
+        confirmLoading={settingsSaving}
+        destroyOnHidden
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <ThreadBadge
+              icon={settingsIcon}
+              color={settingsColor}
+              image={settingsImage}
+              size={28}
+              fallbackIcon="comment"
+            />
+            <Typography.Text type="secondary">
+              Customize this navigator thread appearance.
+            </Typography.Text>
+          </div>
+          <div>
+            <div style={{ marginBottom: 4, color: "#666" }}>Title</div>
+            <Input
+              value={settingsName}
+              onChange={(e) => setSettingsName(e.target.value)}
+              placeholder="Thread title"
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4, color: "#666" }}>Icon</div>
+            <ChatIconPicker
+              value={settingsIcon}
+              onChange={setSettingsIcon}
+              modalTitle="Select Thread Icon"
+              placeholder="Select an icon"
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ color: "#666" }}>Color</div>
+            <ColorButton
+              title="Select Thread Color"
+              onChange={setSettingsColor}
+            />
+            {settingsColor ? (
+              <Tag
+                color={settingsColor}
+                style={{ margin: 0, color: "#111", border: "1px solid #ddd" }}
+              >
+                {settingsColor}
+              </Tag>
+            ) : null}
+            <Button size="small" onClick={() => setSettingsColor(undefined)}>
+              Clear
+            </Button>
+          </div>
+          <div>
+            <div style={{ marginBottom: 4, color: "#666" }}>Image</div>
+            <ThreadImageUpload
+              projectId={project_id}
+              value={settingsImage}
+              onChange={setSettingsImage}
+              modalTitle="Select Thread Image"
+              uploadText="Click or drag image"
+            />
+          </div>
+        </div>
+      </Modal>
       {error ? (
         <Alert type="error" message={error} showIcon style={{ marginBottom: 8 }} />
       ) : null}
