@@ -83,7 +83,6 @@ import { PublicPaths } from "./public-paths/public-paths";
 import { SettingsOverview } from "./settings-index";
 import MembershipBadge from "./membership-badge";
 import { lite, project_id } from "@cocalc/frontend/lite";
-import { AdminPage } from "@cocalc/frontend/admin";
 
 export const ACCOUNT_SETTINGS_ICON_NAME: IconName = "settings";
 
@@ -133,6 +132,16 @@ export const AccountPage: React.FC = () => {
   const kucalc = useTypedRedux("customize", "kucalc");
   const is_commercial = useTypedRedux("customize", "is_commercial");
   const get_api_key = useTypedRedux("page", "get_api_key");
+
+  useEffect(() => {
+    if (!lite) return;
+    if (active_page !== "admin") return;
+    redux.getActions("account").setState({
+      active_page: "index",
+      active_sub_tab: undefined,
+    });
+    redux.getActions("account").push_state(`/settings/index`);
+  }, [active_page]);
 
   function handle_select(key: MenuKey): void {
     switch (key) {
@@ -313,17 +322,6 @@ export const AccountPage: React.FC = () => {
         ],
       },
     ];
-    if (lite) {
-      items.push({
-        key: "admin",
-        label: (
-          <span>
-            <Icon name="users" /> Admin
-          </span>
-        ),
-        children: active_page === "admin" && <AdminPage />,
-      });
-    }
     // adds a few conditional tabs
     items.push({ type: "divider" });
 

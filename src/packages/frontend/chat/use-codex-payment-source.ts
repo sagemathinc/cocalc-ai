@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 
 export function getCodexPaymentSourceShortLabel(
   source: CodexPaymentSourceInfo["source"] | undefined,
 ): string {
+  if (lite) {
+    if (source === "subscription") return "ChatGPT Plan";
+    if (
+      source === "project-api-key" ||
+      source === "account-api-key" ||
+      source === "site-api-key"
+    ) {
+      return "OpenAI API Key";
+    }
+    return "Unconfigured";
+  }
   switch (source) {
     case "subscription":
       return "ChatGPT Plan";
@@ -24,6 +36,20 @@ export function getCodexPaymentSourceShortLabel(
 export function getCodexPaymentSourceLongLabel(
   source: CodexPaymentSourceInfo["source"] | undefined,
 ): string {
+  if (lite) {
+    if (source === "subscription") return "ChatGPT Plan";
+    if (
+      source === "project-api-key" ||
+      source === "account-api-key" ||
+      source === "site-api-key"
+    ) {
+      return "OpenAI API Key";
+    }
+    if (source === "shared-home") {
+      return "Local Codex auth";
+    }
+    return "Not configured";
+  }
   switch (source) {
     case "subscription":
       return "ChatGPT Plan";
@@ -44,6 +70,24 @@ export function getCodexPaymentSourceLongLabel(
 export function getCodexPaymentSourceTooltip(
   paymentSource?: CodexPaymentSourceInfo,
 ): string {
+  if (lite) {
+    if (!paymentSource) {
+      return "Checking local Codex configuration...";
+    }
+    switch (paymentSource.source) {
+      case "subscription":
+        return "Codex will use your ChatGPT Plan.";
+      case "project-api-key":
+      case "account-api-key":
+      case "site-api-key":
+        return "Codex will use your OpenAI API key.";
+      case "shared-home":
+        return "Codex will use local auth from ~/.codex.";
+      case "none":
+      default:
+        return "Configure either a ChatGPT Plan or an OpenAI API key.";
+    }
+  }
   if (!paymentSource) {
     return "Checking likely payment source for the next Codex turn...";
   }

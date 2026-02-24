@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Col, Input, Row, Space } from "antd";
+import { Alert, Button, Input, Space, Typography } from "antd";
 import { getLogger } from "@cocalc/frontend/logger";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { Gap, Loading } from "@cocalc/frontend/components";
@@ -14,30 +14,12 @@ type ProviderKey = {
   placeholder?: string;
 };
 
-const PROVIDERS: ProviderKey[] = [
-  {
-    keyField: "openai_api_key",
-    enableField: "openai_enabled",
-    label: "OpenAI API Key",
-    placeholder: "sk-...",
-  },
-  {
-    keyField: "google_vertexai_key",
-    enableField: "google_vertexai_enabled",
-    label: "Google Gemini API Key",
-    placeholder: "Google AI Studio key",
-  },
-  {
-    keyField: "mistral_api_key",
-    enableField: "mistral_enabled",
-    label: "Mistral API Key",
-  },
-  {
-    keyField: "anthropic_api_key",
-    enableField: "anthropic_enabled",
-    label: "Anthropic API Key",
-  },
-];
+const OPENAI_PROVIDER: ProviderKey = {
+  keyField: "openai_api_key",
+  enableField: "openai_enabled",
+  label: "OpenAI API Key",
+  placeholder: "sk-...",
+};
 
 type State = "load" | "ready" | "save" | "error";
 
@@ -80,10 +62,9 @@ export default function LiteAISettings() {
 
   const saving = state === "save";
   const dirty = useMemo(() => {
-    for (const { keyField } of PROVIDERS) {
-      if ((values[keyField] ?? "") !== (savedValues[keyField] ?? "")) {
-        return true;
-      }
+    const { keyField } = OPENAI_PROVIDER;
+    if ((values[keyField] ?? "") !== (savedValues[keyField] ?? "")) {
+      return true;
     }
     return false;
   }, [values, savedValues]);
@@ -92,20 +73,19 @@ export default function LiteAISettings() {
     if (saving || !dirty) return;
     setState("save");
     try {
-      for (const { keyField, enableField } of PROVIDERS) {
-        const val = values[keyField] ?? "";
-        await query({
-          query: { site_settings: { name: keyField, value: val } },
-        });
-        await query({
-          query: {
-            site_settings: {
-              name: enableField,
-              value: val ? "yes" : "no",
-            },
+      const { keyField, enableField } = OPENAI_PROVIDER;
+      const val = values[keyField] ?? "";
+      await query({
+        query: { site_settings: { name: keyField, value: val } },
+      });
+      await query({
+        query: {
+          site_settings: {
+            name: enableField,
+            value: val ? "yes" : "no",
           },
-        });
-      }
+        },
+      });
       redux.getStore("projects").clearOpenAICache();
       // @ts-ignore
       await redux.getActions("customize")?.reload();
@@ -120,30 +100,25 @@ export default function LiteAISettings() {
 
   return (
     <div>
-      <h3>AI Provider Keys</h3>
-      <p style={{ marginBottom: 12 }}>
-        Enter API keys for the providers you want to use. When a key is saved,
-        the corresponding AI UI is enabled automatically.
-      </p>
+      <Typography.Title level={4} style={{ marginBottom: 8 }}>
+        OpenAI API Key
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+        Use this if you want Codex billed through your OpenAI API key.
+      </Typography.Paragraph>
       {error && (
         <Alert type="error" title="Error" description={error} closable />
       )}
-      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-        {PROVIDERS.map(({ keyField, label, placeholder }) => (
-          <Row key={keyField} gutter={8} align="middle">
-            <Col span={8}>{label}</Col>
-            <Col span={16}>
-              <Input.Password
-                allowClear
-                value={values[keyField] ?? ""}
-                placeholder={placeholder}
-                name={`llm-${keyField}`}
-                autoComplete="off"
-                onChange={(e) => onChange(keyField, e.target.value)}
-              />
-            </Col>
-          </Row>
-        ))}
+      <Space orientation="vertical" style={{ width: "100%" }} size={8}>
+        <div style={{ fontWeight: 500 }}>{OPENAI_PROVIDER.label}</div>
+        <Input.Password
+          allowClear
+          value={values[OPENAI_PROVIDER.keyField] ?? ""}
+          placeholder={OPENAI_PROVIDER.placeholder}
+          name={`llm-${OPENAI_PROVIDER.keyField}`}
+          autoComplete="off"
+          onChange={(e) => onChange(OPENAI_PROVIDER.keyField, e.target.value)}
+        />
       </Space>
       <Gap />
       <Button

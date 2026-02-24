@@ -16,6 +16,7 @@ import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import type {
@@ -26,6 +27,18 @@ import type {
 const { Text } = Typography;
 
 function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
+  if (lite) {
+    if (source === "subscription") return "ChatGPT Plan";
+    if (
+      source === "project-api-key" ||
+      source === "account-api-key" ||
+      source === "site-api-key"
+    ) {
+      return "OpenAI API key";
+    }
+    if (source === "shared-home") return "Local Codex auth";
+    return "Not configured";
+  }
   switch (source) {
     case "subscription":
       return "ChatGPT plan";
@@ -377,37 +390,44 @@ function CodexCredentialsPanelBody({
             </Space>
           }
           description={
-            <>
+            lite ? (
               <Text type="secondary">
-                Order: ChatGPT Plan, Workspace OpenAI API key, Account OpenAI API key, then Site OpenAI API key.
+                In Lite mode, Codex uses either your ChatGPT Plan or one OpenAI API
+                key.
               </Text>
-              <Space wrap>
-                <Tag color={paymentSource.hasSubscription ? "green" : "default"}>
-                  ChatGPT plan
-                </Tag>
-                <Tag color={paymentSource.hasProjectApiKey ? "green" : "default"}>
-                  workspace key
-                </Tag>
-                <Tag color={paymentSource.hasAccountApiKey ? "green" : "default"}>
-                  account key
-                </Tag>
-                <Tag color={paymentSource.hasSiteApiKey ? "green" : "default"}>
-                  site key
-                </Tag>
-                <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
-              </Space>
-              {paymentSource.hasSubscription ? (
-                <div style={{ marginTop: 8 }}>
-                  <a
-                    href="https://chatgpt.com/codex/settings/usage"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Check ChatGPT Codex usage
-                  </a>
-                </div>
-              ) : null}
-            </>
+            ) : (
+              <>
+                <Text type="secondary">
+                  Order: ChatGPT Plan, Workspace OpenAI API key, Account OpenAI API key, then Site OpenAI API key.
+                </Text>
+                <Space wrap>
+                  <Tag color={paymentSource.hasSubscription ? "green" : "default"}>
+                    ChatGPT plan
+                  </Tag>
+                  <Tag color={paymentSource.hasProjectApiKey ? "green" : "default"}>
+                    workspace key
+                  </Tag>
+                  <Tag color={paymentSource.hasAccountApiKey ? "green" : "default"}>
+                    account key
+                  </Tag>
+                  <Tag color={paymentSource.hasSiteApiKey ? "green" : "default"}>
+                    site key
+                  </Tag>
+                  <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
+                </Space>
+                {paymentSource.hasSubscription ? (
+                  <div style={{ marginTop: 8 }}>
+                    <a
+                      href="https://chatgpt.com/codex/settings/usage"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Check ChatGPT Codex usage
+                    </a>
+                  </div>
+                ) : null}
+              </>
+            )
           }
         />
       )}
@@ -618,7 +638,10 @@ function CodexCredentialsPanelBody({
               </Space>
             ),
           },
-          {
+          ...(lite
+            ? []
+            : [
+                {
             key: "api-keys",
             label: "OpenAI API Keys",
             children: (
@@ -823,7 +846,11 @@ function CodexCredentialsPanelBody({
               </Space>
             ),
           },
-          {
+              ]),
+          ...(lite
+            ? []
+            : [
+                {
             key: "credentials",
             label: `Codex subscription credentials (${credentials.length})`,
             children: (
@@ -837,6 +864,7 @@ function CodexCredentialsPanelBody({
               />
             ),
           },
+              ]),
         ]}
       />
     </Space>
