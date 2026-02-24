@@ -158,6 +158,14 @@ export function ChatPanel({
   const scrollToIndex = getDescValue(desc, "data-scrollToIndex") ?? null;
   const scrollToDate = getDescValue(desc, "data-scrollToDate") ?? null;
   const fragmentId = getDescValue(desc, "data-fragmentId") ?? null;
+  const showThreadImagePreviewRaw = getDescValue(
+    desc,
+    "data-showThreadImagePreview",
+  );
+  const showThreadImagePreview =
+    showThreadImagePreviewRaw === false || showThreadImagePreviewRaw === "false"
+      ? false
+      : true;
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const preferLatestThreadFromDescRaw = getDescValue(
     desc,
@@ -704,6 +712,7 @@ export function ChatPanel({
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
+        showThreadImagePreview={showThreadImagePreview}
       />
       <ChatRoomComposer
         actions={actions}

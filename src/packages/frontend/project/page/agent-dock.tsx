@@ -3,9 +3,6 @@ import {
   Button,
   Select,
   Space,
-  Tag,
-  Tooltip,
-  Typography,
 } from "antd";
 import {
   useCallback,
@@ -28,7 +25,6 @@ import {
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
-import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { Loading } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -49,12 +45,6 @@ const DEFAULT_POSITION = { x: 24, y: 84 };
 const DEFAULT_DOCK_SIZE = { width: 560, height: 520 };
 const MIN_DOCK_WIDTH = 380;
 const MIN_DOCK_HEIGHT = 320;
-
-function ellipsize(value: string, max = 72): string {
-  if (!value) return "";
-  if (value.length <= max) return value;
-  return `${value.slice(0, max - 1)}...`;
-}
 
 interface AgentDockProps {
   project_id: string;
@@ -127,6 +117,17 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       if (!detail || detail.projectId !== project_id) return;
       setSession(detail.session);
       setError("");
+      const sharedActions =
+        (redux.getEditorActions(
+          project_id,
+          detail.session.chat_path,
+        ) as ChatActions | undefined) ??
+        getChatActions(project_id, detail.session.chat_path, {
+          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        });
+      if (sharedActions) {
+        setChatActions(sharedActions);
+      }
     };
     const onClose = (evt: Event) => {
       const detail = (evt as CustomEvent<AgentDockCloseDetail>).detail;
@@ -151,7 +152,6 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     let mounted = true;
     let actions: ChatActions | undefined;
     let ownsChatInstance = false;
-    setChatActions(null);
     setError("");
     try {
       const sharedActions =
@@ -168,6 +168,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
           mounted = false;
         };
       }
+      setChatActions(null);
       actions = initChat(project_id, session.chat_path, {
         instanceKey: AGENT_DOCK_CHAT_INSTANCE_KEY,
       });
@@ -268,6 +269,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     return {
       "data-selectedThreadKey": session.thread_key,
       "data-preferLatestThread": false,
+      "data-showThreadImagePreview": false,
     };
   }, [session?.thread_key]);
 
@@ -290,9 +292,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const sessionOptions = useMemo(() => {
     return sessions.map((record) => ({
       value: record.session_id,
-      label: `${record.title || "Agent session"}${
-        record.model ? ` (${record.model})` : ""
-      }`,
+      label: `${record.title || "Agent session"} (workspace root)`,
     }));
   }, [sessions]);
 
@@ -302,9 +302,6 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const height = IS_MOBILE
     ? Math.max(MIN_DOCK_HEIGHT, Math.round(viewport.height * 0.72))
     : dockSize.height;
-  const image = session.thread_image?.trim() || undefined;
-  const icon = session.thread_icon?.trim() || undefined;
-  const color = session.thread_color?.trim() || undefined;
 
   return (
     <div
@@ -354,21 +351,20 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
               size={[6, 6]}
               style={{ width: "100%", justifyContent: "space-between" }}
             >
-              <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
-                <ThreadBadge
-                  image={image}
-                  icon={icon}
-                  color={color}
-                  fallbackIcon="comment"
-                  size={24}
-                />
-                <Tooltip title={session.title || "Agent session"}>
-                  <Typography.Text strong>
-                    {ellipsize(session.title || "Agent session", 44)}
-                  </Typography.Text>
-                </Tooltip>
-                {session.model ? <Tag>{ellipsize(session.model, 24)}</Tag> : null}
-              </Space>
+              <Select
+                size="small"
+                style={{ flex: 1, minWidth: 180 }}
+                value={session.session_id}
+                options={sessionOptions}
+                showSearch
+                optionFilterProp="label"
+                onChange={(value) => {
+                  const next = sessions.find((item) => item.session_id === value);
+                  if (next) {
+                    setSession(next);
+                  }
+                }}
+              />
               <Space size={[4, 4]} wrap>
                 <Button
                   size="small"
@@ -388,24 +384,6 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 </Button>
               </Space>
             </Space>
-            {sessionOptions.length > 1 ? (
-              <div style={{ marginTop: 6 }}>
-                <Select
-                  size="small"
-                  style={{ width: "100%" }}
-                  value={session.session_id}
-                  options={sessionOptions}
-                  showSearch
-                  optionFilterProp="label"
-                  onChange={(value) => {
-                    const next = sessions.find((item) => item.session_id === value);
-                    if (next) {
-                      setSession(next);
-                    }
-                  }}
-                />
-              </div>
-            ) : null}
           </div>
           {error ? (
             <Alert type="error" showIcon message={error} style={{ margin: 8 }} />

@@ -95,6 +95,7 @@ interface ChatRoomThreadPanelProps {
   refreshCodexPaymentSource?: () => void;
   newThreadSetup: NewThreadSetup;
   onNewThreadSetupChange: (next: NewThreadSetup) => void;
+  showThreadImagePreview?: boolean;
 }
 
 export function ChatRoomThreadPanel({
@@ -122,6 +123,7 @@ export function ChatRoomThreadPanel({
   refreshCodexPaymentSource,
   newThreadSetup,
   onNewThreadSetupChange,
+  showThreadImagePreview = true,
 }: ChatRoomThreadPanelProps) {
   if (!selectedThreadKey) {
     type ModelOption = {
@@ -402,7 +404,9 @@ export function ChatRoomThreadPanel({
   const compactThreadColor = threadMeta?.threadColor;
   const compactThreadImage = threadMeta?.threadImage;
   const compactThreadHasAppearance = threadMeta?.hasCustomAppearance ?? false;
-  const threadImagePreview = compactThreadImage?.trim();
+  const threadImagePreview = showThreadImagePreview
+    ? compactThreadImage?.trim()
+    : undefined;
 
   return (
     <div

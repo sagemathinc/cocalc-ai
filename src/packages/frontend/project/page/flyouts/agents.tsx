@@ -150,7 +150,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     let mounted = true;
     let chatActions: ChatActions | undefined;
     let ownsChatInstance = false;
-    setInlineActions(null);
     setInlineError("");
 
     try {
@@ -168,6 +167,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           mounted = false;
         };
       }
+      setInlineActions(null);
       chatActions = initChat(project_id, inlineSession.chat_path, {
         instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
       });
@@ -212,6 +212,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return {
       "data-selectedThreadKey": inlineSession.thread_key,
       "data-preferLatestThread": false,
+      "data-showThreadImagePreview": false,
     };
   }, [inlineSession?.thread_key]);
 
@@ -239,6 +240,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   function openInlineSession(record: AgentSessionRecord): void {
     setInlineSession(record);
     setInlineError("");
+    const sharedActions =
+      (redux.getEditorActions(
+        project_id,
+        record.chat_path,
+      ) as ChatActions | undefined) ??
+      getChatActions(project_id, record.chat_path, {
+        instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+      });
+    if (sharedActions) {
+      setInlineActions(sharedActions);
+    }
   }
 
   function openFloatingSession(record: AgentSessionRecord): void {
@@ -266,6 +278,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const image = record.thread_image?.trim() || undefined;
     const icon = record.thread_icon?.trim() || undefined;
     const color = record.thread_color?.trim() || undefined;
+    const showFlyoutImage = isFlyout && Boolean(image);
+    const showPageCornerImage = !isFlyout && Boolean(image);
     return (
       <div key={record.session_id}>
         <div
@@ -276,8 +290,51 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             padding: isFlyout ? 10 : 12,
             background: "#fff",
             borderLeft: color ? `4px solid ${color}` : undefined,
+            position: "relative",
+            overflow: "hidden",
           }}
         >
+          {showFlyoutImage ? (
+            <div
+              style={{
+                margin: "-10px -10px 10px -10px",
+                borderBottom: "1px solid #eee",
+                background: "#fafafa",
+              }}
+            >
+              <img
+                src={image}
+                alt="Thread image"
+                style={{
+                  width: "100%",
+                  height: 96,
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
+            </div>
+          ) : null}
+          {showPageCornerImage ? (
+            <div
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                width: 72,
+                height: 72,
+                borderRadius: 10,
+                overflow: "hidden",
+                border: "1px solid #ddd",
+                boxShadow: "0 1px 8px rgba(0,0,0,0.1)",
+              }}
+            >
+              <img
+                src={image}
+                alt="Thread image"
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            </div>
+          ) : null}
           <div
             style={{
               display: "flex",
@@ -287,11 +344,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             }}
           >
             <ThreadBadge
-              image={image}
+              image={showFlyoutImage || showPageCornerImage ? undefined : image}
               icon={icon}
               color={color}
               fallbackIcon="comment"
-              size={isFlyout ? 24 : 26}
+              size={isFlyout ? 44 : 28}
               style={{ marginTop: 1 }}
             />
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -304,7 +361,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 }}
               >
                 <Typography.Text strong title={record.title || "Navigator session"}>
-                  {ellipsize(record.title || "Navigator session", isFlyout ? 48 : 72)}
+                  {ellipsize(
+                    record.title || "Navigator session",
+                    isFlyout ? 48 : 56,
+                  )}
                 </Typography.Text>
                 <Tag
                   color={STATUS_COLORS[record.status] ?? "default"}
@@ -378,18 +438,39 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   if (inlineSession) {
+    const inlineImage = inlineSession.thread_image?.trim() || undefined;
     return (
       <div
         style={
           isFlyout
-            ? undefined
+            ? {
+                display: "flex",
+                flexDirection: "column",
+                height: "100%",
+                minHeight: 0,
+              }
             : {
-                maxWidth: 1200,
-                margin: "0 auto",
+                width: "100%",
                 padding: "12px 16px 24px",
               }
         }
       >
+        {isFlyout && inlineImage ? (
+          <div
+            style={{
+              marginBottom: 8,
+              borderRadius: 8,
+              overflow: "hidden",
+              border: "1px solid #eee",
+            }}
+          >
+            <img
+              src={inlineImage}
+              alt="Thread image"
+              style={{ width: "100%", height: 100, objectFit: "cover", display: "block" }}
+            />
+          </div>
+        ) : null}
         <Space
           wrap
           size={[8, 8]}
@@ -463,7 +544,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             borderRadius: 8,
             overflow: "hidden",
             background: "white",
-            height: isFlyout ? "min(72vh, 720px)" : "min(78vh, 860px)",
+            flex: 1,
+            minHeight: 0,
+            height: isFlyout ? undefined : "min(78vh, 860px)",
           }}
         >
           {inlineActions ? (
@@ -488,10 +571,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     <div
       style={
         isFlyout
-          ? undefined
+          ? {
+              height: "100%",
+              minHeight: 0,
+            }
           : {
-              maxWidth: 1200,
-              margin: "0 auto",
+              width: "100%",
               padding: "12px 16px 24px",
             }
       }
@@ -544,7 +629,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             display: "grid",
             gridTemplateColumns: isFlyout
               ? "1fr"
-              : "repeat(auto-fill, minmax(360px, 1fr))",
+              : "repeat(auto-fit, minmax(360px, 1fr))",
             gap: isFlyout ? 8 : 12,
           }}
         >

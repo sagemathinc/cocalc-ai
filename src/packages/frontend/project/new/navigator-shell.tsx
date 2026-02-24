@@ -6,7 +6,6 @@ import {
   Modal,
   Space,
   Tag,
-  Tooltip,
   Typography,
   message as antdMessage,
 } from "antd";
@@ -28,7 +27,6 @@ import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { Loading } from "@cocalc/frontend/components";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
-import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { lite } from "@cocalc/frontend/lite";
 import {
@@ -147,6 +145,7 @@ function buildSessionRecord({
   thread,
   threadMetadata,
   status,
+  defaultWorkingDirectory,
 }: {
   project_id: string;
   account_id: string;
@@ -155,6 +154,7 @@ function buildSessionRecord({
   thread: any;
   threadMetadata?: any;
   status: AgentSessionStatus;
+  defaultWorkingDirectory?: string;
 }): AgentSessionRecord {
   const rootMessage: any = thread?.rootMessage ?? {};
   const acpConfig: any = threadMetadata?.acp_config ?? rootMessage?.acp_config ?? {};
@@ -186,7 +186,7 @@ function buildSessionRecord({
     working_directory:
       typeof acpConfig?.workingDirectory === "string"
         ? acpConfig.workingDirectory
-        : undefined,
+        : defaultWorkingDirectory,
     mode:
       acpConfig?.sessionMode === "read-only" ||
       acpConfig?.sessionMode === "workspace-write" ||
@@ -437,6 +437,7 @@ export function NavigatorShell({
       thread: selectedThread,
       threadMetadata: selectedThreadMetadata,
       status,
+      defaultWorkingDirectory: homeDirectory,
     });
   }, [
     account_id,
@@ -480,6 +481,23 @@ export function NavigatorShell({
     sessionIndexRetry,
   ]);
 
+  useEffect(() => {
+    if (!actions || !selectedThreadKey) return;
+    const acpConfig = selectedThreadMetadata?.acp_config ?? selectedRootMessage?.acp_config;
+    if (!acpConfig) return;
+    if (acpConfig.workingDirectory === homeDirectory) return;
+    actions.setThreadAgentMode(selectedThreadKey, "codex", {
+      ...acpConfig,
+      workingDirectory: homeDirectory,
+    });
+  }, [
+    actions,
+    homeDirectory,
+    selectedRootMessage,
+    selectedThreadKey,
+    selectedThreadMetadata,
+  ]);
+
   const submitIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
       if (!actions) return false;
@@ -490,11 +508,28 @@ export function NavigatorShell({
       }
       const input = intent.forceCodex === false ? basePrompt : ensureCodexMention(basePrompt);
       const replyTo = toReplyDate(selectedThreadKey);
+      const isCodex = intent.forceCodex !== false;
+      const model =
+        typeof selectedAcpConfig?.model === "string"
+          ? selectedAcpConfig.model
+          : undefined;
       const timeStamp = actions.sendChat({
         input,
         reply_to: replyTo,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
+        threadAgent:
+          !replyTo && isCodex
+            ? {
+                mode: "codex",
+                model,
+                codexConfig: {
+                  ...selectedAcpConfig,
+                  model,
+                  workingDirectory: homeDirectory,
+                },
+              }
+            : undefined,
       });
       removeQueuedNavigatorPromptIntent(intent.id);
       if (!replyTo && timeStamp) {
@@ -506,7 +541,7 @@ export function NavigatorShell({
       setTimeout(() => actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER), 100);
       return true;
     },
-    [actions, selectedThreadKey],
+    [actions, homeDirectory, selectedAcpConfig, selectedThreadKey],
   );
 
   useEffect(() => {
@@ -553,6 +588,7 @@ export function NavigatorShell({
   const desc = useMemo(() => {
     const data: Record<string, any> = {
       "data-preferLatestThread": true,
+      "data-showThreadImagePreview": false,
     };
     if (selectedThreadKey !== null) {
       data["data-selectedThreadKey"] = selectedThreadKey;
@@ -741,10 +777,6 @@ export function NavigatorShell({
 
   return (
     <div>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-        Global navigator shell using the same chat/Codex runtime, backed by a
-        hidden chat file.
-      </Typography.Paragraph>
       <Space
         wrap
         size={[8, 8]}
@@ -756,42 +788,16 @@ export function NavigatorShell({
       >
         <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
           <Typography.Text strong>{threadTitle}</Typography.Text>
-          {selectedAcpConfig?.model ? <Tag>{selectedAcpConfig.model}</Tag> : null}
-          {selectedAcpConfig?.reasoning ? (
-            <Tag color="purple">{selectedAcpConfig.reasoning}</Tag>
-          ) : null}
-          {selectedAcpConfig?.sessionMode ? (
-            <Tag color="blue">{selectedAcpConfig.sessionMode}</Tag>
-          ) : null}
-          {selectedAcpConfig?.workingDirectory ? (
-            <Tooltip title={selectedAcpConfig.workingDirectory}>
-              <Tag color="geekblue">wd</Tag>
-            </Tooltip>
-          ) : null}
         </Space>
         <Space size={[4, 4]} wrap>
           <Dropdown
             trigger={["click"]}
             menu={{ items: actionItems, onClick: onActionMenuClick }}
           >
-            <Button size="small">
-              <Space size={6}>
-                <Icon name="ellipsis" />
-                Actions
-              </Space>
-            </Button>
+            <Button size="small">Actions</Button>
           </Dropdown>
         </Space>
       </Space>
-      {selectedAcpConfig?.workingDirectory ? (
-        <Typography.Text
-          type="secondary"
-          style={{ display: "block", marginBottom: 8 }}
-          ellipsis={{ tooltip: selectedAcpConfig.workingDirectory }}
-        >
-          Working directory: {selectedAcpConfig.workingDirectory}
-        </Typography.Text>
-      ) : null}
       <Modal
         title="Thread Settings"
         open={settingsOpen}
