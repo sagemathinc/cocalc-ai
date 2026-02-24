@@ -32,6 +32,19 @@ function chatReduxName({
   return redux_name(project_id, keyPath);
 }
 
+export function getChatActions(
+  project_id: string,
+  path: string,
+  opts?: ChatInstanceOptions,
+): ChatActions | undefined {
+  const name = chatReduxName({
+    project_id,
+    path,
+    instanceKey: opts?.instanceKey,
+  });
+  return redux.getActions(name) as ChatActions | undefined;
+}
+
 // it is fine to call this more than once.
 export function initChat(
   project_id: string,

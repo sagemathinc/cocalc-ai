@@ -29,12 +29,15 @@ import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { Loading } from "@cocalc/frontend/components";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { lite } from "@cocalc/frontend/lite";
 import {
   initChat,
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
+import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
@@ -56,7 +59,7 @@ interface NavigatorShellProps {
   defaultTargetProjectId?: string;
 }
 
-const NAVIGATOR_CHAT_INSTANCE_KEY = "navigator-shell";
+export const NAVIGATOR_CHAT_INSTANCE_KEY = "navigator-shell";
 
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -557,6 +560,19 @@ export function NavigatorShell({
     return data;
   }, [selectedThreadKey]);
 
+  const chatFileContext = useMemo(
+    () => ({
+      project_id,
+      path: navigatorPath,
+      urlTransform: getUrlTransform({ project_id, path: navigatorPath }),
+      AnchorTagComponent: getAnchorTagComponent({
+        project_id,
+        path: navigatorPath,
+      }),
+    }),
+    [project_id, navigatorPath],
+  );
+
   const threadTitle = useMemo(() => {
     if (!selectedThreadKey) return "New chat";
     const name =
@@ -858,13 +874,15 @@ export function NavigatorShell({
         }}
       >
         {actions ? (
-          <SideChat
-            actions={actions}
-            project_id={project_id}
-            path={navigatorPath}
-            hideSidebar
-            desc={desc}
-          />
+          <FileContext.Provider value={chatFileContext}>
+            <SideChat
+              actions={actions}
+              project_id={project_id}
+              path={navigatorPath}
+              hideSidebar
+              desc={desc}
+            />
+          </FileContext.Provider>
         ) : (
           <Loading theme="medium" />
         )}

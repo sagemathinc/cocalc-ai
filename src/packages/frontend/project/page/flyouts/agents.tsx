@@ -22,12 +22,17 @@ import {
 } from "@cocalc/frontend/chat/agent-session-index";
 import {
   initChat,
+  getChatActions,
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
+import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
+import { NAVIGATOR_CHAT_INSTANCE_KEY } from "@cocalc/frontend/project/new/navigator-shell";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
@@ -144,17 +149,35 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     }
     let mounted = true;
     let chatActions: ChatActions | undefined;
+    let ownsChatInstance = false;
     setInlineActions(null);
     setInlineError("");
 
     try {
+      const sharedActions =
+        (redux.getEditorActions(
+          project_id,
+          inlineSession.chat_path,
+        ) as ChatActions | undefined) ??
+        getChatActions(project_id, inlineSession.chat_path, {
+          instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+        });
+      if (sharedActions) {
+        setInlineActions(sharedActions);
+        return () => {
+          mounted = false;
+        };
+      }
       chatActions = initChat(project_id, inlineSession.chat_path, {
         instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
       });
+      ownsChatInstance = true;
       if (!mounted) {
-        removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
-          instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
-        });
+        if (ownsChatInstance) {
+          removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
+            instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+          });
+        }
         return;
       }
       setInlineActions(chatActions);
@@ -166,7 +189,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
     return () => {
       mounted = false;
-      if (chatActions) {
+      if (chatActions && ownsChatInstance) {
         setInlineActions((current) => (current === chatActions ? null : current));
         removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
           instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
@@ -191,6 +214,22 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       "data-preferLatestThread": false,
     };
   }, [inlineSession?.thread_key]);
+
+  const inlineFileContext = useMemo(() => {
+    if (!inlineSession?.chat_path) return undefined;
+    return {
+      project_id,
+      path: inlineSession.chat_path,
+      urlTransform: getUrlTransform({
+        project_id,
+        path: inlineSession.chat_path,
+      }),
+      AnchorTagComponent: getAnchorTagComponent({
+        project_id,
+        path: inlineSession.chat_path,
+      }),
+    };
+  }, [inlineSession?.chat_path, project_id]);
 
   function openNavigatorSession(record: AgentSessionRecord): void {
     saveNavigatorSelectedThreadKey(record.thread_key);
@@ -428,13 +467,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           }}
         >
           {inlineActions ? (
-            <SideChat
-              actions={inlineActions}
-              project_id={project_id}
-              path={inlineSession.chat_path}
-              hideSidebar
-              desc={inlineDesc}
-            />
+            <FileContext.Provider value={inlineFileContext ?? {}}>
+              <SideChat
+                actions={inlineActions}
+                project_id={project_id}
+                path={inlineSession.chat_path}
+                hideSidebar
+                desc={inlineDesc}
+              />
+            </FileContext.Provider>
           ) : (
             <Loading theme="medium" />
           )}

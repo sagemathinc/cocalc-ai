@@ -71,6 +71,16 @@ export function useChatThreadSelection({
       setAllowAutoSelectThread(true);
       return;
     }
+    if (
+      storedThreadFromDesc != null &&
+      threads.some((thread) => thread.key === storedThreadFromDesc)
+    ) {
+      if (selectedThreadKey !== storedThreadFromDesc) {
+        setSelectedThreadKey(storedThreadFromDesc);
+      }
+      setAllowAutoSelectThread(false);
+      return;
+    }
     // If a concrete thread key is selected, don't immediately force a fallback
     // when thread metadata is transiently stale. This happens right after send:
     // selection moves to the new root before threadIndex has caught up.
@@ -92,7 +102,13 @@ export function useChatThreadSelection({
     if (!exists && allowAutoSelectThread) {
       setSelectedThreadKey(COMBINED_FEED_KEY);
     }
-  }, [threads, selectedThreadKey, allowAutoSelectThread, preferLatestThread]);
+  }, [
+    threads,
+    selectedThreadKey,
+    allowAutoSelectThread,
+    preferLatestThread,
+    storedThreadFromDesc,
+  ]);
 
   useEffect(() => {
     if (!fragmentId || messages == null) {
