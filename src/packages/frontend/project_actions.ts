@@ -2265,6 +2265,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // note: there is no need to explicitly close or await what is returned by
   // fs(...) since it's just a lightweight wrapper object to format appropriate RPC calls.
   private filesystem?: FilesystemClient;
+  clearFilesystemClient = () => {
+    this.filesystem = undefined;
+  };
   fs = (): FilesystemClient => {
     this.filesystem ??= webapp_client.conat_client
       .conat()

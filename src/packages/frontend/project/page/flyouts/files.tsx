@@ -64,7 +64,11 @@ import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { evaluateHostOperational, hostLabel } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
-import { isHostRoutingUnavailableError } from "@cocalc/frontend/projects/host-routing-error";
+import {
+  isHostRoutingUnavailableError,
+  shouldSuppressTransientRoutingError,
+} from "@cocalc/frontend/projects/host-routing-error";
+import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -112,6 +116,9 @@ export function FilesFlyout({
     [hostInfo],
   );
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
+    | MoveLroState
+    | undefined;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
@@ -229,8 +236,22 @@ export function FilesFlyout({
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
   const suppressRoutingError =
-    hostUnavailable && isHostRoutingUnavailableError(effectiveError);
+    (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
+    shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
   const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
+  const transientRoutingRetryRef = useRef<string>("");
+  useEffect(() => {
+    if (!effectiveError) return;
+    if (!shouldSuppressTransientRoutingError({ error: effectiveError, moveLro })) {
+      return;
+    }
+    const msg = `${(effectiveError as any)?.message ?? effectiveError}`;
+    const token = `${effective_current_path}|${msg}`;
+    if (transientRoutingRetryRef.current === token) return;
+    transientRoutingRetryRef.current = token;
+    const timer = setTimeout(() => effectiveRefresh(), 1200);
+    return () => clearTimeout(timer);
+  }, [effectiveError, moveLro, effective_current_path, effectiveRefresh]);
 
   // active file: current editor is the file in the listing
   // empty: either no files, or just the ".." for the parent dir

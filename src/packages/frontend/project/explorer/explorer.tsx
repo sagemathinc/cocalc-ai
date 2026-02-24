@@ -66,6 +66,8 @@ import {
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { isHostRoutingUnavailableError } from "@cocalc/frontend/projects/host-routing-error";
+import { shouldSuppressTransientRoutingError } from "@cocalc/frontend/projects/host-routing-error";
+import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -127,6 +129,9 @@ export function Explorer() {
   const error = useTypedRedux({ project_id }, "error");
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const file_action = useTypedRedux({ project_id }, "file_action");
+  const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
+    | MoveLroState
+    | undefined;
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -425,9 +430,35 @@ export function Explorer() {
   }
 
   const suppressRoutingError =
-    hostUnavailable && isHostRoutingUnavailableError(listingError);
+    (hostUnavailable && isHostRoutingUnavailableError(listingError)) ||
+    shouldSuppressTransientRoutingError({ error: listingError, moveLro });
   const suppressProjectError =
-    hostUnavailable && isHostRoutingUnavailableError(error);
+    (hostUnavailable && isHostRoutingUnavailableError(error)) ||
+    shouldSuppressTransientRoutingError({ error, moveLro });
+
+  const transientRoutingRetryRef = useRef<string>("");
+  useEffect(() => {
+    if (!listingError) return;
+    if (!shouldSuppressTransientRoutingError({ error: listingError, moveLro })) {
+      return;
+    }
+    const msg = `${(listingError as any)?.message ?? listingError}`;
+    const token = `${effective_current_path}|${msg}`;
+    if (transientRoutingRetryRef.current === token) return;
+    transientRoutingRetryRef.current = token;
+    const timer = setTimeout(() => refresh(), 1200);
+    return () => clearTimeout(timer);
+  }, [listingError, moveLro, effective_current_path, refresh]);
+
+  const clearedTransientProjectErrorRef = useRef<string>("");
+  useEffect(() => {
+    if (!error) return;
+    if (!shouldSuppressTransientRoutingError({ error, moveLro })) return;
+    const msg = `${(error as any)?.message ?? error}`;
+    if (clearedTransientProjectErrorRef.current === msg) return;
+    clearedTransientProjectErrorRef.current = msg;
+    actions?.setState({ error: "" });
+  }, [error, moveLro, actions]);
 
   if (hostUnavailable && !project_is_running) {
     return (

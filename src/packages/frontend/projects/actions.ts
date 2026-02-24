@@ -943,6 +943,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           dest_host_id: logInfo.dest_host_id,
         });
         actions.setState({ control_error: "" });
+        redux
+          .getProjectActions(logInfo.project_id)
+          ?.clearFilesystemClient?.();
         if (logInfo.dest_host_id) {
           const project_map = store.get("project_map");
           const project = project_map?.get(logInfo.project_id);
