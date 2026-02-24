@@ -87,6 +87,31 @@ workspace codex execution run in the same project-host containerized path as the
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
 
+## Codex Runtime Environment (Agent Integration)
+
+When CoCalc runs Codex turns with CLI/browser integration enabled, turns may
+inherit these env vars:
+
+- `COCALC_API_URL`
+- `COCALC_BEARER_TOKEN`
+- `COCALC_ACCOUNT_ID`
+- `COCALC_PROJECT_ID`
+- `COCALC_BROWSER_ID`
+- `COCALC_CLI_BIN` (optional explicit path)
+
+Recommended browser automation pattern inside a turn:
+
+```bash
+cocalc browser exec-api --browser "$COCALC_BROWSER_ID"
+cocalc browser exec \
+  --project-id "$COCALC_PROJECT_ID" \
+  --browser "$COCALC_BROWSER_ID" \
+  --file script.js
+```
+
+For scoped/agent tokens, prefer `--project-id` + `--browser` (or the matching
+env vars) to avoid discovery calls that may require broader hub permissions.
+
 ## Auth Commands
 
 - `auth status [--check]`
