@@ -911,7 +911,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       scope_type?: LroSummary["scope_type"];
       scope_id?: string;
     },
-    logInfo: { project_id: string; dest_host_id?: string },
+    logInfo: {
+      project_id: string;
+      source_host_id?: string;
+      dest_host_id?: string;
+    },
   ) => {
     if (!actions || !op?.op_id || !op.scope_type) {
       return;
@@ -936,6 +940,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
         this.project_log(logInfo.project_id, {
           event: "project_moved",
+          dest_host_id: logInfo.dest_host_id,
+        });
+        actions.setState({ control_error: "" });
+        if (logInfo.dest_host_id) {
+          const project_map = store.get("project_map");
+          const project = project_map?.get(logInfo.project_id);
+          if (
+            project_map &&
+            project &&
+            project.get("host_id") !== logInfo.dest_host_id
+          ) {
+            this.setState({
+              project_map: project_map.set(
+                logInfo.project_id,
+                project.set("host_id", logInfo.dest_host_id),
+              ),
+            } as ProjectsState);
+          }
+          void this.ensure_host_info(logInfo.dest_host_id, true);
+        }
+        webapp_client.conat_client.refreshProjectHostRouting({
+          source_host_id: logInfo.source_host_id,
           dest_host_id: logInfo.dest_host_id,
         });
       })
@@ -1030,7 +1056,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
         return false;
       }
       actions.trackMoveOp(resp);
-      this.watchMoveLro(actions, resp, { project_id });
+      this.watchMoveLro(actions, resp, {
+        project_id,
+        source_host_id: store.getIn(["project_map", project_id, "host_id"]) as
+          | string
+          | undefined,
+      });
     } catch (err) {
       const error = `Error move project -- ${err}`;
       actions.setState({ control_error: error });
@@ -1056,7 +1087,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           return false;
         }
         actions?.trackMoveOp(resp);
-        this.watchMoveLro(actions, resp, { project_id, dest_host_id });
+        this.watchMoveLro(actions, resp, {
+          project_id,
+          source_host_id:
+            typeof current_host === "string" ? current_host : undefined,
+          dest_host_id,
+        });
       } catch (err) {
         const error = `Error move project -- ${err}`;
         console.log(error);
