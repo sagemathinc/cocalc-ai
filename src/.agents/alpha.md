@@ -263,7 +263,7 @@ Done when:
 
 ---
 
-#### A2.4b Floating Navigator panel UX
+#### A2.4b (done) Floating Navigator panel UX
 
 Provide a docked/floating presentation of the same Navigator thread component used on project-home.
 
@@ -342,3 +342,196 @@ Ship to external alpha testers only when:
 - A1.1 + A1.4 complete,
 - no known data-loss bugs remain in editor path (A2.2/A2.3),
 - upload and notebook baseline usability are functional (A2.1/A2.5).
+
+
+# Details
+
+## Codex chat integration planning
+
+### P2. Expose CoCalc CLI + browser control to Codex turns (before P3)
+
+Principle: deliver one secure runtime contract that lets Codex call `cocalc` during turns, then reuse that for all assistant migrations.
+
+#### P2.1 Turn context contract (frontend -> ACP)
+
+Add browser/session targeting fields to ACP turn metadata so backend can issue scoped credentials and deterministic CLI defaults.
+
+Fields to include in turn context:
+
+- `browser_id` (current browser session id)
+- `project_id` (already present)
+- `account_id` (already present in ACP request)
+
+Done when:
+
+- Every Codex turn from chat/navigator includes `browser_id`.
+- Backend can reliably identify the initiating browser session.
+
+---
+
+#### P2.2 Codex turn environment contract (backend -> codex subprocess)
+
+For each turn, inject env vars that make CLI/browser automation immediately usable:
+
+- `COCALC_API_URL`
+- `COCALC_BEARER_TOKEN` (short-lived, scoped)
+- `COCALC_ACCOUNT_ID`
+- `COCALC_PROJECT_ID`
+- `COCALC_BROWSER_ID`
+- `COCALC_CLI_BIN` (optional explicit binary path)
+
+Done when:
+
+- A Codex turn can run `cocalc browser session list` and `cocalc browser exec ...` with no extra auth/login setup.
+- Tokens are per-turn/per-scope and expire.
+
+---
+
+#### P2.3 Auth/scoping policy for agent-issued credentials
+
+Use least privilege by default:
+
+- browser automation scope (read/write browser session state)
+- workspace/project scope (only selected workspace unless explicitly escalated)
+- explicit TTL (short-lived bearer)
+
+Lite mode:
+
+- Reuse existing agent token path and connection-info mechanics.
+
+Launchpad mode:
+
+- Mint scoped bearer via server/project-host auth path tied to account+project+browser context.
+
+Done when:
+
+- Agent token cannot be reused for unrelated account/workspace operations.
+- Revocation/expiry behavior is deterministic and logged.
+
+---
+
+#### P2.4 Make `cocalc` CLI available in Codex runtimes
+
+Launchpad project-host codex runtime:
+
+- Ensure `cocalc` (or `cocalc-cli`) is present in PATH inside codex execution container.
+- Keep version aligned with server release.
+
+CoCalc-plus:
+
+- Bundle CLI into plus SEA distribution and expose:
+  - `cocalc-plus cli ...`
+- Ensure Codex subprocess PATH includes plus binary location.
+
+Done when:
+
+- In launchpad and plus, Codex can execute CLI commands without install steps.
+- `--version` and `browser exec-api` work inside turn runtime.
+
+---
+
+#### P2.5 Agent skill packaging for CLI/browser workflows
+
+Ship a first-party skill available to Codex sessions that includes:
+
+- command cookbook for common browser tasks
+- safe patterns (`exec-api` inspect first, then `browser exec`)
+- fallback behavior when multiple browser sessions are active
+- examples for open/close tabs, summarize active workspace, apply small edits
+
+Done when:
+
+- Codex uses skill-guided commands in traces for browser tasks.
+- Prompt size remains small (skill file/tooling, not giant inline system prompt).
+
+---
+
+#### P2.6 Vertical-slice rollout (required ordering)
+
+1. Lite-only end-to-end slice:
+   - inject env + browser id + CLI path + skill
+   - verify with local `/home/wstein/bin/cocalc-cli`
+2. Launchpad slice:
+   - scoped bearer minting + container PATH wiring
+3. Plus slice:
+   - `cocalc-plus cli` in SEA + PATH wiring
+
+Done when:
+
+- Same prompt succeeds across lite, launchpad, plus with only runtime-specific auth differences.
+
+---
+
+#### P2.7 Acceptance tests
+
+Manual acceptance prompts:
+
+1. "List my open tabs and close non-chat tabs."
+2. "Open README.md and summarize it."
+3. "Sort open file tabs by on-disk mtime."
+
+Operational checks:
+
+- each action appears in agent trace
+- token scope/expiry enforced
+- cancellation works for long `browser exec` jobs
+
+Done when:
+
+- The three prompts run successfully in lite and launchpad.
+- Failure modes are actionable (no silent no-op behavior).
+
+---
+
+### P3. Migrate all existing assistant/LLM paths to Codex + agent framework
+
+P3 starts only after P2 is stable, since migrated entry points must rely on the same agent runtime contract.
+
+#### P3.1 Inventory and classify all entry points
+
+Create a complete list of assistant invocations across frontend (notebook, editor, latex, terminals, etc.), grouped by:
+
+- intent type (explain/fix/edit/run/summarize)
+- context requirements
+- required permissions
+
+Done when:
+
+- Every current assistant trigger is mapped to a codex intent adapter.
+
+---
+
+#### P3.2 Route all entry points into coherent Navigator/Codex thread model
+
+- No one-off hidden assistant chats.
+- Entry points inject intent envelope into visible thread.
+- Queue policy when active turn is running.
+
+Done when:
+
+- Users can follow all assistant-originated actions in one shared thread timeline.
+
+---
+
+#### P3.3 Remove legacy assistant code paths
+
+- Delete obsolete UI/actions once codex adapters reach parity.
+- Keep only Codex-first pathways for alpha.
+
+Done when:
+
+- No remaining production assistant path bypasses Codex.
+- Docs and UI labels reflect the Codex-only model.
+
+---
+
+### P2/P3 dependency summary
+
+Hard dependency:
+
+- P3 depends on P2 runtime contract (env/auth/CLI/skill) being available and reliable.
+
+Execution:
+
+1. P2 complete (Lite -> Launchpad -> Plus)
+2. P3 migration by entry-point priority (highest traffic first)
