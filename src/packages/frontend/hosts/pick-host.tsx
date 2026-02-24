@@ -32,6 +32,39 @@ const STATUS_COLOR = {
   deprovisioned: "default",
 } as const;
 
+const STATUS_ORDER: Record<string, number> = {
+  running: 0,
+  starting: 1,
+  restarting: 2,
+  error: 3,
+  off: 4,
+  stopping: 5,
+  deprovisioned: 6,
+};
+
+const SCOPE_ORDER: Record<string, number> = {
+  owned: 0,
+  collab: 1,
+  pool: 2,
+  shared: 3,
+};
+
+function autoSelectCompare(a: Host, b: Host): number {
+  const aStatus = STATUS_ORDER[a.status] ?? 99;
+  const bStatus = STATUS_ORDER[b.status] ?? 99;
+  if (aStatus !== bStatus) return aStatus - bStatus;
+
+  const aProjects = typeof a.projects === "number" ? a.projects : Number.MAX_SAFE_INTEGER;
+  const bProjects = typeof b.projects === "number" ? b.projects : Number.MAX_SAFE_INTEGER;
+  if (aProjects !== bProjects) return aProjects - bProjects;
+
+  const aScope = SCOPE_ORDER[a.scope ?? ""] ?? 99;
+  const bScope = SCOPE_ORDER[b.scope ?? ""] ?? 99;
+  if (aScope !== bScope) return aScope - bScope;
+
+  return (a.name || "").localeCompare(b.name || "");
+}
+
 export function HostPickerModal({
   open,
   onCancel,
@@ -78,13 +111,8 @@ export function HostPickerModal({
     );
   }, [currentHost, currentHostId]);
 
-  const grouped = useMemo(() => {
-    const groups: { label: string; items: Host[] }[] = [];
-    const addGroup = (label: string, items: Host[]) => {
-      if (items.length) groups.push({ label, items });
-    };
-
-    const filtered = hosts.filter((h) => {
+  const filteredHosts = useMemo(() => {
+    return hosts.filter((h) => {
       if (!showUnavailable && h.can_place === false) return false;
       if (
         regionFilterState &&
@@ -93,6 +121,30 @@ export function HostPickerModal({
         return false;
       return true;
     });
+  }, [hosts, showUnavailable, regionFilterState]);
+
+  const selectableHosts = useMemo(() => {
+    return filteredHosts.filter(
+      (h) => h.can_place !== false && (isCreate || h.id !== currentHostId),
+    );
+  }, [filteredHosts, isCreate, currentHostId]);
+
+  const bestSelectableHost = useMemo(() => {
+    const preferred = selectableHosts.find((h) => h.id === selectedHostId);
+    if (preferred) return preferred;
+    return [...selectableHosts].sort(autoSelectCompare)[0];
+  }, [selectableHosts, selectedHostId]);
+
+  const noSelectableTarget =
+    !loading && hosts.length > 0 && selectableHosts.length === 0;
+
+  const grouped = useMemo(() => {
+    const groups: { label: string; items: Host[] }[] = [];
+    const addGroup = (label: string, items: Host[]) => {
+      if (items.length) groups.push({ label, items });
+    };
+
+    const filtered = filteredHosts;
 
     const current = filtered.filter((h) => h.id === currentHostId);
     const owned = filtered.filter((h) => h.scope === "owned" && h.id !== currentHostId);
@@ -140,7 +192,7 @@ export function HostPickerModal({
       );
     }
     return items;
-  }, [hosts, currentHostId, showUnavailable, regionFilterState]);
+  }, [filteredHosts, currentHostId]);
 
   const availableRegions = useMemo(() => {
     const regions = new Set<string>();
@@ -158,13 +210,6 @@ export function HostPickerModal({
         catalog: true,
       });
       setHosts(list);
-      // default select currently selected host in create mode, then current host in
-      // move mode, then first placeable host.
-      const first =
-        list.find((h) => h.id === selectedHostId) ??
-        list.find((h) => h.id === currentHostId) ??
-        list.find((h) => h.id !== currentHostId && h.can_place !== false);
-      setSelected(first?.id);
     } catch (err) {
       console.error("failed to load hosts", err);
     } finally {
@@ -181,6 +226,12 @@ export function HostPickerModal({
     }
   }, [open, regionFilter, selectedHostId]);
 
+  useEffect(() => {
+    if (!open) return;
+    if (selected && selectableHosts.some((h) => h.id === selected)) return;
+    setSelected(bestSelectableHost?.id);
+  }, [open, selected, selectableHosts, bestSelectableHost]);
+
   return (
     <Modal
       width={600}
@@ -189,9 +240,10 @@ export function HostPickerModal({
       onOk={() => {
         if (!selected) return;
         const host = hosts.find((h) => h.id === selected);
+        if (!host) return;
         onSelect(selected, host);
       }}
-      okButtonProps={{ disabled: !selected, loading }}
+      okButtonProps={{ disabled: !selected || noSelectableTarget, loading }}
       okText={isCreate ? "Use host" : undefined}
       title={
         <Space>
@@ -272,6 +324,19 @@ export function HostPickerModal({
           </Tag>
         )}
       </Space>
+      {noSelectableTarget && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={
+            isCreate
+              ? "No available host can be used for this new workspace."
+              : "No available destination host can be used for this move."
+          }
+          description="Try another region, start/provision a host, or adjust host permissions."
+        />
+      )}
       <Radio.Group
         style={{ width: "100%" }}
         value={selected}

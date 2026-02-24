@@ -3194,11 +3194,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             counts,
           });
         } catch (err) {
-          console.warn(
-            `WARNING: Issue updating snapshots of ${this.project_id}`,
-            err,
-            { counts },
-          );
+          if (!`${err}`.includes("no subscribers matching")) {
+            console.warn(
+              `WARNING: Issue updating snapshots of ${this.project_id}`,
+              err,
+              { counts },
+            );
+          }
         }
         return false;
       },
@@ -3229,11 +3231,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             counts,
           });
         } catch (err) {
-          console.warn(
-            `WARNING: Issue updating backups of ${this.project_id}`,
-            err,
-            { counts },
-          );
+          // if can't backup because no host, no need to report that
+          if (!`${err}`.includes("no subscribers matching")) {
+            console.warn(
+              `WARNING: Issue updating backups of ${this.project_id}`,
+              err,
+              { counts },
+            );
+          }
         }
         return false;
       },

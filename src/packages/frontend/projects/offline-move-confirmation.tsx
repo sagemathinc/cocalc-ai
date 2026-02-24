@@ -98,19 +98,43 @@ function statusLabel(status: string): string {
 export function buildOfflineMoveConfirmationDialog(
   payload: OfflineMoveConfirmationPayload,
 ): OfflineMoveConfirmationDialog {
+  const noBackup = payload.reason === "no_backup";
+  const sourceDeprovisioned = payload.source_deprovisioned;
   const sourceHeadline = payload.source_deprovisioned
-    ? "Source host is deprovisioned."
+    ? "Source host is deprovisioned (disk deleted)."
     : `Source host is offline (${statusLabel(payload.source_status)}).`;
 
-  const riskMessage =
-    payload.reason === "no_backup"
-      ? "No backup exists for this workspace. Moving now cannot recover the latest data from the source host."
-      : "The latest backup is older than the latest edit. Moving now restores the latest backup and omits newer edits.";
+  const riskMessage = (() => {
+    if (noBackup && sourceDeprovisioned) {
+      return "No backup exists for this workspace. The source host is already deprovisioned, so this workspace will be empty after move.";
+    }
+    if (noBackup) {
+      return "No backup exists for this workspace. Moving now cannot recover the latest data from the source host.";
+    }
+    if (sourceDeprovisioned) {
+      return "The latest available backup is older than the latest edit. Since the source host is already deprovisioned, newer edits are already unavailable. Moving restores the latest available backup.";
+    }
+    return "The latest backup is older than the latest edit. Moving now restores the latest backup and omits newer edits.";
+  })();
 
-  const okText =
-    payload.reason === "no_backup"
-      ? "Move and accept data-loss risk"
-      : "Move using older backup";
+  const okText = (() => {
+    if (noBackup && sourceDeprovisioned) return "Move and create empty workspace";
+    if (noBackup) return "Move and accept data-loss risk";
+    if (sourceDeprovisioned) return "Move and restore available backup";
+    return "Move using older backup";
+  })();
+
+  const moveOutcome = (() => {
+    if (noBackup) {
+      return "Workspace will be empty because there are no backups of it.";
+    }
+    if (sourceDeprovisioned) {
+      return "Destination host restores the latest available backup. Edits newer than that backup are already unavailable.";
+    }
+    return "Destination host restores from the latest backup above.";
+  })();
+
+  const alertType = noBackup && !sourceDeprovisioned ? "error" : "warning";
 
   const items = [
     {
@@ -136,7 +160,7 @@ export function buildOfflineMoveConfirmationDialog(
       children: (
         <>
           <Typography.Text strong>If you move now</Typography.Text>
-          <div>Destination host restores from the latest backup above.</div>
+          <div>{moveOutcome}</div>
         </>
       ),
     },
@@ -145,19 +169,20 @@ export function buildOfflineMoveConfirmationDialog(
   return {
     title: "Move from offline host?",
     okText,
-    okButtonProps: { danger: true },
+    okButtonProps: { danger: !sourceDeprovisioned },
     content: (
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
         <Alert
           showIcon
-          type={payload.reason === "no_backup" ? "error" : "warning"}
+          type={alertType}
           message={sourceHeadline}
           description={riskMessage}
         />
         <div>
-          <Tag color={payload.reason === "no_backup" ? "red" : "orange"}>
-            {payload.reason === "no_backup" ? "No backup available" : "Backup stale"}
+          <Tag color={noBackup ? "red" : "orange"}>
+            {noBackup ? "No backup available" : "Backup stale"}
           </Tag>
+          {sourceDeprovisioned && <Tag color="default">Source deprovisioned</Tag>}
         </div>
         <Timeline items={items} />
       </Space>
