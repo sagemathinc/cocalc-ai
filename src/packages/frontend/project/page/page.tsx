@@ -64,6 +64,8 @@ import {
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
+import MoveInProgress from "./move-in-progress";
 
 const START_BANNER = false;
 
@@ -108,7 +110,16 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     () => evaluateHostOperational(hostInfo),
     [hostInfo],
   );
+  const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
+    | MoveLroState
+    | undefined;
+  const moveInProgress =
+    moveLro != null &&
+    (!moveLro.summary ||
+      moveLro.summary.status === "queued" ||
+      moveLro.summary.status === "running");
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const workspaceBlocked = hostUnavailable || moveInProgress;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
@@ -313,7 +324,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   function renderTopRow() {
     if (fullscreen && fullscreen !== "project") return;
 
-    if (hostUnavailable) {
+    if (workspaceBlocked) {
       return (
         <div style={{ display: "flex", height: "36px" }}>
           <HomePageButton
@@ -399,6 +410,10 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderMainContent() {
+    if (moveInProgress && moveLro) {
+      return <MoveInProgress project_id={project_id} moveLro={moveLro} />;
+    }
+
     if (hostUnavailable) {
       return (
         <div
@@ -504,8 +519,8 @@ You can wait for this host to become available again, or move this workspace to 
         {renderTopRow()}
         {is_deleted && <DeletedProjectWarning />}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {!hostUnavailable && renderActivityBarButtons()}
-          {!hostUnavailable && renderFlyout()}
+          {!workspaceBlocked && renderActivityBarButtons()}
+          {!workspaceBlocked && renderFlyout()}
           {renderMainContent()}
         </div>
       </div>
