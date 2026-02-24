@@ -494,6 +494,10 @@ export function registerBrowserCommand(
       "execute javascript in the target browser session with a limited browser API (use 'cocalc browser exec-api' to inspect the API); provide code inline, with --file, or with --stdin",
     )
     .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
     .option("--browser <id>", "browser id (or unique prefix)")
     .option(
       "--file <path>",
@@ -522,6 +526,7 @@ export function registerBrowserCommand(
         code: string[],
         opts: {
           workspace?: string;
+          projectId?: string;
           browser?: string;
           file?: string;
           stdin?: boolean;
@@ -534,28 +539,34 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser exec", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = `${opts.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
           const workspaceHint = `${opts.workspace ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
-            browserHint: opts.browser,
+            browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
           });
-          const workspaceRow = workspaceHint
-            ? await deps.resolveWorkspace(ctx, workspaceHint)
-            : sessionInfo.active_project_id
-              ? await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)
-              : sessionInfo.open_projects?.length === 1 &&
-                  sessionInfo.open_projects[0]?.project_id
-                ? await deps.resolveWorkspace(
-                    ctx,
-                    sessionInfo.open_projects[0].project_id,
-                  )
-                : (() => {
-                    throw new Error(
-                      "workspace is required; pass -w/--workspace or focus a workspace tab in the target browser session",
-                    );
-                  })();
+          const project_id = projectIdHint
+            ? projectIdHint
+            : workspaceHint
+              ? (await deps.resolveWorkspace(ctx, workspaceHint)).project_id
+              : sessionInfo.active_project_id
+                ? (await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)).project_id
+                : sessionInfo.open_projects?.length === 1 &&
+                    sessionInfo.open_projects[0]?.project_id
+                  ? (
+                      await deps.resolveWorkspace(
+                        ctx,
+                        sessionInfo.open_projects[0].project_id,
+                      )
+                    ).project_id
+                  : (() => {
+                      throw new Error(
+                        "workspace/project is required; pass --project-id, -w/--workspace, or focus a workspace tab in the target browser session",
+                      );
+                    })();
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -591,13 +602,13 @@ export function registerBrowserCommand(
           }
           if (opts.async) {
             const started = await browserClient.startExec({
-              project_id: workspaceRow.project_id,
+              project_id,
               code: script,
             });
             if (!opts.wait) {
               return {
                 browser_id: sessionInfo.browser_id,
-                project_id: workspaceRow.project_id,
+                project_id,
                 ...started,
               };
             }
@@ -620,12 +631,12 @@ export function registerBrowserCommand(
             };
           }
           const response = await browserClient.exec({
-            project_id: workspaceRow.project_id,
+            project_id,
             code: script,
           });
           return {
             browser_id: sessionInfo.browser_id,
-            project_id: workspaceRow.project_id,
+            project_id,
             ok: !!response?.ok,
             result: response?.result ?? null,
           };
