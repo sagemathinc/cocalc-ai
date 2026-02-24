@@ -107,6 +107,19 @@ function normalizeSrcPaths(src: CopySource): string[] {
   return normalized;
 }
 
+function normalizeBackupPath(raw: string, label: string): string {
+  const normalized = normalizeCopyPath(raw, label);
+  if (!normalized) return "";
+  if (normalized === "/root") return "";
+  if (normalized.startsWith("/root/")) {
+    return normalized.slice("/root/".length);
+  }
+  if (path.posix.isAbsolute(normalized)) {
+    return normalized.replace(/^\/+/, "");
+  }
+  return normalized;
+}
+
 async function getHostIds(
   project_ids: string[],
 ): Promise<Map<string, string>> {
@@ -200,6 +213,14 @@ export async function copyProjectFiles({
   if (srcPaths.length > 1 && srcPaths.some((p) => !p)) {
     throw new Error("empty src path not allowed when copying multiple paths");
   }
+  const backupSrcPaths = srcPaths.map((srcPath, idx) =>
+    normalizeBackupPath(srcPath, `src.path[${idx}]`),
+  );
+  if (backupSrcPaths.length > 1 && backupSrcPaths.some((p) => !p)) {
+    throw new Error(
+      "empty backup source path not allowed when copying multiple paths",
+    );
+  }
   const normalizedSrc: CopySource = {
     project_id: src.project_id,
     path: Array.isArray(src.path) ? srcPaths : srcPaths[0],
@@ -256,7 +277,7 @@ export async function copyProjectFiles({
       "purpose=copy",
       `src_project_id=${src.project_id}`,
       ...(op_id ? [`op_id=${op_id}`] : []),
-      ...srcPaths
+      ...backupSrcPaths
         .filter((p) => p)
         .map((p) => `src_path=${encodeURIComponent(p)}`),
     ];
@@ -281,7 +302,7 @@ export async function copyProjectFiles({
       throw copyCanceledError();
     }
     try {
-      for (const srcPath of srcPaths) {
+      for (const srcPath of backupSrcPaths) {
         if (shouldAbort && (await shouldAbort())) {
           throw copyCanceledError();
         }
@@ -305,7 +326,7 @@ export async function copyProjectFiles({
           throw copyCanceledError();
         }
         if (srcPaths.length > 1) {
-          for (const srcPath of srcPaths) {
+          for (const srcPath of backupSrcPaths) {
             const base = path.posix.basename(srcPath);
             const destPath = normalizeCopyPath(
               path.posix.join(dest.path, base),
@@ -342,7 +363,7 @@ export async function copyProjectFiles({
             queue_mode === "insert"
               ? await insertCopyRowIfMissing({
                   src_project_id: src.project_id,
-                  src_path: srcPaths[0],
+                  src_path: backupSrcPaths[0],
                   dest_project_id: dest.project_id,
                   dest_path: dest.path,
                   op_id,
@@ -352,7 +373,7 @@ export async function copyProjectFiles({
                 })
               : await upsertCopyRow({
                   src_project_id: src.project_id,
-                  src_path: srcPaths[0],
+                  src_path: backupSrcPaths[0],
                   dest_project_id: dest.project_id,
                   dest_path: dest.path,
                   op_id,

@@ -40,6 +40,19 @@ function normalizeCopyPath(raw: string, label: string): string {
   return normalized;
 }
 
+function normalizeBackupPath(raw: string): string {
+  const normalized = normalizeCopyPath(raw, "src_path");
+  if (!normalized) return "";
+  if (normalized === "/root") return "";
+  if (normalized.startsWith("/root/")) {
+    return normalized.slice("/root/".length);
+  }
+  if (path.posix.isAbsolute(normalized)) {
+    return normalized.replace(/^\/+/, "");
+  }
+  return normalized;
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await stat(p);
@@ -50,7 +63,7 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
-  const srcPath = normalizeCopyPath(row.src_path, "src_path");
+  const srcPath = normalizeBackupPath(row.src_path);
   let destPath = normalizeCopyPath(row.dest_path, "dest_path");
   if (!destPath) {
     if (!srcPath) {
