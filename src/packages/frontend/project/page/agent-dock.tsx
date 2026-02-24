@@ -48,10 +48,18 @@ const DEFAULT_POSITION = { x: 24, y: 84 };
 const DEFAULT_DOCK_SIZE = { width: 560, height: 520 };
 const MIN_DOCK_WIDTH = 380;
 const MIN_DOCK_HEIGHT = 320;
+const DOCK_SESSION_LABEL_MAX = 42;
 
 interface AgentDockProps {
   project_id: string;
   is_active: boolean;
+}
+
+function ellipsizeLabel(value: string, max = DOCK_SESSION_LABEL_MAX): string {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return "Agent session";
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 1))}...`;
 }
 
 export function AgentDock({ project_id, is_active }: AgentDockProps) {
@@ -303,7 +311,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const sessionOptions = useMemo(() => {
     return sessions.map((record) => ({
       value: record.session_id,
-      label: `${record.title || "Agent session"} (workspace root)`,
+      label: `${ellipsizeLabel(record.title || "Agent session")} (workspace root)`,
     }));
   }, [sessions]);
 
@@ -357,14 +365,18 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
               cursor: "move",
             }}
           >
-            <Space
-              wrap
-              size={[6, 6]}
-              style={{ width: "100%", justifyContent: "space-between" }}
+            <div
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "nowrap",
+              }}
             >
               <Select
                 size="small"
-                style={{ flex: 1, minWidth: 180 }}
+                style={{ flex: "1 1 auto", minWidth: 0 }}
                 value={session.session_id}
                 options={sessionOptions}
                 showSearch
@@ -376,7 +388,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   }
                 }}
               />
-              <Space size={[4, 4]} wrap>
+              <Space
+                size={[4, 4]}
+                wrap={false}
+                style={{ flexShrink: 0, whiteSpace: "nowrap" }}
+              >
                 <Tooltip title="Decrease chat font size">
                   <Button
                     size="small"
@@ -405,7 +421,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 <Button
                   size="small"
                   type="link"
-                  style={{ paddingLeft: 0 }}
+                  style={{ paddingLeft: 0, whiteSpace: "nowrap" }}
                   onClick={() =>
                     projectActions?.open_file({
                       path: session.chat_path,
@@ -419,7 +435,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   <Icon name="times" />
                 </Button>
               </Space>
-            </Space>
+            </div>
           </div>
           {error ? (
             <Alert type="error" showIcon message={error} style={{ margin: 8 }} />
