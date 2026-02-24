@@ -68,6 +68,7 @@ export async function main(opts?: {
 
   const AUTH_TOKEN = await getAuthToken();
   const AGENT_TOKEN = await getAgentToken(AUTH_TOKEN);
+  const CLI_BIN = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
   if (AGENT_TOKEN) {
     process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
   }
@@ -140,6 +141,14 @@ export async function main(opts?: {
 
   logger.debug("start project services");
   cleanup();
+  // cleanup() intentionally drops inherited COCALC_* env vars; restore the
+  // subset needed by lite ACP/Codex runtime wiring.
+  if (AGENT_TOKEN) {
+    process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
+  }
+  if (CLI_BIN) {
+    process.env.COCALC_CLI_BIN = CLI_BIN;
+  }
   // After environment cleanup, default lite process monitoring to owned scope.
   process.env.COCALC_PROJECT_INFO_SCOPE ??= "owned";
   startProjectServices({ client: conatClient });
