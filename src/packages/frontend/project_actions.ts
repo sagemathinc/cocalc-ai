@@ -2219,17 +2219,63 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       const resp =
         await webapp_client.project_client.copyPathBetweenProjects(opts);
       this.copyOpsManager.track(resp);
-      const withSlashes = await this.appendSlashToDirectoryPaths(files);
-      this.log({
-        event: "file_action",
-        action: "copied",
-        dest: opts.dest.path,
-        files: withSlashes,
-        count: files.length,
-        project: opts.dest.project_id,
+      this.set_activity({
+        id,
+        status: `Copy queued (${resp.op_id.slice(0, 8)})`,
       });
+      const summary = await webapp_client.conat_client.lroWait({
+        op_id: resp.op_id,
+        scope_type: resp.scope_type,
+        scope_id: resp.scope_id,
+        onProgress: (event) => {
+          const phase =
+            typeof event.phase == "string" && event.phase.length > 0
+              ? event.phase
+              : typeof event.message == "string" && event.message.length > 0
+                ? event.message
+                : "running";
+          const pct =
+            typeof event.progress == "number" && Number.isFinite(event.progress)
+              ? ` (${Math.max(0, Math.min(100, Math.round(event.progress)))}%)`
+              : "";
+          this.set_activity({
+            id,
+            status: `Copy ${phase}${pct}`,
+          });
+        },
+      });
+      if (summary.status === "succeeded") {
+        const withSlashes = await this.appendSlashToDirectoryPaths(files);
+        this.log({
+          event: "file_action",
+          action: "copied",
+          dest: opts.dest.path,
+          files: withSlashes,
+          count: files.length,
+          project: opts.dest.project_id,
+        });
+      } else if (summary.status === "canceled") {
+        error = summary.error ?? "Copy canceled";
+        alert_message({
+          type: "warning",
+          title: "Copy canceled",
+          message: error,
+        });
+      } else {
+        error = summary.error ?? `Copy failed (${summary.status})`;
+        alert_message({
+          type: "error",
+          title: "Copy failed",
+          message: error,
+        });
+      }
     } catch (err) {
       error = `${err}`;
+      alert_message({
+        type: "error",
+        title: "Copy failed",
+        message: error,
+      });
     } finally {
       this.set_activity({ id, stop: "", error });
     }
