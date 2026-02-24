@@ -20,3 +20,29 @@ describe("CodexExecAgent event path formatting", () => {
   });
 });
 
+describe("CodexExecAgent pre-content path heuristics", () => {
+  const agent = new CodexExecAgent();
+  const extract = (text: string): string[] =>
+    (agent as any).extractPathCandidates(text);
+
+  it("does not emit nested suffix paths from a relative path", () => {
+    const paths = extract(
+      "Please update src/packages/backend/sandbox/rustic.ts and explain the diff.",
+    );
+    expect(paths).toContain("src/packages/backend/sandbox/rustic.ts");
+    expect(paths).not.toContain("packages/backend/sandbox/rustic.ts");
+  });
+
+  it("does not emit nested suffix paths from an absolute path", () => {
+    const paths = extract(
+      "Look at /home/wstein/build/cocalc-lite3/src/packages/backend/sandbox/rustic.ts first.",
+    );
+    expect(paths).toContain(
+      "/home/wstein/build/cocalc-lite3/src/packages/backend/sandbox/rustic.ts",
+    );
+    expect(paths).not.toContain("packages/backend/sandbox/rustic.ts");
+    expect(paths).not.toContain(
+      "/home/wstein/build/cocalc-lite3/packages/backend/sandbox/rustic.ts",
+    );
+  });
+});

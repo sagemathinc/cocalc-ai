@@ -1303,12 +1303,12 @@ export class CodexExecAgent implements AcpAgent {
     // - absolute paths (/...)
     // - relative paths with slashes (src/packages/..., foo/bar/baz)
     // - filenames with extensions (foo.txt)
-    // We run the broader patterns too, so punctuation or brackets don't block matches.
+    // Each pattern enforces a start boundary so nested path suffixes from a
+    // longer match (e.g. `src/packages/...` => `packages/...`) are not emitted.
     const patterns = [
-      /\/[A-Za-z0-9._~\-/]+/g,
-      /(?:^|\s)([A-Za-z0-9._~\-]+\/[A-Za-z0-9._~\-/]+)/g,
-      /([A-Za-z0-9._~\-]+\/[A-Za-z0-9._~\-/]+)/g,
-      /(?:^|\s)([A-Za-z0-9._~\-]+\.[A-Za-z0-9._~\-]+)/g,
+      /(?:^|[^A-Za-z0-9._~/-])(\/(?:[A-Za-z0-9._~\-]+\/)*[A-Za-z0-9._~\-]+)/g,
+      /(?:^|[^A-Za-z0-9._~/-])((?:\.{1,2}|[A-Za-z0-9._~\-]+)\/(?:[A-Za-z0-9._~\-]+\/)*[A-Za-z0-9._~\-]+)/g,
+      /(?:^|[^A-Za-z0-9._~-])((?:\.{1,2}|[A-Za-z0-9._~\-]+)\.[A-Za-z0-9._~\-]+)/g,
     ];
     for (const source of sources) {
       for (const pattern of patterns) {
@@ -1318,7 +1318,11 @@ export class CodexExecAgent implements AcpAgent {
           if (!value) continue;
           const cleaned = value
             .replace(/^[\"'`([{]+/, "")
-            .replace(/[\"'`);,}\]]+$/, "");
+            .replace(/[\"'`);,}\]]+$/, "")
+            .replace(/\/+$/, "");
+          if (!cleaned) continue;
+          if (cleaned.startsWith("-")) continue;
+          if (cleaned.includes("://") || cleaned.startsWith("//")) continue;
           // Avoid treating shell binaries as file paths we should cache.
           if (/^(?:\/)?(?:usr\/)?bin\/(?:bash|sh)$/.test(cleaned)) {
             continue;
@@ -1364,6 +1368,15 @@ export class CodexExecAgent implements AcpAgent {
       const text = await fs.readFile(pathAbs, "utf8");
       this.updateCachedContent(pathAbs, text, cache);
     } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        this.logCache("skip-missing", { path: pathAbs, code });
+        return;
+      }
+      if (code === "EACCES" || code === "EPERM") {
+        this.logCache("skip-inaccessible", { path: pathAbs, code });
+        return;
+      }
       logger.debug("codex-exec: failed to cache pre-content", {
         path: pathAbs,
         err,
