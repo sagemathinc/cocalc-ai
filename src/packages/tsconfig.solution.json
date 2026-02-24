@@ -5,6 +5,7 @@
     { "path": "./api-client" },
     { "path": "./backend" },
     { "path": "./chat" },
+    { "path": "./cli" },
     { "path": "./cloud" },
     { "path": "./comm" },
     { "path": "./conat" },
