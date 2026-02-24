@@ -5,8 +5,13 @@
 
 import { Alert, Button, Empty, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
+import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type {
   AgentSessionRecord,
   AgentSessionStatus,
@@ -15,6 +20,11 @@ import {
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
+import {
+  initChat,
+  removeWithInstance as removeChatWithInstance,
+} from "@cocalc/frontend/chat/register";
+import SideChat from "@cocalc/frontend/chat/side-chat";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
@@ -26,6 +36,7 @@ const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   archived: "purple",
   failed: "red",
 };
+const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 
 function formatUpdated(iso?: string): string {
   if (!iso) return "";
@@ -65,6 +76,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string>("");
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
+  const [inlineSession, setInlineSession] = useState<AgentSessionRecord | null>(
+    null,
+  );
+  const [inlineActions, setInlineActions] = useState<ChatActions | null>(null);
+  const [inlineError, setInlineError] = useState<string>("");
   const isFlyout = layout === "flyout";
 
   useEffect(() => {
@@ -107,9 +123,82 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return visible;
   }, [sessions, showArchived, scope, account_id]);
 
+  useEffect(() => {
+    if (!inlineSession) return;
+    const updated = sessions.find(
+      (session) => session.session_id === inlineSession.session_id,
+    );
+    if (updated) {
+      setInlineSession(updated);
+      return;
+    }
+    setInlineSession(null);
+  }, [inlineSession, sessions]);
+
+  useEffect(() => {
+    if (!inlineSession) {
+      setInlineActions(null);
+      setInlineError("");
+      return;
+    }
+    let mounted = true;
+    let chatActions: ChatActions | undefined;
+    setInlineActions(null);
+    setInlineError("");
+
+    try {
+      chatActions = initChat(project_id, inlineSession.chat_path, {
+        instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+      });
+      if (!mounted) {
+        removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
+          instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+        });
+        return;
+      }
+      setInlineActions(chatActions);
+    } catch (err) {
+      if (!mounted) return;
+      setInlineActions(null);
+      setInlineError(`${err}`);
+    }
+
+    return () => {
+      mounted = false;
+      if (chatActions) {
+        setInlineActions((current) => (current === chatActions ? null : current));
+        removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
+          instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+        });
+      }
+    };
+  }, [inlineSession, project_id]);
+
+  useEffect(() => {
+    if (!inlineActions || !inlineSession?.thread_key) return;
+    inlineActions.setSelectedThread?.(inlineSession.thread_key);
+    const timer = setTimeout(() => {
+      inlineActions?.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [inlineActions, inlineSession]);
+
+  const inlineDesc = useMemo(() => {
+    if (!inlineSession?.thread_key) return undefined;
+    return {
+      "data-selectedThreadKey": inlineSession.thread_key,
+      "data-preferLatestThread": false,
+    };
+  }, [inlineSession?.thread_key]);
+
   function openNavigatorSession(record: AgentSessionRecord): void {
     saveNavigatorSelectedThreadKey(record.thread_key);
     actions?.set_active_tab("home");
+  }
+
+  function openInlineSession(record: AgentSessionRecord): void {
+    setInlineSession(record);
+    setInlineError("");
   }
 
   async function toggleArchive(record: AgentSessionRecord): Promise<void> {
@@ -197,6 +286,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               size="small"
               type="link"
               style={{ paddingLeft: 0 }}
+              onClick={() => openInlineSession(record)}
+            >
+              Open
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
               onClick={() => openNavigatorSession(record)}
             >
               Resume
@@ -226,6 +323,103 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   if (loading) {
     return <Loading theme="medium" />;
+  }
+
+  if (inlineSession) {
+    return (
+      <div
+        style={
+          isFlyout
+            ? undefined
+            : {
+                maxWidth: 1200,
+                margin: "0 auto",
+                padding: "12px 16px 24px",
+              }
+        }
+      >
+        <Space
+          wrap
+          size={[8, 8]}
+          style={{ marginBottom: 8, width: "100%", justifyContent: "space-between" }}
+        >
+          <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => setInlineSession(null)}
+            >
+              Back
+            </Button>
+            <Typography.Text strong title={inlineSession.title || "Agent session"}>
+              {ellipsize(inlineSession.title || "Agent session", isFlyout ? 42 : 90)}
+            </Typography.Text>
+            <Tag
+              color={STATUS_COLORS[inlineSession.status] ?? "default"}
+              style={{ marginInlineEnd: 0 }}
+            >
+              {inlineSession.status}
+            </Tag>
+            {inlineSession.model ? (
+              <Tag title={inlineSession.model}>
+                {ellipsize(inlineSession.model, isFlyout ? 24 : 40)}
+              </Tag>
+            ) : null}
+          </Space>
+          <Space size={[4, 4]} wrap>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => openNavigatorSession(inlineSession)}
+            >
+              Resume
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => actions?.open_file({ path: inlineSession.chat_path })}
+            >
+              Open Chat File
+            </Button>
+          </Space>
+        </Space>
+        {error ? (
+          <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />
+        ) : null}
+        {inlineError ? (
+          <Alert
+            type="error"
+            showIcon
+            message={inlineError}
+            style={{ marginBottom: 8 }}
+          />
+        ) : null}
+        <div
+          style={{
+            border: "1px solid #eee",
+            borderRadius: 8,
+            overflow: "hidden",
+            background: "white",
+            height: isFlyout ? "min(72vh, 720px)" : "min(78vh, 860px)",
+          }}
+        >
+          {inlineActions ? (
+            <SideChat
+              actions={inlineActions}
+              project_id={project_id}
+              path={inlineSession.chat_path}
+              hideSidebar
+              desc={inlineDesc}
+            />
+          ) : (
+            <Loading theme="medium" />
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
