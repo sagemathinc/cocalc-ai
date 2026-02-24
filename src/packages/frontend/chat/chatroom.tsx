@@ -395,6 +395,7 @@ export function ChatPanel({
           typeof thread.threadIcon === "string" ? thread.threadIcon : undefined,
         thread_image:
           typeof thread.threadImage === "string" ? thread.threadImage : undefined,
+        thread_pin: thread.isPinned === true,
       });
     }
     return records;

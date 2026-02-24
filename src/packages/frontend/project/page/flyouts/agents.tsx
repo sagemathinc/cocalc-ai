@@ -27,7 +27,9 @@ import {
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
+import { html_to_text } from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
@@ -44,6 +46,7 @@ const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   failed: "red",
 };
 const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
+const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 
 function formatUpdated(iso?: string): string {
   if (!iso) return "";
@@ -62,6 +65,28 @@ function ellipsize(value: string, max = 72): string {
   if (!value) return "";
   if (value.length <= max) return value;
   return `${value.slice(0, max - 1)}...`;
+}
+
+function dateMs(value?: string): number {
+  if (!value) return 0;
+  const ms = new Date(value).valueOf();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function normalizedTitle(record: AgentSessionRecord): string {
+  const raw = typeof record.title === "string" ? record.title : "";
+  const plain = html_to_text(raw).replace(/\s+/g, " ").trim();
+  if (plain) return plain;
+  return "Navigator session";
+}
+
+interface SessionListItem {
+  key: string;
+  label: string;
+  newestTime: number;
+  messageCount: number;
+  isPinned?: boolean;
+  record: AgentSessionRecord;
 }
 
 interface AgentsFlyoutProps {
@@ -120,15 +145,36 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     };
   }, [account_id, project_id]);
 
-  const visibleSessions = useMemo(() => {
-    let visible = showArchived
-      ? sessions
-      : sessions.filter((session) => session.status !== "archived");
+  const scopedSessions = useMemo(() => {
+    let filtered = sessions;
     if (scope === "mine" && typeof account_id === "string" && account_id.trim()) {
-      visible = visible.filter((session) => session.account_id === account_id);
+      filtered = filtered.filter((session) => session.account_id === account_id);
     }
-    return visible;
-  }, [sessions, showArchived, scope, account_id]);
+    return [...filtered].sort(
+      (a, b) => dateMs(b.updated_at) - dateMs(a.updated_at),
+    );
+  }, [sessions, scope, account_id]);
+
+  const visibleSections = useMemo(() => {
+    const activeItems: SessionListItem[] = scopedSessions
+      .filter((session) => session.status !== "archived")
+      .map((record) => ({
+        key: `${record.chat_path}::${record.thread_key}`,
+        label: normalizedTitle(record),
+        newestTime: Math.max(dateMs(record.updated_at), dateMs(record.created_at)),
+        messageCount: 1,
+        isPinned: record.thread_pin === true,
+        record,
+      }));
+    return groupThreadsByRecency(activeItems).map((section) => ({
+      ...section,
+      threads: section.threads.map((item) => item.record),
+    }));
+  }, [scopedSessions]);
+
+  const archivedSessions = useMemo(() => {
+    return scopedSessions.filter((session) => session.status === "archived");
+  }, [scopedSessions]);
 
   useEffect(() => {
     if (!inlineSession) return;
@@ -254,6 +300,88 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     openFloatingAgentSession(project_id, record);
   }
 
+  async function resolveChatActionsForRecord(record: AgentSessionRecord): Promise<{
+    chatActions: ChatActions;
+    cleanup?: () => void;
+  }> {
+    const directActions = redux.getEditorActions(project_id, record.chat_path);
+    const sharedActions =
+      (isChatActions(directActions) ? directActions : undefined) ??
+      getChatActions(project_id, record.chat_path, {
+        instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+      }) ??
+      getChatActions(project_id, record.chat_path, {
+        instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+      });
+    if (sharedActions) {
+      return { chatActions: sharedActions };
+    }
+
+    const chatActions = initChat(project_id, record.chat_path, {
+      instanceKey: AGENTS_PIN_CHAT_INSTANCE_KEY,
+    });
+    const syncdb = (chatActions as any)?.syncdb;
+    try {
+      if (syncdb?.get_state?.() !== "ready") {
+        await new Promise<void>((resolve, reject) => {
+          const onReady = () => {
+            cleanup();
+            resolve();
+          };
+          const onClose = () => {
+            cleanup();
+            reject(new Error("Chat closed before ready."));
+          };
+          const cleanup = () => {
+            syncdb?.removeListener?.("ready", onReady);
+            syncdb?.removeListener?.("close", onClose);
+          };
+          syncdb?.once?.("ready", onReady);
+          syncdb?.once?.("close", onClose);
+        });
+      }
+    } catch (err) {
+      removeChatWithInstance(record.chat_path, redux, project_id, {
+        instanceKey: AGENTS_PIN_CHAT_INSTANCE_KEY,
+      });
+      throw err;
+    }
+    return {
+      chatActions,
+      cleanup: () => {
+        removeChatWithInstance(record.chat_path, redux, project_id, {
+          instanceKey: AGENTS_PIN_CHAT_INSTANCE_KEY,
+        });
+      },
+    };
+  }
+
+  async function togglePin(record: AgentSessionRecord): Promise<void> {
+    setUpdatingSessionId(record.session_id);
+    const nextPinned = record.thread_pin !== true;
+    let cleanup: (() => void) | undefined;
+    try {
+      const { chatActions, cleanup: removeTemp } = await resolveChatActionsForRecord(
+        record,
+      );
+      cleanup = removeTemp;
+      const ok = chatActions.setThreadPin?.(record.thread_key, nextPinned);
+      if (!ok) {
+        throw new Error("Could not update thread pin state.");
+      }
+      await upsertAgentSessionRecord({
+        ...record,
+        thread_pin: nextPinned,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      cleanup?.();
+      setUpdatingSessionId("");
+    }
+  }
+
   async function toggleArchive(record: AgentSessionRecord): Promise<void> {
     setUpdatingSessionId(record.session_id);
     try {
@@ -275,6 +403,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const image = record.thread_image?.trim() || undefined;
     const icon = record.thread_icon?.trim() || undefined;
     const color = record.thread_color?.trim() || undefined;
+    const title = normalizedTitle(record);
     const showFlyoutImage = isFlyout && Boolean(image);
     const showPageCornerImage = !isFlyout && Boolean(image);
     return (
@@ -357,11 +486,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                   gap: 8,
                 }}
               >
-                <Typography.Text strong title={record.title || "Navigator session"}>
-                  {ellipsize(
-                    record.title || "Navigator session",
-                    isFlyout ? 48 : 56,
-                  )}
+                <Typography.Text strong title={title}>
+                  {ellipsize(title, isFlyout ? 48 : 56)}
                 </Typography.Text>
                 <Tag
                   color={STATUS_COLORS[record.status] ?? "default"}
@@ -390,6 +516,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               onClick={() => openInlineSession(record)}
             >
               Open
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              disabled={updatingSessionId === record.session_id}
+              onClick={() => void togglePin(record)}
+            >
+              {record.thread_pin ? "Unpin" : "Pin"}
             </Button>
             <Button
               size="small"
@@ -436,6 +571,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   if (inlineSession) {
     const inlineImage = inlineSession.thread_image?.trim() || undefined;
+    const inlineTitle = normalizedTitle(inlineSession);
     return (
       <div
         style={
@@ -482,8 +618,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             >
               Back
             </Button>
-            <Typography.Text strong title={inlineSession.title || "Agent session"}>
-              {ellipsize(inlineSession.title || "Agent session", isFlyout ? 42 : 90)}
+            <Typography.Text strong title={inlineTitle}>
+              {ellipsize(inlineTitle, isFlyout ? 42 : 90)}
             </Typography.Text>
             <Tag
               color={STATUS_COLORS[inlineSession.status] ?? "default"}
@@ -611,27 +747,64 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             style={{ paddingLeft: 0 }}
             onClick={() => setShowArchived((v) => !v)}
           >
-            {showArchived ? "Hide archived" : "Show archived"}
+            {showArchived
+              ? "Hide archived"
+              : `Show archived${archivedSessions.length ? ` (${archivedSessions.length})` : ""}`}
           </Button>
         </Space>
       </div>
-      {visibleSessions.length === 0 ? (
+      {visibleSections.length === 0 && (!showArchived || archivedSessions.length === 0) ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description={"No indexed sessions yet"}
         />
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: isFlyout
-              ? "1fr"
-              : "repeat(auto-fit, minmax(360px, 1fr))",
-            gap: isFlyout ? 8 : 12,
-          }}
+        <Space
+          direction="vertical"
+          size={12}
+          style={{ display: "flex", width: "100%" }}
         >
-          {visibleSessions.map((session) => renderSession(session))}
-        </div>
+          {visibleSections.map((section) => (
+            <div key={section.key}>
+              <Typography.Text type="secondary" strong style={{ display: "block", marginBottom: 6 }}>
+                {section.title}
+              </Typography.Text>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: isFlyout
+                    ? "1fr"
+                    : "repeat(auto-fit, minmax(360px, 1fr))",
+                  gap: isFlyout ? 8 : 12,
+                }}
+              >
+                {section.threads.map((session) => renderSession(session))}
+              </div>
+            </div>
+          ))}
+          {showArchived && archivedSessions.length > 0 ? (
+            <div>
+              <Typography.Text
+                type="secondary"
+                strong
+                style={{ display: "block", marginBottom: 6 }}
+              >
+                Archived
+              </Typography.Text>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: isFlyout
+                    ? "1fr"
+                    : "repeat(auto-fit, minmax(360px, 1fr))",
+                  gap: isFlyout ? 8 : 12,
+                }}
+              >
+                {archivedSessions.map((session) => renderSession(session))}
+              </div>
+            </div>
+          ) : null}
+        </Space>
       )}
     </div>
   );

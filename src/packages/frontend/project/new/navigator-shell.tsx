@@ -208,6 +208,11 @@ function buildSessionRecord({
       typeof threadMetadata?.thread_image === "string"
         ? threadMetadata.thread_image
         : undefined,
+    thread_pin:
+      threadMetadata?.pin === true ||
+      threadMetadata?.pin === "true" ||
+      threadMetadata?.pin === 1 ||
+      threadMetadata?.pin === "1",
   };
 }
 
