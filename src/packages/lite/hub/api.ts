@@ -4,6 +4,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 
 import getLogger from "@cocalc/backend/logger";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
 import {
@@ -12,6 +13,7 @@ import {
 } from "@cocalc/util/misc";
 import { callRemoteHub, hasRemote, project_id } from "../remote";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { setSshUi, ssh } from "./ssh";
 import { setReflectUi, reflect } from "./reflect";
 import * as agent from "./agent";
@@ -24,8 +26,109 @@ import {
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
+import { getLiteServerSettings } from "./settings";
 
 const logger = getLogger("lite:hub:api");
+
+function parseMap(raw?: string): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const key in parsed) {
+      const val = parsed[key];
+      if (typeof val === "string" && val.trim()) {
+        out[key] = val.trim();
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function resolveLiteCodexHome(): string {
+  const configured = `${process.env.COCALC_CODEX_HOME ?? ""}`.trim();
+  if (configured) return configured;
+  const home = `${process.env.HOME ?? ""}`.trim();
+  if (home) return join(home, ".codex");
+  return join(process.cwd(), ".codex");
+}
+
+async function hasLocalSubscriptionAuth(codexHome: string): Promise<boolean> {
+  const authPath = join(codexHome, "auth.json");
+  try {
+    const raw = await readFile(authPath, "utf8");
+    if (!raw.trim()) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    return Object.keys(parsed).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function getEnvOpenAiApiKey(): string | undefined {
+  const candidates = [
+    process.env.OPENAI_API_KEY,
+    process.env.COCALC_OPENAI_API_KEY,
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY,
+  ];
+  for (const value of candidates) {
+    const trimmed = `${value ?? ""}`.trim();
+    if (trimmed) return trimmed;
+  }
+}
+
+async function getCodexPaymentSource(opts?: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<CodexPaymentSourceInfo> {
+  const account_id = `${opts?.account_id ?? ACCOUNT_ID}`.trim() || ACCOUNT_ID;
+  const project_id = `${opts?.project_id ?? ""}`.trim() || undefined;
+  const codexHome = resolveLiteCodexHome();
+  const hasSubscription = await hasLocalSubscriptionAuth(codexHome);
+
+  const projectKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
+  );
+  const hasProjectApiKey =
+    !!(project_id && projectKeys[project_id]) ||
+    !!(project_id && `${process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY ?? ""}`.trim());
+  const accountKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
+  );
+  const hasAccountApiKey =
+    !!getEnvOpenAiApiKey() || !!accountKeys[account_id];
+  const settings = getLiteServerSettings();
+  const hasSiteApiKey =
+    !!settings?.openai_enabled && !!`${settings?.openai_api_key ?? ""}`.trim();
+
+  let source: CodexPaymentSourceInfo["source"] = "none";
+  if (hasSubscription) {
+    source = "subscription";
+  } else if (hasProjectApiKey) {
+    source = "project-api-key";
+  } else if (hasAccountApiKey) {
+    source = "account-api-key";
+  } else if (hasSiteApiKey) {
+    source = "site-api-key";
+  }
+
+  return {
+    source,
+    hasSubscription,
+    hasProjectApiKey,
+    hasAccountApiKey,
+    hasSiteApiKey,
+    // Lite always runs against a local/shared home.
+    sharedHomeMode: "always",
+    project_id,
+  };
+}
 
 export async function init({
   client,
@@ -211,6 +314,7 @@ async function removeBrowserSession(opts?: {
 export const hubApi: HubApi = {
   system: {
     getNames,
+    getCodexPaymentSource,
     logClientError,
     userTracking,
     webappError,
