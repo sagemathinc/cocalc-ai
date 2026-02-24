@@ -144,10 +144,13 @@ export class ChatMessageCache extends EventEmitter {
     return d ? `${d.valueOf()}` : undefined;
   }
 
-  private getThreadKey(message: PlainChatMessage): string | undefined {
+  private getThreadKeyForMap(
+    message: PlainChatMessage,
+    threadKeyByThreadId: Map<string, string>,
+  ): string | undefined {
     const threadId = this.getThreadId(message);
     if (threadId) {
-      const mapped = this.threadKeyByThreadId.get(threadId);
+      const mapped = threadKeyByThreadId.get(threadId);
       if (mapped) return mapped;
     }
     const key = this.getThreadKeyFromReplyOrDate(message);
@@ -155,7 +158,7 @@ export class ChatMessageCache extends EventEmitter {
     // Only establish mapping from root messages; replies can have stale/malformed
     // reply_to values during migrations or races.
     if (threadId && !replyTo(message)) {
-      this.threadKeyByThreadId.set(threadId, key);
+      threadKeyByThreadId.set(threadId, key);
     }
     return key;
   }
@@ -175,8 +178,9 @@ export class ChatMessageCache extends EventEmitter {
     draft: Map<string, ThreadIndexEntry>,
     message: PlainChatMessage,
     messageKey: string,
+    threadKeyByThreadId: Map<string, string> = this.threadKeyByThreadId,
   ) {
-    const threadKey = this.getThreadKey(message);
+    const threadKey = this.getThreadKeyForMap(message, threadKeyByThreadId);
     if (!threadKey) return;
     let thread = draft.get(threadKey);
     if (!thread) {
@@ -205,8 +209,9 @@ export class ChatMessageCache extends EventEmitter {
     message: PlainChatMessage,
     messageKey: string,
     messageMap: Map<string, PlainChatMessage>,
+    threadKeyByThreadId: Map<string, string> = this.threadKeyByThreadId,
   ) {
-    const threadKey = this.getThreadKey(message);
+    const threadKey = this.getThreadKeyForMap(message, threadKeyByThreadId);
     if (!threadKey) return;
     const thread = draft.get(threadKey);
     if (!thread) return;
@@ -218,8 +223,8 @@ export class ChatMessageCache extends EventEmitter {
     if (thread.messageCount === 0) {
       draft.delete(threadKey);
       const threadId = this.getThreadId(message);
-      if (threadId && this.threadKeyByThreadId.get(threadId) === threadKey) {
-        this.threadKeyByThreadId.delete(threadId);
+      if (threadId && threadKeyByThreadId.get(threadId) === threadKey) {
+        threadKeyByThreadId.delete(threadId);
       }
       return;
     }
@@ -237,6 +242,74 @@ export class ChatMessageCache extends EventEmitter {
     }
   }
 
+  applyPreviewRows(rows: unknown[]): { applied: boolean; chatRows: number } {
+    if (this.syncdb.get_state() === "ready") {
+      return { applied: false, chatRows: 0 };
+    }
+    const snapshot = this.buildSnapshotFromRows(rows);
+    this.applySnapshot(snapshot);
+    return { applied: true, chatRows: snapshot.chatRows };
+  }
+
+  private applySnapshot(snapshot: ChatCacheSnapshot): void {
+    this.messagesById = produce(snapshot.mapById, () => {});
+    this.messagesByDate = produce(snapshot.mapByDate, () => {});
+    this.messageIdIndex = produce(snapshot.messageIdIndex, () => {});
+    this.dateIndex = produce(snapshot.dateIndex, () => {});
+    this.threadIndex = produce(snapshot.threadIndex, () => {});
+    // Keep this mutable; incremental change handling updates this map in-place.
+    this.threadKeyByThreadId = new Map(snapshot.threadKeyByThreadId);
+    this.bumpVersion();
+  }
+
+  private buildSnapshotFromRows(rows: unknown[]): ChatCacheSnapshot {
+    const mapById = new Map<string, PlainChatMessage>();
+    const mapByDate = new Map<string, PlainChatMessage>();
+    const messageIdIndex = new Map<string, string>();
+    const dateIndex = new Map<string, string>();
+    const threadIndex = new Map<string, ThreadIndexEntry>();
+    const threadKeyByThreadId = new Map<string, string>();
+    const list = Array.isArray(rows) ? rows : [];
+    let chatRows = 0;
+
+    // Build thread_id -> root-date-key mapping first so thread grouping can be
+    // thread-id-driven even when reply_to is stale/malformed.
+    for (const row0 of list) {
+      if ((row0 as any)?.event !== "chat") continue;
+      const message = row0 as PlainChatMessage;
+      if (replyTo(message)) continue;
+      const threadId = this.getThreadId(message);
+      const dateKey = this.getDateKey(message);
+      if (!threadId || !dateKey) continue;
+      threadKeyByThreadId.set(threadId, dateKey);
+    }
+
+    for (const row0 of list) {
+      if ((row0 as any)?.event !== "chat") continue;
+      const message = row0 as PlainChatMessage;
+      const key = this.getDateKey(message);
+      if (!key) continue;
+      const messageId = this.getMessageId(message, key);
+      if (!messageId) continue;
+      chatRows += 1;
+      mapById.set(messageId, message);
+      mapByDate.set(key, message);
+      messageIdIndex.set(messageId, key);
+      dateIndex.set(key, messageId);
+      this.addToThreadIndex(threadIndex, message, key, threadKeyByThreadId);
+    }
+
+    return {
+      mapById,
+      mapByDate,
+      messageIdIndex,
+      dateIndex,
+      threadIndex,
+      threadKeyByThreadId,
+      chatRows,
+    };
+  }
+
   private async rebuildFromDoc() {
     log("rebuildFromDoc");
     if (this.syncdb.get_state() !== "ready") {
@@ -248,48 +321,9 @@ export class ChatMessageCache extends EventEmitter {
         return;
       }
     }
-    const mapById = new Map<string, PlainChatMessage>();
-    const mapByDate = new Map<string, PlainChatMessage>();
-    const messageIdIndex = new Map<string, string>();
-    const dateIndex = new Map<string, string>();
-    const threadIndex = new Map<string, ThreadIndexEntry>();
-    this.threadKeyByThreadId = new Map<string, string>();
     const rows = this.syncdb.get() ?? [];
     log("rebuildFromDoc: got rows", rows);
-
-    // Build thread_id -> root-date-key mapping first so thread grouping can be
-    // thread-id-driven even when reply_to is stale/malformed.
-    for (const row0 of rows ?? []) {
-      if (row0?.event !== "chat") continue;
-      const message = row0 as PlainChatMessage;
-      if (replyTo(message)) continue;
-      const threadId = this.getThreadId(message);
-      const dateKey = this.getDateKey(message);
-      if (!threadId || !dateKey) continue;
-      this.threadKeyByThreadId.set(threadId, dateKey);
-    }
-
-    for (const row0 of rows ?? []) {
-      if (row0?.event !== "chat") continue;
-      const key = this.getDateKey(row0);
-      if (!key) continue;
-      const message = row0 as PlainChatMessage;
-      const messageId = this.getMessageId(message, key);
-      if (messageId) {
-        mapById.set(messageId, message);
-        mapByDate.set(key, message);
-        messageIdIndex.set(messageId, key);
-        dateIndex.set(key, messageId);
-      }
-      this.addToThreadIndex(threadIndex, message, key);
-    }
-    // Freeze rebuilt Maps for consistency with produce() updates.
-    this.messagesById = produce(mapById, () => {});
-    this.messagesByDate = produce(mapByDate, () => {});
-    this.messageIdIndex = produce(messageIdIndex, () => {});
-    this.dateIndex = produce(dateIndex, () => {});
-    this.threadIndex = produce(threadIndex, () => {});
-    this.bumpVersion();
+    this.applySnapshot(this.buildSnapshotFromRows(rows));
   }
 
   // assumed is an => function (so bound)
@@ -363,4 +397,14 @@ export interface ThreadIndexEntry {
   messageKeys: Set<string>;
   orderedKeys?: string[];
   rootMessage?: PlainChatMessage;
+}
+
+interface ChatCacheSnapshot {
+  mapById: Map<string, PlainChatMessage>;
+  mapByDate: Map<string, PlainChatMessage>;
+  messageIdIndex: Map<string, string>;
+  dateIndex: Map<string, string>;
+  threadIndex: Map<string, ThreadIndexEntry>;
+  threadKeyByThreadId: Map<string, string>;
+  chatRows: number;
 }

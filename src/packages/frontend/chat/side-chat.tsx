@@ -1,9 +1,11 @@
 import { CSS } from "@cocalc/frontend/app-framework";
-import { useActions, useEditorRedux } from "@cocalc/frontend/app-framework";
+import { redux, useEditorRedux } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "./actions";
 import { ChatPanel } from "./chatroom";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import type { ChatState } from "./store";
+import { Loading } from "@cocalc/frontend/components";
+import { isChatActions } from "./register";
 
 interface Props {
   project_id: string;
@@ -12,6 +14,7 @@ interface Props {
   fontSize?: number;
   actions?: ChatActions;
   desc?;
+  hideSidebar?: boolean;
 }
 
 export default function SideChat({
@@ -21,12 +24,20 @@ export default function SideChat({
   style,
   fontSize,
   desc,
+  hideSidebar = false,
 }: Props) {
-  const actionsViaContext = useActions(project_id, path);
-  const actions: ChatActions = actions0 ?? actionsViaContext;
+  const actionsViaContext = redux.getEditorActions(project_id, path);
+  const candidateActions = actions0 ?? actionsViaContext;
+  const actions: ChatActions | undefined = isChatActions(candidateActions)
+    ? candidateActions
+    : undefined;
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
+
+  if (!actions) {
+    return <Loading theme="medium" />;
+  }
 
   return (
     <ChatDocProvider cache={actions.messageCache}>
@@ -46,6 +57,7 @@ export default function SideChat({
           path={path}
           fontSize={fontSize}
           desc={desc}
+          hideSidebar={hideSidebar}
         />
       </div>
     </ChatDocProvider>
@@ -65,6 +77,7 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       fontSize={props.fontSize}
       desc={props.desc}
       variant="compact"
+      hideSidebar={props.hideSidebar}
     />
   );
 }

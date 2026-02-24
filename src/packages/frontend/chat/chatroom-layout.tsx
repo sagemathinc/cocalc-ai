@@ -25,6 +25,7 @@ interface ChatRoomLayoutProps {
   chatContent: React.ReactNode;
   onNewChat: () => void;
   newChatSelected: boolean;
+  hideSidebar?: boolean;
 }
 
 export function ChatRoomLayout({
@@ -38,7 +39,16 @@ export function ChatRoomLayout({
   chatContent,
   onNewChat,
   newChatSelected,
+  hideSidebar = false,
 }: ChatRoomLayoutProps) {
+  if (hideSidebar) {
+    return (
+      <div className="smc-vfill" style={{ background: "white", minHeight: 0 }}>
+        {chatContent}
+      </div>
+    );
+  }
+
   if (variant === "compact") {
     return (
       <div className="smc-vfill" style={{ background: "white" }}>

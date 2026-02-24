@@ -15,6 +15,7 @@ interface ThreadSelectionOptions {
   messages?: ChatMessages;
   fragmentId?: string | null;
   storedThreadFromDesc?: string | null;
+  preferLatestThread?: boolean;
 }
 
 export function useChatThreadSelection({
@@ -23,6 +24,7 @@ export function useChatThreadSelection({
   messages,
   fragmentId,
   storedThreadFromDesc,
+  preferLatestThread = false,
 }: ThreadSelectionOptions) {
   const [selectedThreadKey, setSelectedThreadKey0] = useState<string | null>(
     storedThreadFromDesc ?? COMBINED_FEED_KEY,
@@ -69,6 +71,16 @@ export function useChatThreadSelection({
       setAllowAutoSelectThread(true);
       return;
     }
+    if (
+      storedThreadFromDesc != null &&
+      threads.some((thread) => thread.key === storedThreadFromDesc)
+    ) {
+      if (selectedThreadKey !== storedThreadFromDesc) {
+        setSelectedThreadKey(storedThreadFromDesc);
+      }
+      setAllowAutoSelectThread(false);
+      return;
+    }
     // If a concrete thread key is selected, don't immediately force a fallback
     // when thread metadata is transiently stale. This happens right after send:
     // selection moves to the new root before threadIndex has caught up.
@@ -78,11 +90,25 @@ export function useChatThreadSelection({
     ) {
       return;
     }
+    if (preferLatestThread && allowAutoSelectThread) {
+      const latestThreadKey = threads[0]?.key;
+      if (latestThreadKey && latestThreadKey !== selectedThreadKey) {
+        setSelectedThreadKey(latestThreadKey);
+        setAllowAutoSelectThread(false);
+      }
+      return;
+    }
     const exists = threads.some((thread) => thread.key === selectedThreadKey);
     if (!exists && allowAutoSelectThread) {
       setSelectedThreadKey(COMBINED_FEED_KEY);
     }
-  }, [threads, selectedThreadKey, allowAutoSelectThread]);
+  }, [
+    threads,
+    selectedThreadKey,
+    allowAutoSelectThread,
+    preferLatestThread,
+    storedThreadFromDesc,
+  ]);
 
   useEffect(() => {
     if (!fragmentId || messages == null) {

@@ -301,7 +301,7 @@ export function CodexConfigButton({
               <Form.Item
                 label="Working directory"
                 name="workingDirectory"
-                tooltip="Optional. If set, Codex runs in this directory for subsequent turns."
+                tooltip="Codex runs in this directory for subsequent turns."
                 style={formItemStyle}
               >
                 <Input placeholder="Derived from the directory containing this chat" />
@@ -309,7 +309,7 @@ export function CodexConfigButton({
               <Form.Item
                 label="Session ID"
                 name="sessionId"
-                tooltip="Optional. Reuse a Codex session to keep continuity."
+                tooltip="Reuse a Codex session to keep continuity."
                 style={formItemStyle}
               >
                 <Input

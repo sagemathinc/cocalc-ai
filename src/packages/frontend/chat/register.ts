@@ -11,12 +11,92 @@ import { path_split, startswith } from "@cocalc/util/misc";
 import { ChatActions } from "./actions";
 import { ChatStore } from "./store";
 import { ChatMessageCache } from "@cocalc/frontend/chat/message-cache";
+import { parseChatPreviewRows } from "./preview";
+
+interface ChatInstanceOptions {
+  instanceKey?: string;
+}
+
+export function isChatActions(actions: any): actions is ChatActions {
+  return Boolean(
+    actions &&
+      typeof actions.sendChat === "function" &&
+      typeof actions.getMessagesInThread === "function" &&
+      typeof actions.clearAllFilters === "function" &&
+      typeof actions.setSelectedThread === "function" &&
+      actions.messageCache != null,
+  );
+}
+
+function startOptimisticChatPreview(
+  project_id: string,
+  path: string,
+  syncdb: any,
+  cache: ChatMessageCache,
+): void {
+  const fs = redux.getProjectActions(project_id)?.fs?.();
+  if (typeof fs?.readFile !== "function") return;
+  void (async () => {
+    try {
+      const raw = await fs.readFile(path, "utf8");
+      if (syncdb?.get_state?.() === "ready") return;
+      if (syncdb?.get_state?.() === "closed") return;
+      const content =
+        typeof raw === "string"
+          ? raw
+          : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+      const parsed = parseChatPreviewRows(content);
+      cache.applyPreviewRows(parsed.rows);
+    } catch {
+      // fall back to live-sync initialization path
+    }
+  })();
+}
+
+function chatReduxName({
+  project_id,
+  path,
+  instanceKey,
+}: {
+  project_id: string;
+  path: string;
+  instanceKey?: string;
+}): string {
+  const keyPath =
+    typeof instanceKey === "string" && instanceKey.trim().length > 0
+      ? `${path}#${instanceKey.trim()}`
+      : path;
+  return redux_name(project_id, keyPath);
+}
+
+export function getChatActions(
+  project_id: string,
+  path: string,
+  opts?: ChatInstanceOptions,
+): ChatActions | undefined {
+  const name = chatReduxName({
+    project_id,
+    path,
+    instanceKey: opts?.instanceKey,
+  });
+  const actions = redux.getActions(name);
+  return isChatActions(actions) ? actions : undefined;
+}
 
 // it is fine to call this more than once.
-export function initChat(project_id: string, path: string): ChatActions {
-  const name = redux_name(project_id, path);
-  if (redux.getActions(name) != null) {
-    return redux.getActions(name); // already initialized
+export function initChat(
+  project_id: string,
+  path: string,
+  opts?: ChatInstanceOptions,
+): ChatActions {
+  const name = chatReduxName({
+    project_id,
+    path,
+    instanceKey: opts?.instanceKey,
+  });
+  const existing = redux.getActions(name);
+  if (isChatActions(existing)) {
+    return existing; // already initialized
   }
 
   const actions = redux.createActions(name, ChatActions);
@@ -41,6 +121,8 @@ export function initChat(project_id: string, path: string): ChatActions {
     change_throttle: 3000,
   });
   const cache = new ChatMessageCache(syncdb);
+  actions.set_syncdb(syncdb, store, cache);
+  startOptimisticChatPreview(project_id, path, syncdb, cache);
   syncdb.once("close", () => {
     cache.dispose();
   });
@@ -52,7 +134,6 @@ export function initChat(project_id: string, path: string): ChatActions {
   });
 
   syncdb.once("ready", () => {
-    actions.set_syncdb(syncdb, store, cache);
     actions.init_from_syncdb();
     syncdb.on("change", actions.syncdbChange);
     redux.getProjectActions(project_id)?.log_opened_time(path);
@@ -62,7 +143,28 @@ export function initChat(project_id: string, path: string): ChatActions {
 }
 
 export function remove(path: string, redux, project_id: string): string {
-  const name = redux_name(project_id, path);
+  const name = chatReduxName({
+    project_id,
+    path,
+  });
+  return removeByName(name, redux);
+}
+
+export function removeWithInstance(
+  path: string,
+  redux,
+  project_id: string,
+  opts?: ChatInstanceOptions,
+): string {
+  const name = chatReduxName({
+    project_id,
+    path,
+    instanceKey: opts?.instanceKey,
+  });
+  return removeByName(name, redux);
+}
+
+function removeByName(name: string, redux): string {
   const actions = redux.getActions(name);
   // Dispose per-chat resources before tearing down redux.
   actions?.dispose?.();

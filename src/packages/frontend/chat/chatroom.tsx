@@ -46,6 +46,10 @@ import { useChatThreadSelection } from "./thread-selection";
 import { dateValue, field } from "./access";
 import { useCodexPaymentSource } from "./use-codex-payment-source";
 import { resetAcpThreadState } from "./acp-api";
+import {
+  upsertAgentSessionRecord,
+  type AgentSessionRecord,
+} from "./agent-session-index";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -59,6 +63,13 @@ const GRID_STYLE: React.CSSProperties = {
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const COMBINED_FEED_MAX_PER_THREAD = 5;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+function parseDateISOString(value: unknown): string | undefined {
+  if (!value) return undefined;
+  const d = value instanceof Date ? value : new Date(value as string | number);
+  if (!Number.isFinite(d.valueOf())) return undefined;
+  return d.toISOString();
+}
 
 type MessageKeyWithTime = { key: string; time: number };
 
@@ -112,6 +123,7 @@ export interface ChatPanelProps {
   fontSize?: number;
   desc?: NodeDesc;
   variant?: "default" | "compact";
+  hideSidebar?: boolean;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -133,6 +145,7 @@ export function ChatPanel({
   fontSize = 13,
   desc,
   variant = "default",
+  hideSidebar = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const activity: undefined | immutable.Map<string, number> =
@@ -145,7 +158,23 @@ export function ChatPanel({
   const scrollToIndex = getDescValue(desc, "data-scrollToIndex") ?? null;
   const scrollToDate = getDescValue(desc, "data-scrollToDate") ?? null;
   const fragmentId = getDescValue(desc, "data-fragmentId") ?? null;
+  const showThreadImagePreviewRaw = getDescValue(
+    desc,
+    "data-showThreadImagePreview",
+  );
+  const showThreadImagePreview =
+    showThreadImagePreviewRaw === false || showThreadImagePreviewRaw === "false"
+      ? false
+      : true;
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
+  const preferLatestThreadFromDescRaw = getDescValue(
+    desc,
+    "data-preferLatestThread",
+  );
+  const preferLatestThreadFromDesc =
+    preferLatestThreadFromDescRaw === true ||
+    preferLatestThreadFromDescRaw === "true" ||
+    preferLatestThreadFromDescRaw === 1;
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     typeof storedSidebarWidth === "number" && storedSidebarWidth > 50
       ? storedSidebarWidth
@@ -167,6 +196,7 @@ export function ChatPanel({
   } | null>(null);
   const visitedThreadsRef = useRef<Set<string>>(new Set());
   const unreadSeenRef = useRef<Map<string, number>>(new Map());
+  const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
     actions.frameTreeActions.set_frame_data({
@@ -198,6 +228,7 @@ export function ChatPanel({
     messages,
     fragmentId,
     storedThreadFromDesc,
+    preferLatestThread: preferLatestThreadFromDesc,
   });
 
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
@@ -291,6 +322,99 @@ export function ChatPanel({
     }
     return false;
   }, [isSelectedThreadAI, selectedThreadMessages, acpState, selectedThread]);
+
+  const agentSessionRecords = useMemo<AgentSessionRecord[]>(() => {
+    if (typeof account_id !== "string" || !account_id.trim()) {
+      return [];
+    }
+    const records: AgentSessionRecord[] = [];
+    for (const thread of threads) {
+      if (!thread.isAI) continue;
+      const rootMessage = thread.rootMessage as any;
+      const threadId =
+        typeof rootMessage?.thread_id === "string"
+          ? rootMessage.thread_id
+          : undefined;
+      const metadata = actions.getThreadMetadata?.(thread.key, {
+        threadId,
+      });
+      const acpConfig = metadata?.acp_config ?? undefined;
+      const sessionIdRaw =
+        typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
+          ? acpConfig.sessionId.trim()
+          : thread.key;
+      const createdAt =
+        parseDateISOString(rootMessage?.date) ??
+        parseDateISOString(thread.newestTime) ??
+        new Date().toISOString();
+      const updatedAt =
+        parseDateISOString(thread.newestTime) ??
+        parseDateISOString(rootMessage?.date) ??
+        new Date().toISOString();
+      const threadState =
+        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+      const status = thread.isArchived
+        ? "archived"
+        : typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)
+          ? "running"
+          : "active";
+      records.push({
+        session_id: sessionIdRaw,
+        project_id,
+        account_id,
+        chat_path: path,
+        thread_key: thread.key,
+        title: thread.displayLabel || thread.label || "Agent session",
+        created_at: createdAt,
+        updated_at: updatedAt,
+        status,
+        entrypoint: path.includes("navigator.chat") ? "global" : "file",
+        working_directory:
+          typeof acpConfig?.workingDirectory === "string"
+            ? acpConfig.workingDirectory
+            : undefined,
+        mode:
+          acpConfig?.sessionMode === "read-only" ||
+          acpConfig?.sessionMode === "workspace-write" ||
+          acpConfig?.sessionMode === "full-access"
+            ? acpConfig.sessionMode
+            : undefined,
+        model:
+          typeof acpConfig?.model === "string"
+            ? acpConfig.model
+            : typeof metadata?.agent_model === "string"
+              ? metadata.agent_model
+              : undefined,
+        reasoning:
+          typeof acpConfig?.reasoning === "string"
+            ? acpConfig.reasoning
+            : undefined,
+        thread_color:
+          typeof thread.threadColor === "string" ? thread.threadColor : undefined,
+        thread_icon:
+          typeof thread.threadIcon === "string" ? thread.threadIcon : undefined,
+        thread_image:
+          typeof thread.threadImage === "string" ? thread.threadImage : undefined,
+        thread_pin: thread.isPinned === true,
+      });
+    }
+    return records;
+  }, [account_id, acpState, actions, path, project_id, threads]);
+
+  useEffect(() => {
+    if (!agentSessionRecords.length) return;
+    for (const record of agentSessionRecords) {
+      const serialized = JSON.stringify(record);
+      if (indexedAgentSessionsRef.current.get(record.session_id) === serialized) {
+        continue;
+      }
+      void upsertAgentSessionRecord(record)
+        .then(() => {
+          indexedAgentSessionsRef.current.set(record.session_id, serialized);
+        })
+        .catch(() => {});
+    }
+  }, [agentSessionRecords, path]);
 
   const {
     paymentSource: codexPaymentSource,
@@ -589,6 +713,7 @@ export function ChatPanel({
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
+        showThreadImagePreview={showThreadImagePreview}
       />
       <ChatRoomComposer
         actions={actions}
@@ -639,6 +764,7 @@ export function ChatPanel({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
+        hideSidebar={hideSidebar}
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}

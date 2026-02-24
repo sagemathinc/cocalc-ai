@@ -37,12 +37,12 @@ import { ProjectLog } from "@cocalc/frontend/project/history";
 import { ProjectInfo } from "@cocalc/frontend/project/info";
 import { ProjectNew } from "@cocalc/frontend/project/new";
 import { ProjectSearch } from "@cocalc/frontend/project/search/search";
-import { ProjectServers } from "@cocalc/frontend/project/servers";
 import { ProjectSettings } from "@cocalc/frontend/project/settings";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import { useProjectContext } from "../context";
+import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
 import HomePage from "./home-page";
 import { ProjectCollaboratorsPage } from "./project-collaborators";
@@ -59,7 +59,7 @@ const MAIN_STYLE: React.CSSProperties = {
 } as const;
 
 interface Props {
-  tab_name: string; // e.g., 'files', 'new', 'log', 'search', 'settings', or 'editor-<path>'
+  tab_name: string; // e.g., 'files', 'new', 'log', 'search', 'settings', 'agents', or 'editor-<path>'
   is_visible: boolean; // if false, editor is in the DOM (so all subtle DOM state preserved) but it is not visible on screen.
 }
 
@@ -175,13 +175,16 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "search":
       return <ProjectSearch />;
     case "servers":
-      return <ProjectServers />;
+      // Backward compatibility for old links/history; server launch is under +New now.
+      return <ProjectNew project_id={project_id} />;
     case "settings":
       return <ProjectSettings project_id={project_id} />;
     case "info":
       return <ProjectInfo project_id={project_id} />;
     case "users":
       return <ProjectCollaboratorsPage />;
+    case "agents":
+      return <AgentsPanel project_id={project_id} layout="page" />;
     default:
       // check for "editor-[filename]"
       if (!tab_name.startsWith("editor-")) {

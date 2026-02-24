@@ -30,15 +30,14 @@ import track from "@cocalc/frontend/user-tracking";
 import { filename_extension, path_split, path_to_tab } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
-import { TITLE as SERVERS_TITLE } from "../servers";
 import {
+  AgentsFlyout,
   CollabsFlyout,
   FilesFlyout,
   LogFlyout,
   NewFlyout,
   ProjectInfoFlyout,
   SearchFlyout,
-  ServersFlyout,
   SettingsFlyout,
 } from "./flyouts";
 import { ActiveFlyout } from "./flyouts/active";
@@ -49,11 +48,11 @@ import { file_options } from "@cocalc/frontend/editor-tmp";
 
 export type FixedTab =
   | "active"
+  | "agents"
   | "files"
   | "new"
   | "log"
   | "search"
-  | "servers"
   | "settings"
   | "info"
   | "users";
@@ -90,6 +89,19 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     noAnonymous: false,
     noFullPage: true,
   },
+  agents: {
+    label: defineMessage({
+      id: "project.page.file-tab.agents.label",
+      defaultMessage: "Agents",
+    }),
+    flyoutTitle: defineMessage({
+      id: "project.page.flyout.agents.title",
+      defaultMessage: "Agents",
+    }),
+    icon: "comment",
+    flyout: AgentsFlyout,
+    noAnonymous: false,
+  },
   files: {
     label: labels.explorer,
     icon: "folder-open",
@@ -124,13 +136,6 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
       defaultMessage: "Recent Files",
     }),
     noAnonymous: false,
-  },
-  servers: {
-    label: SERVERS_TITLE,
-    icon: "server",
-    flyout: ServersFlyout,
-    noAnonymous: false,
-    noLite: false,
   },
   users: {
     label: labels.users,

@@ -699,7 +699,7 @@ export function MessageList({
     return (
       <div>
         {sortedDates.map((_, index) => renderMessage(index))}
-        <div ref={endRef} style={{ height: "25vh" }} />
+        <div ref={endRef} style={{ height: "25px" }} />
       </div>
     );
   }
@@ -721,7 +721,7 @@ export function MessageList({
       }}
       itemContent={(index) => {
         if (sortedDates.length == index) {
-          return <div style={{ height: "25vh" }} />;
+          return <div style={{ height: "25px" }} />;
         }
         return renderMessage(index);
       }}

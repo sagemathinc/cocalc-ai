@@ -53,7 +53,7 @@ export const ProjectTitle: React.FC<Props> = ({
       // try to load all projects
       redux.getActions("projects").load_all_projects();
     }, 1);
-    return <span style={style}>(Private {projectLabelLower})</span>;
+    return <span style={style}>...</span>;
   }
 
   const body = (

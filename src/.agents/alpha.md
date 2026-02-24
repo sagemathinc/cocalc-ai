@@ -234,6 +234,56 @@ These are high-visibility issues for tester confidence.
 
 **Depends on:** can run independently; validate against A1 auth model for cloud mode.
 
+#### A2.4a Lite thread routing and intent injection
+
+For lite mode, all assistant-style entry points should route into one coherent codex thread by default.
+
+Design:
+
+- Keep exactly one primary Navigator thread per lite workspace/session.
+- Route assistant entry points into that thread as explicit intent messages.
+- Reuse the active thread unless the user explicitly starts a new session.
+- If a codex turn is in progress, queue a new intent and let user choose:
+  - add to current turn, or
+  - start new turn.
+- Show every injected intent in the thread feed (no hidden side channel).
+
+Intent envelope (minimum fields):
+
+- `source`: notebook-error | selection | terminal | latex | explorer | manual
+- `goal`: short natural-language objective
+- `context`: file path(s), selection/error text, cwd, timestamp, project id
+- `open_target`: optional file/tab to focus after action
+
+Done when:
+
+- Triggering "Help me fix this" from notebook/editor/latex opens or focuses Navigator.
+- The generated intent appears in the same visible Navigator thread.
+- No one-off hidden chats are created by entry points.
+
+---
+
+#### A2.4b Floating Navigator panel UX
+
+Provide a docked/floating presentation of the same Navigator thread component used on project-home.
+
+Design constraints:
+
+- Same underlying chat thread/state/component everywhere (no parallel chat implementation).
+- Fast open/close toggle and keyboard shortcut.
+- Resizable panel width/height; persistent size/position per browser (use localStorage).
+- Support two modes:
+  - docked left panel (default),
+  - floating overlay panel.
+- Panel can pin/unpin; unpinned auto-hides on narrow screens.
+- Opening from an entry point auto-focuses input and scrolls to bottom.
+
+Done when:
+
+- Notebook/latex/editor users can invoke Navigator without leaving their current file context.
+- Panel renders the same codex controls/config bar as project-home.
+- Session/thread continuity is preserved across page navigations and refreshes.
+
 ---
 
 ### A2.5 Jupyter with no default kernel shows blank notebook

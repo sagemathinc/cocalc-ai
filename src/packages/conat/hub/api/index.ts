@@ -10,10 +10,10 @@ import { type Messages, messages } from "./messages";
 import { type FileSync, fileSync } from "./file-sync";
 import { type Hosts, hosts } from "./hosts";
 import { type Software, software } from "./software";
-import { type ControlAgent, controlAgent } from "./control-agent";
 import { type LroApi, lro } from "./lro";
 import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
+import { type AgentApi, agent } from "./agent";
 
 export interface HubApi {
   system: System;
@@ -26,10 +26,10 @@ export interface HubApi {
   fileSync: FileSync;
   hosts: Hosts;
   software: Software;
-  controlAgent: ControlAgent;
   lro: LroApi;
   ssh: Ssh;
   reflect: ReflectApi;
+  agent: AgentApi;
 }
 
 const HubApiStructure = {
@@ -43,10 +43,10 @@ const HubApiStructure = {
   fileSync,
   hosts,
   software,
-  controlAgent,
   lro,
   ssh,
   reflect,
+  agent,
 } as const;
 
 export function transformArgs({

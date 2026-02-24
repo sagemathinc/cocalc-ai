@@ -5,7 +5,7 @@ import ROOT_PATH from "lib/root-path";
 
 
 export default docsApiRoute({
-  // deniedPaths: [...] // Ignore endpoints from the generated OpenAPI spec.
+  deniedPaths: ["/api/conat/**", "/api/share/**", "/api/v2/**/*.test"],
   // allowedPaths: [...], // Explicitly set which endpoints to include in the generated OpenAPI spec.
   openApiObject: {
     info: {

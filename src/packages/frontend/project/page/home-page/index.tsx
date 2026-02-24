@@ -6,11 +6,13 @@
 import { Button, Col, Row, Space } from "antd";
 
 import useAppContext from "@cocalc/frontend/app/use-context";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Title } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { COLORS } from "@cocalc/util/theme";
 import { FIXED_PROJECT_TABS } from "../file-tab";
+import { NavigatorShell } from "../../new/navigator-shell";
 import { HomeRecentFiles } from "./recent-files";
 
 const BTN_PROPS = {
@@ -24,6 +26,10 @@ const BTN_PROPS = {
 export default function HomePage() {
   const { displayI18N: display } = useAppContext();
   const { project_id, actions } = useProjectContext();
+  const other_settings = useTypedRedux("account", "other_settings");
+  const navigator_target_project_id = other_settings?.get?.(
+    "navigator_target_project_id",
+  );
 
   return (
     <Row
@@ -55,6 +61,16 @@ export default function HomePage() {
           </Title>
         </div>
       </Col>
+      <Col md={24}>
+        <NavigatorShell
+          project_id={project_id}
+          defaultTargetProjectId={
+            typeof navigator_target_project_id === "string"
+              ? navigator_target_project_id
+              : undefined
+          }
+        />
+      </Col>
       <Col md={24} style={{ textAlign: "center" }}>
         <Space.Compact>
           <Button
@@ -84,10 +100,6 @@ export default function HomePage() {
         <Button type="text" onClick={() => actions?.set_active_tab("users")}>
           <Icon name={FIXED_PROJECT_TABS.users.icon} />{" "}
           {display(FIXED_PROJECT_TABS.users.label)}
-        </Button>
-        <Button type="text" onClick={() => actions?.set_active_tab("servers")}>
-          <Icon name={FIXED_PROJECT_TABS.servers.icon} />{" "}
-          {display(FIXED_PROJECT_TABS.servers.label)}
         </Button>
         <Button type="text" onClick={() => actions?.set_active_tab("settings")}>
           <Icon name={FIXED_PROJECT_TABS.settings.icon} />{" "}

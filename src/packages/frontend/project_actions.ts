@@ -777,6 +777,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   ): void => {
     const store = this.get_store();
     if (store == undefined) return; // project closed
+    if (key === "servers") {
+      // The dedicated Servers page was removed; launch/manage servers via +New.
+      key = "new";
+    }
     const prev_active_project_tab = store.get("active_project_tab");
     if (!opts.change_history && prev_active_project_tab === key) {
       // already active -- nothing further to do
@@ -837,12 +841,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         break;
 
-      case "servers":
-        if (opts.change_history) {
-          this.push_state("servers", "");
-        }
-        break;
-
       case "settings":
         if (opts.change_history) {
           this.push_state("settings", "");
@@ -865,6 +863,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "users":
         if (opts.change_history) {
           this.push_state("users", "");
+        }
+        break;
+
+      case "agents":
+        if (opts.change_history) {
+          this.push_state("agents", "");
         }
         break;
 
@@ -2954,15 +2958,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         this.set_active_tab("settings", { change_history: change_history });
         break;
 
-      case "servers":
-        this.set_active_tab("servers", { change_history: change_history });
-        break;
-
       case "search":
         this.set_current_path(
           this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
         );
         this.set_active_tab("search", { change_history: change_history });
+        break;
+
+      case "agents":
+        this.set_active_tab("agents", { change_history: change_history });
         break;
 
       case "info":
@@ -3150,7 +3154,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   setServerTab = (_name: string) => {
-    this.set_active_tab("servers", {
+    this.set_active_tab("new", {
       change_history: true,
     });
   };
