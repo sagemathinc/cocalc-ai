@@ -97,6 +97,7 @@ export default function MoveInProgress({
   const [canceling, setCanceling] = useState<boolean>(false);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [opError, setOpError] = useState<string>("");
+  const [copied, setCopied] = useState<boolean>(false);
 
   const status = moveLro.summary?.status;
   const canCancel = status != null && !LRO_TERMINAL_STATUSES.has(status);
@@ -274,6 +275,22 @@ export default function MoveInProgress({
             />
           ) : null}
           <Timeline items={timelineItems} />
+          <Space size="small" wrap style={{ fontSize: "12px", color: "#666" }}>
+            <span>
+              Operation ID: <code>{moveLro.op_id}</code>
+            </span>
+            <Button
+              type="link"
+              size="small"
+              onClick={async () => {
+                await navigator.clipboard.writeText(moveLro.op_id);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1200);
+              }}
+            >
+              {copied ? "Copied" : "Copy ID"}
+            </Button>
+          </Space>
           <Space wrap>
             <Button
               size="large"
