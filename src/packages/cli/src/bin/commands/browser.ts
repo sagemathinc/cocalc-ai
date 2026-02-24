@@ -9,6 +9,7 @@ or opening files in that browser session.
 import { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
+import { isValidUUID } from "@cocalc/util/misc";
 import { durationToMs } from "../../core/utils";
 
 type BrowserSessionClient = {
@@ -393,8 +394,14 @@ export function registerBrowserCommand(
     });
 
   browser
-    .command("open <workspace> <paths...>")
-    .description("open one or more workspace files in a target browser session")
+    .command("open [workspace] <paths...>")
+    .description(
+      "open one or more workspace files in a target browser session (supports --project-id/COCALC_PROJECT_ID)",
+    )
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides [workspace]); defaults to COCALC_PROJECT_ID when set",
+    )
     .option("--browser <id>", "browser id (or unique prefix)")
     .option(
       "--background",
@@ -402,17 +409,30 @@ export function registerBrowserCommand(
     )
     .action(
       async (
-        workspace: string,
+        workspace: string | undefined,
         paths: string[],
-        opts: { browser?: string; background?: boolean },
+        opts: {
+          browser?: string;
+          projectId?: string;
+          background?: boolean;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser open", async (ctx) => {
-          const workspaceRow = await deps.resolveWorkspace(ctx, workspace);
+          const projectHint = `${opts.projectId ?? workspace ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          if (!projectHint) {
+            throw new Error(
+              "workspace/project is required; pass [workspace], --project-id, or set COCALC_PROJECT_ID",
+            );
+          }
+          const project_id = isValidUUID(projectHint)
+            ? projectHint
+            : (await deps.resolveWorkspace(ctx, projectHint)).project_id;
           const profileSelection = loadProfileSelection(deps, command);
+          const browserHint = `${opts.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
-            browserHint: opts.browser,
+            browserHint,
             fallbackBrowserId: profileSelection.browser_id,
           });
           const browserClient = deps.createBrowserSessionClient({
@@ -427,7 +447,7 @@ export function registerBrowserCommand(
           for (const [index, path] of cleanPaths.entries()) {
             const foreground = !opts.background && index === 0;
             await browserClient.openFile({
-              project_id: workspaceRow.project_id,
+              project_id,
               path,
               foreground,
               foreground_project: foreground,
@@ -435,7 +455,7 @@ export function registerBrowserCommand(
           }
           return {
             browser_id: sessionInfo.browser_id,
-            project_id: workspaceRow.project_id,
+            project_id,
             paths: cleanPaths,
             opened: cleanPaths.length,
             background: !!opts.background,
@@ -445,22 +465,37 @@ export function registerBrowserCommand(
     );
 
   browser
-    .command("close <workspace> <paths...>")
-    .description("close one or more open workspace files in a target browser session")
+    .command("close [workspace] <paths...>")
+    .description(
+      "close one or more open workspace files in a target browser session (supports --project-id/COCALC_PROJECT_ID)",
+    )
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides [workspace]); defaults to COCALC_PROJECT_ID when set",
+    )
     .option("--browser <id>", "browser id (or unique prefix)")
     .action(
       async (
-        workspace: string,
+        workspace: string | undefined,
         paths: string[],
-        opts: { browser?: string },
+        opts: { browser?: string; projectId?: string },
         command: Command,
       ) => {
         await deps.withContext(command, "browser close", async (ctx) => {
-          const workspaceRow = await deps.resolveWorkspace(ctx, workspace);
+          const projectHint = `${opts.projectId ?? workspace ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          if (!projectHint) {
+            throw new Error(
+              "workspace/project is required; pass [workspace], --project-id, or set COCALC_PROJECT_ID",
+            );
+          }
+          const project_id = isValidUUID(projectHint)
+            ? projectHint
+            : (await deps.resolveWorkspace(ctx, projectHint)).project_id;
           const profileSelection = loadProfileSelection(deps, command);
+          const browserHint = `${opts.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
-            browserHint: opts.browser,
+            browserHint,
             fallbackBrowserId: profileSelection.browser_id,
           });
           const browserClient = deps.createBrowserSessionClient({
@@ -474,13 +509,13 @@ export function registerBrowserCommand(
           }
           for (const path of cleanPaths) {
             await browserClient.closeFile({
-              project_id: workspaceRow.project_id,
+              project_id,
               path,
             });
           }
           return {
             browser_id: sessionInfo.browser_id,
-            project_id: workspaceRow.project_id,
+            project_id,
             paths: cleanPaths,
             closed: cleanPaths.length,
           };
