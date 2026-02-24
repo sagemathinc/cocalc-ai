@@ -52,7 +52,7 @@ import exec, {
 } from "./exec";
 import { rustic as rusticPath } from "./install";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
-import { join } from "path";
+import { join, relative } from "path";
 import { rusticRepo } from "@cocalc/backend/data";
 import LRU from "lru-cache";
 import getLogger from "@cocalc/backend/logger";
@@ -119,7 +119,8 @@ export default async function rustic(
       if (args.length == 1) {
         throw Error("missing backup source");
       }
-      const source = (await safeAbsPath(args.slice(-1)[0])).slice(cwd.length);
+      const sourceAbs = await safeAbsPath(args.slice(-1)[0]);
+      const source = relative(cwd, sourceAbs).replace(/^\/+/, "");
       const options = parseAndValidateOptions(
         args.slice(1, -1),
         whitelist.backup,
