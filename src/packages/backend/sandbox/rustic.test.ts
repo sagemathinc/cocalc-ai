@@ -60,6 +60,18 @@ describe("rustic does something", () => {
     expect(truncated).toBe(false);
   });
 
+  it("resolves '.' relative to cwd (not sandbox root)", async () => {
+    await mkdir(join(home, "nested", "deep"), { recursive: true });
+    await writeFile(join(home, "nested", "deep", "c.txt"), "cwd");
+    const { stdout, truncated } = await rustic(
+      ["backup", "--json", "."],
+      { ...options, cwd: "nested/deep" },
+    );
+    const s = JSON.parse(Buffer.from(stdout).toString());
+    expect(s.paths).toEqual(["."]);
+    expect(truncated).toBe(false);
+  });
+
   it("use a .toml file instead of explicitly passing in a repo", async () => {
     await mkdir(join(home, "x"));
     await writeFile(

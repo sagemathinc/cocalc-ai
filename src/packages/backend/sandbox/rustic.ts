@@ -52,7 +52,7 @@ import exec, {
 } from "./exec";
 import { rustic as rusticPath } from "./install";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
-import { join, relative } from "path";
+import { isAbsolute, join, relative } from "path";
 import { rusticRepo } from "@cocalc/backend/data";
 import LRU from "lru-cache";
 import getLogger from "@cocalc/backend/logger";
@@ -90,7 +90,8 @@ export default async function rustic(
 
   const common = getCommonArgs(repo);
   await ensureInitialized(repo);
-  const cwd = await safeAbsPath?.(options.cwd ?? "");
+  const cwdArg = options.cwd ?? "";
+  const cwd = await safeAbsPath?.(cwdArg);
 
   const run = async (sanitizedArgs: string[]) => {
     return await exec({
@@ -119,15 +120,20 @@ export default async function rustic(
       if (args.length == 1) {
         throw Error("missing backup source");
       }
-      const sourceAbs = await safeAbsPath(args.slice(-1)[0]);
+      const sourceArg = args.slice(-1)[0];
+      const sourcePath =
+        isAbsolute(sourceArg) || sourceArg == ""
+          ? sourceArg
+          : join(cwdArg, sourceArg);
+      const sourceAbs = await safeAbsPath(sourcePath);
       const source = relative(cwd, sourceAbs).replace(/^\/+/, "");
-      const options = parseAndValidateOptions(
+      const parsedOptions = parseAndValidateOptions(
         args.slice(1, -1),
         whitelist.backup,
       );
 
       return await run([
-        ...options,
+        ...parsedOptions,
         "--no-scan",
         "--host",
         host,
