@@ -132,7 +132,6 @@ export function ChatRoomThreadPanel({
       value: string;
       label: string;
       description?: string;
-      thinking?: string;
       reasoning?: CodexReasoningLevel[];
     };
     const update = (patch: Partial<NewThreadSetup>) =>
@@ -142,7 +141,6 @@ export function ChatRoomThreadPanel({
       value: model.name,
       label: model.name,
       description: model.description,
-      thinking: model.reasoning?.find((r) => r.default)?.label,
       reasoning: model.reasoning,
     }));
     const codexReasoningOptions = (
@@ -289,9 +287,7 @@ export function ChatRoomThreadPanel({
                   options={codexModelOptions}
                   optionRender={(option) =>
                     renderOptionWithDescription({
-                      title: `${option.data.label}${
-                        option.data.thinking ? ` (${option.data.thinking})` : ""
-                      }`,
+                      title: `${option.data.label}`,
                       description: option.data.description,
                     })
                   }

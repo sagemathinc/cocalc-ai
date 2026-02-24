@@ -82,7 +82,6 @@ export interface CodexConfigButtonProps {
 type ModelOption = {
   value: string;
   label: string;
-  thinking?: string;
   description?: string;
   reasoning?: CodexReasoningLevel[];
 };
@@ -121,7 +120,6 @@ export function CodexConfigButton({
     const initialModels = DEFAULT_CODEX_MODELS.map((m) => ({
       value: m.name,
       label: m.name,
-      thinking: m.reasoning?.find((r) => r.default)?.label,
       description: m.description,
       reasoning: m.reasoning,
     }));
@@ -186,9 +184,6 @@ export function CodexConfigButton({
       })) ?? []
     );
   }, [models, selectedModelValue]);
-  const selectedReasoningLabel =
-    reasoningOptions.find((r) => r.value === selectedReasoningValue)?.label ??
-    "";
   const sourceShortLabel = paymentSourceLoading
     ? "Checking…"
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
@@ -325,14 +320,7 @@ export function CodexConfigButton({
                   options={models}
                   optionRender={(option) =>
                     renderOptionWithDescription({
-                      title: `${option.data.label}${
-                        option.data.value === selectedModelValue &&
-                        selectedReasoningLabel
-                          ? ` (${selectedReasoningLabel})`
-                          : option.data.thinking
-                            ? ` (${option.data.thinking})`
-                            : ""
-                      }`,
+                      title: `${option.data.label}`,
                       description: option.data.description,
                     })
                   }
