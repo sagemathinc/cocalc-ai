@@ -1776,7 +1776,11 @@ async function ensureAgent(
   }
 }
 
-function resolveCodexApiUrl(): string {
+function resolveCodexApiUrl(request?: AcpRequest): string {
+  const fromChat = `${request?.chat?.api_url ?? ""}`.trim();
+  if (fromChat) {
+    return fromChat;
+  }
   const explicit =
     `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
   if (explicit) {
@@ -1801,7 +1805,7 @@ function buildCodexRuntimeEnv({
   if (projectId) out.COCALC_PROJECT_ID = projectId;
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
-  out.COCALC_API_URL = resolveCodexApiUrl();
+  out.COCALC_API_URL = resolveCodexApiUrl(request);
   const bearer =
     `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
     `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();

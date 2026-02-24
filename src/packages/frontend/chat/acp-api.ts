@@ -290,6 +290,10 @@ export async function processAcpLLM({
         project_id,
         path,
         sender_id,
+        api_url:
+          typeof window !== "undefined"
+            ? `${window.location.protocol}//${window.location.host}`
+            : undefined,
         browser_id: webapp_client.browser_id,
         messageDate: newMessageDate,
         reply_to: threadRootDate,
@@ -470,6 +474,7 @@ function buildChatMetadata({
   project_id,
   path,
   sender_id,
+  api_url,
   browser_id,
   messageDate,
   reply_to,
@@ -481,6 +486,7 @@ function buildChatMetadata({
   project_id?: string;
   path?: string;
   sender_id: string;
+  api_url?: string;
   browser_id?: string;
   messageDate: Date;
   reply_to?: Date;
@@ -502,6 +508,7 @@ function buildChatMetadata({
     project_id,
     path,
     sender_id,
+    api_url,
     browser_id,
     message_date: messageDate.toISOString(),
     reply_to: reply_to?.toISOString(),

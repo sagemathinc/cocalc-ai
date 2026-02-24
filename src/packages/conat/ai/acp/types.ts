@@ -6,6 +6,8 @@ export interface AcpChatContext {
   path: string;
   message_date: string;
   sender_id: string;
+  // Browser-visible API origin for this chat turn (e.g. https://host:port).
+  api_url?: string;
   // Browser session initiating this turn (for agent/browser automation routing).
   browser_id?: string;
   reply_to?: string;
