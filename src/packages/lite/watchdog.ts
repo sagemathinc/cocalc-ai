@@ -20,6 +20,7 @@ const DEFAULT_CHANGEFEED_UNTRACKED_WARN = 100;
 const DEFAULT_ACP_ACTIVE_WRITERS_WARN = 20;
 const DEFAULT_BACKEND_WATCHER_ACTIVE_WARN = 500;
 const DEFAULT_TOP_N = 6;
+const DEFAULT_HOT_LOG_EVERY_MS = 5 * 60_000;
 
 let timer: NodeJS.Timeout | undefined;
 
@@ -171,8 +172,14 @@ export function initWatchdog() {
   const summaryEnabled = envEnabled("COCALC_WATCHDOG_SUMMARY", false);
   const topN = Math.max(1, envNumber("COCALC_WATCHDOG_TOP_N", DEFAULT_TOP_N));
 
-  const cpuWarnPct = envNumber("COCALC_WATCHDOG_CPU_WARN_PCT", DEFAULT_CPU_WARN_PCT);
-  const eluWarnPct = envNumber("COCALC_WATCHDOG_ELU_WARN_PCT", DEFAULT_ELU_WARN_PCT);
+  const cpuWarnPct = envNumber(
+    "COCALC_WATCHDOG_CPU_WARN_PCT",
+    DEFAULT_CPU_WARN_PCT,
+  );
+  const eluWarnPct = envNumber(
+    "COCALC_WATCHDOG_ELU_WARN_PCT",
+    DEFAULT_ELU_WARN_PCT,
+  );
   const loopDelayWarnMs = envNumber(
     "COCALC_WATCHDOG_LOOP_DELAY_WARN_MS",
     DEFAULT_LOOP_DELAY_WARN_MS,
@@ -197,6 +204,11 @@ export function initWatchdog() {
     "COCALC_WATCHDOG_BACKEND_WATCHER_ACTIVE_WARN",
     DEFAULT_BACKEND_WATCHER_ACTIVE_WARN,
   );
+  const hotLogEveryMs = Math.max(
+    intervalMs,
+    envNumber("COCALC_WATCHDOG_HOT_LOG_EVERY_MS", DEFAULT_HOT_LOG_EVERY_MS),
+  );
+  const hotDetailed = envEnabled("COCALC_WATCHDOG_HOT_DETAILED", false);
 
   const loopDelay = monitorEventLoopDelay({ resolution: 20 });
   loopDelay.enable();
@@ -206,6 +218,9 @@ export function initWatchdog() {
   let lastElu = performance.eventLoopUtilization();
   let lastSummary = Date.now();
   let hotStreak = 0;
+  let wasHot = false;
+  let lastHotSignature = "";
+  let lastHotLogAt = 0;
 
   logger.debug("watchdog enabled", {
     intervalMs,
@@ -219,6 +234,8 @@ export function initWatchdog() {
     changefeedUntrackedWarn,
     acpActiveWritersWarn,
     backendWatcherActiveWarn,
+    hotLogEveryMs,
+    hotDetailed,
   });
 
   const tick = () => {
@@ -302,6 +319,8 @@ export function initWatchdog() {
 
     const hot = reasons.length > 0;
     hotStreak = hot ? hotStreak + 1 : 0;
+    const hotSignature = reasons.join("|");
+    const reasonsChanged = hotSignature !== lastHotSignature;
 
     const snapshot = {
       timestamp: new Date(now).toISOString(),
@@ -329,12 +348,43 @@ export function initWatchdog() {
       changefeedUntracked,
     };
 
+    if (
+      hot &&
+      (!wasHot || reasonsChanged || now - lastHotLogAt >= hotLogEveryMs)
+    ) {
+      lastHotLogAt = now;
+      lastHotSignature = hotSignature;
+      if (hotDetailed) {
+        logger.warn("watchdog hot", {
+          ...snapshot,
+          runtime: getActiveHandleStats(topN),
+        });
+      } else {
+        logger.warn("watchdog hot", {
+          timestamp: snapshot.timestamp,
+          hotStreak: snapshot.hotStreak,
+          reasons: snapshot.reasons,
+          cpuPct: snapshot.cpuPct,
+          eventLoopUtilizationPct: snapshot.eventLoopUtilizationPct,
+          loopDelayMs: snapshot.loopDelayMs,
+          memoryMB: snapshot.memoryMB,
+          loadavg: snapshot.loadavg,
+        });
+      }
+    }
     if (hot) {
-      logger.warn("watchdog hot", {
-        ...snapshot,
-        runtime: getActiveHandleStats(topN),
-      });
+      wasHot = true;
       return;
+    }
+    if (wasHot) {
+      wasHot = false;
+      lastHotSignature = "";
+      logger.debug("watchdog recovered", {
+        timestamp: snapshot.timestamp,
+        cpuPct: snapshot.cpuPct,
+        eventLoopUtilizationPct: snapshot.eventLoopUtilizationPct,
+        loopDelayMs: snapshot.loopDelayMs,
+      });
     }
 
     if (summaryEnabled && now - lastSummary >= summaryMs) {
