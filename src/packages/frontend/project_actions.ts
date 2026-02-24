@@ -2201,6 +2201,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // Copy 1 or more paths from one project to another (possibly the same) project.
   copyPathBetweenProjects = async (opts: {
     src: { project_id: string; path: string | string[] };
+    src_home?: string;
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => {
@@ -2216,8 +2217,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     });
     let error: any = undefined;
     try {
+      const src_home =
+        opts.src_home ??
+        (opts.src.project_id === this.project_id
+          ? getProjectHomeDirectory(this.project_id)
+          : undefined);
       const resp =
-        await webapp_client.project_client.copyPathBetweenProjects(opts);
+        await webapp_client.project_client.copyPathBetweenProjects({
+          ...opts,
+          ...(src_home ? { src_home } : {}),
+        });
       this.copyOpsManager.track(resp);
       this.set_activity({
         id,

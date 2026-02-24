@@ -185,4 +185,26 @@ describe("projects.copyProjectFiles", () => {
       }),
     );
   });
+
+  it("uses src_home to normalize absolute source paths instead of hardcoding /root", async () => {
+    queryMock = makeHostQuery({ src: "h1", dest: "h2" });
+    getBackupFilesMock.mockResolvedValue([{ name: "x.py" }]);
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: { project_id: "src", path: "/home/wstein/work/x.py" },
+      src_home: "/home/wstein/work",
+      dests: [{ project_id: "dest", path: "/root/out" }],
+      snapshot_id: "snap-existing",
+    });
+
+    expect(result).toEqual({ queued: 1, local: 0, snapshot_id: "snap-existing" });
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src_path: "x.py",
+        dest_path: "/root/out",
+      }),
+    );
+  });
 });

@@ -107,9 +107,36 @@ function normalizeSrcPaths(src: CopySource): string[] {
   return normalized;
 }
 
-function normalizeBackupPath(raw: string, label: string): string {
+function normalizeHomePath(raw?: string): string | undefined {
+  if (!raw) return;
+  const normalized = normalizeCopyPath(raw, "src_home");
+  if (!path.posix.isAbsolute(normalized)) {
+    throw new Error("src_home must be an absolute path");
+  }
+  if (normalized === "/") return normalized;
+  return normalized.replace(/\/+$/, "");
+}
+
+function normalizeBackupPath({
+  raw,
+  label,
+  src_home,
+}: {
+  raw: string;
+  label: string;
+  src_home?: string;
+}): string {
   const normalized = normalizeCopyPath(raw, label);
   if (!normalized) return "";
+  if (src_home) {
+    if (src_home === "/") {
+      return normalized.replace(/^\/+/, "");
+    }
+    if (normalized === src_home) return "";
+    if (normalized.startsWith(`${src_home}/`)) {
+      return normalized.slice(src_home.length + 1);
+    }
+  }
   if (normalized === "/root") return "";
   if (normalized.startsWith("/root/")) {
     return normalized.slice("/root/".length);
@@ -174,6 +201,7 @@ async function assertBackupContainsPath({
 
 export async function copyProjectFiles({
   src,
+  src_home,
   dests,
   options,
   account_id,
@@ -186,6 +214,7 @@ export async function copyProjectFiles({
   shouldAbort,
 }: {
   src: CopySource;
+  src_home?: string;
   dests: CopyDest[];
   options?: CopyOptions;
   account_id: string;
@@ -210,11 +239,16 @@ export async function copyProjectFiles({
   }
 
   const srcPaths = normalizeSrcPaths(src);
+  const normalizedSrcHome = normalizeHomePath(src_home);
   if (srcPaths.length > 1 && srcPaths.some((p) => !p)) {
     throw new Error("empty src path not allowed when copying multiple paths");
   }
   const backupSrcPaths = srcPaths.map((srcPath, idx) =>
-    normalizeBackupPath(srcPath, `src.path[${idx}]`),
+    normalizeBackupPath({
+      raw: srcPath,
+      label: `src.path[${idx}]`,
+      src_home: normalizedSrcHome,
+    }),
   );
   if (backupSrcPaths.length > 1 && backupSrcPaths.some((p) => !p)) {
     throw new Error(

@@ -44,11 +44,13 @@ import type {
 
 export async function copyPathBetweenProjects({
   src,
+  src_home,
   dest,
   options,
   account_id,
 }: {
   src: { project_id: string; path: string | string[] };
+  src_home?: string;
   dest: { project_id: string; path: string };
   options?: CopyOptions;
   account_id?: string;
@@ -72,14 +74,27 @@ export async function copyPathBetweenProjects({
     scope_id: src.project_id,
     created_by: account_id,
     routing: "hub",
-    input: { src, dests: [dest], options },
+    input: {
+      src,
+      ...(src_home ? { src_home } : {}),
+      dests: [dest],
+      options,
+    },
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
-  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("copyPathBetweenProjects: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      project_id: src.project_id,
+      err,
+    });
+  }
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -91,7 +106,13 @@ export async function copyPathBetweenProjects({
       message: "queued",
       progress: 0,
     },
-  }).catch(() => {});
+  }).catch((err) => {
+    log.warn("copyPathBetweenProjects: unable to publish queued progress event", {
+      op_id: op.op_id,
+      project_id: src.project_id,
+      err,
+    });
+  });
   return {
     op_id: op.op_id,
     scope_type: "project",
@@ -353,11 +374,19 @@ export async function start({
     input: { project_id },
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
-  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("start: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  }
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -369,7 +398,13 @@ export async function start({
       message: "queued",
       progress: 0,
     },
-  }).catch(() => {});
+  }).catch((err) => {
+    log.warn("start: unable to publish queued progress event", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  });
 
   log.debug("start", { project_id, op_id: op.op_id });
   const project = await getProject(project_id);
@@ -387,11 +422,19 @@ export async function start({
       error: null,
     });
     if (running) {
-      await publishLroSummary({
-        scope_type: running.scope_type,
-        scope_id: running.scope_id,
-        summary: running,
-      });
+      try {
+        await publishLroSummary({
+          scope_type: running.scope_type,
+          scope_id: running.scope_id,
+          summary: running,
+        });
+      } catch (err) {
+        log.warn("start: unable to publish running LRO summary", {
+          op_id: op.op_id,
+          project_id,
+          err,
+        });
+      }
     }
     try {
       await project.start({ lro_op_id: op.op_id, account_id });
@@ -412,11 +455,19 @@ export async function start({
         error: null,
       });
       if (updated) {
-        await publishLroSummary({
-          scope_type: updated.scope_type,
-          scope_id: updated.scope_id,
-          summary: updated,
-        });
+        try {
+          await publishLroSummary({
+            scope_type: updated.scope_type,
+            scope_id: updated.scope_id,
+            summary: updated,
+          });
+        } catch (err) {
+          log.warn("start: unable to publish succeeded LRO summary", {
+            op_id: op.op_id,
+            project_id,
+            err,
+          });
+        }
       }
     } catch (err) {
       const updated = await updateLro({
@@ -425,11 +476,19 @@ export async function start({
         error: `${err}`,
       });
       if (updated) {
-        await publishLroSummary({
-          scope_type: updated.scope_type,
-          scope_id: updated.scope_id,
-          summary: updated,
-        });
+        try {
+          await publishLroSummary({
+            scope_type: updated.scope_type,
+            scope_id: updated.scope_id,
+            summary: updated,
+          });
+        } catch (publishErr) {
+          log.warn("start: unable to publish failed LRO summary", {
+            op_id: op.op_id,
+            project_id,
+            err: publishErr,
+          });
+        }
       }
       throw err;
     }
