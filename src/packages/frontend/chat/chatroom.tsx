@@ -15,6 +15,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
+import { lite } from "@cocalc/frontend/lite";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -135,6 +136,16 @@ function getDescValue(desc: NodeDesc | undefined, key: string) {
   return (desc as any)[key];
 }
 
+function asBoolean(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function asTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function ChatPanel({
   actions,
   project_id,
@@ -166,6 +177,8 @@ export function ChatPanel({
     showThreadImagePreviewRaw === false || showThreadImagePreviewRaw === "false"
       ? false
       : true;
+  const hideChatTypeSelectorRaw = getDescValue(desc, "data-hideChatTypeSelector");
+  const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const preferLatestThreadFromDescRaw = getDescValue(
     desc,
@@ -234,8 +247,20 @@ export function ChatPanel({
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
+  const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
+    const title = asTrimmedString(getDescValue(desc, "data-newThreadTitleDefault"));
+    const icon = asTrimmedString(getDescValue(desc, "data-newThreadIconDefault"));
+    const color = asTrimmedString(getDescValue(desc, "data-newThreadColorDefault"));
+    return {
+      ...DEFAULT_NEW_THREAD_SETUP,
+      title: title ?? DEFAULT_NEW_THREAD_SETUP.title,
+      icon: icon ?? DEFAULT_NEW_THREAD_SETUP.icon,
+      color: color ?? DEFAULT_NEW_THREAD_SETUP.color,
+      agentMode: "codex",
+    };
+  }, [desc]);
   const [newThreadSetup, setNewThreadSetup] =
-    useState<NewThreadSetup>(DEFAULT_NEW_THREAD_SETUP);
+    useState<NewThreadSetup>(defaultNewThreadSetup);
 
   const composerDraftKey = useMemo(() => {
     if (
@@ -617,10 +642,10 @@ export function ChatPanel({
       threadAgent:
         !reply_to && newThreadSetup.agentMode
           ? {
-              mode: newThreadSetup.agentMode,
+              mode: lite ? "codex" : newThreadSetup.agentMode,
               model: newThreadSetup.model?.trim(),
               codexConfig:
-                newThreadSetup.agentMode === "codex"
+                (lite ? "codex" : newThreadSetup.agentMode) === "codex"
                   ? {
                       ...newThreadSetup.codexConfig,
                       model:
@@ -681,7 +706,7 @@ export function ChatPanel({
     void clearComposerDraft(0);
     setAllowAutoSelectThread(false);
     setSelectedThreadKey(null);
-    setNewThreadSetup(DEFAULT_NEW_THREAD_SETUP);
+    setNewThreadSetup(defaultNewThreadSetup);
   }
 
   const renderChatContent = () => (
@@ -714,6 +739,7 @@ export function ChatPanel({
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
         showThreadImagePreview={showThreadImagePreview}
+        hideChatTypeSelector={hideChatTypeSelector}
       />
       <ChatRoomComposer
         actions={actions}

@@ -4,6 +4,7 @@ import {
   Dropdown,
   Input,
   Modal,
+  Select,
   Space,
   Tag,
   Tooltip,
@@ -60,6 +61,9 @@ interface NavigatorShellProps {
 }
 
 export const NAVIGATOR_CHAT_INSTANCE_KEY = "navigator-shell";
+const NAVIGATOR_DEFAULT_THREAD_TITLE = "Navigator";
+const NAVIGATOR_DEFAULT_THREAD_ICON = "sitemap";
+const NAVIGATOR_DEFAULT_THREAD_COLOR = "#c8e6c9";
 
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -105,6 +109,41 @@ function chooseThreadKey(
     return preferredThreadKey;
   }
   return latestThreadKey(actions);
+}
+
+function isThreadArchived(actions: ChatActions, thread: any): boolean {
+  const threadKey = typeof thread?.key === "string" ? thread.key : "";
+  const threadId =
+    typeof thread?.rootMessage?.thread_id === "string"
+      ? thread.rootMessage.thread_id
+      : undefined;
+  if (!threadKey) return false;
+  return actions.getThreadMetadata(threadKey, { threadId }).archived === true;
+}
+
+function chooseNonArchivedThreadKey(
+  actions: ChatActions,
+  preferredThreadKey?: string | null,
+): string | null {
+  const index = actions.messageCache?.getThreadIndex();
+  if (!index?.size) return null;
+  if (preferredThreadKey && index.has(preferredThreadKey)) {
+    const preferred = index.get(preferredThreadKey);
+    if (preferred && !isThreadArchived(actions, preferred)) {
+      return preferredThreadKey;
+    }
+  }
+  let bestKey: string | null = null;
+  let bestTime = -Infinity;
+  for (const thread of index.values()) {
+    if (isThreadArchived(actions, thread)) continue;
+    const newest = Number(thread?.newestTime ?? -Infinity);
+    if (typeof thread?.key === "string" && newest > bestTime) {
+      bestTime = newest;
+      bestKey = thread.key;
+    }
+  }
+  return bestKey;
 }
 
 function parseDateISOString(value: unknown): string | undefined {
@@ -263,6 +302,7 @@ export function NavigatorShell({
   const [settingsImage, setSettingsImage] = useState("");
   const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
   const lastIndexedValueRef = useRef<string>("");
+  const pendingNewThreadDefaultsRef = useRef<boolean>(false);
   const preferredThreadKeyRef = useRef<string | undefined>(
     loadNavigatorSelectedThreadKey(project_id),
   );
@@ -445,6 +485,30 @@ export function NavigatorShell({
     });
   }, [actions, selectedRootMessage, selectedThreadKey]);
 
+  const threadOptions = useMemo(() => {
+    if (!actions) return [] as Array<{ value: string; label: string }>;
+    const index = actions.messageCache?.getThreadIndex();
+    if (!index?.size) return [] as Array<{ value: string; label: string }>;
+    const items = Array.from(index.values())
+      .filter((thread) => !isThreadArchived(actions, thread))
+      .sort((a, b) => Number(b?.newestTime ?? 0) - Number(a?.newestTime ?? 0))
+      .map((thread) => {
+        const metadata = actions.getThreadMetadata(thread.key, {
+          threadId:
+            typeof thread?.rootMessage?.thread_id === "string"
+              ? thread.rootMessage.thread_id
+              : undefined,
+        });
+        const name =
+          typeof metadata?.name === "string" ? metadata.name.trim() : "";
+        return {
+          value: thread.key,
+          label: name || summarizeTitle(thread.rootMessage),
+        };
+      });
+    return items;
+  }, [actions, cacheVersion]);
+
   const selectedSessionRecord = useMemo(() => {
     if (
       !selectedThreadKey ||
@@ -525,6 +589,44 @@ export function NavigatorShell({
     selectedThreadKey,
     selectedThreadMetadata,
   ]);
+
+  useEffect(() => {
+    if (!actions || !selectedThreadKey || selectedThreadKey === "") return;
+    if (!pendingNewThreadDefaultsRef.current) return;
+    const threadId =
+      typeof selectedRootMessage?.thread_id === "string"
+        ? selectedRootMessage.thread_id
+        : undefined;
+    if (!threadId) return;
+    const metadata = actions.getThreadMetadata(selectedThreadKey, {
+      threadId,
+    });
+    const patch: {
+      name?: string;
+      color?: string;
+      icon?: string;
+    } = {};
+    if (!(typeof metadata?.name === "string" && metadata.name.trim().length > 0)) {
+      patch.name = NAVIGATOR_DEFAULT_THREAD_TITLE;
+    }
+    if (
+      !(typeof metadata?.thread_color === "string" && metadata.thread_color.trim().length > 0)
+    ) {
+      patch.color = NAVIGATOR_DEFAULT_THREAD_COLOR;
+    }
+    if (!(typeof metadata?.thread_icon === "string" && metadata.thread_icon.trim().length > 0)) {
+      patch.icon = NAVIGATOR_DEFAULT_THREAD_ICON;
+    }
+    if (Object.keys(patch).length > 0) {
+      const ok = actions.setThreadAppearance(selectedThreadKey, patch);
+      if (ok) {
+        setCacheVersion((v) => v + 1);
+      } else {
+        return;
+      }
+    }
+    pendingNewThreadDefaultsRef.current = false;
+  }, [actions, selectedRootMessage, selectedThreadKey]);
 
   const submitIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
@@ -617,6 +719,10 @@ export function NavigatorShell({
     const data: Record<string, any> = {
       "data-preferLatestThread": true,
       "data-showThreadImagePreview": false,
+      "data-hideChatTypeSelector": true,
+      "data-newThreadTitleDefault": NAVIGATOR_DEFAULT_THREAD_TITLE,
+      "data-newThreadIconDefault": NAVIGATOR_DEFAULT_THREAD_ICON,
+      "data-newThreadColorDefault": NAVIGATOR_DEFAULT_THREAD_COLOR,
     };
     if (selectedThreadKey !== null) {
       data["data-selectedThreadKey"] = selectedThreadKey;
@@ -713,6 +819,7 @@ export function NavigatorShell({
   }
 
   function startNewThread(): void {
+    pendingNewThreadDefaultsRef.current = true;
     setSelectedThreadKey("");
     actions?.setSelectedThread?.(null);
   }
@@ -721,7 +828,7 @@ export function NavigatorShell({
     if (!actions || !selectedThreadKey) return;
     const deleted = actions.deleteThread(selectedThreadKey);
     if (deleted <= 0) return;
-    const next = chooseThreadKey(actions);
+    const next = chooseNonArchivedThreadKey(actions) ?? chooseThreadKey(actions);
     setSelectedThreadKey(next);
     actions.setSelectedThread?.(next);
   }
@@ -848,6 +955,25 @@ export function NavigatorShell({
       >
         <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
           <Typography.Text strong>{threadTitle}</Typography.Text>
+          {threadOptions.length > 0 ? (
+            <Select
+              size="small"
+              style={{ minWidth: 190, maxWidth: 320 }}
+              placeholder="Select thread"
+              value={selectedThreadKey || undefined}
+              options={threadOptions}
+              onChange={(value) => {
+                const threadKey =
+                  typeof value === "string" && value.trim().length > 0
+                    ? value
+                    : null;
+                setSelectedThreadKey(threadKey);
+                actions?.setSelectedThread?.(threadKey);
+              }}
+              showSearch
+              optionFilterProp="label"
+            />
+          ) : null}
         </Space>
         <Space size={[4, 4]} wrap>
           {fontControls}

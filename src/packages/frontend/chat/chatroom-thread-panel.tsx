@@ -96,6 +96,7 @@ interface ChatRoomThreadPanelProps {
   newThreadSetup: NewThreadSetup;
   onNewThreadSetupChange: (next: NewThreadSetup) => void;
   showThreadImagePreview?: boolean;
+  hideChatTypeSelector?: boolean;
 }
 
 export function ChatRoomThreadPanel({
@@ -124,6 +125,7 @@ export function ChatRoomThreadPanel({
   newThreadSetup,
   onNewThreadSetupChange,
   showThreadImagePreview = true,
+  hideChatTypeSelector = false,
 }: ChatRoomThreadPanelProps) {
   if (!selectedThreadKey) {
     type ModelOption = {
@@ -151,6 +153,7 @@ export function ChatRoomThreadPanel({
       description: r.description,
       default: r.default,
     }));
+    const shouldHideChatType = hideChatTypeSelector || lite;
     return (
       <div
         className="smc-vfill"
@@ -192,42 +195,46 @@ export function ChatRoomThreadPanel({
               />
             </div>
             <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                Chat type
-              </div>
-              <Select
-                value={newThreadSetup.agentMode}
-                style={{ width: "100%" }}
-                onChange={(value) => {
-                  const mode = value as NewThreadAgentMode;
-                  if (mode === "codex") {
-                    const model = isCodexModelName(newThreadSetup.model)
-                      ? newThreadSetup.model
-                      : DEFAULT_CODEX_MODEL;
-                    update({
-                      agentMode: mode,
-                      model,
-                      codexConfig: {
-                        ...newThreadSetup.codexConfig,
-                        model,
-                        sessionMode:
-                          normalizeSessionMode(newThreadSetup.codexConfig) ??
-                          DEFAULT_CODEX_SESSION_MODE,
-                        reasoning: getReasoningForModel({
-                          modelValue: model,
-                          desired: newThreadSetup.codexConfig.reasoning,
-                        }),
-                      },
-                    });
-                    return;
-                  }
-                  update({ agentMode: mode });
-                }}
-                options={[
-                  { value: "codex", label: "Codex (agent)" },
-                  { value: "human", label: "Human only" },
-                ]}
-              />
+              {!shouldHideChatType ? (
+                <>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Chat type
+                  </div>
+                  <Select
+                    value={newThreadSetup.agentMode}
+                    style={{ width: "100%" }}
+                    onChange={(value) => {
+                      const mode = value as NewThreadAgentMode;
+                      if (mode === "codex") {
+                        const model = isCodexModelName(newThreadSetup.model)
+                          ? newThreadSetup.model
+                          : DEFAULT_CODEX_MODEL;
+                        update({
+                          agentMode: mode,
+                          model,
+                          codexConfig: {
+                            ...newThreadSetup.codexConfig,
+                            model,
+                            sessionMode:
+                              normalizeSessionMode(newThreadSetup.codexConfig) ??
+                              DEFAULT_CODEX_SESSION_MODE,
+                            reasoning: getReasoningForModel({
+                              modelValue: model,
+                              desired: newThreadSetup.codexConfig.reasoning,
+                            }),
+                          },
+                        });
+                        return;
+                      }
+                      update({ agentMode: mode });
+                    }}
+                    options={[
+                      { value: "codex", label: "Codex (agent)" },
+                      { value: "human", label: "Human only" },
+                    ]}
+                  />
+                </>
+              ) : null}
             </div>
             <div>
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
