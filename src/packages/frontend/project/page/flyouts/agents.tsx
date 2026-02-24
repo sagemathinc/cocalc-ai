@@ -3,14 +3,29 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Empty, Space, Tag, Tooltip, Typography } from "antd";
-import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import {
+  Alert,
+  Button,
+  Dropdown,
+  Empty,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+  type MenuProps,
+} from "antd";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import {
   redux,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
+import { Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type {
   AgentSessionRecord,
@@ -42,7 +57,6 @@ import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { NAVIGATOR_CHAT_INSTANCE_KEY } from "@cocalc/frontend/project/new/navigator-shell";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
-import { Icon } from "@cocalc/frontend/components";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
 
@@ -57,13 +71,7 @@ const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
 const AGENTS_OPEN_SESSION_STORAGE_PREFIX = "agents-panel-open-session";
-
-function formatUpdated(iso?: string): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (!Number.isFinite(date.valueOf())) return "";
-  return date.toLocaleString();
-}
+const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 
 function shortAccountId(accountId?: string): string {
   if (!accountId) return "unknown";
@@ -172,6 +180,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   );
   const [inlineActions, setInlineActions] = useState<ChatActions | null>(null);
   const [inlineError, setInlineError] = useState<string>("");
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(0);
   const isFlyout = layout === "flyout";
   const {
     fontSize,
@@ -210,6 +220,30 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       unsubscribe?.();
     };
   }, [account_id, project_id]);
+
+  useEffect(() => {
+    const node = panelRef.current;
+    if (!node) return;
+    const update = () => {
+      const width = node.getBoundingClientRect().width;
+      if (Number.isFinite(width)) {
+        setPanelWidth(width);
+      }
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => update());
+    ro.observe(node);
+    return () => {
+      ro.disconnect();
+    };
+  }, [layout, inlineSessionId]);
+
+  const showModelInMeta = useMemo(() => {
+    if (!isFlyout) return true;
+    if (panelWidth <= 0) return false;
+    return panelWidth >= AGENTS_MODEL_MIN_PANEL_WIDTH_PX;
+  }, [isFlyout, panelWidth]);
 
   const knownChatPaths = useMemo(() => {
     return Array.from(
@@ -440,6 +474,140 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     openFloatingAgentSession(project_id, record);
   }
 
+  function recordMetaLine(record: AgentSessionRecord): string {
+    const parts: string[] = [];
+    if (scope === "all") {
+      parts.push(shortAccountId(record.account_id));
+    }
+    if (showModelInMeta && record.model) {
+      parts.push(ellipsize(record.model, isFlyout ? 30 : 44));
+    }
+    if (record.thread_pin) {
+      parts.push("pinned");
+    }
+    return parts.join(" · ");
+  }
+
+  function renderSessionMenu(record: AgentSessionRecord): React.JSX.Element {
+    const items: MenuProps["items"] = [
+      {
+        key: "resume",
+        label: "Go to Home Chat",
+      },
+      {
+        key: "float",
+        label: "Float",
+      },
+      {
+        key: "open-file",
+        label: "Open Chat File",
+      },
+      {
+        type: "divider",
+      },
+      {
+        key: "pin",
+        label: record.thread_pin ? "Unpin" : "Pin",
+        disabled: updatingSessionId === record.session_id,
+      },
+      {
+        key: "archive",
+        label: record.status === "archived" ? "Unarchive" : "Archive",
+        disabled: updatingSessionId === record.session_id,
+        danger: record.status !== "archived",
+      },
+    ];
+    return (
+      <Dropdown
+        trigger={["click"]}
+        menu={{
+          items,
+          onClick: ({ key }) => {
+            switch (key) {
+              case "resume":
+                openNavigatorSession(record);
+                return;
+              case "float":
+                openFloatingSession(record);
+                return;
+              case "open-file":
+                actions?.open_file({ path: record.chat_path });
+                return;
+              case "pin":
+                void togglePin(record);
+                return;
+              case "archive":
+                void toggleArchive(record);
+                return;
+            }
+          },
+        }}
+      >
+        <Button size="small" type="text" icon={<Icon name="ellipsis" />} />
+      </Dropdown>
+    );
+  }
+
+  function renderInlineSessionMenu(record: AgentSessionRecord): React.JSX.Element {
+    const items: MenuProps["items"] = [
+      {
+        key: "resume",
+        label: "Go to Home Chat",
+      },
+      {
+        key: "float",
+        label: "Float",
+      },
+      {
+        key: "open-file",
+        label: "Open Chat File",
+      },
+      {
+        type: "divider",
+      },
+      {
+        key: "pin",
+        label: record.thread_pin ? "Unpin" : "Pin",
+        disabled: updatingSessionId === record.session_id,
+      },
+      {
+        key: "archive",
+        label: record.status === "archived" ? "Unarchive" : "Archive",
+        disabled: updatingSessionId === record.session_id,
+        danger: record.status !== "archived",
+      },
+    ];
+    return (
+      <Dropdown
+        trigger={["click"]}
+        menu={{
+          items,
+          onClick: ({ key }) => {
+            switch (key) {
+              case "resume":
+                openNavigatorSession(record);
+                return;
+              case "float":
+                openFloatingSession(record);
+                return;
+              case "open-file":
+                actions?.open_file({ path: record.chat_path });
+                return;
+              case "pin":
+                void togglePin(record);
+                return;
+              case "archive":
+                void toggleArchive(record);
+                return;
+            }
+          },
+        }}
+      >
+        <Button size="small">Actions</Button>
+      </Dropdown>
+    );
+  }
+
   function renderFontSizeControls(minimal = false): React.JSX.Element {
     return (
       <Space size={[4, 0]} wrap>
@@ -581,8 +749,18 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const icon = record.thread_icon?.trim() || undefined;
     const color = record.thread_color?.trim() || undefined;
     const title = normalizedTitle(record);
-    const showFlyoutImage = isFlyout && Boolean(image);
-    const showPageCornerImage = !isFlyout && Boolean(image);
+    const metaLine = recordMetaLine(record);
+    const updatedAt = record.updated_at ?? record.created_at;
+    const showCornerImage = Boolean(image);
+    const statusTag =
+      record.status === "running" || record.status === "failed" ? (
+        <Tag
+          color={STATUS_COLORS[record.status] ?? "default"}
+          style={{ marginInlineEnd: 0 }}
+        >
+          {record.status}
+        </Tag>
+      ) : null;
     return (
       <div key={record.session_id}>
         <div
@@ -590,34 +768,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             width: "100%",
             border: "1px solid #e8e8e8",
             borderRadius: 8,
-            padding: isFlyout ? 10 : 12,
+            padding: isFlyout ? 8 : 10,
             background: "#fff",
             borderLeft: color ? `4px solid ${color}` : undefined,
             position: "relative",
             overflow: "hidden",
           }}
         >
-          {showFlyoutImage ? (
-            <div
-              style={{
-                margin: "-10px -10px 10px -10px",
-                borderBottom: "1px solid #eee",
-                background: "#fafafa",
-              }}
-            >
-              <img
-                src={image}
-                alt="Thread image"
-                style={{
-                  width: "100%",
-                  height: 96,
-                  objectFit: "cover",
-                  display: "block",
-                }}
-              />
-            </div>
-          ) : null}
-          {showPageCornerImage ? (
+          {showCornerImage ? (
             <div
               style={{
                 position: "absolute",
@@ -647,95 +805,105 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             }}
           >
             <ThreadBadge
-              image={showFlyoutImage || showPageCornerImage ? undefined : image}
+              image={showCornerImage ? undefined : image}
               icon={icon}
               color={color}
               fallbackIcon="comment"
-              size={isFlyout ? 44 : 28}
+              size={isFlyout ? 36 : 32}
               style={{ marginTop: 1 }}
             />
-            <div style={{ minWidth: 0, flex: 1 }}>
+            <div
+              style={{
+                minWidth: 0,
+                flex: 1,
+                paddingRight: showCornerImage ? 84 : undefined,
+              }}
+            >
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "space-between",
+                  justifyContent: "flex-start",
                   gap: 8,
                 }}
               >
                 <Typography.Text strong title={title}>
                   {ellipsize(title, isFlyout ? 48 : 56)}
                 </Typography.Text>
-                <Tag
-                  color={STATUS_COLORS[record.status] ?? "default"}
-                  style={{ marginInlineEnd: 0 }}
-                >
-                  {record.status}
-                </Tag>
+                {statusTag}
               </div>
-              <Space size={[6, 6]} wrap style={{ marginTop: 6 }}>
-                <Tag>{shortAccountId(record.account_id)}</Tag>
-                {record.model ? (
-                  <Tag title={record.model}>{ellipsize(record.model, isFlyout ? 28 : 36)}</Tag>
-                ) : null}
-                {record.mode ? <Tag>{record.mode}</Tag> : null}
-              </Space>
+              {metaLine ? (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginTop: 2,
+                  }}
+                >
+                  <Typography.Text
+                    type="secondary"
+                    style={{
+                      minWidth: 0,
+                      flex: 1,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {metaLine}
+                  </Typography.Text>
+                  {updatedAt ? (
+                    <span
+                      style={{
+                        color: "#9a9a9a",
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <TimeAgo
+                        date={updatedAt}
+                        click_to_toggle={false}
+                        style={{
+                          whiteSpace: "nowrap",
+                        }}
+                      />
+                    </span>
+                  ) : null}
+                </div>
+              ) : updatedAt ? (
+                <span
+                  style={{
+                    color: "#9a9a9a",
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    display: "block",
+                    marginTop: 2,
+                  }}
+                >
+                  <TimeAgo
+                    date={updatedAt}
+                    click_to_toggle={false}
+                    style={{
+                      whiteSpace: "nowrap",
+                    }}
+                  />
+                </span>
+              ) : null}
             </div>
           </div>
-          <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
-            Updated: {formatUpdated(record.updated_at)}
-          </Typography.Text>
-          <Space size={[6, 0]} wrap>
+          <Space size={[4, 0]}>
             <Button
               size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
+              type="primary"
               onClick={() => openInlineSession(record)}
             >
               Open
             </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              disabled={updatingSessionId === record.session_id}
-              onClick={() => void togglePin(record)}
-            >
-              {record.thread_pin ? "Unpin" : "Pin"}
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              onClick={() => openFloatingSession(record)}
-            >
-              Float
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              onClick={() => openNavigatorSession(record)}
-            >
-              Resume
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              onClick={() => actions?.open_file({ path: record.chat_path })}
-            >
-              Open Chat File
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              disabled={updatingSessionId === record.session_id}
-              onClick={() => void toggleArchive(record)}
-            >
-              {record.status === "archived" ? "Unarchive" : "Archive"}
-            </Button>
+            {renderSessionMenu(record)}
           </Space>
         </div>
       </div>
@@ -747,10 +915,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   if (inlineSession) {
-    const inlineImage = inlineSession.thread_image?.trim() || undefined;
     const inlineTitle = normalizedTitle(inlineSession);
     return (
       <div
+        ref={panelRef}
         style={
           isFlyout
             ? {
@@ -767,22 +935,6 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               }
         }
       >
-        {isFlyout && inlineImage ? (
-          <div
-            style={{
-              marginBottom: 8,
-              borderRadius: 8,
-              overflow: "hidden",
-              border: "1px solid #eee",
-            }}
-          >
-            <img
-              src={inlineImage}
-              alt="Thread image"
-              style={{ width: "100%", height: 100, objectFit: "cover", display: "block" }}
-            />
-          </div>
-        ) : null}
         <Space
           wrap
           size={[8, 8]}
@@ -800,44 +952,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             <Typography.Text strong title={inlineTitle}>
               {ellipsize(inlineTitle, isFlyout ? 42 : 90)}
             </Typography.Text>
-            <Tag
-              color={STATUS_COLORS[inlineSession.status] ?? "default"}
-              style={{ marginInlineEnd: 0 }}
-            >
-              {inlineSession.status}
-            </Tag>
-            {inlineSession.model ? (
-              <Tag title={inlineSession.model}>
-                {ellipsize(inlineSession.model, isFlyout ? 24 : 40)}
-              </Tag>
-            ) : null}
           </Space>
           <Space size={[4, 4]} wrap>
             {renderFontSizeControls(true)}
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              onClick={() => openNavigatorSession(inlineSession)}
-            >
-              Resume
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              onClick={() => openFloatingSession(inlineSession)}
-            >
-              Float
-            </Button>
-            <Button
-              size="small"
-              type="link"
-              style={{ paddingLeft: 0 }}
-              onClick={() => actions?.open_file({ path: inlineSession.chat_path })}
-            >
-              Open Chat File
-            </Button>
+            {renderInlineSessionMenu(inlineSession)}
           </Space>
         </Space>
         {error ? (
@@ -883,6 +1001,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   return (
     <div
+      ref={panelRef}
       style={
         isFlyout
           ? {
