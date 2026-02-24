@@ -36,6 +36,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
 import { useProjectHasInternetAccess } from "../project/settings/has-internet-access-hook";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
+import { normalizeProjectStateForDisplay } from "./host-operational";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -87,6 +88,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
   const other_settings = useTypedRedux("account", "other_settings");
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const project = useRedux(["projects", "project_map", project_id]);
+  const host_info = useTypedRedux("projects", "host_info");
   const pageActions = useActions("page");
   const public_project_titles = useTypedRedux(
     "projects",
@@ -106,13 +108,21 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     set_window_title(title);
   }
 
-  const project_state = project?.getIn(["state", "state"]);
+  const hostId = project?.get("host_id") as string | undefined;
+  const hostInfo = hostId ? host_info?.get(hostId) : undefined;
+  const project_state = normalizeProjectStateForDisplay({
+    projectState: project?.getIn(["state", "state"]),
+    hostId,
+    hostInfo,
+  });
+  const projectStateKey =
+    (project_state ?? "opened") as keyof typeof COMPUTE_STATES;
 
   const icon =
     any_alerts && project_state === "running" ? (
       <Icon name={"exclamation-triangle"} style={{ color: COLORS.BS_RED }} />
     ) : (
-      <Icon name={COMPUTE_STATES[project_state]?.icon ?? "bullhorn"} />
+      <Icon name={COMPUTE_STATES[projectStateKey]?.icon ?? "bullhorn"} />
     );
 
   function click_title(e) {

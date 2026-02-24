@@ -73,7 +73,8 @@ fi
 
 if [ "$SMOKE_BUILD_CLI" = "1" ]; then
   echo "building cli package..."
-  pnpm --dir "$SRC_DIR/packages/cli" build
+  pnpm --dir "$SRC_DIR/packages/cli" exec tsc --build --force
+  pnpm --dir "$SRC_DIR/packages/cli" run link:bins
 fi
 
 if [ "$SMOKE_RESTART_HUB" = "1" ]; then
@@ -170,7 +171,11 @@ run_provider_smoke() {
   local result_file="$SMOKE_CLOUD_RESULT_DIR/${provider}-${run_tag}.json"
   LAST_SMOKE_RESULT_FILE="$result_file"
   echo "cloud smoke: running provider=${provider} run_tag=${run_tag}"
+  # Keep smoke-runner/CLI transport on the same hub endpoint used by this script.
   SMOKE_PROVIDER="$provider" \
+  SMOKE_API_URL="$hub_base_url" \
+  COCALC_API_URL="$hub_base_url" \
+  BASE_URL="$hub_base_url" \
   SMOKE_CLOUD_RUN_TAG="$run_tag" \
   SMOKE_CLOUD_RESULT_FILE="$result_file" \
   SMOKE_CLOUD_ACCOUNT_ID="$SMOKE_CLOUD_ACCOUNT_ID" \
@@ -224,7 +229,7 @@ const proxyPort = proxyPortRaw == null ? undefined : Number(proxyPortRaw);
 if (proxyPortRaw != null && !Number.isFinite(proxyPort)) {
   throw new Error(`invalid SMOKE_CLOUD_PROXY_PORT='${proxyPortRaw}'`);
 }
-if (!["persistence", "drain"].includes(scenarioByProvider)) {
+if (!["persistence", "drain", "move"].includes(scenarioByProvider)) {
   throw new Error(`invalid SMOKE_CLOUD_SCENARIO='${scenarioByProvider}'`);
 }
 const runTag = envOptional("SMOKE_CLOUD_RUN_TAG");

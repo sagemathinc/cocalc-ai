@@ -41,6 +41,22 @@ function publishSummary(summary: LroSummary) {
   });
 }
 
+async function publishSummarySafe(
+  summary: LroSummary | undefined,
+  context: { op_id: string; when: string },
+) {
+  if (!summary) return;
+  try {
+    await publishSummary(summary);
+  } catch (err) {
+    logger.warn("copy op publish summary failed", {
+      op_id: context.op_id,
+      when: context.when,
+      err,
+    });
+  }
+}
+
 function progressEvent({
   op,
   step,
@@ -77,6 +93,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       ? [input.dest]
       : [];
   const options = input.options;
+  const src_home = input.src_home;
   const account_id = op.created_by ?? input.account_id;
 
   if (!account_id || !src || !dests.length) {
@@ -85,9 +102,10 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       status: "failed",
       error: "copy op missing src/dest or account",
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "invalid-input",
+    });
     return;
   }
 
@@ -155,6 +173,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
 
     const result = await copyProjectFiles({
       src,
+      src_home,
       dests,
       options,
       account_id,
@@ -170,9 +189,10 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
         op_id,
         result: { ...(op.result ?? {}), snapshot_id: result.snapshot_id },
       });
-      if (updated) {
-        await publishSummary(updated);
-      }
+      await publishSummarySafe(updated, {
+        op_id,
+        when: "store-snapshot-id",
+      });
     }
 
     const hasRemote = result.queued > 0 || existing.length > 0;
@@ -192,9 +212,10 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
             : undefined,
         error: null,
       });
-      if (updated) {
-        await publishSummary(updated);
-      }
+      await publishSummarySafe(updated, {
+        op_id,
+        when: "set-running",
+      });
     } else {
       const progress_summary = {
         done: result.local,
@@ -212,9 +233,10 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
         result: progress_summary,
         error: null,
       });
-      if (updated) {
-        await publishSummary(updated);
-      }
+      await publishSummarySafe(updated, {
+        op_id,
+        when: "set-succeeded",
+      });
     }
 
   } catch (err) {
@@ -225,9 +247,10 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
         status: "canceled",
         error: "canceled",
       });
-      if (updated) {
-        await publishSummary(updated);
-      }
+      await publishSummarySafe(updated, {
+        op_id,
+        when: "set-canceled",
+      });
       progress({ step: "done", message: "canceled" });
       return;
     }
@@ -237,9 +260,10 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       status: "failed",
       error: `${err}`,
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "set-failed",
+    });
     progress({ step: "done", message: "failed" });
   } finally {
     clearInterval(heartbeat);
@@ -275,7 +299,10 @@ export function startCopyLroWorker({
 
     for (const op of ops) {
       inFlight += 1;
-      void publishSummary(op).catch(() => {});
+      void publishSummarySafe(op, {
+        op_id: op.op_id,
+        when: "worker-claim",
+      });
       void handleCopyOp(op)
         .catch((err) =>
           logger.warn("copy op crashed", { op_id: op.op_id, err }),

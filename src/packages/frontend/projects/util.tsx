@@ -38,6 +38,7 @@ import {
   NamedServerName,
 } from "@cocalc/util/types/servers";
 import { ProjectMap } from "./store";
+import { normalizeProjectStateForDisplay } from "./host-operational";
 
 function parse_tags(info): string[] {
   const indices = parse_hashtags(info);
@@ -406,6 +407,7 @@ export function useServersMenuItems(
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const project_map = useTypedRedux("projects", "project_map");
+  const host_info = useTypedRedux("projects", "host_info");
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
   const available = useAvailableFeatures(project_id);
@@ -414,8 +416,14 @@ export function useServersMenuItems(
     // Get the project from the project map
     const project = project_map?.get(project_id);
 
-    // Check if project is running
-    const isProjectRunning = project?.getIn(["state", "state"]) === "running";
+    const hostId = project?.get("host_id") as string | undefined;
+    const hostInfo = hostId ? host_info?.get(hostId) : undefined;
+    const isProjectRunning =
+      normalizeProjectStateForDisplay({
+        projectState: project?.getIn(["state", "state"]),
+        hostId,
+        hostInfo,
+      }) === "running";
 
     if (!isProjectRunning) {
       return [
@@ -511,5 +519,11 @@ export function useServersMenuItems(
             icon: <Icon name="server" />,
           },
         ];
-  }, [project_id, project_map, student_project_functionality, available]);
+  }, [
+    project_id,
+    project_map,
+    host_info,
+    student_project_functionality,
+    available,
+  ]);
 }

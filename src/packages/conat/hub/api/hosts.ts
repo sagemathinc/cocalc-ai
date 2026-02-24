@@ -204,6 +204,10 @@ export interface HostConnectionInfo {
   connect_url?: string | null;
   local_proxy?: boolean;
   ready?: boolean;
+  status?: HostStatus | null;
+  last_seen?: string;
+  online?: boolean;
+  reason_unavailable?: string;
 }
 
 export interface HostLogEntry {
@@ -348,6 +352,7 @@ export interface Hosts {
     admin_view?: boolean;
     include_deleted?: boolean;
     catalog?: boolean;
+    show_all?: boolean;
   }) => Promise<Host[]>;
   listHostProjects: (opts: {
     account_id?: string;

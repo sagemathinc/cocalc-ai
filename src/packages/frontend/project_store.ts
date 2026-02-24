@@ -44,6 +44,7 @@ import {
 } from "./project/page/flyouts/utils";
 import { type PublicPath } from "@cocalc/util/db-schema/public-paths";
 import { DirectoryListing } from "@cocalc/frontend/project/explorer/types";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 export { FILE_ACTIONS as file_actions, type FileAction, ProjectActions };
 import { SCHEMA, client_db } from "@cocalc/util/schema";
 import type {
@@ -274,10 +275,11 @@ export class ProjectStore extends Store<ProjectStoreState> {
   }
 
   getInitialState = (): ProjectStoreState => {
+    const initialPath = getProjectHomeDirectory(this.project_id);
     return {
       // Shared
-      current_path_abs: "/",
-      history_path_abs: "/",
+      current_path_abs: initialPath,
+      history_path_abs: initialPath,
       open_files: immutable.Map<immutable.Map<string, any>>({}),
       open_files_order: immutable.List([]),
       just_closed_files: immutable.List([]),

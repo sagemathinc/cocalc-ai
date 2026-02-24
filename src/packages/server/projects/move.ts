@@ -16,6 +16,10 @@ import {
 } from "../project-host/control";
 import { start as startProjectLro } from "../conat/api/projects";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
+import {
+  makeOfflineMoveConfirmationPayload,
+  offlineMoveConfirmationError,
+} from "./offline-move-confirmation";
 
 const log = getLogger("server:projects:move");
 const MAX_BACKUPS_PER_PROJECT = 30;
@@ -204,8 +208,6 @@ async function buildMoveProjectContext(
 }
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;
-const OFFLINE_MOVE_CONFIRM_CODE = "MOVE_OFFLINE_CONFIRMATION_REQUIRED";
-
 function isSourceHostAvailable(context: MoveProjectContext): boolean {
   if (!context.project_host_id) return false;
   if (context.source_host_deleted) return false;
@@ -360,12 +362,13 @@ export async function moveProjectToHost(
         },
       });
     } else if (hasStaleBackup(context) && !input.allow_offline) {
-      const detail = `source host is offline (status=${status}) and last backup is older than last edit (last_backup=${
-        context.last_backup?.toISOString?.() ?? context.last_backup ?? "none"
-      }, last_edited=${
-        context.last_edited?.toISOString?.() ?? context.last_edited ?? "unknown"
-      })`;
-      throw new Error(`${OFFLINE_MOVE_CONFIRM_CODE}: ${detail}`);
+      throw offlineMoveConfirmationError(
+        makeOfflineMoveConfirmationPayload({
+          source_status: status,
+          last_backup: context.last_backup,
+          last_edited: context.last_edited,
+        }),
+      );
     }
     progress({
       step: "backup",
@@ -468,7 +471,7 @@ export async function moveProjectToHost(
   }
   progress({
     step: "placement",
-    message: "updating project placement",
+    message: "updating workspace placement",
     detail: { dest_host_id: context.dest_host_id },
   });
   try {
@@ -492,7 +495,7 @@ export async function moveProjectToHost(
   if (startDest) {
     progress({
       step: "start-dest",
-      message: "starting project on destination host",
+      message: "starting workspace on destination host",
       detail: { dest_host_id: context.dest_host_id },
     });
     try {
@@ -521,7 +524,7 @@ export async function moveProjectToHost(
       }
       progress({
         step: "start-dest",
-        message: "destination project started",
+        message: "destination workspace started",
         detail: { dest_host_id: context.dest_host_id },
       });
       log.info("moveProjectToHost started project on destination host", {
@@ -532,7 +535,7 @@ export async function moveProjectToHost(
       if (stopDestAfterStart) {
         progress({
           step: "start-dest",
-          message: "stopping destination project after restore",
+          message: "stopping destination workspace after restore",
           detail: { dest_host_id: context.dest_host_id },
         });
         await stopProjectOnHost(context.project_id, {
@@ -540,7 +543,7 @@ export async function moveProjectToHost(
         });
         progress({
           step: "start-dest",
-          message: "destination project stopped after restore",
+          message: "destination workspace stopped after restore",
           detail: { dest_host_id: context.dest_host_id },
         });
         log.info("moveProjectToHost stopped destination project after restore", {

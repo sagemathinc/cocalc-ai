@@ -58,6 +58,16 @@ import { getSort, setSort } from "./config";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import {
+  evaluateHostOperational,
+  hostLabel,
+  normalizeProjectStateForDisplay,
+} from "@cocalc/frontend/projects/host-operational";
+import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import { isHostRoutingUnavailableError } from "@cocalc/frontend/projects/host-routing-error";
+import { shouldSuppressTransientRoutingError } from "@cocalc/frontend/projects/host-routing-error";
+import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -119,6 +129,9 @@ export function Explorer() {
   const error = useTypedRedux({ project_id }, "error");
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const file_action = useTypedRedux({ project_id }, "file_action");
+  const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
+    | MoveLroState
+    | undefined;
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -139,6 +152,18 @@ export function Explorer() {
 
   const images = useTypedRedux("compute_images", "images");
   const mask = useTypedRedux("account", "other_settings")?.get("mask_files");
+  const host_id = project_map?.getIn([project_id, "host_id"]) as
+    | string
+    | undefined;
+  const hostInfo = useHostInfo(host_id);
+  const hostOperational = useMemo(
+    () => evaluateHostOperational(hostInfo),
+    [hostInfo],
+  );
+  const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const hostUnavailableReason =
+    hostOperational.reason ?? "Assigned host is unavailable.";
+  const assignedHostLabel = hostLabel(hostInfo, host_id);
 
   const sort = useTypedRedux({ project_id }, "active_file_sort");
   const active_file_sort = useMemo(
@@ -366,7 +391,12 @@ export function Explorer() {
     // next, we check if this is a common user (not public)
   } else if (my_group !== "public") {
     project_state = project_map?.getIn([project_id, "state"]) as any;
-    project_is_running = project_state?.get("state") == "running";
+    const displayState = normalizeProjectStateForDisplay({
+      projectState: project_state?.get("state"),
+      hostId: host_id,
+      hostInfo,
+    });
+    project_is_running = displayState === "running";
   } else {
     project_is_running = false;
   }
@@ -399,6 +429,70 @@ export function Explorer() {
     );
   }
 
+  const suppressRoutingError =
+    (hostUnavailable && isHostRoutingUnavailableError(listingError)) ||
+    shouldSuppressTransientRoutingError({ error: listingError, moveLro });
+  const suppressProjectError =
+    (hostUnavailable && isHostRoutingUnavailableError(error)) ||
+    shouldSuppressTransientRoutingError({ error, moveLro });
+
+  const transientRoutingRetryRef = useRef<string>("");
+  useEffect(() => {
+    if (!listingError) return;
+    if (!shouldSuppressTransientRoutingError({ error: listingError, moveLro })) {
+      return;
+    }
+    const msg = `${(listingError as any)?.message ?? listingError}`;
+    const token = `${effective_current_path}|${msg}`;
+    if (transientRoutingRetryRef.current === token) return;
+    transientRoutingRetryRef.current = token;
+    const timer = setTimeout(() => refresh(), 1200);
+    return () => clearTimeout(timer);
+  }, [listingError, moveLro, effective_current_path, refresh]);
+
+  const clearedTransientProjectErrorRef = useRef<string>("");
+  useEffect(() => {
+    if (!error) return;
+    if (!shouldSuppressTransientRoutingError({ error, moveLro })) return;
+    const msg = `${(error as any)?.message ?? error}`;
+    if (clearedTransientProjectErrorRef.current === msg) return;
+    clearedTransientProjectErrorRef.current = msg;
+    actions?.setState({ error: "" });
+  }, [error, moveLro, actions]);
+
+  if (hostUnavailable && !project_is_running) {
+    return (
+      <div
+        style={{
+          margin: "40px auto",
+          maxWidth: "820px",
+          padding: "0 20px",
+          textAlign: "left",
+        }}
+      >
+        <ShowError
+          message={`${projectLabel} host is not available`}
+          error={`This ${projectLabelLower} is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
+
+You can either wait for this host to become available again, or move this ${projectLabelLower} to another host.`}
+          style={{ textAlign: "left" }}
+        />
+        <br />
+        <Space.Compact>
+          <Button size="large" style={{ margin: "auto" }} onClick={refresh}>
+            <Icon name="refresh" /> Wait / Refresh
+          </Button>
+          <MoveProject
+            project_id={project_id}
+            size="large"
+            label="Move Workspace"
+            showHostName={false}
+          />
+        </Space.Compact>
+      </div>
+    );
+  }
+
   // be careful with adding height:'100%'. it could cause flex to miscalculate. see #3904
   return (
     <div
@@ -415,7 +509,7 @@ export function Explorer() {
           padding: "2px 2px 0 2px",
         }}
       >
-        {error && (
+        {!suppressProjectError && error && (
           <ErrorDisplay
             error={error}
             style={ERROR_STYLE}
@@ -572,7 +666,7 @@ export function Explorer() {
         ) : undefined}
       </div>
 
-      {listingError && (
+      {listingError && !suppressRoutingError && (
         <div style={{ margin: "30px auto", textAlign: "center" }}>
           <ShowError error={listingError} style={{ textAlign: "left" }} />
           <br />

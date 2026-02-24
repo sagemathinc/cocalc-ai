@@ -298,6 +298,20 @@ export class ConatClient extends EventEmitter {
     delete this.routedHubClients[host_id];
   };
 
+  refreshProjectHostRouting = ({
+    source_host_id,
+    dest_host_id,
+  }: {
+    source_host_id?: string;
+    dest_host_id?: string;
+  }) => {
+    for (const host_id of [source_host_id, dest_host_id]) {
+      if (!host_id) continue;
+      this.invalidateProjectHostToken(host_id);
+      this.removeRoutedHubClient(host_id);
+    }
+  };
+
   private getProjectHostToken = async ({
     host_id,
     project_id,

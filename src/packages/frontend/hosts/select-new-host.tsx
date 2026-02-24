@@ -101,7 +101,8 @@ export function SelectNewHost({
       </Space>
       <HostPickerModal
         open={pickerOpen}
-        currentHostId={selectedHost?.id}
+        currentHostId={pickerMode === "move" ? selectedHost?.id : undefined}
+        selectedHostId={selectedHost?.id}
         regionFilter={regionFilter}
         lockRegion={Boolean(regionFilter)}
         mode={pickerMode}

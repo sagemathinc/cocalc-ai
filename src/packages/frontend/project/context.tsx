@@ -35,6 +35,8 @@ import {
 import { useProjectHasInternetAccess } from "./settings/has-internet-access-hook";
 import { Project } from "./settings/types";
 import { lite } from "@cocalc/frontend/lite";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 
 export interface ProjectContextState {
   actions?: ProjectActions;
@@ -112,8 +114,16 @@ export function useProjectContextProvider({
   const { project, group, compute_image } = useProject(project_id);
   const status: ProjectStatus = useProjectState(project_id);
   const hasInternet = useProjectHasInternetAccess(project_id) || lite;
+  const hostId = project?.get("host_id") as string | undefined;
+  const hostInfo = useHostInfo(hostId);
+  const effectiveStatus =
+    normalizeProjectStateForDisplay({
+      projectState: status.get("state"),
+      hostId,
+      hostInfo,
+    }) ?? status.get("state");
   const isRunning =
-    useMemo(() => status.get("state") === "running", [status.get("state")]) ||
+    useMemo(() => effectiveStatus === "running", [effectiveStatus]) ||
     lite;
   const active_project_tab = useTypedRedux(
     { project_id },

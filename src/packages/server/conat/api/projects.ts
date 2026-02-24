@@ -31,6 +31,10 @@ import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import {
+  makeOfflineMoveConfirmationPayload,
+  offlineMoveConfirmationError,
+} from "@cocalc/server/projects/offline-move-confirmation";
 import { assertCollab } from "./util";
 import type {
   ProjectCopyRow,
@@ -40,11 +44,13 @@ import type {
 
 export async function copyPathBetweenProjects({
   src,
+  src_home,
   dest,
   options,
   account_id,
 }: {
   src: { project_id: string; path: string | string[] };
+  src_home?: string;
   dest: { project_id: string; path: string };
   options?: CopyOptions;
   account_id?: string;
@@ -68,14 +74,27 @@ export async function copyPathBetweenProjects({
     scope_id: src.project_id,
     created_by: account_id,
     routing: "hub",
-    input: { src, dests: [dest], options },
+    input: {
+      src,
+      ...(src_home ? { src_home } : {}),
+      dests: [dest],
+      options,
+    },
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
-  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("copyPathBetweenProjects: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      project_id: src.project_id,
+      err,
+    });
+  }
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -87,7 +106,13 @@ export async function copyPathBetweenProjects({
       message: "queued",
       progress: 0,
     },
-  }).catch(() => {});
+  }).catch((err) => {
+    log.warn("copyPathBetweenProjects: unable to publish queued progress event", {
+      op_id: op.op_id,
+      project_id: src.project_id,
+      err,
+    });
+  });
   return {
     op_id: op.op_id,
     scope_type: "project",
@@ -349,11 +374,19 @@ export async function start({
     input: { project_id },
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
-  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("start: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  }
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -365,7 +398,13 @@ export async function start({
       message: "queued",
       progress: 0,
     },
-  }).catch(() => {});
+  }).catch((err) => {
+    log.warn("start: unable to publish queued progress event", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  });
 
   log.debug("start", { project_id, op_id: op.op_id });
   const project = await getProject(project_id);
@@ -383,11 +422,19 @@ export async function start({
       error: null,
     });
     if (running) {
-      await publishLroSummary({
-        scope_type: running.scope_type,
-        scope_id: running.scope_id,
-        summary: running,
-      });
+      try {
+        await publishLroSummary({
+          scope_type: running.scope_type,
+          scope_id: running.scope_id,
+          summary: running,
+        });
+      } catch (err) {
+        log.warn("start: unable to publish running LRO summary", {
+          op_id: op.op_id,
+          project_id,
+          err,
+        });
+      }
     }
     try {
       await project.start({ lro_op_id: op.op_id, account_id });
@@ -408,11 +455,19 @@ export async function start({
         error: null,
       });
       if (updated) {
-        await publishLroSummary({
-          scope_type: updated.scope_type,
-          scope_id: updated.scope_id,
-          summary: updated,
-        });
+        try {
+          await publishLroSummary({
+            scope_type: updated.scope_type,
+            scope_id: updated.scope_id,
+            summary: updated,
+          });
+        } catch (err) {
+          log.warn("start: unable to publish succeeded LRO summary", {
+            op_id: op.op_id,
+            project_id,
+            err,
+          });
+        }
       }
     } catch (err) {
       const updated = await updateLro({
@@ -421,11 +476,19 @@ export async function start({
         error: `${err}`,
       });
       if (updated) {
-        await publishLroSummary({
-          scope_type: updated.scope_type,
-          scope_id: updated.scope_id,
-          summary: updated,
-        });
+        try {
+          await publishLroSummary({
+            scope_type: updated.scope_type,
+            scope_id: updated.scope_id,
+            summary: updated,
+          });
+        } catch (publishErr) {
+          log.warn("start: unable to publish failed LRO summary", {
+            op_id: op.op_id,
+            project_id,
+            err: publishErr,
+          });
+        }
       }
       throw err;
     }
@@ -694,25 +757,40 @@ export async function moveProject({
   stream_name: string;
 }> {
   await assertCollab({ account_id, project_id });
+  const movePrecheck = await getMoveOfflinePrecheck({ project_id });
   if (!allow_offline) {
-    await ensureMoveOfflineAllowed({ project_id });
+    await ensureMoveOfflineAllowed({
+      movePrecheck,
+    });
   }
+  const lroInput = {
+    project_id,
+    allow_offline,
+    source_host_id: movePrecheck.source_host_id,
+    ...(dest_host_id ? { dest_host_id } : {}),
+  };
   const op = await createLro({
     kind: "project-move",
     scope_type: "project",
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: dest_host_id
-      ? { project_id, dest_host_id, allow_offline }
-      : { project_id, allow_offline },
+    input: lroInput,
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
-  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("moveProject: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  }
   publishLroEvent({
     scope_type: op.scope_type,
     scope_id: op.scope_id,
@@ -724,7 +802,13 @@ export async function moveProject({
       message: "queued",
       progress: 0,
     },
-  }).catch(() => {});
+  }).catch((err) => {
+    log.warn("moveProject: unable to publish queued progress event", {
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  });
 
   return {
     op_id: op.op_id,
@@ -736,13 +820,18 @@ export async function moveProject({
 }
 
 const HOST_SEEN_TTL_MS = 2 * 60 * 1000;
-const OFFLINE_MOVE_CONFIRM_CODE = "MOVE_OFFLINE_CONFIRMATION_REQUIRED";
 
-async function ensureMoveOfflineAllowed({
+type MoveOfflinePrecheck = {
+  source_host_id?: string;
+  last_edited: Date | null;
+  last_backup: Date | null;
+};
+
+async function getMoveOfflinePrecheck({
   project_id,
 }: {
   project_id: string;
-}): Promise<void> {
+}): Promise<MoveOfflinePrecheck> {
   const pool = getPool();
   const { rows } = await pool.query<{
     host_id: string | null;
@@ -753,15 +842,29 @@ async function ensureMoveOfflineAllowed({
     [project_id],
   );
   const row = rows[0];
-  if (!row?.host_id) {
+  return {
+    source_host_id: row?.host_id ?? undefined,
+    last_edited: row?.last_edited ?? null,
+    last_backup: row?.last_backup ?? null,
+  };
+}
+
+async function ensureMoveOfflineAllowed({
+  movePrecheck,
+}: {
+  movePrecheck: MoveOfflinePrecheck;
+}): Promise<void> {
+  const source_host_id = movePrecheck.source_host_id;
+  if (!source_host_id) {
     return;
   }
+  const pool = getPool();
   const hostRow = await pool.query<{
     status: string | null;
     deleted: Date | null;
     last_seen: Date | null;
   }>("SELECT status, deleted, last_seen FROM project_hosts WHERE id=$1", [
-    row.host_id,
+    source_host_id,
   ]);
   const host = hostRow.rows[0];
   const status = String(host?.status ?? "");
@@ -779,16 +882,23 @@ async function ensureMoveOfflineAllowed({
   if (hostAvailable) {
     return;
   }
-  const lastEdited = row.last_edited ? new Date(row.last_edited).getTime() : 0;
-  const lastBackup = row.last_backup ? new Date(row.last_backup).getTime() : 0;
+  const lastEdited = movePrecheck.last_edited
+    ? new Date(movePrecheck.last_edited).getTime()
+    : 0;
+  const lastBackup = movePrecheck.last_backup
+    ? new Date(movePrecheck.last_backup).getTime()
+    : 0;
   if (!lastEdited) {
     return;
   }
   if (!lastBackup || lastEdited > lastBackup) {
-    const detail = `source host is offline (status=${status || "unknown"}) and last backup is older than last edit (last_backup=${
-      row.last_backup ? row.last_backup.toISOString?.() ?? row.last_backup : "none"
-    }, last_edited=${row.last_edited?.toISOString?.() ?? row.last_edited})`;
-    throw new Error(`${OFFLINE_MOVE_CONFIRM_CODE}: ${detail}`);
+    throw offlineMoveConfirmationError(
+      makeOfflineMoveConfirmationPayload({
+        source_status: status || "unknown",
+        last_backup: movePrecheck.last_backup,
+        last_edited: movePrecheck.last_edited,
+      }),
+    );
   }
 }
 

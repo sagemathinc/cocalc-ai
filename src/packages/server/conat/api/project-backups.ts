@@ -3,7 +3,9 @@ import {
   type RestoreMode,
   type RestoreStagingHandle,
 } from "@cocalc/conat/files/file-server";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
+import getLogger from "@cocalc/backend/logger";
 import { assertCollab } from "./util";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
@@ -13,6 +15,51 @@ import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 // just *some* limit to avoid bugs/abuse
 
 const MAX_BACKUPS_PER_PROJECT = 30;
+const log = getLogger("server:conat:api:project-backups");
+
+async function publishQueuedLroSafe({
+  op,
+  project_id,
+  kind,
+}: {
+  op: LroSummary;
+  project_id: string;
+  kind: string;
+}) {
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("unable to publish initial LRO summary", {
+      kind,
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  }
+  publishLroEvent({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    op_id: op.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+    },
+  }).catch((err) => {
+    log.warn("unable to publish queued LRO progress event", {
+      kind,
+      op_id: op.op_id,
+      project_id,
+      err,
+    });
+  });
+}
 
 export async function createBackup({
   account_id,
@@ -45,23 +92,11 @@ opts?: {
     input: { project_id, tags },
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
+  await publishQueuedLroSafe({
+    op,
+    project_id,
+    kind: "project-backup",
   });
-  publishLroEvent({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    op_id: op.op_id,
-    event: {
-      type: "progress",
-      ts: Date.now(),
-      phase: "queued",
-      message: "queued",
-      progress: 0,
-    },
-  }).catch(() => {});
   return {
     op_id: op.op_id,
     scope_type: "project",
@@ -130,23 +165,11 @@ export async function restoreBackup({
     input: { project_id, id, path, dest },
     status: "queued",
   });
-  await publishLroSummary({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    summary: op,
+  await publishQueuedLroSafe({
+    op,
+    project_id,
+    kind: "project-restore",
   });
-  publishLroEvent({
-    scope_type: op.scope_type,
-    scope_id: op.scope_id,
-    op_id: op.op_id,
-    event: {
-      type: "progress",
-      ts: Date.now(),
-      phase: "queued",
-      message: "queued",
-      progress: 0,
-    },
-  }).catch(() => {});
   return {
     op_id: op.op_id,
     scope_type: "project",

@@ -39,13 +39,36 @@ describe("rustic does something", () => {
   });
 
   it("create a file and back it up", async () => {
-    await writeFile(join(tempDir, "a.txt"), "hello");
+    await writeFile(join(home, "a.txt"), "hello");
     const { stdout, truncated } = await rustic(
       ["backup", "--json", "a.txt"],
       options,
     );
     const s = JSON.parse(Buffer.from(stdout).toString());
     expect(s.paths).toEqual(["a.txt"]);
+    expect(truncated).toBe(false);
+  });
+
+  it("backs up a file relative to cwd without introducing an absolute path", async () => {
+    await writeFile(join(home, "b.txt"), "world");
+    const { stdout, truncated } = await rustic(
+      ["backup", "--json", "b.txt"],
+      { ...options, cwd: "." },
+    );
+    const s = JSON.parse(Buffer.from(stdout).toString());
+    expect(s.paths).toEqual(["b.txt"]);
+    expect(truncated).toBe(false);
+  });
+
+  it("resolves '.' relative to cwd (not sandbox root)", async () => {
+    await mkdir(join(home, "nested", "deep"), { recursive: true });
+    await writeFile(join(home, "nested", "deep", "c.txt"), "cwd");
+    const { stdout, truncated } = await rustic(
+      ["backup", "--json", "."],
+      { ...options, cwd: "nested/deep" },
+    );
+    const s = JSON.parse(Buffer.from(stdout).toString());
+    expect(s.paths).toEqual(["."]);
     expect(truncated).toBe(false);
   });
 
@@ -64,8 +87,10 @@ password = ""
       await rustic(["snapshots", "--json"], options2),
     );
     const s = JSON.parse(stdout);
-    expect(s.length).toEqual(1);
-    expect(s[0].group_key.hostname).toEqual("my-host");
+    expect(s.length).toBeGreaterThanOrEqual(1);
+    expect(s.some((group) => group?.group_key?.hostname === "my-host")).toBe(
+      true,
+    );
   });
 
   it("it appears in the snapshots list", async () => {
@@ -74,7 +99,10 @@ password = ""
       options,
     );
     const s = JSON.parse(Buffer.from(stdout).toString());
-    expect(s[0].snapshots[0].paths).toEqual(["a.txt"]);
+    const paths = s.flatMap((group) =>
+      (group?.snapshots ?? []).map((snap) => snap.paths?.[0]),
+    );
+    expect(paths).toEqual(expect.arrayContaining(["a.txt", "b.txt"]));
     expect(truncated).toBe(false);
   });
 });

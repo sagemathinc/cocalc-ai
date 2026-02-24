@@ -230,6 +230,7 @@ export interface Projects {
 
   copyPathBetweenProjects: (opts: {
     src: { project_id: string; path: string | string[] };
+    src_home?: string;
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => Promise<{

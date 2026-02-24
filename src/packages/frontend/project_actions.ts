@@ -2205,6 +2205,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // Copy 1 or more paths from one project to another (possibly the same) project.
   copyPathBetweenProjects = async (opts: {
     src: { project_id: string; path: string | string[] };
+    src_home?: string;
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => {
@@ -2220,20 +2221,74 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     });
     let error: any = undefined;
     try {
+      const src_home =
+        opts.src_home ??
+        (opts.src.project_id === this.project_id
+          ? getProjectHomeDirectory(this.project_id)
+          : undefined);
       const resp =
-        await webapp_client.project_client.copyPathBetweenProjects(opts);
+        await webapp_client.project_client.copyPathBetweenProjects({
+          ...opts,
+          ...(src_home ? { src_home } : {}),
+        });
       this.copyOpsManager.track(resp);
-      const withSlashes = await this.appendSlashToDirectoryPaths(files);
-      this.log({
-        event: "file_action",
-        action: "copied",
-        dest: opts.dest.path,
-        files: withSlashes,
-        count: files.length,
-        project: opts.dest.project_id,
+      this.set_activity({
+        id,
+        status: `Copy queued (${resp.op_id.slice(0, 8)})`,
       });
+      const summary = await webapp_client.conat_client.lroWait({
+        op_id: resp.op_id,
+        scope_type: resp.scope_type,
+        scope_id: resp.scope_id,
+        onProgress: (event) => {
+          const phase =
+            typeof event.phase == "string" && event.phase.length > 0
+              ? event.phase
+              : typeof event.message == "string" && event.message.length > 0
+                ? event.message
+                : "running";
+          const pct =
+            typeof event.progress == "number" && Number.isFinite(event.progress)
+              ? ` (${Math.max(0, Math.min(100, Math.round(event.progress)))}%)`
+              : "";
+          this.set_activity({
+            id,
+            status: `Copy ${phase}${pct}`,
+          });
+        },
+      });
+      if (summary.status === "succeeded") {
+        const withSlashes = await this.appendSlashToDirectoryPaths(files);
+        this.log({
+          event: "file_action",
+          action: "copied",
+          dest: opts.dest.path,
+          files: withSlashes,
+          count: files.length,
+          project: opts.dest.project_id,
+        });
+      } else if (summary.status === "canceled") {
+        error = summary.error ?? "Copy canceled";
+        alert_message({
+          type: "warning",
+          title: "Copy canceled",
+          message: error,
+        });
+      } else {
+        error = summary.error ?? `Copy failed (${summary.status})`;
+        alert_message({
+          type: "error",
+          title: "Copy failed",
+          message: error,
+        });
+      }
     } catch (err) {
       error = `${err}`;
+      alert_message({
+        type: "error",
+        title: "Copy failed",
+        message: error,
+      });
     } finally {
       this.set_activity({ id, stop: "", error });
     }
@@ -2269,6 +2324,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // note: there is no need to explicitly close or await what is returned by
   // fs(...) since it's just a lightweight wrapper object to format appropriate RPC calls.
   private filesystem?: FilesystemClient;
+  clearFilesystemClient = () => {
+    this.filesystem = undefined;
+  };
   fs = (): FilesystemClient => {
     this.filesystem ??= webapp_client.conat_client
       .conat()
@@ -3198,11 +3256,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             counts,
           });
         } catch (err) {
-          console.warn(
-            `WARNING: Issue updating snapshots of ${this.project_id}`,
-            err,
-            { counts },
-          );
+          if (!`${err}`.includes("no subscribers matching")) {
+            console.warn(
+              `WARNING: Issue updating snapshots of ${this.project_id}`,
+              err,
+              { counts },
+            );
+          }
         }
         return false;
       },
@@ -3233,11 +3293,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             counts,
           });
         } catch (err) {
-          console.warn(
-            `WARNING: Issue updating backups of ${this.project_id}`,
-            err,
-            { counts },
-          );
+          // if can't backup because no host, no need to report that
+          if (!`${err}`.includes("no subscribers matching")) {
+            console.warn(
+              `WARNING: Issue updating backups of ${this.project_id}`,
+              err,
+              { counts },
+            );
+          }
         }
         return false;
       },

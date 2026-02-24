@@ -45,6 +45,7 @@ import {
 import { FLYOUT_PADDING } from "./consts";
 import { getFlyoutSettings, storeFlyoutState } from "./state";
 import ProjectControlError from "@cocalc/frontend/project/settings/project-control-error";
+import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 
 interface Props {
   project_id: string;
@@ -56,6 +57,7 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
   const { status, project } = useProjectContext();
   const account_id = useTypedRedux("account", "account_id");
+  const host_info = useTypedRedux("projects", "host_info");
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const projectIsVisible = active_top_tab === project_id;
   const [datastoreReload, setDatastoreReload] = useState<number>(0);
@@ -71,6 +73,14 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   const showDatastore =
     kucalc === KUCALC_COCALC_COM ||
     (kucalc === KUCALC_ON_PREMISES && datastore);
+  const hostId = project?.get("host_id") as string | undefined;
+  const hostInfo = hostId ? host_info?.get(hostId) : undefined;
+  const effectiveState =
+    normalizeProjectStateForDisplay({
+      projectState: status?.get("state"),
+      hostId,
+      hostInfo,
+    }) ?? status?.get("state");
 
   useEffect(() => {
     const state = getFlyoutSettings(project_id);
@@ -87,7 +97,7 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
 
   function renderState() {
     if (status == null) return <Loading />;
-    const s = status?.get("state");
+    const s = effectiveState;
     const iconName = COMPUTE_STATES[s]?.icon;
     const str = COMPUTE_STATES[s]?.display ?? s;
 
@@ -135,7 +145,7 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
           <RestartProject project_id={project_id} />
           <StopProject
             project_id={project_id}
-            disabled={status.get("state") !== "running"}
+            disabled={effectiveState !== "running"}
           />
           <MoveProject project_id={project_id} />
         </Space.Compact>

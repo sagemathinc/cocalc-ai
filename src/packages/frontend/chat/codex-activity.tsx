@@ -843,6 +843,24 @@ function resolvePath(
       : undefined;
   }
   const normalizedBase = normalizeAbsoluteMaybe(basePath);
+  if (normalizedBase && homePath) {
+    const homePrefix = homePath.endsWith("/") ? homePath : `${homePath}/`;
+    if (
+      normalizedBase === homePath ||
+      normalizedBase.startsWith(homePrefix)
+    ) {
+      const baseRel = normalizedBase.slice(homePrefix.length);
+      // Some backend events are HOME-relative (e.g., "build/repo/src/file.ts").
+      // If that prefix is present, resolve against HOME first; otherwise we'd
+      // incorrectly resolve against cwd and duplicate path segments.
+      if (
+        baseRel &&
+        (normalizedPath === baseRel || normalizedPath.startsWith(`${baseRel}/`))
+      ) {
+        return normalizeAbsolutePath(normalizedPath, homePath);
+      }
+    }
+  }
   if (normalizedBase) {
     return normalizeAbsolutePath(normalizedPath, normalizedBase);
   }

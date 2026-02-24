@@ -29,6 +29,14 @@ import { ProjectsState, store } from "./store";
 import { load_all_projects, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
+import {
+  evaluateHostOperational,
+  hostLabel,
+} from "./host-operational";
+import {
+  buildOfflineMoveConfirmationDialog,
+  parseOfflineMoveConfirmationError,
+} from "./offline-move-confirmation";
 
 import type {
   CourseInfo,
@@ -42,12 +50,12 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
 
-  ensure_host_info = reuseInFlight(async (host_id?: string) => {
+  ensure_host_info = reuseInFlight(async (host_id?: string, force = false) => {
     if (!host_id) return;
     const hostInfo = store.get("host_info");
     const existing = hostInfo?.get(host_id);
     const now = Date.now();
-    if (existing) {
+    if (existing && !force) {
       const updatedAt = existing.get("updated_at");
       if (typeof updatedAt === "number") {
         if (now - updatedAt < ProjectsActions.HOST_INFO_TTL_MS) {
@@ -802,6 +810,23 @@ export class ProjectsActions extends Actions<ProjectsState> {
     ) {
       return false;
     }
+    const assignedHostId = store.getIn(["project_map", project_id, "host_id"]) as
+      | string
+      | undefined;
+    if (assignedHostId) {
+      const hostInfo = await this.ensure_host_info(assignedHostId);
+      const hostState = evaluateHostOperational(hostInfo as any);
+      if (hostState.state === "unavailable") {
+        const hostName = hostLabel(hostInfo as any, assignedHostId);
+        const reason = hostState.reason ?? "Assigned host is unavailable.";
+        const message =
+          `Cannot start workspace because ${hostName} is unavailable (${reason}). ` +
+          "Open Settings and move this workspace to an available host, or start the assigned host.";
+        redux.getProjectActions(project_id)?.setState({ control_error: message });
+        alert_message({ type: "error", message, timeout: 20 });
+        return false;
+      }
+    }
 
     const t0 = webapp_client.server_time().getTime();
     // make an action request:
@@ -886,7 +911,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       scope_type?: LroSummary["scope_type"];
       scope_id?: string;
     },
-    logInfo: { project_id: string; dest_host_id?: string },
+    logInfo: {
+      project_id: string;
+      source_host_id?: string;
+      dest_host_id?: string;
+    },
   ) => {
     if (!actions || !op?.op_id || !op.scope_type) {
       return;
@@ -913,6 +942,31 @@ export class ProjectsActions extends Actions<ProjectsState> {
           event: "project_moved",
           dest_host_id: logInfo.dest_host_id,
         });
+        actions.setState({ control_error: "" });
+        redux
+          .getProjectActions(logInfo.project_id)
+          ?.clearFilesystemClient?.();
+        if (logInfo.dest_host_id) {
+          const project_map = store.get("project_map");
+          const project = project_map?.get(logInfo.project_id);
+          if (
+            project_map &&
+            project &&
+            project.get("host_id") !== logInfo.dest_host_id
+          ) {
+            this.setState({
+              project_map: project_map.set(
+                logInfo.project_id,
+                project.set("host_id", logInfo.dest_host_id),
+              ),
+            } as ProjectsState);
+          }
+          void this.ensure_host_info(logInfo.dest_host_id, true);
+        }
+        webapp_client.conat_client.refreshProjectHostRouting({
+          source_host_id: logInfo.source_host_id,
+          dest_host_id: logInfo.dest_host_id,
+        });
       })
       .catch((err) => {
         const error = `Error move project -- ${err}`;
@@ -920,26 +974,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
   };
 
-  private isOfflineMoveConfirmError = (err: unknown): string | null => {
-    const message = `${err ?? ""}`;
-    const code = "MOVE_OFFLINE_CONFIRMATION_REQUIRED";
-    if (!message.includes(code)) {
-      return null;
-    }
-    const parts = message.split(code);
-    const detail = parts.slice(1).join(code).replace(/^[:\s-]+/, "");
-    return detail || message;
-  };
-
-  private confirmOfflineMove = async (detail?: string): Promise<boolean> => {
-    const base =
-      "The source host appears to be offline, so this move will use the most recent backup and may miss newer changes.";
-    const content = detail ? `${base}\n\n${detail}` : base;
+  private confirmOfflineMove = async (
+    payload: ReturnType<typeof parseOfflineMoveConfirmationError>,
+  ): Promise<boolean> => {
+    if (payload == null) return false;
+    const dialog = buildOfflineMoveConfirmationDialog(payload);
     return await new Promise((resolve) => {
       Modal.confirm({
-        title: "Move from offline host?",
-        content,
-        okText: "Move anyway",
+        title: dialog.title,
+        content: dialog.content,
+        okText: dialog.okText,
+        okButtonProps: dialog.okButtonProps,
         cancelText: "Cancel",
         onOk: () => resolve(true),
         onCancel: () => resolve(false),
@@ -955,7 +1000,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
-  }) => {
+  }): Promise<
+    | {
+        op_id?: string;
+        scope_type?: LroSummary["scope_type"];
+        scope_id?: string;
+      }
+    | null
+  > => {
     try {
       return await webapp_client.conat_client.hub.projects.moveProject({
         project_id,
@@ -964,9 +1016,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
     } catch (err) {
       if (!allow_offline) {
-        const detail = this.isOfflineMoveConfirmError(err);
-        if (detail != null) {
-          const proceed = await this.confirmOfflineMove(detail);
+        const payload = parseOfflineMoveConfirmationError(err);
+        if (payload != null) {
+          const proceed = await this.confirmOfflineMove(payload);
           if (!proceed) {
             return null;
           }
@@ -977,7 +1029,88 @@ export class ProjectsActions extends Actions<ProjectsState> {
           });
         }
       }
+      if (this.isTimeoutError(err)) {
+        const op = await this.findRecentMoveOp({
+          project_id,
+          dest_host_id,
+        });
+        if (op) {
+          console.warn(
+            "requestMoveProject timed out but recovered recent move operation",
+            { project_id, dest_host_id, op_id: op.op_id },
+          );
+          return op;
+        }
+      }
       throw err;
+    }
+  };
+
+  private isTimeoutError(err: unknown): boolean {
+    const text = `${err}`.toLowerCase();
+    return (
+      text.includes("timeout") ||
+      text.includes("timed out") ||
+      text.includes("code='408'") ||
+      text.includes("code=408")
+    );
+  }
+
+  private lroTime(summary: LroSummary): number {
+    const candidate =
+      summary.updated_at ?? summary.started_at ?? summary.created_at;
+    const ts = new Date(candidate as any).getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  private findRecentMoveOp = async ({
+    project_id,
+    dest_host_id,
+  }: {
+    project_id: string;
+    dest_host_id?: string;
+  }): Promise<
+    | {
+        op_id: string;
+        scope_type: LroSummary["scope_type"];
+        scope_id: string;
+      }
+    | undefined
+  > => {
+    try {
+      const ops = await webapp_client.conat_client.hub.lro.list({
+        scope_type: "project",
+        scope_id: project_id,
+        include_completed: true,
+      });
+      const now = Date.now();
+      const candidates = ops
+        .filter((op) => op.kind === "project-move")
+        .filter((op) => !op.dismissed_at)
+        .filter((op) =>
+          dest_host_id
+            ? op.input?.dest_host_id == null ||
+              op.input?.dest_host_id === dest_host_id
+            : true,
+        )
+        .sort((a, b) => this.lroTime(b) - this.lroTime(a));
+      const latest = candidates[0];
+      if (!latest) return;
+      if (now - this.lroTime(latest) > 3 * 60 * 1000) {
+        return;
+      }
+      return {
+        op_id: latest.op_id,
+        scope_type: latest.scope_type,
+        scope_id: latest.scope_id,
+      };
+    } catch (lookupErr) {
+      console.warn("findRecentMoveOp failed", {
+        project_id,
+        dest_host_id,
+        err: `${lookupErr}`,
+      });
+      return;
     }
   };
 
@@ -1014,7 +1147,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
         return false;
       }
       actions.trackMoveOp(resp);
-      this.watchMoveLro(actions, resp, { project_id });
+      this.watchMoveLro(actions, resp, {
+        project_id,
+        source_host_id: store.getIn(["project_map", project_id, "host_id"]) as
+          | string
+          | undefined,
+      });
     } catch (err) {
       const error = `Error move project -- ${err}`;
       actions.setState({ control_error: error });
@@ -1040,7 +1178,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           return false;
         }
         actions?.trackMoveOp(resp);
-        this.watchMoveLro(actions, resp, { project_id, dest_host_id });
+        this.watchMoveLro(actions, resp, {
+          project_id,
+          source_host_id:
+            typeof current_host === "string" ? current_host : undefined,
+          dest_host_id,
+        });
       } catch (err) {
         const error = `Error move project -- ${err}`;
         console.log(error);

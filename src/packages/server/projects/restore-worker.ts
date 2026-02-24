@@ -39,6 +39,22 @@ function publishSummary(summary: LroSummary) {
   });
 }
 
+async function publishSummarySafe(
+  summary: LroSummary | undefined,
+  context: { op_id: string; when: string },
+) {
+  if (!summary) return;
+  try {
+    await publishSummary(summary);
+  } catch (err) {
+    logger.warn("restore op publish summary failed", {
+      op_id: context.op_id,
+      when: context.when,
+      err,
+    });
+  }
+}
+
 function progressEvent({
   op,
   step,
@@ -85,9 +101,10 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       status: "failed",
       error: "restore op missing project_id or backup id",
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "invalid-input",
+    });
     return;
   }
 
@@ -138,9 +155,10 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       error: null,
       progress_summary: { phase: "validate" },
     });
-    if (running) {
-      await publishSummary(running);
-    }
+    await publishSummarySafe(running, {
+      op_id,
+      when: "set-running",
+    });
     progress({
       step: "validate",
       message: "starting restore",
@@ -184,9 +202,10 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       },
       error: null,
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "set-succeeded",
+    });
     progress({
       step: "done",
       message: "restore complete",
@@ -199,9 +218,10 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       status: "failed",
       error: `${err}`,
     });
-    if (updated) {
-      await publishSummary(updated);
-    }
+    await publishSummarySafe(updated, {
+      op_id,
+      when: "set-failed",
+    });
     progress({ step: "done", message: "failed" });
   } finally {
     clearInterval(heartbeat);
@@ -243,9 +263,10 @@ export function startRestoreLroWorker({
             status: "failed",
             error: `${err}`,
           });
-          if (updated) {
-            await publishSummary(updated);
-          }
+          await publishSummarySafe(updated, {
+            op_id: op.op_id,
+            when: "handler-catch",
+          });
         })
         .finally(() => {
           inFlight = Math.max(0, inFlight - 1);

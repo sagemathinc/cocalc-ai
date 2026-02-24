@@ -29,6 +29,31 @@ import {
 } from "@cocalc/util/consts";
 
 const log = getLogger("server:projects:create");
+const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+
+function isHostRunningAndOnline(row: any): {
+  ok: boolean;
+  reason?: string;
+} {
+  if (!row || row.deleted) {
+    return { ok: false, reason: "host is deleted" };
+  }
+  const status = `${row.status ?? ""}`.trim().toLowerCase();
+  if (!["running", "active"].includes(status)) {
+    return { ok: false, reason: `status is ${status || "unknown"}` };
+  }
+  if (!row.last_seen) {
+    return { ok: false, reason: "no recent heartbeat" };
+  }
+  const lastSeenMs = new Date(row.last_seen as any).getTime();
+  if (!Number.isFinite(lastSeenMs)) {
+    return { ok: false, reason: "invalid heartbeat timestamp" };
+  }
+  if (Date.now() - lastSeenMs > HOST_ONLINE_WINDOW_MS) {
+    return { ok: false, reason: "heartbeat is stale" };
+  }
+  return { ok: true };
+}
 
 export default async function createProject(opts: CreateProjectOptions) {
   if (opts.account_id != null) {
@@ -130,6 +155,12 @@ export default async function createProject(opts: CreateProjectOptions) {
     const row = rows[0];
     if (!row) {
       throw Error(`host ${host_id} not found`);
+    }
+    const availability = isHostRunningAndOnline(row);
+    if (!availability.ok) {
+      throw Error(
+        `host ${host_id} is unavailable for new workspaces (${availability.reason})`,
+      );
     }
     const metadata = row.metadata ?? {};
     const owner = metadata.owner;

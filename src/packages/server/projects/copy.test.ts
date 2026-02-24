@@ -129,7 +129,7 @@ describe("projects.copyProjectFiles", () => {
     expect(createBackupMock).not.toHaveBeenCalled();
   });
 
-  it("queues cross-host absolute copy rows when snapshot_id is provided", async () => {
+  it("queues cross-host absolute copy rows with backup-relative source paths", async () => {
     queryMock = makeHostQuery({ src: "h1", dest: "h2" });
     getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }]);
     const { copyProjectFiles } = await import("./copy");
@@ -146,7 +146,7 @@ describe("projects.copyProjectFiles", () => {
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         src_project_id: "src",
-        src_path: "/root/a.txt",
+        src_path: "a.txt",
         dest_project_id: "dest",
         dest_path: "/root/b.txt",
         snapshot_id: "snap-existing",
@@ -173,15 +173,37 @@ describe("projects.copyProjectFiles", () => {
     expect(upsertMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        src_path: "/root/a.txt",
+        src_path: "a.txt",
         dest_path: "/root/target/a.txt",
       }),
     );
     expect(upsertMock).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        src_path: "/tmp/b.txt",
+        src_path: "tmp/b.txt",
         dest_path: "/root/target/b.txt",
+      }),
+    );
+  });
+
+  it("uses src_home to normalize absolute source paths instead of hardcoding /root", async () => {
+    queryMock = makeHostQuery({ src: "h1", dest: "h2" });
+    getBackupFilesMock.mockResolvedValue([{ name: "x.py" }]);
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: { project_id: "src", path: "/home/wstein/work/x.py" },
+      src_home: "/home/wstein/work",
+      dests: [{ project_id: "dest", path: "/root/out" }],
+      snapshot_id: "snap-existing",
+    });
+
+    expect(result).toEqual({ queued: 1, local: 0, snapshot_id: "snap-existing" });
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src_path: "x.py",
+        dest_path: "/root/out",
       }),
     );
   });

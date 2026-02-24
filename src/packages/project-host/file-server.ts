@@ -973,15 +973,36 @@ async function syncBackupIndexCache(
       manifest.entries[backup_id] = { snapshot_id: entry.snapshot_id, file };
     }
 
+    let preservedLocalOnly = 0;
     for (const backup_id of Object.keys(manifest.entries)) {
       if (remoteByBackup.has(backup_id)) continue;
       const entry = manifest.entries[backup_id];
-      if (entry?.file) {
+      if (!entry) continue;
+
+      const filePath = entry.file
+        ? join(backupIndexDir(project_id), entry.file)
+        : undefined;
+      const hasLocalFile = filePath ? await exists(filePath) : false;
+
+      // Keep local index manifests when there is no remote index snapshot.
+      // This happens when index upload fails but local index build succeeds.
+      if (entry.snapshot_id === "local" && hasLocalFile) {
+        preservedLocalOnly += 1;
+        continue;
+      }
+
+      if (entry.file) {
         await rm(join(backupIndexDir(project_id), entry.file), {
           force: true,
         });
       }
       delete manifest.entries[backup_id];
+    }
+    if (preservedLocalOnly > 0 && remote.length === 0) {
+      logger.warn("backup index remote snapshot list empty; using local index", {
+        project_id,
+        preserved: preservedLocalOnly,
+      });
     }
 
     await saveBackupIndexManifest(project_id, manifest);

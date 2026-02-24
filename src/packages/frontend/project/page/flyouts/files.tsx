@@ -61,6 +61,14 @@ import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
+import { evaluateHostOperational, hostLabel } from "@cocalc/frontend/projects/host-operational";
+import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import {
+  isHostRoutingUnavailableError,
+  shouldSuppressTransientRoutingError,
+} from "@cocalc/frontend/projects/host-routing-error";
+import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -98,6 +106,22 @@ export function FilesFlyout({
   );
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
+  const project_map = useTypedRedux("projects", "project_map");
+  const host_id = project_map?.getIn([project_id, "host_id"]) as
+    | string
+    | undefined;
+  const hostInfo = useHostInfo(host_id);
+  const hostOperational = useMemo(
+    () => evaluateHostOperational(hostInfo),
+    [hostInfo],
+  );
+  const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
+  const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
+    | MoveLroState
+    | undefined;
+  const hostUnavailableReason =
+    hostOperational.reason ?? "Assigned host is unavailable.";
+  const assignedHostLabel = hostLabel(hostInfo, host_id);
   const available_features = useTypedRedux(
     { project_id },
     "available_features",
@@ -211,7 +235,23 @@ export function FilesFlyout({
   }, [backupOps, refreshBackups]);
   const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
   const effectiveError = inBackupsPath ? backupsError : listingError;
+  const suppressRoutingError =
+    (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
+    shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
   const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
+  const transientRoutingRetryRef = useRef<string>("");
+  useEffect(() => {
+    if (!effectiveError) return;
+    if (!shouldSuppressTransientRoutingError({ error: effectiveError, moveLro })) {
+      return;
+    }
+    const msg = `${(effectiveError as any)?.message ?? effectiveError}`;
+    const token = `${effective_current_path}|${msg}`;
+    if (transientRoutingRetryRef.current === token) return;
+    transientRoutingRetryRef.current = token;
+    const timer = setTimeout(() => effectiveRefresh(), 1200);
+    return () => clearTimeout(timer);
+  }, [effectiveError, moveLro, effective_current_path, effectiveRefresh]);
 
   // active file: current editor is the file in the listing
   // empty: either no files, or just the ".." for the parent dir
@@ -648,6 +688,30 @@ export function FilesFlyout({
   function renderLoadingOrStartProject(): React.JSX.Element {
     if (projectIsRunning) {
       return <Loading theme="medium" transparent />;
+    } else if (hostUnavailable) {
+      return (
+        <Alert
+          type="warning"
+          banner
+          showIcon={false}
+          style={{ padding: FLYOUT_PADDING, margin: 0 }}
+          description={
+            <>
+              This workspace is assigned to {assignedHostLabel}, which is
+              unavailable ({hostUnavailableReason}). You can wait, or move this
+              workspace to an available host.
+              <div style={{ marginTop: "8px" }}>
+                <MoveProject
+                  project_id={project_id}
+                  size="small"
+                  label="Move Workspace"
+                  showHostName={false}
+                />
+              </div>
+            </>
+          }
+        />
+      );
     } else {
       return (
         <Alert
@@ -718,7 +782,9 @@ export function FilesFlyout({
       ref={rootRef}
       style={{ flex: "1 0 auto", flexDirection: "column", display: "flex" }}
     >
-      <ShowError error={effectiveError} setError={effectiveRefresh} />
+      {!suppressRoutingError && (
+        <ShowError error={effectiveError} setError={effectiveRefresh} />
+      )}
       <FilesHeader
         activeFile={activeFile}
         getFile={getFile}
