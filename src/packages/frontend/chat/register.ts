@@ -16,6 +16,17 @@ interface ChatInstanceOptions {
   instanceKey?: string;
 }
 
+export function isChatActions(actions: any): actions is ChatActions {
+  return Boolean(
+    actions &&
+      typeof actions.sendChat === "function" &&
+      typeof actions.getMessagesInThread === "function" &&
+      typeof actions.clearAllFilters === "function" &&
+      typeof actions.setSelectedThread === "function" &&
+      actions.messageCache != null,
+  );
+}
+
 function chatReduxName({
   project_id,
   path,
@@ -42,7 +53,8 @@ export function getChatActions(
     path,
     instanceKey: opts?.instanceKey,
   });
-  return redux.getActions(name) as ChatActions | undefined;
+  const actions = redux.getActions(name);
+  return isChatActions(actions) ? actions : undefined;
 }
 
 // it is fine to call this more than once.
@@ -56,8 +68,9 @@ export function initChat(
     path,
     instanceKey: opts?.instanceKey,
   });
-  if (redux.getActions(name) != null) {
-    return redux.getActions(name); // already initialized
+  const existing = redux.getActions(name);
+  if (isChatActions(existing)) {
+    return existing; // already initialized
   }
 
   const actions = redux.createActions(name, ChatActions);

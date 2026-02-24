@@ -5,6 +5,7 @@ import { ChatPanel } from "./chatroom";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import type { ChatState } from "./store";
 import { Loading } from "@cocalc/frontend/components";
+import { isChatActions } from "./register";
 
 interface Props {
   project_id: string;
@@ -25,10 +26,11 @@ export default function SideChat({
   desc,
   hideSidebar = false,
 }: Props) {
-  const actionsViaContext = redux.getEditorActions(project_id, path) as
-    | ChatActions
-    | undefined;
-  const actions: ChatActions | undefined = actions0 ?? actionsViaContext;
+  const actionsViaContext = redux.getEditorActions(project_id, path);
+  const candidateActions = actions0 ?? actionsViaContext;
+  const actions: ChatActions | undefined = isChatActions(candidateActions)
+    ? candidateActions
+    : undefined;
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");

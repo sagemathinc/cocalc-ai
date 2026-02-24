@@ -23,6 +23,7 @@ import {
 import {
   initChat,
   getChatActions,
+  isChatActions,
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
@@ -153,11 +154,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setInlineError("");
 
     try {
+      const directActions = redux.getEditorActions(project_id, inlineSession.chat_path);
       const sharedActions =
-        (redux.getEditorActions(
-          project_id,
-          inlineSession.chat_path,
-        ) as ChatActions | undefined) ??
+        (isChatActions(directActions) ? directActions : undefined) ??
         getChatActions(project_id, inlineSession.chat_path, {
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
@@ -240,11 +239,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   function openInlineSession(record: AgentSessionRecord): void {
     setInlineSession(record);
     setInlineError("");
+    const directActions = redux.getEditorActions(project_id, record.chat_path);
     const sharedActions =
-      (redux.getEditorActions(
-        project_id,
-        record.chat_path,
-      ) as ChatActions | undefined) ??
+      (isChatActions(directActions) ? directActions : undefined) ??
       getChatActions(project_id, record.chat_path, {
         instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
       });

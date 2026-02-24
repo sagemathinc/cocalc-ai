@@ -22,6 +22,7 @@ import {
 import {
   getChatActions,
   initChat,
+  isChatActions,
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
@@ -117,11 +118,12 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       if (!detail || detail.projectId !== project_id) return;
       setSession(detail.session);
       setError("");
+      const directActions = redux.getEditorActions(
+        project_id,
+        detail.session.chat_path,
+      );
       const sharedActions =
-        (redux.getEditorActions(
-          project_id,
-          detail.session.chat_path,
-        ) as ChatActions | undefined) ??
+        (isChatActions(directActions) ? directActions : undefined) ??
         getChatActions(project_id, detail.session.chat_path, {
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
@@ -154,11 +156,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     let ownsChatInstance = false;
     setError("");
     try {
+      const directActions = redux.getEditorActions(project_id, session.chat_path);
       const sharedActions =
-        (redux.getEditorActions(
-          project_id,
-          session.chat_path,
-        ) as ChatActions | undefined) ??
+        (isChatActions(directActions) ? directActions : undefined) ??
         getChatActions(project_id, session.chat_path, {
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
