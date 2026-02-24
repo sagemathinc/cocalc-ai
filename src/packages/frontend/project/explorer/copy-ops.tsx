@@ -1,5 +1,5 @@
-import { Button, Popconfirm, Progress, Space, Spin } from "antd";
-import { useRef } from "react";
+import { Button, Popconfirm, Popover, Progress, Space, Spin, Tag, Timeline } from "antd";
+import { useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
@@ -10,6 +10,47 @@ import {
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
 import type { CopyLroState } from "@cocalc/frontend/project/copy-ops";
+import { TimeAgo } from "@cocalc/frontend/components";
+import { User } from "@cocalc/frontend/users/user";
+
+const COPY_PHASES = [
+  {
+    key: "queued",
+    label: "Queued",
+    description: "Operation accepted and waiting for worker",
+  },
+  {
+    key: "validate",
+    label: "Validate",
+    description: "Validate source, destinations, and permissions",
+  },
+  {
+    key: "backup",
+    label: "Create backup",
+    description: "Create source snapshot backup when cross-host copy is required",
+  },
+  {
+    key: "queue",
+    label: "Queue remote copies",
+    description: "Queue remote copy jobs on destination host(s)",
+  },
+  {
+    key: "copy-local",
+    label: "Copy local paths",
+    description: "Execute same-host copies directly",
+  },
+  {
+    key: "done",
+    label: "Complete",
+    description: "Operation completed and final summary persisted",
+  },
+] as const;
+
+type CopyPhaseKey = (typeof COPY_PHASES)[number]["key"];
+
+const COPY_PHASE_SET = new Set<CopyPhaseKey>(
+  COPY_PHASES.map((phase) => phase.key),
+);
 
 export default function CopyOps({ project_id }: { project_id: string }) {
   const copyOps = useTypedRedux({ project_id }, "copy_ops")?.toJS() ?? {};
@@ -50,6 +91,7 @@ function CopyOpRow({ op }: { op: CopyLroState }) {
   const title = formatTitle(summary);
   const percent = progressPercent(op);
   const lastDetailRef = useRef<string | undefined>(undefined);
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const progress = op.last_progress;
   const detail = formatProgressDetail(progress?.detail);
   if (detail) {
@@ -74,6 +116,17 @@ function CopyOpRow({ op }: { op: CopyLroState }) {
           />
         )}
         <span style={{ fontSize: "11px", color: "#666" }}>{statusText}</span>
+        <Popover
+          trigger="click"
+          open={detailsOpen}
+          onOpenChange={setDetailsOpen}
+          content={<CopyOpTimeline op={op} />}
+          placement="bottomLeft"
+        >
+          <Button type="link" size="small">
+            Timeline
+          </Button>
+        </Popover>
         {canCancel && (
           <Popconfirm
             title="Cancel this copy operation?"
@@ -108,6 +161,148 @@ function formatTitle(summary?: LroSummary): string {
     return `Copy ${pathCount} ${plural(pathCount, "path")}`;
   }
   return "Copy operation";
+}
+
+function CopyOpTimeline({ op }: { op: CopyLroState }) {
+  const summary = op.summary;
+  const counts = summary?.progress_summary ?? {};
+  const phaseKey = phaseFromOp(op);
+  const activeIndex = phaseKey != null ? phaseIndex(phaseKey) : 0;
+  const status = summary?.status;
+  const statusText = formatStatusLine(op);
+  const summaryCounts = formatCounts(counts);
+  const detailText = formatProgressDetail(op.last_progress?.detail);
+  const createdBy = summary?.created_by;
+  const sourcePath = summary?.input?.src?.path;
+  const sourceCount = Array.isArray(sourcePath)
+    ? sourcePath.length
+    : sourcePath
+      ? 1
+      : 0;
+  const destCount = Array.isArray(summary?.input?.dests)
+    ? summary?.input?.dests.length
+    : summary?.input?.dest
+      ? 1
+      : 0;
+
+  const timelineItems = useMemo(() => {
+    return COPY_PHASES.map((phase, index) => ({
+      color: phaseColor({
+        index,
+        activeIndex,
+        status,
+      }),
+      children: (
+        <div>
+          <div style={{ fontWeight: 600 }}>{phase.label}</div>
+          <div style={{ color: "#666", fontSize: "11px" }}>{phase.description}</div>
+        </div>
+      ),
+    }));
+  }, [activeIndex, status]);
+
+  return (
+    <div style={{ width: "460px", maxWidth: "80vw" }}>
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <div style={{ fontWeight: 600 }}>Copy operation lifecycle</div>
+        <Space wrap size={[6, 6]}>
+          <Tag color={statusColor(status)}>{status ?? "running"}</Tag>
+          {summaryCounts ? <Tag>{summaryCounts}</Tag> : null}
+          {detailText ? <Tag>{detailText}</Tag> : null}
+        </Space>
+        <div style={{ fontSize: "12px", color: "#666" }}>{statusText}</div>
+        <Space size="small" wrap style={{ fontSize: "12px" }}>
+          {createdBy ? (
+            <span>
+              Initiated by <User account_id={createdBy} show_avatar avatarSize={16} />
+            </span>
+          ) : null}
+          {summary?.created_at ? (
+            <span>
+              Started <TimeAgo date={summary.created_at} />
+            </span>
+          ) : null}
+          {summary?.updated_at ? (
+            <span>
+              Updated <TimeAgo date={summary.updated_at} />
+            </span>
+          ) : null}
+        </Space>
+        <div style={{ fontSize: "12px" }}>
+          {sourceCount > 0 ? (
+            <span>
+              {sourceCount} {plural(sourceCount, "source path")} to {destCount || 0}{" "}
+              {plural(destCount || 0, "destination")}
+            </span>
+          ) : (
+            <span>Source and destination metadata not available.</span>
+          )}
+        </div>
+        <Timeline items={timelineItems} />
+      </Space>
+    </div>
+  );
+}
+
+function statusColor(status?: string): string {
+  if (status === "succeeded") return "green";
+  if (status === "failed") return "red";
+  if (status === "canceled") return "orange";
+  if (status === "expired") return "red";
+  return "processing";
+}
+
+function phaseFromOp(op: CopyLroState): CopyPhaseKey | undefined {
+  const phaseRaw =
+    op.last_progress?.phase ??
+    op.summary?.progress_summary?.phase ??
+    op.last_progress?.message;
+  if (typeof phaseRaw !== "string" || !phaseRaw.trim()) return;
+  const lower = phaseRaw.trim().toLowerCase();
+  if (COPY_PHASE_SET.has(lower as CopyPhaseKey)) {
+    return lower as CopyPhaseKey;
+  }
+  if (lower.includes("queue")) return "queue";
+  if (lower.includes("backup")) return "backup";
+  if (lower.includes("local")) return "copy-local";
+  if (lower.includes("validate")) return "validate";
+  if (lower.includes("done") || lower.includes("complete")) return "done";
+  return;
+}
+
+function phaseIndex(phase: CopyPhaseKey): number {
+  const idx = COPY_PHASES.findIndex((entry) => entry.key === phase);
+  return idx < 0 ? 0 : idx;
+}
+
+function phaseColor({
+  index,
+  activeIndex,
+  status,
+}: {
+  index: number;
+  activeIndex: number;
+  status?: string;
+}): string {
+  if (status === "succeeded") return "green";
+  if (status === "failed") {
+    if (index < activeIndex) return "green";
+    if (index === activeIndex) return "red";
+    return "gray";
+  }
+  if (status === "canceled") {
+    if (index < activeIndex) return "green";
+    if (index === activeIndex) return "orange";
+    return "gray";
+  }
+  if (status === "expired") {
+    if (index < activeIndex) return "green";
+    if (index === activeIndex) return "red";
+    return "gray";
+  }
+  if (index < activeIndex) return "green";
+  if (index === activeIndex) return "blue";
+  return "gray";
 }
 
 function formatStatusLine(op: CopyLroState, detailOverride?: string): string {
