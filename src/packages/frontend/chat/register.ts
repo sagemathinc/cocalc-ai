@@ -11,6 +11,7 @@ import { path_split, startswith } from "@cocalc/util/misc";
 import { ChatActions } from "./actions";
 import { ChatStore } from "./store";
 import { ChatMessageCache } from "@cocalc/frontend/chat/message-cache";
+import { parseChatPreviewRows } from "./preview";
 
 interface ChatInstanceOptions {
   instanceKey?: string;
@@ -25,6 +26,31 @@ export function isChatActions(actions: any): actions is ChatActions {
       typeof actions.setSelectedThread === "function" &&
       actions.messageCache != null,
   );
+}
+
+function startOptimisticChatPreview(
+  project_id: string,
+  path: string,
+  syncdb: any,
+  cache: ChatMessageCache,
+): void {
+  const fs = redux.getProjectActions(project_id)?.fs?.();
+  if (typeof fs?.readFile !== "function") return;
+  void (async () => {
+    try {
+      const raw = await fs.readFile(path, "utf8");
+      if (syncdb?.get_state?.() === "ready") return;
+      if (syncdb?.get_state?.() === "closed") return;
+      const content =
+        typeof raw === "string"
+          ? raw
+          : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+      const parsed = parseChatPreviewRows(content);
+      cache.applyPreviewRows(parsed.rows);
+    } catch {
+      // fall back to live-sync initialization path
+    }
+  })();
 }
 
 function chatReduxName({
@@ -95,6 +121,8 @@ export function initChat(
     change_throttle: 3000,
   });
   const cache = new ChatMessageCache(syncdb);
+  actions.set_syncdb(syncdb, store, cache);
+  startOptimisticChatPreview(project_id, path, syncdb, cache);
   syncdb.once("close", () => {
     cache.dispose();
   });
@@ -106,7 +134,6 @@ export function initChat(
   });
 
   syncdb.once("ready", () => {
-    actions.set_syncdb(syncdb, store, cache);
     actions.init_from_syncdb();
     syncdb.on("change", actions.syncdbChange);
     redux.getProjectActions(project_id)?.log_opened_time(path);

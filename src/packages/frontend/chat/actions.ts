@@ -218,6 +218,9 @@ export class ChatActions extends Actions<ChatState> {
     store: ChatStore,
     messageCache: ChatMessageCache,
   ): void => {
+    if (this.syncdb != null) {
+      this.syncdb.removeListener("change", this.autosave);
+    }
     this.syncdb = syncdb;
     this.store = store;
 
@@ -274,6 +277,16 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb?.set(obj);
   };
 
+  private getSyncdbOne(where: Record<string, unknown>): any | null {
+    if (this.syncdb == null) return null;
+    if (this.syncdb.get_state?.() !== "ready") return null;
+    try {
+      return this.syncdb.get_one(where) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // Dispose resources tied to this actions instance.
   dispose(): void {
     // do NOT dispose of messageCache and syncdb here; that's managed
@@ -306,7 +319,7 @@ export class ChatActions extends Actions<ChatState> {
     const cur =
       (replyToIso &&
         rootMessage &&
-        this.syncdb.get_one({
+        this.getSyncdbOne({
           event: "chat",
           date: replyToIso,
           sender_id: senderId(rootMessage),
@@ -371,7 +384,7 @@ export class ChatActions extends Actions<ChatState> {
     if (!dateIso) return;
     const account_id = this.redux.getStore("account").get_account_id();
     const messageId = field<string>(message, "message_id");
-    const cur = this.syncdb.get_one({
+    const cur = this.getSyncdbOne({
       event: "chat",
       date: dateIso,
       sender_id: senderId(message),
@@ -1041,12 +1054,10 @@ export class ChatActions extends Actions<ChatState> {
   private getThreadConfigRecordById = (threadId?: string): any | null => {
     if (this.syncdb == null) return null;
     if (!threadId) return null;
-    return (
-      this.syncdb.get_one({
-        event: THREAD_CONFIG_EVENT,
-        thread_id: threadId,
-      }) ?? null
-    );
+    return this.getSyncdbOne({
+      event: THREAD_CONFIG_EVENT,
+      thread_id: threadId,
+    });
   };
 
   private resolveThreadIdForKey = (threadKey: string): string | undefined => {

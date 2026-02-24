@@ -26,8 +26,14 @@ import { delay } from "awaiting";
 import { newest_content } from "@cocalc/frontend/chat/utils";
 import type { ChatMessageTyped } from "@cocalc/frontend/chat/types";
 import { ChatMessageCache } from "@cocalc/frontend/chat/message-cache";
+import { parseChatPreviewRows } from "@cocalc/frontend/chat/preview";
+import {
+  log_opened_time,
+  mark_open_phase,
+} from "@cocalc/frontend/project/open-file";
 
 const FRAME_TYPE = "chatroom";
+const FAST_OPEN_CHAT_STATUS = "Loading live collaboration...";
 
 type ChatEditorState = CodeEditorState & ChatState;
 
@@ -39,6 +45,43 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   private chatActions: { [frameId: string]: ChatActions } = {};
   private auxPath: string;
   private messageCache?: ChatMessageCache;
+  private chatFastOpenToken = 0;
+  private chatFastOpenApplied = false;
+
+  private startOptimisticChatFastOpen(syncdb: any): void {
+    const fs = this._get_project_actions()?.fs?.();
+    if (typeof fs?.readFile !== "function") return;
+    const token = ++this.chatFastOpenToken;
+    void (async () => {
+      try {
+        const raw = await fs.readFile(this.path, "utf8");
+        if (this.isClosed() || token !== this.chatFastOpenToken) return;
+        if (syncdb?.get_state?.() === "ready") return;
+        const content =
+          typeof raw === "string"
+            ? raw
+            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+        const parsed = parseChatPreviewRows(content);
+        const applied = this.messageCache?.applyPreviewRows(parsed.rows);
+        if (!applied?.applied) return;
+        this.chatFastOpenApplied = true;
+        this.setState({
+          is_loaded: true,
+          read_only: true,
+          status: FAST_OPEN_CHAT_STATUS,
+          rtc_status: "loading",
+        });
+        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+          bytes: content.length,
+          rows: parsed.parsedRows,
+          parse_errors: parsed.parseErrors,
+        });
+        log_opened_time(this.project_id, this.path);
+      } catch {
+        // fall back to normal sync-ready path
+      }
+    })();
+  }
 
   _init2(): void {
     this.auxPath = aux_file(this.path, "tasks");
@@ -51,8 +94,17 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     const syncdb = this._syncstring;
     // Single shared message cache for all chat frames attached to this syncdoc.
     this.messageCache = new ChatMessageCache(syncdb);
+    this.startOptimisticChatFastOpen(syncdb);
     syncdb.once("ready", () => {
       initFromSyncDB({ syncdb, store });
+      if (this.chatFastOpenApplied) {
+        this.chatFastOpenApplied = false;
+        if (this.store?.get("status") === FAST_OPEN_CHAT_STATUS) {
+          this.setState({ status: "" });
+        }
+        this.setState({ rtc_status: "live" });
+        mark_open_phase(this.project_id, this.path, "handoff_done");
+      }
     });
     syncdb.on("change", (changes) => {
       handleSyncDBChange({ store, syncdb, changes });

@@ -6,14 +6,16 @@ import { ChatMessageCache } from "../message-cache";
 class MockSyncdb extends EventEmitter {
   public opts = { ignoreInitialChanges: true };
   private rows: any[];
+  private state: string;
 
-  constructor(rows: any[]) {
+  constructor(rows: any[], state: string = "ready") {
     super();
     this.rows = rows;
+    this.state = state;
   }
 
   get_state() {
-    return "ready";
+    return this.state;
   }
 
   get() {
@@ -28,6 +30,10 @@ class MockSyncdb extends EventEmitter {
 
   replaceRows(rows: any[]) {
     this.rows = rows;
+  }
+
+  setSyncState(state: string) {
+    this.state = state;
   }
 }
 
@@ -179,6 +185,29 @@ describe("ChatMessageCache message_id index", () => {
     syncdb.emit("change", new Set([rows[0]]));
 
     expect(cache.getThreadKeyByThreadId("thread-3")).toBeUndefined();
+    cache.dispose();
+  });
+
+  it("hydrates preview rows while syncdb is not ready", () => {
+    const syncdb = new MockSyncdb([], "loading");
+    const cache = new ChatMessageCache(syncdb as any);
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2026-01-05T00:00:00.000Z",
+        message_id: "preview-1",
+        thread_id: "preview-thread",
+        history: [],
+      },
+    ];
+    const result = cache.applyPreviewRows(rows);
+    expect(result.applied).toBe(true);
+    expect(result.chatRows).toBe(1);
+    expect(cache.getByMessageId("preview-1")?.sender_id).toBe("user-1");
+    expect(cache.getThreadKeyByThreadId("preview-thread")).toBe(
+      `${new Date(rows[0].date).valueOf()}`,
+    );
     cache.dispose();
   });
 });
