@@ -12,6 +12,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { COLORS } from "@cocalc/util/theme";
 import { FIXED_PROJECT_TABS } from "../file-tab";
+import { AGENT_CHAT_MAX_WIDTH_PX } from "../agent-layout-constants";
 import { NavigatorShell } from "../../new/navigator-shell";
 import { HomeRecentFiles } from "./recent-files";
 
@@ -35,7 +36,7 @@ export default function HomePage() {
     <Row
       gutter={[30, 30]}
       style={{
-        maxWidth: "800px",
+        maxWidth: AGENT_CHAT_MAX_WIDTH_PX,
         margin: "0 auto",
         padding: "10px",
       }}

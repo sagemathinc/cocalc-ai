@@ -77,6 +77,10 @@ const inFlightChatTurnKeys = new Map<
   string,
   { startedAt: number; subject: string }
 >();
+const inFlightSessionTurnKeys = new Map<
+  string,
+  { startedAt: number; subject: string }
+>();
 
 async function runLimited(
   label: string,
@@ -184,6 +188,7 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
     hasChat: !!options.chat,
   });
   let activeChatTurnKey: string | undefined;
+  let activeSessionTurnKey: string | undefined;
 
   let done = false;
   let seq = -1;
@@ -256,6 +261,28 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
         subject: mesg.subject,
       });
     }
+    activeSessionTurnKey = sessionTurnKey(options);
+    if (activeSessionTurnKey != null) {
+      const existing = inFlightSessionTurnKeys.get(activeSessionTurnKey);
+      if (existing != null) {
+        logger.warn(
+          "duplicate acp evaluate request rejected while session turn is in-flight",
+          {
+            sessionTurnKey: activeSessionTurnKey,
+            subject: mesg.subject,
+            existingSubject: existing.subject,
+            inFlightMs: Date.now() - existing.startedAt,
+          },
+        );
+        throw Error(
+          "ACP agent is already processing a request for this session",
+        );
+      }
+      inFlightSessionTurnKeys.set(activeSessionTurnKey, {
+        startedAt: Date.now(),
+        subject: mesg.subject,
+      });
+    }
 
     await evaluate({
       ...options,
@@ -271,6 +298,9 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
   } finally {
     if (activeChatTurnKey != null) {
       inFlightChatTurnKeys.delete(activeChatTurnKey);
+    }
+    if (activeSessionTurnKey != null) {
+      inFlightSessionTurnKeys.delete(activeSessionTurnKey);
     }
   }
 }
@@ -303,6 +333,17 @@ function chatTurnKey(options: AcpRequest): string | undefined {
     return undefined;
   }
   return `${chat.project_id}:${chat.path}:${chat.message_date}`;
+}
+
+function sessionTurnKey(options: AcpRequest): string | undefined {
+  const projectId = options.project_id;
+  const sessionId = options.session_id;
+  if (typeof projectId !== "string" || typeof sessionId !== "string") {
+    return undefined;
+  }
+  const trimmed = sessionId.trim();
+  if (trimmed.length === 0) return undefined;
+  return `${projectId}:${trimmed}`;
 }
 
 async function handleInterruptMessage(

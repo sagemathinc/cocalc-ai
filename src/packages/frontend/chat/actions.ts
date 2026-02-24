@@ -978,6 +978,9 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) {
       return false;
     }
+    if (this.syncdb.get_state?.() !== "ready") {
+      return false;
+    }
     const account_id = this.redux.getStore("account").get_account_id();
     if (!account_id || !Number.isFinite(count)) {
       return false;

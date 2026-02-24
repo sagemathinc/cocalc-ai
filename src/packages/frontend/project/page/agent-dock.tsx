@@ -3,6 +3,7 @@ import {
   Button,
   Select,
   Space,
+  Tooltip,
 } from "antd";
 import {
   useCallback,
@@ -13,7 +14,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import Draggable from "react-draggable";
-import { redux, useActions } from "@cocalc/frontend/app-framework";
+import { redux, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import {
@@ -40,6 +41,7 @@ import {
   type AgentDockCloseDetail,
   type AgentDockOpenDetail,
 } from "./agent-dock-state";
+import { useAgentChatFontSize } from "./agent-chat-font-size";
 
 const AGENT_DOCK_CHAT_INSTANCE_KEY = "project-agent-dock";
 const DEFAULT_POSITION = { x: 24, y: 84 };
@@ -54,6 +56,7 @@ interface AgentDockProps {
 
 export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const projectActions = useActions({ project_id }) as ProjectActions;
+  const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
   const [session, setSession] = useState<AgentSessionRecord | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions | null>(null);
@@ -74,6 +77,13 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     startWidth: number;
     startHeight: number;
   } | null>(null);
+  const {
+    fontSize,
+    increaseFontSize,
+    decreaseFontSize,
+    canIncreaseFontSize,
+    canDecreaseFontSize,
+  } = useAgentChatFontSize(accountFontSize);
 
   useEffect(() => {
     if (is_active) return;
@@ -146,7 +156,8 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   }, [project_id]);
 
   useEffect(() => {
-    if (!session) {
+    const chatPath = session?.chat_path;
+    if (!chatPath) {
       setChatActions(null);
       setError("");
       return;
@@ -156,10 +167,10 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     let ownsChatInstance = false;
     setError("");
     try {
-      const directActions = redux.getEditorActions(project_id, session.chat_path);
+      const directActions = redux.getEditorActions(project_id, chatPath);
       const sharedActions =
         (isChatActions(directActions) ? directActions : undefined) ??
-        getChatActions(project_id, session.chat_path, {
+        getChatActions(project_id, chatPath, {
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
       if (sharedActions) {
@@ -169,13 +180,13 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
         };
       }
       setChatActions(null);
-      actions = initChat(project_id, session.chat_path, {
+      actions = initChat(project_id, chatPath, {
         instanceKey: AGENT_DOCK_CHAT_INSTANCE_KEY,
       });
       ownsChatInstance = true;
       if (!mounted) {
         if (ownsChatInstance) {
-          removeChatWithInstance(session.chat_path, redux, project_id, {
+          removeChatWithInstance(chatPath, redux, project_id, {
             instanceKey: AGENT_DOCK_CHAT_INSTANCE_KEY,
           });
         }
@@ -191,12 +202,12 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       mounted = false;
       if (actions && ownsChatInstance) {
         setChatActions((current) => (current === actions ? null : current));
-        removeChatWithInstance(session.chat_path, redux, project_id, {
+        removeChatWithInstance(chatPath, redux, project_id, {
           instanceKey: AGENT_DOCK_CHAT_INSTANCE_KEY,
         });
       }
     };
-  }, [project_id, session]);
+  }, [project_id, session?.chat_path]);
 
   useEffect(() => {
     if (!chatActions || !session?.thread_key) return;
@@ -205,7 +216,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       chatActions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
     }, 0);
     return () => clearTimeout(timer);
-  }, [chatActions, session]);
+  }, [chatActions, session?.thread_key]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -366,6 +377,31 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 }}
               />
               <Space size={[4, 4]} wrap>
+                <Tooltip title="Decrease chat font size">
+                  <Button
+                    size="small"
+                    type="text"
+                    disabled={!canDecreaseFontSize}
+                    onClick={decreaseFontSize}
+                  >
+                    <Icon name="minus" />
+                  </Button>
+                </Tooltip>
+                <Tooltip title={`Agent chat font size: ${fontSize}px`}>
+                  <span style={{ minWidth: 24, textAlign: "center", fontSize: 12 }}>
+                    {fontSize}
+                  </span>
+                </Tooltip>
+                <Tooltip title="Increase chat font size">
+                  <Button
+                    size="small"
+                    type="text"
+                    disabled={!canIncreaseFontSize}
+                    onClick={increaseFontSize}
+                  >
+                    <Icon name="plus" />
+                  </Button>
+                </Tooltip>
                 <Button
                   size="small"
                   type="link"
@@ -395,6 +431,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   actions={chatActions}
                   project_id={project_id}
                   path={session.chat_path}
+                  fontSize={fontSize}
                   hideSidebar
                   desc={desc}
                 />

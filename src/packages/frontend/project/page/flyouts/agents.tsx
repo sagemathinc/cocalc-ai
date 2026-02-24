@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Empty, Space, Tag, Typography } from "antd";
+import { Alert, Button, Empty, Space, Tag, Tooltip, Typography } from "antd";
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import {
   redux,
@@ -29,7 +29,12 @@ import {
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { groupThreadsByRecency } from "@cocalc/frontend/chat/threads";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
-import { html_to_text } from "@cocalc/frontend/misc";
+import {
+  delete_local_storage,
+  get_local_storage,
+  html_to_text,
+  set_local_storage,
+} from "@cocalc/frontend/misc";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
@@ -37,6 +42,9 @@ import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { NAVIGATOR_CHAT_INSTANCE_KEY } from "@cocalc/frontend/project/new/navigator-shell";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
+import { Icon } from "@cocalc/frontend/components";
+import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
+import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "processing",
@@ -48,6 +56,7 @@ const STATUS_COLORS: Record<AgentSessionStatus, string> = {
 const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
+const AGENTS_OPEN_SESSION_STORAGE_PREFIX = "agents-panel-open-session";
 
 function formatUpdated(iso?: string): string {
   if (!iso) return "";
@@ -105,6 +114,36 @@ interface SessionListItem {
   record: AgentSessionRecord;
 }
 
+function openedSessionStorageKey(
+  project_id: string,
+  layout: "flyout" | "page",
+): string {
+  return `${AGENTS_OPEN_SESSION_STORAGE_PREFIX}:${project_id}:${layout}`;
+}
+
+function loadOpenedSessionId(
+  project_id: string,
+  layout: "flyout" | "page",
+): string | null {
+  const raw = get_local_storage(openedSessionStorageKey(project_id, layout));
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function saveOpenedSessionId(
+  project_id: string,
+  layout: "flyout" | "page",
+  sessionId: string | null,
+): void {
+  const key = openedSessionStorageKey(project_id, layout);
+  if (!sessionId) {
+    delete_local_storage(key);
+    return;
+  }
+  set_local_storage(key, sessionId);
+}
+
 interface AgentsFlyoutProps {
   project_id: string;
   wrap: (content: React.JSX.Element, style?: React.CSSProperties) => React.JSX.Element;
@@ -118,6 +157,7 @@ interface AgentsPanelProps {
 export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
+  const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
   const [missingChatPaths, setMissingChatPaths] = useState<Set<string>>(
     () => new Set(),
@@ -127,12 +167,19 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string>("");
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
-  const [inlineSession, setInlineSession] = useState<AgentSessionRecord | null>(
-    null,
+  const [inlineSessionId, setInlineSessionId] = useState<string | null>(() =>
+    loadOpenedSessionId(project_id, layout),
   );
   const [inlineActions, setInlineActions] = useState<ChatActions | null>(null);
   const [inlineError, setInlineError] = useState<string>("");
   const isFlyout = layout === "flyout";
+  const {
+    fontSize,
+    increaseFontSize,
+    decreaseFontSize,
+    canIncreaseFontSize,
+    canDecreaseFontSize,
+  } = useAgentChatFontSize(accountFontSize);
 
   useEffect(() => {
     let closed = false;
@@ -229,6 +276,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return sessions.filter((session) => !missingChatPaths.has(session.chat_path));
   }, [sessions, missingChatPaths]);
 
+  const inlineSession = useMemo(() => {
+    if (!inlineSessionId) return null;
+    return (
+      sessionsWithExistingChat.find(
+        (session) => session.session_id === inlineSessionId,
+      ) ?? null
+    );
+  }, [inlineSessionId, sessionsWithExistingChat]);
+
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
     if (scope === "mine" && typeof account_id === "string" && account_id.trim()) {
@@ -261,19 +317,19 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [scopedSessions]);
 
   useEffect(() => {
-    if (!inlineSession) return;
-    const updated = sessionsWithExistingChat.find(
-      (session) => session.session_id === inlineSession.session_id,
-    );
-    if (updated) {
-      setInlineSession(updated);
-      return;
-    }
-    setInlineSession(null);
-  }, [inlineSession, sessionsWithExistingChat]);
+    if (!inlineSessionId) return;
+    if (inlineSession) return;
+    if (loading) return;
+    setInlineSessionId(null);
+  }, [inlineSession, inlineSessionId, loading]);
 
   useEffect(() => {
-    if (!inlineSession) {
+    saveOpenedSessionId(project_id, layout, inlineSessionId);
+  }, [inlineSessionId, layout, project_id]);
+
+  useEffect(() => {
+    const chatPath = inlineSession?.chat_path;
+    if (!chatPath) {
       setInlineActions(null);
       setInlineError("");
       return;
@@ -284,10 +340,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setInlineError("");
 
     try {
-      const directActions = redux.getEditorActions(project_id, inlineSession.chat_path);
+      const directActions = redux.getEditorActions(project_id, chatPath);
       const sharedActions =
         (isChatActions(directActions) ? directActions : undefined) ??
-        getChatActions(project_id, inlineSession.chat_path, {
+        getChatActions(project_id, chatPath, {
           instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
         });
       if (sharedActions) {
@@ -297,13 +353,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         };
       }
       setInlineActions(null);
-      chatActions = initChat(project_id, inlineSession.chat_path, {
+      chatActions = initChat(project_id, chatPath, {
         instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
       });
       ownsChatInstance = true;
       if (!mounted) {
         if (ownsChatInstance) {
-          removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
+          removeChatWithInstance(chatPath, redux, project_id, {
             instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
           });
         }
@@ -320,12 +376,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       mounted = false;
       if (chatActions && ownsChatInstance) {
         setInlineActions((current) => (current === chatActions ? null : current));
-        removeChatWithInstance(inlineSession.chat_path, redux, project_id, {
+        removeChatWithInstance(chatPath, redux, project_id, {
           instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
         });
       }
     };
-  }, [inlineSession, project_id]);
+  }, [inlineSession?.chat_path, project_id]);
 
   useEffect(() => {
     if (!inlineActions || !inlineSession?.thread_key) return;
@@ -334,7 +390,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       inlineActions?.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
     }, 0);
     return () => clearTimeout(timer);
-  }, [inlineActions, inlineSession]);
+  }, [inlineActions, inlineSession?.thread_key]);
 
   const inlineDesc = useMemo(() => {
     if (!inlineSession?.thread_key) return undefined;
@@ -367,7 +423,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function openInlineSession(record: AgentSessionRecord): void {
-    setInlineSession(record);
+    setInlineSessionId(record.session_id);
     setInlineError("");
     const directActions = redux.getEditorActions(project_id, record.chat_path);
     const sharedActions =
@@ -382,6 +438,43 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   function openFloatingSession(record: AgentSessionRecord): void {
     openFloatingAgentSession(project_id, record);
+  }
+
+  function renderFontSizeControls(minimal = false): React.JSX.Element {
+    return (
+      <Space size={[4, 0]} wrap>
+        {!minimal ? (
+          <Typography.Text type="secondary">Font</Typography.Text>
+        ) : null}
+        <Tooltip title="Decrease chat font size">
+          <Button
+            size="small"
+            type="text"
+            disabled={!canDecreaseFontSize}
+            onClick={decreaseFontSize}
+            style={{ minWidth: 24, padding: "0 4px" }}
+          >
+            <Icon name="minus" />
+          </Button>
+        </Tooltip>
+        <Tooltip title={`Agent chat font size: ${fontSize}px`}>
+          <Typography.Text style={{ minWidth: 28, textAlign: "center" }}>
+            {fontSize}
+          </Typography.Text>
+        </Tooltip>
+        <Tooltip title="Increase chat font size">
+          <Button
+            size="small"
+            type="text"
+            disabled={!canIncreaseFontSize}
+            onClick={increaseFontSize}
+            style={{ minWidth: 24, padding: "0 4px" }}
+          >
+            <Icon name="plus" />
+          </Button>
+        </Tooltip>
+      </Space>
+    );
   }
 
   async function resolveChatActionsForRecord(record: AgentSessionRecord): Promise<{
@@ -668,6 +761,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               }
             : {
                 width: "100%",
+                maxWidth: AGENT_CHAT_MAX_WIDTH_PX,
+                margin: "0 auto",
                 padding: "12px 16px 24px",
               }
         }
@@ -698,7 +793,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               size="small"
               type="link"
               style={{ paddingLeft: 0 }}
-              onClick={() => setInlineSession(null)}
+              onClick={() => setInlineSessionId(null)}
             >
               Back
             </Button>
@@ -718,6 +813,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             ) : null}
           </Space>
           <Space size={[4, 4]} wrap>
+            {renderFontSizeControls(true)}
             <Button
               size="small"
               type="link"
@@ -772,6 +868,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 actions={inlineActions}
                 project_id={project_id}
                 path={inlineSession.chat_path}
+                fontSize={fontSize}
                 hideSidebar
                 desc={inlineDesc}
               />
@@ -810,32 +907,42 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
           Recent agent sessions
         </Typography.Text>
-        <Space size={[6, 6]} wrap>
-          <Button
-            size="small"
-            type={scope === "mine" ? "primary" : "default"}
-            onClick={() => setScope("mine")}
-          >
-            Mine
-          </Button>
-          <Button
-            size="small"
-            type={scope === "all" ? "primary" : "default"}
-            onClick={() => setScope("all")}
-          >
-            All Users
-          </Button>
-          <Button
-            size="small"
-            type="link"
-            style={{ paddingLeft: 0 }}
-            onClick={() => setShowArchived((v) => !v)}
-          >
-            {showArchived
-              ? "Hide archived"
-              : `Show archived${archivedSessions.length ? ` (${archivedSessions.length})` : ""}`}
-          </Button>
-        </Space>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <Space size={[6, 6]} wrap>
+            <Button
+              size="small"
+              type={scope === "mine" ? "primary" : "default"}
+              onClick={() => setScope("mine")}
+            >
+              Mine
+            </Button>
+            <Button
+              size="small"
+              type={scope === "all" ? "primary" : "default"}
+              onClick={() => setScope("all")}
+            >
+              All Users
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ paddingLeft: 0 }}
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              {showArchived
+                ? "Hide archived"
+                : `Show archived${archivedSessions.length ? ` (${archivedSessions.length})` : ""}`}
+            </Button>
+          </Space>
+        </div>
       </div>
       {visibleSections.length === 0 && (!showArchived || archivedSessions.length === 0) ? (
         <Empty
