@@ -810,6 +810,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
     ) {
       return false;
     }
+    const lifecycleState = store.getIn([
+      "project_map",
+      project_id,
+      "state",
+      "state",
+    ]) as string | undefined;
+    if (lifecycleState === "starting" || lifecycleState === "running") {
+      return false;
+    }
     const assignedHostId = store.getIn(["project_map", project_id, "host_id"]) as
       | string
       | undefined;

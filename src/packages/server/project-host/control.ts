@@ -11,6 +11,8 @@ const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
 const START_PROJECT_TIMEOUT_MS = 60 * 60 * 1000;
 const STOP_PROJECT_TIMEOUT_MS = 30 * 1000;
+const RECENT_RUNNING_STATE_MS = 60 * 1000;
+const startProjectInFlight = new Map<string, Promise<void>>();
 
 type HostPlacement = {
   host_id: string;
@@ -26,6 +28,30 @@ export type ProjectMeta = {
 };
 
 const pool = () => getPool();
+
+async function getProjectStateSnapshot(
+  project_id: string,
+): Promise<{ state?: string; timeMs?: number }> {
+  try {
+    const { rows } = await pool().query<{ state: any }>(
+      "SELECT state FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    const rawState = rows[0]?.state;
+    const parsed =
+      typeof rawState === "string" ? JSON.parse(rawState) : rawState ?? {};
+    const state = parsed?.state;
+    const timeMs =
+      parsed?.time != null ? new Date(parsed.time).getTime() : undefined;
+    return {
+      state: typeof state === "string" ? state : undefined,
+      timeMs: Number.isFinite(timeMs) ? timeMs : undefined,
+    };
+  } catch (err) {
+    log.debug("getProjectStateSnapshot failed", { project_id, err: `${err}` });
+    return {};
+  }
+}
 
 export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const { rows } = await pool().query(
@@ -196,34 +222,73 @@ export async function startProjectOnHost(
   project_id: string,
   opts?: { lro_op_id?: string },
 ): Promise<void> {
-  const placement = await ensurePlacement(project_id);
-  const meta = await loadProject(project_id);
-  const run_quota = await applyHostGpuToRunQuota(
-    meta.run_quota,
-    placement.host_id,
-  );
-  const { rows } = await pool().query<{ backup_bucket_id: string | null }>(
-    "SELECT backup_bucket_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  const restore = rows[0]?.backup_bucket_id ? "auto" : "none";
-  const client = createHostControlClient({
-    host_id: placement.host_id,
-    client: conatWithProjectRouting(),
-    timeout: START_PROJECT_TIMEOUT_MS,
-  });
-  try {
-    await client.startProject({
-      project_id,
-      authorized_keys: meta.authorized_keys,
-      run_quota,
-      image: meta.image,
-      restore,
-      lro_op_id: opts?.lro_op_id,
+  const existing = startProjectInFlight.get(project_id);
+  if (existing) {
+    await existing;
+    return;
+  }
+  const task = (async () => {
+    const snapshot = await getProjectStateSnapshot(project_id);
+    if (snapshot.state === "starting") {
+      log.debug("startProjectOnHost skipping duplicate start for starting project", {
+        project_id,
+      });
+      return;
+    }
+    if (snapshot.state === "running") {
+      const isRecent =
+        snapshot.timeMs != null &&
+        Date.now() - snapshot.timeMs <= RECENT_RUNNING_STATE_MS;
+      if (isRecent) {
+        log.debug("startProjectOnHost skipping duplicate start for recently running project", {
+          project_id,
+          state_time: snapshot.timeMs,
+        });
+        return;
+      }
+    }
+
+    const placement = await ensurePlacement(project_id);
+    const meta = await loadProject(project_id);
+    const run_quota = await applyHostGpuToRunQuota(
+      meta.run_quota,
+      placement.host_id,
+    );
+    const { rows } = await pool().query<{ backup_bucket_id: string | null }>(
+      "SELECT backup_bucket_id FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    const restore = rows[0]?.backup_bucket_id ? "auto" : "none";
+    const client = createHostControlClient({
+      host_id: placement.host_id,
+      client: conatWithProjectRouting(),
+      timeout: START_PROJECT_TIMEOUT_MS,
     });
-  } catch (err) {
-    log.warn("startProjectOnHost failed", { project_id, host: placement, err });
-    throw err;
+    try {
+      await client.startProject({
+        project_id,
+        authorized_keys: meta.authorized_keys,
+        run_quota,
+        image: meta.image,
+        restore,
+        lro_op_id: opts?.lro_op_id,
+      });
+    } catch (err) {
+      log.warn("startProjectOnHost failed", {
+        project_id,
+        host: placement,
+        err,
+      });
+      throw err;
+    }
+  })();
+  startProjectInFlight.set(project_id, task);
+  try {
+    await task;
+  } finally {
+    if (startProjectInFlight.get(project_id) === task) {
+      startProjectInFlight.delete(project_id);
+    }
   }
 }
 

@@ -328,9 +328,25 @@ async function startNewProject(
   log.debug("startNewProject", { project_id });
   try {
     await project.start({ account_id });
-    // just in case
+    // Keep a conservative retry for slow host bring-up, but only if the
+    // project still is not active after a short settle window.
     await delay(5000);
-    await project.start({ account_id });
+    let state: string | undefined;
+    try {
+      state = (await project.state())?.state;
+    } catch (err) {
+      log.debug("startNewProject: unable to verify post-start state", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+    if (state != null && state !== "running" && state !== "starting") {
+      log.debug("startNewProject: retrying start after non-active state", {
+        project_id,
+        state,
+      });
+      await project.start({ account_id });
+    }
   } catch (err) {
     log.debug(`WARNING: problem starting new project -- ${err}`, {
       project_id,
