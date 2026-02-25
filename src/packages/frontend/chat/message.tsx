@@ -190,6 +190,25 @@ export function resolveEditedMessageForSave(
     : fallback;
 }
 
+export function resolveRenderedMessageValue({
+  rowValue,
+  logValue,
+  generating,
+}: {
+  rowValue: string;
+  logValue?: string;
+  generating: boolean;
+}): string {
+  if (
+    typeof logValue === "string" &&
+    logValue.trim().length > 0 &&
+    (generating || rowValue.trim().length === 0)
+  ) {
+    return logValue;
+  }
+  return rowValue;
+}
+
 export default function Message({
   index,
   actions,
@@ -510,16 +529,15 @@ export default function Message({
     }
     return getBestResponseText(codexBodyLog.events as any);
   }, [codexBodyLog.events]);
-  const renderedMessageValue = useMemo(() => {
-    if (
-      typeof codexBodyValue === "string" &&
-      codexBodyValue.trim().length > 0 &&
-      (effectiveGenerating || rowMessageValue.trim().length === 0)
-    ) {
-      return codexBodyValue;
-    }
-    return rowMessageValue;
-  }, [codexBodyValue, effectiveGenerating, rowMessageValue]);
+  const renderedMessageValue = useMemo(
+    () =>
+      resolveRenderedMessageValue({
+        rowValue: rowMessageValue,
+        logValue: codexBodyValue,
+        generating: effectiveGenerating,
+      }),
+    [codexBodyValue, effectiveGenerating, rowMessageValue],
+  );
 
   const threadKeyForSession = useMemo(
     () => (threadRootMs != null ? `${threadRootMs}` : undefined),
