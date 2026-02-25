@@ -72,6 +72,7 @@ export type AcpStreamEvent =
       type: "file";
       path: string;
       operation: "read" | "write";
+      cwd?: string;
       command?: string;
       args?: string[];
       bytes?: number;

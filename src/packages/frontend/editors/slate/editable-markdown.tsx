@@ -1415,7 +1415,26 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (dt.getData(JUPYTER_CELL_CLIPBOARD_MIME)) return false;
       const types = Array.from(dt.types ?? []);
       if (types.includes("application/x-slate-fragment")) return false;
-      const markdown = dt.getData("text/markdown");
+      const plain = dt.getData("text/plain");
+      let markdown = dt.getData("text/markdown");
+      if (!markdown?.trim()) {
+        const tagged = dt.getData("application/x-cocalc-markdown-copy");
+        if (tagged && plain?.trim()) {
+          markdown = plain;
+        }
+      }
+      if (!markdown?.trim() && plain?.trim() && typeof window !== "undefined") {
+        const cached = (window as any).__COCALC_LAST_MARKDOWN_COPY;
+        if (
+          cached &&
+          typeof cached.text === "string" &&
+          cached.text === plain &&
+          Number.isFinite(cached.at) &&
+          Date.now() - cached.at < 2 * 60 * 1000
+        ) {
+          markdown = plain;
+        }
+      }
       if (!markdown || !markdown.trim()) return false;
       event.preventDefault();
       event.stopPropagation();

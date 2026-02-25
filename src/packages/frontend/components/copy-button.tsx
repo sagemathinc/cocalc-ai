@@ -1,6 +1,5 @@
 import { Button } from "antd";
 import { CSSProperties, useEffect, useState } from "react";
-import { CopyToClipboard } from "react-copy-to-clipboard";
 
 import { Icon } from "@cocalc/frontend/components/icon";
 
@@ -26,48 +25,97 @@ export default function CopyButton({
     setCopied(false);
   }, [value]);
   const text = value ?? "";
+  const noteMarkdownCopy = () => {
+    if (!markdown) return;
+    if (typeof window === "undefined") return;
+    (window as any).__COCALC_LAST_MARKDOWN_COPY = {
+      text,
+      at: Date.now(),
+    };
+  };
 
-  const copyWithClipboardApi = async (): Promise<boolean> => {
+  const copyWithNavigatorApi = async (): Promise<boolean> => {
     if (!text) return false;
     if (typeof navigator === "undefined") return false;
-    if (!navigator.clipboard || typeof navigator.clipboard.write !== "function") {
-      return false;
-    }
-    const ClipboardItemCtor = (window as any)?.ClipboardItem;
-    if (typeof ClipboardItemCtor !== "function") return false;
     try {
-      const itemData: Record<string, Blob> = {
-        "text/plain": new Blob([text], { type: "text/plain" }),
-      };
-      if (markdown) {
-        itemData["text/markdown"] = new Blob([text], { type: "text/markdown" });
+      const ClipboardItemCtor = (window as any)?.ClipboardItem;
+      if (
+        navigator.clipboard &&
+        typeof navigator.clipboard.write === "function" &&
+        typeof ClipboardItemCtor === "function"
+      ) {
+        const itemData: Record<string, Blob> = {
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        };
+        if (markdown) {
+          itemData["text/markdown"] = new Blob([text], {
+            type: "text/markdown",
+          });
+          itemData["application/x-cocalc-markdown-copy"] = new Blob([text], {
+            type: "application/x-cocalc-markdown-copy",
+          });
+        }
+        await navigator.clipboard.write([new ClipboardItemCtor(itemData)]);
+        return true;
       }
-      await navigator.clipboard.write([new ClipboardItemCtor(itemData)]);
-      return true;
+      if (
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fallback below
+    }
+    return false;
+  };
+
+  const copyWithExecCommand = (): boolean => {
+    if (typeof document === "undefined") return false;
+    const onCopy = (event: ClipboardEvent) => {
+      const dt = event.clipboardData;
+      if (!dt) return;
+      event.preventDefault();
+      dt.setData("text/plain", text);
+      if (markdown) {
+        dt.setData("text/markdown", text);
+        dt.setData("application/x-cocalc-markdown-copy", text);
+      }
+    };
+    try {
+      document.addEventListener("copy", onCopy);
+      return document.execCommand("copy");
     } catch {
       return false;
+    } finally {
+      document.removeEventListener("copy", onCopy);
+    }
+  };
+
+  const copy = async () => {
+    if (!text) return;
+    const viaNavigator = await copyWithNavigatorApi();
+    const ok = viaNavigator || copyWithExecCommand();
+    if (ok) {
+      noteMarkdownCopy();
+      setCopied(true);
     }
   };
 
   return (
-    <CopyToClipboard text={text} onCopy={() => setCopied(true)}>
-      <Button
-        block={block}
-        size={size}
-        type="text"
-        style={style}
-        onClick={(e) => {
-          e.stopPropagation();
-          void (async () => {
-            if (await copyWithClipboardApi()) {
-              setCopied(true);
-            }
-          })();
-        }}
-      >
-        <Icon name={copied ? "check" : "copy"} />
-        {noText ? undefined : copied ? "Copied" : "Copy"}
-      </Button>
-    </CopyToClipboard>
+    <Button
+      block={block}
+      size={size}
+      type="text"
+      style={style}
+      onClick={(e) => {
+        e.stopPropagation();
+        void copy();
+      }}
+    >
+      <Icon name={copied ? "check" : "copy"} />
+      {noText ? undefined : copied ? "Copied" : "Copy"}
+    </Button>
   );
 }

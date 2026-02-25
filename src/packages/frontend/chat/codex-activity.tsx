@@ -81,6 +81,7 @@ type ActivityEntry =
       time?: number;
       path: string;
       operation: "read" | "write";
+      cwd?: string;
       command?: string;
       args?: string[];
       bytes?: number;
@@ -650,6 +651,7 @@ function createEventEntry({
       time,
       path: stringifyPath(event.path),
       operation: event.operation,
+      cwd: typeof event.cwd === "string" ? event.cwd : undefined,
       command: event.command,
       args: event.args,
       bytes: event.bytes,
@@ -1045,7 +1047,7 @@ function FileRow({
       line={entry.line}
       projectId={projectId}
       fontSize={Math.max(11, fontSize - 2)}
-      basePath={basePath}
+      basePath={entry.cwd ?? basePath}
     />
   );
   return (
