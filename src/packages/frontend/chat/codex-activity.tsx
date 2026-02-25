@@ -102,6 +102,7 @@ export interface CodexActivityProps {
   expanded?: boolean;
   virtualizeEntries?: boolean;
   scrollParent?: HTMLElement | null;
+  onOpenFileLink?: () => void;
 }
 
 // Persist log visibility per chat message so Virtuoso remounts don’t reset it.
@@ -122,6 +123,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   expanded: initExpanded,
   virtualizeEntries = false,
   scrollParent,
+  onOpenFileLink,
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
   const resolvedBasePath = useMemo(
@@ -163,6 +165,22 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
 
   const showCloseButton = IS_TOUCH || hovered;
   const useVirtualizedEntries = virtualizeEntries && entries.length > VIRTUALIZE_THRESHOLD;
+  const handleClickCapture = (e: React.MouseEvent) => {
+    if (!onOpenFileLink) return;
+    const target = e.target as HTMLElement | null;
+    const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!anchor) return;
+    const href = anchor.getAttribute("href")?.trim() ?? "";
+    if (
+      href.startsWith("cocalc-file://open") ||
+      href.startsWith("/") ||
+      href.startsWith("./") ||
+      href.startsWith("../") ||
+      href.startsWith("~/")
+    ) {
+      onOpenFileLink();
+    }
+  };
 
   if (!expanded) {
     return (
@@ -285,6 +303,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
       onMouseLeave={() => {
         if (!IS_TOUCH) setHovered(false);
       }}
+      onClickCapture={handleClickCapture}
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         {header}

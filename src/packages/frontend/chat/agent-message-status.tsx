@@ -252,6 +252,7 @@ export function AgentMessageStatus({
             inlineCodeLinks={inlineCodeLinks}
             virtualizeEntries
             scrollParent={scrollParent}
+            onOpenFileLink={handleDrawerClose}
           />
         </div>
       </Drawer>

@@ -29,6 +29,7 @@ interface Props {
   inlineCodeLinks?: InlineCodeLink[];
   virtualizeEntries?: boolean;
   scrollParent?: HTMLElement | null;
+  onOpenFileLink?: () => void;
 }
 
 export function CodexLogPanel({
@@ -51,6 +52,7 @@ export function CodexLogPanel({
   inlineCodeLinks,
   virtualizeEntries = false,
   scrollParent,
+  onOpenFileLink,
 }: Props) {
   const codexLog = useCodexLog({
     projectId: logProjectId,
@@ -117,6 +119,7 @@ export function CodexLogPanel({
       inlineCodeLinks={inlineCodeLinks}
       virtualizeEntries={virtualizeEntries}
       scrollParent={scrollParent}
+      onOpenFileLink={onOpenFileLink}
     />
   );
 }
