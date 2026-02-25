@@ -1776,18 +1776,16 @@ async function ensureAgent(
   }
 }
 
-function resolveCodexApiUrl(request?: AcpRequest): string {
-  const fromChat = `${request?.chat?.api_url ?? ""}`.trim();
-  if (fromChat) {
-    return fromChat;
-  }
+function resolveCodexApiUrl(): string {
   const explicit =
     `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
   if (explicit) {
     return explicit;
   }
   const port = `${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim();
-  return `http://127.0.0.1:${port || "9100"}`;
+  // In lite mode Codex runs on the same machine as the hub process.
+  // Prefer loopback to avoid DNS/port-forward/public-origin indirection.
+  return `http://localhost:${port || "9100"}`;
 }
 
 function buildCodexRuntimeEnv({
@@ -1805,7 +1803,7 @@ function buildCodexRuntimeEnv({
   if (projectId) out.COCALC_PROJECT_ID = projectId;
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
-  out.COCALC_API_URL = resolveCodexApiUrl(request);
+  out.COCALC_API_URL = resolveCodexApiUrl();
   const bearer =
     `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
     `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();

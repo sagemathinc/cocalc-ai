@@ -324,10 +324,15 @@ function daemonContextKey(globals: GlobalOptions): string {
 }
 
 function defaultApiBaseUrl(): string {
-  const raw =
-    process.env.COCALC_API_URL ??
-    process.env.BASE_URL ??
-    `http://127.0.0.1:${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`;
+  const fromEnv = process.env.COCALC_API_URL ?? process.env.BASE_URL;
+  if (fromEnv?.trim()) {
+    return normalizeUrl(fromEnv);
+  }
+  const info = loadLiteConnectionInfo();
+  if (info?.url?.trim()) {
+    return normalizeUrl(info.url);
+  }
+  const raw = `http://127.0.0.1:${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`;
   return normalizeUrl(raw);
 }
 
@@ -560,6 +565,7 @@ function maybeApplyLiteAgentAuth({
     !!normalizeOptionalSecret(globals.apiKey) ||
     !!normalizeSecretValue(globals.hubPassword) ||
     !!normalizeOptionalSecret(process.env.COCALC_BEARER_TOKEN) ||
+    !!normalizeOptionalSecret(process.env.COCALC_AGENT_TOKEN) ||
     !!normalizeOptionalSecret(process.env.COCALC_API_KEY) ||
     !!normalizeSecretValue(process.env.COCALC_HUB_PASSWORD);
   if (hasExplicitAuth) return globals;
@@ -641,15 +647,16 @@ async function connectRemote({
     extraHeaders.Cookie = cookie;
   }
   const bearer = globals.bearer ?? process.env.COCALC_BEARER_TOKEN;
-  if (bearer?.trim()) {
-    extraHeaders.Authorization = `Bearer ${bearer.trim()}`;
+  const effectiveBearer = bearer ?? process.env.COCALC_AGENT_TOKEN;
+  if (effectiveBearer?.trim()) {
+    extraHeaders.Authorization = `Bearer ${effectiveBearer.trim()}`;
   }
   cliDebug("connectRemote", {
     apiBaseUrl,
     timeoutMs,
     signInTimeoutMs,
     hasCookie: !!cookie,
-    hasBearer: !!bearer?.trim(),
+    hasBearer: !!effectiveBearer?.trim(),
     hasApiKey: !!(globals.apiKey ?? process.env.COCALC_API_KEY),
     hasHubPassword: hasHubPassword(globals),
   });

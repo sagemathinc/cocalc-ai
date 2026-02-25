@@ -60,20 +60,23 @@ const IMMEDIATE_SEND_GUIDANCE = [
   "[/CoCalc immediate-send behavior]",
 ].join(" ");
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
-const COCALC_RUNTIME_GUIDANCE_HEADER = [
-  "[CoCalc runtime capabilities]",
-  "This turn may run with CoCalc CLI/browser automation context.",
-  "If relevant, you can use `cocalc` CLI to inspect browser state and run browser exec scripts.",
-  "Prefer scoped variables already provided in environment, e.g.:",
-  "- COCALC_PROJECT_ID",
-  "- COCALC_BROWSER_ID",
-  "- COCALC_API_URL",
-  "- COCALC_BEARER_TOKEN",
-  "Typical safe pattern:",
-  "1) Inspect API: cocalc browser exec-api --browser \"$COCALC_BROWSER_ID\"",
-  "2) Execute in browser: cocalc browser exec --project-id \"$COCALC_PROJECT_ID\" --browser \"$COCALC_BROWSER_ID\" --file <script.js>",
-  "[/CoCalc runtime capabilities]",
-].join("\n");
+function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
+  return [
+    "[CoCalc runtime capabilities]",
+    "This turn may run with CoCalc CLI/browser automation context.",
+    `If relevant, you can use \`${cliCommand}\` to inspect browser state and run browser exec scripts.`,
+    "Prefer scoped variables already provided in environment, e.g.:",
+    "- COCALC_PROJECT_ID",
+    "- COCALC_BROWSER_ID",
+    "- COCALC_API_URL",
+    "- COCALC_BEARER_TOKEN",
+    "Typical safe pattern:",
+    `1) Inspect API: ${cliCommand} browser exec-api`,
+    `2) Execute in browser: ${cliCommand} browser exec --project-id \"$COCALC_PROJECT_ID\" --file <script.js>`,
+    "(`COCALC_BROWSER_ID` is used automatically when set.)",
+    "[/CoCalc runtime capabilities]",
+  ].join("\n");
+}
 
 function redactArgsForLog(args: string[]): string {
   const out = [...args];
@@ -797,7 +800,9 @@ export class CodexExecAgent implements AcpAgent {
     if (!hasProject || !hasBrowser) {
       return prompt;
     }
-    return `${COCALC_RUNTIME_GUIDANCE_HEADER}\n\n${prompt}`;
+    const rawCli = `${runtimeEnv?.COCALC_CLI_BIN ?? ""}`.trim();
+    const cliCommand = rawCli ? `"${rawCli}"` : "cocalc";
+    return `${getCoCalcRuntimeGuidanceHeader(cliCommand)}\n\n${prompt}`;
   }
 
   private async handleItem(

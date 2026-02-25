@@ -80,6 +80,8 @@ export async function main(opts?: {
   const { httpServer, app, port, isHttps, hostname } = await initHttpServer({
     AUTH_TOKEN,
   });
+  const LOCAL_API_URL = `http://localhost:${port}`;
+  process.env.COCALC_API_URL = LOCAL_API_URL;
   if (!AUTH_TOKEN) {
     if (isLoopbackHost(hostname)) {
       logger.warn(
@@ -143,6 +145,7 @@ export async function main(opts?: {
   cleanup();
   // cleanup() intentionally drops inherited COCALC_* env vars; restore the
   // subset needed by lite ACP/Codex runtime wiring.
+  process.env.COCALC_API_URL = LOCAL_API_URL;
   if (AGENT_TOKEN) {
     process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
   }
