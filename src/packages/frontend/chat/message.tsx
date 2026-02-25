@@ -1522,6 +1522,21 @@ export default function Message({
     if (!actions) return;
     cancelQueuedAcpTurn({ actions, message });
   };
+  const handleSendQueuedImmediately = () => {
+    if (!actions) return;
+    const canceled = cancelQueuedAcpTurn({ actions, message });
+    if (!canceled) return;
+    const text = newest_content(message)?.trim();
+    if (!text) return;
+    const rootIso = replyTo(message) ?? threadRootIso;
+    if (!rootIso) return;
+    actions.sendChat({
+      input: text,
+      reply_to: new Date(rootIso),
+      send_mode: "immediate",
+      noNotification: true,
+    });
+  };
 
   const acpStateToRender = useMemo(() => {
     return computeAcpStateToRender({
@@ -1538,6 +1553,13 @@ export default function Message({
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <Tag color="gold">queued</Tag>
+          <Button
+            size="small"
+            type="text"
+            onClick={handleSendQueuedImmediately}
+          >
+            Send now
+          </Button>
           <Button size="small" type="text" onClick={handleCancelQueued}>
             Cancel
           </Button>

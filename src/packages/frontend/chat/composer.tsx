@@ -513,7 +513,7 @@ export function ChatRoomComposer({
               <Button
                 onClick={handleSend}
                 disabled={!hasInput}
-                type={hasActiveAcpTurn && isSelectedThreadAI ? "default" : "primary"}
+                type="primary"
                 icon={<Icon name="paper-plane" />}
               >
                 {hasActiveAcpTurn && isSelectedThreadAI ? (
@@ -536,10 +536,10 @@ export function ChatRoomComposer({
                   <Button
                     onClick={handleSendImmediately}
                     disabled={!hasInput}
-                    type="primary"
+                    type="default"
                     icon={<Icon name="bolt" />}
                   >
-                    Send Immediately
+                    Send Now
                   </Button>
                 </Tooltip>
               </>
