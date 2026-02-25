@@ -465,6 +465,7 @@ export function ChatRoomComposer({
             sessionToken={composerSession}
             editBarStyle={{ overflow: "auto" }}
             placeholder={composerPlaceholder}
+            externalMultilinePasteAsCodeBlock
           />
         </div>
       </div>

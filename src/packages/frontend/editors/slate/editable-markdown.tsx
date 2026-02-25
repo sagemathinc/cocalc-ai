@@ -61,7 +61,7 @@ import { withInsertBreakHack } from "./elements/link/editable";
 import { createMention } from "./elements/mention/editable";
 import { Mention } from "./elements/mention/index";
 import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
-import { getCodeBlockText } from "./elements/code-block/utils";
+import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
 import { withAutoFormat } from "./format";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import Leaf from "./leaf-with-cursor";
@@ -221,6 +221,7 @@ interface Props {
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
   disableBlockEditor?: boolean;
+  externalMultilinePasteAsCodeBlock?: boolean;
   onSlateChange?: (
     value: Descendant[],
     opts: { onlySelectionOps: boolean; syncCausedUpdate: boolean },
@@ -272,6 +273,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     controlRef,
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
+    externalMultilinePasteAsCodeBlock = false,
     onSlateChange,
     jupyterGapCursor,
     setJupyterGapCursor,
@@ -1408,6 +1410,55 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [pasteJupyterCellNodes],
   );
 
+  const insertMultilinePasteAsCodeBlock = useCallback(
+    (text: string): boolean => {
+      const normalized = text.replace(/\r\n?/g, "\n");
+      if (!/[\r\n]/.test(normalized)) return false;
+      const pasteId = `ext-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      Transforms.insertNodes(
+        editor,
+        [
+          {
+            type: "code_block",
+            fence: true,
+            info: "",
+            markdownCandidate: true,
+            pasteId,
+            children: toCodeLines(normalized),
+          } as any,
+          {
+            type: "paragraph",
+            children: [{ text: "" }],
+          } as any,
+        ],
+        editor.selection?.focus != null ? { at: editor.selection.focus } : undefined,
+      );
+      try {
+        const entry = Editor.nodes(editor, {
+          at: [],
+          match: (node) =>
+            SlateElement.isElement(node) &&
+            node.type === "code_block" &&
+            node["pasteId"] === pasteId,
+        }).next().value as [SlateElement, number[]] | undefined;
+        if (entry) {
+          const [, codePath] = entry;
+          const spacerPath = [codePath[0] + 1];
+          const start = Editor.start(editor, spacerPath);
+          Transforms.select(editor, { anchor: start, focus: start });
+          ReactEditor.focus(editor);
+          Transforms.setNodes(editor, { pasteId: undefined } as any, {
+            at: codePath,
+          });
+        }
+      } catch {
+        // ignore selection positioning failures; insertion already succeeded.
+      }
+      return true;
+    },
+    [editor],
+  );
+
   const handleMarkdownClipboardPaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
       const dt = event.clipboardData;
@@ -1435,6 +1486,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           markdown = plain;
         }
       }
+      if (
+        externalMultilinePasteAsCodeBlock &&
+        (!markdown || !markdown.trim()) &&
+        plain?.trim() &&
+        /[\r\n]/.test(plain)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return insertMultilinePasteAsCodeBlock(plain);
+      }
       if (!markdown || !markdown.trim()) return false;
       event.preventDefault();
       event.stopPropagation();
@@ -1449,7 +1510,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
       return false;
     },
-    [editor],
+    [
+      editor,
+      externalMultilinePasteAsCodeBlock,
+      insertMultilinePasteAsCodeBlock,
+    ],
   );
 
   function onKeyDown(e) {

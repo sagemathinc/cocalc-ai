@@ -147,6 +147,7 @@ interface Props {
 
   controlRef?: MutableRefObject<any>;
   preserveBlankLines?: boolean;
+  slateExternalMultilinePasteAsCodeBlock?: boolean;
 }
 
 export default function MultiMarkdownInput({
@@ -199,6 +200,7 @@ export default function MultiMarkdownInput({
   controlRef,
   preserveBlankLines = true,
   disableBlockEditor = true,
+  slateExternalMultilinePasteAsCodeBlock = false,
 }: Props) {
   const {
     isFocused: isFocusedFrame,
@@ -668,6 +670,9 @@ export default function MultiMarkdownInput({
             dirtyRef={dirtyRef}
             controlRef={slateControlRef}
             preserveBlankLines={preserveBlankLines}
+            externalMultilinePasteAsCodeBlock={
+              slateExternalMultilinePasteAsCodeBlock
+            }
           />
         </div>
       ) : undefined}

@@ -47,6 +47,7 @@ interface Props {
   moveCursorToEndOfLine?: boolean;
   sessionToken?: number;
   fixedMode?: "markdown" | "editor";
+  externalMultilinePasteAsCodeBlock?: boolean;
 }
 
 type HistoryEntry = {
@@ -86,6 +87,7 @@ export default function ChatInput({
   autoGrowMaxHeight,
   sessionToken,
   fixedMode,
+  externalMultilinePasteAsCodeBlock,
 }: Props) {
   const intl = useIntl();
   const controlRef = useRef<any>(null);
@@ -203,6 +205,9 @@ export default function ChatInput({
   return (
     <MarkdownInput
       fixedMode={fixedMode}
+      slateExternalMultilinePasteAsCodeBlock={
+        externalMultilinePasteAsCodeBlock
+      }
       autoFocus={autoFocus}
       saveDebounceMs={CHAT_INPUT_SAVE_DEBOUNCE_MS}
       onFocus={() => {
