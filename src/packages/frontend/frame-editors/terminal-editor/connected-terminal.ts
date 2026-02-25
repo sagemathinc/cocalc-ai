@@ -261,8 +261,14 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         // not supposed to be running
         return;
       }
-      // make a call to the backend to check on the pty itself
-      if ((await this.pty.state()) != "running") {
+      try {
+        // make a call to the backend to check on the pty itself
+        if ((await this.pty.state()) != "running") {
+          this.connect();
+        }
+      } catch {
+        // The socket can briefly target a stale terminal server subject
+        // during project startup/restart. Force reconnect immediately.
         this.connect();
       }
     },
@@ -1073,7 +1079,13 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   resizeToFitAllClients = asyncThrottle(
     async () => {
-      const sizes = await this.pty?.sizes(2000);
+      let sizes: undefined | { rows: number; cols: number }[];
+      try {
+        sizes = await this.pty?.sizes(2000);
+      } catch {
+        this.connect();
+        return;
+      }
       if (sizes == null || sizes.length < 2) {
         return;
       }

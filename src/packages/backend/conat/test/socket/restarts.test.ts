@@ -74,6 +74,11 @@ describe("create a client and server and socket, verify it works, restart conat 
     expect((await client.request(null)).data).toBe("hello");
   });
 
+  it("request recovers if the client has a stale server subject", async () => {
+    (client as any).serverId = "stale-server-id";
+    expect((await client.request(null, { timeout: 2000 })).data).toBe("hello");
+  });
+
   it("observes the socket did not disconnect - they never do until a timeout or being explicitly closed, which is the point of sockets -- they are robust to client connection state", async () => {
     expect(socketDisconnects.length).toBe(0);
   });

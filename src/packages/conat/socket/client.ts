@@ -28,6 +28,7 @@ export class ConatSocketClient extends ConatSocketBase {
   private alive?: KeepAlive;
   private serverId?: string;
   private loadBalancer?: (subject: string) => Promise<string>;
+  private requestRetryInFlight = false;
 
   constructor(opts: ConatSocketOptions) {
     super(opts);
@@ -251,21 +252,82 @@ export class ConatSocketClient extends ConatSocketBase {
   };
 
   request = async (data, options?) => {
+    const timeout = options?.timeout;
+    const doRequest = async () => {
+      try {
+        await this.waitUntilReady(timeout);
+      } catch {
+        throw Error("request timed out");
+      }
+      if (this.state == "closed") {
+        throw Error("closed");
+      }
+      // console.log("sending request from client ", { subject, data, options });
+      return await this.client.request(this.serverSubject(), data, {
+        waitForInterest: options?.waitForInterest ?? true,
+        ...options,
+      });
+    };
+
     try {
-      await this.waitUntilReady(options?.timeout);
-    } catch {
-      throw Error("request timed out");
+      return await doRequest();
+    } catch (err) {
+      if (!this.shouldRetrySocketRequest(err)) {
+        throw err;
+      }
+      await this.reconnectAndWait(timeout);
+      return await doRequest();
     }
-    if (this.state == "closed") {
-      throw Error("closed");
-    }
-    // console.log("sending request from client ", { subject, data, options });
-    return await this.client.request(this.serverSubject(), data, options);
   };
 
   requestMany = async (data, options?): Promise<Subscription> => {
-    await this.waitUntilReady(options?.timeout);
-    return await this.client.requestMany(this.serverSubject(), data, options);
+    const timeout = options?.timeout;
+    const doRequestMany = async () => {
+      await this.waitUntilReady(timeout);
+      return await this.client.requestMany(this.serverSubject(), data, {
+        waitForInterest: options?.waitForInterest ?? true,
+        ...options,
+      });
+    };
+    try {
+      return await doRequestMany();
+    } catch (err) {
+      if (!this.shouldRetrySocketRequest(err)) {
+        throw err;
+      }
+      await this.reconnectAndWait(timeout);
+      return await doRequestMany();
+    }
+  };
+
+  private shouldRetrySocketRequest = (err: unknown): boolean => {
+    if (this.state == "closed") {
+      return false;
+    }
+    const msg = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+    const code = `${(err as any)?.code ?? ""}`.toLowerCase();
+    if (code === "503" || code === "408") {
+      return true;
+    }
+    return (
+      msg.includes("no subscribers matching") ||
+      msg.includes("request timed out") ||
+      msg === "timeout"
+    );
+  };
+
+  private reconnectAndWait = async (timeout?: number): Promise<void> => {
+    if (this.requestRetryInFlight) {
+      await this.waitUntilReady(timeout);
+      return;
+    }
+    this.requestRetryInFlight = true;
+    try {
+      this.disconnect();
+      await this.waitUntilReady(timeout);
+    } finally {
+      this.requestRetryInFlight = false;
+    }
   };
 
   async end({ timeout = 3000 }: { timeout?: number } = {}) {
