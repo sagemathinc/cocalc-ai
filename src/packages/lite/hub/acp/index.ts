@@ -1804,6 +1804,7 @@ function buildCodexRuntimeEnv({
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
   out.COCALC_API_URL = resolveCodexApiUrl();
+  out.COCALC_CLI_AGENT_MODE = "1";
   const bearer =
     `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
     `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();

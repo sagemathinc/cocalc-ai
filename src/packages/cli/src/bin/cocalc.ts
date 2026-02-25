@@ -378,26 +378,86 @@ function emitError(
   emitErrorCore(ctx, commandName, error, normalizeUrl);
 }
 
+function optionValueSource(command: any, optionName: string): string | undefined {
+  let cur = command;
+  while (cur && typeof cur === "object") {
+    if (typeof cur.getOptionValueSource === "function") {
+      const source = cur.getOptionValueSource(optionName);
+      if (typeof source === "string" && source.length > 0) {
+        return source;
+      }
+    }
+    cur = cur.parent;
+  }
+  if (typeof program?.getOptionValueSource === "function") {
+    const source = program.getOptionValueSource(optionName);
+    if (typeof source === "string" && source.length > 0) {
+      return source;
+    }
+  }
+  return undefined;
+}
+
+function isCliAgentModeEnabled(): boolean {
+  return (
+    normalizeBoolean(process.env.COCALC_CLI_AGENT_MODE) ||
+    normalizeBoolean(process.env.COCALC_AGENT_MODE)
+  );
+}
+
+function applyAgentModeOutputDefaults(
+  globals: GlobalOptions,
+  command: unknown,
+): GlobalOptions {
+  if (!isCliAgentModeEnabled()) return globals;
+  const cmd = command as any;
+  const jsonSource = optionValueSource(cmd, "json");
+  const outputSource = optionValueSource(cmd, "output");
+  const quietSource = optionValueSource(cmd, "quiet");
+  const explicitJson = jsonSource === "cli";
+  const explicitOutput = outputSource === "cli";
+  const explicitQuiet = quietSource === "cli";
+
+  const next: GlobalOptions = { ...globals };
+  if (!explicitJson && !explicitOutput && !next.json && !next.output) {
+    next.output = "json";
+  }
+  const effectiveJson = next.json || next.output === "json";
+  if (effectiveJson && !explicitQuiet && next.quiet == null) {
+    next.quiet = true;
+  }
+  return next;
+}
+
 function globalsFrom(command: unknown): GlobalOptions {
   const cmd = command as any;
   if (cmd && typeof cmd === "object") {
     if (typeof cmd.optsWithGlobals === "function") {
-      return cmd.optsWithGlobals() as GlobalOptions;
+      return applyAgentModeOutputDefaults(
+        cmd.optsWithGlobals() as GlobalOptions,
+        command,
+      );
     }
     if (typeof cmd.opts === "function") {
-      return cmd.opts() as GlobalOptions;
+      return applyAgentModeOutputDefaults(cmd.opts() as GlobalOptions, command);
     }
     if (cmd.parent && typeof cmd.parent.optsWithGlobals === "function") {
-      return cmd.parent.optsWithGlobals() as GlobalOptions;
+      return applyAgentModeOutputDefaults(
+        cmd.parent.optsWithGlobals() as GlobalOptions,
+        command,
+      );
     }
     if (cmd.parent && typeof cmd.parent.opts === "function") {
-      return cmd.parent.opts() as GlobalOptions;
+      return applyAgentModeOutputDefaults(
+        cmd.parent.opts() as GlobalOptions,
+        command,
+      );
     }
   }
   if (typeof program?.opts === "function") {
-    return program.opts() as GlobalOptions;
+    return applyAgentModeOutputDefaults(program.opts() as GlobalOptions, command);
   }
-  return {};
+  return applyAgentModeOutputDefaults({}, command);
 }
 
 function getExplicitAccountId(globals: GlobalOptions): string | undefined {

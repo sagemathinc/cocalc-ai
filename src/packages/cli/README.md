@@ -98,6 +98,7 @@ inherit these env vars:
 - `COCALC_PROJECT_ID`
 - `COCALC_BROWSER_ID`
 - `COCALC_CLI_BIN` (optional explicit path)
+- `COCALC_CLI_AGENT_MODE` (`1` enables machine-friendly defaults: JSON output unless explicitly overridden)
 
 Recommended browser automation pattern inside a turn:
 
