@@ -1548,9 +1548,13 @@ export class Client extends EventEmitter {
   fs = (opts: {
     project_id: string;
     service?: string;
+    timeout?: number;
+    waitForInterest?: boolean;
   }) => {
     return fsClient({
       subject: fsSubject(opts),
+      timeout: opts.timeout,
+      waitForInterest: opts.waitForInterest,
       client: this,
     });
   };

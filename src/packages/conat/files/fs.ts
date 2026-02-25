@@ -718,13 +718,18 @@ export function fsClient({
   client,
   subject,
   timeout = DEFAULT_FS_CALL_TIMEOUT,
+  waitForInterest = true,
 }: {
   client?: Client;
   subject: string;
   timeout?: number;
+  waitForInterest?: boolean;
 }): FilesystemClient {
   client ??= conat();
-  let call = client.call<FilesystemClient>(subject, { timeout });
+  let call = client.call<FilesystemClient>(subject, {
+    timeout,
+    waitForInterest,
+  });
 
   const readdir0 = call.readdir.bind(call);
   call.readdir = async (path: string, options?) => {
