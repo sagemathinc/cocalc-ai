@@ -279,7 +279,8 @@ export class ChatActions extends Actions<ChatState> {
 
   private getSyncdbOne(where: Record<string, unknown>): any | null {
     if (this.syncdb == null) return null;
-    if (this.syncdb.get_state?.() !== "ready") return null;
+    const state = this.syncdb.get_state?.();
+    if (state != null && state !== "ready") return null;
     try {
       return this.syncdb.get_one(where) ?? null;
     } catch {
@@ -978,7 +979,8 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) {
       return false;
     }
-    if (this.syncdb.get_state?.() !== "ready") {
+    const state = this.syncdb.get_state?.();
+    if (state != null && state !== "ready") {
       return false;
     }
     const account_id = this.redux.getStore("account").get_account_id();
