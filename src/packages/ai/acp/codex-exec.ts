@@ -850,6 +850,7 @@ export class CodexExecAgent implements AcpAgent {
                 type: "file",
                 path: pathForEvent,
                 operation: "read",
+                command: item.command,
                 line: readInfo.line,
                 limit: readInfo.limit,
                 bytes,
@@ -868,6 +869,7 @@ export class CodexExecAgent implements AcpAgent {
                 type: "file",
                 path: pathForEvent,
                 operation: "write",
+                command: item.command,
               },
             });
           }

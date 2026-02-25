@@ -80,6 +80,8 @@ type ActivityEntry =
       time?: number;
       path: string;
       operation: "read" | "write";
+      command?: string;
+      args?: string[];
       bytes?: number;
       truncated?: boolean;
       line?: number;
@@ -637,6 +639,8 @@ function createEventEntry({
       time,
       path: stringifyPath(event.path),
       operation: event.operation,
+      command: event.command,
+      args: event.args,
       bytes: event.bytes,
       truncated: event.truncated,
       line: event.line,
@@ -995,12 +999,14 @@ function FileRow({
   projectId?: string;
   basePath?: string;
 }) {
+  const [showCommand, setShowCommand] = useState(false);
   const isRead = entry.operation === "read";
   const actionLabel = isRead
     ? "Read"
     : entry.existed === false
       ? "Created"
       : "Wrote";
+  const commandLine = formatCommand(entry.command, entry.args);
   const scope = formatReadScope(entry);
   const sizeLabel =
     typeof entry.bytes === "number" ? formatByteCount(entry.bytes) : undefined;
@@ -1044,7 +1050,23 @@ function FileRow({
             Partial content
           </Tag>
         ) : null}
+        {commandLine ? (
+          <Button
+            size="small"
+            type="link"
+            style={{ padding: 0 }}
+            onClick={() => setShowCommand((v) => !v)}
+          >
+            {showCommand ? "Hide command" : "Show command"}
+          </Button>
+        ) : null}
       </Space>
+      {showCommand && commandLine ? (
+        <StaticMarkdown
+          value={toFencedCodeBlock(`$ ${commandLine}`, "sh")}
+          style={{ fontSize, marginTop: 2 }}
+        />
+      ) : null}
     </div>
   );
 }
