@@ -69,6 +69,7 @@ import {
 } from "../sqlite/acp-turns";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
+import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
 
 // how many ms between saving output during a running turn
 // so that everybody sees it.
@@ -79,6 +80,12 @@ const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
 const MESSAGE_ID_LOOKUP_WARN_EVERY = 100;
 const ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK = false;
 const ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK = false;
+const CHAT_OFFLOAD_AUTOROTATE_ENABLED =
+  `${process.env.COCALC_CHAT_OFFLOAD_AUTOROTATE ?? "1"}`.trim() !== "0";
+const CHAT_OFFLOAD_AUTOROTATE_COOLDOWN_MS = 60_000;
+const CHAT_OFFLOAD_AUTOROTATE_KEEP_MESSAGES = 500;
+const CHAT_OFFLOAD_AUTOROTATE_MAX_BYTES = 2 * 1024 * 1024;
+const CHAT_OFFLOAD_AUTOROTATE_MAX_MESSAGES = 500;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -140,6 +147,55 @@ let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
 let acpMissingThreadIdFallbacks = 0;
 let acpDateSenderLookupFallbacks = 0;
+const chatOffloadRotateAt = new Map<string, number>();
+
+async function maybeAutoRotateChatStore({
+  chatPath,
+  chatKey,
+}: {
+  chatPath?: string;
+  chatKey: string;
+}): Promise<void> {
+  if (!CHAT_OFFLOAD_AUTOROTATE_ENABLED) return;
+  if (!chatPath || !path.isAbsolute(chatPath)) return;
+  const now = Date.now();
+  const last = chatOffloadRotateAt.get(chatPath) ?? 0;
+  if (now - last < CHAT_OFFLOAD_AUTOROTATE_COOLDOWN_MS) return;
+  chatOffloadRotateAt.set(chatPath, now);
+  try {
+    const result = await rotateChatStore({
+      chat_path: chatPath,
+      keep_recent_messages: CHAT_OFFLOAD_AUTOROTATE_KEEP_MESSAGES,
+      max_head_bytes: CHAT_OFFLOAD_AUTOROTATE_MAX_BYTES,
+      max_head_messages: CHAT_OFFLOAD_AUTOROTATE_MAX_MESSAGES,
+      require_idle: true,
+      force: false,
+    });
+    if (result.rotated) {
+      logger.info("chat offload autorotate completed", {
+        chatKey,
+        chatPath,
+        segment_id: result.segment_id,
+        archived_rows: result.archived_rows,
+        head_bytes_before: result.head_bytes_before,
+        head_bytes_after: result.head_bytes_after,
+        rewrite_warning: result.rewrite_warning,
+      });
+    } else if (result.reason && result.reason !== "thresholds not exceeded") {
+      logger.debug("chat offload autorotate skipped", {
+        chatKey,
+        chatPath,
+        reason: result.reason,
+      });
+    }
+  } catch (err) {
+    logger.warn("chat offload autorotate failed", {
+      chatKey,
+      chatPath,
+      err: `${err}`,
+    });
+  }
+}
 
 function safeJsonParse(value: string): any | undefined {
   try {
@@ -1027,6 +1083,10 @@ export class ChatStreamWriter {
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
       void this.persistLog();
+      void maybeAutoRotateChatStore({
+        chatPath: this.resolveChatFilePath(),
+        chatKey: this.chatKey,
+      });
       return;
     }
     if (payload.type === "error") {
@@ -1041,6 +1101,10 @@ export class ChatStreamWriter {
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
       );
       void this.persistLog();
+      void maybeAutoRotateChatStore({
+        chatPath: this.resolveChatFilePath(),
+        chatKey: this.chatKey,
+      });
     }
   }
 
@@ -1086,6 +1150,15 @@ export class ChatStreamWriter {
     });
     this.inlineCodeLinksCache = { content, links };
     return links.length ? links : undefined;
+  }
+
+  private resolveChatFilePath(): string | undefined {
+    const chatPath = `${this.metadata.path ?? ""}`.trim();
+    if (!chatPath) return;
+    if (path.isAbsolute(chatPath)) return path.resolve(chatPath);
+    const root = this.hostWorkspaceRoot ?? this.workspaceRoot;
+    if (!root || !path.isAbsolute(root)) return;
+    return path.resolve(root, chatPath);
   }
 
   private commitNow(
