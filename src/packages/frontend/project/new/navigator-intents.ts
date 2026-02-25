@@ -1,3 +1,11 @@
+import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
+import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
+import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import {
+  loadNavigatorSelectedThreadKey,
+  saveNavigatorSelectedThreadKey,
+} from "./navigator-state";
 import { uuid } from "@cocalc/util/misc";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
@@ -10,6 +18,110 @@ export interface NavigatorSubmitPromptDetail {
   prompt: string;
   tag?: string;
   forceCodex?: boolean;
+}
+
+function toReplyDate(threadKey?: string | null): Date | undefined {
+  if (!threadKey || !/^\d+$/.test(threadKey)) return;
+  const ms = Number(threadKey);
+  if (!Number.isFinite(ms)) return;
+  return new Date(ms);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getField(obj: any, key: string): any {
+  if (obj == null) return undefined;
+  if (typeof obj?.get === "function") return obj.get(key);
+  return obj[key];
+}
+
+function chooseThreadKeyFromIndex(opts: {
+  actions: any;
+  preferredThreadKey?: string;
+  fallbackThreadKey?: string;
+}): string {
+  const index = opts.actions?.messageCache?.getThreadIndex?.();
+  if (!index?.size) {
+    return `${opts.fallbackThreadKey ?? ""}`.trim();
+  }
+  const preferred = `${opts.preferredThreadKey ?? ""}`.trim();
+  if (preferred && index.has(preferred)) {
+    return preferred;
+  }
+  const fallback = `${opts.fallbackThreadKey ?? ""}`.trim();
+  if (fallback && index.has(fallback)) {
+    return fallback;
+  }
+  let bestKey = "";
+  let bestTime = -Infinity;
+  for (const thread of index.values()) {
+    const key = `${thread?.key ?? ""}`.trim();
+    if (!key) continue;
+    const t = Number(thread?.newestTime ?? -Infinity);
+    if (t > bestTime) {
+      bestKey = key;
+      bestTime = t;
+    }
+  }
+  return bestKey || fallback;
+}
+
+function hasThreadRootIdentity(actions: any, threadKey?: string): boolean {
+  const key = `${threadKey ?? ""}`.trim();
+  if (!key || !/^\d+$/.test(key)) return false;
+  const root = actions?.getMessageByDate?.(Number(key));
+  if (!root) return false;
+  const messageId = getField(root, "message_id");
+  const threadId = getField(root, "thread_id");
+  return (
+    typeof messageId === "string" &&
+    messageId.length > 0 &&
+    typeof threadId === "string" &&
+    threadId.length > 0
+  );
+}
+
+async function waitForThreadReady(opts: {
+  actions: any;
+  threadKey?: string;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  const timeoutMs = Math.max(500, opts.timeoutMs ?? 6000);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const state = opts.actions?.syncdb?.get_state?.();
+    const ready = state === "ready";
+    if (ready) {
+      const key = `${opts.threadKey ?? ""}`.trim();
+      if (!key || hasThreadRootIdentity(opts.actions, key)) {
+        return true;
+      }
+    }
+    await sleep(100);
+  }
+  return false;
+}
+
+function pickNavigatorSession({
+  records,
+  preferredThreadKey,
+}: {
+  records: AgentSessionRecord[];
+  preferredThreadKey?: string;
+}): AgentSessionRecord | undefined {
+  const global = records.filter((record) => record.entrypoint === "global");
+  if (global.length === 0) return;
+  const preferred = `${preferredThreadKey ?? ""}`.trim();
+  if (preferred) {
+    const match = global.find((record) => record.thread_key === preferred);
+    if (match) return match;
+  }
+  return (
+    global.find((record) => record.status !== "archived") ??
+    global[0]
+  );
 }
 
 function readQueue(): NavigatorSubmitPromptDetail[] {
@@ -83,4 +195,102 @@ export function dispatchNavigatorPromptIntent(opts: {
     );
   }
   return intent;
+}
+
+export async function submitNavigatorPromptToCurrentThread(opts: {
+  project_id: string;
+  prompt: string;
+  tag?: string;
+  forceCodex?: boolean;
+  openFloating?: boolean;
+}): Promise<boolean> {
+  try {
+    const project_id = `${opts.project_id ?? ""}`.trim();
+    const basePrompt = `${opts.prompt ?? ""}`.trim();
+    if (!project_id || !basePrompt) return false;
+
+    const preferredThreadKey = loadNavigatorSelectedThreadKey(project_id);
+    const sessions = await listAgentSessionsForProject({ project_id });
+    const session = pickNavigatorSession({ records: sessions, preferredThreadKey });
+    if (!session?.chat_path) return false;
+
+    const threadKey = `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
+    const input = basePrompt;
+    if (!input) return false;
+
+    const instanceKey = "navigator-intent-dispatch";
+    const actions =
+      getChatActions(project_id, session.chat_path, { instanceKey }) ??
+      initChat(project_id, session.chat_path, { instanceKey });
+
+    if (!actions) return false;
+    const ready = await waitForThreadReady({
+      actions,
+      timeoutMs: 6000,
+    });
+    if (!ready) return false;
+    const resolvedThreadKey = chooseThreadKeyFromIndex({
+      actions,
+      preferredThreadKey,
+      fallbackThreadKey: threadKey,
+    });
+    if (!resolvedThreadKey) return false;
+    const rootReady = await waitForThreadReady({
+      actions,
+      threadKey: resolvedThreadKey,
+      timeoutMs: 1500,
+    });
+    if (!rootReady) return false;
+
+    const replyTo = toReplyDate(resolvedThreadKey);
+    const model =
+      typeof session.model === "string" && session.model.trim().length > 0
+        ? session.model.trim()
+        : undefined;
+    const timeStamp = actions.sendChat({
+      input,
+      reply_to: replyTo,
+      tag: opts.tag ?? "intent:navigator",
+      noNotification: true,
+      threadAgent:
+        !replyTo && opts.forceCodex !== false
+          ? {
+              mode: "codex",
+              model,
+              codexConfig: {
+                model,
+                reasoning: session.reasoning as any,
+                sessionMode: session.mode as any,
+                workingDirectory: session.working_directory,
+              },
+            }
+          : undefined,
+    });
+    if (!timeStamp) {
+      return false;
+    }
+
+    const nextThreadKey =
+      resolvedThreadKey ||
+      (typeof timeStamp === "string"
+        ? `${new Date(timeStamp).valueOf()}`
+        : "");
+    if (nextThreadKey) {
+      saveNavigatorSelectedThreadKey(nextThreadKey);
+    }
+    if (opts.openFloating !== false) {
+      openFloatingAgentSession(project_id, {
+        ...session,
+        thread_key: nextThreadKey || session.thread_key,
+        updated_at: new Date().toISOString(),
+        status: "active",
+      });
+    }
+    setTimeout(() => {
+      actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+    }, 50);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -46,6 +46,32 @@ const logger = getLogger("lite:main");
 export let conatServer: ConatServer | null = null;
 export let persistServer: any = null;
 
+const PRESERVED_COCALC_ENV_KEYS = [
+  "COCALC_ACP_MODE",
+  "COCALC_ACP_MOCK_SCRIPT",
+  "COCALC_ACP_MOCK_FILE",
+  "COCALC_ACP_EXECUTOR",
+  "COCALC_CODEX_BIN",
+  "COCALC_CODEX_HOME",
+  "COCALC_CLI_BIN",
+] as const;
+
+function captureEnv(keys: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const value = `${process.env[key] ?? ""}`.trim();
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
+function restoreEnv(env: Record<string, string>) {
+  for (const key in env) {
+    const value = `${env[key] ?? ""}`.trim();
+    if (value) process.env[key] = value;
+  }
+}
+
 function conat(opts?): Client {
   if (conatServer == null) {
     throw Error("not initialized");
@@ -69,6 +95,7 @@ export async function main(opts?: {
   const AUTH_TOKEN = await getAuthToken();
   const AGENT_TOKEN = await getAgentToken();
   const CLI_BIN = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
+  const preservedEnv = captureEnv(PRESERVED_COCALC_ENV_KEYS);
   if (AGENT_TOKEN) {
     process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
   }
@@ -145,6 +172,7 @@ export async function main(opts?: {
   cleanup();
   // cleanup() intentionally drops inherited COCALC_* env vars; restore the
   // subset needed by lite ACP/Codex runtime wiring.
+  restoreEnv(preservedEnv);
   process.env.COCALC_API_URL = LOCAL_API_URL;
   if (AGENT_TOKEN) {
     process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
@@ -152,6 +180,8 @@ export async function main(opts?: {
   if (CLI_BIN) {
     process.env.COCALC_CLI_BIN = CLI_BIN;
   }
+  const acpMode = `${process.env.COCALC_ACP_MODE ?? ""}`.trim() || "codex";
+  logger.info("lite acp mode", { mode: acpMode });
   // After environment cleanup, default lite process monitoring to owned scope.
   process.env.COCALC_PROJECT_INFO_SCOPE ??= "owned";
   startProjectServices({ client: conatClient });

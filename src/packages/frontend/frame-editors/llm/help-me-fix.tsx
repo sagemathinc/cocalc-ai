@@ -11,7 +11,10 @@ import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageMod
 import { AIAvatar } from "@cocalc/frontend/components";
 import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { dispatchNavigatorPromptIntent } from "@cocalc/frontend/project/new/navigator-intents";
+import {
+  dispatchNavigatorPromptIntent,
+  submitNavigatorPromptToCurrentThread,
+} from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
 import HelpMeFixButton from "./help-me-fix-button";
 import { createMessage, createNavigatorIntentMessage } from "./help-me-fix-utils";
@@ -161,12 +164,21 @@ export default function HelpMeFix({
         isHint: mode === "hint",
         sourceTag,
       });
-      dispatchNavigatorPromptIntent({
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
         prompt,
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
+        openFloating: true,
       });
-      redux?.getProjectActions?.(project_id)?.set_active_tab("home");
+      if (!sent) {
+        dispatchNavigatorPromptIntent({
+          prompt,
+          tag: `intent:error-fix:${tagSuffix}`,
+          forceCodex: true,
+        });
+        redux?.getProjectActions?.(project_id)?.set_active_tab("home");
+      }
     } catch (err) {
       setErrorGettingHelp(`${err}`);
     } finally {

@@ -1,5 +1,8 @@
 import { backtickSequence } from "@cocalc/frontend/markdown/util";
-import { dispatchNavigatorPromptIntent } from "@cocalc/frontend/project/new/navigator-intents";
+import {
+  dispatchNavigatorPromptIntent,
+  submitNavigatorPromptToCurrentThread,
+} from "@cocalc/frontend/project/new/navigator-intents";
 import { trunc, trunc_left, trunc_middle } from "@cocalc/util/misc";
 import { CUTOFF } from "./consts";
 import { modelToMention } from "./llm-selector";
@@ -77,12 +80,21 @@ export async function getHelp({
       isHint,
       sourceTag: `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`,
     });
-    dispatchNavigatorPromptIntent({
+    const sent = await submitNavigatorPromptToCurrentThread({
+      project_id,
       prompt: intentPrompt,
       tag: `intent:error-fix:${tagSuffix}`,
       forceCodex: true,
+      openFloating: true,
     });
-    redux?.getProjectActions?.(project_id)?.set_active_tab("home");
+    if (!sent) {
+      dispatchNavigatorPromptIntent({
+        prompt: intentPrompt,
+        tag: `intent:error-fix:${tagSuffix}`,
+        forceCodex: true,
+      });
+      redux?.getProjectActions?.(project_id)?.set_active_tab("home");
+    }
   } catch (err) {
     console.error("Error getting help:", err);
     throw err;

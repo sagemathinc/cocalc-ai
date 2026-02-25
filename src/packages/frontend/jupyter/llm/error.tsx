@@ -7,7 +7,10 @@ import { CSSProperties, useMemo, useState } from "react";
 
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import HelpMeFix from "@cocalc/frontend/frame-editors/llm/help-me-fix";
-import { dispatchNavigatorPromptIntent } from "@cocalc/frontend/project/new/navigator-intents";
+import {
+  dispatchNavigatorPromptIntent,
+  submitNavigatorPromptToCurrentThread,
+} from "@cocalc/frontend/project/new/navigator-intents";
 
 interface Props {
   style?: CSSProperties;
@@ -59,12 +62,21 @@ export default function LLMError({ style, traceback, input }: Props) {
     setRoutingError("");
     try {
       await Promise.resolve(frameActions?.save?.(true));
-      dispatchNavigatorPromptIntent({
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
         prompt: intentPrompt,
         tag: "intent:notebook-error",
         forceCodex: true,
+        openFloating: true,
       });
-      redux?.getProjectActions?.(project_id)?.set_active_tab("home");
+      if (!sent) {
+        dispatchNavigatorPromptIntent({
+          prompt: intentPrompt,
+          tag: "intent:notebook-error",
+          forceCodex: true,
+        });
+        redux?.getProjectActions?.(project_id)?.set_active_tab("home");
+      }
     } catch (err) {
       setRoutingError(`${err}`);
     } finally {

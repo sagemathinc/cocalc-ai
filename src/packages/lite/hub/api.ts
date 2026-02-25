@@ -107,8 +107,10 @@ async function getCodexPaymentSource(opts?: {
   const hasAccountApiKey =
     !!getEnvOpenAiApiKey() || !!accountKeys[account_id];
   const settings = getLiteServerSettings();
+  const acpMockMode = `${process.env.COCALC_ACP_MODE ?? ""}`.trim() === "mock";
   const hasSiteApiKey =
-    !!settings?.openai_enabled && !!`${settings?.openai_api_key ?? ""}`.trim();
+    acpMockMode ||
+    (!!settings?.openai_enabled && !!`${settings?.openai_api_key ?? ""}`.trim());
 
   let source: CodexPaymentSourceInfo["source"] = "none";
   if (hasSubscription) {
