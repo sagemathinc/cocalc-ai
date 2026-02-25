@@ -3,13 +3,10 @@ import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
-import {
-  client as fileServerClient,
-  type Fileserver,
-} from "@cocalc/conat/files/file-server";
+import { type Fileserver } from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
-import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
 
 const logger = getLogger("server:projects:copy");
@@ -36,23 +33,6 @@ function copyCanceledError(): Error {
   // @ts-ignore
   err.code = COPY_CANCELED_CODE;
   return err;
-}
-
-function fileServerClientWithTimeout(
-  project_id: string,
-  timeout_ms?: number,
-): Fileserver {
-  return fileServerClient({
-    project_id,
-    timeout: timeout_ms,
-  });
-}
-
-async function ensureProjectRoute(project_id: string): Promise<void> {
-  const address = await materializeProjectHost(project_id);
-  if (!address) {
-    throw new Error(`unable to route project ${project_id} to a host`);
-  }
 }
 
 function report(progress: CopyProgress | undefined, update: CopyStep) {
@@ -282,7 +262,10 @@ export async function copyProjectFiles({
   }
   const hostIds = await getHostIds(Array.from(projectIds));
   const srcHostId = hostIds.get(src.project_id)!;
-  await ensureProjectRoute(src.project_id);
+  const srcProjectClient = await getProjectFileServerClient({
+    project_id: src.project_id,
+    timeout: timeout_ms,
+  });
 
   const localDests: CopyDest[] = [];
   const remoteDests: CopyDest[] = [];
@@ -324,10 +307,7 @@ export async function copyProjectFiles({
         .filter((p) => p)
         .map((p) => `src_path=${encodeURIComponent(p)}`),
     ];
-    const backupClient = fileServerClientWithTimeout(
-      src.project_id,
-      timeout_ms,
-    );
+    const backupClient = srcProjectClient;
     let createdBackup = false;
     if (!snapshot_id) {
       const backup = await createBackupAndWait({
@@ -466,10 +446,7 @@ export async function copyProjectFiles({
       step: "copy-local",
       detail: { count: localDests.length, paths: srcPaths.length },
     });
-    const client = fileServerClientWithTimeout(
-      src.project_id,
-      timeout_ms,
-    );
+    const client = srcProjectClient;
     for (const dest of localDests) {
       await client.cp({ src: normalizedSrc, dest, options });
       localCount += srcPaths.length;

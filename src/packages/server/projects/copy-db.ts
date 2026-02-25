@@ -1,6 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { client as fileServerClient } from "@cocalc/conat/files/file-server";
 import type {
   ProjectCopyRow,
   ProjectCopyState,
@@ -8,6 +7,7 @@ import type {
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import { getLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroSummary } from "@cocalc/conat/lro/stream";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 const logger = getLogger("server:projects:copy-db");
 
@@ -181,7 +181,7 @@ async function maybeCleanupSnapshot({
   const activeCount = await countActiveSnapshotRefs(snapshot_id);
   if (activeCount > 0) return;
   try {
-    await fileServerClient({ project_id: src_project_id }).deleteBackup({
+    await (await getProjectFileServerClient({ project_id: src_project_id })).deleteBackup({
       project_id: src_project_id,
       id: snapshot_id,
     });

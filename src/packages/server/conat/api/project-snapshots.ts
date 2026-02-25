@@ -1,6 +1,6 @@
-import { client as fileServerClient } from "@cocalc/conat/files/file-server";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { assertCollab } from "./util";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 // NOTES about snapshots:
 
@@ -10,6 +10,10 @@ import { assertCollab } from "./util";
 // just *some* limit to avoid bugs/abuse
 
 const MAX_SNAPSHOTS_PER_PROJECT = 250;
+
+async function projectClient(project_id: string) {
+  return await getProjectFileServerClient({ project_id });
+}
 
 export async function createSnapshot({
   account_id,
@@ -21,7 +25,7 @@ export async function createSnapshot({
   name?: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await fileServerClient({ project_id }).createSnapshot({
+  await (await projectClient(project_id)).createSnapshot({
     project_id,
     name,
     limit: MAX_SNAPSHOTS_PER_PROJECT,
@@ -38,7 +42,7 @@ export async function deleteSnapshot({
   name: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await fileServerClient({ project_id }).deleteSnapshot({ project_id, name });
+  await (await projectClient(project_id)).deleteSnapshot({ project_id, name });
 }
 
 export async function updateSnapshots({
@@ -51,7 +55,7 @@ export async function updateSnapshots({
   counts?: Partial<SnapshotCounts>;
 }) {
   await assertCollab({ account_id, project_id });
-  await fileServerClient({ project_id }).updateSnapshots({
+  await (await projectClient(project_id)).updateSnapshots({
     project_id,
     counts,
     limit: MAX_SNAPSHOTS_PER_PROJECT,
@@ -77,7 +81,7 @@ export async function allSnapshotUsage({
   project_id: string;
 }) {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).allSnapshotUsage({
+  return await (await projectClient(project_id)).allSnapshotUsage({
     project_id,
   });
 }
@@ -96,7 +100,7 @@ export async function getSnapshotFileText({
   max_bytes?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).getSnapshotFileText({
+  return await (await projectClient(project_id)).getSnapshotFileText({
     project_id,
     snapshot,
     path,
