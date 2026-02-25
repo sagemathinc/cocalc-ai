@@ -24,6 +24,8 @@ describe("CodexExecAgent pre-content path heuristics", () => {
   const agent = new CodexExecAgent();
   const extract = (text: string): string[] =>
     (agent as any).extractPathCandidates(text);
+  const parseReadOnly = (command: string, cwd: string) =>
+    (agent as any).parseReadOnlyCommand(command, cwd);
 
   it("does not emit nested suffix paths from a relative path", () => {
     const paths = extract(
@@ -44,5 +46,13 @@ describe("CodexExecAgent pre-content path heuristics", () => {
     expect(paths).not.toContain(
       "/home/wstein/build/cocalc-lite3/packages/backend/sandbox/rustic.ts",
     );
+  });
+
+  it("does not treat rg pipelines as single file reads", () => {
+    const read = parseReadOnly(
+      `rg -n "COCALC_ACP_" src/packages | head -n 200`,
+      "/home/wstein/build/cocalc-lite3/src",
+    );
+    expect(read).toBeNull();
   });
 });

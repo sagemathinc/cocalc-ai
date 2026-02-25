@@ -262,6 +262,11 @@ function formatInlineCodeDisplay(
   link: InlineCodeLink,
   inlineCodeWorkspaceRoot?: string,
 ): string {
+  const rawCode = typeof link.code === "string" ? link.code.trim() : "";
+  if (rawCode.startsWith("/")) {
+    // Preserve absolute paths exactly as produced by the model.
+    return rawCode;
+  }
   const suffix = formatLineSuffix(link);
   const displayAtTurn =
     typeof link.display_path_at_turn === "string"

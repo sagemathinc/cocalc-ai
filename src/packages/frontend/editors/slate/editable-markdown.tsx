@@ -1408,6 +1408,31 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [pasteJupyterCellNodes],
   );
 
+  const handleMarkdownClipboardPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const dt = event.clipboardData;
+      if (!dt) return false;
+      if (dt.getData(JUPYTER_CELL_CLIPBOARD_MIME)) return false;
+      const types = Array.from(dt.types ?? []);
+      if (types.includes("application/x-slate-fragment")) return false;
+      const markdown = dt.getData("text/markdown");
+      if (!markdown || !markdown.trim()) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        const fragment = markdown_to_slate(markdown, true, editor.syncCache);
+        if (Array.isArray(fragment) && fragment.length > 0) {
+          Transforms.insertFragment(editor, fragment as any);
+          return true;
+        }
+      } catch (_err) {
+        // fallback to default browser/slate paste behavior below
+      }
+      return false;
+    },
+    [editor],
+  );
+
   function onKeyDown(e) {
     if (read_only) {
       e.preventDefault();
@@ -2225,7 +2250,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           onKeyDown={onKeyDown}
           onCopy={handleJupyterCellCopy}
           onCut={handleJupyterCellCut}
-          onPaste={handleJupyterCellPaste}
+          onPaste={(event) => {
+            if (handleJupyterCellPaste(event)) return;
+            handleMarkdownClipboardPaste(event);
+          }}
           style={
             useWindowing
               ? editableFillStyle

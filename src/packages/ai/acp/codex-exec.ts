@@ -917,7 +917,10 @@ export class CodexExecAgent implements AcpAgent {
       !tailPath ||
       tailPath.startsWith("-") ||
       tailPath === head ||
-      tailPath.startsWith("<")
+      tailPath.startsWith("<") ||
+      tailPath === "." ||
+      tailPath === ".." ||
+      /[*?[\]{}]/.test(tailPath)
     ) {
       return null;
     }
@@ -959,13 +962,6 @@ export class CodexExecAgent implements AcpAgent {
 
     if (head === "cat") {
       return { path: pathAbs };
-    }
-
-    if (head === "rg") {
-      // Treat rg -n ... <file> as a read-only scan of the file.
-      if (tokens.includes("-n")) {
-        return { path: pathAbs };
-      }
     }
 
     return null;

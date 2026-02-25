@@ -43,10 +43,17 @@ export function resolveInlineCodeLinks(
     if (!hostPath) continue;
     const resolved = safeRealpath(hostPath);
     if (!resolved) continue;
+    if (realWorkspaceRoot && !isInsideRoot(resolved, realWorkspaceRoot)) {
+      // Never auto-link files outside the configured workspace root.
+      continue;
+    }
+    const stat = safeStat(resolved);
+    if (!stat?.isFile()) continue;
     const key = `${code}\u0000${resolved}\u0000${parsed.line ?? ""}\u0000${parsed.col ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const displayPath = toDisplayPath({
+      sourcePath: parsed.rawPath,
       absPath: resolved,
       workspaceRoot: realWorkspaceRoot,
     });
@@ -148,19 +155,35 @@ function safeRealpath(value: string): string | undefined {
   }
 }
 
+function safeStat(value: string): fs.Stats | undefined {
+  try {
+    return fs.statSync(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function toDisplayPath({
+  sourcePath,
   absPath,
   workspaceRoot,
 }: {
+  sourcePath: string;
   absPath: string;
   workspaceRoot?: string;
 }): string {
+  if (path.isAbsolute(sourcePath)) {
+    return toPosix(path.normalize(sourcePath));
+  }
   if (!workspaceRoot) {
     return toPosix(absPath);
   }
   const rel = path.relative(workspaceRoot, absPath);
   if (!rel || rel === ".") {
     return toPosix(path.basename(absPath));
+  }
+  if (rel.startsWith("..")) {
+    return toPosix(absPath);
   }
   return toPosix(rel);
 }

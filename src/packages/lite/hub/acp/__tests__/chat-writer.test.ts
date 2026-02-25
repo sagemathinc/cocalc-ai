@@ -859,6 +859,60 @@ describe("ChatStreamWriter", () => {
     }
   });
 
+  it("keeps absolute display paths and ignores links outside workspace root", async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-inline-links-abs-"),
+    );
+    try {
+      const workspaceRoot = path.join(tempRoot, "work");
+      const insidePath = path.join(workspaceRoot, "src", "inside.ts");
+      const outsidePath = path.join(tempRoot, "outside.ts");
+      await fs.mkdir(path.dirname(insidePath), { recursive: true });
+      await fs.writeFile(insidePath, "inside\n");
+      await fs.writeFile(outsidePath, "outside\n");
+      await fs.mkdir(path.join(tempRoot, "rooms"), { recursive: true });
+      await fs.writeFile(path.join(tempRoot, "rooms", "chat.chat"), "");
+
+      const { syncdb, sets } = makeFakeSyncDB();
+      const writer: any = new ChatStreamWriter({
+        metadata: {
+          ...baseMetadata,
+          path: "rooms/chat.chat",
+          message_id: "msg-inline-links-abs",
+        } as any,
+        client: makeFakeClient(),
+        approverAccountId: "u",
+        hostWorkspaceRoot: workspaceRoot,
+        syncdbOverride: syncdb as any,
+        logStoreFactory: () =>
+          ({
+            set: async () => {},
+          }) as any,
+      });
+
+      await (writer as any).handle({
+        type: "summary",
+        finalResponse: `Use \`${insidePath}:7\` and ignore \`${outsidePath}:1\`.`,
+        seq: 0,
+      } as AcpStreamMessage);
+      await flush(writer);
+
+      const final = sets[sets.length - 1] as any;
+      expect(Array.isArray(final.inline_code_links)).toBe(true);
+      expect(final.inline_code_links).toHaveLength(1);
+      expect(final.inline_code_links[0]).toMatchObject({
+        code: `${insidePath}:7`,
+        abs_path: insidePath,
+        display_path_at_turn: insidePath.split(path.sep).join("/"),
+        workspace_root_at_turn: workspaceRoot,
+        line: 7,
+      });
+      writer.dispose?.(true);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("resolves chat row by message_id when sender/date changed", async () => {
     const rowDate = new Date("2026-02-21T10:11:12.000Z").toISOString();
     const rows: any[] = [

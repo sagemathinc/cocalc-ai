@@ -387,12 +387,30 @@ function InternalFileLink({ project_id, href, title, children }) {
         if (!project_id) return;
         const target = parseInternalFileHref(href);
         if (!target.path) return;
-        redux.getProjectActions(project_id).open_file({
-          path: target.path,
-          line: target.line,
-          foreground: true,
-          explicit: true,
-        });
+        const actions = redux.getProjectActions(project_id);
+        void (async () => {
+          try {
+            let isDir = actions.isDirViaCache?.(target.path!);
+            if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
+              isDir = await actions.isDir(target.path!);
+            }
+            if (isDir === true) {
+              actions.open_directory?.(target.path!);
+              return;
+            }
+            await actions.open_file({
+              path: target.path!,
+              line: target.line,
+              foreground: true,
+              explicit: true,
+            });
+          } catch (err) {
+            alert_message({
+              type: "error",
+              message: `Cannot open linked file: ${target.path} (${err})`,
+            });
+          }
+        })();
       }}
     >
       {children}

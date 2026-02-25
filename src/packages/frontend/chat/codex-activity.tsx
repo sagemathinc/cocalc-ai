@@ -13,6 +13,7 @@ import type {
   AcpStreamMessage as AcpLogStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import { alert_message } from "@cocalc/frontend/alerts";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -160,9 +161,13 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   const baseFontSize = fontSize ?? 13;
   const secondarySize = Math.max(11, baseFontSize - 2);
   const durationSummary =
-    durationLabel && durationLabel.trim().length > 0
-      ? `Worked for ${durationLabel}`
-      : `${entries.length} ${plural(entries.length, "step")}`;
+    generating === true
+      ? durationLabel && durationLabel.trim().length > 0
+        ? `Working... ${durationLabel}`
+        : "Working..."
+      : durationLabel && durationLabel.trim().length > 0
+        ? `Worked for ${durationLabel}`
+        : `${entries.length} ${plural(entries.length, "step")}`;
   const toggleLabel = expanded ? "Hide log" : `${durationSummary} (show)`;
 
   const showCloseButton = IS_TOUCH || hovered;
@@ -277,7 +282,13 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
         </Text>
         {durationLabel ? (
           <Text type="secondary" style={{ fontSize: secondarySize }}>
-            Worked for {durationLabel}
+            {generating === true
+              ? `Working... ${durationLabel}`
+              : `Worked for ${durationLabel}`}
+          </Text>
+        ) : generating === true ? (
+          <Text type="secondary" style={{ fontSize: secondarySize }}>
+            Working...
           </Text>
         ) : null}
       </Space>
@@ -751,12 +762,30 @@ function PathLink({
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
       e.preventDefault();
-      actions.open_file({
-        path: resolvedPath,
-        line,
-        foreground: true,
-        explicit: true,
-      });
+      void (async () => {
+        try {
+          let isDir = actions.isDirViaCache?.(resolvedPath);
+          if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
+            isDir = await actions.isDir(resolvedPath);
+          }
+          if (isDir === true) {
+            actions.open_directory?.(resolvedPath);
+            return;
+          }
+          await actions.open_file({
+            path: resolvedPath,
+            line,
+            foreground: true,
+            explicit: true,
+          });
+        } catch (err) {
+          alert_message({
+            type: "error",
+            message: `Cannot open path from activity log: ${resolvedPath} (${err})`,
+            timeout: 8,
+          });
+        }
+      })();
     },
     [actions, resolvedPath, line],
   );

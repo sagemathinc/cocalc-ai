@@ -49,4 +49,26 @@ describe("StaticMarkdown inline code links", () => {
     const link = screen.getByRole("link", { name: "different/path.ts:3" });
     expect(link).toBeTruthy();
   });
+
+  it("preserves absolute inline-code display text", () => {
+    render(
+      <StaticMarkdown
+        value={"Open `/usr/bin/python3.13`."}
+        inlineCodeWorkspaceRoot="/tmp/x"
+        inlineCodeLinks={[
+          {
+            code: "/usr/bin/python3.13",
+            abs_path: "/usr/bin/python3.13",
+            display_path_at_turn: "../../usr/bin/python3.13",
+            workspace_root_at_turn: "/tmp/x",
+          },
+        ]}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "/usr/bin/python3.13" });
+    expect(link.getAttribute("href")).toBe(
+      "cocalc-file://open?path=%2Fusr%2Fbin%2Fpython3.13",
+    );
+  });
 });

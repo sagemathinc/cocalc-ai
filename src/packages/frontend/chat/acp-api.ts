@@ -27,6 +27,16 @@ type QueueState = { running: boolean; items: QueueItem[] };
 const turnQueues: Map<QueueKey, QueueState> = new Map();
 let lastGeneratedAcpMessageMs = 0;
 const QUEUED_PROMPT_NOTE_THRESHOLD_MS = 1500;
+const SESSION_BUSY_RETRY_DELAYS_MS = [350, 900, 1600];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isSessionBusyError(err: unknown): boolean {
+  const text = `${err ?? ""}`.toLowerCase();
+  return text.includes("already processing a request for this session");
+}
 
 function nextAcpMessageDate({
   actions,
@@ -393,28 +403,53 @@ export async function processAcpLLM({
       } catch (err) {
         console.warn("failed to fetch ACP project-host bearer token", err);
       }
-      const stream = await webapp_client.conat_client.streamAcp({
-        project_id,
-        prompt: promptForRun,
-        session_id: sessionKey,
-        config: buildAcpConfig({
-          path,
-          config:
-            effectiveSessionId != null
-              ? { ...(config ?? {}), sessionId: effectiveSessionId }
-              : config,
-          model: normalizedModel,
-        }),
-        chat: chatMetadata,
-        runtime_env: runtimeEnv,
-      });
-      setState("sent");
-      for await (const response of stream) {
-        setState("running");
-        // when something goes wrong, the stream may send this sort of message:
-        // {seq: 0, error: 'Error: ACP agent is already processing a request', type: 'error'}
-        if (response?.type == "error") {
-          throw Error(response.error);
+      let attempt = 0;
+      while (true) {
+        try {
+          const stream = await webapp_client.conat_client.streamAcp({
+            project_id,
+            prompt: promptForRun,
+            session_id: sessionKey,
+            config: buildAcpConfig({
+              path,
+              config:
+                effectiveSessionId != null
+                  ? { ...(config ?? {}), sessionId: effectiveSessionId }
+                  : config,
+              model: normalizedModel,
+            }),
+            chat: chatMetadata,
+            runtime_env: runtimeEnv,
+          });
+          setState("sent");
+          for await (const response of stream) {
+            setState("running");
+            // when something goes wrong, the stream may send this sort of message:
+            // {seq: 0, error: 'Error: ACP agent is already processing a request', type: 'error'}
+            if (response?.type == "error") {
+              throw Error(response.error);
+            }
+          }
+          break;
+        } catch (err) {
+          if (
+            isSessionBusyError(err) &&
+            attempt < SESSION_BUSY_RETRY_DELAYS_MS.length
+          ) {
+            const delayMs = SESSION_BUSY_RETRY_DELAYS_MS[attempt];
+            attempt += 1;
+            console.warn("ACP turn retrying after session-busy race", {
+              project_id,
+              path,
+              message_id: user_message_id,
+              thread_id,
+              attempt,
+              delayMs,
+            });
+            await sleep(delayMs);
+            continue;
+          }
+          throw err;
         }
       }
     } catch (err) {

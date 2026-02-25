@@ -10,6 +10,7 @@ interface Props {
   size?;
   noText?: boolean;
   block?: true;
+  markdown?: boolean;
 }
 
 export default function CopyButton({
@@ -18,19 +19,51 @@ export default function CopyButton({
   size,
   noText = false,
   block,
+  markdown = false,
 }: Props) {
   const [copied, setCopied] = useState<boolean>(false);
   useEffect(() => {
     setCopied(false);
   }, [value]);
+  const text = value ?? "";
+
+  const copyWithClipboardApi = async (): Promise<boolean> => {
+    if (!text) return false;
+    if (typeof navigator === "undefined") return false;
+    if (!navigator.clipboard || typeof navigator.clipboard.write !== "function") {
+      return false;
+    }
+    const ClipboardItemCtor = (window as any)?.ClipboardItem;
+    if (typeof ClipboardItemCtor !== "function") return false;
+    try {
+      const itemData: Record<string, Blob> = {
+        "text/plain": new Blob([text], { type: "text/plain" }),
+      };
+      if (markdown) {
+        itemData["text/markdown"] = new Blob([text], { type: "text/markdown" });
+      }
+      await navigator.clipboard.write([new ClipboardItemCtor(itemData)]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   return (
-    <CopyToClipboard text={value} onCopy={() => setCopied(true)}>
+    <CopyToClipboard text={text} onCopy={() => setCopied(true)}>
       <Button
         block={block}
         size={size}
         type="text"
         style={style}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          void (async () => {
+            if (await copyWithClipboardApi()) {
+              setCopied(true);
+            }
+          })();
+        }}
       >
         <Icon name={copied ? "check" : "copy"} />
         {noText ? undefined : copied ? "Copied" : "Copy"}

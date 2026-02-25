@@ -319,8 +319,12 @@ export default function Message({
     [acpState],
   );
   const effectiveGenerating = useMemo(() => {
-    if (generating !== true) return false;
-    if (!isCodexThread) return true;
+    if (!isCodexThread) return generating === true;
+    // `generating` is persisted on the chat row and survives reconnect/refresh;
+    // treat it as authoritative for whether the assistant is still running.
+    if (generating === true) return true;
+    // ACP queue/sending/running in store can still make state visible even
+    // before backend row transitions to generating=true.
     return acpStateActive;
   }, [generating, isCodexThread, acpStateActive]);
 
@@ -654,6 +658,7 @@ export default function Message({
         })}
       >
         <CopyButton
+          markdown
           value={message_to_markdown(message)}
           size="small"
           noText={true}

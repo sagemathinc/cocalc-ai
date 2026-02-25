@@ -1,9 +1,12 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import SmartAnchorTag from "./smart-anchor-tag";
 
 const openFile = jest.fn();
+const openDirectory = jest.fn();
+const isDir = jest.fn(async () => false);
+const isDirViaCache = jest.fn(() => false);
 
 jest.mock("@cocalc/frontend/components", () => ({
   A: ({ href, title, onClick, children }) => (
@@ -22,6 +25,9 @@ jest.mock("@cocalc/frontend/app-framework", () => {
       ...(actual.redux ?? {}),
       getProjectActions: () => ({
         open_file: openFile,
+        open_directory: openDirectory,
+        isDir,
+        isDirViaCache,
       }),
       getActions: () => ({}),
     },
@@ -41,10 +47,15 @@ describe("SmartAnchorTag", () => {
 
   beforeEach(() => {
     openFile.mockReset();
+    openDirectory.mockReset();
+    isDir.mockReset();
+    isDirViaCache.mockReset();
+    isDir.mockResolvedValue(false);
+    isDirViaCache.mockReturnValue(false);
     openMock.mockReset();
   });
 
-  it("opens internal cocalc-file links via project open_file", () => {
+  it("opens internal cocalc-file links via project open_file", async () => {
     render(
       <SmartAnchorTag
         project_id="00000000-1000-4000-8000-000000000000"
@@ -56,11 +67,13 @@ describe("SmartAnchorTag", () => {
     );
 
     fireEvent.click(screen.getByRole("link", { name: "workspaces.py" }));
-    expect(openFile).toHaveBeenCalledWith({
-      path: "/tmp/x/workspaces.py",
-      line: 9,
-      foreground: true,
-      explicit: true,
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/tmp/x/workspaces.py",
+        line: 9,
+        foreground: true,
+        explicit: true,
+      });
     });
   });
 
