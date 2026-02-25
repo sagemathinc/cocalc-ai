@@ -78,6 +78,8 @@ import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
 // how many ms between saving output during a running turn
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
+const CONTENT_CHECKPOINT_INTERVAL_MS = 15_000;
+const CONTENT_CHECKPOINT_MIN_BYTES_DELTA = 2 * 1024;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
 const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
@@ -572,6 +574,12 @@ export class ChatStreamWriter {
   private events: AcpStreamMessage[] = [];
   private usage: AcpStreamUsage | null = null;
   private content = "";
+  private lastCommittedContent = "";
+  private lastFullCommitAtMs = 0;
+  private lastCommittedThreadId: string | null = null;
+  private lastCommittedUsageJson = "null";
+  private lastCommittedInterrupted = false;
+  private lastCommittedGenerating: boolean | undefined;
   private lastErrorText: string | null = null;
   private threadId: string | null = null;
   private seq = 0;
@@ -1139,6 +1147,81 @@ export class ChatStreamWriter {
     return update;
   }
 
+  private buildChatMetadataUpdate(generating: boolean): Record<string, unknown> {
+    const rowDate = this.resolvedChatKey?.date ?? this.metadata.message_date;
+    const rowSender = this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
+    const update: Record<string, unknown> = {
+      event: "chat",
+      sender_id: rowSender,
+      date: rowDate,
+      generating,
+      acp_thread_id: this.threadId,
+      acp_usage: this.usage,
+      acp_account_id: this.approverAccountId,
+      message_id: this.metadata.message_id,
+      thread_id: this.metadata.thread_id,
+      reply_to_message_id: this.metadata.reply_to_message_id,
+      reply_to: this.metadata.reply_to,
+    };
+    if (this.interruptNotified) {
+      (update as any).acp_interrupted = true;
+      (update as any).acp_interrupted_reason = "interrupt";
+      (update as any).acp_interrupted_text =
+        this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
+    }
+    return update;
+  }
+
+  private usageFingerprint(): string {
+    try {
+      return JSON.stringify(this.usage ?? null);
+    } catch {
+      return "null";
+    }
+  }
+
+  private hasMetadataDelta(generating: boolean): boolean {
+    return (
+      this.lastCommittedThreadId !== this.threadId ||
+      this.lastCommittedUsageJson !== this.usageFingerprint() ||
+      this.lastCommittedInterrupted !== this.interruptNotified ||
+      this.lastCommittedGenerating !== generating
+    );
+  }
+
+  private shouldFullContentCommit({
+    generating,
+    reason,
+    now,
+  }: {
+    generating: boolean;
+    reason: "throttled" | "terminal-verify" | "dispose";
+    now: number;
+  }): boolean {
+    if (!generating) return true;
+    if (reason !== "throttled") return true;
+    if (this.lastFullCommitAtMs === 0) return true;
+    if (this.content === this.lastCommittedContent) return false;
+    const elapsed = now - this.lastFullCommitAtMs;
+    if (elapsed >= CONTENT_CHECKPOINT_INTERVAL_MS) return true;
+    const bytesDelta = Math.abs(
+      Buffer.byteLength(this.content, "utf8") -
+        Buffer.byteLength(this.lastCommittedContent, "utf8"),
+    );
+    return bytesDelta >= CONTENT_CHECKPOINT_MIN_BYTES_DELTA;
+  }
+
+  private markCommitted(generating: boolean, fullContent: boolean): void {
+    if (fullContent) {
+      this.lastCommittedContent = this.content;
+      this.lastFullCommitAtMs = Date.now();
+    }
+    this.lastCommittedThreadId = this.threadId;
+    this.lastCommittedUsageJson = this.usageFingerprint();
+    this.lastCommittedInterrupted = this.interruptNotified;
+    this.lastCommittedGenerating = generating;
+  }
+
   private resolveInlineCodeLinks(): InlineCodeLink[] | undefined {
     const content = this.content ?? "";
     if (!content.trim()) return undefined;
@@ -1177,14 +1260,30 @@ export class ChatStreamWriter {
       });
       return false;
     }
+    const now = Date.now();
+    const fullContent = this.shouldFullContentCommit({
+      generating,
+      reason,
+      now,
+    });
+    const metadataDelta = this.hasMetadataDelta(generating);
+    if (!fullContent && !metadataDelta) {
+      return true;
+    }
     try {
-      this.syncdb.set(this.buildChatUpdate(generating));
+      this.syncdb.set(
+        fullContent
+          ? this.buildChatUpdate(generating)
+          : this.buildChatMetadataUpdate(generating),
+      );
       this.syncdb.commit();
+      this.markCommitted(generating, fullContent);
     } catch (err) {
       logger.warn("chat syncdb commit failed", {
         chatKey: this.chatKey,
         reason,
         generating,
+        fullContent,
         err,
       });
       return false;
@@ -1197,6 +1296,7 @@ export class ChatStreamWriter {
           chatKey: this.chatKey,
           reason,
           generating,
+          fullContent,
           err,
         });
       }

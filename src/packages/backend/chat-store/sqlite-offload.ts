@@ -45,6 +45,9 @@ export interface ChatStoreStatsResult {
   max_head_bytes: number;
   max_head_messages: number;
   last_rotated_at_ms?: number;
+  pending_rotate_op_id?: string;
+  pending_rotate_status?: string;
+  pending_rotate_error?: string;
 }
 
 export interface RotateChatStoreOptions {
@@ -63,6 +66,8 @@ export interface RotateChatStoreResult {
   reason?: string;
   dry_run?: boolean;
   chat_id: string;
+  maintenance_op_id?: string;
+  maintenance_status?: string;
   segment_id?: string;
   segment_seq?: number;
   archived_rows?: number;
@@ -106,6 +111,7 @@ export interface ReadArchivedOptions {
   chat_path: string;
   db_path?: string;
   before_date_ms?: number;
+  thread_id?: string;
   limit?: number;
   offset?: number;
 }
@@ -196,6 +202,20 @@ type ParsedLine = {
   excerpt?: string;
 };
 
+type RotateOpStatus = "segment_written" | "done" | "conflict";
+
+type RotateMaintenanceOp = {
+  op_id: string;
+  chat_id: string;
+  status: RotateOpStatus;
+  source_sha256?: string;
+  head_after_sha256?: string;
+  head_after_jsonl?: string;
+  segment_id?: string;
+  updated_at_ms: number;
+  error?: string;
+};
+
 const dbCache = new Map<string, DatabaseSync>();
 
 function resolveDbPath(override?: string): string {
@@ -248,6 +268,23 @@ function openDb(dbPath: string): DatabaseSync {
       FOREIGN KEY(chat_id) REFERENCES chat_registry(chat_id) ON DELETE CASCADE,
       UNIQUE(chat_id, seq)
     );
+    CREATE TABLE IF NOT EXISTS maintenance_ops (
+      op_id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      source_sha256 TEXT,
+      head_after_sha256 TEXT,
+      head_after_jsonl TEXT,
+      segment_id TEXT,
+      error TEXT,
+      FOREIGN KEY(chat_id) REFERENCES chat_registry(chat_id) ON DELETE CASCADE,
+      FOREIGN KEY(segment_id) REFERENCES segments(segment_id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS maintenance_ops_chat_status_idx
+      ON maintenance_ops(chat_id, type, status, updated_at_ms DESC);
     CREATE TABLE IF NOT EXISTS archived_rows (
       row_id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_id TEXT NOT NULL,
@@ -356,6 +393,109 @@ function sha256Hex(data: string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+function getPendingRotateOp(
+  db: DatabaseSync,
+  chat_id: string,
+): RotateMaintenanceOp | undefined {
+  return db
+    .prepare(
+      `SELECT op_id, chat_id, status, source_sha256, head_after_sha256, head_after_jsonl,
+              segment_id, updated_at_ms, error
+         FROM maintenance_ops
+        WHERE chat_id = ?
+          AND type = 'rotate'
+          AND status = 'segment_written'
+        ORDER BY updated_at_ms DESC
+        LIMIT 1`,
+    )
+    .get(chat_id) as RotateMaintenanceOp | undefined;
+}
+
+async function applyPendingRotateOp({
+  db,
+  chatPath,
+  op,
+}: {
+  db: DatabaseSync;
+  chatPath: string;
+  op: RotateMaintenanceOp;
+}): Promise<{
+  applied: boolean;
+  status: RotateOpStatus;
+  warning?: string;
+}> {
+  const now = Date.now();
+  if (!op.head_after_jsonl) {
+    const warning = `pending rotate op ${op.op_id} has no head_after_jsonl`;
+    db.prepare(
+      "UPDATE maintenance_ops SET status = 'conflict', updated_at_ms = ?, error = ? WHERE op_id = ?",
+    ).run(now, warning, op.op_id);
+    return { applied: false, status: "conflict", warning };
+  }
+
+  let currentRaw = "";
+  try {
+    currentRaw = await fs.readFile(chatPath, "utf8");
+  } catch {
+    currentRaw = "";
+  }
+  const currentSha = sha256Hex(currentRaw);
+  if (op.source_sha256 && currentSha !== op.source_sha256) {
+    const warning = `pending rotate op ${op.op_id} source hash mismatch; chat file changed since segment write`;
+    db.prepare(
+      "UPDATE maintenance_ops SET status = 'conflict', updated_at_ms = ?, error = ? WHERE op_id = ?",
+    ).run(now, warning, op.op_id);
+    return { applied: false, status: "conflict", warning };
+  }
+
+  const temp = `${chatPath}.offload-${op.op_id}.tmp`;
+  try {
+    await fs.writeFile(temp, op.head_after_jsonl, "utf8");
+    await fs.rename(temp, chatPath);
+  } catch (err) {
+    try {
+      await fs.unlink(temp);
+    } catch {
+      // ignore cleanup errors
+    }
+    const warning = `pending rotate op ${op.op_id} rewrite failed: ${err}`;
+    db.prepare(
+      "UPDATE maintenance_ops SET updated_at_ms = ?, error = ? WHERE op_id = ?",
+    ).run(now, warning, op.op_id);
+    return { applied: false, status: "segment_written", warning };
+  }
+
+  db.prepare(
+    "UPDATE maintenance_ops SET status = 'done', updated_at_ms = ?, error = NULL, head_after_jsonl = NULL WHERE op_id = ?",
+  ).run(now, op.op_id);
+  return { applied: true, status: "done" };
+}
+
+async function resumePendingRotate({
+  db,
+  chat_id,
+  chatPath,
+}: {
+  db: DatabaseSync;
+  chat_id: string;
+  chatPath: string;
+}): Promise<{
+  resumed: boolean;
+  op_id?: string;
+  status?: RotateOpStatus;
+  warning?: string;
+}> {
+  const pending = getPendingRotateOp(db, chat_id);
+  if (!pending) return { resumed: false };
+  const applied = await applyPendingRotateOp({ db, chatPath, op: pending });
+  return {
+    resumed: true,
+    op_id: pending.op_id,
+    status: applied.status,
+    warning: applied.warning,
+  };
+}
+
 function getOrCreateChatId(db: DatabaseSync, chatPath: string): {
   chat_id: string;
   created: boolean;
@@ -446,6 +586,16 @@ export async function getChatStoreStats({
   const dbPath = resolveDbPath(db_path);
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
+  const resumed = await resumePendingRotate({ db, chat_id, chatPath });
+  if (resumed.warning) {
+    logger.warn("chat offload pending rotate resume", {
+      chatPath,
+      chat_id,
+      op_id: resumed.op_id,
+      status: resumed.status,
+      warning: resumed.warning,
+    });
+  }
   let raw = "";
   try {
     raw = await fs.readFile(chatPath, "utf8");
@@ -466,6 +616,7 @@ export async function getChatStoreStats({
   const reg = db
     .prepare("SELECT last_rotated_at_ms FROM chat_registry WHERE chat_id = ?")
     .get(chat_id) as { last_rotated_at_ms?: number } | undefined;
+  const pending = getPendingRotateOp(db, chat_id);
   return {
     chat_id,
     chat_path: chatPath,
@@ -480,6 +631,9 @@ export async function getChatStoreStats({
     max_head_bytes: DEFAULT_MAX_HEAD_BYTES,
     max_head_messages: DEFAULT_MAX_HEAD_MESSAGES,
     last_rotated_at_ms: reg?.last_rotated_at_ms,
+    pending_rotate_op_id: pending?.op_id,
+    pending_rotate_status: pending?.status,
+    pending_rotate_error: pending?.error,
   };
 }
 
@@ -497,6 +651,26 @@ export async function rotateChatStore({
   const dbPath = resolveDbPath(db_path);
   const db = openDb(dbPath);
   const { chat_id } = getOrCreateChatId(db, chatPath);
+  const resumed = await resumePendingRotate({ db, chat_id, chatPath });
+  if (resumed.warning) {
+    logger.warn("chat offload pending rotate resume", {
+      chatPath,
+      chat_id,
+      op_id: resumed.op_id,
+      status: resumed.status,
+      warning: resumed.warning,
+    });
+  }
+  const pendingAfterResume = getPendingRotateOp(db, chat_id);
+  if (pendingAfterResume) {
+    return {
+      rotated: false,
+      reason: `pending rotate operation requires recovery (${pendingAfterResume.op_id})`,
+      chat_id,
+      maintenance_op_id: pendingAfterResume.op_id,
+      maintenance_status: pendingAfterResume.status,
+    };
+  }
   const raw = await fs.readFile(chatPath, "utf8");
   const parsed = parseChatFile(raw);
   const chatRows = parsed
@@ -593,10 +767,13 @@ export async function rotateChatStore({
   const fromMessage = archivedSorted[0]?.row.message_id;
   const toMessage = archivedSorted[archivedSorted.length - 1]?.row.message_id;
   const payloadSha = sha256Hex(archivedLines.join("\n"));
+  const sourceSha = sha256Hex(raw);
+  const headAfterSha = sha256Hex(headAfterRaw);
   const nextSeqRow = db
     .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as seq FROM segments WHERE chat_id = ?")
     .get(chat_id) as { seq: number };
   const segmentSeq = Number(nextSeqRow?.seq ?? 1);
+  const maintenanceOpId = randomUUID();
 
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -649,6 +826,21 @@ export async function rotateChatStore({
     db.prepare(
       "UPDATE chat_registry SET updated_at_ms = ?, last_rotated_at_ms = ? WHERE chat_id = ?",
     ).run(now, now, chat_id);
+    db.prepare(
+      `INSERT INTO maintenance_ops(
+        op_id, chat_id, type, status, created_at_ms, updated_at_ms,
+        source_sha256, head_after_sha256, head_after_jsonl, segment_id
+      ) VALUES(?, ?, 'rotate', 'segment_written', ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      maintenanceOpId,
+      chat_id,
+      now,
+      now,
+      sourceSha,
+      headAfterSha,
+      headAfterRaw,
+      segment_id,
+    );
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -656,22 +848,36 @@ export async function rotateChatStore({
   }
 
   let rewriteWarning: string | undefined;
-  try {
-    const temp = `${chatPath}.offload-${segment_id}.tmp`;
-    await fs.writeFile(temp, headAfterRaw, "utf8");
-    await fs.rename(temp, chatPath);
-  } catch (err) {
-    rewriteWarning = `${err}`;
-    logger.warn("chat offload rotate: archived rows committed but file rewrite failed", {
-      chatPath,
+  const applied = await applyPendingRotateOp({
+    db,
+    chatPath,
+    op: {
+      op_id: maintenanceOpId,
+      chat_id,
+      status: "segment_written",
+      source_sha256: sourceSha,
+      head_after_sha256: headAfterSha,
+      head_after_jsonl: headAfterRaw,
       segment_id,
-      err: `${err}`,
+      updated_at_ms: now,
+    },
+  });
+  if (!applied.applied) {
+    rewriteWarning = applied.warning ?? "pending rotate rewrite not yet applied";
+    logger.warn("chat offload rotate: archived rows committed, rewrite pending", {
+      chatPath,
+      chat_id,
+      segment_id,
+      op_id: maintenanceOpId,
+      warning: rewriteWarning,
     });
   }
 
   return {
     rotated: true,
     chat_id,
+    maintenance_op_id: maintenanceOpId,
+    maintenance_status: applied.status,
     segment_id,
     segment_seq: segmentSeq,
     archived_rows: archivedLines.length,
@@ -717,6 +923,7 @@ export function readChatStoreArchived({
   chat_path,
   db_path,
   before_date_ms,
+  thread_id,
   limit = 100,
   offset = 0,
 }: ReadArchivedOptions): ReadArchivedResult {
@@ -729,6 +936,10 @@ export function readChatStoreArchived({
   if (Number.isFinite(before_date_ms)) {
     where.push("date_ms IS NOT NULL AND date_ms < ?");
     params.push(before_date_ms);
+  }
+  if (thread_id) {
+    where.push("thread_id = ?");
+    params.push(thread_id);
   }
   params.push(Math.max(1, limit), Math.max(0, offset));
   const rows = db

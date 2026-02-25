@@ -55,6 +55,7 @@ describe("chat offload sqlite store", () => {
       makeChatRow({
         date: "2026-02-20T00:01:00.000Z",
         message_id: "m2",
+        thread_id: "thread-2",
         content: "beta second message",
       }),
       makeChatRow({
@@ -99,6 +100,14 @@ describe("chat offload sqlite store", () => {
     });
     expect(archived.rows.length).toBe(2);
     expect(archived.rows.some((x) => x.message_id === "m1")).toBe(true);
+    const archivedThread1 = readChatStoreArchived({
+      chat_path: chatPath,
+      db_path: dbPath,
+      thread_id: "thread-1",
+      limit: 10,
+    });
+    expect(archivedThread1.rows.length).toBe(1);
+    expect(archivedThread1.rows[0].message_id).toBe("m1");
 
     const search = searchChatStoreArchived({
       chat_path: chatPath,
@@ -108,6 +117,15 @@ describe("chat offload sqlite store", () => {
     });
     expect(search.hits.length).toBe(1);
     expect(search.hits[0].message_id).toBe("m1");
+    const searchThread2 = searchChatStoreArchived({
+      chat_path: chatPath,
+      db_path: dbPath,
+      query: "beta",
+      thread_id: "thread-2",
+      limit: 10,
+    });
+    expect(searchThread2.hits.length).toBe(1);
+    expect(searchThread2.hits[0].message_id).toBe("m2");
 
     const del = deleteChatStoreData({
       chat_path: chatPath,
@@ -136,5 +154,60 @@ describe("chat offload sqlite store", () => {
     expect(finalStats.archived_rows).toBe(1);
     expect(finalStats.head_chat_rows).toBe(2);
   });
-});
 
+  it("resumes pending rotate rewrite after transient rename failure", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "chat-offload-resume-"));
+    const chatPath = path.join(tmp, "resume.chat");
+    const dbPath = path.join(tmp, "offload.sqlite3");
+    const rows = [
+      makeChatRow({
+        date: "2026-02-20T00:00:00.000Z",
+        message_id: "r1",
+        content: "first",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:01:00.000Z",
+        message_id: "r2",
+        content: "second",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:02:00.000Z",
+        message_id: "r3",
+        content: "third",
+      }),
+    ];
+    await fs.writeFile(
+      chatPath,
+      rows.map((x) => JSON.stringify(x)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const renameSpy = jest
+      .spyOn(fs, "rename")
+      .mockImplementationOnce(async () => {
+        throw new Error("rename failed");
+      });
+
+    const first = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+    });
+    expect(first.rotated).toBe(true);
+    expect(first.maintenance_status).toBe("segment_written");
+    expect(first.rewrite_warning).toContain("rename failed");
+
+    // Stats call should auto-resume the pending rotate op and rewrite head.
+    const afterResume = await getChatStoreStats({
+      chat_path: chatPath,
+      db_path: dbPath,
+    });
+    expect(afterResume.head_chat_rows).toBe(1);
+    expect(afterResume.pending_rotate_op_id).toBeUndefined();
+
+    renameSpy.mockRestore();
+  });
+});

@@ -1102,6 +1102,7 @@ export async function chatStoreReadArchived({
   chat_path,
   db_path,
   before_date_ms,
+  thread_id,
   limit,
   offset,
 }: {
@@ -1110,6 +1111,7 @@ export async function chatStoreReadArchived({
   chat_path: string;
   db_path?: string;
   before_date_ms?: number;
+  thread_id?: string;
   limit?: number;
   offset?: number;
 }): Promise<{
@@ -1123,6 +1125,7 @@ export async function chatStoreReadArchived({
     chat_path,
     db_path,
     before_date_ms,
+    thread_id,
     limit,
     offset,
   });

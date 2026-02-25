@@ -426,6 +426,7 @@ export const hubApi: HubApi = {
       chat_path: string;
       db_path?: string;
       before_date_ms?: number;
+      thread_id?: string;
       limit?: number;
       offset?: number;
     }) => {
@@ -433,6 +434,7 @@ export const hubApi: HubApi = {
         chat_path: opts.chat_path,
         db_path: opts.db_path,
         before_date_ms: opts.before_date_ms,
+        thread_id: opts.thread_id,
         limit: opts.limit,
         offset: opts.offset,
       });

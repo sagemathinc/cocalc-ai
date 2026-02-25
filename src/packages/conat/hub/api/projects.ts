@@ -162,6 +162,9 @@ export interface ChatStoreStats {
   max_head_bytes: number;
   max_head_messages: number;
   last_rotated_at_ms?: number;
+  pending_rotate_op_id?: string;
+  pending_rotate_status?: string;
+  pending_rotate_error?: string;
 }
 
 export interface ChatStoreRotateResult {
@@ -169,6 +172,8 @@ export interface ChatStoreRotateResult {
   reason?: string;
   dry_run?: boolean;
   chat_id: string;
+  maintenance_op_id?: string;
+  maintenance_status?: string;
   segment_id?: string;
   segment_seq?: number;
   archived_rows?: number;
@@ -802,6 +807,7 @@ export interface Projects {
     chat_path: string;
     db_path?: string;
     before_date_ms?: number;
+    thread_id?: string;
     limit?: number;
     offset?: number;
   }) => Promise<{ chat_id: string; rows: ChatStoreArchivedRow[]; offset: number; next_offset?: number }>;
