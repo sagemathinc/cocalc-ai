@@ -6,6 +6,7 @@ import {
   ensureNotebook,
   notebookUrl,
   openNotebookPage,
+  resolveAcpMode,
   resolveBaseUrl,
   resolveLiteDaemonHome,
   uniqueNotebookPath,
@@ -20,6 +21,7 @@ function envFlag(name: string): boolean {
 
 const RUN_ACP_E2E =
   envFlag("COCALC_JUPYTER_E2E_ACP") || envFlag("COCALC_JUPYTER_E2E_AGENT");
+const ALLOW_NON_MOCK = envFlag("COCALC_JUPYTER_E2E_ALLOW_NON_MOCK");
 
 test.describe.configure({ mode: "serial" });
 
@@ -31,6 +33,12 @@ test.skip(
 test("Fix with Agent opens floating navigator and sends prompt in-place", async ({
   page,
 }) => {
+  const acpMode = await resolveAcpMode();
+  test.skip(
+    !ALLOW_NON_MOCK && acpMode != null && acpMode !== "mock",
+    `requires ACP mock mode (detected: ${acpMode ?? "unknown"})`,
+  );
+
   const { base_url, auth_token } = await resolveBaseUrl();
   const liteHome = await resolveLiteDaemonHome();
   const navigatorChatPath = join(liteHome, ".local", "share", "cocalc", "navigator.chat");

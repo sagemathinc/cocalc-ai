@@ -127,6 +127,7 @@ export async function main(opts?: {
     AGENT_TOKEN,
     isHttps,
     hostname,
+    acpMode: `${process.env.COCALC_ACP_MODE ?? ""}`.trim() || "codex",
   });
 
   logger.debug("create server");
@@ -238,12 +239,14 @@ async function writeConnectionInfo({
   AGENT_TOKEN,
   isHttps,
   hostname,
+  acpMode,
 }: {
   port: number;
   AUTH_TOKEN?: string;
   AGENT_TOKEN?: string;
   isHttps: boolean;
   hostname: string;
+  acpMode: string;
 }) {
   const output = connectionInfoPath();
   try {
@@ -258,6 +261,7 @@ async function writeConnectionInfo({
       protocol: isHttps ? "https" : "http",
       host: hostname,
       url: `${isHttps ? "https" : "http"}://${hostname}:${port}`,
+      acp_mode: acpMode,
       pid: process.pid,
       startedAt: new Date().toISOString(),
     };
