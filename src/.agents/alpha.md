@@ -43,7 +43,7 @@ A phase is complete only if:
 
 These are hard prerequisites for reliable tester onboarding.
 
-### A0.1 Launchpad host/project status gating in frontend
+### A0.1 (done) Launchpad host/project status gating in frontend
 
 **Task:** "frontend UI for working with projects need to be much more aware of host status"
 
@@ -57,7 +57,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 ---
 
-### A0.2 New project start fails: rootfs not mounted
+### A0.2 (done) New project start fails: rootfs not mounted
 
 **Task:** "starting any new project says rootfs is not mounted"
 
@@ -70,7 +70,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 ---
 
-### A0.3 New project assigned/started before host ready
+### A0.3 (done) New project assigned/started before host ready
 
 **Task:** "creating new project VERY slow; do not assign/start until host is ready"
 
@@ -342,7 +342,6 @@ Ship to external alpha testers only when:
 - A1.1 + A1.4 complete,
 - no known data-loss bugs remain in editor path (A2.2/A2.3),
 - upload and notebook baseline usability are functional (A2.1/A2.5).
-
 
 # Details
 
