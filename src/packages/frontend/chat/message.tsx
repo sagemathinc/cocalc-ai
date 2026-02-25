@@ -27,7 +27,11 @@ import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
 import { plural, unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { deriveAcpLogRefs, type InlineCodeLink } from "@cocalc/chat";
+import {
+  deriveAcpLogRefs,
+  getBestResponseText,
+  type InlineCodeLink,
+} from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
 import { codexEventsToMarkdown } from "./codex-activity";
@@ -61,6 +65,7 @@ import {
 } from "./access";
 import { SyncOutlined } from "@ant-design/icons";
 import { AgentMessageStatus } from "./agent-message-status";
+import { useCodexLog } from "./use-codex-log";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -472,6 +477,49 @@ export default function Message({
     // other kinds of LLM messages.
     return Boolean(field<string>(message, "acp_account_id"));
   }, [message]);
+
+  const rowMessageValue = useMemo(() => newest_content(message), [message]);
+  const logStore = useMemo(
+    () => field<string>(message, "acp_log_store") ?? fallbackLogRefs.store,
+    [message, fallbackLogRefs.store],
+  );
+  const logKey = useMemo(
+    () => field<string>(message, "acp_log_key") ?? fallbackLogRefs.key,
+    [message, fallbackLogRefs.key],
+  );
+  const logSubject = useMemo(
+    () => field<string>(message, "acp_log_subject") ?? fallbackLogRefs.subject,
+    [message, fallbackLogRefs.subject],
+  );
+  const loadLogBody = useMemo(() => {
+    if (!showCodexActivity || !project_id) return false;
+    if (effectiveGenerating) return true;
+    return rowMessageValue.trim().length === 0;
+  }, [showCodexActivity, project_id, effectiveGenerating, rowMessageValue]);
+  const codexBodyLog = useCodexLog({
+    projectId: project_id,
+    logStore,
+    logKey,
+    logSubject,
+    generating: effectiveGenerating,
+    enabled: loadLogBody,
+  });
+  const codexBodyValue = useMemo(() => {
+    if (!Array.isArray(codexBodyLog.events) || codexBodyLog.events.length === 0) {
+      return undefined;
+    }
+    return getBestResponseText(codexBodyLog.events as any);
+  }, [codexBodyLog.events]);
+  const renderedMessageValue = useMemo(() => {
+    if (
+      typeof codexBodyValue === "string" &&
+      codexBodyValue.trim().length > 0 &&
+      (effectiveGenerating || rowMessageValue.trim().length === 0)
+    ) {
+      return codexBodyValue;
+    }
+    return rowMessageValue;
+  }, [codexBodyValue, effectiveGenerating, rowMessageValue]);
 
   const threadKeyForSession = useMemo(
     () => (threadRootMs != null ? `${threadRootMs}` : undefined),
@@ -1019,7 +1067,7 @@ export default function Message({
   }
 
   function renderMessageBody({ message_class }) {
-    const value = newest_content(message);
+    const value = renderedMessageValue;
     const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
 
     return (
@@ -1063,7 +1111,7 @@ export default function Message({
 
   function renderZenMessageDrawer() {
     if (!showZenMessage) return null;
-    const value = newest_content(message);
+    const value = renderedMessageValue;
     const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
     return (
       <Drawer

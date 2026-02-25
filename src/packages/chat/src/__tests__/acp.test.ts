@@ -1,6 +1,11 @@
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 
-import { appendStreamMessage } from "../acp";
+import {
+  appendStreamMessage,
+  getBestResponseText,
+  getLatestMessageText,
+  getLatestSummaryText,
+} from "../acp";
 
 function textEvent(
   type: "thinking" | "message",
@@ -43,5 +48,38 @@ describe("appendStreamMessage", () => {
 
     expect(merged).toHaveLength(1);
     expect((merged[0] as any).event.text).toBe("**First block** **Second block**");
+  });
+});
+
+describe("response text helpers", () => {
+  test("returns latest merged message text", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "Hel", 1),
+      textEvent("message", "lo", 2),
+    ];
+    expect(getLatestMessageText(events)).toBe("Hello");
+  });
+
+  test("merges incremental summary chunks", () => {
+    const events: AcpStreamMessage[] = [
+      { type: "summary", finalResponse: "Hello", seq: 1 } as AcpStreamMessage,
+      { type: "summary", finalResponse: " world", seq: 2 } as AcpStreamMessage,
+    ];
+    expect(getLatestSummaryText(events)).toBe("Hello world");
+  });
+
+  test("prefers summary text over streamed message text", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "draft", 1),
+      { type: "summary", finalResponse: "final", seq: 2 } as AcpStreamMessage,
+    ];
+    expect(getBestResponseText(events)).toBe("final");
+  });
+
+  test("falls back to message text when summary is absent", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "final", 1),
+    ];
+    expect(getBestResponseText(events)).toBe("final");
   });
 });

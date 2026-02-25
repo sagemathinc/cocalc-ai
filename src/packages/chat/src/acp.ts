@@ -81,3 +81,47 @@ export function eventHasText(
 ): event is Extract<AcpStreamEvent, { text: string }> {
   return event?.type === "thinking" || event?.type === "message";
 }
+
+function mergeResponseText(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  const prev = typeof previous === "string" ? previous : "";
+  const cur = typeof next === "string" ? next : "";
+  if (!prev) return cur || undefined;
+  if (!cur) return prev;
+  if (cur.startsWith(prev)) return cur;
+  if (prev.startsWith(cur)) return prev;
+  if (prev.endsWith(cur)) return prev;
+  return `${prev}${cur}`;
+}
+
+export function getLatestMessageText(
+  events: AcpStreamMessage[],
+): string | undefined {
+  let latest: string | undefined;
+  for (const evt of events ?? []) {
+    if (evt?.type === "event" && evt.event?.type === "message") {
+      latest = mergeResponseText(latest, evt.event.text);
+    }
+  }
+  return latest;
+}
+
+export function getLatestSummaryText(
+  events: AcpStreamMessage[],
+): string | undefined {
+  let latest: string | undefined;
+  for (const evt of events ?? []) {
+    if (evt?.type === "summary") {
+      latest = mergeResponseText(latest, evt.finalResponse);
+    }
+  }
+  return latest;
+}
+
+export function getBestResponseText(
+  events: AcpStreamMessage[],
+): string | undefined {
+  return getLatestSummaryText(events) ?? getLatestMessageText(events);
+}
