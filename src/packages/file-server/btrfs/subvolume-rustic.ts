@@ -40,8 +40,13 @@ import {
 
 export const RUSTIC = "rustic";
 
-const RUSTIC_SNAPSHOT = "temp-rustic-snapshot";
+const RUSTIC_SNAPSHOT_PREFIX = "temp-rustic-snapshot";
 const logger = getLogger("file-server:btrfs:subvolume-rustic");
+
+function makeTempRusticSnapshotName(): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${RUSTIC_SNAPSHOT_PREFIX}-${Date.now().toString(36)}-${rand}`;
+}
 
 interface Snapshot {
   id: string;
@@ -90,20 +95,17 @@ export class SubvolumeRustic {
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0)
       .flatMap((tag) => ["--tag", tag]);
-    if (await this.subvolume.snapshots.exists(RUSTIC_SNAPSHOT)) {
-      logger.debug(`backup: deleting existing ${RUSTIC_SNAPSHOT}`);
-      await this.subvolume.snapshots.delete(RUSTIC_SNAPSHOT);
-    }
-    const target = this.subvolume.snapshots.path(RUSTIC_SNAPSHOT);
+    const tempSnapshot = makeTempRusticSnapshotName();
+    const target = this.subvolume.snapshots.path(tempSnapshot);
     const snapshotPath = join(this.subvolume.path, target);
     try {
       logger.debug(
-        `backup: creating ${RUSTIC_SNAPSHOT} to get a consistent backup`,
+        `backup: creating ${tempSnapshot} to get a consistent backup`,
       );
-      await this.subvolume.snapshots.create(RUSTIC_SNAPSHOT);
+      await this.subvolume.snapshots.create(tempSnapshot);
       // Backup the snapshot path directly (no bind mounts). The project tree
       // already includes persistent metadata under ~/.local/share/cocalc/persist.
-      logger.debug(`backup: backing up ${RUSTIC_SNAPSHOT} using rustic`);
+      logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
       const { stdout } = parseOutput(
         await this.subvolume.fs.rustic(
           ["backup", "-x", "--json", ...tagArgs, "."],
@@ -155,9 +157,9 @@ export class SubvolumeRustic {
       };
     } finally {
       this.snapshotsCache = null;
-      logger.debug(`backup: deleting temporary ${RUSTIC_SNAPSHOT}`);
+      logger.debug(`backup: deleting temporary ${tempSnapshot}`);
       try {
-        await this.subvolume.snapshots.delete(RUSTIC_SNAPSHOT);
+        await this.subvolume.snapshots.delete(tempSnapshot);
       } catch {}
     }
   };

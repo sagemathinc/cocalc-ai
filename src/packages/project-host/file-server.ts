@@ -95,6 +95,7 @@ const BACKUP_MAX_PARALLEL = Math.max(
 );
 let backupInFlight = 0;
 const backupWaiters: Array<() => void> = [];
+const backupProjectTails = new Map<string, Promise<void>>();
 
 function volName(project_id: string) {
   return `project-${project_id}`;
@@ -121,6 +122,47 @@ function releaseBackupSlot() {
   }
 }
 
+async function withBackupProjectLock<T>({
+  project_id,
+  op,
+  run,
+}: {
+  project_id: string;
+  op: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const previous = backupProjectTails.get(project_id) ?? Promise.resolve();
+  const queued = previous.then(() => gate);
+  backupProjectTails.set(project_id, queued);
+
+  const waitStartedAt = Date.now();
+  await previous;
+  logger.debug("backup project lock acquired", {
+    project_id,
+    op,
+    wait_ms: Date.now() - waitStartedAt,
+    queued_projects: backupProjectTails.size,
+  });
+
+  try {
+    return await run();
+  } finally {
+    release();
+    if (backupProjectTails.get(project_id) === queued) {
+      backupProjectTails.delete(project_id);
+    }
+    logger.debug("backup project lock released", {
+      project_id,
+      op,
+      queued_projects: backupProjectTails.size,
+    });
+  }
+}
+
 async function withBackupParallelLimit<T>({
   project_id,
   op,
@@ -130,26 +172,32 @@ async function withBackupParallelLimit<T>({
   op: string;
   run: () => Promise<T>;
 }): Promise<T> {
-  await acquireBackupSlot();
-  logger.debug("backup slot acquired", {
+  return await withBackupProjectLock({
     project_id,
     op,
-    in_flight: backupInFlight,
-    queued: backupWaiters.length,
-    max_parallel: BACKUP_MAX_PARALLEL,
+    run: async () => {
+      await acquireBackupSlot();
+      logger.debug("backup slot acquired", {
+        project_id,
+        op,
+        in_flight: backupInFlight,
+        queued: backupWaiters.length,
+        max_parallel: BACKUP_MAX_PARALLEL,
+      });
+      try {
+        return await run();
+      } finally {
+        releaseBackupSlot();
+        logger.debug("backup slot released", {
+          project_id,
+          op,
+          in_flight: backupInFlight,
+          queued: backupWaiters.length,
+          max_parallel: BACKUP_MAX_PARALLEL,
+        });
+      }
+    },
   });
-  try {
-    return await run();
-  } finally {
-    releaseBackupSlot();
-    logger.debug("backup slot released", {
-      project_id,
-      op,
-      in_flight: backupInFlight,
-      queued: backupWaiters.length,
-      max_parallel: BACKUP_MAX_PARALLEL,
-    });
-  }
 }
 
 function scratchVolName(project_id: string) {
