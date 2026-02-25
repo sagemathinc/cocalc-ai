@@ -9,6 +9,7 @@ import {
 } from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import { createBackup as createBackupLro } from "@cocalc/server/conat/api/project-backups";
+import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
 
 const logger = getLogger("server:projects:copy");
@@ -41,10 +42,17 @@ function fileServerClientWithTimeout(
   project_id: string,
   timeout_ms?: number,
 ): Fileserver {
-  if (!timeout_ms) return fileServerClient({ project_id });
-  return conat().call<Fileserver>(`file-server.${project_id}`, {
+  return fileServerClient({
+    project_id,
     timeout: timeout_ms,
   });
+}
+
+async function ensureProjectRoute(project_id: string): Promise<void> {
+  const address = await materializeProjectHost(project_id);
+  if (!address) {
+    throw new Error(`unable to route project ${project_id} to a host`);
+  }
 }
 
 function report(progress: CopyProgress | undefined, update: CopyStep) {
@@ -274,6 +282,7 @@ export async function copyProjectFiles({
   }
   const hostIds = await getHostIds(Array.from(projectIds));
   const srcHostId = hostIds.get(src.project_id)!;
+  await ensureProjectRoute(src.project_id);
 
   const localDests: CopyDest[] = [];
   const remoteDests: CopyDest[] = [];
