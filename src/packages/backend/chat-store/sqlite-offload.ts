@@ -715,6 +715,31 @@ export async function rotateChatStore({
   for (const item of chatRows) {
     if (item.row.generating) keepIdx.add(item.idx);
   }
+  // Preserve thread root anchors for any thread that still has kept rows.
+  // Without this, replies can remain in head while their root is archived,
+  // causing "orphan"/date-only thread presentation in the UI.
+  const rootIdxByThreadId = new Map<string, number>();
+  for (const item of chatRows) {
+    const threadId = `${item.row.thread_id ?? ""}`.trim();
+    if (!threadId) continue;
+    const replyTo = (item.row.obj as any)?.reply_to;
+    if (replyTo == null || `${replyTo}`.trim() === "") {
+      if (!rootIdxByThreadId.has(threadId)) {
+        rootIdxByThreadId.set(threadId, item.idx);
+      }
+    }
+  }
+  const keptThreadIds = new Set<string>();
+  for (const item of chatRows) {
+    if (!keepIdx.has(item.idx)) continue;
+    const threadId = `${item.row.thread_id ?? ""}`.trim();
+    if (!threadId) continue;
+    keptThreadIds.add(threadId);
+  }
+  for (const threadId of keptThreadIds) {
+    const rootIdx = rootIdxByThreadId.get(threadId);
+    if (rootIdx != null) keepIdx.add(rootIdx);
+  }
   const archivedCandidates = chatRows.filter((x) => !keepIdx.has(x.idx));
   if (!archivedCandidates.length) {
     return {
