@@ -158,12 +158,32 @@ const chatOffloadRotateAt = new Map<string, number>();
 async function maybeAutoRotateChatStore({
   chatPath,
   chatKey,
+  projectId,
+  chatPathKey,
 }: {
   chatPath?: string;
   chatKey: string;
+  projectId: string;
+  chatPathKey: string;
 }): Promise<void> {
   if (!CHAT_OFFLOAD_AUTOROTATE_ENABLED) return;
   if (!chatPath || !path.isAbsolute(chatPath)) return;
+  // Idleness is determined by live ACP leases, not stale historical
+  // generating flags embedded in old chat rows.
+  const runningSameChat = listRunningAcpTurnLeases().filter(
+    (x) =>
+      x.project_id === projectId &&
+      x.path === chatPathKey &&
+      x.state === "running",
+  ).length;
+  if (runningSameChat > 0) {
+    logger.debug("chat offload autorotate skipped", {
+      chatKey,
+      chatPath,
+      reason: `chat has ${runningSameChat} running ACP leases`,
+    });
+    return;
+  }
   const now = Date.now();
   const last = chatOffloadRotateAt.get(chatPath) ?? 0;
   if (now - last < CHAT_OFFLOAD_AUTOROTATE_COOLDOWN_MS) return;
@@ -174,7 +194,9 @@ async function maybeAutoRotateChatStore({
       keep_recent_messages: CHAT_OFFLOAD_AUTOROTATE_KEEP_MESSAGES,
       max_head_bytes: CHAT_OFFLOAD_AUTOROTATE_MAX_BYTES,
       max_head_messages: CHAT_OFFLOAD_AUTOROTATE_MAX_MESSAGES,
-      require_idle: true,
+      // We already gate idleness using live ACP leases above; this avoids
+      // stale legacy generating=true rows blocking rotation forever.
+      require_idle: false,
       force: false,
     });
     if (result.rotated) {
@@ -1098,6 +1120,8 @@ export class ChatStreamWriter {
       void maybeAutoRotateChatStore({
         chatPath: this.resolveChatFilePath(),
         chatKey: this.chatKey,
+        projectId: this.metadata.project_id,
+        chatPathKey: this.metadata.path,
       });
       return;
     }
@@ -1116,6 +1140,8 @@ export class ChatStreamWriter {
       void maybeAutoRotateChatStore({
         chatPath: this.resolveChatFilePath(),
         chatKey: this.chatKey,
+        projectId: this.metadata.project_id,
+        chatPathKey: this.metadata.path,
       });
     }
   }
