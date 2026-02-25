@@ -5,6 +5,7 @@ import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import { capitalize } from "@cocalc/util/misc";
 import { User } from "@cocalc/frontend/users/user";
 import type { HostLroState } from "../hooks/use-host-ops";
+import type { CSSProperties } from "react";
 
 const ACTIVE_STATUSES = new Set<LroStatus>(["queued", "running"]);
 
@@ -258,6 +259,13 @@ function opLabel(op: HostLroState): string {
   return "Host op";
 }
 
+const WRAP_TAG_STYLE: CSSProperties = {
+  maxWidth: "100%",
+  whiteSpace: "normal",
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 export function getHostOpPhase(op?: HostLroState): string | undefined {
   if (!op) return undefined;
   return formatPhase(
@@ -298,7 +306,9 @@ function kindInputTags(op: HostLroState) {
   return (
     <Space size={[6, 6]} wrap>
       {tags.map((value) => (
-        <Tag key={value}>{value}</Tag>
+        <Tag key={value} style={WRAP_TAG_STYLE}>
+          {value}
+        </Tag>
       ))}
     </Space>
   );
@@ -330,15 +340,25 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
   );
 
   return (
-    <div style={{ width: 480, maxWidth: "80vw" }}>
+    <div
+      style={{
+        width: 480,
+        maxWidth: "80vw",
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+      }}
+    >
       <Space direction="vertical" size={8} style={{ width: "100%" }}>
         <div style={{ fontWeight: 600 }}>{actionLabel} lifecycle</div>
         <Space wrap size={[6, 6]}>
           <Tag color={statusColor(status)}>{status ?? "running"}</Tag>
-          {currentPhase ? <Tag>{currentPhase}</Tag> : null}
-          {detail ? <Tag>{detail}</Tag> : null}
-          <Tag>
-            Operation ID: <code>{op.op_id}</code>
+          {currentPhase ? <Tag style={WRAP_TAG_STYLE}>{currentPhase}</Tag> : null}
+          {detail ? <Tag style={WRAP_TAG_STYLE}>{detail}</Tag> : null}
+          <Tag style={WRAP_TAG_STYLE}>
+            Operation ID:{" "}
+            <code style={{ overflowWrap: "anywhere", wordBreak: "break-all" }}>
+              {op.op_id}
+            </code>
           </Tag>
           <Button
             size="small"
