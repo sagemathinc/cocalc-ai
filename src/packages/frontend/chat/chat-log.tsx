@@ -74,6 +74,7 @@ interface Props {
   composerFocused?: boolean;
   searchJumpDate?: string;
   searchJumpToken?: number;
+  searchQuery?: string;
 }
 
 export function ChatLog({
@@ -96,6 +97,7 @@ export function ChatLog({
   composerFocused,
   searchJumpDate,
   searchJumpToken,
+  searchQuery,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -308,6 +310,7 @@ export function ChatLog({
           onSelectThread: showThreadHeaders ? handleSelectThread : undefined,
           composerTargetKey,
           composerFocused,
+          searchQuery,
         }}
       />
       <Composing
@@ -521,6 +524,7 @@ export function MessageList({
   acpState,
   showThreadHeaders,
   onSelectThread,
+  searchQuery,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -545,6 +549,7 @@ export function MessageList({
   acpState?;
   showThreadHeaders?: boolean;
   onSelectThread?: (threadKey: string) => void;
+  searchQuery?: string;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const [atBottom, setAtBottom] = useState(true);
@@ -697,6 +702,7 @@ export function MessageList({
               })()
             }
             dim={shouldDim}
+            searchHighlight={searchQuery}
           />
         </DivTempHeight>
       </div>

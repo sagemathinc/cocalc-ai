@@ -171,6 +171,7 @@ interface Props {
 
   acpState?: string;
   dim?: boolean;
+  searchHighlight?: string;
 }
 
 export function resolveEditedMessageForSave(
@@ -209,6 +210,7 @@ export default function Message({
   onForceScrollToBottom,
   acpState,
   dim,
+  searchHighlight,
 }: Props) {
   const intl = useIntl();
 
@@ -1044,6 +1046,7 @@ export default function Message({
           style={MARKDOWN_STYLE}
           value={value}
           className={message_class}
+          highlightQuery={searchHighlight}
           inlineCodeLinks={
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
@@ -1070,6 +1073,7 @@ export default function Message({
           <StaticMarkdown
             style={{ fontSize: `${font_size ?? 14}px` }}
             value={value}
+            highlightQuery={searchHighlight}
             inlineCodeLinks={
               Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
             }

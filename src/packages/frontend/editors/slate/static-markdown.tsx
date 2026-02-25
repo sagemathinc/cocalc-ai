@@ -23,6 +23,7 @@ interface Props {
   className?: string;
   inlineCodeLinks?: InlineCodeLink[];
   inlineCodeWorkspaceRoot?: string;
+  highlightQuery?: string;
 }
 
 type PartialSlateEditor = any; // TODO
@@ -33,12 +34,16 @@ export default function StaticMarkdown({
   className,
   inlineCodeLinks,
   inlineCodeWorkspaceRoot,
+  highlightQuery,
 }: Props) {
   const [editor, setEditor] = useState<PartialSlateEditor>({
-    children: applyInlineCodeLinks(markdownToSlate(value), {
-      inlineCodeLinks,
-      inlineCodeWorkspaceRoot,
-    }),
+    children: applySearchHighlights(
+      applyInlineCodeLinks(markdownToSlate(value), {
+        inlineCodeLinks,
+        inlineCodeWorkspaceRoot,
+      }),
+      highlightQuery,
+    ),
   });
   const [change, setChange] = useState<number>(0);
   useEffect(() => {
@@ -47,13 +52,16 @@ export default function StaticMarkdown({
       // no need to set it the first time because it is set in the useState initialization.
       // and we *have* to set it there so it works for server side rendering and exporting to html/pdf.
       setEditor({
-        children: applyInlineCodeLinks(markdownToSlate(value), {
-          inlineCodeLinks,
-          inlineCodeWorkspaceRoot,
-        }),
+        children: applySearchHighlights(
+          applyInlineCodeLinks(markdownToSlate(value), {
+            inlineCodeLinks,
+            inlineCodeWorkspaceRoot,
+          }),
+          highlightQuery,
+        ),
       });
     }
-  }, [value, inlineCodeLinks, inlineCodeWorkspaceRoot]);
+  }, [value, inlineCodeLinks, inlineCodeWorkspaceRoot, highlightQuery]);
 
   if (editor == null) {
     return null;
@@ -77,6 +85,63 @@ export default function StaticMarkdown({
       </div>
     </ChangeContext.Provider>
   );
+}
+
+function applySearchHighlights(children: any[], query?: string): any[] {
+  const needle = normalizeHighlightQuery(query);
+  if (!needle) return children;
+  return transformSearchNodes(children, needle);
+}
+
+function normalizeHighlightQuery(value?: string): string {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+}
+
+function transformSearchNodes(nodes: any[], needle: string): any[] {
+  const out: any[] = [];
+  for (const node of nodes ?? []) {
+    if (!node || typeof node !== "object") {
+      out.push(node);
+      continue;
+    }
+    if (typeof node.type === "string") {
+      const nextChildren = Array.isArray(node.children)
+        ? transformSearchNodes(node.children, needle)
+        : node.children;
+      out.push({ ...node, children: nextChildren });
+      continue;
+    }
+    if (typeof node.text === "string") {
+      out.push(...splitSearchTextNode(node, needle));
+      continue;
+    }
+    out.push(node);
+  }
+  return out;
+}
+
+function splitSearchTextNode(node: any, needle: string): any[] {
+  const text = node.text as string;
+  if (!text || !needle) return [node];
+  const lower = text.toLowerCase();
+  let index = 0;
+  let found = lower.indexOf(needle, index);
+  if (found < 0) return [node];
+  const pieces: any[] = [];
+  while (found >= 0) {
+    if (found > index) {
+      pieces.push({ ...node, text: text.slice(index, found), search: undefined });
+    }
+    const end = found + needle.length;
+    pieces.push({ ...node, text: text.slice(found, end), search: true });
+    index = end;
+    found = lower.indexOf(needle, index);
+  }
+  if (index < text.length) {
+    pieces.push({ ...node, text: text.slice(index), search: undefined });
+  }
+  return pieces.length ? pieces : [node];
 }
 
 function applyInlineCodeLinks(

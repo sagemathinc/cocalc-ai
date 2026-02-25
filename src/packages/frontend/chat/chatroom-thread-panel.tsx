@@ -3,13 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Select, Space } from "antd";
+import { Button, Input, Select, Space, Tooltip } from "antd";
 import {
   React,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
+import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
@@ -33,6 +35,7 @@ import { dateValue } from "./access";
 import { newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import { ChatIconPicker } from "./chat-icon-picker";
+import { Icon } from "@cocalc/frontend/components";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -134,9 +137,12 @@ export function ChatRoomThreadPanel({
   showThreadImagePreview = true,
   hideChatTypeSelector = false,
 }: ChatRoomThreadPanelProps) {
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [threadSearchInput, setThreadSearchInput] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
   const [threadSearchJumpToken, setThreadSearchJumpToken] = useState(0);
+  const searchInputRef = useRef<any>(null);
   const selectedThreadRootIso = useMemo(() => {
     const rootDate = dateValue(selectedThread?.rootMessage);
     if (rootDate != null && !Number.isNaN(rootDate.valueOf())) {
@@ -182,9 +188,29 @@ export function ChatRoomThreadPanel({
     [matchCount, normalizedCursor, threadSearchMatches],
   );
 
+  const setSearchQueryDebounced = useMemo(
+    () =>
+      debounce((value: string) => {
+        setThreadSearchQuery(value);
+      }, 300),
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      setSearchQueryDebounced.cancel();
+    };
+  }, [setSearchQueryDebounced]);
+
   useEffect(() => {
     setThreadSearchCursor(0);
   }, [threadSearchQuery, selectedThreadKey]);
+
+  useEffect(() => {
+    setThreadSearchInput("");
+    setThreadSearchQuery("");
+    setThreadSearchOpen(false);
+  }, [selectedThreadKey]);
 
   useEffect(() => {
     if (!matchCount) return;
@@ -197,6 +223,30 @@ export function ChatRoomThreadPanel({
     if (!activeSearchMatchDate) return;
     setThreadSearchJumpToken((n) => n + 1);
   }, [activeSearchMatchDate]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      setThreadSearchOpen(true);
+      setTimeout(() => {
+        searchInputRef.current?.focus?.();
+      }, 0);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const onSearchInputChange = (value: string) => {
+    setThreadSearchInput(value);
+    if (!value.trim()) {
+      setSearchQueryDebounced.cancel();
+      setThreadSearchQuery("");
+      return;
+    }
+    setSearchQueryDebounced(value);
+  };
   if (!selectedThreadKey) {
     type ModelOption = {
       value: string;
@@ -554,20 +604,56 @@ export function ChatRoomThreadPanel({
           {compactThreadLabel}
         </div>
       )}
-      {selectedThreadKey != null ? (
+      <div
+        style={{
+          position: "absolute",
+          top: 8,
+          right: threadImagePreview ? 116 : 12,
+          zIndex: 20,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <Tooltip title="Search thread (Ctrl/Cmd+F)">
+          <Button
+            size="small"
+            onClick={() => {
+              setThreadSearchOpen((open) => {
+                const next = !open;
+                if (next) {
+                  setTimeout(() => searchInputRef.current?.focus?.(), 0);
+                }
+                return next;
+              });
+            }}
+            icon={<Icon name="search" />}
+          >
+            Search
+          </Button>
+        </Tooltip>
+      </div>
+      {threadSearchOpen ? (
         <div
           style={{
-            padding: "8px 12px",
-            borderBottom: "1px solid #eee",
+            position: "absolute",
+            top: 44,
+            right: threadImagePreview ? 116 : 12,
+            zIndex: 21,
+            padding: "8px",
             display: "flex",
             alignItems: "center",
             gap: 8,
             flexWrap: "wrap",
-            background: "#fafafa",
-            zIndex: 5,
+            background: "rgba(250,250,250,0.98)",
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+            maxWidth: "min(90vw, 560px)",
           }}
         >
           <Input
+            ref={searchInputRef}
             size="small"
             allowClear
             placeholder={
@@ -575,8 +661,8 @@ export function ChatRoomThreadPanel({
                 ? "Search this thread"
                 : "Select a thread to search"
             }
-            value={threadSearchQuery}
-            onChange={(e) => setThreadSearchQuery(e.target.value)}
+            value={threadSearchInput}
+            onChange={(e) => onSearchInputChange(e.target.value)}
             onPressEnter={() => {
               if (!matchCount) return;
               setThreadSearchCursor((n) => n + 1);
@@ -605,6 +691,13 @@ export function ChatRoomThreadPanel({
                 ? `${normalizedCursor + 1}/${matchCount}`
                 : "0 matches"}
           </span>
+          <Button
+            size="small"
+            type="text"
+            onClick={() => setThreadSearchOpen(false)}
+          >
+            ×
+          </Button>
         </div>
       ) : null}
       <ChatLog
@@ -626,6 +719,7 @@ export function ChatRoomThreadPanel({
         composerFocused={composerFocused}
         searchJumpDate={activeSearchMatchDate}
         searchJumpToken={threadSearchJumpToken}
+        searchQuery={threadSearchQuery}
       />
     </div>
   );
