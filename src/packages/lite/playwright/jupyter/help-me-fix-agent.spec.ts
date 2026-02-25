@@ -1,10 +1,13 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   codeCell,
   ensureNotebook,
   notebookUrl,
   openNotebookPage,
   resolveBaseUrl,
+  resolveLiteDaemonHome,
   uniqueNotebookPath,
 } from "./helpers";
 
@@ -29,6 +32,8 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
   page,
 }) => {
   const { base_url, auth_token } = await resolveBaseUrl();
+  const liteHome = await resolveLiteDaemonHome();
+  const navigatorChatPath = join(liteHome, ".local", "share", "cocalc", "navigator.chat");
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-help-me-fix-agent");
   await ensureNotebook(path_ipynb, [
     codeCell("1/0", {
@@ -59,9 +64,17 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
   });
   await expect(page).toHaveURL(/\/projects\/[^/]+\/files\//);
 
-  await expect(
-    page.getByText("Investigate and fix this Jupyter notebook error.", {
-      exact: false,
-    }),
-  ).toBeVisible({ timeout: 45_000 });
+  await expect
+    .poll(
+      async () => {
+        try {
+          const raw = await readFile(navigatorChatPath, "utf8");
+          return raw.includes("Investigate and fix this Jupyter notebook error.");
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 45_000 },
+    )
+    .toBe(true);
 });

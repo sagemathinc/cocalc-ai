@@ -50,7 +50,7 @@ export async function getHelp({
   task,
   language,
   extraFileInfo,
-  redux,
+  redux: _redux,
   prioritize,
   model,
   isHint = false,
@@ -93,7 +93,6 @@ export async function getHelp({
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,
       });
-      redux?.getProjectActions?.(project_id)?.set_active_tab("home");
     }
   } catch (err) {
     console.error("Error getting help:", err);

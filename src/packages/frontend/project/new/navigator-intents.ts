@@ -1,12 +1,17 @@
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
+import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import { lite } from "@cocalc/frontend/lite";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
 import {
   loadNavigatorSelectedThreadKey,
   saveNavigatorSelectedThreadKey,
 } from "./navigator-state";
 import { uuid } from "@cocalc/util/misc";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { path_split } from "@cocalc/util/misc";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT =
@@ -124,6 +129,35 @@ function pickNavigatorSession({
   );
 }
 
+function sanitizeAccountId(accountId: string): string {
+  return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
+}
+
+function navigatorChatPath(accountId?: string): string {
+  if (lite) return ".local/share/cocalc/navigator.chat";
+  const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
+  return `.local/share/cocalc/navigator-${key}.chat`;
+}
+
+function resolveNavigatorChatPath(project_id: string): string {
+  const accountId = `${redux.getStore("account")?.get?.("account_id") ?? ""}`;
+  const homeDirectory = getProjectHomeDirectory(project_id);
+  return normalizeAbsolutePath(navigatorChatPath(accountId), homeDirectory);
+}
+
+async function ensureNavigatorChatDirectory(
+  project_id: string,
+  chat_path: string,
+): Promise<void> {
+  const fs = redux.getProjectActions(project_id)?.fs?.();
+  if (!fs?.mkdir) return;
+  try {
+    await fs.mkdir(path_split(chat_path).head, { recursive: true });
+  } catch {
+    // Best effort only; chat initialization may still succeed.
+  }
+}
+
 function readQueue(): NavigatorSubmitPromptDetail[] {
   try {
     const raw = localStorage.getItem(NAVIGATOR_INTENT_QUEUE_KEY);
@@ -211,8 +245,29 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
 
     const preferredThreadKey = loadNavigatorSelectedThreadKey(project_id);
     const sessions = await listAgentSessionsForProject({ project_id });
-    const session = pickNavigatorSession({ records: sessions, preferredThreadKey });
+    const indexedSession = pickNavigatorSession({
+      records: sessions,
+      preferredThreadKey,
+    });
+    const fallbackSession: AgentSessionRecord | undefined =
+      indexedSession == null
+        ? {
+            session_id: `navigator-${project_id}`,
+            project_id,
+            account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
+            chat_path: resolveNavigatorChatPath(project_id),
+            thread_key: `${preferredThreadKey ?? ""}`.trim(),
+            title: "Navigator",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            status: "active",
+            entrypoint: "global",
+          }
+        : undefined;
+    const session = indexedSession ?? fallbackSession;
     if (!session?.chat_path) return false;
+
+    await ensureNavigatorChatDirectory(project_id, session.chat_path);
 
     const threadKey = `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
     const input = basePrompt;
@@ -234,19 +289,24 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       preferredThreadKey,
       fallbackThreadKey: threadKey,
     });
-    if (!resolvedThreadKey) return false;
-    const rootReady = await waitForThreadReady({
-      actions,
-      threadKey: resolvedThreadKey,
-      timeoutMs: 1500,
-    });
-    if (!rootReady) return false;
 
-    const replyTo = toReplyDate(resolvedThreadKey);
+    let replyThreadKey = resolvedThreadKey;
     const model =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
+    if (replyThreadKey) {
+      const rootReady = await waitForThreadReady({
+        actions,
+        threadKey: replyThreadKey,
+        timeoutMs: 4000,
+      });
+      if (!rootReady) {
+        // Fall back to opening a new thread rather than failing the intent.
+        replyThreadKey = "";
+      }
+    }
+    const replyTo = toReplyDate(replyThreadKey);
     const timeStamp = actions.sendChat({
       input,
       reply_to: replyTo,
@@ -271,7 +331,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }
 
     const nextThreadKey =
-      resolvedThreadKey ||
+      replyThreadKey ||
       (typeof timeStamp === "string"
         ? `${new Date(timeStamp).valueOf()}`
         : "");

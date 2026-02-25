@@ -219,6 +219,25 @@ export async function resolveBaseUrl(): Promise<{
   );
 }
 
+export async function resolveLiteDaemonHome(): Promise<string> {
+  const byPath = await readConnectionInfoCandidates();
+  if (byPath.length === 0) {
+    const paths = candidateConnectionInfoPaths();
+    throw startLiteServerMessage(
+      `missing connection-info.json (checked: ${paths.join(", ")})`,
+    );
+  }
+  for (const { path, info } of byPath) {
+    const pid = Number(info.pid);
+    const port = validatedPort(info.port);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    if (port == null) continue;
+    if (!isRunningPid(pid)) continue;
+    return dirname(path);
+  }
+  throw startLiteServerMessage("no usable running connection info");
+}
+
 function encodeNotebookPath(path: string): string {
   if (path.startsWith("/")) {
     return `%2F${encodeURI(path.slice(1)).replace(/#/g, "%23").replace(/\?/g, "%3F")}`;

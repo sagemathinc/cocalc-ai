@@ -47,7 +47,7 @@ function buildNotebookErrorPrompt(opts: {
 }
 
 export default function LLMError({ style, traceback, input }: Props) {
-  const { actions: frameActions, project_id, path, redux } = useFrameContext();
+  const { actions: frameActions, project_id, path } = useFrameContext();
   const [routing, setRouting] = useState(false);
   const [routingError, setRoutingError] = useState("");
 
@@ -75,7 +75,6 @@ export default function LLMError({ style, traceback, input }: Props) {
           tag: "intent:notebook-error",
           forceCodex: true,
         });
-        redux?.getProjectActions?.(project_id)?.set_active_tab("home");
       }
     } catch (err) {
       setRoutingError(`${err}`);

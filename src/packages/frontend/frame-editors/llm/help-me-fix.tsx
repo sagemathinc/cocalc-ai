@@ -177,7 +177,6 @@ export default function HelpMeFix({
           tag: `intent:error-fix:${tagSuffix}`,
           forceCodex: true,
         });
-        redux?.getProjectActions?.(project_id)?.set_active_tab("home");
       }
     } catch (err) {
       setErrorGettingHelp(`${err}`);
