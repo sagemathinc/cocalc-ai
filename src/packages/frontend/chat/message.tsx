@@ -5,7 +5,7 @@
 
 // cSpell:ignore blankcolumn
 
-import { Badge, Button, Col, Divider, Row, Tag, Tooltip } from "antd";
+import { Badge, Button, Col, Divider, Drawer, Row, Tag, Tooltip } from "antd";
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -291,6 +291,7 @@ export default function Message({
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
+  const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
@@ -796,6 +797,22 @@ export default function Message({
     }
     buttons.push(<span key="copy">{renderCopyMessageButton()}</span>);
     buttons.push(<span key="link">{renderLinkMessageButton()}</span>);
+    buttons.push(
+      <Tooltip
+        key="focus"
+        placement="top"
+        title="Focus this message"
+      >
+        <Button
+          size="small"
+          type="text"
+          style={{ color: COLORS.GRAY_M, fontSize: "12px", marginTop: "-4px" }}
+          onClick={() => setShowZenMessage(true)}
+        >
+          <Icon name="expand-arrows" />
+        </Button>
+      </Tooltip>,
+    );
 
     if (allowReply && !replying && actions) {
       buttons.push(
@@ -1029,6 +1046,33 @@ export default function Message({
           inlineCodeWorkspaceRoot={activityBasePath}
         />
       </>
+    );
+  }
+
+  function renderZenMessageDrawer() {
+    if (!showZenMessage) return null;
+    const value = newest_content(message);
+    const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
+    return (
+      <Drawer
+        title={get_user_name(field(message, "sender_id"))}
+        open={showZenMessage}
+        onClose={() => setShowZenMessage(false)}
+        placement="right"
+        width="100vw"
+        destroyOnHidden
+      >
+        <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 8px 24px 8px" }}>
+          <StaticMarkdown
+            style={{ fontSize: `${font_size ?? 14}px` }}
+            value={value}
+            inlineCodeLinks={
+              Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+            }
+            inlineCodeWorkspaceRoot={activityBasePath}
+          />
+        </div>
+      </Drawer>
     );
   }
 
@@ -1589,6 +1633,7 @@ export default function Message({
     >
       {renderCols()}
       {renderFoldedRow()}
+      {renderZenMessageDrawer()}
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>
           <Divider>{renderAcpState()}</Divider>
