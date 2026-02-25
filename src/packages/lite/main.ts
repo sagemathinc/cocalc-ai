@@ -67,7 +67,7 @@ export async function main(opts?: {
   initBugCounter();
 
   const AUTH_TOKEN = await getAuthToken();
-  const AGENT_TOKEN = await getAgentToken(AUTH_TOKEN);
+  const AGENT_TOKEN = await getAgentToken();
   const CLI_BIN = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
   if (AGENT_TOKEN) {
     process.env.COCALC_AGENT_TOKEN = AGENT_TOKEN;
@@ -237,9 +237,8 @@ async function writeConnectionInfo({
   }
 }
 
-async function getAgentToken(AUTH_TOKEN?: string): Promise<string | undefined> {
+async function getAgentToken(): Promise<string | undefined> {
   const value = `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
   if (value) return value;
-  if (!AUTH_TOKEN) return undefined;
   return await secureRandomString(40);
 }
