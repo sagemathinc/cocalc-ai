@@ -3,6 +3,70 @@ import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 
+const CACHE_TTL_MS = 15_000;
+type PaymentSourceCacheEntry = {
+  paymentSource?: CodexPaymentSourceInfo;
+  error?: string;
+  fetchedAt: number;
+};
+
+const paymentSourceCache = new Map<string, PaymentSourceCacheEntry>();
+const paymentSourceInflight = new Map<string, Promise<PaymentSourceCacheEntry>>();
+
+function cacheKey(projectId?: string): string {
+  return projectId?.trim() || "";
+}
+
+function getCachedPaymentSource(
+  projectId?: string,
+): PaymentSourceCacheEntry | undefined {
+  return paymentSourceCache.get(cacheKey(projectId));
+}
+
+async function fetchPaymentSourceCached({
+  projectId,
+  force = false,
+}: {
+  projectId?: string;
+  force?: boolean;
+}): Promise<PaymentSourceCacheEntry> {
+  const key = cacheKey(projectId);
+  const cached = paymentSourceCache.get(key);
+  const now = Date.now();
+  if (!force && cached && now - cached.fetchedAt <= CACHE_TTL_MS) {
+    return cached;
+  }
+  const existing = paymentSourceInflight.get(key);
+  if (existing) return existing;
+
+  const promise = (async (): Promise<PaymentSourceCacheEntry> => {
+    try {
+      const result =
+        await webapp_client.conat_client.hub.system.getCodexPaymentSource({
+          project_id: projectId?.trim() || undefined,
+        });
+      const entry: PaymentSourceCacheEntry = {
+        paymentSource: result as CodexPaymentSourceInfo,
+        fetchedAt: Date.now(),
+      };
+      paymentSourceCache.set(key, entry);
+      return entry;
+    } catch (err) {
+      const entry: PaymentSourceCacheEntry = {
+        error: `${err}`,
+        fetchedAt: Date.now(),
+      };
+      paymentSourceCache.set(key, entry);
+      return entry;
+    } finally {
+      paymentSourceInflight.delete(key);
+    }
+  })();
+
+  paymentSourceInflight.set(key, promise);
+  return promise;
+}
+
 export function getCodexPaymentSourceShortLabel(
   source: CodexPaymentSourceInfo["source"] | undefined,
 ): string {
@@ -122,19 +186,28 @@ export function useCodexPaymentSource({
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    const cached = getCachedPaymentSource(projectId);
+    if (cached?.paymentSource) {
+      setPaymentSource(cached.paymentSource);
+      setError("");
+    } else if (cached?.error) {
+      setError(cached.error);
+    }
     const load = async () => {
       setLoading(true);
       try {
-        const result =
-          await webapp_client.conat_client.hub.system.getCodexPaymentSource({
-            project_id: projectId?.trim() || undefined,
-          });
+        const entry = await fetchPaymentSourceCached({
+          projectId,
+          force: refreshToken > 0,
+        });
         if (cancelled) return;
-        setPaymentSource(result as CodexPaymentSourceInfo);
-        setError("");
-      } catch (err) {
-        if (cancelled) return;
-        setError(`${err}`);
+        if (entry.paymentSource) {
+          setPaymentSource(entry.paymentSource);
+          setError("");
+        } else {
+          setPaymentSource(undefined);
+          setError(entry.error ?? "");
+        }
       } finally {
         if (!cancelled) {
           setLoading(false);

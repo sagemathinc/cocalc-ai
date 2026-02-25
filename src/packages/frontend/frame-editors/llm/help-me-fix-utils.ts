@@ -1,5 +1,5 @@
-import getChatActions from "@cocalc/frontend/chat/get-actions";
 import { backtickSequence } from "@cocalc/frontend/markdown/util";
+import { dispatchNavigatorPromptIntent } from "@cocalc/frontend/project/new/navigator-intents";
 import { trunc, trunc_left, trunc_middle } from "@cocalc/util/misc";
 import { CUTOFF } from "./consts";
 import { modelToMention } from "./llm-selector";
@@ -34,6 +34,7 @@ export interface CreateMessageOpts {
   open: boolean;
   full: boolean;
   isHint?: boolean;
+  includeModelMention?: boolean;
 }
 
 export async function getHelp({
@@ -63,17 +64,25 @@ export async function getHelp({
     open: true,
     full: true,
     isHint,
+    includeModelMention: false,
   });
 
   try {
-    const actions = await getChatActions(redux, project_id, path);
-    setTimeout(() => actions.scrollToBottom(), 100);
     const tagSuffix = isHint ? "hint" : "solution";
-    await actions.sendChat({
-      input: messageText,
-      tag: `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`,
-      noNotification: true,
+    const intentPrompt = createNavigatorIntentMessage({
+      message: messageText,
+      project_id,
+      path,
+      model,
+      isHint,
+      sourceTag: `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`,
     });
+    dispatchNavigatorPromptIntent({
+      prompt: intentPrompt,
+      tag: `intent:error-fix:${tagSuffix}`,
+      forceCodex: true,
+    });
+    redux?.getProjectActions?.(project_id)?.set_active_tab("home");
   } catch (err) {
     console.error("Error getting help:", err);
     throw err;
@@ -92,9 +101,10 @@ export function createMessage({
   open,
   full,
   isHint = false,
+  includeModelMention = full,
 }: CreateMessageOpts): string {
   const message: string[] = [];
-  const prefix = full ? modelToMention(model) + " " : "";
+  const prefix = includeModelMention ? modelToMention(model) + " " : "";
   if (isHint) {
     message.push(
       `${prefix}Please give me a hint to help me fix my code. Do not provide the complete solution - just point me in the right direction.`,
@@ -155,6 +165,50 @@ export function createMessage({
   if (full) message.push("</details>");
 
   return message.join("\n\n");
+}
+
+interface CreateNavigatorIntentMessageOpts {
+  message: string;
+  project_id: string;
+  path: string;
+  model: string;
+  isHint: boolean;
+  sourceTag: string;
+}
+
+export function createNavigatorIntentMessage({
+  message,
+  project_id,
+  path,
+  model,
+  isHint,
+  sourceTag,
+}: CreateNavigatorIntentMessageOpts): string {
+  const metadata = {
+    source: "help-me-fix",
+    intent: "intent:error-fix",
+    goal: isHint
+      ? "Diagnose issue and provide a hint-first fix plan."
+      : "Diagnose issue, apply fixes directly when safe, and verify the result.",
+    context: {
+      project_id,
+      path,
+      preferred_model: model,
+      source_tag: sourceTag,
+    },
+    mutation_mode: "in-place-edit",
+    permissions_hint: "workspace-write",
+  };
+  return [
+    "Handle this CoCalc help-me-fix request as an agent.",
+    "Apply edits directly when safe, run checks as needed, and summarize exactly what changed.",
+    "<details><summary>Intent metadata</summary>",
+    "```json",
+    JSON.stringify(metadata, null, 2),
+    "```",
+    "</details>",
+    message,
+  ].join("\n\n");
 }
 
 function trimStr(s: string, language): string {

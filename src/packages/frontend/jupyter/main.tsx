@@ -24,6 +24,7 @@ import "./output-messages/mime-types/init-frontend";
 
 // React components that implement parts of the Jupyter notebook.
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
+import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { ErrorDisplay, Icon, Text } from "@cocalc/frontend/components";
 import { A } from "@cocalc/frontend/components/A";
 import { Loading } from "@cocalc/frontend/components/loading";
@@ -196,11 +197,22 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   // this is confusing: it's here because the "nbviewer" code reuses a subset of components
   // and this is here to pass down AI tools related functionality to those, which are used by the frontend
   const [model, setModel] = useLanguageModelSetting(project_id);
-  // ATTN: if you add values here, make sure to check the memoize check functions in the components –
-  // otherwise they will not re-render as expected.
-  const llmEnabled = redux
+  const aiDisabled =
+    !!redux.getStore("account").getIn(["customize", "disableAI"]) ||
+    !!redux.getStore("account").getIn(["other_settings", "openai_disabled"]);
+  const llmEnabledLegacy = redux
     .getStore("projects")
     .hasLanguageModelEnabled(project_id);
+  const { paymentSource } = useCodexPaymentSource({
+    projectId: project_id,
+    enabled: !llmEnabledLegacy && !aiDisabled,
+    pollMs: 90_000,
+  });
+  const codexAvailable =
+    paymentSource?.source != null && paymentSource.source !== "none";
+  // ATTN: if you add values here, make sure to check the memoize check functions in the components –
+  // otherwise they will not re-render as expected.
+  const llmEnabled = llmEnabledLegacy || (!aiDisabled && codexAvailable);
   // This only checks if we can use the LLM tools at all – detailed checks like "for this project in a course" are by component
   const llmTools: LLMTools | undefined = llmEnabled
     ? {

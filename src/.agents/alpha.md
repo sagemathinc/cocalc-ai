@@ -540,13 +540,103 @@ These call LLM APIs but are not user-facing assistant workflows and should not b
 
 #### P3.2 Route all entry points into coherent Navigator/Codex thread model
 
-- No one-off hidden assistant chats.
-- Entry points inject intent envelope into visible thread.
-- Queue policy when active turn is running.
+Objective:
+
+- Route every assistant trigger through one visible Navigator/Codex timeline.
+- Replace one-off LLM calls with intent-driven agent turns.
+- Enforce product rule: user should not need to copy/paste AI output back into documents.
+
+##### P3.2a Intent router contract
+
+All migrated entry points call one frontend router (existing foundation: `navigator-intents.ts`):
+
+- `dispatchNavigatorPromptIntent({ prompt, tag, forceCodex })`
+
+Extend the payload into an explicit intent envelope (serialized into prompt + metadata):
+
+- `source`: editor-assistant | help-me-fix | jupyter-cell | jupyter-generate | doc-generate | formula | chat-summarize | chat-regenerate | host-recommendation
+- `intent`: `intent:*` adapter id from P3.1
+- `goal`: concise natural-language objective
+- `context`: file path(s), selection, errors, notebook cell id/range, kernel, cwd, target language/model, etc.
+- `open_target`: optional UI target to focus after edits
+- `permissions_hint`: read-only | workspace-write | needs-approval
+- `mutation_mode`: none | in-place-edit | create-file | run-command
 
 Done when:
 
-- Users can follow all assistant-originated actions in one shared thread timeline.
+- Every migrated trigger emits this envelope through the same router.
+
+##### P3.2b Execution semantics (single thread, agent-first)
+
+1. Thread model
+- Always target the visible Navigator thread (project-scoped).
+- No hidden side threads for assistant-originated actions.
+- If a turn is active: queue by default, with explicit immediate-send override.
+
+2. No copy/paste rule
+- Successful intents should apply edits directly when safe.
+- Agent responses should include what changed and where, not just prose.
+
+3. Preflight consistency
+- Before dispatch, attempt to save dirty source documents (best-effort).
+- Include document identity + timestamp/hash hints in context for conflict awareness.
+
+4. Apply path preference
+- Prefer browser/RTC-aware edits (via CoCalc CLI browser exec) when target docs are open.
+- Fallback to workspace file edits + open/focus target file if RTC route is unavailable.
+- Avoid silent divergence between on-disk and in-memory state.
+
+5. Safety + audit
+- Approval gate for destructive actions or package/system mutations when policy requires it.
+- Timetravel remains primary undo mechanism.
+- Non-blocking follow-up: add explicit agent-authored markers in timetravel history.
+
+Done when:
+
+- Users can follow assistant-originated actions in one shared timeline, and edits are applied directly in most successful runs.
+
+##### P3.2c Migration order (highest impact first)
+
+1. Wave 1: Help Me Fix family (`intent:error-fix`, `intent:notebook-error`)
+- Replace all `HelpMeFix` one-shot sends with Navigator intent routing.
+- Keep existing buttons/placement initially; change backend behavior first.
+
+2. Wave 2: Editor/Jupyter assistant surfaces (`intent:editor-assistant`, `intent:jupyter-cell-assistant`)
+- Route title-bar Assistant and Jupyter cell tool into intent router.
+- Preserve UX affordances while removing direct one-shot LLM path.
+
+3. Wave 3: Generation flows (`intent:jupyter-generate-cell`, `intent:document-generate`, `intent:formula-generate`)
+- Keep preview UX where useful, but execution/apply goes through agent route.
+- Ensure generated output can be directly inserted/applied without copy/paste.
+
+4. Wave 4: Chat/host special intents (`intent:chat-summarize`, `intent:chat-regenerate`, `intent:host-recommendation`)
+- Move remaining special flows to adapters or keep explicitly scoped exceptions with rationale.
+
+Done when:
+
+- Waves 1-3 are fully routed; wave 4 is either routed or explicitly documented as intentionally separate.
+
+##### P3.2d Acceptance criteria
+
+Manual acceptance checks:
+
+1. Trigger Help Me Fix from notebook/latex/rmd/qmd/formatter and verify:
+- intent appears in Navigator thread,
+- agent proposes/applies fix,
+- no manual copy/paste needed for standard fix flow.
+
+2. Trigger editor Assistant and Jupyter cell tool:
+- both route into same Navigator timeline,
+- active-turn queue/immediate behavior is correct.
+
+3. Trigger document/cell/formula generation:
+- generated result can be applied directly,
+- target doc/tab focuses correctly,
+- undo via timetravel works.
+
+Done when:
+
+- Users can follow all migrated assistant actions in a coherent timeline with direct-apply behavior.
 
 ---
 

@@ -8,12 +8,13 @@ import { CSSProperties, useState } from "react";
 import useAsyncEffect from "use-async-effect";
 
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
-import getChatActions from "@cocalc/frontend/chat/get-actions";
 import { AIAvatar } from "@cocalc/frontend/components";
+import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-source";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import { dispatchNavigatorPromptIntent } from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
 import HelpMeFixButton from "./help-me-fix-button";
-import { createMessage } from "./help-me-fix-utils";
+import { createMessage, createNavigatorIntentMessage } from "./help-me-fix-utils";
 
 // Re-export getHelp for backward compatibility
 export { getHelp } from "./help-me-fix-utils";
@@ -51,27 +52,56 @@ export default function HelpMeFix({
   size,
   prioritize,
 }: Props) {
-  const { redux, project_id, path } = useFrameContext();
+  const { redux, project_id, path, actions: frameActions } = useFrameContext();
   const [gettingHelp, setGettingHelp] = useState<boolean>(false);
   const [errorGettingHelp, setErrorGettingHelp] = useState<string>("");
   const projectsStore: ProjectsStore = redux.getStore("projects");
   const [model, setModel] = useLanguageModelSetting(project_id);
   const [solutionTokens, setSolutionTokens] = useState<number>(0);
   const [hintTokens, setHintTokens] = useState<number>(0);
-
-  // Check permissions for both hint and complete solution
-  const canGetHint = projectsStore.hasLanguageModelEnabled(
+  const canGetHintLegacy = projectsStore.hasLanguageModelEnabled(
     project_id,
     "help-me-fix-hint",
   );
-  const canGetSolution = projectsStore.hasLanguageModelEnabled(
+  const canGetSolutionLegacy = projectsStore.hasLanguageModelEnabled(
     project_id,
     "help-me-fix-solution",
   );
+  const needsCodexFallback = !canGetHintLegacy || !canGetSolutionLegacy;
+  const { paymentSource } = useCodexPaymentSource({
+    projectId: project_id,
+    enabled: needsCodexFallback,
+    pollMs: 90_000,
+  });
+  const codexAvailable =
+    paymentSource?.source != null && paymentSource.source !== "none";
+  const disableAIForAccount =
+    !!redux.getStore("account").getIn(["customize", "disableAI"]) ||
+    !!redux.getStore("account").getIn(["other_settings", "openai_disabled"]);
+  const studentProjectSettings = projectsStore.getIn([
+    "project_map",
+    project_id,
+    "course",
+    "student_project_functionality",
+  ]);
+  const disableChatGPTInProject = !!studentProjectSettings?.get("disableChatGPT");
+  const disableSomeChatGPTInProject = !!studentProjectSettings?.get(
+    "disableSomeChatGPT",
+  );
 
-  if (redux == null || (!canGetHint && !canGetSolution)) {
-    return null;
-  }
+  // Keep existing policy limits, but allow Codex availability as an alternate
+  // capability signal when legacy LLM-vendor checks are false.
+  const canGetHint =
+    !disableAIForAccount &&
+    !disableChatGPTInProject &&
+    (canGetHintLegacy || codexAvailable);
+  const canGetSolution =
+    !disableAIForAccount &&
+    !disableChatGPTInProject &&
+    !disableSomeChatGPTInProject &&
+    (canGetSolutionLegacy || codexAvailable);
+
+  const shouldRender = redux != null && (canGetHint || canGetSolution);
 
   function createMessageMode(
     mode: "solution" | "hint",
@@ -89,6 +119,7 @@ export default function HelpMeFix({
       open: true,
       full,
       isHint: mode === "hint",
+      includeModelMention: false,
     });
   }
 
@@ -96,6 +127,11 @@ export default function HelpMeFix({
   const hintText = createMessageMode("hint");
 
   useAsyncEffect(async () => {
+    if (!shouldRender) {
+      setSolutionTokens(0);
+      setHintTokens(0);
+      return;
+    }
     // compute the number of tokens (this MUST be a lazy import):
     const { getMaxTokens, numTokensUpperBound } = await import(
       "@cocalc/frontend/misc/llm"
@@ -103,22 +139,34 @@ export default function HelpMeFix({
 
     setSolutionTokens(numTokensUpperBound(solutionText, getMaxTokens(model)));
     setHintTokens(numTokensUpperBound(hintText, getMaxTokens(model)));
-  }, [model, solutionText, hintText]);
+  }, [model, solutionText, hintText, shouldRender]);
+
+  if (!shouldRender) {
+    return null;
+  }
 
   async function onConfirm(mode: "solution" | "hint") {
     setGettingHelp(true);
     setErrorGettingHelp("");
     try {
-      // scroll to bottom *after* the message gets sent.
-      const actions = await getChatActions(redux, project_id, path);
-      setTimeout(() => actions.scrollToBottom(), 100);
+      await Promise.resolve(frameActions?.save?.(true));
       const inputText = createMessageMode(mode, true);
       const tagSuffix = mode === "hint" ? "hint" : "solution";
-      await actions.sendChat({
-        input: inputText,
-        tag: `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`,
-        noNotification: true,
+      const sourceTag = `help-me-fix-${tagSuffix}${tag ? `:${tag}` : ""}`;
+      const prompt = createNavigatorIntentMessage({
+        message: inputText,
+        project_id,
+        path,
+        model,
+        isHint: mode === "hint",
+        sourceTag,
       });
+      dispatchNavigatorPromptIntent({
+        prompt,
+        tag: `intent:error-fix:${tagSuffix}`,
+        forceCodex: true,
+      });
+      redux?.getProjectActions?.(project_id)?.set_active_tab("home");
     } catch (err) {
       setErrorGettingHelp(`${err}`);
     } finally {
