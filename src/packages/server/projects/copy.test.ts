@@ -8,24 +8,22 @@ let upsertMock: jest.Mock;
 let insertMock: jest.Mock;
 let createBackupMock: jest.Mock;
 let waitLroMock: jest.Mock;
-let fileServerClientMock: jest.Mock;
-let conatCallMock: jest.Mock;
+let getProjectFileServerClientMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
 }));
 
-jest.mock("@cocalc/conat/files/file-server", () => ({
-  __esModule: true,
-  client: (...args: any[]) => fileServerClientMock(...args),
-}));
-
 jest.mock("@cocalc/backend/conat", () => ({
   __esModule: true,
-  conat: jest.fn(() => ({
-    call: (...args: any[]) => conatCallMock(...args),
-  })),
+  conat: jest.fn(() => ({})),
+}));
+
+jest.mock("@cocalc/server/conat/file-server-client", () => ({
+  __esModule: true,
+  getProjectFileServerClient: (...args: any[]) =>
+    getProjectFileServerClientMock(...args),
 }));
 
 jest.mock("@cocalc/server/conat/api/project-backups", () => ({
@@ -65,12 +63,7 @@ describe("projects.copyProjectFiles", () => {
     cpMock = jest.fn(async () => undefined);
     getBackupFilesMock = jest.fn(async () => []);
     deleteBackupMock = jest.fn(async () => undefined);
-    fileServerClientMock = jest.fn(() => ({
-      cp: (...args: any[]) => cpMock(...args),
-      getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
-      deleteBackup: (...args: any[]) => deleteBackupMock(...args),
-    }));
-    conatCallMock = jest.fn(() => ({
+    getProjectFileServerClientMock = jest.fn(async () => ({
       cp: (...args: any[]) => cpMock(...args),
       getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
       deleteBackup: (...args: any[]) => deleteBackupMock(...args),

@@ -1,7 +1,6 @@
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
-import { client as fileServerClient } from "@cocalc/conat/files/file-server";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
@@ -20,7 +19,7 @@ import {
   makeOfflineMoveConfirmationPayload,
   offlineMoveConfirmationError,
 } from "./offline-move-confirmation";
-import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 const log = getLogger("server:projects:move");
 const MAX_BACKUPS_PER_PROJECT = 30;
@@ -240,11 +239,7 @@ async function createFinalBackup({
 }: {
   project_id: string;
 }): Promise<{ id: string; time: string }> {
-  const address = await materializeProjectHost(project_id);
-  if (!address) {
-    throw new Error(`unable to route project ${project_id} to a host`);
-  }
-  const fileServer = fileServerClient({
+  const fileServer = await getProjectFileServerClient({
     project_id,
     timeout: BACKUP_TIMEOUT_MS,
   });

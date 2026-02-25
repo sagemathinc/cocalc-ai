@@ -1,8 +1,4 @@
-import {
-  client as fileServerClient,
-  type RestoreMode,
-  type RestoreStagingHandle,
-} from "@cocalc/conat/files/file-server";
+import { type RestoreMode, type RestoreStagingHandle } from "@cocalc/conat/files/file-server";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import getLogger from "@cocalc/backend/logger";
@@ -11,11 +7,16 @@ import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 // just *some* limit to avoid bugs/abuse
 
 const MAX_BACKUPS_PER_PROJECT = 30;
 const log = getLogger("server:conat:api:project-backups");
+
+async function projectClient(project_id: string) {
+  return await getProjectFileServerClient({ project_id });
+}
 
 async function publishQueuedLroSafe({
   op,
@@ -116,7 +117,7 @@ export async function deleteBackup({
   id: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await fileServerClient({ project_id }).deleteBackup({ project_id, id });
+  await (await projectClient(project_id)).deleteBackup({ project_id, id });
 }
 
 export async function updateBackups({
@@ -129,7 +130,7 @@ export async function updateBackups({
   counts?: Partial<SnapshotCounts>;
 }) {
   await assertCollab({ account_id, project_id });
-  await fileServerClient({ project_id }).updateBackups({
+  await (await projectClient(project_id)).updateBackups({
     project_id,
     counts,
     limit: MAX_BACKUPS_PER_PROJECT,
@@ -191,7 +192,7 @@ export async function beginRestoreStaging({
   restore?: RestoreMode;
 }): Promise<RestoreStagingHandle | null> {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).beginRestoreStaging({
+  return await (await projectClient(project_id)).beginRestoreStaging({
     project_id,
     home,
     restore,
@@ -206,7 +207,7 @@ export async function ensureRestoreStaging({
   handle: RestoreStagingHandle;
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
-  await fileServerClient({ project_id: handle.project_id }).ensureRestoreStaging({
+  await (await projectClient(handle.project_id)).ensureRestoreStaging({
     handle,
   });
 }
@@ -219,7 +220,7 @@ export async function finalizeRestoreStaging({
   handle: RestoreStagingHandle;
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
-  await fileServerClient({ project_id: handle.project_id }).finalizeRestoreStaging({
+  await (await projectClient(handle.project_id)).finalizeRestoreStaging({
     handle,
   });
 }
@@ -234,7 +235,7 @@ export async function releaseRestoreStaging({
   cleanupStaging?: boolean;
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
-  await fileServerClient({ project_id: handle.project_id }).releaseRestoreStaging({
+  await (await projectClient(handle.project_id)).releaseRestoreStaging({
     handle,
     cleanupStaging,
   });
@@ -250,7 +251,7 @@ export async function cleanupRestoreStaging({
   root?: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await fileServerClient({ project_id }).cleanupRestoreStaging({ root });
+  await (await projectClient(project_id)).cleanupRestoreStaging({ root });
 }
 
 export async function getBackups({
@@ -263,7 +264,7 @@ export async function getBackups({
   indexed_only?: boolean;
 }) {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).getBackups({
+  return await (await projectClient(project_id)).getBackups({
     project_id,
     indexed_only,
   });
@@ -281,7 +282,7 @@ export async function getBackupFiles({
   path?: string;
 }) {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).getBackupFiles({
+  return await (await projectClient(project_id)).getBackupFiles({
     project_id,
     id,
     path,
@@ -304,7 +305,7 @@ export async function findBackupFiles({
   ids?: string[];
 }) {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).findBackupFiles({
+  return await (await projectClient(project_id)).findBackupFiles({
     project_id,
     glob,
     iglob,
@@ -327,7 +328,7 @@ export async function getBackupFileText({
   max_bytes?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await fileServerClient({ project_id }).getBackupFileText({
+  return await (await projectClient(project_id)).getBackupFileText({
     project_id,
     id,
     path,

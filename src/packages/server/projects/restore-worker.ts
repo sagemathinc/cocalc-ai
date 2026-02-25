@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { client as fileServerClient, type Fileserver } from "@cocalc/conat/files/file-server";
 import {
   claimLroOps,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
-import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 const logger = getLogger("server:projects:restore-worker");
 
@@ -79,20 +78,6 @@ function progressEvent({
       detail,
     },
   });
-}
-
-function fileServerClientWithTimeout(project_id: string): Fileserver {
-  return fileServerClient({
-    project_id,
-    timeout: RESTORE_TIMEOUT_MS,
-  });
-}
-
-async function ensureProjectRoute(project_id: string): Promise<void> {
-  const address = await materializeProjectHost(project_id);
-  if (!address) {
-    throw new Error(`unable to route project ${project_id} to a host`);
-  }
 }
 
 async function handleRestoreOp(op: LroSummary): Promise<void> {
@@ -180,8 +165,10 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
       detail: { backup_id, path, dest },
     });
 
-    await ensureProjectRoute(project_id);
-    const client = fileServerClientWithTimeout(project_id);
+    const client = await getProjectFileServerClient({
+      project_id,
+      timeout: RESTORE_TIMEOUT_MS,
+    });
     await client.restoreBackup({
       project_id,
       id: backup_id,

@@ -2,14 +2,13 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { client as fileServerClient, type Fileserver } from "@cocalc/conat/files/file-server";
 import {
   claimLroOps,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
-import { materializeProjectHost } from "@cocalc/server/conat/route-project";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
 const logger = getLogger("server:projects:backup-worker");
 
@@ -89,20 +88,6 @@ function progressEvent({
   });
 }
 
-function fileServerClientWithTimeout(project_id: string): Fileserver {
-  return fileServerClient({
-    project_id,
-    timeout: BACKUP_TIMEOUT_MS,
-  });
-}
-
-async function ensureProjectRoute(project_id: string): Promise<void> {
-  const address = await materializeProjectHost(project_id);
-  if (!address) {
-    throw new Error(`unable to route project ${project_id} to a host`);
-  }
-}
-
 async function handleBackupOp(op: LroSummary): Promise<void> {
   const { op_id } = op;
   const input = op.input ?? {};
@@ -180,8 +165,10 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     const started = Date.now();
     progress({ step: "backup", message: "creating backup snapshot", detail: { tags } });
 
-    await ensureProjectRoute(project_id);
-    const client = fileServerClientWithTimeout(project_id);
+    const client = await getProjectFileServerClient({
+      project_id,
+      timeout: BACKUP_TIMEOUT_MS,
+    });
     const backup = await client.createBackup({
       project_id,
       limit: MAX_BACKUPS_PER_PROJECT,
