@@ -96,7 +96,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 ---
 
-### A0.5 Lite codex shows false “unconfigured”
+### A0.5 (done) Lite codex shows false “unconfigured”
 
 **Task:** "in lite mode chat with codex says unconfigured"
 
@@ -343,14 +343,13 @@ Ship to external alpha testers only when:
 - no known data-loss bugs remain in editor path (A2.2/A2.3),
 - upload and notebook baseline usability are functional (A2.1/A2.5).
 
-
 # Details
 
 ## Codex chat integration planning
 
-### P2. Expose CoCalc CLI + browser control to Codex turns (before P3)
+### P2. (done) Expose CoCalc CLI + browser control to Codex turns (before P3)
 
-Principle: deliver one secure runtime contract that lets Codex call `cocalc` during turns, then reuse that for all assistant migrations.
+Principle: deliver one secure runtime contract that lets Codex call `cocalc` via `cocalc-cli` during turns, then reuse that for all assistant migrations.
 
 #### P2.1 Turn context contract (frontend -> ACP)
 
@@ -498,6 +497,44 @@ Create a complete list of assistant invocations across frontend (notebook, edito
 Done when:
 
 - Every current assistant trigger is mapped to a codex intent adapter.
+
+##### P3.1a Inventory snapshot (2026-02-25)
+
+The table below is the current inventory of production assistant/LLM entry points in `src/packages/frontend`, classified by intent, required context, and permission profile.
+
+| Entry point | Current code path | Intent type | Context requirements | Permission profile | Target Codex adapter |
+| --- | --- | --- | --- | --- | --- |
+| Editor title bar "AI Assistant" command (code/markdown/latex/rmd/qmd/csv/html/slides/jupyter/task/terminal/chat/whiteboard) | `frame-editors/frame-tree/commands/generic-commands.tsx` -> `frame-editors/llm/llm-assistant-button.tsx` -> `frame-editors/llm/create-chat.ts` | explain/fix/review/edit | active file path, language, selected scope (selection/cell/page/all), terminal/editor type | read file context + write chat thread | `intent:editor-assistant` (terminal path specialized as `intent:terminal-assistant`) |
+| Help Me Fix button family (formatter, latex errors/gutters, Rmd/Qmd build logs, Jupyter error panel) | `frame-editors/llm/help-me-fix.tsx`, `frame-editors/llm/help-me-fix-utils.ts`, consumers in `frame-editors/...` and `jupyter/llm/error.tsx` | fix-error | error text, optional line, truncated source context, language/file metadata | read file/error context + write chat thread | `intent:error-fix` |
+| Jupyter "Fix with Agent" (new route) | `jupyter/llm/error.tsx` -> `project/new/navigator-intents.ts` -> `project/new/navigator-shell.tsx` | fix-error | traceback, cell input, notebook path | read notebook context + write navigator thread | `intent:notebook-error` (already routed) |
+| Jupyter per-cell AI tool (Ask/Explain/Bugfix/Modify/Improve/Document/Translate/Proofread/Formulize/Translate text) | `jupyter/llm/cell-tool.tsx` | explain/fix/edit/translate/document | current cell input, optional output, optional surrounding cells, kernel/language | read notebook context + write chat thread | `intent:jupyter-cell-assistant` |
+| Jupyter "Generate cell using AI" | `jupyter/insert-cell/ai-cell-generator.tsx` | generate/edit | user prompt, insertion position, neighboring cells, kernel/language | read notebook + write notebook cells | `intent:jupyter-generate-cell` |
+| "AI Generate Document" modal/button (home page, +New, title bar) | `project/page/home-page/ai-generate-document.tsx` (+ call sites in `project/new/*`, `frame-editors/frame-tree/title-bar.tsx`) | generate-document | prompt, target extension, optional page size/kernel | write new file/notebook + open tab (+ optional run/build follow-up) | `intent:document-generate` |
+| AI formula generator (CodeMirror + Slate integration) | `codemirror/extensions/ai-formula.tsx`, `codemirror/extensions/edit-selection.ts`, `editors/slate/format/insert-ai-formula.ts` | generate-formula/edit | selected text or free-form formula prompt, mode (`tex`/`md`) | write current editor selection | `intent:formula-generate` |
+| Chat "Summarize thread" action | `chat/llm-msg-summarize.tsx` -> `chat/actions.ts::summarizeThread` | summarize | thread message history, participant names | read thread + write chat message | `intent:chat-summarize` |
+| Chat "Regenerate" action | `chat/llm-msg-regenerate.tsx` -> `chat/actions.ts::regenerateLLMResponse` -> `chat/actions/llm.ts` | regenerate/edit | target message + ancestor thread history | write assistant reply in thread | `intent:chat-regenerate` |
+| Chat @mentions / model-driven turns (`@chatgpt`, `@codex`, thread model) | `chat/actions/llm.ts`, `chat/actions.ts` | ask/explain/fix/edit (free-form) | chat thread history, mention/model selector | write chat reply (Codex path may execute tools based on session mode) | `intent:chat-turn` |
+| Hosts "AI Assist" recommendations | `hosts/components/host-ai-assist.tsx` -> `hosts/hooks/use-host-ai.ts` | recommend/plan | host catalog summary, budget, preferred region group | no filesystem write; can apply recommendations to host form state | `intent:host-recommendation` |
+
+##### P3.1b Grouped classification
+
+1. Chat-injection intents (no immediate file mutation): `intent:editor-assistant`, `intent:terminal-assistant`, `intent:error-fix`, `intent:jupyter-cell-assistant`, `intent:chat-summarize`, `intent:chat-regenerate`, `intent:chat-turn`, `intent:notebook-error`.
+2. Content-generation intents with direct edits/writes: `intent:jupyter-generate-cell`, `intent:document-generate`, `intent:formula-generate`.
+3. Product-planning/recommendation intents: `intent:host-recommendation`.
+
+##### P3.1c Out of scope for P3 migration (keep as tooling)
+
+These call LLM APIs but are not user-facing assistant workflows and should not block P3:
+
+- Account custom-LLM "Test" UI: `account/user-defined-llm.tsx`
+- Admin LLM test panel: `admin/llm/admin-llm-test.tsx`
+
+##### P3.1d Completion checklist
+
+- [x] Enumerate frontend assistant/LLM entry points.
+- [x] Classify each by intent, context, and permissions.
+- [x] Assign a target Codex intent adapter for each trigger.
+- [ ] Implement adapters and route all triggers through Navigator/Codex (P3.2).
 
 ---
 

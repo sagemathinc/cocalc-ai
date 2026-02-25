@@ -670,20 +670,22 @@ export function ChatRoomThreadPanel({
             style={{ width: "min(320px, 100%)" }}
             disabled={!selectedThreadRootIso}
           />
-          <Button
-            size="small"
-            disabled={!selectedThreadRootIso || !matchCount}
-            onClick={() => setThreadSearchCursor((n) => n - 1)}
-          >
-            Prev
-          </Button>
-          <Button
-            size="small"
-            disabled={!selectedThreadRootIso || !matchCount}
-            onClick={() => setThreadSearchCursor((n) => n + 1)}
-          >
-            Next
-          </Button>
+          <div style={{ display: "inline-flex", gap: 8, whiteSpace: "nowrap" }}>
+            <Button
+              size="small"
+              disabled={!selectedThreadRootIso || !matchCount}
+              onClick={() => setThreadSearchCursor((n) => n - 1)}
+            >
+              Prev
+            </Button>
+            <Button
+              size="small"
+              disabled={!selectedThreadRootIso || !matchCount}
+              onClick={() => setThreadSearchCursor((n) => n + 1)}
+            >
+              Next
+            </Button>
+          </div>
           <span style={{ color: "#666", fontSize: 12 }}>
             {!selectedThreadRootIso
               ? "Select a thread to search"
