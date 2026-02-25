@@ -195,6 +195,53 @@ function formatDetail(detail: any): string | undefined {
   }
 }
 
+function formatUpgradeTargets(targets: any): string | undefined {
+  if (!Array.isArray(targets) || !targets.length) return undefined;
+  const values = targets
+    .map((target) => {
+      if (typeof target === "string") return target;
+      if (target == null || typeof target !== "object") return undefined;
+      const artifact =
+        typeof target.artifact === "string" && target.artifact
+          ? target.artifact
+          : undefined;
+      const channel =
+        typeof target.channel === "string" && target.channel
+          ? target.channel
+          : undefined;
+      const version =
+        typeof target.version === "string" && target.version
+          ? target.version
+          : undefined;
+      if (artifact && channel) return `${artifact}@${channel}`;
+      if (artifact && version) return `${artifact}@${version}`;
+      return artifact ?? channel ?? version ?? undefined;
+    })
+    .filter((value): value is string => !!value);
+  if (!values.length) return undefined;
+  return values.join(", ");
+}
+
+function formatPhase(value: any): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value !== "object") return undefined;
+  const phase =
+    typeof value.phase === "string"
+      ? value.phase
+      : typeof value.step === "string"
+        ? value.step
+        : typeof value.status === "string"
+          ? value.status
+          : undefined;
+  if (phase) return phase;
+  if (typeof value.message === "string") return value.message;
+  return undefined;
+}
+
 function opLabel(op: HostLroState): string {
   const summary = op.summary;
   const kind = summary?.kind ?? op.kind;
@@ -213,10 +260,10 @@ function opLabel(op: HostLroState): string {
 
 export function getHostOpPhase(op?: HostLroState): string | undefined {
   if (!op) return undefined;
-  return (
+  return formatPhase(
     op.summary?.progress_summary?.phase ??
-    op.last_progress?.phase ??
-    op.last_progress?.message
+      op.last_progress?.phase ??
+      op.last_progress?.message,
   );
 }
 
@@ -244,7 +291,8 @@ function kindInputTags(op: HostLroState) {
     tags.push("skip_backups=true");
   }
   if (kind === "host-upgrade-software" && Array.isArray(input.targets)) {
-    tags.push(`targets=${input.targets.join(",")}`);
+    const targets = formatUpgradeTargets(input.targets);
+    if (targets) tags.push(`targets=${targets}`);
   }
   if (!tags.length) return null;
   return (
