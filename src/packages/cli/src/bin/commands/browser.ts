@@ -82,6 +82,12 @@ function normalizeBrowserId(value: unknown): string | undefined {
   return id.length > 0 ? id : undefined;
 }
 
+function browserHintFromOption(value: unknown): string | undefined {
+  return (
+    normalizeBrowserId(value) ?? normalizeBrowserId(process.env.COCALC_BROWSER_ID)
+  );
+}
+
 function isLikelyExactBrowserId(value: string): boolean {
   return /^[A-Za-z0-9_-]{8,}$/.test(value);
 }
@@ -348,13 +354,16 @@ export function registerBrowserCommand(
     .description(
       "print the TypeScript declaration for the browser exec API supported by the selected browser session",
     )
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .action(async (opts: { browser?: string }, command: Command) => {
       await deps.withContext(command, "browser exec-api", async (ctx) => {
         const profileSelection = loadProfileSelection(deps, command);
         const sessionInfo = await chooseBrowserSession({
           ctx,
-          browserHint: opts.browser,
+          browserHint: browserHintFromOption(opts.browser),
           fallbackBrowserId: profileSelection.browser_id,
         });
         const browserClient = deps.createBrowserSessionClient({
@@ -369,13 +378,16 @@ export function registerBrowserCommand(
   browser
     .command("files")
     .description("list files currently open in a browser session")
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .action(async (opts: { browser?: string }, command: Command) => {
       await deps.withContext(command, "browser files", async (ctx) => {
         const profileSelection = loadProfileSelection(deps, command);
         const sessionInfo = await chooseBrowserSession({
           ctx,
-          browserHint: opts.browser,
+          browserHint: browserHintFromOption(opts.browser),
           fallbackBrowserId: profileSelection.browser_id,
         });
         const browserClient = deps.createBrowserSessionClient({
@@ -402,7 +414,10 @@ export function registerBrowserCommand(
       "--project-id <id>",
       "workspace/project id (overrides [workspace]); defaults to COCALC_PROJECT_ID when set",
     )
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .option(
       "--background",
       "open in background (do not focus project/file in browser)",
@@ -429,7 +444,7 @@ export function registerBrowserCommand(
             ? projectHint
             : (await deps.resolveWorkspace(ctx, projectHint)).project_id;
           const profileSelection = loadProfileSelection(deps, command);
-          const browserHint = `${opts.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser);
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
@@ -473,7 +488,10 @@ export function registerBrowserCommand(
       "--project-id <id>",
       "workspace/project id (overrides [workspace]); defaults to COCALC_PROJECT_ID when set",
     )
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .action(
       async (
         workspace: string | undefined,
@@ -492,7 +510,7 @@ export function registerBrowserCommand(
             ? projectHint
             : (await deps.resolveWorkspace(ctx, projectHint)).project_id;
           const profileSelection = loadProfileSelection(deps, command);
-          const browserHint = `${opts.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser);
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
@@ -533,7 +551,10 @@ export function registerBrowserCommand(
       "--project-id <id>",
       "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
     )
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .option(
       "--file <path>",
       "read javascript from a file path (use '-' to read from stdin)",
@@ -575,7 +596,7 @@ export function registerBrowserCommand(
         await deps.withContext(command, "browser exec", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-          const browserHint = `${opts.browser ?? process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
           const workspaceHint = `${opts.workspace ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
@@ -682,7 +703,10 @@ export function registerBrowserCommand(
   browser
     .command("exec-get <exec_id>")
     .description("get status/result for an async browser exec operation")
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .option(
       "--timeout <duration>",
       "rpc timeout per status request (e.g. 30s, 5m)",
@@ -697,7 +721,7 @@ export function registerBrowserCommand(
           const profileSelection = loadProfileSelection(deps, command);
           const sessionInfo = await chooseBrowserSession({
             ctx,
-            browserHint: opts.browser,
+            browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
           });
           const browserClient = deps.createBrowserSessionClient({
@@ -718,7 +742,10 @@ export function registerBrowserCommand(
   browser
     .command("exec-wait <exec_id>")
     .description("wait for completion of an async browser exec operation")
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .option(
       "--poll-ms <duration>",
       "poll interval while waiting (e.g. 250ms, 2s)",
@@ -738,7 +765,7 @@ export function registerBrowserCommand(
           const profileSelection = loadProfileSelection(deps, command);
           const sessionInfo = await chooseBrowserSession({
             ctx,
-            browserHint: opts.browser,
+            browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
           });
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
@@ -772,7 +799,10 @@ export function registerBrowserCommand(
   browser
     .command("exec-cancel <exec_id>")
     .description("request cancellation of an async browser exec operation")
-    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
     .option(
       "--timeout <duration>",
       "rpc timeout for cancel request (e.g. 30s, 5m)",
@@ -787,7 +817,7 @@ export function registerBrowserCommand(
           const profileSelection = loadProfileSelection(deps, command);
           const sessionInfo = await chooseBrowserSession({
             ctx,
-            browserHint: opts.browser,
+            browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
           });
           const browserClient = deps.createBrowserSessionClient({
