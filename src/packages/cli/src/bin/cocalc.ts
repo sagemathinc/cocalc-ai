@@ -417,13 +417,15 @@ function applyAgentModeOutputDefaults(
   const explicitJson = jsonSource === "cli";
   const explicitOutput = outputSource === "cli";
   const explicitQuiet = quietSource === "cli";
+  const outputIsDefault = outputSource == null || outputSource === "default";
+  const quietIsDefault = quietSource == null || quietSource === "default";
 
   const next: GlobalOptions = { ...globals };
-  if (!explicitJson && !explicitOutput && !next.json && !next.output) {
+  if (!explicitJson && !explicitOutput && outputIsDefault) {
     next.output = "json";
   }
   const effectiveJson = next.json || next.output === "json";
-  if (effectiveJson && !explicitQuiet && next.quiet == null) {
+  if (effectiveJson && !explicitQuiet && quietIsDefault) {
     next.quiet = true;
   }
   return next;
