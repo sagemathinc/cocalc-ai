@@ -16,6 +16,7 @@ type ConnectionInfo = {
   protocol?: string;
   host?: string;
   token?: string;
+  acp_mode?: string;
 };
 
 export type NotebookCell = {
@@ -217,6 +218,40 @@ export async function resolveBaseUrl(): Promise<{
         .map(({ path }) => path)
         .join(", ")})`,
   );
+}
+
+export async function resolveLiteDaemonHome(): Promise<string> {
+  const byPath = await readConnectionInfoCandidates();
+  if (byPath.length === 0) {
+    const paths = candidateConnectionInfoPaths();
+    throw startLiteServerMessage(
+      `missing connection-info.json (checked: ${paths.join(", ")})`,
+    );
+  }
+  for (const { path, info } of byPath) {
+    const pid = Number(info.pid);
+    const port = validatedPort(info.port);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    if (port == null) continue;
+    if (!isRunningPid(pid)) continue;
+    return dirname(path);
+  }
+  throw startLiteServerMessage("no usable running connection info");
+}
+
+export async function resolveAcpMode(): Promise<string | undefined> {
+  const byPath = await readConnectionInfoCandidates();
+  if (byPath.length === 0) return;
+  for (const { info } of byPath) {
+    const pid = Number(info.pid);
+    const port = validatedPort(info.port);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    if (port == null) continue;
+    if (!isRunningPid(pid)) continue;
+    const mode = `${info.acp_mode ?? ""}`.trim();
+    return mode || "codex";
+  }
+  return;
 }
 
 function encodeNotebookPath(path: string): string {

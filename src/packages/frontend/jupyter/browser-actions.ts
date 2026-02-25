@@ -2732,7 +2732,10 @@ export class JupyterActions extends JupyterActions0 {
         if (done()) return true;
         try {
           this.fileWatcher = await fs.watch(this.path, {
-            unique: true,
+            // Use shared (non-unique) watch mode so we receive every event,
+            // including those flagged "ignore" during write windows.
+            // Unique mode can drop events entirely while ignoreUntil is active.
+            unique: false,
             patch: true,
           });
           this.runDebug("watch.stream.opened");
@@ -2751,14 +2754,13 @@ export class JupyterActions extends JupyterActions0 {
               this.runDebug("watch.event.unlink");
               break;
             }
-            if (!ignore) {
-              await this.watchLoadFromDisk({ patch, patchSeq });
-            } else {
-              this.runDebug("watch.event.ignored", {
+            if (ignore) {
+              this.runDebug("watch.event.ignore-flagged", {
                 patchSeq,
                 expectedPatchSeq: this.expectedPatchSeq,
               });
             }
+            await this.watchLoadFromDisk({ patch, patchSeq });
           }
         } catch (err) {
           this.runDebug("watch.stream.failed", { err: `${err}` });

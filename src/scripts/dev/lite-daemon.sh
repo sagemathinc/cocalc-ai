@@ -26,8 +26,12 @@ EOF
 
 load_config() {
   if [ -f "$CONFIG_FILE" ]; then
+    # Export variables from config so entries like COCALC_ACP_MODE=mock
+    # are available to the daemon process without requiring "export".
+    set -a
     # shellcheck source=/dev/null
     source "$CONFIG_FILE"
+    set +a
   fi
 
   local scratch_default
@@ -257,6 +261,11 @@ LITE_DEBUG=$LITE_DEBUG
 LITE_NODE_BIN=$LITE_NODE_BIN
 LITE_STDOUT_LOG=$LITE_STDOUT_LOG
 EOF
+  echo "COCALC_*:"
+  local key
+  for key in $(compgen -v COCALC_ | sort); do
+    printf "%s=%s\n" "$key" "${!key-}"
+  done
 }
 
 init_config() {

@@ -171,13 +171,6 @@ function toReplyDate(threadKey: string | null): Date | undefined {
   return new Date(ms);
 }
 
-function ensureCodexMention(prompt: string): string {
-  const trimmed = prompt.trim();
-  if (!trimmed) return "";
-  if (/^@codex\b/i.test(trimmed)) return trimmed;
-  return `@codex ${trimmed}`;
-}
-
 function buildSessionRecord({
   project_id,
   account_id,
@@ -636,8 +629,13 @@ export function NavigatorShell({
         removeQueuedNavigatorPromptIntent(intent.id);
         return true;
       }
-      const input = intent.forceCodex === false ? basePrompt : ensureCodexMention(basePrompt);
-      const replyTo = toReplyDate(selectedThreadKey);
+      const input = basePrompt;
+      const storedThreadKey = loadNavigatorSelectedThreadKey(project_id);
+      const resolvedThreadKey = chooseNonArchivedThreadKey(
+        actions,
+        selectedThreadKey ?? storedThreadKey ?? undefined,
+      );
+      const replyTo = toReplyDate(resolvedThreadKey);
       const isCodex = intent.forceCodex !== false;
       const model =
         typeof selectedAcpConfig?.model === "string"
@@ -662,6 +660,9 @@ export function NavigatorShell({
             : undefined,
       });
       removeQueuedNavigatorPromptIntent(intent.id);
+      if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
+        setSelectedThreadKey(resolvedThreadKey);
+      }
       if (!replyTo && timeStamp) {
         const threadTime = new Date(timeStamp).valueOf();
         if (Number.isFinite(threadTime)) {

@@ -10,6 +10,7 @@ import {
   CodexExecAgent,
   EchoAgent,
   type AcpAgent,
+  type AcpEvaluateRequest,
   forkSession,
   getSessionsRoot,
 } from "@cocalc/ai/acp";
@@ -85,6 +86,7 @@ const ACP_INSTANCE_ID = randomUUID();
 let blobStore: AKV | null = null;
 const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
+let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -94,6 +96,35 @@ const THREAD_CONFIG_SENDER = "__thread_config__";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SENDER = "__thread_state__";
 const THREAD_STATE_SCHEMA_VERSION = 2;
+
+type AcpMockRule = {
+  name?: string;
+  match?: string;
+  flags?: string;
+  includes?: string;
+  response?: string;
+  thinking?: string;
+  message?: string;
+  delayMs?: number;
+  usage?: AcpStreamUsage;
+  threadId?: string;
+};
+
+type AcpMockScript = {
+  defaultResponse: string;
+  defaultThinking?: string;
+  defaultMessage?: string;
+  defaultDelayMs: number;
+  rules: AcpMockRule[];
+};
+
+const DEFAULT_ACP_MOCK_SCRIPT: AcpMockScript = {
+  defaultResponse: "ACP Mock: deterministic response.",
+  defaultThinking: "Mock agent analyzing request...",
+  defaultMessage: "Mock agent composing answer...",
+  defaultDelayMs: 50,
+  rules: [],
+};
 
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
@@ -109,6 +140,199 @@ let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
 let acpMissingThreadIdFallbacks = 0;
 let acpDateSenderLookupFallbacks = 0;
+
+function safeJsonParse(value: string): any | undefined {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseDelayMs(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(60_000, Math.round(n)));
+}
+
+function normalizeMockScript(raw: any): AcpMockScript {
+  const base =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw
+      : {};
+  const rulesRaw = Array.isArray(base.rules) ? base.rules : [];
+  const rules: AcpMockRule[] = [];
+  for (const item of rulesRaw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const rule: AcpMockRule = {
+      name:
+        typeof item.name === "string" && item.name.trim().length > 0
+          ? item.name.trim()
+          : undefined,
+      match:
+        typeof item.match === "string" && item.match.trim().length > 0
+          ? item.match.trim()
+          : undefined,
+      flags:
+        typeof item.flags === "string" && item.flags.trim().length > 0
+          ? item.flags.trim()
+          : undefined,
+      includes:
+        typeof item.includes === "string" && item.includes.trim().length > 0
+          ? item.includes.trim()
+          : undefined,
+      response:
+        typeof item.response === "string" && item.response.length > 0
+          ? item.response
+          : undefined,
+      thinking:
+        typeof item.thinking === "string" && item.thinking.length > 0
+          ? item.thinking
+          : undefined,
+      message:
+        typeof item.message === "string" && item.message.length > 0
+          ? item.message
+          : undefined,
+      delayMs: parseDelayMs(item.delayMs, DEFAULT_ACP_MOCK_SCRIPT.defaultDelayMs),
+      threadId:
+        typeof item.threadId === "string" && item.threadId.trim().length > 0
+          ? item.threadId.trim()
+          : undefined,
+      usage:
+        item.usage && typeof item.usage === "object" && !Array.isArray(item.usage)
+          ? (item.usage as AcpStreamUsage)
+          : undefined,
+    };
+    rules.push(rule);
+  }
+  return {
+    defaultResponse:
+      typeof base.defaultResponse === "string" && base.defaultResponse.length > 0
+        ? base.defaultResponse
+        : DEFAULT_ACP_MOCK_SCRIPT.defaultResponse,
+    defaultThinking:
+      typeof base.defaultThinking === "string" && base.defaultThinking.length > 0
+        ? base.defaultThinking
+        : DEFAULT_ACP_MOCK_SCRIPT.defaultThinking,
+    defaultMessage:
+      typeof base.defaultMessage === "string" && base.defaultMessage.length > 0
+        ? base.defaultMessage
+        : DEFAULT_ACP_MOCK_SCRIPT.defaultMessage,
+    defaultDelayMs: parseDelayMs(
+      base.defaultDelayMs,
+      DEFAULT_ACP_MOCK_SCRIPT.defaultDelayMs,
+    ),
+    rules,
+  };
+}
+
+async function loadAcpMockScript(): Promise<AcpMockScript> {
+  if (cachedMockScriptPromise) return await cachedMockScriptPromise;
+  cachedMockScriptPromise = (async () => {
+    const inlineRaw = `${process.env.COCALC_ACP_MOCK_SCRIPT ?? ""}`.trim();
+    if (inlineRaw) {
+      const parsed = safeJsonParse(inlineRaw);
+      if (parsed) {
+        logger.info("acp mock mode: using inline script");
+        return normalizeMockScript(parsed);
+      }
+      logger.warn("acp mock mode: invalid inline script JSON; using defaults");
+      return DEFAULT_ACP_MOCK_SCRIPT;
+    }
+    const file = `${process.env.COCALC_ACP_MOCK_FILE ?? ""}`.trim();
+    if (!file) {
+      logger.info("acp mock mode: using default script");
+      return DEFAULT_ACP_MOCK_SCRIPT;
+    }
+    try {
+      const raw = await fs.readFile(file, "utf8");
+      const parsed = safeJsonParse(raw);
+      if (parsed) {
+        logger.info("acp mock mode: loaded script from file", { file });
+        return normalizeMockScript(parsed);
+      }
+      logger.warn("acp mock mode: invalid JSON in script file; using defaults", {
+        file,
+      });
+      return DEFAULT_ACP_MOCK_SCRIPT;
+    } catch (err) {
+      logger.warn("acp mock mode: failed reading script file; using defaults", {
+        file,
+        err: `${err}`,
+      });
+      return DEFAULT_ACP_MOCK_SCRIPT;
+    }
+  })();
+  return await cachedMockScriptPromise;
+}
+
+function renderMockTemplate(template: string, prompt: string): string {
+  return template
+    .replaceAll("{{prompt}}", prompt)
+    .replaceAll("{{prompt_json}}", JSON.stringify(prompt));
+}
+
+function ruleMatchesPrompt(rule: AcpMockRule, prompt: string): boolean {
+  if (rule.match) {
+    try {
+      const re = new RegExp(rule.match, rule.flags ?? "i");
+      return re.test(prompt);
+    } catch {
+      return false;
+    }
+  }
+  if (rule.includes) {
+    return prompt.toLowerCase().includes(rule.includes.toLowerCase());
+  }
+  return false;
+}
+
+function chooseMockRule(script: AcpMockScript, prompt: string): AcpMockRule | undefined {
+  for (const rule of script.rules) {
+    if (ruleMatchesPrompt(rule, prompt)) return rule;
+  }
+  return;
+}
+
+class MockAgent implements AcpAgent {
+  constructor(private readonly script: AcpMockScript) {}
+
+  async evaluate({ prompt, session_id, stream }: AcpEvaluateRequest): Promise<void> {
+    const rule = chooseMockRule(this.script, prompt);
+    const thinking = rule?.thinking ?? this.script.defaultThinking;
+    const message = rule?.message ?? this.script.defaultMessage;
+    const responseTemplate = rule?.response ?? this.script.defaultResponse;
+    const response = renderMockTemplate(responseTemplate, prompt);
+    const delayMs = parseDelayMs(rule?.delayMs, this.script.defaultDelayMs);
+    if (thinking) {
+      await stream({
+        type: "event",
+        event: { type: "thinking", text: thinking },
+      });
+    }
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+    if (message) {
+      await stream({
+        type: "event",
+        event: { type: "message", text: message },
+      });
+    }
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+    await stream({
+      type: "summary",
+      finalResponse: response,
+      usage: rule?.usage ?? {
+        input_tokens: prompt.length,
+        output_tokens: response.length,
+      },
+      threadId: rule?.threadId ?? session_id ?? randomUUID(),
+    });
+  }
+}
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -1755,6 +1979,13 @@ async function ensureAgent(
     const echo = new EchoAgent();
     agents.set(key, echo);
     return echo;
+  }
+  if (mode === "mock") {
+    logger.debug("ensureAgent: creating mock agent");
+    const script = await loadAcpMockScript();
+    const mock = new MockAgent(script);
+    agents.set(key, mock);
+    return mock;
   }
   try {
     logger.debug("ensureAgent: creating codex exec agent");
