@@ -136,14 +136,19 @@ export function ChatRoomThreadPanel({
 }: ChatRoomThreadPanelProps) {
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
+  const [threadSearchJumpToken, setThreadSearchJumpToken] = useState(0);
   const selectedThreadRootIso = useMemo(() => {
+    const rootDate = dateValue(selectedThread?.rootMessage);
+    if (rootDate != null && !Number.isNaN(rootDate.valueOf())) {
+      return rootDate.toISOString();
+    }
     if (!selectedThreadKey) return undefined;
     const ms = parseInt(selectedThreadKey, 10);
     if (!Number.isFinite(ms)) return undefined;
     const date = new Date(ms);
     if (Number.isNaN(date.valueOf())) return undefined;
     return date.toISOString();
-  }, [selectedThreadKey]);
+  }, [selectedThread?.rootMessage, selectedThreadKey]);
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadRootIso != null
@@ -172,6 +177,10 @@ export function ChatRoomThreadPanel({
     const c = threadSearchCursor % matchCount;
     return c >= 0 ? c : c + matchCount;
   }, [threadSearchCursor, matchCount]);
+  const activeSearchMatchDate = useMemo(
+    () => (matchCount ? threadSearchMatches[normalizedCursor] : undefined),
+    [matchCount, normalizedCursor, threadSearchMatches],
+  );
 
   useEffect(() => {
     setThreadSearchCursor(0);
@@ -185,12 +194,9 @@ export function ChatRoomThreadPanel({
   }, [threadSearchCursor, matchCount]);
 
   useEffect(() => {
-    if (!matchCount) return;
-    const key = threadSearchMatches[normalizedCursor];
-    const ms = parseFloat(key);
-    if (!Number.isFinite(ms)) return;
-    actions.scrollToDate(ms);
-  }, [actions, matchCount, normalizedCursor, threadSearchMatches]);
+    if (!activeSearchMatchDate) return;
+    setThreadSearchJumpToken((n) => n + 1);
+  }, [activeSearchMatchDate]);
   if (!selectedThreadKey) {
     type ModelOption = {
       value: string;
@@ -548,7 +554,7 @@ export function ChatRoomThreadPanel({
           {compactThreadLabel}
         </div>
       )}
-      {selectedThreadRootIso ? (
+      {selectedThreadKey != null ? (
         <div
           style={{
             padding: "8px 12px",
@@ -564,7 +570,11 @@ export function ChatRoomThreadPanel({
           <Input
             size="small"
             allowClear
-            placeholder="Search this thread"
+            placeholder={
+              selectedThreadRootIso
+                ? "Search this thread"
+                : "Select a thread to search"
+            }
             value={threadSearchQuery}
             onChange={(e) => setThreadSearchQuery(e.target.value)}
             onPressEnter={() => {
@@ -572,23 +582,28 @@ export function ChatRoomThreadPanel({
               setThreadSearchCursor((n) => n + 1);
             }}
             style={{ width: "min(320px, 100%)" }}
+            disabled={!selectedThreadRootIso}
           />
           <Button
             size="small"
-            disabled={!matchCount}
+            disabled={!selectedThreadRootIso || !matchCount}
             onClick={() => setThreadSearchCursor((n) => n - 1)}
           >
             Prev
           </Button>
           <Button
             size="small"
-            disabled={!matchCount}
+            disabled={!selectedThreadRootIso || !matchCount}
             onClick={() => setThreadSearchCursor((n) => n + 1)}
           >
             Next
           </Button>
           <span style={{ color: "#666", fontSize: 12 }}>
-            {matchCount ? `${normalizedCursor + 1}/${matchCount}` : "0 matches"}
+            {!selectedThreadRootIso
+              ? "Select a thread to search"
+              : matchCount
+                ? `${normalizedCursor + 1}/${matchCount}`
+                : "0 matches"}
           </span>
         </div>
       ) : null}
@@ -606,9 +621,11 @@ export function ChatRoomThreadPanel({
         selectedThread={selectedThreadForLog}
         scrollToIndex={scrollToIndex}
         scrollToDate={scrollToDate}
-        selectedDate={fragmentId ?? undefined}
+        selectedDate={activeSearchMatchDate ?? fragmentId ?? undefined}
         composerTargetKey={composerTargetKey}
         composerFocused={composerFocused}
+        searchJumpDate={activeSearchMatchDate}
+        searchJumpToken={threadSearchJumpToken}
       />
     </div>
   );

@@ -72,6 +72,8 @@ interface Props {
   acpState?;
   composerTargetKey?: string | null;
   composerFocused?: boolean;
+  searchJumpDate?: string;
+  searchJumpToken?: number;
 }
 
 export function ChatLog({
@@ -92,6 +94,8 @@ export function ChatLog({
   acpState,
   composerTargetKey,
   composerFocused,
+  searchJumpDate,
+  searchJumpToken,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -210,6 +214,17 @@ export function ChatLog({
     virtuosoRef.current?.scrollToIndex({ index });
     actions.clearScrollRequest();
   }, [scrollToDate]);
+
+  useEffect(() => {
+    if (searchJumpDate == null || searchJumpDate === "") return;
+    const index = sortedDates.indexOf(searchJumpDate);
+    if (index < 0) return;
+    if (USE_VIRTUOSO) {
+      virtuosoRef.current?.scrollToIndex({ index, align: "center" });
+    } else if (scrollToBottomRef?.current) {
+      scrollToBottomRef.current(true);
+    }
+  }, [searchJumpDate, searchJumpToken, sortedDates]);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const manualScrollRef = useRef<boolean>(false);

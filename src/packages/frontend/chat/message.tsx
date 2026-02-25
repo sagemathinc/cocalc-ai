@@ -31,7 +31,11 @@ import { deriveAcpLogRefs, type InlineCodeLink } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
 import { codexEventsToMarkdown } from "./codex-activity";
-import { cancelQueuedAcpTurn, resetAcpThreadState } from "./acp-api";
+import {
+  cancelQueuedAcpTurn,
+  resetAcpThreadState,
+  sendQueuedAcpTurnImmediately,
+} from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
 import ChatInput from "./input";
 import { FeedbackLLM } from "./llm-msg-feedback";
@@ -797,22 +801,6 @@ export default function Message({
     }
     buttons.push(<span key="copy">{renderCopyMessageButton()}</span>);
     buttons.push(<span key="link">{renderLinkMessageButton()}</span>);
-    buttons.push(
-      <Tooltip
-        key="focus"
-        placement="top"
-        title="Focus this message"
-      >
-        <Button
-          size="small"
-          type="text"
-          style={{ color: COLORS.GRAY_M, fontSize: "12px", marginTop: "-4px" }}
-          onClick={() => setShowZenMessage(true)}
-        >
-          <Icon name="expand-arrows" />
-        </Button>
-      </Tooltip>,
-    );
 
     if (allowReply && !replying && actions) {
       buttons.push(
@@ -946,6 +934,22 @@ export default function Message({
         </span>,
       );
     }
+    buttons.push(
+      <Tooltip
+        key="focus"
+        placement="top"
+        title="Focus this message"
+      >
+        <Button
+          size="small"
+          type="text"
+          style={{ color: COLORS.GRAY_M, fontSize: "12px", marginTop: "-4px" }}
+          onClick={() => setShowZenMessage(true)}
+        >
+          <Icon name="expand-arrows" />
+        </Button>
+      </Tooltip>,
+    );
 
     if (!buttons.length) {
       return null;
@@ -1568,18 +1572,7 @@ export default function Message({
   };
   const handleSendQueuedImmediately = () => {
     if (!actions) return;
-    const canceled = cancelQueuedAcpTurn({ actions, message });
-    if (!canceled) return;
-    const text = newest_content(message)?.trim();
-    if (!text) return;
-    const rootIso = replyTo(message) ?? threadRootIso;
-    if (!rootIso) return;
-    actions.sendChat({
-      input: text,
-      reply_to: new Date(rootIso),
-      send_mode: "immediate",
-      noNotification: true,
-    });
+    sendQueuedAcpTurnImmediately({ actions, message });
   };
 
   const acpStateToRender = useMemo(() => {

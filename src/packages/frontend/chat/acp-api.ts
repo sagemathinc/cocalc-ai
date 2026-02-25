@@ -14,6 +14,12 @@ import { type ChatActions } from "./actions";
 type QueueKey = string;
 type QueueItem = {
   messageId: string;
+  threadId?: string;
+  replyTo?: Date;
+  senderId?: string;
+  queuedAtMs: number;
+  sendMode?: "immediate";
+  forceImmediate?: boolean;
   run: () => Promise<void>;
   canceled: boolean;
 };
@@ -87,6 +93,30 @@ function maybeDecorateQueuedPrompt({
     "",
     prompt,
   ].join("\n");
+}
+
+function interruptActiveThreadTurn({
+  actions,
+  replyTo,
+  threadId,
+}: {
+  actions: ChatActions;
+  replyTo?: Date;
+  threadId?: string;
+}): void {
+  if (!replyTo) return;
+  const threadIso = replyTo.toISOString();
+  const threadMessages = actions.getMessagesInThread(threadIso) ?? [];
+  for (const msg of threadMessages) {
+    if (field<boolean>(msg, "generating") !== true) continue;
+    const msgDate = dateValue(msg);
+    if (!msgDate) continue;
+    actions.languageModelStopGenerating(msgDate, {
+      threadId: field<string>(msg, "acp_thread_id") ?? threadId,
+      replyTo,
+      senderId: field<string>(msg, "sender_id"),
+    });
+  }
 }
 
 function makeQueueKey({ project_id, path, threadKey }): QueueKey {
@@ -307,13 +337,22 @@ export async function processAcpLLM({
   const sessionKey = effectiveSessionId ?? threadToken;
   const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const queuedAtMs = Date.now();
-  const job = async (): Promise<void> => {
+  const queueItem: QueueItem = {
+    messageId: user_message_id,
+    threadId: thread_id,
+    replyTo: threadRootDate,
+    senderId: field<string>(message, "sender_id"),
+    queuedAtMs,
+    sendMode,
+    forceImmediate: false,
+    canceled: false,
+    run: async (): Promise<void> => {
     try {
       setState("sending");
       const promptForRun = maybeDecorateQueuedPrompt({
         prompt: workingInput,
-        queuedAtMs,
-        sendMode,
+        queuedAtMs: queueItem.queuedAtMs,
+        sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
       });
       // Generate a stable assistant-reply key for this turn, but do NOT write any
       // corresponding chat row here. The backend is the sole writer of the assistant
@@ -338,7 +377,7 @@ export async function processAcpLLM({
         thread_id,
         message_id,
         reply_to_message_id,
-        sendMode,
+        sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
       });
       let runtimeEnv: Record<string, string> | undefined;
       try {
@@ -403,14 +442,11 @@ export async function processAcpLLM({
     } finally {
       setState("");
     }
+  },
   };
 
   const q = getQueue(queueKey);
-  q.items.push({
-    messageId: user_message_id,
-    run: job,
-    canceled: false,
-  });
+  q.items.push(queueItem);
   setState("queue");
   if (!q.running) {
     void runQueue(queueKey);
@@ -455,6 +491,43 @@ export function cancelQueuedAcpTurn({
       return next;
     })(),
   });
+  return true;
+}
+
+export function sendQueuedAcpTurnImmediately({
+  actions,
+  message,
+}: {
+  actions: ChatActions;
+  message: ChatMessage;
+}): boolean {
+  const { store } = actions;
+  if (!store) return false;
+  const messageId = field<string>(message, "message_id");
+  if (!messageId) return false;
+  const threadToken = field<string>(message, "thread_id");
+  if (!threadToken) return false;
+  const project_id = store.get("project_id");
+  const path = store.get("path");
+  if (!project_id || !path) return false;
+  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
+  const q = turnQueues.get(queueKey);
+  if (!q) return false;
+  const targetIndex = q.items.findIndex((item) => item.messageId === messageId);
+  if (targetIndex < 0) return false;
+  const [item] = q.items.splice(targetIndex, 1);
+  item.forceImmediate = true;
+  item.sendMode = "immediate";
+  q.items.unshift(item);
+  if (q.running) {
+    interruptActiveThreadTurn({
+      actions,
+      replyTo: item.replyTo,
+      threadId: item.threadId,
+    });
+  } else {
+    void runQueue(queueKey);
+  }
   return true;
 }
 
