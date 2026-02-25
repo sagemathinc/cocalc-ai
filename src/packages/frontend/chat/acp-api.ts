@@ -20,6 +20,7 @@ type QueueItem = {
 type QueueState = { running: boolean; items: QueueItem[] };
 const turnQueues: Map<QueueKey, QueueState> = new Map();
 let lastGeneratedAcpMessageMs = 0;
+const QUEUED_PROMPT_NOTE_THRESHOLD_MS = 1500;
 
 function nextAcpMessageDate({
   actions,
@@ -55,6 +56,37 @@ function getQueue(key: QueueKey): QueueState {
     turnQueues.set(key, q);
   }
   return q;
+}
+
+function formatQueuedDelay(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remain = seconds % 60;
+  return remain > 0 ? `${minutes}m ${remain}s` : `${minutes}m`;
+}
+
+function maybeDecorateQueuedPrompt({
+  prompt,
+  queuedAtMs,
+  sendMode,
+}: {
+  prompt: string;
+  queuedAtMs: number;
+  sendMode?: "immediate";
+}): string {
+  if (sendMode === "immediate") return prompt;
+  const delayMs = Date.now() - queuedAtMs;
+  if (!Number.isFinite(delayMs) || delayMs < QUEUED_PROMPT_NOTE_THRESHOLD_MS) {
+    return prompt;
+  }
+  return [
+    `System note: this message was queued for ${formatQueuedDelay(
+      delayMs,
+    )} while another turn was active, and is being sent automatically now.`,
+    "",
+    prompt,
+  ].join("\n");
 }
 
 function makeQueueKey({ project_id, path, threadKey }): QueueKey {
@@ -274,9 +306,15 @@ export async function processAcpLLM({
   const threadToken = thread_id;
   const sessionKey = effectiveSessionId ?? threadToken;
   const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
+  const queuedAtMs = Date.now();
   const job = async (): Promise<void> => {
     try {
       setState("sending");
+      const promptForRun = maybeDecorateQueuedPrompt({
+        prompt: workingInput,
+        queuedAtMs,
+        sendMode,
+      });
       // Generate a stable assistant-reply key for this turn, but do NOT write any
       // corresponding chat row here. The backend is the sole writer of the assistant
       // reply row (avoids frontend/backend sync races on the same row).
@@ -318,7 +356,7 @@ export async function processAcpLLM({
       }
       const stream = await webapp_client.conat_client.streamAcp({
         project_id,
-        prompt: workingInput,
+        prompt: promptForRun,
         session_id: sessionKey,
         config: buildAcpConfig({
           path,
