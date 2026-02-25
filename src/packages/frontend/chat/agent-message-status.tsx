@@ -4,7 +4,12 @@
  */
 
 import { Badge, Button, Drawer } from "antd";
-import { useEffect, useRef, useState } from "@cocalc/frontend/app-framework";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import type { InlineCodeLink } from "@cocalc/chat";
 import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
@@ -13,6 +18,18 @@ import type { ActivityLogContext } from "./actions/activity-logs";
 const activityScrollPositions = new Map<string, number>();
 const SCROLL_BOTTOM_SENTINEL = Number.POSITIVE_INFINITY;
 const SCROLL_BOTTOM_EPSILON = 1;
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+  }
+  return `${minutes}:${pad(seconds)}`;
+}
 
 function getSavedScrollPosition(node: HTMLDivElement): number {
   const maxTop = node.scrollHeight - node.clientHeight;
@@ -67,6 +84,12 @@ export function AgentMessageStatus({
   const pendingRestoreRef = useRef<number | null>(null);
   const restoringRef = useRef(false);
   const [contentVersion, setContentVersion] = useState(0);
+  const [tick, setTick] = useState(0);
+  const liveDurationLabel = useMemo(() => {
+    if (!generating) return durationLabel;
+    if (!Number.isFinite(date) || date <= 0) return durationLabel;
+    return formatElapsed(Date.now() - date);
+  }, [date, durationLabel, generating, tick]);
   const setActivitySize = (size: number) => {
     setActivitySize0(size);
     try {
@@ -98,6 +121,14 @@ export function AgentMessageStatus({
     pendingRestoreRef.current = SCROLL_BOTTOM_SENTINEL;
     activityScrollPositions.set(persistKey, SCROLL_BOTTOM_SENTINEL);
   };
+
+  useEffect(() => {
+    if (!generating) return;
+    const handle = window.setInterval(() => {
+      setTick((n) => n + 1);
+    }, 1000);
+    return () => window.clearInterval(handle);
+  }, [generating]);
 
   useEffect(() => {
     if (!showDrawer) return;
@@ -182,7 +213,7 @@ export function AgentMessageStatus({
           onClick={() => setShowDrawer(true)}
           title="View Codex activity log"
         >
-          {generating ? "Working" : `Worked for\n${durationLabel}`}
+          {generating ? "Working" : `Worked for\n${liveDurationLabel}`}
         </Button>
         {generating ? <span style={{ color: COLORS.GRAY_D }}>Live</span> : null}
       </div>
@@ -216,7 +247,7 @@ export function AgentMessageStatus({
             activityContext={activityContext}
             onJumpToBottom={handleJumpToBottom}
             onEventsChange={() => setContentVersion((prev) => prev + 1)}
-            durationLabel={generating === true ? durationLabel : durationLabel}
+            durationLabel={liveDurationLabel}
             projectId={project_id}
             inlineCodeLinks={inlineCodeLinks}
             virtualizeEntries
