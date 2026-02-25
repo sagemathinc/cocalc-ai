@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import { human_readable_size, plural } from "@cocalc/util/misc";
+import { plural } from "@cocalc/util/misc";
 import {
   LRO_TERMINAL_STATUSES,
   isDismissed,
@@ -12,6 +12,13 @@ import {
 import type { CopyLroState } from "@cocalc/frontend/project/copy-ops";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { User } from "@cocalc/frontend/users/user";
+import {
+  clampProgressPercent,
+  formatProgressDetail,
+  lroPhaseColor,
+  lroStatusColor,
+  lroUpdatedAt,
+} from "./lro-timeline-utils";
 
 const COPY_PHASES = [
   {
@@ -206,7 +213,7 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
       <Space direction="vertical" size={8} style={{ width: "100%" }}>
         <div style={{ fontWeight: 600 }}>Copy operation lifecycle</div>
         <Space wrap size={[6, 6]}>
-          <Tag color={statusColor(status)}>{status ?? "running"}</Tag>
+          <Tag color={lroStatusColor(status)}>{status ?? "running"}</Tag>
           {summaryCounts ? <Tag>{summaryCounts}</Tag> : null}
           {detailText ? <Tag>{detailText}</Tag> : null}
         </Space>
@@ -244,14 +251,6 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
   );
 }
 
-function statusColor(status?: string): string {
-  if (status === "succeeded") return "green";
-  if (status === "failed") return "red";
-  if (status === "canceled") return "orange";
-  if (status === "expired") return "red";
-  return "processing";
-}
-
 function phaseFromOp(op: CopyLroState): CopyPhaseKey | undefined {
   const phaseRaw =
     op.last_progress?.phase ??
@@ -284,25 +283,7 @@ function phaseColor({
   activeIndex: number;
   status?: string;
 }): string {
-  if (status === "succeeded") return "green";
-  if (status === "failed") {
-    if (index < activeIndex) return "green";
-    if (index === activeIndex) return "red";
-    return "gray";
-  }
-  if (status === "canceled") {
-    if (index < activeIndex) return "green";
-    if (index === activeIndex) return "orange";
-    return "gray";
-  }
-  if (status === "expired") {
-    if (index < activeIndex) return "green";
-    if (index === activeIndex) return "red";
-    return "gray";
-  }
-  if (index < activeIndex) return "green";
-  if (index === activeIndex) return "blue";
-  return "gray";
+  return lroPhaseColor({ index, activeIndex, status });
 }
 
 function formatStatusLine(op: CopyLroState, detailOverride?: string): string {
@@ -352,48 +333,17 @@ function formatCounts(summary: any): string {
 }
 
 function progressPercent(op: CopyLroState): number | undefined {
-  const progress = op.last_progress?.progress;
-  if (progress != null) {
-    return Math.max(0, Math.min(100, Math.round(progress)));
-  }
+  const direct = clampProgressPercent(op.last_progress?.progress);
+  if (direct != null) return direct;
   const summary = op.summary?.progress_summary ?? {};
   const total = summary.total;
   const done = summary.done ?? summary.local;
   if (total && done != null) {
-    return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+    return clampProgressPercent((done / total) * 100);
   }
   return undefined;
 }
 
-function formatProgressDetail(detail?: any): string | undefined {
-  if (!detail) return undefined;
-  const parts: string[] = [];
-  const speed = formatSpeed(detail.speed);
-  if (speed) parts.push(speed);
-  const eta = formatEta(detail.eta);
-  if (eta) parts.push(`ETA ${eta}`);
-  return parts.length ? parts.join(", ") : undefined;
-}
-
-function formatSpeed(speed?: string): string | undefined {
-  if (!speed) return undefined;
-  const numeric = Number.parseFloat(speed);
-  if (!Number.isFinite(numeric)) {
-    return speed;
-  }
-  return `${human_readable_size(numeric, true)}/s`;
-}
-
-function formatEta(eta?: number): string | undefined {
-  if (eta == null || eta <= 0) return undefined;
-  if (eta < 1000) return `${Math.round(eta)} ms`;
-  if (eta < 60_000) return `${Math.round(eta / 1000)} s`;
-  return `${Math.round(eta / 1000 / 60)} min`;
-}
-
 function getUpdatedAt(op: CopyLroState): number {
-  const summary = op.summary;
-  if (!summary?.updated_at) return 0;
-  const date = new Date(summary.updated_at as any);
-  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
+  return lroUpdatedAt(op.summary);
 }

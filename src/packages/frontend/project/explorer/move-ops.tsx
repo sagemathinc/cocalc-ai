@@ -13,6 +13,11 @@ import {
 } from "@cocalc/frontend/lro/utils";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import { User } from "@cocalc/frontend/users/user";
+import {
+  clampProgressPercent,
+  lroPhaseColor,
+  lroStatusColor,
+} from "./lro-timeline-utils";
 
 const HIDE_STATUSES = new Set<LroStatus>(["succeeded"]);
 const MOVE_PHASES = [
@@ -134,7 +139,7 @@ function MoveOpDetails({ op }: { op: MoveLroState }) {
       <Space direction="vertical" size={8} style={{ width: "100%" }}>
         <div style={{ fontWeight: 600 }}>Move operation lifecycle</div>
         <Space wrap size={[6, 6]}>
-          <Tag color={statusColor(status)}>{status ?? "running"}</Tag>
+          <Tag color={lroStatusColor(status)}>{status ?? "running"}</Tag>
           <Tag>
             Operation ID: <code>{op.op_id}</code>
           </Tag>
@@ -199,11 +204,7 @@ function formatStatusLine(op: MoveLroState): string {
 }
 
 function progressPercent(op: MoveLroState): number | undefined {
-  const progress = op.last_progress?.progress;
-  if (progress != null) {
-    return Math.max(0, Math.min(100, Math.round(progress)));
-  }
-  return undefined;
+  return clampProgressPercent(op.last_progress?.progress);
 }
 
 function phaseFromOp(op: MoveLroState): MovePhaseKey | undefined {
@@ -230,14 +231,6 @@ function phaseIndex(phase: MovePhaseKey | undefined): number {
   return idx < 0 ? 0 : idx;
 }
 
-function statusColor(status?: string): string {
-  if (status === "succeeded") return "green";
-  if (status === "failed") return "red";
-  if (status === "canceled") return "orange";
-  if (status === "expired") return "red";
-  return "processing";
-}
-
 function phaseColor({
   index,
   activeIndex,
@@ -247,18 +240,5 @@ function phaseColor({
   activeIndex: number;
   status?: string;
 }): string {
-  if (status === "succeeded") return "green";
-  if (status === "failed" || status === "expired") {
-    if (index < activeIndex) return "green";
-    if (index === activeIndex) return "red";
-    return "gray";
-  }
-  if (status === "canceled") {
-    if (index < activeIndex) return "green";
-    if (index === activeIndex) return "orange";
-    return "gray";
-  }
-  if (index < activeIndex) return "green";
-  if (index === activeIndex) return "blue";
-  return "gray";
+  return lroPhaseColor({ index, activeIndex, status });
 }

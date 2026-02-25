@@ -1,5 +1,15 @@
-import { Progress, Space, Spin } from "antd";
-import { useRef } from "react";
+import {
+  Button,
+  Popconfirm,
+  Popover,
+  Progress,
+  Space,
+  Spin,
+  Tag,
+  Timeline,
+} from "antd";
+import { useMemo, useRef, useState } from "react";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import {
@@ -8,9 +18,46 @@ import {
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
 import type { BackupLroState } from "@cocalc/frontend/project/backup-ops";
-import { human_readable_size } from "@cocalc/util/misc";
+import { TimeAgo } from "@cocalc/frontend/components";
+import { User } from "@cocalc/frontend/users/user";
+import {
+  clampProgressPercent,
+  formatProgressDetail,
+  lroPhaseColor,
+  lroStatusColor,
+  lroUpdatedAt,
+} from "./lro-timeline-utils";
 
 const HIDE_STATUSES = new Set<LroStatus>(["succeeded"]);
+
+const BACKUP_PHASES = [
+  {
+    key: "queued",
+    label: "Queued",
+    description: "Operation accepted and waiting for worker",
+  },
+  {
+    key: "validate",
+    label: "Validate",
+    description: "Validate workspace and backup parameters",
+  },
+  {
+    key: "backup",
+    label: "Create backup",
+    description: "Create a backup snapshot on the assigned host",
+  },
+  {
+    key: "done",
+    label: "Complete",
+    description: "Backup completed and summary persisted",
+  },
+] as const;
+
+type BackupPhaseKey = (typeof BACKUP_PHASES)[number]["key"];
+
+const BACKUP_PHASE_SET = new Set<BackupPhaseKey>(
+  BACKUP_PHASES.map((phase) => phase.key),
+);
 
 export default function BackupOps({ project_id }: { project_id: string }) {
   const backupOps = useTypedRedux({ project_id }, "backup_ops")?.toJS() ?? {};
@@ -52,6 +99,7 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
     return null;
   }
   const lastDetailRef = useRef<string | undefined>(undefined);
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const percent = progressPercent(op);
   const progress = op.last_progress;
   const detail = formatProgressDetail(progress?.detail);
@@ -60,12 +108,11 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
   }
   const statusText = formatStatusLine(op, detail ?? lastDetailRef.current);
   const progressStatus = progressBarStatus(summary?.status);
+  const canCancel = summary && !LRO_TERMINAL_STATUSES.has(summary.status);
 
   return (
     <div style={{ marginBottom: "6px" }}>
-      <div style={{ fontSize: "12px", marginBottom: "2px" }}>
-        Backup operation
-      </div>
+      <div style={{ fontSize: "12px", marginBottom: "2px" }}>Backup operation</div>
       <Space size="small" align="center">
         {percent == null ? (
           <Spin size="small" />
@@ -78,9 +125,140 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
           />
         )}
         <span style={{ fontSize: "11px", color: "#666" }}>{statusText}</span>
+        <Popover
+          trigger="click"
+          open={detailsOpen}
+          onOpenChange={setDetailsOpen}
+          content={<BackupOpTimeline op={op} />}
+          placement="bottomLeft"
+        >
+          <Button type="link" size="small">
+            Timeline
+          </Button>
+        </Popover>
+        {canCancel ? (
+          <Popconfirm
+            title="Cancel this backup operation?"
+            okText="Cancel"
+            cancelText="Keep"
+            onConfirm={() =>
+              webapp_client.conat_client.hub.lro.cancel({ op_id: op.op_id })
+            }
+          >
+            <Button type="link" size="small">
+              Cancel
+            </Button>
+          </Popconfirm>
+        ) : null}
       </Space>
     </div>
   );
+}
+
+function BackupOpTimeline({ op }: { op: BackupLroState }) {
+  const summary = op.summary;
+  const status = summary?.status;
+  const detailText = formatProgressDetail(op.last_progress?.detail);
+  const statusText = formatStatusLine(op);
+  const phase = phaseFromOp(op);
+  const activeIndex = phase != null ? phaseIndex(phase) : 0;
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const timelineItems = useMemo(() => {
+    return BACKUP_PHASES.map((entry, index) => ({
+      color: lroPhaseColor({ index, activeIndex, status }),
+      children: (
+        <div>
+          <div style={{ fontWeight: 600 }}>{entry.label}</div>
+          <div style={{ color: "#666", fontSize: "11px" }}>{entry.description}</div>
+        </div>
+      ),
+    }));
+  }, [activeIndex, status]);
+
+  const tags = Array.isArray(summary?.input?.tags)
+    ? summary.input.tags.filter((tag) => typeof tag === "string" && tag.length > 0)
+    : [];
+
+  return (
+    <div style={{ width: "460px", maxWidth: "80vw" }}>
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <div style={{ fontWeight: 600 }}>Backup operation lifecycle</div>
+        <Space wrap size={[6, 6]}>
+          <Tag color={lroStatusColor(status)}>{status ?? "running"}</Tag>
+          {detailText ? <Tag>{detailText}</Tag> : null}
+          <Tag>
+            Operation ID: <code>{op.op_id}</code>
+          </Tag>
+          <Button
+            size="small"
+            type="link"
+            onClick={async () => {
+              await navigator.clipboard.writeText(op.op_id);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            }}
+          >
+            {copied ? "Copied" : "Copy ID"}
+          </Button>
+        </Space>
+        <div style={{ fontSize: "12px", color: "#666" }}>{statusText}</div>
+        <Space size="small" wrap style={{ fontSize: "12px" }}>
+          {summary?.created_by ? (
+            <span>
+              Initiated by <User account_id={summary.created_by} show_avatar avatarSize={16} />
+            </span>
+          ) : null}
+          {summary?.created_at ? (
+            <span>
+              Started <TimeAgo date={summary.created_at} />
+            </span>
+          ) : null}
+          {summary?.updated_at ? (
+            <span>
+              Updated <TimeAgo date={summary.updated_at} />
+            </span>
+          ) : null}
+        </Space>
+        <div style={{ fontSize: "12px" }}>
+          {summary?.input?.project_id ? (
+            <span>Workspace: {summary.input.project_id}</span>
+          ) : (
+            <span>Workspace metadata unavailable.</span>
+          )}
+          {tags.length > 0 ? (
+            <>
+              <br />
+              <span>Tags: {tags.join(", ")}</span>
+            </>
+          ) : null}
+        </div>
+        <Timeline items={timelineItems} />
+      </Space>
+    </div>
+  );
+}
+
+function phaseFromOp(op: BackupLroState): BackupPhaseKey | undefined {
+  const phaseRaw =
+    op.last_progress?.phase ??
+    op.summary?.progress_summary?.phase ??
+    op.last_progress?.message;
+  if (typeof phaseRaw !== "string" || !phaseRaw.trim()) return;
+  const lower = phaseRaw.trim().toLowerCase();
+  if (BACKUP_PHASE_SET.has(lower as BackupPhaseKey)) {
+    return lower as BackupPhaseKey;
+  }
+  if (lower.includes("validate")) return "validate";
+  if (lower.includes("backup")) return "backup";
+  if (lower.includes("done") || lower.includes("complete")) return "done";
+  if (lower.includes("queue")) return "queued";
+  return;
+}
+
+function phaseIndex(phase: BackupPhaseKey): number {
+  const idx = BACKUP_PHASES.findIndex((entry) => entry.key === phase);
+  return idx < 0 ? 0 : idx;
 }
 
 function formatStatusLine(
@@ -99,7 +277,7 @@ function formatStatusLine(
   }
   const progress = op.last_progress;
   const message =
-    progress?.message ?? progress?.phase ?? summary?.progress_summary?.phase;
+    summary?.progress_summary?.phase ?? progress?.phase ?? progress?.message;
   const detail = detailOverride ?? formatProgressDetail(progress?.detail);
   if (message && detail) {
     return `${message} • ${detail}`;
@@ -114,46 +292,9 @@ function formatStatusLine(
 }
 
 function progressPercent(op: BackupLroState): number | undefined {
-  const progress = op.last_progress?.progress;
-  if (progress != null) {
-    return Math.max(0, Math.min(100, Math.round(progress)));
-  }
-  return undefined;
-}
-
-function formatProgressDetail(detail?: any): string | undefined {
-  if (!detail) return undefined;
-  const parts: string[] = [];
-  const speed = formatSpeed(detail.speed);
-  if (speed) parts.push(speed);
-  const eta = formatEta(detail.eta);
-  if (eta) parts.push(`ETA ${eta}`);
-  return parts.length ? parts.join(", ") : undefined;
-}
-
-function formatSpeed(speed?: string | number): string | undefined {
-  if (speed == null) return undefined;
-  if (typeof speed === "number") {
-    if (!Number.isFinite(speed)) return undefined;
-    return `${human_readable_size(speed, true)}/s`;
-  }
-  const numeric = Number.parseFloat(speed);
-  if (!Number.isFinite(numeric)) {
-    return speed;
-  }
-  return `${human_readable_size(numeric, true)}/s`;
-}
-
-function formatEta(eta?: number): string | undefined {
-  if (eta == null || eta <= 0) return undefined;
-  if (eta < 1000) return `${Math.round(eta)} ms`;
-  if (eta < 60_000) return `${Math.round(eta / 1000)} s`;
-  return `${Math.round(eta / 1000 / 60)} min`;
+  return clampProgressPercent(op.last_progress?.progress);
 }
 
 function getUpdatedAt(op: BackupLroState): number {
-  const summary = op.summary;
-  if (!summary?.updated_at) return 0;
-  const date = new Date(summary.updated_at as any);
-  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
+  return lroUpdatedAt(op.summary);
 }
