@@ -1302,6 +1302,9 @@ importers:
 
   plus:
     dependencies:
+      '@cocalc/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat
@@ -17730,7 +17733,7 @@ snapshots:
 
   axios@1.13.2:
     dependencies:
-      follow-redirects: 1.15.11
+      follow-redirects: 1.15.11(debug@4.4.3)
       form-data: 4.0.5
       proxy-from-env: 1.1.0
     transitivePeerDependencies:
@@ -20030,8 +20033,6 @@ snapshots:
   flatten-vertex-data@1.0.2:
     dependencies:
       dtype: 2.0.0
-
-  follow-redirects@1.15.11: {}
 
   follow-redirects@1.15.11(debug@4.4.3):
     optionalDependencies:
