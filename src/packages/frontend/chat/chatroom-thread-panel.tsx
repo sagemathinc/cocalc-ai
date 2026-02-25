@@ -3,9 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Select, Space, Tooltip } from "antd";
+import { Button, Input, Modal, Select, Space, Tooltip } from "antd";
 import {
   React,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -31,11 +32,16 @@ import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
-import { dateValue } from "./access";
+import { dateValue, field } from "./access";
 import { newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  ChatStoreArchivedRow,
+  ChatStoreSearchHit,
+} from "@cocalc/conat/hub/api/projects";
 import { ChatIconPicker } from "./chat-icon-picker";
 import { Icon } from "@cocalc/frontend/components";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -49,6 +55,8 @@ const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
 const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   ? "read-only"
   : "workspace-write";
+const ARCHIVED_SEARCH_LIMIT = 20;
+const ARCHIVED_HISTORY_LIMIT = 50;
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
   { value: "workspace-write", label: "Workspace write" },
@@ -142,6 +150,20 @@ export function ChatRoomThreadPanel({
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
   const [threadSearchJumpToken, setThreadSearchJumpToken] = useState(0);
+  const [archivedSearchLoading, setArchivedSearchLoading] = useState(false);
+  const [archivedSearchHits, setArchivedSearchHits] = useState<ChatStoreSearchHit[]>(
+    [],
+  );
+  const [archivedSearchError, setArchivedSearchError] = useState("");
+  const [archivedHistoryOpen, setArchivedHistoryOpen] = useState(false);
+  const [archivedHistoryLoading, setArchivedHistoryLoading] = useState(false);
+  const [archivedHistoryRows, setArchivedHistoryRows] = useState<ChatStoreArchivedRow[]>(
+    [],
+  );
+  const [archivedHistoryError, setArchivedHistoryError] = useState("");
+  const [archivedHistoryNextOffset, setArchivedHistoryNextOffset] = useState<
+    number | undefined
+  >(undefined);
   const searchInputRef = useRef<any>(null);
   const selectedThreadRootIso = useMemo(() => {
     const rootDate = dateValue(selectedThread?.rootMessage);
@@ -187,6 +209,50 @@ export function ChatRoomThreadPanel({
     () => (matchCount ? threadSearchMatches[normalizedCursor] : undefined),
     [matchCount, normalizedCursor, threadSearchMatches],
   );
+  const selectedThreadId = useMemo(() => {
+    const id = field<string>(selectedThread?.rootMessage as any, "thread_id");
+    if (typeof id !== "string") return undefined;
+    const trimmed = id.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }, [selectedThread?.rootMessage, selectedThreadKey]);
+  const archivedMatchCount = archivedSearchHits.length;
+
+  const loadArchivedHistory = useCallback(
+    async (offset = 0, append = false) => {
+      if (!project_id || !path || !selectedThreadId) {
+        setArchivedHistoryRows([]);
+        setArchivedHistoryNextOffset(undefined);
+        return;
+      }
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      if (!hubProjects) {
+        setArchivedHistoryError("Conat project API is unavailable.");
+        setArchivedHistoryRows([]);
+        setArchivedHistoryNextOffset(undefined);
+        return;
+      }
+      setArchivedHistoryLoading(true);
+      setArchivedHistoryError("");
+      try {
+        const result = await hubProjects.chatStoreReadArchived({
+          project_id,
+          chat_path: path,
+          thread_id: selectedThreadId,
+          limit: ARCHIVED_HISTORY_LIMIT,
+          offset,
+        });
+        setArchivedHistoryRows((prev) =>
+          append ? [...prev, ...(result.rows ?? [])] : (result.rows ?? []),
+        );
+        setArchivedHistoryNextOffset(result.next_offset);
+      } catch (err) {
+        setArchivedHistoryError(`${err}`);
+      } finally {
+        setArchivedHistoryLoading(false);
+      }
+    },
+    [project_id, path, selectedThreadId],
+  );
 
   const setSearchQueryDebounced = useMemo(
     () =>
@@ -210,6 +276,12 @@ export function ChatRoomThreadPanel({
     setThreadSearchInput("");
     setThreadSearchQuery("");
     setThreadSearchOpen(false);
+    setArchivedSearchHits([]);
+    setArchivedSearchError("");
+    setArchivedHistoryRows([]);
+    setArchivedHistoryError("");
+    setArchivedHistoryNextOffset(undefined);
+    setArchivedHistoryOpen(false);
   }, [selectedThreadKey]);
 
   useEffect(() => {
@@ -223,6 +295,57 @@ export function ChatRoomThreadPanel({
     if (!activeSearchMatchDate) return;
     setThreadSearchJumpToken((n) => n + 1);
   }, [activeSearchMatchDate]);
+
+  useEffect(() => {
+    const query = threadSearchQuery.trim();
+    if (
+      !threadSearchOpen ||
+      !query ||
+      !project_id ||
+      !path ||
+      !selectedThreadId
+    ) {
+      setArchivedSearchLoading(false);
+      setArchivedSearchHits([]);
+      setArchivedSearchError("");
+      return;
+    }
+    let canceled = false;
+    setArchivedSearchLoading(true);
+    setArchivedSearchError("");
+    void (async () => {
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      if (!hubProjects) {
+        setArchivedSearchLoading(false);
+        setArchivedSearchHits([]);
+        setArchivedSearchError("Conat project API is unavailable.");
+        return;
+      }
+      try {
+        const result = await hubProjects.chatStoreSearch({
+          project_id,
+          chat_path: path,
+          query,
+          thread_id: selectedThreadId,
+          limit: ARCHIVED_SEARCH_LIMIT,
+          offset: 0,
+        });
+        if (canceled) return;
+        setArchivedSearchHits(result.hits ?? []);
+      } catch (err) {
+        if (canceled) return;
+        setArchivedSearchHits([]);
+        setArchivedSearchError(`${err}`);
+      } finally {
+        if (!canceled) {
+          setArchivedSearchLoading(false);
+        }
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [threadSearchOpen, threadSearchQuery, project_id, path, selectedThreadId]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -693,6 +816,25 @@ export function ChatRoomThreadPanel({
                 ? `${normalizedCursor + 1}/${matchCount}`
                 : "0 matches"}
           </span>
+          {selectedThreadRootIso && threadSearchQuery.trim().length > 0 ? (
+            <span style={{ color: "#666", fontSize: 12 }}>
+              {archivedSearchLoading
+                ? "Archived: searching…"
+                : archivedSearchError
+                  ? "Archived: error"
+                  : `Archived: ${archivedMatchCount}`}
+            </span>
+          ) : null}
+          <Button
+            size="small"
+            disabled={!selectedThreadId || !project_id || !path}
+            onClick={() => {
+              setArchivedHistoryOpen(true);
+              void loadArchivedHistory(0, false);
+            }}
+          >
+            History
+          </Button>
           <Button
             size="small"
             type="text"
@@ -700,8 +842,105 @@ export function ChatRoomThreadPanel({
           >
             ×
           </Button>
+          {selectedThreadRootIso && threadSearchQuery.trim().length > 0 ? (
+            <div
+              style={{
+                width: "100%",
+                maxHeight: 160,
+                overflowY: "auto",
+                borderTop: "1px solid #e6e6e6",
+                paddingTop: 6,
+                marginTop: 2,
+                color: "#555",
+                fontSize: 12,
+              }}
+            >
+              {archivedSearchLoading ? (
+                <div>Searching archived history…</div>
+              ) : archivedSearchError ? (
+                <div style={{ color: "#b71c1c" }}>{archivedSearchError}</div>
+              ) : archivedSearchHits.length === 0 ? (
+                <div>No archived matches.</div>
+              ) : (
+                archivedSearchHits.slice(0, 6).map((hit) => {
+                  const when =
+                    typeof hit.date_ms === "number"
+                      ? new Date(hit.date_ms).toLocaleString()
+                      : "";
+                  const text = (hit.snippet ?? hit.excerpt ?? "")
+                    .replace(/<[^>]*>/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
+                  return (
+                    <div
+                      key={`${hit.segment_id}:${hit.row_id}`}
+                      style={{ marginBottom: 6, lineHeight: "16px" }}
+                    >
+                      <div style={{ fontSize: 11, color: "#888" }}>{when}</div>
+                      <div>{text || "(no preview)"}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
+      <Modal
+        title="Archived thread history"
+        open={archivedHistoryOpen}
+        width={680}
+        onCancel={() => setArchivedHistoryOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setArchivedHistoryOpen(false)}>
+            Close
+          </Button>,
+          <Button
+            key="more"
+            onClick={() => {
+              if (archivedHistoryNextOffset == null) return;
+              void loadArchivedHistory(archivedHistoryNextOffset, true);
+            }}
+            disabled={archivedHistoryLoading || archivedHistoryNextOffset == null}
+          >
+            Load more
+          </Button>,
+        ]}
+      >
+        <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+          {archivedHistoryLoading && archivedHistoryRows.length === 0 ? (
+            <div style={{ color: "#666" }}>Loading archived history…</div>
+          ) : archivedHistoryError ? (
+            <div style={{ color: "#b71c1c" }}>{archivedHistoryError}</div>
+          ) : archivedHistoryRows.length === 0 ? (
+            <div style={{ color: "#666" }}>No archived rows for this thread.</div>
+          ) : (
+            archivedHistoryRows.map((row) => {
+              const when =
+                typeof row.date_ms === "number"
+                  ? new Date(row.date_ms).toLocaleString()
+                  : "(unknown time)";
+              const text = (row.excerpt ?? "")
+                .replace(/<[^>]*>/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+              return (
+                <div
+                  key={`${row.segment_id}:${row.row_id}`}
+                  style={{
+                    borderBottom: "1px solid #f0f0f0",
+                    padding: "8px 0",
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ color: "#888", marginBottom: 2 }}>{when}</div>
+                  <div style={{ color: "#333" }}>{text || "(no preview)"}</div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </Modal>
       <ChatLog
         actions={actions}
         project_id={project_id ?? ""}
