@@ -93,6 +93,13 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
   "projects.codexUploadAuthFile",
+  "projects.chatStoreStats",
+  "projects.chatStoreRotate",
+  "projects.chatStoreListSegments",
+  "projects.chatStoreReadArchived",
+  "projects.chatStoreSearch",
+  "projects.chatStoreDelete",
+  "projects.chatStoreVacuum",
 ]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 

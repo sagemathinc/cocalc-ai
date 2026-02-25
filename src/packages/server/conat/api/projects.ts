@@ -37,10 +37,26 @@ import {
 } from "@cocalc/server/projects/offline-move-confirmation";
 import { assertCollab } from "./util";
 import type {
+  ChatStoreDeleteResult,
+  ChatStoreScope,
+  ChatStoreStats,
+  ChatStoreRotateResult,
+  ChatStoreSegment,
+  ChatStoreArchivedRow,
+  ChatStoreSearchHit,
   ProjectCopyRow,
   ProjectRuntimeLog,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
+import {
+  deleteChatStoreData,
+  getChatStoreStats,
+  listChatStoreSegments,
+  readChatStoreArchived,
+  rotateChatStore,
+  searchChatStoreArchived,
+  vacuumChatStore,
+} from "@cocalc/backend/chat-store/sqlite-offload";
 
 export async function copyPathBetweenProjects({
   src,
@@ -1003,4 +1019,194 @@ export async function codexUploadAuthFile({
   throw Error(
     "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
   );
+}
+
+export async function chatStoreStats({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+}): Promise<ChatStoreStats> {
+  await assertCollab({ account_id, project_id });
+  return await getChatStoreStats({ chat_path, db_path });
+}
+
+export async function chatStoreRotate({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+  keep_recent_messages,
+  max_head_bytes,
+  max_head_messages,
+  require_idle,
+  force,
+  dry_run,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+  keep_recent_messages?: number;
+  max_head_bytes?: number;
+  max_head_messages?: number;
+  require_idle?: boolean;
+  force?: boolean;
+  dry_run?: boolean;
+}): Promise<ChatStoreRotateResult> {
+  await assertCollab({ account_id, project_id });
+  return await rotateChatStore({
+    chat_path,
+    db_path,
+    keep_recent_messages,
+    max_head_bytes,
+    max_head_messages,
+    require_idle,
+    force,
+    dry_run,
+  });
+}
+
+export async function chatStoreListSegments({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+  limit,
+  offset,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ chat_id: string; segments: ChatStoreSegment[] }> {
+  await assertCollab({ account_id, project_id });
+  return listChatStoreSegments({
+    chat_path,
+    db_path,
+    limit,
+    offset,
+  });
+}
+
+export async function chatStoreReadArchived({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+  before_date_ms,
+  limit,
+  offset,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+  before_date_ms?: number;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  chat_id: string;
+  rows: ChatStoreArchivedRow[];
+  offset: number;
+  next_offset?: number;
+}> {
+  await assertCollab({ account_id, project_id });
+  return readChatStoreArchived({
+    chat_path,
+    db_path,
+    before_date_ms,
+    limit,
+    offset,
+  });
+}
+
+export async function chatStoreSearch({
+  account_id,
+  project_id,
+  chat_path,
+  query,
+  db_path,
+  thread_id,
+  limit,
+  offset,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  query: string;
+  db_path?: string;
+  thread_id?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  chat_id: string;
+  hits: ChatStoreSearchHit[];
+  offset: number;
+  next_offset?: number;
+}> {
+  await assertCollab({ account_id, project_id });
+  return searchChatStoreArchived({
+    chat_path,
+    query,
+    db_path,
+    thread_id,
+    limit,
+    offset,
+  });
+}
+
+export async function chatStoreDelete({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+  scope,
+  before_date_ms,
+  thread_id,
+  message_ids,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+  scope: ChatStoreScope;
+  before_date_ms?: number;
+  thread_id?: string;
+  message_ids?: string[];
+}): Promise<ChatStoreDeleteResult> {
+  await assertCollab({ account_id, project_id });
+  return deleteChatStoreData({
+    chat_path,
+    db_path,
+    scope,
+    before_date_ms,
+    thread_id,
+    message_ids,
+  });
+}
+
+export async function chatStoreVacuum({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+}): Promise<{ chat_id: string; db_path: string; before_bytes: number; after_bytes: number }> {
+  await assertCollab({ account_id, project_id });
+  return vacuumChatStore({
+    chat_path,
+    db_path,
+  });
 }

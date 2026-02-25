@@ -146,6 +146,85 @@ export interface MyCollaboratorRow {
   shared_projects: number;
 }
 
+export type ChatStoreScope = "chat" | "before_date" | "thread" | "messages";
+
+export interface ChatStoreStats {
+  chat_id: string;
+  chat_path: string;
+  db_path: string;
+  head_bytes: number;
+  head_rows: number;
+  head_chat_rows: number;
+  archived_rows: number;
+  archived_bytes: number;
+  segments: number;
+  keep_recent_messages: number;
+  max_head_bytes: number;
+  max_head_messages: number;
+  last_rotated_at_ms?: number;
+}
+
+export interface ChatStoreRotateResult {
+  rotated: boolean;
+  reason?: string;
+  dry_run?: boolean;
+  chat_id: string;
+  segment_id?: string;
+  segment_seq?: number;
+  archived_rows?: number;
+  archived_bytes?: number;
+  kept_chat_rows?: number;
+  head_bytes_before?: number;
+  head_bytes_after?: number;
+  head_rows_before?: number;
+  head_rows_after?: number;
+  generating_rows?: number;
+  rewrite_warning?: string;
+}
+
+export interface ChatStoreSegment {
+  segment_id: string;
+  seq: number;
+  created_at_ms: number;
+  from_date_ms?: number;
+  to_date_ms?: number;
+  from_message_id?: string;
+  to_message_id?: string;
+  row_count: number;
+  payload_sha256: string;
+  payload_codec: string;
+  payload_bytes: number;
+}
+
+export interface ChatStoreArchivedRow {
+  row_id: number;
+  segment_id: string;
+  message_id?: string;
+  thread_id?: string;
+  sender_id?: string;
+  event?: string;
+  date_ms?: number;
+  excerpt?: string;
+  row: Record<string, any>;
+}
+
+export interface ChatStoreSearchHit {
+  row_id: number;
+  segment_id: string;
+  message_id?: string;
+  thread_id?: string;
+  date_ms?: number;
+  excerpt?: string;
+  snippet?: string;
+}
+
+export interface ChatStoreDeleteResult {
+  chat_id: string;
+  scope: ChatStoreScope;
+  deleted_rows: number;
+  deleted_segments: number;
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -208,6 +287,13 @@ export const projects = {
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
+  chatStoreStats: authFirstRequireAccount,
+  chatStoreRotate: authFirstRequireAccount,
+  chatStoreListSegments: authFirstRequireAccount,
+  chatStoreReadArchived: authFirstRequireAccount,
+  chatStoreSearch: authFirstRequireAccount,
+  chatStoreDelete: authFirstRequireAccount,
+  chatStoreVacuum: authFirstRequireAccount,
 };
 
 export type AddCollaborator =
@@ -680,4 +766,72 @@ export interface Projects {
     filename?: string;
     content: string;
   }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
+
+  chatStoreStats: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+  }) => Promise<ChatStoreStats>;
+
+  chatStoreRotate: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    keep_recent_messages?: number;
+    max_head_bytes?: number;
+    max_head_messages?: number;
+    require_idle?: boolean;
+    force?: boolean;
+    dry_run?: boolean;
+  }) => Promise<ChatStoreRotateResult>;
+
+  chatStoreListSegments: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    limit?: number;
+    offset?: number;
+  }) => Promise<{ chat_id: string; segments: ChatStoreSegment[] }>;
+
+  chatStoreReadArchived: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    before_date_ms?: number;
+    limit?: number;
+    offset?: number;
+  }) => Promise<{ chat_id: string; rows: ChatStoreArchivedRow[]; offset: number; next_offset?: number }>;
+
+  chatStoreSearch: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    query: string;
+    db_path?: string;
+    thread_id?: string;
+    limit?: number;
+    offset?: number;
+  }) => Promise<{ chat_id: string; hits: ChatStoreSearchHit[]; offset: number; next_offset?: number }>;
+
+  chatStoreDelete: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    scope: ChatStoreScope;
+    before_date_ms?: number;
+    thread_id?: string;
+    message_ids?: string[];
+  }) => Promise<ChatStoreDeleteResult>;
+
+  chatStoreVacuum: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+  }) => Promise<{ chat_id: string; db_path: string; before_bytes: number; after_bytes: number }>;
 }

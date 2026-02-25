@@ -29,6 +29,15 @@ import {
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
 import { getLiteServerSettings } from "./settings";
+import {
+  deleteChatStoreData,
+  getChatStoreStats,
+  listChatStoreSegments,
+  readChatStoreArchived,
+  rotateChatStore,
+  searchChatStoreArchived,
+  vacuumChatStore,
+} from "./sqlite/chat-offload";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -369,7 +378,109 @@ export const hubApi: HubApi = {
     listBrowserSessions,
     removeBrowserSession,
   },
-  projects: {},
+  projects: {
+    chatStoreStats: async (opts: {
+      chat_path: string;
+      db_path?: string;
+    }) => {
+      return await getChatStoreStats({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+      });
+    },
+    chatStoreRotate: async (opts: {
+      chat_path: string;
+      db_path?: string;
+      keep_recent_messages?: number;
+      max_head_bytes?: number;
+      max_head_messages?: number;
+      require_idle?: boolean;
+      force?: boolean;
+      dry_run?: boolean;
+    }) => {
+      return await rotateChatStore({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+        keep_recent_messages: opts.keep_recent_messages,
+        max_head_bytes: opts.max_head_bytes,
+        max_head_messages: opts.max_head_messages,
+        require_idle: opts.require_idle,
+        force: opts.force,
+        dry_run: opts.dry_run,
+      });
+    },
+    chatStoreListSegments: (opts: {
+      chat_path: string;
+      db_path?: string;
+      limit?: number;
+      offset?: number;
+    }) => {
+      return listChatStoreSegments({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+        limit: opts.limit,
+        offset: opts.offset,
+      });
+    },
+    chatStoreReadArchived: (opts: {
+      chat_path: string;
+      db_path?: string;
+      before_date_ms?: number;
+      limit?: number;
+      offset?: number;
+    }) => {
+      return readChatStoreArchived({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+        before_date_ms: opts.before_date_ms,
+        limit: opts.limit,
+        offset: opts.offset,
+      });
+    },
+    chatStoreSearch: (opts: {
+      chat_path: string;
+      query: string;
+      db_path?: string;
+      thread_id?: string;
+      limit?: number;
+      offset?: number;
+    }) => {
+      return searchChatStoreArchived({
+        chat_path: opts.chat_path,
+        query: opts.query,
+        db_path: opts.db_path,
+        thread_id: opts.thread_id,
+        limit: opts.limit,
+        offset: opts.offset,
+      });
+    },
+    chatStoreDelete: (opts: {
+      chat_path: string;
+      db_path?: string;
+      scope: "chat" | "before_date" | "thread" | "messages";
+      before_date_ms?: number;
+      thread_id?: string;
+      message_ids?: string[];
+    }) => {
+      return deleteChatStoreData({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+        scope: opts.scope,
+        before_date_ms: opts.before_date_ms,
+        thread_id: opts.thread_id,
+        message_ids: opts.message_ids,
+      });
+    },
+    chatStoreVacuum: (opts: {
+      chat_path: string;
+      db_path?: string;
+    }) => {
+      return vacuumChatStore({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+      });
+    },
+  },
   db: { touch: () => {}, userQuery },
   purchases: {},
   agent,
