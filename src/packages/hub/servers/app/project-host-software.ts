@@ -50,6 +50,13 @@ function localSoftwarePackagesRoots(): string[] {
 }
 
 function looksLikePackagesRoot(root: string): boolean {
+  if (
+    existsSync(join(root, "project-host", "build")) &&
+    existsSync(join(root, "project", "build")) &&
+    existsSync(join(root, "server", "cloud", "bootstrap"))
+  ) {
+    return true;
+  }
   return (
     existsSync(join(root, "project-host", "build", "bundle-linux.tar.xz")) &&
     existsSync(join(root, "project", "build", "bundle-linux.tar.xz"))
@@ -169,7 +176,7 @@ async function buildLatestBundleManifest(
     throw new Error(
       `missing local artifact for ${opts.artifact} (${opts.os}${
         opts.arch ? `-${opts.arch}` : ""
-      })`,
+      }) under ${packagesRoot}`,
     );
   }
   const meta = await getFileMeta(bundlePath);

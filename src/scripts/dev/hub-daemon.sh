@@ -109,6 +109,7 @@ load_config() {
   HUB_STDOUT_LOG="${HUB_STDOUT_LOG:-$STATE_DIR/hub.stdout.log}"
   HUB_SOFTWARE_PACKAGES_ROOT="${HUB_SOFTWARE_PACKAGES_ROOT:-$SRC_DIR/packages}"
   HUB_USE_LOCAL_SOFTWARE="${HUB_USE_LOCAL_SOFTWARE:-1}"
+  HUB_AUTO_BUILD_LOCAL_SOFTWARE="${HUB_AUTO_BUILD_LOCAL_SOFTWARE:-1}"
   HUB_HOST_IP="${HUB_HOST_IP:-}"
   HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SOFTWARE_BASE_URL_FORCE:-}"
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
@@ -128,6 +129,67 @@ load_config() {
         HUB_SOFTWARE_BASE_URL_FORCE="http://$HUB_HOST_IP:$HUB_PORT/software"
       fi
     fi
+  fi
+}
+
+have_local_tools_bundle() {
+  local root="$1"
+  if compgen -G "$root/project/build/tools-linux-*.tar.xz" >/dev/null 2>&1; then
+    return 0
+  fi
+  if compgen -G "$root/project/build/tools-minimal-linux-*.tar.xz" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+ensure_local_software_artifacts() {
+  if [ "$HUB_USE_LOCAL_SOFTWARE" != "1" ]; then
+    return 0
+  fi
+  if [ "$HUB_AUTO_BUILD_LOCAL_SOFTWARE" != "1" ]; then
+    return 0
+  fi
+
+  local configured_root source_root
+  configured_root="$(realpath "$HUB_SOFTWARE_PACKAGES_ROOT" 2>/dev/null || true)"
+  source_root="$(realpath "$SRC_DIR/packages" 2>/dev/null || true)"
+  if [ -z "$configured_root" ] || [ ! -d "$configured_root" ]; then
+    echo "hub daemon: HUB_SOFTWARE_PACKAGES_ROOT is not a directory: $HUB_SOFTWARE_PACKAGES_ROOT" >&2
+    return 0
+  fi
+  if [ -z "$source_root" ] || [ "$configured_root" != "$source_root" ]; then
+    echo "hub daemon: skipping auto-build for non-local software root: $HUB_SOFTWARE_PACKAGES_ROOT"
+    return 0
+  fi
+
+  local need_project_host_bundle=0
+  local need_project_bundle=0
+  local need_tools_bundle=0
+  [ -f "$source_root/project-host/build/bundle-linux.tar.xz" ] || need_project_host_bundle=1
+  [ -f "$source_root/project/build/bundle-linux.tar.xz" ] || need_project_bundle=1
+  if ! have_local_tools_bundle "$source_root"; then
+    need_tools_bundle=1
+  fi
+
+  if [ "$need_project_host_bundle" = "0" ] \
+    && [ "$need_project_bundle" = "0" ] \
+    && [ "$need_tools_bundle" = "0" ]; then
+    return 0
+  fi
+
+  echo "hub daemon: local software artifacts missing; building now..."
+  if [ "$need_project_host_bundle" = "1" ]; then
+    echo "  - building project-host bundle"
+    pnpm --dir "$SRC_DIR/packages/project-host" build:bundle
+  fi
+  if [ "$need_project_bundle" = "1" ]; then
+    echo "  - building project bundle"
+    pnpm --dir "$SRC_DIR/packages/project" build:bundle
+  fi
+  if [ "$need_tools_bundle" = "1" ]; then
+    echo "  - building tools bundle"
+    pnpm --dir "$SRC_DIR/packages/project" build:tools
   fi
 }
 
@@ -187,6 +249,8 @@ start_daemon() {
     echo "hub daemon already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
+
+  ensure_local_software_artifacts
 
   rm -f "$PID_FILE"
   rm -f "$HUB_DEBUG_FILE"
@@ -328,6 +392,7 @@ HUB_DEBUG_FILE=$HUB_DEBUG_FILE
 HUB_STDOUT_LOG=$HUB_STDOUT_LOG
 HUB_SOFTWARE_PACKAGES_ROOT=$HUB_SOFTWARE_PACKAGES_ROOT
 HUB_USE_LOCAL_SOFTWARE=$HUB_USE_LOCAL_SOFTWARE
+HUB_AUTO_BUILD_LOCAL_SOFTWARE=$HUB_AUTO_BUILD_LOCAL_SOFTWARE
 HUB_HOST_IP=$HUB_HOST_IP
 HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_NODE_BIN=$HUB_NODE_BIN
