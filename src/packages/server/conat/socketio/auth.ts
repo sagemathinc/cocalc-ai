@@ -20,6 +20,9 @@ import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-to
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import getPool from "@cocalc/database/pool";
 import { verifyProjectHostToken } from "@cocalc/server/project-host/bootstrap-token";
+import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
+import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
+import { isValidUUID } from "@cocalc/util/misc";
 import {
   type CoCalcUser,
   type CoCalcUserType,
@@ -34,6 +37,57 @@ import {
 } from "@cocalc/conat/auth/subject-policy";
 
 const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
+const DEFAULT_AGENT_SCOPES = ["browser_session"] as const;
+
+type CoCalcUserWithAgent = CoCalcUser & {
+  auth_actor?: "account" | "agent";
+  auth_scopes?: string[];
+};
+
+function parseProjectHostAudienceHostId(token: string): string | undefined {
+  const parts = token.split(".");
+  if (parts.length !== 3) return;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(
+        parts[1].replace(/-/g, "+").replace(/_/g, "/"),
+        "base64",
+      ).toString("utf8"),
+    ) as { aud?: string };
+    const aud = `${payload?.aud ?? ""}`;
+    const prefix = "project-host:";
+    if (!aud.startsWith(prefix)) return;
+    const host_id = aud.slice(prefix.length);
+    if (!isValidUUID(host_id)) return;
+    return host_id;
+  } catch {
+    return;
+  }
+}
+
+function verifyAgentScopedProjectHostBearer(
+  bearerToken: string,
+): CoCalcUserWithAgent | undefined {
+  const host_id = parseProjectHostAudienceHostId(bearerToken);
+  if (!host_id) return;
+  try {
+    const claims = verifyProjectHostAuthToken({
+      token: bearerToken,
+      host_id,
+      public_key: getProjectHostAuthTokenPublicKey(),
+    });
+    if (claims.act !== "account" || !isValidUUID(claims.sub)) {
+      return;
+    }
+    return {
+      account_id: claims.sub,
+      auth_actor: "agent",
+      auth_scopes: [...DEFAULT_AGENT_SCOPES],
+    };
+  } catch {
+    return;
+  }
+}
 
 export async function getUser(
   socket,
@@ -44,10 +98,14 @@ export async function getUser(
     const hostToken = await verifyProjectHostToken(bearerToken, {
       purpose: "master-conat",
     });
-    if (!hostToken) {
-      throw Error("invalid master host auth token");
+    if (hostToken) {
+      return { host_id: hostToken.host_id };
     }
-    return { host_id: hostToken.host_id };
+    const agentUser = verifyAgentScopedProjectHostBearer(bearerToken);
+    if (agentUser) {
+      return agentUser;
+    }
+    throw Error("invalid master host auth token");
   }
 
   if (!socket.handshake.headers.cookie) {

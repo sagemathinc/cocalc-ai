@@ -1776,12 +1776,68 @@ async function ensureAgent(
   }
 }
 
-function resolveCodexApiUrl(): string {
+function isLoopbackHostname(hostname: string): boolean {
+  const lower = hostname.trim().toLowerCase();
+  return lower === "localhost" || lower === "::1" || lower.startsWith("127.");
+}
+
+function normalizeApiUrl(
+  raw: string,
+  { rewriteLoopbackHost }: { rewriteLoopbackHost: boolean },
+): string | undefined {
+  const trimmed = `${raw ?? ""}`.trim();
+  if (!trimmed) return;
+  try {
+    const parsed = new URL(trimmed);
+    if (rewriteLoopbackHost && isLoopbackHostname(parsed.hostname)) {
+      parsed.hostname = "host.containers.internal";
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed;
+  }
+}
+
+function resolveCodexApiUrl({
+  useContainer,
+  request,
+}: {
+  useContainer: boolean;
+  request?: AcpRequest;
+}): string {
   const explicit =
     `${process.env.COCALC_API_URL ?? process.env.BASE_URL ?? ""}`.trim();
-  if (explicit) {
-    return explicit;
+  const masterConat =
+    `${process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER ?? ""}`.trim();
+  const browserOrigin = `${request?.chat?.api_url ?? ""}`.trim();
+
+  if (useContainer) {
+    // In project-host/container mode, Codex needs the hub/master URL, not the
+    // project-host listener URL (PORT), to reach account-scoped browser APIs.
+    const containerPreferred = normalizeApiUrl(masterConat, {
+      rewriteLoopbackHost: true,
+    });
+    if (containerPreferred) return containerPreferred;
+
+    const explicitContainer = normalizeApiUrl(explicit, {
+      rewriteLoopbackHost: true,
+    });
+    if (explicitContainer) return explicitContainer;
+
+    const browserFallback = normalizeApiUrl(browserOrigin, {
+      rewriteLoopbackHost: false,
+    });
+    if (browserFallback) return browserFallback;
+
+    const port = `${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim();
+    return `http://host.containers.internal:${port || "9100"}`;
   }
+
+  const explicitLocal = normalizeApiUrl(explicit, {
+    rewriteLoopbackHost: false,
+  });
+  if (explicitLocal) return explicitLocal;
+
   const port = `${process.env.HUB_PORT ?? process.env.PORT ?? "9100"}`.trim();
   // In lite mode Codex runs on the same machine as the hub process.
   // Prefer loopback to avoid DNS/port-forward/public-origin indirection.
@@ -1792,10 +1848,12 @@ function buildCodexRuntimeEnv({
   request,
   projectId,
   includeCliBin,
+  useContainer,
 }: {
   request: AcpRequest;
   projectId: string;
   includeCliBin: boolean;
+  useContainer: boolean;
 }): Record<string, string> {
   const out: Record<string, string> = {};
   const accountId = `${request.account_id ?? ""}`.trim();
@@ -1803,15 +1861,29 @@ function buildCodexRuntimeEnv({
   if (projectId) out.COCALC_PROJECT_ID = projectId;
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
-  out.COCALC_API_URL = resolveCodexApiUrl();
+  out.COCALC_API_URL = resolveCodexApiUrl({
+    useContainer,
+    request,
+  });
   out.COCALC_CLI_AGENT_MODE = "1";
   const bearer =
     `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
     `${process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
-  if (bearer) out.COCALC_BEARER_TOKEN = bearer;
+  if (bearer) {
+    out.COCALC_BEARER_TOKEN = bearer;
+    out.COCALC_AGENT_TOKEN = bearer;
+  }
   if (includeCliBin) {
     const cliBin = `${process.env.COCALC_CLI_BIN ?? ""}`.trim();
     if (cliBin) out.COCALC_CLI_BIN = cliBin;
+  }
+  if (request.runtime_env) {
+    for (const [key, value] of Object.entries(request.runtime_env)) {
+      const normalized = typeof value === "string" ? value.trim() : "";
+      if (normalized) {
+        out[key] = normalized;
+      }
+    }
   }
   return out;
 }
@@ -1856,6 +1928,7 @@ export async function evaluate({
     request,
     projectId,
     includeCliBin: !useContainer,
+    useContainer,
   });
   const hostRoot =
     useContainer && executor instanceof ContainerExecutor

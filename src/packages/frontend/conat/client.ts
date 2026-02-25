@@ -355,6 +355,23 @@ export class ConatClient extends EventEmitter {
     return await request.then(({ token }) => token);
   };
 
+  // Mint a short-lived project-host auth token for ACP/Codex runtime use.
+  // Returns undefined when this workspace is not project-host routed.
+  public getProjectHostAcpBearer = async ({
+    project_id,
+  }: {
+    project_id?: string;
+  }): Promise<string | undefined> => {
+    const id = `${project_id ?? ""}`.trim();
+    if (!id) return;
+    const routing = this.getProjectRoutingInfo(id);
+    if (!routing?.host_id) return;
+    return await this.getProjectHostToken({
+      host_id: routing.host_id,
+      project_id: id,
+    });
+  };
+
   public addProjectHostAuthToUrl = async ({
     project_id,
     url,

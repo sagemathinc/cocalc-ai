@@ -302,6 +302,20 @@ export async function processAcpLLM({
         reply_to_message_id,
         sendMode,
       });
+      let runtimeEnv: Record<string, string> | undefined;
+      try {
+        const bearer = await webapp_client.conat_client.getProjectHostAcpBearer(
+          { project_id },
+        );
+        if (bearer?.trim()) {
+          runtimeEnv = {
+            COCALC_BEARER_TOKEN: bearer.trim(),
+            COCALC_AGENT_TOKEN: bearer.trim(),
+          };
+        }
+      } catch (err) {
+        console.warn("failed to fetch ACP project-host bearer token", err);
+      }
       const stream = await webapp_client.conat_client.streamAcp({
         project_id,
         prompt: workingInput,
@@ -315,6 +329,7 @@ export async function processAcpLLM({
           model: normalizedModel,
         }),
         chat: chatMetadata,
+        runtime_env: runtimeEnv,
       });
       setState("sent");
       for await (const response of stream) {
