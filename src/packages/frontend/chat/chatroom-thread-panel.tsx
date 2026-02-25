@@ -4,7 +4,12 @@
  */
 
 import { Button, Input, Select, Space } from "antd";
-import { React } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  useEffect,
+  useMemo,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
@@ -24,6 +29,8 @@ import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
+import { dateValue } from "./access";
+import { newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import { ChatIconPicker } from "./chat-icon-picker";
 
@@ -127,6 +134,63 @@ export function ChatRoomThreadPanel({
   showThreadImagePreview = true,
   hideChatTypeSelector = false,
 }: ChatRoomThreadPanelProps) {
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [threadSearchCursor, setThreadSearchCursor] = useState(0);
+  const selectedThreadRootIso = useMemo(() => {
+    if (!selectedThreadKey) return undefined;
+    const ms = parseInt(selectedThreadKey, 10);
+    if (!Number.isFinite(ms)) return undefined;
+    const date = new Date(ms);
+    if (Number.isNaN(date.valueOf())) return undefined;
+    return date.toISOString();
+  }, [selectedThreadKey]);
+  const selectedThreadMessages = useMemo(
+    () =>
+      selectedThreadRootIso != null
+        ? actions.getMessagesInThread(selectedThreadRootIso) ?? []
+        : [],
+    [actions, selectedThreadRootIso, messages],
+  );
+  const threadSearchMatches = useMemo(() => {
+    const needle = threadSearchQuery.trim().toLowerCase();
+    if (!needle) return [] as string[];
+    const matches: string[] = [];
+    for (const message of selectedThreadMessages) {
+      const text = newest_content(message)
+        .replace(/<[^>]*>/g, " ")
+        .toLowerCase();
+      if (!text.includes(needle)) continue;
+      const d = dateValue(message);
+      if (!d) continue;
+      matches.push(`${d.valueOf()}`);
+    }
+    return matches;
+  }, [threadSearchQuery, selectedThreadMessages]);
+  const matchCount = threadSearchMatches.length;
+  const normalizedCursor = useMemo(() => {
+    if (!matchCount) return 0;
+    const c = threadSearchCursor % matchCount;
+    return c >= 0 ? c : c + matchCount;
+  }, [threadSearchCursor, matchCount]);
+
+  useEffect(() => {
+    setThreadSearchCursor(0);
+  }, [threadSearchQuery, selectedThreadKey]);
+
+  useEffect(() => {
+    if (!matchCount) return;
+    if (threadSearchCursor >= matchCount) {
+      setThreadSearchCursor(matchCount - 1);
+    }
+  }, [threadSearchCursor, matchCount]);
+
+  useEffect(() => {
+    if (!matchCount) return;
+    const key = threadSearchMatches[normalizedCursor];
+    const ms = parseFloat(key);
+    if (!Number.isFinite(ms)) return;
+    actions.scrollToDate(ms);
+  }, [actions, matchCount, normalizedCursor, threadSearchMatches]);
   if (!selectedThreadKey) {
     type ModelOption = {
       value: string;
@@ -484,6 +548,50 @@ export function ChatRoomThreadPanel({
           {compactThreadLabel}
         </div>
       )}
+      {selectedThreadRootIso ? (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderBottom: "1px solid #eee",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            background: "#fafafa",
+            zIndex: 5,
+          }}
+        >
+          <Input
+            size="small"
+            allowClear
+            placeholder="Search this thread"
+            value={threadSearchQuery}
+            onChange={(e) => setThreadSearchQuery(e.target.value)}
+            onPressEnter={() => {
+              if (!matchCount) return;
+              setThreadSearchCursor((n) => n + 1);
+            }}
+            style={{ width: "min(320px, 100%)" }}
+          />
+          <Button
+            size="small"
+            disabled={!matchCount}
+            onClick={() => setThreadSearchCursor((n) => n - 1)}
+          >
+            Prev
+          </Button>
+          <Button
+            size="small"
+            disabled={!matchCount}
+            onClick={() => setThreadSearchCursor((n) => n + 1)}
+          >
+            Next
+          </Button>
+          <span style={{ color: "#666", fontSize: 12 }}>
+            {matchCount ? `${normalizedCursor + 1}/${matchCount}` : "0 matches"}
+          </span>
+        </div>
+      ) : null}
       <ChatLog
         actions={actions}
         project_id={project_id ?? ""}
