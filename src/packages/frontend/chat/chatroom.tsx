@@ -319,13 +319,12 @@ export function ChatPanel({
         : [],
     [actions, selectedThreadIso, messages],
   );
-  const hasActiveAcpTurn = useMemo(() => {
+  const hasRunningAcpTurn = useMemo(() => {
     if (!isSelectedThreadAI) return false;
-    const activeStates = new Set(["queue", "sending", "sent", "running"]);
     const selectedThreadId = field<string>(selectedThread?.rootMessage, "thread_id");
     if (selectedThreadId) {
       const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
-      if (typeof byThread === "string" && activeStates.has(byThread)) {
+      if (byThread === "running") {
         return true;
       }
     }
@@ -337,13 +336,13 @@ export function ChatPanel({
       const threadId = field<string>(msg, "thread_id");
       if (threadId) {
         const threadState = acpState?.get?.(`thread:${threadId}`);
-        if (threadState && activeStates.has(threadState)) return true;
+        if (threadState === "running") return true;
       }
       const messageId = field<string>(msg, "message_id");
       const state =
         (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
         acpState?.get?.(`${d.valueOf()}`);
-      if (state && activeStates.has(state)) return true;
+      if (state === "running") return true;
     }
     return false;
   }, [isSelectedThreadAI, selectedThreadMessages, acpState, selectedThread]);
@@ -755,7 +754,7 @@ export function ChatPanel({
         submitMentionsRef={submitMentionsRef}
         hasInput={hasInput}
         isSelectedThreadAI={isSelectedThreadAI}
-        hasActiveAcpTurn={hasActiveAcpTurn}
+        hasActiveAcpTurn={hasRunningAcpTurn}
         combinedFeedSelected={isCombinedFeedSelected}
         composerTargetKey={composerTargetKey}
         threads={threads}
