@@ -36,7 +36,6 @@ import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageByLookup,
   markChatAsReadIfUnseen,
-  toMsString,
 } from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
@@ -737,7 +736,7 @@ export function ChatPanel({
         ? (() => {
             const created = actions.getMessageByDate(new Date(timeStamp));
             const threadId = field<string>(created as any, "thread_id");
-            return threadId?.trim() || toMsString(timeStamp) || timeStamp;
+            return threadId?.trim() || null;
           })()
         : null;
     if (!reply_to && !reply_thread_id && threadKey) {
