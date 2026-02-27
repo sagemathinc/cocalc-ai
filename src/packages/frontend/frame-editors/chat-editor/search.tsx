@@ -208,7 +208,29 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     return Number.isFinite(oldestMs) && oldestMs < recentThreshold;
   }, [scopeKeys, recentThreshold]);
 
+  const scopeHasArchivedRows = useMemo(() => {
+    if (
+      !chatActions ||
+      !searchScope ||
+      searchScope === COMBINED_FEED_KEY ||
+      searchScope === ALL_MESSAGES_KEY
+    ) {
+      return false;
+    }
+    const meta = chatActions.getThreadMetadata?.(searchScope, {
+      threadId: searchScope,
+    });
+    const value = meta?.archived_chat_rows;
+    return typeof value === "number" && Number.isFinite(value) && value > 0;
+  }, [chatActions, searchScope, cacheVersion]);
+
   useEffect(() => {
+    if (scopeHasArchivedRows) {
+      if (recentDaysOnly !== false) {
+        setRecentDaysOnly(false);
+      }
+      return;
+    }
     if (scopeHasOlderMessages) {
       if (recentDaysOnly === undefined) {
         setRecentDaysOnly(true);
@@ -216,9 +238,12 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     } else if (recentDaysOnly !== false) {
       setRecentDaysOnly(false);
     }
-  }, [scopeHasOlderMessages, recentDaysOnly]);
+  }, [scopeHasArchivedRows, scopeHasOlderMessages, recentDaysOnly]);
 
   const keysByDate = useMemo(() => {
+    if (scopeHasArchivedRows) {
+      return scopeKeys;
+    }
     if (!recentDaysOnly) {
       return scopeKeys;
     }
@@ -226,7 +251,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       const ms = Number.parseFloat(key);
       return Number.isFinite(ms) ? ms >= recentThreshold : true;
     });
-  }, [scopeKeys, recentDaysOnly, recentThreshold]);
+  }, [scopeKeys, recentDaysOnly, recentThreshold, scopeHasArchivedRows]);
 
   const keysToScan = keysByDate;
 
@@ -317,7 +342,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
               })),
             ]}
           />
-          {scopeHasOlderMessages ? (
+          {scopeHasOlderMessages && !scopeHasArchivedRows ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Switch
                 checked={recentDaysOnly ?? false}
