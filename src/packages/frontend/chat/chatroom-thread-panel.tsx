@@ -179,18 +179,15 @@ export function ChatRoomThreadPanel({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
-  const selectedThreadMeta = useMemo(
-    () =>
-      selectedThreadId
-        ? actions.getThreadMetadata(selectedThreadId, { threadId: selectedThreadId })
-        : undefined,
-    [actions, selectedThreadId],
-  );
-  const archivedRowsCount = useMemo(() => {
+  const selectedThreadMeta =
+    selectedThreadId != null
+      ? actions.getThreadMetadata(selectedThreadId, { threadId: selectedThreadId })
+      : undefined;
+  const archivedRowsCount = (() => {
     const value = selectedThreadMeta?.archived_chat_rows;
     if (typeof value !== "number" || !Number.isFinite(value)) return 0;
     return Math.max(0, Math.floor(value));
-  }, [selectedThreadMeta?.archived_chat_rows]);
+  })();
   const selectedThreadLookup = selectedThreadId;
   const selectedThreadMessages = useMemo(
     () =>

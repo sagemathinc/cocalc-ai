@@ -101,6 +101,15 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.chatStoreDelete",
   "projects.chatStoreVacuum",
 ]);
+const PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK = new Set<string>([
+  "projects.chatStoreStats",
+  "projects.chatStoreRotate",
+  "projects.chatStoreListSegments",
+  "projects.chatStoreReadArchived",
+  "projects.chatStoreSearch",
+  "projects.chatStoreDelete",
+  "projects.chatStoreVacuum",
+]);
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 
 type RoutedHubClientState = {
@@ -695,12 +704,14 @@ export class ConatClient extends EventEmitter {
     let cn = this.conat();
     if (routeToProjectHost) {
       const routing = this.getProjectRoutingInfo(project_id!);
-      if (!routing) {
+      if (!routing && !PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name)) {
         throw Error(
-          `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
+          `unable to route '${name}' to project-host for workspace ${project_id}; host routing info unavailable (open the workspace first so host info is loaded)`,
         );
       }
-      cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
+      if (routing) {
+        cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
+      }
     }
     try {
       const data = { name, args };
@@ -774,7 +785,7 @@ export class ConatClient extends EventEmitter {
     const routing = this.getProjectRoutingInfo(project_id);
     if (!routing) {
       throw Error(
-        `unable to route publish to project-host for project ${project_id}; host routing info unavailable`,
+        `unable to route publish to project-host for workspace ${project_id}; host routing info unavailable`,
       );
     }
     const cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
