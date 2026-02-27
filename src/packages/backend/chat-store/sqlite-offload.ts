@@ -1056,23 +1056,60 @@ export function searchChatStoreArchived({
     where.push("ar.thread_id = ?");
     params.push(thread_id);
   }
-  params.push(q, Math.max(1, limit), Math.max(0, offset));
-  const rows = db
-    .prepare(
-      `SELECT ar.row_id, ar.segment_id, ar.message_id, ar.thread_id, ar.date_ms, ar.excerpt,
-              snippet(archived_rows_fts, 0, '<b>', '</b>', '…', 16) as snippet
-         FROM archived_rows_fts
-         JOIN archived_rows ar ON ar.row_id = archived_rows_fts.rowid
-        WHERE ${where.join(" AND ")} AND archived_rows_fts MATCH ?
-        ORDER BY bm25(archived_rows_fts), ar.date_ms DESC
-        LIMIT ? OFFSET ?`,
-    )
-    .all(...params) as unknown as SearchArchivedHit[];
+  const normalizedLimit = Math.max(1, limit);
+  const normalizedOffset = Math.max(0, offset);
+  const ftsParams = [...params, q, normalizedLimit, normalizedOffset];
+  let rows: SearchArchivedHit[] = [];
+  try {
+    rows = db
+      .prepare(
+        `SELECT ar.row_id, ar.segment_id, ar.message_id, ar.thread_id, ar.date_ms, ar.excerpt,
+                snippet(archived_rows_fts, 0, '<b>', '</b>', '…', 16) as snippet
+           FROM archived_rows_fts
+           JOIN archived_rows ar ON ar.row_id = archived_rows_fts.rowid
+          WHERE ${where.join(" AND ")} AND archived_rows_fts MATCH ?
+          ORDER BY bm25(archived_rows_fts), ar.date_ms DESC
+          LIMIT ? OFFSET ?`,
+      )
+      .all(...ftsParams) as unknown as SearchArchivedHit[];
+  } catch (err) {
+    logger.warn("chat-store archived FTS search failed; using fallback", {
+      chatPath,
+      thread_id,
+      query: q,
+      err: `${err}`,
+    });
+  }
+  if (rows.length === 0) {
+    // Fallback for queries that do not tokenize well in FTS (e.g. code-ish paths,
+    // markdown punctuation, or malformed FTS syntax). Keep thread/chat scoping.
+    const likeNeedle = `%${q.toLowerCase()}%`;
+    const fallbackParams = [
+      ...params,
+      likeNeedle,
+      likeNeedle,
+      normalizedLimit,
+      normalizedOffset,
+    ];
+    rows = db
+      .prepare(
+        `SELECT ar.row_id, ar.segment_id, ar.message_id, ar.thread_id, ar.date_ms, ar.excerpt, NULL as snippet
+           FROM archived_rows ar
+          WHERE ${where.join(" AND ")}
+            AND (
+              LOWER(COALESCE(ar.excerpt, '')) LIKE ?
+              OR LOWER(ar.row_json) LIKE ?
+            )
+          ORDER BY ar.date_ms DESC, ar.row_id DESC
+          LIMIT ? OFFSET ?`,
+      )
+      .all(...fallbackParams) as unknown as SearchArchivedHit[];
+  }
   return {
     chat_id,
     hits: rows,
-    offset: Math.max(0, offset),
-    next_offset: rows.length === Math.max(1, limit) ? Math.max(0, offset) + rows.length : undefined,
+    offset: normalizedOffset,
+    next_offset: rows.length === normalizedLimit ? normalizedOffset + rows.length : undefined,
   };
 }
 

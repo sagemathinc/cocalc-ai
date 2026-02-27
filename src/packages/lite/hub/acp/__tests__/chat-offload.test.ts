@@ -50,7 +50,7 @@ describe("chat offload sqlite store", () => {
       makeChatRow({
         date: "2026-02-20T00:00:00.000Z",
         message_id: "m1",
-        content: "alpha first message",
+        content: "alpha OR first message",
       }),
       makeChatRow({
         date: "2026-02-20T00:01:00.000Z",
@@ -128,6 +128,16 @@ describe("chat offload sqlite store", () => {
     });
     expect(searchThread2.hits.length).toBe(1);
     expect(searchThread2.hits[0].message_id).toBe("m2");
+    const searchMalformedFts = searchChatStoreArchived({
+      chat_path: chatPath,
+      db_path: dbPath,
+      // Invalid FTS syntax should still return results via fallback scan.
+      query: "alpha OR",
+      thread_id: "thread-1",
+      limit: 10,
+    });
+    expect(searchMalformedFts.hits.length).toBeGreaterThanOrEqual(1);
+    expect(searchMalformedFts.hits[0].message_id).toBe("m1");
 
     const del = deleteChatStoreData({
       chat_path: chatPath,
