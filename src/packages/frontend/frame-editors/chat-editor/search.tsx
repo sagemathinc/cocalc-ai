@@ -9,6 +9,8 @@ import ShowError from "@cocalc/frontend/components/error";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { ChatMessages } from "@cocalc/frontend/chat/types";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import type { ChatStoreSearchHit } from "@cocalc/conat/hub/api/projects";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   COMBINED_FEED_KEY,
   deriveThreadLabel,
@@ -23,6 +25,7 @@ const RECENT_DAYS = 7;
 interface MatchHit {
   id: string;
   content: string;
+  source?: "live" | "archived";
 }
 
 interface ThreadOption {
@@ -55,7 +58,7 @@ interface Props {
 }
 
 function ChatSearch({ font_size: fontSize, desc }: Props) {
-  const { actions, path, id } = useFrameContext();
+  const { actions, path, id, project_id } = useFrameContext();
   const chatActions = ((actions &&
     "getChatActions" in actions &&
     typeof (actions as any).getChatActions === "function"
@@ -73,6 +76,9 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     undefined,
   );
   const [result, setResult] = useState<MatchHit[]>([]);
+  const [archivedResult, setArchivedResult] = useState<MatchHit[]>([]);
+  const [archivedSearchError, setArchivedSearchError] = useState<string>("");
+  const [archivedSearchLoading, setArchivedSearchLoading] = useState<boolean>(false);
   const [recentDaysOnly, setRecentDaysOnly] = useState<boolean | undefined>(
     undefined,
   );
@@ -293,6 +299,77 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     };
   }, [index, search, messages, resultLimit, keysToScanSet, setError]);
 
+  useEffect(() => {
+    const query = search.trim();
+    if (
+      !query ||
+      !project_id ||
+      !path ||
+      !searchScope ||
+      searchScope === COMBINED_FEED_KEY ||
+      searchScope === ALL_MESSAGES_KEY ||
+      !scopeHasArchivedRows
+    ) {
+      setArchivedSearchLoading(false);
+      setArchivedSearchError("");
+      setArchivedResult([]);
+      return;
+    }
+    const hubProjects = webapp_client.conat_client?.hub?.projects;
+    if (!hubProjects) {
+      setArchivedSearchLoading(false);
+      setArchivedSearchError("Conat project API is unavailable.");
+      setArchivedResult([]);
+      return;
+    }
+    let cancelled = false;
+    setArchivedSearchLoading(true);
+    setArchivedSearchError("");
+    void (async () => {
+      try {
+        const response = await hubProjects.chatStoreSearch({
+          project_id,
+          chat_path: path,
+          query,
+          thread_id: searchScope,
+          limit: 100,
+          offset: 0,
+        });
+        if (cancelled) return;
+        const mapped = (response?.hits ?? []).map(mapArchivedHitToMatchHit);
+        setArchivedResult(mapped);
+      } catch (err) {
+        if (cancelled) return;
+        setArchivedSearchError(`${err}`);
+        setArchivedResult([]);
+      } finally {
+        if (!cancelled) {
+          setArchivedSearchLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id, path, search, searchScope, scopeHasArchivedRows]);
+
+  const combinedResult = useMemo(() => {
+    if (archivedResult.length === 0) return result;
+    const all = [...result, ...archivedResult];
+    const deduped = new Map<string, MatchHit>();
+    for (const hit of all) {
+      const key = `${hit.id}|${hit.source ?? "live"}`;
+      if (!deduped.has(key)) deduped.set(key, hit);
+    }
+    return Array.from(deduped.values()).sort((a, b) => {
+      const ta = Number.parseFloat(a.id);
+      const tb = Number.parseFloat(b.id);
+      const va = Number.isFinite(ta) ? ta : 0;
+      const vb = Number.isFinite(tb) ? tb : 0;
+      return vb - va;
+    });
+  }, [result, archivedResult]);
+
   return (
     <div className="smc-vfill">
       <Card
@@ -312,6 +389,16 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         {isIndexing ? (
           <div style={{ color: "#888", marginBottom: "10px", fontSize }}>
             Indexing...
+          </div>
+        ) : null}
+        {archivedSearchLoading ? (
+          <div style={{ color: "#888", marginBottom: "10px", fontSize }}>
+            Searching archived history...
+          </div>
+        ) : null}
+        {archivedSearchError ? (
+          <div style={{ color: "#b71c1c", marginBottom: "10px", fontSize }}>
+            Archived search error: {archivedSearchError}
           </div>
         ) : null}
         <div
@@ -378,11 +465,11 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         <div style={{ overflow: "auto", padding: "15px" }}>
           <div style={{ color: "#888", textAlign: "center", fontSize }}>
             {!search?.trim() && <span>Enter a search above</span>}
-            {result.length === 0 && search?.trim() && <span>No Matches</span>}
+            {combinedResult.length === 0 && search?.trim() && <span>No Matches</span>}
           </div>
-          {result.map((hit) => (
+          {combinedResult.map((hit) => (
             <SearchResult
-              key={hit.id}
+              key={`${hit.source ?? "live"}:${hit.id}`}
               hit={hit}
               actions={actions}
               fontSize={fontSize}
@@ -407,10 +494,12 @@ function SearchResult({
   fragmentKey?: string;
 }) {
   const key = fragmentKey ?? "chat";
+  const dateMs = Number.parseFloat(hit.id);
+  const hasJumpTarget = Number.isFinite(dateMs);
   return (
     <div
       style={{
-        cursor: "pointer",
+        cursor: hasJumpTarget ? "pointer" : "default",
         margin: "10px 0",
         padding: "5px",
         border: "1px solid #ccc",
@@ -421,17 +510,32 @@ function SearchResult({
         fontSize,
       }}
       onClick={() => {
+        if (!hasJumpTarget) return;
         actions?.gotoFragment?.({ [key]: hit.id });
       }}
     >
-      <TimeAgo
-        style={{ float: "right", color: "#888" }}
-        date={parseFloat(hit.id)}
-      />
+      {hasJumpTarget ? (
+        <TimeAgo style={{ float: "right", color: "#888" }} date={dateMs} />
+      ) : null}
+      {hit.source === "archived" ? (
+        <span style={{ float: "right", color: "#888", marginRight: 8 }}>
+          archived
+        </span>
+      ) : null}
       <StaticMarkdown
         value={hit.content}
         style={{ marginBottom: "-10px" /* account for <p> */ }}
       />
     </div>
   );
+}
+
+function mapArchivedHitToMatchHit(hit: ChatStoreSearchHit): MatchHit {
+  const dateMs =
+    typeof hit?.date_ms === "number" && Number.isFinite(hit.date_ms)
+      ? hit.date_ms
+      : undefined;
+  const id = dateMs != null ? `${dateMs}` : `${hit.segment_id}:${hit.row_id}`;
+  const content = (hit.snippet ?? hit.excerpt ?? "").trim() || "(no preview)";
+  return { id, content, source: "archived" };
 }
