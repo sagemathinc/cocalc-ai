@@ -143,19 +143,25 @@ type ThreadQueueRef = {
 function resolveThreadQueueRef({
   actions,
   threadRootDate,
+  threadId,
 }: {
   actions: ChatActions;
-  threadRootDate: Date;
+  threadRootDate?: Date;
+  threadId?: string;
 }): ThreadQueueRef | undefined {
   const store = actions.store;
   if (!store) return undefined;
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return undefined;
-  const rootMessage =
-    actions.getMessageByDate?.(threadRootDate) ??
-    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
-  const threadToken = field<string>(rootMessage, "thread_id");
+  const explicitThreadToken = `${threadId ?? ""}`.trim();
+  let threadToken = explicitThreadToken;
+  if (!threadToken && threadRootDate) {
+    const rootMessage =
+      actions.getMessageByDate?.(threadRootDate) ??
+      actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
+    threadToken = `${field<string>(rootMessage, "thread_id") ?? ""}`.trim();
+  }
   if (!threadToken) return undefined;
   return {
     queueKey: makeQueueKey({ project_id, path, threadKey: threadToken }),
@@ -171,13 +177,15 @@ function resolveThreadQueueRef({
 export function resetAcpThreadState({
   actions,
   threadRootDate,
+  threadId,
 }: {
   actions: ChatActions;
-  threadRootDate: Date;
+  threadRootDate?: Date;
+  threadId?: string;
 }): void {
   const store = actions.store;
   if (!store) return;
-  const queueRef = resolveThreadQueueRef({ actions, threadRootDate });
+  const queueRef = resolveThreadQueueRef({ actions, threadRootDate, threadId });
   if (queueRef) {
     const q = turnQueues.get(queueRef.queueKey);
     if (q) {
@@ -190,8 +198,12 @@ export function resetAcpThreadState({
     }
   }
 
-  const threadIso = threadRootDate.toISOString();
-  const threadMessages = actions.getMessagesInThread(threadIso) ?? [];
+  const threadLookup =
+    `${threadId ?? ""}`.trim() ||
+    (threadRootDate ? threadRootDate.toISOString() : undefined);
+  const threadMessages = threadLookup
+    ? actions.getMessagesInThread(threadLookup) ?? []
+    : [];
   let nextState = store.get("acpState");
   for (const msg of threadMessages) {
     const messageId = field<string>(msg, "message_id");

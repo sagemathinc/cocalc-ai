@@ -111,10 +111,13 @@ export function handleSyncDBChange({
       if (!record) continue;
       const { message } = normalizeChatMessage(record);
       if (!activityReady || !message) continue;
-      const root = message.reply_to
-        ? new Date(message.reply_to).valueOf()
-        : message.date.valueOf();
-      const key = `${root}`;
+      const threadId =
+        typeof (message as any)?.thread_id === "string"
+          ? `${(message as any).thread_id}`.trim()
+          : "";
+      const key =
+        threadId ||
+        `${message.reply_to ? new Date(message.reply_to).valueOf() : message.date.valueOf()}`;
       const now = Date.now();
       const activity = (store.get("activity") ?? iMap()).set(key, now);
       store.setState({ activity });

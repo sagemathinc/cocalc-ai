@@ -541,7 +541,10 @@ describe("markThreadRead with UUID keys", () => {
     expect(actions.syncdb.commit).toHaveBeenCalled();
     const row = actions.syncdb.set.mock.calls
       .map((x) => x[0])
-      .find((x: any) => x?.event === "chat" && x?.message_id === "root");
+      .find(
+        (x: any) =>
+          x?.event === "chat-thread-config" && x?.thread_id === threadId,
+      );
     expect(row?.["read-00000000-1000-4000-8000-000000000001"]).toBe(7);
   });
 });

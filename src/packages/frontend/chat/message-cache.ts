@@ -150,8 +150,9 @@ export class ChatMessageCache extends EventEmitter {
   ): string | undefined {
     const threadId = this.getThreadId(message);
     if (threadId) {
-      const mapped = threadKeyByThreadId.get(threadId);
-      if (mapped) return mapped;
+      // Canonical thread map key is thread_id (UUID). We still keep
+      // threadKeyByThreadId as a root-date lookup map for legacy/date-based APIs.
+      return threadId;
     }
     const key = this.getThreadKeyFromReplyOrDate(message);
     if (!key) return undefined;
@@ -219,6 +220,10 @@ export class ChatMessageCache extends EventEmitter {
     thread.messageCount = thread.messageKeys.size;
     if (!replyTo(message) && thread.rootMessage?.date === message.date) {
       thread.rootMessage = undefined;
+      const threadId = this.getThreadId(message);
+      if (threadId && threadKeyByThreadId.get(threadId) === messageKey) {
+        threadKeyByThreadId.delete(threadId);
+      }
     }
     if (thread.messageCount === 0) {
       draft.delete(threadKey);

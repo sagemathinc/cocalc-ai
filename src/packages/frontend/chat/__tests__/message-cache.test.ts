@@ -111,7 +111,7 @@ describe("ChatMessageCache message_id index", () => {
     const cache = new ChatMessageCache(syncdb as any);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const threadKey = `${new Date(rootDate).valueOf()}`;
+    const threadKey = "thread-1";
     const entry = cache.getThreadIndex().get(threadKey);
     expect(entry?.messageCount).toBe(2);
 
@@ -151,13 +151,14 @@ describe("ChatMessageCache message_id index", () => {
     const cache = new ChatMessageCache(syncdb as any);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const rootKey = `${new Date(rootDate).valueOf()}`;
+    const rootKey = "thread-2";
+    const rootDateKey = `${new Date(rootDate).valueOf()}`;
     const entry = cache.getThreadIndex().get(rootKey);
     expect(entry?.messageCount).toBe(2);
     const staleKey = `${new Date(staleReplyTarget).valueOf()}`;
     expect(cache.getThreadIndex().get(staleKey)).toBeUndefined();
-    expect(cache.getThreadKeyByThreadId("thread-2")).toBe(rootKey);
-    expect(cache.getThreadKeyByThreadId(" thread-2 ")).toBe(rootKey);
+    expect(cache.getThreadKeyByThreadId("thread-2")).toBe(rootDateKey);
+    expect(cache.getThreadKeyByThreadId(" thread-2 ")).toBe(rootDateKey);
     cache.dispose();
   });
 

@@ -249,18 +249,9 @@ export function useThreadSections({
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
       const isArchived = threadMeta?.archived ?? false;
-      const readField =
-        accountId && rootMessage
-          ? field<any>(rootMessage, `read-${accountId}`)
-          : null;
-      const readValue =
-        typeof readField === "number"
-          ? readField
-          : typeof readField === "string"
-            ? parseInt(readField, 10)
-            : 0;
-      const readCount =
-        Number.isFinite(readValue) && readValue > 0 ? readValue : 0;
+      const readCount = accountId
+        ? Math.max(0, actions?.getThreadReadCount?.(thread.key, accountId) ?? 0)
+        : 0;
       const unreadCount = Math.max(thread.messageCount - readCount, 0);
       const metadataIsAI =
         threadMeta?.agent_kind === "acp" ||
@@ -268,9 +259,15 @@ export function useThreadSections({
         threadMeta?.acp_config != null;
       let isAI = metadataIsAI;
       if (!isAI && actions?.isLanguageModelThread) {
-        const result = actions.isLanguageModelThread(
-          new Date(parseInt(thread.key, 10)),
-        );
+        const fallbackDate =
+          rootMessage?.date != null ? new Date(rootMessage.date as any) : undefined;
+        const result =
+          fallbackDate && !Number.isNaN(fallbackDate.valueOf())
+            ? actions.isLanguageModelThread(
+                fallbackDate,
+                field<string>(rootMessage as any, "thread_id") ?? undefined,
+              )
+            : false;
         isAI = result !== false;
       }
       const lastActivityAt = activity?.get(thread.key);

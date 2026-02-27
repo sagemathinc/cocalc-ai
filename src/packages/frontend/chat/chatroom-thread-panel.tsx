@@ -57,6 +57,7 @@ const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   : "workspace-write";
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
   { value: "workspace-write", label: "Workspace write" },
@@ -165,10 +166,35 @@ export function ChatRoomThreadPanel({
     number | undefined
   >(undefined);
   const searchInputRef = useRef<any>(null);
+  const selectedThreadId = useMemo(() => {
+    const id = field<string>(selectedThread?.rootMessage as any, "thread_id");
+    if (typeof id === "string") {
+      const trimmed = id.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+    if (selectedThreadKey && UUID_RX.test(selectedThreadKey)) {
+      return selectedThreadKey;
+    }
+    return undefined;
+  }, [selectedThread?.rootMessage, selectedThreadKey]);
+  const selectedThreadMeta = useMemo(
+    () =>
+      selectedThreadKey
+        ? actions.getThreadMetadata(selectedThreadKey, { threadId: selectedThreadId })
+        : undefined,
+    [actions, selectedThreadId, selectedThreadKey],
+  );
   const selectedThreadRootIso = useMemo(() => {
     const rootDate = dateValue(selectedThread?.rootMessage);
     if (rootDate != null && !Number.isNaN(rootDate.valueOf())) {
       return rootDate.toISOString();
+    }
+    const cfgDate = selectedThreadMeta?.thread_date;
+    if (cfgDate) {
+      const d = new Date(cfgDate);
+      if (!Number.isNaN(d.valueOf())) {
+        return d.toISOString();
+      }
     }
     if (!selectedThreadKey) return undefined;
     const ms = parseInt(selectedThreadKey, 10);
@@ -176,13 +202,14 @@ export function ChatRoomThreadPanel({
     const date = new Date(ms);
     if (Number.isNaN(date.valueOf())) return undefined;
     return date.toISOString();
-  }, [selectedThread?.rootMessage, selectedThreadKey]);
+  }, [selectedThread?.rootMessage, selectedThreadKey, selectedThreadMeta?.thread_date]);
+  const selectedThreadLookup = selectedThreadId ?? selectedThreadRootIso;
   const selectedThreadMessages = useMemo(
     () =>
-      selectedThreadRootIso != null
-        ? actions.getMessagesInThread(selectedThreadRootIso) ?? []
+      selectedThreadLookup != null
+        ? actions.getMessagesInThread(selectedThreadLookup) ?? []
         : [],
-    [actions, selectedThreadRootIso, messages],
+    [actions, selectedThreadLookup, messages],
   );
   const threadSearchMatches = useMemo(() => {
     const needle = threadSearchQuery.trim().toLowerCase();
@@ -209,12 +236,6 @@ export function ChatRoomThreadPanel({
     () => (matchCount ? threadSearchMatches[normalizedCursor] : undefined),
     [matchCount, normalizedCursor, threadSearchMatches],
   );
-  const selectedThreadId = useMemo(() => {
-    const id = field<string>(selectedThread?.rootMessage as any, "thread_id");
-    if (typeof id !== "string") return undefined;
-    const trimmed = id.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }, [selectedThread?.rootMessage, selectedThreadKey]);
   const archivedMatchCount = archivedSearchHits.length;
 
   const loadArchivedHistory = useCallback(

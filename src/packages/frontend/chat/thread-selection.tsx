@@ -8,6 +8,7 @@ import type { ChatActions } from "./actions";
 import { COMBINED_FEED_KEY, type ThreadMeta } from "./threads";
 import type { ChatMessages } from "./types";
 import { getMessageAtDate, getThreadRootDate } from "./utils";
+import { field } from "./access";
 
 interface ThreadSelectionOptions {
   actions: ChatActions;
@@ -40,15 +41,6 @@ export function useChatThreadSelection({
     setSelectedThreadKey0(x);
     actions.setSelectedThread?.(x);
   };
-
-  const selectedThreadDate = useMemo(() => {
-    if (!selectedThreadKey || selectedThreadKey === COMBINED_FEED_KEY) {
-      return undefined;
-    }
-    const millis = parseInt(selectedThreadKey, 10);
-    if (!isFinite(millis)) return undefined;
-    return new Date(millis);
-  }, [selectedThreadKey]);
 
   const isCombinedFeedSelected = selectedThreadKey === COMBINED_FEED_KEY;
   const singleThreadView = selectedThreadKey != null && !isCombinedFeedSelected;
@@ -141,8 +133,9 @@ export function useChatThreadSelection({
     }
     const message = getMessageAtDate({ messages, date: parsed });
     if (message == null) return;
+    const threadId = field<string>(message as any, "thread_id")?.trim();
     const root = getThreadRootDate({ date: parsed, messages }) || parsed;
-    const threadKey = `${root}`;
+    const threadKey = threadId || `${root}`;
     if (threadKey !== selectedThreadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
@@ -153,6 +146,20 @@ export function useChatThreadSelection({
     () => threads.find((t) => t.key === selectedThreadKey),
     [threads, selectedThreadKey],
   );
+
+  const selectedThreadDate = useMemo(() => {
+    if (!selectedThreadKey || selectedThreadKey === COMBINED_FEED_KEY) {
+      return undefined;
+    }
+    const rootDate = selectedThread?.rootMessage?.date;
+    if (rootDate != null) {
+      const d = new Date(rootDate as any);
+      if (!Number.isNaN(d.valueOf())) return d;
+    }
+    const millis = parseInt(selectedThreadKey, 10);
+    if (!isFinite(millis)) return undefined;
+    return new Date(millis);
+  }, [selectedThreadKey, selectedThread]);
 
   return {
     selectedThreadKey,

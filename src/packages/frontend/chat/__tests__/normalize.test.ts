@@ -78,6 +78,8 @@ describe("handleSyncDBChange", () => {
       event: "chat",
       sender_id: "user-1",
       date,
+      message_id: "m1",
+      thread_id: "t1",
       history: [
         { content: "hi", author_id: "user-1", date: date.toISOString() },
       ],
@@ -101,7 +103,7 @@ describe("handleSyncDBChange", () => {
       store,
       changes: [{ event: "chat", sender_id: "user-1", date }],
     });
-    const activityTs = store.state.activity?.get(`${date.valueOf()}`);
+    const activityTs = store.state.activity?.get("t1");
     expect(typeof activityTs).toBe("number");
 
     // draft change
