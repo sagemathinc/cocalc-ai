@@ -32,7 +32,7 @@ import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
-import { dateValue, field } from "./access";
+import { dateValue } from "./access";
 import { newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import type {
@@ -167,38 +167,12 @@ export function ChatRoomThreadPanel({
   >(undefined);
   const searchInputRef = useRef<any>(null);
   const selectedThreadId = useMemo(() => {
-    const id = field<string>(selectedThread?.rootMessage as any, "thread_id");
-    if (typeof id === "string") {
-      const trimmed = id.trim();
-      if (trimmed.length > 0) return trimmed;
-    }
     if (selectedThreadKey && UUID_RX.test(selectedThreadKey)) {
       return selectedThreadKey;
     }
     return undefined;
-  }, [selectedThread?.rootMessage, selectedThreadKey]);
-  const selectedThreadMeta = useMemo(
-    () =>
-      selectedThreadKey
-        ? actions.getThreadMetadata(selectedThreadKey, { threadId: selectedThreadId })
-        : undefined,
-    [actions, selectedThreadId, selectedThreadKey],
-  );
-  const selectedThreadRootIso = useMemo(() => {
-    const rootDate = dateValue(selectedThread?.rootMessage);
-    if (rootDate != null && !Number.isNaN(rootDate.valueOf())) {
-      return rootDate.toISOString();
-    }
-    const cfgDate = selectedThreadMeta?.thread_date;
-    if (cfgDate) {
-      const d = new Date(cfgDate);
-      if (!Number.isNaN(d.valueOf())) {
-        return d.toISOString();
-      }
-    }
-    return undefined;
-  }, [selectedThread?.rootMessage, selectedThreadKey, selectedThreadMeta?.thread_date]);
-  const selectedThreadLookup = selectedThreadId ?? selectedThreadRootIso;
+  }, [selectedThreadKey]);
+  const selectedThreadLookup = selectedThreadId;
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookup != null
@@ -796,7 +770,7 @@ export function ChatRoomThreadPanel({
             size="small"
             allowClear
             placeholder={
-              selectedThreadRootIso
+              selectedThreadId
                 ? "Search this thread"
                 : "Select a thread to search"
             }
@@ -807,32 +781,32 @@ export function ChatRoomThreadPanel({
               setThreadSearchCursor((n) => n + 1);
             }}
             style={{ width: "min(320px, 100%)" }}
-            disabled={!selectedThreadRootIso}
+            disabled={!selectedThreadId}
           />
           <div style={{ display: "inline-flex", gap: 8, whiteSpace: "nowrap" }}>
             <Button
               size="small"
-              disabled={!selectedThreadRootIso || !matchCount}
+              disabled={!selectedThreadId || !matchCount}
               onClick={() => setThreadSearchCursor((n) => n - 1)}
             >
               Prev
             </Button>
             <Button
               size="small"
-              disabled={!selectedThreadRootIso || !matchCount}
+              disabled={!selectedThreadId || !matchCount}
               onClick={() => setThreadSearchCursor((n) => n + 1)}
             >
               Next
             </Button>
           </div>
           <span style={{ color: "#666", fontSize: 12 }}>
-            {!selectedThreadRootIso
+            {!selectedThreadId
               ? "Select a thread to search"
               : matchCount
                 ? `${normalizedCursor + 1}/${matchCount}`
                 : "0 matches"}
           </span>
-          {selectedThreadRootIso && threadSearchQuery.trim().length > 0 ? (
+          {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <span style={{ color: "#666", fontSize: 12 }}>
               {archivedSearchLoading
                 ? "Archived: searching…"
@@ -858,7 +832,7 @@ export function ChatRoomThreadPanel({
           >
             ×
           </Button>
-          {selectedThreadRootIso && threadSearchQuery.trim().length > 0 ? (
+          {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <div
               style={{
                 width: "100%",

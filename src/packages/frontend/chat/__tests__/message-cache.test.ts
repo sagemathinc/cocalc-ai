@@ -45,6 +45,7 @@ describe("ChatMessageCache message_id index", () => {
         sender_id: "user-1",
         date: "2026-01-01T00:00:00.000Z",
         message_id: "msg-1",
+        thread_id: "thread-msg-1",
         history: [],
       },
       {
@@ -52,6 +53,7 @@ describe("ChatMessageCache message_id index", () => {
         sender_id: "user-2",
         date: "2026-01-01T00:00:01.000Z",
         message_id: "msg-2",
+        thread_id: "thread-msg-2",
         history: [],
       },
     ];
@@ -73,6 +75,7 @@ describe("ChatMessageCache message_id index", () => {
       sender_id: "user-2",
       date: "2026-01-01T00:00:01.000Z",
       message_id: "msg-2b",
+      thread_id: "thread-msg-2",
       history: [],
     };
     syncdb.replaceRows([rows[0], updated]);

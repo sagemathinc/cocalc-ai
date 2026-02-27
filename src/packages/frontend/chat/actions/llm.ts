@@ -98,8 +98,9 @@ export async function processLLM({
 
   const model = resolveLLMModel({ message, reply_to, tag, llm, threadModel });
   if (model === false || model == null) return;
-  if (reply_to) {
-    actions.recordThreadAgentModel(reply_to, model);
+  const threadIdForThread = (message as any)?.thread_id as string | undefined;
+  if (threadIdForThread) {
+    actions.recordThreadAgentModel(threadIdForThread, model);
   }
 
   let input = stripMentions(inputRaw);
@@ -152,7 +153,9 @@ export async function processLLM({
   actions.chatStreams.add(id);
   setTimeout(() => actions.chatStreams.delete(id), 3 * 60 * 1000);
 
-  let history = reply_to ? actions.getLLMHistory(reply_to) : undefined;
+  let history = threadIdForThread
+    ? actions.getLLMHistory(threadIdForThread)
+    : undefined;
   const regen = prepareRegenerateInput({ tag, history, dateLimit, reply_to });
   if (regen?.error) return;
   history = regen?.history ?? history;

@@ -45,8 +45,7 @@ describe("ChatActions.getMessagesInThread", () => {
     const result =
       collectThreadMessages({
         messages: messages as any,
-        dateStr: threadId,
-        getMessageByDate: (date: number) => messages.get(`${date}`),
+        threadId,
       }) ?? [];
     expect(result.map((m: any) => m.message_id)).toEqual(["root-1", "reply-1"]);
   });
@@ -108,8 +107,7 @@ describe("ChatActions.getMessagesInThread", () => {
     const result =
       collectThreadMessages({
         messages: messages as any,
-        dateStr: rootIso,
-        getMessageByDate: (date: number) => messages.get(`${date}`),
+        threadId: "thread-abc",
       }) ?? [];
     expect(result.map((m: any) => m.message_id)).toEqual([
       "root-1",
@@ -158,8 +156,7 @@ describe("ChatActions.getMessagesInThread", () => {
     const result =
       collectThreadMessages({
         messages: messages as any,
-        dateStr: rootIso,
-        getMessageByDate: (date: number) => messages.get(`${date}`),
+        threadId: "missing-thread-id",
       }) ?? [];
     expect(result.map((m: any) => m.message_id)).toEqual([]);
   });
@@ -178,7 +175,7 @@ describe("resolveThreadAgentModel", () => {
       getThreadMetadata,
     });
     expect(model).toBe("gpt-5.3-codex");
-    expect(getThreadMetadata).toHaveBeenCalledWith(`${date.valueOf()}`, {
+    expect(getThreadMetadata).toHaveBeenCalledWith("thread-abc", {
       threadId: "thread-abc",
     });
   });

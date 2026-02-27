@@ -142,9 +142,9 @@ export function CodexConfigButton({
 
   useEffect(() => {
     if (!models.length) return;
-    const ms = parseInt(threadKey, 10);
-    if (Number.isNaN(ms)) {
-      console.warn("invalid chat message threadKey", { threadKey });
+    const threadId = `${threadKey ?? ""}`.trim();
+    if (!threadId) {
+      console.warn("invalid chat thread id", { threadKey });
       return;
     }
     const baseModel = models[0]?.value ?? DEFAULT_MODEL_NAME;
@@ -159,7 +159,7 @@ export function CodexConfigButton({
       reasoning: baseReasoning,
       sessionMode: DEFAULT_CODEX_SESSION_MODE,
     };
-    const saved = actions?.getCodexConfig?.(new Date(ms));
+    const saved = actions?.getCodexConfig?.(threadId);
     const merged: CodexThreadConfig = { ...defaults, ...saved };
     const model = models.some((m) => m.value === merged.model)
       ? merged.model

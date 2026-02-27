@@ -311,20 +311,11 @@ export function ChatPanel({
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
   const selectedThreadId = useMemo(() => {
-    const rootId = field<string>(selectedThread?.rootMessage as any, "thread_id");
-    if (typeof rootId === "string" && rootId.trim()) return rootId.trim();
     if (selectedThreadKey && UUID_RX.test(selectedThreadKey)) return selectedThreadKey;
     return undefined;
-  }, [selectedThread?.rootMessage, selectedThreadKey]);
+  }, [selectedThreadKey]);
 
-  const selectedThreadIso = useMemo(
-    () =>
-      selectedThreadDate && !isNaN(selectedThreadDate.valueOf())
-        ? selectedThreadDate.toISOString()
-        : undefined,
-    [selectedThreadDate],
-  );
-  const selectedThreadLookupKey = selectedThreadId ?? selectedThreadIso;
+  const selectedThreadLookupKey = selectedThreadId;
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookupKey != null
@@ -366,13 +357,7 @@ export function ChatPanel({
     const records: AgentSessionRecord[] = [];
     for (const thread of threads) {
       if (!thread.isAI) continue;
-      const rootMessage = thread.rootMessage as any;
-      const threadId =
-        typeof rootMessage?.thread_id === "string" && rootMessage.thread_id.trim()
-          ? rootMessage.thread_id.trim()
-          : UUID_RX.test(thread.key)
-            ? thread.key
-            : undefined;
+      const threadId = UUID_RX.test(thread.key) ? thread.key : undefined;
       const metadata = actions.getThreadMetadata?.(thread.key, {
         threadId,
       });
@@ -381,13 +366,15 @@ export function ChatPanel({
         typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
           ? acpConfig.sessionId.trim()
           : thread.key;
+      const threadDateRaw =
+        metadata?.thread_date ??
+        (thread.newestTime ? new Date(thread.newestTime).toISOString() : undefined);
       const createdAt =
-        parseDateISOString(rootMessage?.date) ??
-        parseDateISOString(thread.newestTime) ??
+        parseDateISOString(threadDateRaw) ??
         new Date().toISOString();
       const updatedAt =
         parseDateISOString(thread.newestTime) ??
-        parseDateISOString(rootMessage?.date) ??
+        parseDateISOString(threadDateRaw) ??
         new Date().toISOString();
       const threadState =
         threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
@@ -598,23 +585,15 @@ export function ChatPanel({
     }
     const resolveFromThreadKey = (threadKey?: string | null) => {
       if (!threadKey) return { reply_to: undefined, thread_id: undefined, lookup: undefined };
-      const thread = threads.find((x) => x.key === threadKey);
-      const thread_id =
-        field<string>(thread?.rootMessage as any, "thread_id")?.trim() ||
-        (UUID_RX.test(threadKey) ? threadKey : undefined);
+      const thread_id = UUID_RX.test(threadKey) ? threadKey : undefined;
       const metadata = actions.getThreadMetadata?.(threadKey, {
         threadId: thread_id,
       });
-      const rootDate = dateValue(thread?.rootMessage as any);
       const configDate =
         metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
       const reply_to =
-        rootDate && !Number.isNaN(rootDate.valueOf())
-          ? new Date(rootDate.valueOf())
-          : configDate && !Number.isNaN(configDate.valueOf())
-            ? configDate
-            : undefined;
-      const lookup = thread_id ?? (reply_to ? reply_to.toISOString() : undefined);
+        configDate && !Number.isNaN(configDate.valueOf()) ? configDate : undefined;
+      const lookup = thread_id;
       return { reply_to: reply_to ?? undefined, thread_id, lookup };
     };
     if (isCombinedFeedSelected) {
@@ -635,7 +614,7 @@ export function ChatPanel({
     const threadMessages =
       (lookup ? actions.getMessagesInThread(lookup) : undefined) ?? [];
     const sessionId =
-      (reply_to ? actions.getCodexConfig(reply_to)?.sessionId : undefined) ??
+      (thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined) ??
       thread_id ??
       (reply_to ? `${reply_to.valueOf()}` : undefined);
     for (const msg of threadMessages) {
@@ -686,13 +665,11 @@ export function ChatPanel({
 
     if ((reply_to || reply_thread_id) && opts?.immediate && isSelectedThreadAI) {
       interruptThreadIfRunning(target);
-      if (reply_to) {
-        resetAcpThreadState({
-          actions,
-          threadRootDate: reply_to,
-          threadId: reply_thread_id,
-        });
-      }
+      resetAcpThreadState({
+        actions,
+        threadRootDate: reply_to,
+        threadId: reply_thread_id,
+      });
     }
 
     clearComposerNow(composerDraftKey);

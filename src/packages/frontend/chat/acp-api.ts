@@ -114,9 +114,9 @@ function interruptActiveThreadTurn({
   replyTo?: Date;
   threadId?: string;
 }): void {
-  if (!replyTo) return;
-  const threadIso = replyTo.toISOString();
-  const threadMessages = actions.getMessagesInThread(threadIso) ?? [];
+  const normalizedThreadId = `${threadId ?? ""}`.trim();
+  if (!normalizedThreadId) return;
+  const threadMessages = actions.getMessagesInThread(normalizedThreadId) ?? [];
   for (const msg of threadMessages) {
     if (field<boolean>(msg, "generating") !== true) continue;
     const msgDate = dateValue(msg);
@@ -142,11 +142,9 @@ type ThreadQueueRef = {
 
 function resolveThreadQueueRef({
   actions,
-  threadRootDate,
   threadId,
 }: {
   actions: ChatActions;
-  threadRootDate?: Date;
   threadId?: string;
 }): ThreadQueueRef | undefined {
   const store = actions.store;
@@ -154,14 +152,7 @@ function resolveThreadQueueRef({
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return undefined;
-  const explicitThreadToken = `${threadId ?? ""}`.trim();
-  let threadToken = explicitThreadToken;
-  if (!threadToken && threadRootDate) {
-    const rootMessage =
-      actions.getMessageByDate?.(threadRootDate) ??
-      actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
-    threadToken = `${field<string>(rootMessage, "thread_id") ?? ""}`.trim();
-  }
+  const threadToken = `${threadId ?? ""}`.trim();
   if (!threadToken) return undefined;
   return {
     queueKey: makeQueueKey({ project_id, path, threadKey: threadToken }),
@@ -176,7 +167,7 @@ function resolveThreadQueueRef({
 // "continue" can start immediately instead of remaining queued forever.
 export function resetAcpThreadState({
   actions,
-  threadRootDate,
+  threadRootDate: _threadRootDate,
   threadId,
 }: {
   actions: ChatActions;
@@ -185,7 +176,7 @@ export function resetAcpThreadState({
 }): void {
   const store = actions.store;
   if (!store) return;
-  const queueRef = resolveThreadQueueRef({ actions, threadRootDate, threadId });
+  const queueRef = resolveThreadQueueRef({ actions, threadId });
   if (queueRef) {
     const q = turnQueues.get(queueRef.queueKey);
     if (q) {
@@ -198,11 +189,9 @@ export function resetAcpThreadState({
     }
   }
 
-  const threadLookup =
-    `${threadId ?? ""}`.trim() ||
-    (threadRootDate ? threadRootDate.toISOString() : undefined);
-  const threadMessages = threadLookup
-    ? actions.getMessagesInThread(threadLookup) ?? []
+  const normalizedThreadId = `${threadId ?? ""}`.trim();
+  const threadMessages = normalizedThreadId
+    ? actions.getMessagesInThread(normalizedThreadId) ?? []
     : [];
   let nextState = store.get("acpState");
   for (const msg of threadMessages) {
@@ -269,45 +258,13 @@ export async function processAcpLLM({
 
   const sender_id = model || "openai-codex-agent";
 
-  // Determine the thread root date from the message itself.
-  // - For replies, `message.reply_to` is the thread root (ISO string).
-  // - Otherwise use explicit caller context, then fallback to `message.date`.
   const messageDate = dateValue(message);
   if (!messageDate) {
     throw Error("invalid message");
   }
-  const threadRootDate = message.reply_to
-    ? new Date(message.reply_to)
-    : reply_to ?? messageDate;
-  if (Number.isNaN(threadRootDate?.valueOf())) {
-    throw new Error("ACP turn missing thread root date");
-  }
-
-  const config = actions.getCodexConfig?.(threadRootDate);
-  const normalizedModel =
-    typeof model === "string" ? normalizeCodexMention(model) : undefined;
-  // If thread_config.sessionId has not been persisted yet, recover it from the
-  // most recent ACP assistant message in this thread so follow-up turns still
-  // resume the same Codex session.
-  const inferredSessionId = (() => {
-    const threadIso = threadRootDate.toISOString();
-    const threadMessages = actions.getMessagesInThread?.(threadIso) ?? [];
-    for (let i = threadMessages.length - 1; i >= 0; i--) {
-      const sessionId = field<string>(threadMessages[i], "acp_thread_id");
-      if (typeof sessionId === "string" && sessionId.trim().length > 0) {
-        return sessionId.trim();
-      }
-    }
-    return undefined;
-  })();
-  const effectiveSessionId = config?.sessionId ?? inferredSessionId;
-  const threadRootMessage =
-    actions.getMessageByDate?.(threadRootDate) ??
-    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
   const project_id = store.get("project_id");
   const path = store.get("path");
-  const thread_id =
-    (message as any)?.thread_id ?? (threadRootMessage as any)?.thread_id;
+  const thread_id = `${(message as any)?.thread_id ?? ""}`.trim();
   const user_message_id = (message as any)?.message_id;
   if (!user_message_id) {
     console.warn("ACP turn missing user message_id; skipping", {
@@ -325,12 +282,48 @@ export async function processAcpLLM({
     });
     return;
   }
+  const threadMeta = actions.getThreadMetadata?.(thread_id, {
+    threadId: thread_id,
+  });
+  const threadRootDate = (() => {
+    const byMessage =
+      typeof message.reply_to === "string" ? new Date(message.reply_to) : undefined;
+    if (byMessage && !Number.isNaN(byMessage.valueOf())) return byMessage;
+    const byMeta =
+      typeof threadMeta?.thread_date === "string"
+        ? new Date(threadMeta.thread_date)
+        : undefined;
+    if (byMeta && !Number.isNaN(byMeta.valueOf())) return byMeta;
+    if (reply_to && !Number.isNaN(reply_to.valueOf())) return reply_to;
+    return messageDate;
+  })();
+  if (Number.isNaN(threadRootDate?.valueOf())) {
+    throw new Error("ACP turn missing thread root date");
+  }
+
+  const config = actions.getCodexConfig?.(thread_id);
+  const normalizedModel =
+    typeof model === "string" ? normalizeCodexMention(model) : undefined;
+  // If thread_config.sessionId has not been persisted yet, recover it from the
+  // most recent ACP assistant message in this thread so follow-up turns still
+  // resume the same Codex session.
+  const inferredSessionId = (() => {
+    const threadMessages = actions.getMessagesInThread?.(thread_id) ?? [];
+    for (let i = threadMessages.length - 1; i >= 0; i--) {
+      const sessionId = field<string>(threadMessages[i], "acp_thread_id");
+      if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+        return sessionId.trim();
+      }
+    }
+    return undefined;
+  })();
+  const effectiveSessionId = config?.sessionId ?? inferredSessionId;
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
   const message_id = uuid();
   const reply_to_message_id =
-    (threadRootMessage as any)?.message_id ?? user_message_id;
+    `${(message as any)?.reply_to_message_id ?? ""}`.trim() || user_message_id;
 
   const id = uuid();
   chatStreams.add(id);

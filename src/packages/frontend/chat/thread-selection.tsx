@@ -151,18 +151,13 @@ export function useChatThreadSelection({
     if (!selectedThreadKey || selectedThreadKey === COMBINED_FEED_KEY) {
       return undefined;
     }
-    const rootDate = selectedThread?.rootMessage?.date;
-    if (rootDate != null) {
-      const d = new Date(rootDate as any);
-      if (!Number.isNaN(d.valueOf())) return d;
-    }
     const meta = actions.getThreadMetadata?.(selectedThreadKey, {
       threadId: selectedThreadKey,
     });
     if (!meta?.thread_date) return undefined;
     const d = new Date(meta.thread_date);
     return Number.isNaN(d.valueOf()) ? undefined : d;
-  }, [actions, selectedThreadKey, selectedThread]);
+  }, [actions, selectedThreadKey]);
 
   return {
     selectedThreadKey,

@@ -121,6 +121,7 @@ describe("sendChat identity fields", () => {
     actions.sendChat({
       input: "reply content",
       reply_to: rootDate,
+      reply_thread_id: "thread-abc-1",
     });
     await Promise.resolve();
 
@@ -166,8 +167,10 @@ describe("sendChat identity fields", () => {
     expect(sent).toBe("");
     expect(actions.syncdb.set).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(
-      "chat sendChat reply skipped: root message is missing v2 identity fields",
-      expect.any(Object),
+      "chat sendChat reply skipped: missing reply_thread_id",
+      expect.objectContaining({
+        reply_to: rootDate.toISOString(),
+      }),
     );
     warn.mockRestore();
   });
@@ -347,46 +350,13 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_mode).toBe("single_turn");
   });
 
-  it("creates thread-config for UUID thread keys using root message date", () => {
+  it("requires an existing thread-config date when updating by thread_id", () => {
     const threadId = "44444444-4444-4444-8444-444444444444";
-    const rootDate = new Date("2026-02-21T18:45:00.000Z");
-    const messages = new Map<string, any>([
-      [
-        `${rootDate.valueOf()}`,
-        {
-          event: "chat",
-          sender_id: "u1",
-          date: rootDate,
-          thread_id: threadId,
-          message_id: "root-msg-1",
-          history: [
-            {
-              author_id: "u1",
-              content: "root",
-              date: rootDate.toISOString(),
-            },
-          ],
-        },
-      ],
-    ]);
-    const actions = makeActions(messages);
-
-    actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
-        return undefined;
-      }
-      return undefined;
-    });
+    const actions = makeActions();
 
     const ok = actions.setThreadAppearance(threadId, { name: "Thread title" });
-    expect(ok).toBe(true);
-    expect(actions.syncdb.commit).toHaveBeenCalled();
-    const setRow = actions.syncdb.set.mock.calls
-      .map((x) => x[0])
-      .find((row: any) => row?.event === "chat-thread-config" && row?.thread_id === threadId);
-    expect(setRow).toBeTruthy();
-    expect(setRow.date).toBe(rootDate.toISOString());
-    expect(setRow.name).toBe("Thread title");
+    expect(ok).toBe(false);
+    expect(actions.syncdb.commit).not.toHaveBeenCalled();
   });
 });
 
@@ -454,7 +424,7 @@ describe("deleteThread identity targeting", () => {
     ).toBeTruthy();
   });
 
-  it("keeps timestamp-key delete compatibility", () => {
+  it("does not delete by timestamp keys anymore", () => {
     const thread = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const root = new Date("2026-02-21T20:00:00.000Z");
     const reply = new Date("2026-02-21T20:01:00.000Z");
@@ -497,11 +467,11 @@ describe("deleteThread identity targeting", () => {
     ]);
     const actions = makeActions(messages);
     const deleted = actions.deleteThread(`${root.valueOf()}`);
-    expect(deleted).toBe(2);
+    expect(deleted).toBe(0);
     const chatDeletes = actions.syncdb.delete.mock.calls
       .map((x) => x[0])
       .filter((row: any) => row?.event === "chat");
-    expect(chatDeletes).toHaveLength(2);
+    expect(chatDeletes).toHaveLength(0);
   });
 });
 
@@ -536,6 +506,17 @@ describe("markThreadRead with UUID keys", () => {
       ],
     ]);
     const actions = makeActions(messages);
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return {
+          event: "chat-thread-config",
+          sender_id: "__thread_config__",
+          date: d1.toISOString(),
+          thread_id: threadId,
+        };
+      }
+      return undefined;
+    });
     const ok = actions.markThreadRead(threadId, 7);
     expect(ok).toBe(true);
     expect(actions.syncdb.commit).toHaveBeenCalled();

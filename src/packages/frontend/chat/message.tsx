@@ -403,11 +403,15 @@ export default function Message({
     () => (threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined),
     [threadRootMs],
   );
+  const messageThreadId = useMemo(() => {
+    const id = field<string>(message, "thread_id");
+    return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
+  }, [message]);
 
   const threadMessages = useMemo(() => {
-    if (!actions || !threadRootIso) return undefined;
-    return actions.getMessagesInThread(threadRootIso);
-  }, [actions, threadRootIso, messages]);
+    if (!actions || !messageThreadId) return undefined;
+    return actions.getMessagesInThread(messageThreadId);
+  }, [actions, messageThreadId, messages]);
 
   const isLastMessageInThread = useMemo(() => {
     if (!threadMessages?.length) return false;
@@ -1106,6 +1110,7 @@ export default function Message({
             message,
             messages,
             threadRootMs,
+            threadId: messageThreadId,
             project_id,
             path,
           }}

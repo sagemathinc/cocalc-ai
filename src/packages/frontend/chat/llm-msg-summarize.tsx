@@ -18,7 +18,7 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { COLORS } from "@cocalc/util/theme";
 import { ChatActions } from "./actions";
 import { ChatMessageTyped } from "./types";
-import { replyTo } from "./access";
+import { field } from "./access";
 
 export function SummarizeThread({
   message,
@@ -27,7 +27,7 @@ export function SummarizeThread({
   message: ChatMessageTyped;
   actions?: ChatActions;
 }) {
-  const reply_to = replyTo(message);
+  const thread_id = field<string>(message, "thread_id");
   const { project_id } = useProjectContext();
   const [model, setModel] = useLanguageModelSetting(project_id);
   const [visible, setVisible] = useState(false);
@@ -42,7 +42,7 @@ export function SummarizeThread({
 
     const info = await actions?.summarizeThread({
       model,
-      reply_to,
+      thread_id,
       returnInfo: true,
       short,
     });
@@ -109,7 +109,7 @@ export function SummarizeThread({
           />
         </div>
       )}
-      onConfirm={() => actions?.summarizeThread({ model, reply_to, short })}
+      onConfirm={() => actions?.summarizeThread({ model, thread_id, short })}
       okText="Summarize"
     >
       <Tip

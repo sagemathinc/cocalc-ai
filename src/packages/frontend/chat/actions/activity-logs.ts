@@ -8,14 +8,14 @@ import { delay } from "awaiting";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ChatActions } from "../actions";
 import type { ChatMessage, ChatMessages } from "../types";
-import { dateValue } from "../access";
-import { getThreadRootDate } from "../utils";
+import { dateValue, field } from "../access";
 
 export type ActivityLogContext = {
   actions?: ChatActions;
   message: ChatMessage;
   messages?: ChatMessages;
   threadRootMs?: number;
+  threadId?: string;
   project_id?: string;
   path?: string;
 };
@@ -47,8 +47,8 @@ export async function deleteActivityLog({
 
 export async function deleteAllActivityLogs({
   actions,
-  messages,
   threadRootMs,
+  threadId,
   message,
   project_id,
   path,
@@ -56,10 +56,12 @@ export async function deleteAllActivityLogs({
   if (!actions?.syncdb) return;
   const targets: { date: Date; sender_id?: string }[] = [];
   const logRefs: { store: string; key: string }[] = [];
+  const normalizedThreadId =
+    `${threadId ?? field<string>(message, "thread_id") ?? ""}`.trim() || undefined;
   const rootIso =
     threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined;
-  if (rootIso && actions) {
-    const seq = actions.getMessagesInThread(rootIso);
+  if (normalizedThreadId && actions) {
+    const seq = actions.getMessagesInThread(normalizedThreadId);
     for (const msg of seq ?? []) {
       const d = dateValue(msg);
       if (!(d instanceof Date)) continue;
@@ -71,35 +73,15 @@ export async function deleteAllActivityLogs({
       const refs = deriveAcpLogRefs({
         project_id,
         path,
-        thread_root_date: rootIso,
+        thread_root_date:
+          rootIso ??
+          (typeof (msg as any)?.reply_to === "string"
+            ? (msg as any).reply_to
+            : d.toISOString()),
         turn_date: d.toISOString(),
       });
       logRefs.push({ store: refs.store, key: refs.key });
     }
-  } else if (messages?.forEach) {
-    messages.forEach((msg) => {
-      const d = dateValue(msg);
-      if (!(d instanceof Date)) return;
-      const root = getThreadRootDate({
-        date: d.valueOf(),
-        messages,
-      });
-      const rootMs = root?.valueOf?.();
-      if (rootMs != null && rootMs === threadRootMs) {
-        targets.push({
-          date: d,
-          sender_id: (msg as any)?.sender_id,
-        });
-        if (!project_id || !path || !rootIso) return;
-        const refs = deriveAcpLogRefs({
-          project_id,
-          path,
-          thread_root_date: rootIso,
-          turn_date: d.toISOString(),
-        });
-        logRefs.push({ store: refs.store, key: refs.key });
-      }
-    });
   }
   if (!targets.length) {
     const d = dateValue(message);

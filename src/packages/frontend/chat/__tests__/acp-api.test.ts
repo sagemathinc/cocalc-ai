@@ -8,6 +8,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       streamAcp: (...args: any[]) => mockStreamAcp(...args),
+      getProjectHostAcpBearer: async () => "",
     },
   },
 }));
@@ -109,7 +110,7 @@ describe("processAcpLLM", () => {
     expect(arg.chat.message_id).toBeTruthy();
     expect(arg.chat.message_id).not.toBe("user-msg-1");
     expect(arg.chat.thread_id).toBe("thread-1");
-    expect(arg.chat.reply_to_message_id).toBe("root-msg-1");
+    expect(arg.chat.reply_to_message_id).toBe("user-msg-1");
     expect(arg.session_id).toBe("thread-1");
   });
 

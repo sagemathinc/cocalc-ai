@@ -132,47 +132,19 @@ export class ChatMessageCache extends EventEmitter {
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
-  private getThreadKeyFromReplyOrDate(
-    message: PlainChatMessage,
-  ): string | undefined {
-    const root = replyTo(message);
-    if (root) {
-      const d = new Date(root);
-      return Number.isFinite(d.valueOf()) ? `${d.valueOf()}` : undefined;
-    }
-    const d = dateValue(message);
-    return d ? `${d.valueOf()}` : undefined;
-  }
-
   private getThreadKeyForMap(
     message: PlainChatMessage,
-    threadKeyByThreadId: Map<string, string>,
   ): string | undefined {
     const threadId = this.getThreadId(message);
-    if (threadId) {
-      // Canonical thread map key is thread_id (UUID). We still keep
-      // threadKeyByThreadId as a root-date lookup map for legacy/date-based APIs.
-      return threadId;
-    }
-    const key = this.getThreadKeyFromReplyOrDate(message);
-    if (!key) return undefined;
-    // Only establish mapping from root messages; replies can have stale/malformed
-    // reply_to values during migrations or races.
-    if (threadId && !replyTo(message)) {
-      threadKeyByThreadId.set(threadId, key);
-    }
-    return key;
+    return threadId;
   }
 
   private getMessageId(
     message?: PlainChatMessage,
-    dateKey?: string,
   ): string | undefined {
     const id = (message as any)?.message_id;
     if (typeof id === "string" && id.length > 0) return id;
-    if (!message || !dateKey) return undefined;
-    const sender = `${(message as any)?.sender_id ?? "unknown"}`;
-    return `legacy-message:${sender}:${dateKey}`;
+    return undefined;
   }
 
   private addToThreadIndex(
@@ -181,7 +153,7 @@ export class ChatMessageCache extends EventEmitter {
     messageKey: string,
     threadKeyByThreadId: Map<string, string> = this.threadKeyByThreadId,
   ) {
-    const threadKey = this.getThreadKeyForMap(message, threadKeyByThreadId);
+    const threadKey = this.getThreadKeyForMap(message);
     if (!threadKey) return;
     let thread = draft.get(threadKey);
     if (!thread) {
@@ -202,6 +174,7 @@ export class ChatMessageCache extends EventEmitter {
     }
     if (!replyTo(message)) {
       thread.rootMessage = message;
+      threadKeyByThreadId.set(threadKey, messageKey);
     }
   }
 
@@ -212,7 +185,7 @@ export class ChatMessageCache extends EventEmitter {
     messageMap: Map<string, PlainChatMessage>,
     threadKeyByThreadId: Map<string, string> = this.threadKeyByThreadId,
   ) {
-    const threadKey = this.getThreadKeyForMap(message, threadKeyByThreadId);
+    const threadKey = this.getThreadKeyForMap(message);
     if (!threadKey) return;
     const thread = draft.get(threadKey);
     if (!thread) return;
@@ -277,8 +250,8 @@ export class ChatMessageCache extends EventEmitter {
     const list = Array.isArray(rows) ? rows : [];
     let chatRows = 0;
 
-    // Build thread_id -> root-date-key mapping first so thread grouping can be
-    // thread-id-driven even when reply_to is stale/malformed.
+    // Build thread_id -> root-date-key mapping for opening root messages from
+    // thread metadata (used by a few date-keyed helpers).
     for (const row0 of list) {
       if ((row0 as any)?.event !== "chat") continue;
       const message = row0 as PlainChatMessage;
@@ -292,9 +265,11 @@ export class ChatMessageCache extends EventEmitter {
     for (const row0 of list) {
       if ((row0 as any)?.event !== "chat") continue;
       const message = row0 as PlainChatMessage;
+      const threadId = this.getThreadId(message);
+      if (!threadId) continue;
       const key = this.getDateKey(message);
       if (!key) continue;
-      const messageId = this.getMessageId(message, key);
+      const messageId = this.getMessageId(message);
       if (!messageId) continue;
       chatRows += 1;
       mapById.set(messageId, message);
@@ -363,7 +338,7 @@ export class ChatMessageCache extends EventEmitter {
                 if (prev) {
                   this.removeFromThreadIndex(threadDraft, prev, key, dateDraft);
                   const prevId =
-                    dateIndexDraft.get(key) ?? this.getMessageId(prev, key);
+                    dateIndexDraft.get(key) ?? this.getMessageId(prev);
                   if (prevId) {
                     idDraft.delete(prevId);
                     idMapDraft.delete(prevId);
@@ -377,7 +352,7 @@ export class ChatMessageCache extends EventEmitter {
                 }
 
                 const nextMessage = rec as PlainChatMessage;
-                const nextId = this.getMessageId(nextMessage, key);
+                const nextId = this.getMessageId(nextMessage);
                 if (!nextId) continue;
                 dateDraft.set(key, nextMessage);
                 idMapDraft.set(nextId, nextMessage);
