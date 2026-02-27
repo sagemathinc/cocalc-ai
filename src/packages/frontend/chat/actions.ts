@@ -864,18 +864,17 @@ export class ChatActions extends Actions<ChatState> {
   });
 
   // returns number of deleted messages
-  // threadKey = thread_id (UUID)
+  // threadKey = thread_id (UUID or migrated legacy-thread-*)
   deleteThread = (threadKey: string): number => {
     if (this.syncdb == null) {
       return 0;
     }
     const messages = this.getAllMessages();
-    const threadIdTarget = isValidUUID(threadKey) ? threadKey : undefined;
+    const threadIdTarget = this.normalizeThreadId(threadKey);
     if (!threadIdTarget) {
       return 0;
     }
     let deleted = 0;
-    const deletedThreadIds = new Set<string>();
     for (const [_, message] of messages) {
       if (message == null) continue;
       const d = dateValue(message);
@@ -893,20 +892,31 @@ export class ChatActions extends Actions<ChatState> {
         date: dateIso,
         sender_id: senderId(message),
       });
-      if (typeof messageThreadId === "string" && messageThreadId.length > 0) {
-        deletedThreadIds.add(messageThreadId);
-      }
       deleted++;
     }
-    for (const threadId of deletedThreadIds) {
+    const hasConfig =
+      this.getSyncdbOne({
+        event: THREAD_CONFIG_EVENT,
+        thread_id: threadIdTarget,
+      }) != null;
+    const hasState =
+      this.getSyncdbOne({
+        event: "chat-thread-state",
+        thread_id: threadIdTarget,
+      }) != null;
+    if (hasConfig || hasState || deleted > 0) {
       this.syncdb.delete({
         event: THREAD_CONFIG_EVENT,
-        thread_id: threadId,
+        thread_id: threadIdTarget,
       });
       this.syncdb.delete({
         event: "chat-thread-state",
-        thread_id: threadId,
+        thread_id: threadIdTarget,
       });
+      if (deleted === 0 && (hasConfig || hasState)) {
+        // allow deleting archived/config-only threads from the UI
+        deleted = 1;
+      }
     }
     if (deleted > 0) {
       this.syncdb.commit();
@@ -1007,13 +1017,15 @@ export class ChatActions extends Actions<ChatState> {
     threadKey?: string,
     optsThreadId?: string,
   ): string | undefined => {
+    const isThreadId = (value: string): boolean =>
+      value.length > 0 && value !== "__COMBINED_FEED__";
     const explicit = `${optsThreadId ?? ""}`.trim();
     if (explicit) {
-      return isValidUUID(explicit) ? explicit : undefined;
+      return isThreadId(explicit) ? explicit : undefined;
     }
     const key = `${threadKey ?? ""}`.trim();
     if (!key) return undefined;
-    return isValidUUID(key) ? key : undefined;
+    return isThreadId(key) ? key : undefined;
   };
 
   private getThreadConfigRecord = (threadKey: string): any | null => {

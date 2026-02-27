@@ -321,6 +321,42 @@ describe("thread-config by thread_id", () => {
     expect(row).toBeTruthy();
   });
 
+  it("updates thread-config for migrated legacy thread ids", () => {
+    const threadId = "legacy-thread-1769012000306";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-01-21T16:13:20.306Z",
+      thread_id: threadId,
+      archived: true,
+      name: "Before",
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return existing;
+      }
+      return undefined;
+    });
+    expect(actions.setThreadArchived(threadId, false)).toBe(true);
+    expect(actions.setThreadAppearance(threadId, { name: "After" })).toBe(true);
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    const archivedPatch = rows.find(
+      (x: any) =>
+        x?.event === "chat-thread-config" &&
+        x?.thread_id === threadId &&
+        x?.archived === false,
+    );
+    const namePatch = rows.find(
+      (x: any) =>
+        x?.event === "chat-thread-config" &&
+        x?.thread_id === threadId &&
+        x?.name === "After",
+    );
+    expect(archivedPatch).toBeTruthy();
+    expect(namePatch).toBeTruthy();
+  });
+
   it("updates non-codex agent model for UUID thread keys", () => {
     const threadId = "35333333-3333-4333-8333-333333333333";
     const existing = {
@@ -472,6 +508,38 @@ describe("deleteThread identity targeting", () => {
       .map((x) => x[0])
       .filter((row: any) => row?.event === "chat");
     expect(chatDeletes).toHaveLength(0);
+  });
+
+  it("deletes config-only migrated legacy threads", () => {
+    const thread = "legacy-thread-1769012000306";
+    const actions = makeActions(new Map());
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === thread) {
+        return {
+          event: "chat-thread-config",
+          sender_id: "__thread_config__",
+          date: "2026-01-21T16:13:20.306Z",
+          thread_id: thread,
+        };
+      }
+      return undefined;
+    });
+    const deleted = actions.deleteThread(thread);
+    expect(deleted).toBe(1);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+    const deletes = actions.syncdb.delete.mock.calls.map((x) => x[0]);
+    expect(
+      deletes.find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === thread,
+      ),
+    ).toBeTruthy();
+    expect(
+      deletes.find(
+        (row: any) =>
+          row?.event === "chat-thread-state" && row?.thread_id === thread,
+      ),
+    ).toBeTruthy();
   });
 });
 
