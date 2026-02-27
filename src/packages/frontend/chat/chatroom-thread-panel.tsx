@@ -410,7 +410,7 @@ export function ChatRoomThreadPanel({
       description: r.description,
       default: r.default,
     }));
-    const shouldHideChatType = hideChatTypeSelector || lite;
+    const shouldHideChatType = hideChatTypeSelector;
     return (
       <div
         className="smc-vfill"

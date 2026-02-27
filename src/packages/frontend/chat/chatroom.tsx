@@ -15,7 +15,6 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
-import { lite } from "@cocalc/frontend/lite";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -710,10 +709,10 @@ export function ChatPanel({
       threadAgent:
         !reply_to && !reply_thread_id && newThreadSetup.agentMode
           ? {
-              mode: lite ? "codex" : newThreadSetup.agentMode,
+              mode: newThreadSetup.agentMode,
               model: newThreadSetup.model?.trim(),
               codexConfig:
-                (lite ? "codex" : newThreadSetup.agentMode) === "codex"
+                newThreadSetup.agentMode === "codex"
                   ? {
                       ...newThreadSetup.codexConfig,
                       model:
