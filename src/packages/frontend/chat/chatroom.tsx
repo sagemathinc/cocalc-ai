@@ -677,7 +677,9 @@ export function ChatPanel({
     const reply_to = target.reply_to;
     const reply_thread_id = target.thread_id;
     if (!reply_to && !reply_thread_id) {
-      setAllowAutoSelectThread(true);
+      // Creating a new thread should never auto-fallback to Combined while
+      // thread metadata is hydrating.
+      setAllowAutoSelectThread(false);
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
@@ -755,7 +757,8 @@ export function ChatPanel({
         });
       }
     }
-    if (!reply_to && !reply_thread_id && threadKey && !isCombinedFeedSelected) {
+    if (!reply_to && !reply_thread_id && threadKey) {
+      setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
       setTimeout(() => {
         setSelectedThreadKey(threadKey);
