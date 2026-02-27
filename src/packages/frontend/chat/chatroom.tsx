@@ -729,7 +729,10 @@ export function ChatPanel({
               image: newThreadSetup.image?.trim(),
             }
           : undefined,
-      preserveSelectedThread: isCombinedFeedSelected,
+      // Replies sent from Combined should keep Combined selected.
+      // Brand new threads should always switch to the newly created thread.
+      preserveSelectedThread:
+        isCombinedFeedSelected && (reply_to != null || reply_thread_id != null),
     });
     const threadKey =
       !reply_to && !reply_thread_id && timeStamp
