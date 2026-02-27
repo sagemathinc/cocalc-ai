@@ -214,4 +214,42 @@ describe("ChatMessageCache message_id index", () => {
     );
     cache.dispose();
   });
+
+  it("hydrates archived chat rows into the live cache", async () => {
+    const syncdb = new MockSyncdb([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2026-01-06T00:00:00.000Z",
+        message_id: "head-1",
+        thread_id: "thread-archived",
+        history: [{ author_id: "user-1", content: "head", date: "2026-01-06T00:00:00.000Z" }],
+      },
+    ]);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const result = cache.hydrateArchivedRows([
+      {
+        event: "chat",
+        sender_id: "user-2",
+        date: "2026-01-05T00:00:00.000Z",
+        message_id: "archived-1",
+        thread_id: "thread-archived",
+        reply_to: "2026-01-06T00:00:00.000Z",
+        reply_to_message_id: "head-1",
+        history: [
+          {
+            author_id: "user-2",
+            content: "older archived message",
+            date: "2026-01-05T00:00:00.000Z",
+          },
+        ],
+      },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(cache.getByMessageId("archived-1")?.sender_id).toBe("user-2");
+    expect(cache.getThreadIndex().get("thread-archived")?.messageCount).toBe(2);
+    cache.dispose();
+  });
 });

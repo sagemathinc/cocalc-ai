@@ -174,6 +174,14 @@ export function ChatRoomThreadPanel({
   const [archivedHistoryNextOffset, setArchivedHistoryNextOffset] = useState<
     number | undefined
   >(undefined);
+  const [archivedLoadInProgress, setArchivedLoadInProgress] = useState(false);
+  const [archivedLoadError, setArchivedLoadError] = useState("");
+  const [archivedLoadOffsetByThread, setArchivedLoadOffsetByThread] = useState<
+    Record<string, number>
+  >({});
+  const [archivedLoadDoneByThread, setArchivedLoadDoneByThread] = useState<
+    Record<string, boolean>
+  >({});
   const searchInputRef = useRef<any>(null);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
@@ -222,6 +230,12 @@ export function ChatRoomThreadPanel({
     [matchCount, normalizedCursor, threadSearchMatches],
   );
   const archivedMatchCount = archivedSearchHits.length;
+  const archivedLoadedOffset = selectedThreadId
+    ? (archivedLoadOffsetByThread[selectedThreadId] ?? 0)
+    : 0;
+  const archivedLoadDone = selectedThreadId
+    ? !!archivedLoadDoneByThread[selectedThreadId]
+    : false;
 
   const loadArchivedHistory = useCallback(
     async (offset = 0, append = false) => {
@@ -260,6 +274,60 @@ export function ChatRoomThreadPanel({
     [project_id, path, selectedThreadId],
   );
 
+  const loadArchivedIntoThread = useCallback(async () => {
+    if (!project_id || !path || !selectedThreadId) {
+      setArchivedLoadError("");
+      return;
+    }
+    const hubProjects = webapp_client.conat_client?.hub?.projects;
+    if (!hubProjects) {
+      setArchivedLoadError("Conat project API is unavailable.");
+      return;
+    }
+    if (archivedLoadInProgress) return;
+    const offset = archivedLoadOffsetByThread[selectedThreadId] ?? 0;
+    setArchivedLoadInProgress(true);
+    setArchivedLoadError("");
+    try {
+      const result = await hubProjects.chatStoreReadArchived({
+        project_id,
+        chat_path: path,
+        thread_id: selectedThreadId,
+        limit: ARCHIVED_HISTORY_LIMIT,
+        offset,
+      });
+      const rows = result.rows ?? [];
+      const hydrate = actions.hydrateArchivedRows(
+        rows.map((row) => row.row).filter((row) => row != null),
+      );
+      if (rows.length === 0) {
+        setArchivedLoadDoneByThread((prev) => ({ ...prev, [selectedThreadId]: true }));
+      } else {
+        setArchivedLoadOffsetByThread((prev) => ({
+          ...prev,
+          [selectedThreadId]: offset + rows.length,
+        }));
+      }
+      if (result.next_offset == null) {
+        setArchivedLoadDoneByThread((prev) => ({ ...prev, [selectedThreadId]: true }));
+      }
+      if (rows.length > 0 && hydrate.applied === 0) {
+        setArchivedLoadError("No additional archived messages were loaded.");
+      }
+    } catch (err) {
+      setArchivedLoadError(`${err}`);
+    } finally {
+      setArchivedLoadInProgress(false);
+    }
+  }, [
+    actions,
+    archivedLoadInProgress,
+    archivedLoadOffsetByThread,
+    path,
+    project_id,
+    selectedThreadId,
+  ]);
+
   const setSearchQueryDebounced = useMemo(
     () =>
       debounce((value: string) => {
@@ -288,6 +356,7 @@ export function ChatRoomThreadPanel({
     setArchivedHistoryError("");
     setArchivedHistoryNextOffset(undefined);
     setArchivedHistoryOpen(false);
+    setArchivedLoadError("");
   }, [selectedThreadKey]);
 
   useEffect(() => {
@@ -965,7 +1034,30 @@ export function ChatRoomThreadPanel({
         >
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             {archivedRowsCount.toLocaleString()} older message
-            {archivedRowsCount === 1 ? "" : "s"} archived.
+            {archivedRowsCount === 1 ? "" : "s"} archived
+            {archivedLoadedOffset > 0 ? (
+              <>
+                {" "}
+                ({archivedLoadedOffset.toLocaleString()} loaded)
+              </>
+            ) : (
+              "."
+            )}
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => {
+                void loadArchivedIntoThread();
+              }}
+              disabled={archivedLoadInProgress || archivedLoadDone}
+            >
+              {archivedLoadInProgress
+                ? "Loading..."
+                : archivedLoadDone
+                  ? "All loaded"
+                  : "Load more"}
+            </Button>
             <Button
               size="small"
               type="link"
@@ -975,9 +1067,20 @@ export function ChatRoomThreadPanel({
                 void loadArchivedHistory(0, false);
               }}
             >
-              Load more
+              Preview
             </Button>
           </span>
+        </div>
+      ) : null}
+      {selectedThreadId && archivedLoadError ? (
+        <div
+          style={{
+            margin: "6px 12px 0 12px",
+            color: "#b71c1c",
+            fontSize: 12,
+          }}
+        >
+          {archivedLoadError}
         </div>
       ) : null}
       <ChatLog

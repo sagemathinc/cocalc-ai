@@ -4,6 +4,7 @@ import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import type { PlainChatMessage } from "./types";
 import { dateValue, replyTo } from "./access";
 import { once } from "@cocalc/util/async-utils";
+import { normalizeChatMessage } from "./normalize";
 
 /**
  * ChatMessageCache
@@ -227,6 +228,84 @@ export class ChatMessageCache extends EventEmitter {
     const snapshot = this.buildSnapshotFromRows(rows);
     this.applySnapshot(snapshot);
     return { applied: true, chatRows: snapshot.chatRows };
+  }
+
+  hydrateArchivedRows(rows: unknown[]): {
+    applied: number;
+    skipped: number;
+  } {
+    const list = Array.isArray(rows) ? rows : [];
+    if (list.length === 0) {
+      return { applied: 0, skipped: 0 };
+    }
+    let applied = 0;
+    let skipped = 0;
+    const nextByDate = produce(this.messagesByDate, (dateDraft) => {
+      this.messagesById = produce(this.messagesById, (idMapDraft) => {
+        this.threadIndex = produce(this.threadIndex, (threadDraft) => {
+          this.messageIdIndex = produce(this.messageIdIndex, (idDraft) => {
+            this.dateIndex = produce(this.dateIndex, (dateIndexDraft) => {
+              for (const row0 of list) {
+                const normalized = normalizeChatMessage(row0);
+                const nextMessage = normalized.message as
+                  | PlainChatMessage
+                  | undefined;
+                if (!nextMessage || nextMessage.event !== "chat") {
+                  skipped += 1;
+                  continue;
+                }
+                const threadId = this.getThreadId(nextMessage);
+                const key = this.getDateKey(nextMessage);
+                const messageId = this.getMessageId(nextMessage);
+                if (!threadId || !key || !messageId) {
+                  skipped += 1;
+                  continue;
+                }
+
+                const existingKeyForId = idDraft.get(messageId);
+                if (existingKeyForId && existingKeyForId !== key) {
+                  const prevById = dateDraft.get(existingKeyForId);
+                  if (prevById) {
+                    this.removeFromThreadIndex(
+                      threadDraft,
+                      prevById,
+                      existingKeyForId,
+                      dateDraft,
+                    );
+                  }
+                  dateDraft.delete(existingKeyForId);
+                  dateIndexDraft.delete(existingKeyForId);
+                }
+
+                const prev = dateDraft.get(key);
+                if (prev) {
+                  this.removeFromThreadIndex(threadDraft, prev, key, dateDraft);
+                  const prevId =
+                    dateIndexDraft.get(key) ?? this.getMessageId(prev);
+                  if (prevId) {
+                    idDraft.delete(prevId);
+                    idMapDraft.delete(prevId);
+                  }
+                  dateIndexDraft.delete(key);
+                }
+
+                dateDraft.set(key, nextMessage);
+                idMapDraft.set(messageId, nextMessage);
+                idDraft.set(messageId, key);
+                dateIndexDraft.set(key, messageId);
+                this.addToThreadIndex(threadDraft, nextMessage, key);
+                applied += 1;
+              }
+            });
+          });
+        });
+      });
+    });
+    this.messagesByDate = nextByDate;
+    if (applied > 0) {
+      this.bumpVersion();
+    }
+    return { applied, skipped };
   }
 
   private applySnapshot(snapshot: ChatCacheSnapshot): void {

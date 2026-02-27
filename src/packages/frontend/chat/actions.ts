@@ -1421,6 +1421,15 @@ export class ChatActions extends Actions<ChatState> {
     });
   };
 
+  hydrateArchivedRows = (
+    rows: unknown[],
+  ): { applied: number; skipped: number } => {
+    if (!this.messageCache) {
+      return { applied: 0, skipped: Array.isArray(rows) ? rows.length : 0 };
+    }
+    return this.messageCache.hydrateArchivedRows(rows);
+  };
+
   private saveSyncdb = async (): Promise<void> => {
     if (!this.syncdb) return;
     try {
