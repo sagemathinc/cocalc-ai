@@ -962,24 +962,25 @@ export function ChatRoomThreadPanel({
             fontSize: 12,
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
+            gap: 6,
             zIndex: 1,
           }}
         >
-          <span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             {archivedRowsCount.toLocaleString()} older message
             {archivedRowsCount === 1 ? "" : "s"} archived.
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => {
+                setArchivedHistoryOpen(true);
+                void loadArchivedHistory(0, false);
+              }}
+            >
+              Load more
+            </Button>
           </span>
-          <Button
-            size="small"
-            onClick={() => {
-              setArchivedHistoryOpen(true);
-              void loadArchivedHistory(0, false);
-            }}
-          >
-            Load more
-          </Button>
         </div>
       ) : null}
       <ChatLog
