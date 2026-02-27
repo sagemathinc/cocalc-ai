@@ -62,7 +62,12 @@ const GRID_STYLE: React.CSSProperties = {
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const COMBINED_FEED_MAX_PER_THREAD = 5;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
-const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeThreadKey(value?: string | null): string | undefined {
+  const key = `${value ?? ""}`.trim();
+  if (!key || key === COMBINED_FEED_KEY) return undefined;
+  return key;
+}
 
 function parseDateISOString(value: unknown): string | undefined {
   if (!value) return undefined;
@@ -310,10 +315,10 @@ export function ChatPanel({
   );
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
-  const selectedThreadId = useMemo(() => {
-    if (selectedThreadKey && UUID_RX.test(selectedThreadKey)) return selectedThreadKey;
-    return undefined;
-  }, [selectedThreadKey]);
+  const selectedThreadId = useMemo(
+    () => normalizeThreadKey(selectedThreadKey),
+    [selectedThreadKey],
+  );
 
   const selectedThreadLookupKey = selectedThreadId;
   const selectedThreadMessages = useMemo(
@@ -357,7 +362,7 @@ export function ChatPanel({
     const records: AgentSessionRecord[] = [];
     for (const thread of threads) {
       if (!thread.isAI) continue;
-      const threadId = UUID_RX.test(thread.key) ? thread.key : undefined;
+      const threadId = normalizeThreadKey(thread.key);
       const metadata = actions.getThreadMetadata?.(thread.key, {
         threadId,
       });
@@ -585,7 +590,7 @@ export function ChatPanel({
     }
     const resolveFromThreadKey = (threadKey?: string | null) => {
       if (!threadKey) return { reply_to: undefined, thread_id: undefined, lookup: undefined };
-      const thread_id = UUID_RX.test(threadKey) ? threadKey : undefined;
+      const thread_id = normalizeThreadKey(threadKey);
       const metadata = actions.getThreadMetadata?.(threadKey, {
         threadId: thread_id,
       });

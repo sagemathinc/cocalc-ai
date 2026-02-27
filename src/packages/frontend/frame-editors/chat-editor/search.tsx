@@ -31,6 +31,15 @@ interface ThreadOption {
   newestTime: number;
 }
 
+function threadLabelFromConfigRow(row: any, newestTime: number): string {
+  const name = typeof row?.name === "string" ? row.name.trim() : "";
+  if (name) return name;
+  if (newestTime > 0) {
+    return new Date(newestTime).toLocaleString();
+  }
+  return "Untitled chat";
+}
+
 export const search: EditorDescription = {
   type: "search",
   short: "Search",
@@ -86,23 +95,43 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const threadIndex = chatActions?.getThreadIndex?.();
 
   const threadOptions: ThreadOption[] = useMemo(() => {
-    if (!threadIndex) {
-      return [];
-    }
-    const items: ThreadOption[] = [];
-    for (const entry of threadIndex.values()) {
+    const byKey = new Map<string, ThreadOption>();
+    for (const entry of threadIndex?.values() ?? []) {
       const rootMessage =
         entry.rootMessage ??
         (messages ? messages.get(entry.key) : undefined);
-      items.push({
+      byKey.set(entry.key, {
         key: entry.key,
         label: deriveThreadLabel(rootMessage, entry.key),
         newestTime: entry.newestTime,
       });
     }
+    const configRows = chatActions?.listThreadConfigRows?.() ?? [];
+    for (const row0 of configRows) {
+      const row =
+        row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
+      const threadId = `${row?.thread_id ?? ""}`.trim();
+      if (
+        !threadId ||
+        threadId === COMBINED_FEED_KEY ||
+        threadId === ALL_MESSAGES_KEY ||
+        byKey.has(threadId)
+      ) {
+        continue;
+      }
+      const whenRaw = row?.updated_at ?? row?.date;
+      const when = new Date(whenRaw);
+      const newestTime = Number.isFinite(when.valueOf()) ? when.valueOf() : 0;
+      byKey.set(threadId, {
+        key: threadId,
+        label: threadLabelFromConfigRow(row, newestTime),
+        newestTime,
+      });
+    }
+    const items = Array.from(byKey.values());
     items.sort((a, b) => b.newestTime - a.newestTime);
     return items;
-  }, [threadIndex, messages]);
+  }, [threadIndex, messages, chatActions]);
 
   useEffect(() => {
     if (!messageCache) {

@@ -31,7 +31,11 @@ import type { ChatActions } from "./actions";
 import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
-import type { ThreadListItem, ThreadMeta } from "./threads";
+import {
+  COMBINED_FEED_KEY,
+  type ThreadListItem,
+  type ThreadMeta,
+} from "./threads";
 import { dateValue } from "./access";
 import { newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
@@ -57,7 +61,6 @@ const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   : "workspace-write";
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
-const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
   { value: "workspace-write", label: "Workspace write" },
@@ -88,6 +91,12 @@ export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup = {
     reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
   },
 };
+
+function normalizeThreadKey(value?: string | null): string | undefined {
+  const key = `${value ?? ""}`.trim();
+  if (!key || key === COMBINED_FEED_KEY) return undefined;
+  return key;
+}
 
 interface ChatRoomThreadPanelProps {
   actions: ChatActions;
@@ -166,12 +175,10 @@ export function ChatRoomThreadPanel({
     number | undefined
   >(undefined);
   const searchInputRef = useRef<any>(null);
-  const selectedThreadId = useMemo(() => {
-    if (selectedThreadKey && UUID_RX.test(selectedThreadKey)) {
-      return selectedThreadKey;
-    }
-    return undefined;
-  }, [selectedThreadKey]);
+  const selectedThreadId = useMemo(
+    () => normalizeThreadKey(selectedThreadKey),
+    [selectedThreadKey],
+  );
   const selectedThreadMeta = useMemo(
     () =>
       selectedThreadId
