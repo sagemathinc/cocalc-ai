@@ -10,7 +10,6 @@ import type {
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
   ChatStreamWriter,
-  getAcpWatchdogStats,
   recoverOrphanedAcpTurns,
 } from "../index";
 import * as queue from "../../sqlite/acp-queue";
@@ -100,6 +99,8 @@ const baseMetadata: AcpChatContext = {
   path: "chat",
   message_date: "123",
   sender_id: "u",
+  message_id: "msg-0",
+  thread_id: "thread-0",
 } as any;
 
 beforeEach(() => {
@@ -124,68 +125,44 @@ async function flush(writer: ChatStreamWriter) {
 }
 
 describe("ChatStreamWriter", () => {
-  it("tracks thread-id fallback usage in watchdog stats", async () => {
-    const before =
-      getAcpWatchdogStats().integrityTotals?.[
-        "chat.acp.missing_thread_id_fallbacks"
-      ] ?? 0;
+  it("requires thread_id in metadata", async () => {
     const { syncdb } = makeFakeSyncDB();
-    const writer: any = new ChatStreamWriter({
-      metadata: {
-        ...baseMetadata,
-        message_id: "msg-watchdog-1",
-        thread_id: undefined,
-      },
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady?.();
-    const after =
-      getAcpWatchdogStats().integrityTotals?.[
-        "chat.acp.missing_thread_id_fallbacks"
-      ] ?? 0;
-    expect(after).toBeGreaterThanOrEqual(before + 1);
-    writer.dispose?.(true);
+    expect(
+      () =>
+        new ChatStreamWriter({
+          metadata: {
+            ...baseMetadata,
+            thread_id: undefined,
+          } as any,
+          client: makeFakeClient(),
+          approverAccountId: "u",
+          syncdbOverride: syncdb as any,
+          logStoreFactory: () =>
+            ({
+              set: async () => {},
+            }) as any,
+        }),
+    ).toThrow("missing required thread_id");
   });
 
-  it("tracks date+sender lookup fallback usage when message_id is missing", async () => {
-    const before =
-      getAcpWatchdogStats().integrityTotals?.[
-        "chat.acp.date_sender_lookup_fallbacks"
-      ] ?? 0;
-    const { syncdb, setCurrent } = makeFakeSyncDB();
-    setCurrent({
-      event: "chat",
-      date: "123",
-      sender_id: "u",
-      generating: true,
-      history: [],
-    });
-    const writer: any = new ChatStreamWriter({
-      metadata: {
-        ...baseMetadata,
-        message_id: undefined,
-      },
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb as any,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady?.();
-    const after =
-      getAcpWatchdogStats().integrityTotals?.[
-        "chat.acp.date_sender_lookup_fallbacks"
-      ] ?? 0;
-    expect(after).toBeGreaterThanOrEqual(before + 1);
-    writer.dispose?.(true);
+  it("requires message_id in metadata", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    expect(
+      () =>
+        new ChatStreamWriter({
+          metadata: {
+            ...baseMetadata,
+            message_id: undefined,
+          } as any,
+          client: makeFakeClient(),
+          approverAccountId: "u",
+          syncdbOverride: syncdb as any,
+          logStoreFactory: () =>
+            ({
+              set: async () => {},
+            }) as any,
+        }),
+    ).toThrow("missing required message_id");
   });
 
   it("clears generating on summary", async () => {
@@ -1081,6 +1058,9 @@ describe("recoverOrphanedAcpTurns", () => {
     setCurrent({
       event: "chat",
       date: "123",
+      sender_id: "codex-agent",
+      message_id: "msg-recover-1",
+      thread_id: "thread-recover-1",
       generating: true,
       history: [
         {
@@ -1098,6 +1078,8 @@ describe("recoverOrphanedAcpTurns", () => {
         message_date: "123",
         sender_id: "codex-agent",
         reply_to: null,
+        message_id: "msg-recover-1",
+        thread_id: "thread-recover-1",
       },
     ]);
 

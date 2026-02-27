@@ -85,7 +85,6 @@ const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
 const MESSAGE_ID_LOOKUP_WARN_EVERY = 100;
 const ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK = false;
-const ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK = false;
 const CHAT_OFFLOAD_AUTOROTATE_ENABLED =
   `${process.env.COCALC_CHAT_OFFLOAD_AUTOROTATE ?? "1"}`.trim() !== "0";
 const CHAT_OFFLOAD_AUTOROTATE_COOLDOWN_MS = 60_000;
@@ -151,8 +150,6 @@ let acpLookupByMessageIdRowsScannedMax = 0;
 let acpLookupByMessageIdLargeScanWarnings = 0;
 let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
-let acpMissingThreadIdFallbacks = 0;
-let acpDateSenderLookupFallbacks = 0;
 const chatOffloadRotateAt = new Map<string, number>();
 
 async function maybeAutoRotateChatStore({
@@ -533,8 +530,6 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
         acpLookupByMessageIdRowsScannedMax,
       "chat.acp.lookup_message_id_large_scan_warnings":
         acpLookupByMessageIdLargeScanWarnings,
-      "chat.acp.missing_thread_id_fallbacks": acpMissingThreadIdFallbacks,
-      "chat.acp.date_sender_lookup_fallbacks": acpDateSenderLookupFallbacks,
     },
     topWritersByEvents,
   };
@@ -650,14 +645,6 @@ export class ChatStreamWriter {
     return (record as any)[key] as T;
   }
 
-  private chatPrimaryWhere(): Record<string, unknown> {
-    return {
-      event: "chat",
-      date: this.resolvedChatKey?.date ?? this.metadata.message_date,
-      sender_id: this.resolvedChatKey?.sender_id ?? this.metadata.sender_id,
-    };
-  }
-
   private setResolvedChatKey(record: any): void {
     const date = normalizeIsoDateString(syncdbField(record, "date"));
     const sender_id = syncdbField<string>(record, "sender_id");
@@ -667,24 +654,16 @@ export class ChatStreamWriter {
 
   private findChatRow(): any {
     if (!this.syncdb) return undefined;
-    if (this.metadata.message_id) {
-      const byMessageId = findChatRowByMessageId(
-        this.syncdb,
-        this.metadata.message_id,
-      );
-      if (byMessageId != null) {
-        this.setResolvedChatKey(byMessageId);
-        return byMessageId;
-      }
-    }
-    if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && this.metadata.message_id) {
+    if (!this.metadata.message_id) {
       return undefined;
     }
-    acpDateSenderLookupFallbacks += 1;
-    const current = this.syncdb.get_one(this.chatPrimaryWhere());
-    if (current != null) {
-      this.setResolvedChatKey(current);
-      return current;
+    const byMessageId = findChatRowByMessageId(
+      this.syncdb,
+      this.metadata.message_id,
+    );
+    if (byMessageId != null) {
+      this.setResolvedChatKey(byMessageId);
+      return byMessageId;
     }
     return undefined;
   }
@@ -698,36 +677,30 @@ export class ChatStreamWriter {
     return d.toISOString();
   }
 
-  private resolvedThreadId(): string {
-    if (this.metadata.thread_id) return this.metadata.thread_id;
-    if (this.threadId) return this.threadId;
-    if (this.sessionKey) return this.sessionKey;
-    const root = this.threadRootIso();
-    acpMissingThreadIdFallbacks += 1;
-    if (
-      acpMissingThreadIdFallbacks <= 3 ||
-      acpMissingThreadIdFallbacks % 100 === 0
-    ) {
-      logger.warn("acp chat metadata missing thread_id; using legacy fallback", {
-        chatKey: this.chatKey,
-        message_id: this.metadata.message_id,
-        message_date: this.metadata.message_date,
-        fallbackCount: acpMissingThreadIdFallbacks,
-      });
-    }
-    return `legacy-thread-${root}`;
+  private resolvedThreadId(): string | undefined {
+    const threadId = `${this.metadata.thread_id ?? ""}`.trim();
+    return threadId || undefined;
   }
 
   private setThreadState(
     state: "idle" | "queued" | "running" | "interrupted" | "error" | "complete",
   ): void {
     if (this.closed || this.syncdbError || !this.syncdb) return;
+    const threadId = this.resolvedThreadId();
+    if (!threadId) {
+      logger.warn("skip chat thread-state update: missing thread_id", {
+        chatKey: this.chatKey,
+        message_id: this.metadata.message_id,
+        state,
+      });
+      return;
+    }
     try {
       this.syncdb.set({
         event: THREAD_STATE_EVENT,
         sender_id: THREAD_STATE_SENDER,
         date: this.threadRootIso(),
-        thread_id: this.resolvedThreadId(),
+        thread_id: threadId,
         state,
         active_message_id: this.metadata.message_id,
         updated_at: new Date().toISOString(),
@@ -832,6 +805,12 @@ export class ChatStreamWriter {
     syncdbOverride?: any;
     logStoreFactory?: () => AKV<AcpStreamMessage[]>;
   }) {
+    if (`${metadata.message_id ?? ""}`.trim().length === 0) {
+      throw new Error("acp chat metadata is missing required message_id");
+    }
+    if (`${metadata.thread_id ?? ""}`.trim().length === 0) {
+      throw new Error("acp chat metadata is missing required thread_id");
+    }
     this.metadata = metadata;
     this.approverAccountId = approverAccountId;
     this.client = client;
@@ -1679,6 +1658,14 @@ export class ChatStreamWriter {
       return;
     }
     try {
+      const threadId = this.resolvedThreadId();
+      if (!threadId) {
+        logger.warn("persistSessionId skipped: missing thread_id", {
+          chatKey: this.chatKey,
+          message_id: this.metadata.message_id,
+        });
+        return;
+      }
       const threadCfgCurrent = this.syncdb.get_one({
         event: THREAD_CONFIG_EVENT,
         sender_id: THREAD_CONFIG_SENDER,
@@ -1695,7 +1682,7 @@ export class ChatStreamWriter {
         event: THREAD_CONFIG_EVENT,
         sender_id: THREAD_CONFIG_SENDER,
         date: threadRootIso,
-        thread_id: this.resolvedThreadId(),
+        thread_id: threadId,
         acp_config: { ...threadCfg, ...nextCfg },
         updated_at: new Date().toISOString(),
         updated_by: this.approverAccountId,
@@ -1829,21 +1816,10 @@ function findRecoverableChatRow(
     message_id?: string;
   },
 ): any {
-  if (context.message_id) {
-    const byMessageId = findChatRowByMessageId(syncdb, context.message_id);
-    if (byMessageId != null) return byMessageId;
-  }
-  if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && context.message_id) {
+  if (!context.message_id) {
     return undefined;
   }
-  acpDateSenderLookupFallbacks += 1;
-  const byDate = syncdb?.get_one?.({
-    event: "chat",
-    date: context.message_date,
-    sender_id: context.sender_id,
-  });
-  if (byDate != null) return byDate;
-  return undefined;
+  return findChatRowByMessageId(syncdb, context.message_id);
 }
 
 function historyToArray(value: any): MessageHistory[] {
@@ -1967,19 +1943,19 @@ export async function recoverOrphanedAcpTurns(
           })();
           const threadId =
             syncdbField<string>(current, "thread_id") ??
-            turn.thread_id ??
-            turn.session_id ??
-            `legacy-thread-${threadRootIso}`;
-          syncdb.set({
-            event: THREAD_STATE_EVENT,
-            sender_id: THREAD_STATE_SENDER,
-            date: threadRootIso,
-            thread_id: threadId,
-            state: "interrupted",
-            active_message_id: syncdbField<string>(current, "message_id"),
-            updated_at: new Date().toISOString(),
-            schema_version: THREAD_STATE_SCHEMA_VERSION,
-          });
+            turn.thread_id;
+          if (threadId) {
+            syncdb.set({
+              event: THREAD_STATE_EVENT,
+              sender_id: THREAD_STATE_SENDER,
+              date: threadRootIso,
+              thread_id: threadId,
+              state: "interrupted",
+              active_message_id: syncdbField<string>(current, "message_id"),
+              updated_at: new Date().toISOString(),
+              schema_version: THREAD_STATE_SCHEMA_VERSION,
+            });
+          }
           syncdb.commit();
           await syncdb.save();
         }
