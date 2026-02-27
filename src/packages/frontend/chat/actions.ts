@@ -288,6 +288,24 @@ export class ChatActions extends Actions<ChatState> {
     }
   }
 
+  private getSyncdbMany(where: Record<string, unknown>): any[] {
+    if (this.syncdb == null) return [];
+    const state = this.syncdb.get_state?.();
+    if (state != null && state !== "ready") return [];
+    try {
+      const rows = this.syncdb.get(where);
+      if (rows == null) return [];
+      if (Array.isArray(rows)) return rows;
+      if (typeof (rows as any)?.toJS === "function") {
+        const js = (rows as any).toJS();
+        return Array.isArray(js) ? js : [];
+      }
+    } catch {
+      // ignore and return empty
+    }
+    return [];
+  }
+
   // Dispose resources tied to this actions instance.
   dispose(): void {
     // do NOT dispose of messageCache and syncdb here; that's managed
@@ -1181,6 +1199,13 @@ export class ChatActions extends Actions<ChatState> {
       agent_mode,
       acp_config,
     };
+  };
+
+  listThreadConfigRows = (): any[] => {
+    return this.getSyncdbMany({
+      event: THREAD_CONFIG_EVENT,
+      sender_id: THREAD_CONFIG_SENDER,
+    });
   };
 
   save_scroll_state = (position, height, offset): void => {

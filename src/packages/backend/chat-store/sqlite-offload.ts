@@ -758,10 +758,35 @@ export async function rotateChatStore({
     return a.idx - b.idx;
   });
   const archivedLines = archivedSorted.map((x) => x.row.line);
+  const archivedCountByThreadId = new Map<string, number>();
+  for (const item of archivedSorted) {
+    const threadId = `${item.row.thread_id ?? ""}`.trim();
+    if (!threadId) continue;
+    archivedCountByThreadId.set(
+      threadId,
+      (archivedCountByThreadId.get(threadId) ?? 0) + 1,
+    );
+  }
   const keptLines = parsed
     .map((row, idx) => ({ row, idx }))
     .filter((x) => !x.row.is_chat || keepIdx.has(x.idx))
-    .map((x) => x.row.line);
+    .map((x) => {
+      if (x.row.event !== "chat-thread-config" || !x.row.obj) {
+        return x.row.line;
+      }
+      const threadId = `${x.row.thread_id ?? ""}`.trim();
+      if (!threadId) return x.row.line;
+      const archivedCount = archivedCountByThreadId.get(threadId);
+      if (!archivedCount) return x.row.line;
+      const cfg = x.row.obj as Record<string, any>;
+      const prevCount = Number(cfg.archived_chat_rows ?? 0);
+      const nextCount =
+        (Number.isFinite(prevCount) ? prevCount : 0) + archivedCount;
+      return JSON.stringify({
+        ...cfg,
+        archived_chat_rows: nextCount,
+      });
+    });
   const archivedBytes = archivedLines.reduce(
     (sum, line) => sum + Buffer.byteLength(line),
     0,

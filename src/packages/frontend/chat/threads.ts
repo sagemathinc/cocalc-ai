@@ -194,9 +194,50 @@ export function useThreadSections({
   threadSections: ThreadSectionWithUnread[];
 } {
   const rawThreads = useThreadList(messages, threadIndex, version);
+  const configThreads = React.useMemo<ThreadListItem[]>(() => {
+    const rows = actions?.listThreadConfigRows?.() ?? [];
+    if (!rows.length) return [];
+    const keysInUse = new Set(rawThreads.map((x) => x.key));
+    const threadIdsInUse = new Set<string>();
+    for (const thread of rawThreads) {
+      const id = `${field<string>(thread.rootMessage, "thread_id") ?? ""}`.trim();
+      if (id) threadIdsInUse.add(id);
+    }
+    const extra: ThreadListItem[] = [];
+    for (const row0 of rows) {
+      const row =
+        row0 && typeof row0.toJS === "function" ? row0.toJS() : row0;
+      const threadId = `${field<string>(row, "thread_id") ?? ""}`.trim();
+      if (!threadId || threadIdsInUse.has(threadId) || keysInUse.has(threadId)) {
+        continue;
+      }
+      const dateRaw =
+        field<string>(row, "updated_at") ?? field<string>(row, "date");
+      const dateMs = (() => {
+        if (!dateRaw) return 0;
+        const d = new Date(dateRaw);
+        return Number.isFinite(d.valueOf()) ? d.valueOf() : 0;
+      })();
+      const name = `${field<string>(row, "name") ?? ""}`.trim();
+      extra.push({
+        key: threadId,
+        label: name || (dateMs ? new Date(dateMs).toLocaleString() : "Untitled Chat"),
+        newestTime: dateMs,
+        messageCount: 0,
+        rootMessage: undefined,
+      });
+    }
+    return extra;
+  }, [actions, rawThreads, version]);
+  const allThreads = React.useMemo<ThreadListItem[]>(() => {
+    if (configThreads.length === 0) return rawThreads;
+    const merged = [...rawThreads, ...configThreads];
+    merged.sort((a, b) => b.newestTime - a.newestTime);
+    return merged;
+  }, [rawThreads, configThreads]);
 
   const threads = React.useMemo<ThreadMeta[]>(() => {
-    return rawThreads.map((thread) => {
+    return allThreads.map((thread) => {
       const rootMessage = thread.rootMessage;
       const threadMeta = actions?.getThreadMetadata?.(thread.key);
       const storedName = threadMeta?.name;
@@ -249,7 +290,7 @@ export function useThreadSections({
         lastActivityAt,
       };
     });
-  }, [rawThreads, accountId, actions, activity, version]);
+  }, [allThreads, accountId, actions, activity, version]);
 
   const visibleThreads = React.useMemo(
     () => threads.filter((thread) => !thread.isArchived),

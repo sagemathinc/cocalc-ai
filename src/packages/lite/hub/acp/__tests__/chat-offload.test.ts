@@ -279,4 +279,57 @@ describe("chat offload sqlite store", () => {
     expect(headMessageIds).toContain("reply-1");
     expect(headMessageIds).toContain("root-1");
   });
+
+  it("preserves thread-config rows and records archived message counts", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "chat-offload-threadcfg-"));
+    const chatPath = path.join(tmp, "threadcfg.chat");
+    const dbPath = path.join(tmp, "offload.sqlite3");
+    const threadId = "thread-cfg-1";
+    const rows = [
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: "2026-02-20T00:00:00.000Z",
+        thread_id: threadId,
+        name: "Config Thread",
+      },
+      makeChatRow({
+        date: "2026-02-20T00:01:00.000Z",
+        message_id: "cfg-old-1",
+        thread_id: threadId,
+        content: "old in thread",
+      }),
+      makeChatRow({
+        date: "2026-02-20T00:02:00.000Z",
+        message_id: "cfg-new-1",
+        thread_id: "thread-other",
+        content: "newest",
+      }),
+    ];
+    await fs.writeFile(
+      chatPath,
+      rows.map((x) => JSON.stringify(x)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const rotated = await rotateChatStore({
+      chat_path: chatPath,
+      db_path: dbPath,
+      keep_recent_messages: 1,
+      max_head_bytes: 1,
+      max_head_messages: 1,
+      require_idle: true,
+    });
+    expect(rotated.rotated).toBe(true);
+
+    const headRaw = await fs.readFile(chatPath, "utf8");
+    const headRows = headRaw
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((x) => JSON.parse(x));
+    const cfg = headRows.find((x) => x.event === "chat-thread-config");
+    expect(cfg?.thread_id).toBe(threadId);
+    expect(cfg?.archived_chat_rows).toBe(1);
+  });
 });

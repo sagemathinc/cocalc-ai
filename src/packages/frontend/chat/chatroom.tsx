@@ -450,24 +450,39 @@ export function ChatPanel({
   });
 
   const combinedFeedIndex = useMemo(() => {
-    if (!threadIndex || !combinedThread) return undefined;
+    if (!threadIndex) return undefined;
     const combinedKeys = buildCombinedFeedKeys(
       threadIndex,
       messages,
       COMBINED_FEED_MAX_PER_THREAD,
     );
-    const entry: ThreadIndexEntry = {
-      key: COMBINED_FEED_KEY,
-      newestTime: combinedThread.newestTime,
-      messageCount: combinedKeys.length,
-      messageKeys: new Set(combinedKeys),
-      orderedKeys: combinedKeys,
-      rootMessage: undefined,
-    };
     const next = new Map(threadIndex);
-    next.set(COMBINED_FEED_KEY, entry);
+    if (combinedThread) {
+      const entry: ThreadIndexEntry = {
+        key: COMBINED_FEED_KEY,
+        newestTime: combinedThread.newestTime,
+        messageCount: combinedKeys.length,
+        messageKeys: new Set(combinedKeys),
+        orderedKeys: combinedKeys,
+        rootMessage: undefined,
+      };
+      next.set(COMBINED_FEED_KEY, entry);
+    }
+    // Ensure config-only threads have explicit empty index entries so selecting
+    // them doesn't fall back to rendering all messages.
+    for (const thread of threads) {
+      if (next.has(thread.key)) continue;
+      next.set(thread.key, {
+        key: thread.key,
+        newestTime: thread.newestTime,
+        messageCount: 0,
+        messageKeys: new Set<string>(),
+        orderedKeys: [],
+        rootMessage: thread.rootMessage as any,
+      });
+    }
     return next;
-  }, [threadIndex, messages, combinedThread]);
+  }, [threadIndex, messages, combinedThread, threads]);
 
   const scrollCacheId = useMemo(() => {
     const base = `${project_id ?? ""}${path ?? ""}`;
