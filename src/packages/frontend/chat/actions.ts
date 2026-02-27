@@ -134,32 +134,22 @@ export function collectThreadMessages({
 }): ChatMessageTyped[] | undefined {
   if (!messages || messages.size === 0) return undefined;
   const trimmed = typeof dateStr === "string" ? dateStr.trim() : "";
-  if (isValidUUID(trimmed)) {
-    const list: ChatMessageTyped[] = [];
-    for (const msg of messages.values()) {
-      if (field<string>(msg, "thread_id") === trimmed) {
-        list.push(msg);
-      }
-    }
-    list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
-    return list.length > 0 ? list : undefined;
-  }
-  const parsedMs = (() => {
+  const threadId = (() => {
+    if (isValidUUID(trimmed)) return trimmed;
     const asNumber = Number(trimmed || dateStr);
-    if (Number.isFinite(asNumber)) return asNumber;
-    const asDate = new Date(trimmed || dateStr).valueOf();
-    return Number.isFinite(asDate) ? asDate : undefined;
-  })();
-  const rootMessage = parsedMs != null ? getMessageByDate(parsedMs) : undefined;
-  const threadId = field<string>(rootMessage, "thread_id");
-  const list: ChatMessageTyped[] = [];
-  if (!threadId) {
-    if (rootMessage) {
-      list.push(rootMessage);
+    if (Number.isFinite(asNumber)) {
+      const rootMessage = getMessageByDate(asNumber);
+      const id = field<string>(rootMessage, "thread_id");
+      return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
     }
-    list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
-    return list;
-  }
+    const asDate = new Date(trimmed || dateStr);
+    if (!Number.isFinite(asDate.valueOf())) return undefined;
+    const rootMessage = getMessageByDate(asDate.valueOf());
+    const id = field<string>(rootMessage, "thread_id");
+    return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
+  })();
+  if (!threadId) return undefined;
+  const list: ChatMessageTyped[] = [];
   for (const msg of messages.values()) {
     if (field<string>(msg, "thread_id") === threadId) {
       list.push(msg);
@@ -1069,17 +1059,7 @@ export class ChatActions extends Actions<ChatState> {
       return false;
     }
     const readKey = `read-${account_id}`;
-    let updated = this.setThreadConfigRecord(threadKey, { [readKey]: count });
-    if (!updated) {
-      // Legacy fallback: still support old read markers persisted on the root row.
-      const entry = this.getThreadRootDoc(threadKey);
-      if (entry == null) {
-        return false;
-      }
-      entry.doc[readKey] = count;
-      this.setSyncdb(entry.doc);
-      updated = true;
-    }
+    const updated = this.setThreadConfigRecord(threadKey, { [readKey]: count });
     if (commit) {
       this.syncdb.commit();
     }
@@ -1192,8 +1172,7 @@ export class ChatActions extends Actions<ChatState> {
       asIsoDateString(opts?.date) ??
       asIsoDateString(field<string>(currentObj, "date")) ??
       asIsoDateString(field<string>(rootDoc?.doc, "date")) ??
-      asIsoDateString(dateValue(rootDoc?.message)) ??
-      threadKeyToIso(threadKey);
+      asIsoDateString(dateValue(rootDoc?.message));
     if (!dateIso) {
       console.warn("chat thread-config write skipped: missing valid date", {
         threadKey,
@@ -1294,15 +1273,7 @@ export class ChatActions extends Actions<ChatState> {
     if (Number.isFinite(parsedCfg) && parsedCfg > 0) {
       return parsedCfg;
     }
-    const root = this.getThreadRootDoc(threadKey)?.message as any;
-    const fromRoot = root?.[readKey];
-    const parsedRoot =
-      typeof fromRoot === "number"
-        ? fromRoot
-        : typeof fromRoot === "string"
-          ? parseInt(fromRoot, 10)
-          : NaN;
-    return Number.isFinite(parsedRoot) && parsedRoot > 0 ? parsedRoot : 0;
+    return 0;
   };
 
   listThreadConfigRows = (): any[] => {
@@ -2032,10 +2003,6 @@ export class ChatActions extends Actions<ChatState> {
       selectedThreadKey: threadKey,
     });
   };
-}
-
-function threadKeyToIso(threadKey: string): string | null {
-  return asIsoDateString(threadKey) ?? null;
 }
 
 function asIsoDateString(value: unknown): string | undefined {

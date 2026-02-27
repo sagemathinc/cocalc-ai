@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "./actions";
 import { COMBINED_FEED_KEY, type ThreadMeta } from "./threads";
 import type { ChatMessages } from "./types";
-import { getMessageAtDate, getThreadRootDate } from "./utils";
+import { getMessageAtDate } from "./utils";
 import { field } from "./access";
 
 interface ThreadSelectionOptions {
@@ -134,8 +134,8 @@ export function useChatThreadSelection({
     const message = getMessageAtDate({ messages, date: parsed });
     if (message == null) return;
     const threadId = field<string>(message as any, "thread_id")?.trim();
-    const root = getThreadRootDate({ date: parsed, messages }) || parsed;
-    const threadKey = threadId || `${root}`;
+    if (!threadId) return;
+    const threadKey = threadId;
     if (threadKey !== selectedThreadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
@@ -156,10 +156,13 @@ export function useChatThreadSelection({
       const d = new Date(rootDate as any);
       if (!Number.isNaN(d.valueOf())) return d;
     }
-    const millis = parseInt(selectedThreadKey, 10);
-    if (!isFinite(millis)) return undefined;
-    return new Date(millis);
-  }, [selectedThreadKey, selectedThread]);
+    const meta = actions.getThreadMetadata?.(selectedThreadKey, {
+      threadId: selectedThreadKey,
+    });
+    if (!meta?.thread_date) return undefined;
+    const d = new Date(meta.thread_date);
+    return Number.isNaN(d.valueOf()) ? undefined : d;
+  }, [actions, selectedThreadKey, selectedThread]);
 
   return {
     selectedThreadKey,

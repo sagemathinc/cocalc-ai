@@ -118,7 +118,7 @@ describe("ChatActions.getMessagesInThread", () => {
     ]);
   });
 
-  it("returns only the root message when thread_id is missing", () => {
+  it("returns no thread messages when thread_id is missing", () => {
     const rootDate = new Date("2026-01-02T00:00:00.000Z");
     const rootIso = rootDate.toISOString();
     const messages = new Map<string, any>([
@@ -161,7 +161,7 @@ describe("ChatActions.getMessagesInThread", () => {
         dateStr: rootIso,
         getMessageByDate: (date: number) => messages.get(`${date}`),
       }) ?? [];
-    expect(result.map((m: any) => m.message_id)).toEqual(["legacy-root"]);
+    expect(result.map((m: any) => m.message_id)).toEqual([]);
   });
 });
 

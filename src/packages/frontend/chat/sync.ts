@@ -115,9 +115,8 @@ export function handleSyncDBChange({
         typeof (message as any)?.thread_id === "string"
           ? `${(message as any).thread_id}`.trim()
           : "";
-      const key =
-        threadId ||
-        `${message.reply_to ? new Date(message.reply_to).valueOf() : message.date.valueOf()}`;
+      if (!threadId) continue;
+      const key = threadId;
       const now = Date.now();
       const activity = (store.get("activity") ?? iMap()).set(key, now);
       store.setState({ activity });

@@ -196,12 +196,7 @@ export function ChatRoomThreadPanel({
         return d.toISOString();
       }
     }
-    if (!selectedThreadKey) return undefined;
-    const ms = parseInt(selectedThreadKey, 10);
-    if (!Number.isFinite(ms)) return undefined;
-    const date = new Date(ms);
-    if (Number.isNaN(date.valueOf())) return undefined;
-    return date.toISOString();
+    return undefined;
   }, [selectedThread?.rootMessage, selectedThreadKey, selectedThreadMeta?.thread_date]);
   const selectedThreadLookup = selectedThreadId ?? selectedThreadRootIso;
   const selectedThreadMessages = useMemo(
