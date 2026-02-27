@@ -172,6 +172,18 @@ export function ChatRoomThreadPanel({
     }
     return undefined;
   }, [selectedThreadKey]);
+  const selectedThreadMeta = useMemo(
+    () =>
+      selectedThreadId
+        ? actions.getThreadMetadata(selectedThreadId, { threadId: selectedThreadId })
+        : undefined,
+    [actions, selectedThreadId],
+  );
+  const archivedRowsCount = useMemo(() => {
+    const value = selectedThreadMeta?.archived_chat_rows;
+    if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+    return Math.max(0, Math.floor(value));
+  }, [selectedThreadMeta?.archived_chat_rows]);
   const selectedThreadLookup = selectedThreadId;
   const selectedThreadMessages = useMemo(
     () =>
@@ -931,6 +943,38 @@ export function ChatRoomThreadPanel({
           )}
         </div>
       </Modal>
+      {selectedThreadId && archivedRowsCount > 0 ? (
+        <div
+          style={{
+            margin: "8px 12px 0 12px",
+            padding: "8px 10px",
+            border: "1px solid #ffe58f",
+            background: "#fffbe6",
+            borderRadius: 8,
+            color: "#8a6d3b",
+            fontSize: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            zIndex: 1,
+          }}
+        >
+          <span>
+            {archivedRowsCount.toLocaleString()} older message
+            {archivedRowsCount === 1 ? "" : "s"} archived.
+          </span>
+          <Button
+            size="small"
+            onClick={() => {
+              setArchivedHistoryOpen(true);
+              void loadArchivedHistory(0, false);
+            }}
+          >
+            Load more
+          </Button>
+        </div>
+      ) : null}
       <ChatLog
         actions={actions}
         project_id={project_id ?? ""}

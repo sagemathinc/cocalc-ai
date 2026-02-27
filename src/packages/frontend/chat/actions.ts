@@ -79,6 +79,7 @@ export interface ThreadMetadataSnapshot {
   thread_color?: string;
   thread_icon?: string;
   thread_image?: string;
+  archived_chat_rows?: number;
   pin?: boolean;
   archived?: boolean;
   agent_kind?: ThreadAgentKind;
@@ -1091,6 +1092,18 @@ export class ChatActions extends Actions<ChatState> {
         : value === false || value === "false" || value === 0 || value === "0"
           ? false
           : undefined;
+    const parseCount = (value: any): number | undefined => {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.max(0, Math.floor(value));
+      }
+      if (typeof value === "string") {
+        const parsed = parseInt(value, 10);
+        if (Number.isFinite(parsed)) {
+          return Math.max(0, parsed);
+        }
+      }
+      return undefined;
+    };
     const readString = (
       key: "name" | "thread_color" | "thread_icon" | "thread_image",
     ): string | undefined => {
@@ -1124,6 +1137,7 @@ export class ChatActions extends Actions<ChatState> {
       thread_color: readString("thread_color"),
       thread_icon: readString("thread_icon"),
       thread_image: readString("thread_image"),
+      archived_chat_rows: parseCount(field<any>(cfg, "archived_chat_rows")),
       pin,
       archived,
       agent_kind,
