@@ -1035,12 +1035,19 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   private getThreadConfigRecordById = (threadId?: string): any | null => {
-    if (this.syncdb == null) return null;
     if (!threadId) return null;
-    return this.getSyncdbOne({
-      event: THREAD_CONFIG_EVENT,
-      thread_id: threadId,
-    });
+    const syncState = this.syncdb?.get_state?.();
+    if (this.syncdb != null && (syncState == null || syncState === "ready")) {
+      return (
+        this.getSyncdbOne({
+          event: THREAD_CONFIG_EVENT,
+          thread_id: threadId,
+        }) ?? null
+      );
+    }
+    return (
+      this.messageCache?.getThreadConfigPreviewById?.(threadId) ?? null
+    );
   };
 
   private setThreadConfigRecord = (
@@ -1181,10 +1188,14 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   listThreadConfigRows = (): any[] => {
-    return this.getSyncdbMany({
-      event: THREAD_CONFIG_EVENT,
-      sender_id: THREAD_CONFIG_SENDER,
-    });
+    const syncState = this.syncdb?.get_state?.();
+    if (this.syncdb != null && (syncState == null || syncState === "ready")) {
+      return this.getSyncdbMany({
+        event: THREAD_CONFIG_EVENT,
+        sender_id: THREAD_CONFIG_SENDER,
+      });
+    }
+    return this.messageCache?.listThreadConfigPreviewRows?.() ?? [];
   };
 
   save_scroll_state = (position, height, offset): void => {

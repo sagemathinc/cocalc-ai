@@ -37,6 +37,8 @@ export class ChatMessageCache extends EventEmitter {
   private dateIndex: Map<string, string> = new Map();
   private threadIndex: Map<string, ThreadIndexEntry> = new Map();
   private threadKeyByThreadId: Map<string, string> = new Map();
+  private threadConfigByThreadId: Map<string, Record<string, unknown>> =
+    new Map();
   private version = 0;
 
   constructor(syncdb: ImmerDB) {
@@ -88,6 +90,19 @@ export class ChatMessageCache extends EventEmitter {
     return this.threadKeyByThreadId.get(trimmed);
   }
 
+  getThreadConfigPreviewById(
+    threadId?: string,
+  ): Record<string, unknown> | undefined {
+    if (!threadId) return;
+    const trimmed = threadId.trim();
+    if (!trimmed) return;
+    return this.threadConfigByThreadId.get(trimmed);
+  }
+
+  listThreadConfigPreviewRows(): Record<string, unknown>[] {
+    return Array.from(this.threadConfigByThreadId.values());
+  }
+
   getByMessageId(messageId?: string): PlainChatMessage | undefined {
     if (!messageId) return;
     return this.messagesById.get(messageId);
@@ -109,6 +124,7 @@ export class ChatMessageCache extends EventEmitter {
     this.messageIdIndex = new Map();
     this.dateIndex = new Map();
     this.threadKeyByThreadId = new Map();
+    this.threadConfigByThreadId = new Map();
     this.removeAllListeners();
   }
 
@@ -316,6 +332,7 @@ export class ChatMessageCache extends EventEmitter {
     this.threadIndex = produce(snapshot.threadIndex, () => {});
     // Keep this mutable; incremental change handling updates this map in-place.
     this.threadKeyByThreadId = new Map(snapshot.threadKeyByThreadId);
+    this.threadConfigByThreadId = new Map(snapshot.threadConfigByThreadId);
     this.bumpVersion();
   }
 
@@ -326,8 +343,16 @@ export class ChatMessageCache extends EventEmitter {
     const dateIndex = new Map<string, string>();
     const threadIndex = new Map<string, ThreadIndexEntry>();
     const threadKeyByThreadId = new Map<string, string>();
+    const threadConfigByThreadId = new Map<string, Record<string, unknown>>();
     const list = Array.isArray(rows) ? rows : [];
     let chatRows = 0;
+
+    for (const row0 of list) {
+      if ((row0 as any)?.event !== "chat-thread-config") continue;
+      const threadId = `${(row0 as any)?.thread_id ?? ""}`.trim();
+      if (!threadId) continue;
+      threadConfigByThreadId.set(threadId, row0 as Record<string, unknown>);
+    }
 
     // Build thread_id -> root-date-key mapping for opening root messages from
     // thread metadata (used by a few date-keyed helpers).
@@ -365,6 +390,7 @@ export class ChatMessageCache extends EventEmitter {
       dateIndex,
       threadIndex,
       threadKeyByThreadId,
+      threadConfigByThreadId,
       chatRows,
     };
   }
@@ -465,5 +491,6 @@ interface ChatCacheSnapshot {
   dateIndex: Map<string, string>;
   threadIndex: Map<string, ThreadIndexEntry>;
   threadKeyByThreadId: Map<string, string>;
+  threadConfigByThreadId: Map<string, Record<string, unknown>>;
   chatRows: number;
 }

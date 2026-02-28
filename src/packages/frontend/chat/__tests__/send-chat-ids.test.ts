@@ -221,6 +221,26 @@ describe("thread-config by thread_id", () => {
     expect(meta.agent_model).toBe("gpt-5.3-codex");
   });
 
+  it("reads thread metadata from preview cache while syncdb is loading", () => {
+    const threadId = "aaaaaaaa-1111-4111-8111-111111111111";
+    const actions = makeActions();
+    actions.syncdb.get_state = () => "loading";
+    actions.messageCache.getThreadConfigPreviewById = (id: string) =>
+      id === threadId
+        ? ({
+            event: "chat-thread-config",
+            sender_id: "__thread_config__",
+            date: "2026-02-21T18:00:00.000Z",
+            thread_id: threadId,
+            name: "Archived thread",
+            archived: true,
+          } as any)
+        : undefined;
+    const meta = actions.getThreadMetadata(threadId, { threadId });
+    expect(meta.name).toBe("Archived thread");
+    expect(meta.archived).toBe(true);
+  });
+
   it("updates thread-config by UUID thread key without timestamp keying", () => {
     const threadId = "22222222-2222-4222-8222-222222222222";
     const existing = {
