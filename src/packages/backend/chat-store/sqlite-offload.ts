@@ -140,6 +140,7 @@ export interface SearchArchivedOptions {
   query: string;
   db_path?: string;
   thread_id?: string;
+  exclude_thread_ids?: string[];
   limit?: number;
   offset?: number;
 }
@@ -1036,6 +1037,7 @@ export function searchChatStoreArchived({
   query,
   db_path,
   thread_id,
+  exclude_thread_ids,
   limit = 50,
   offset = 0,
 }: SearchArchivedOptions): SearchArchivedResult {
@@ -1057,6 +1059,18 @@ export function searchChatStoreArchived({
   if (thread_id) {
     where.push("ar.thread_id = ?");
     params.push(thread_id);
+  }
+  const excludedThreadIds = Array.from(
+    new Set(
+      (exclude_thread_ids ?? [])
+        .map((x) => `${x ?? ""}`.trim())
+        .filter((x) => x.length > 0),
+    ),
+  );
+  if (excludedThreadIds.length > 0) {
+    const placeholders = excludedThreadIds.map(() => "?").join(", ");
+    where.push(`(ar.thread_id IS NULL OR ar.thread_id NOT IN (${placeholders}))`);
+    params.push(...excludedThreadIds);
   }
   const normalizedLimit = Math.max(1, limit);
   const normalizedOffset = Math.max(0, offset);

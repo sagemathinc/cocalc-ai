@@ -142,6 +142,17 @@ describe("chat offload sqlite store", () => {
     expect(searchThread2.hits.length).toBe(1);
     expect(searchThread2.total_hits).toBe(1);
     expect(searchThread2.hits[0].message_id).toBe("m2");
+
+    const searchExcludeThread2 = searchChatStoreArchived({
+      chat_path: chatPath,
+      db_path: dbPath,
+      query: "message",
+      exclude_thread_ids: ["thread-2"],
+      limit: 10,
+    });
+    expect(searchExcludeThread2.hits.length).toBe(1);
+    expect(searchExcludeThread2.total_hits).toBe(1);
+    expect(searchExcludeThread2.hits[0].message_id).toBe("m1");
     const searchMalformedFts = searchChatStoreArchived({
       chat_path: chatPath,
       db_path: dbPath,

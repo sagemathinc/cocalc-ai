@@ -819,6 +819,7 @@ export interface Projects {
     query: string;
     db_path?: string;
     thread_id?: string;
+    exclude_thread_ids?: string[];
     limit?: number;
     offset?: number;
   }) => Promise<{

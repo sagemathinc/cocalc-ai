@@ -1138,6 +1138,7 @@ export async function chatStoreSearch({
   query,
   db_path,
   thread_id,
+  exclude_thread_ids,
   limit,
   offset,
 }: {
@@ -1147,6 +1148,7 @@ export async function chatStoreSearch({
   query: string;
   db_path?: string;
   thread_id?: string;
+  exclude_thread_ids?: string[];
   limit?: number;
   offset?: number;
 }): Promise<{
@@ -1162,6 +1164,7 @@ export async function chatStoreSearch({
     query,
     db_path,
     thread_id,
+    exclude_thread_ids,
     limit,
     offset,
   });

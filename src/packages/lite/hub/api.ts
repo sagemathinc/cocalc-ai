@@ -444,6 +444,7 @@ export const hubApi: HubApi = {
       query: string;
       db_path?: string;
       thread_id?: string;
+      exclude_thread_ids?: string[];
       limit?: number;
       offset?: number;
     }) => {
@@ -452,6 +453,7 @@ export const hubApi: HubApi = {
         query: opts.query,
         db_path: opts.db_path,
         thread_id: opts.thread_id,
+        exclude_thread_ids: opts.exclude_thread_ids,
         limit: opts.limit,
         offset: opts.offset,
       });
