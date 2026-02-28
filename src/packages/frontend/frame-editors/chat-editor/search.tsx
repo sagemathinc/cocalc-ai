@@ -136,17 +136,27 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         !threadId ||
         threadId === COMBINED_FEED_KEY ||
         threadId === ALL_MESSAGES_KEY ||
-        archivedByThreadId.get(threadId) === true ||
-        byKey.has(threadId)
+        archivedByThreadId.get(threadId) === true
       ) {
         continue;
       }
       const whenRaw = row?.updated_at ?? row?.date;
       const when = new Date(whenRaw);
       const newestTime = Number.isFinite(when.valueOf()) ? when.valueOf() : 0;
+      const configLabel = threadLabelFromConfigRow(row, newestTime);
+      const configName = typeof row?.name === "string" ? row.name.trim() : "";
+      const existing = byKey.get(threadId);
+      if (existing) {
+        // Prefer explicit thread-config names over inferred root-message labels.
+        if (configName) {
+          existing.label = configLabel;
+        }
+        existing.newestTime = Math.max(existing.newestTime, newestTime);
+        continue;
+      }
       byKey.set(threadId, {
         key: threadId,
-        label: threadLabelFromConfigRow(row, newestTime),
+        label: configLabel,
         newestTime,
       });
     }
