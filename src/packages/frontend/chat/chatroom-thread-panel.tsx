@@ -334,7 +334,9 @@ export function ChatRoomThreadPanel({
         }));
       }
       if (totalRows > 0 && totalApplied === 0) {
-        setArchivedLoadError("No additional archived messages were loaded.");
+        setArchivedLoadError(
+          "No additional backend-stored messages were loaded.",
+        );
       }
     } catch (err) {
       setArchivedLoadError(`${err}`);
@@ -1013,10 +1015,10 @@ export function ChatRoomThreadPanel({
             {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
               <span>
                 {archivedSearchLoading
-                  ? "Backend: searching..."
+                  ? "Stored on backend: searching..."
                   : archivedSearchError
-                    ? "Backend: error"
-                    : `Backend: ${archivedSearchTotal} hits (${Math.min(
+                    ? "Stored on backend: error"
+                    : `Stored on backend: ${archivedSearchTotal} hits (${Math.min(
                         ARCHIVED_INLINE_PREVIEW_LIMIT,
                         archivedMatchCount,
                       )} shown)`}
@@ -1040,7 +1042,7 @@ export function ChatRoomThreadPanel({
               ) : archivedSearchError ? (
                 <div style={{ color: "#b71c1c" }}>{archivedSearchError}</div>
               ) : archivedSearchHits.length === 0 ? (
-                <div>No backend matches.</div>
+                <div>No matches in backend-stored history.</div>
               ) : (
                 archivedSearchHits
                   .slice(0, ARCHIVED_INLINE_PREVIEW_LIMIT)

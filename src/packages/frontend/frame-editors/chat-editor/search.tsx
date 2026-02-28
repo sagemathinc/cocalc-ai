@@ -481,12 +481,12 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         ) : null}
         {archivedSearchLoading ? (
           <div style={{ color: "#888", marginBottom: "10px", fontSize }}>
-            Searching backend history...
+            Searching history stored on backend...
           </div>
         ) : null}
         {archivedSearchError ? (
           <div style={{ color: "#b71c1c", marginBottom: "10px", fontSize }}>
-            Backend search error: {archivedSearchError}
+            Backend-stored history search error: {archivedSearchError}
           </div>
         ) : null}
         <div
@@ -542,7 +542,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
                 ? `Searching… loaded: ${loadedCount}`
                 : `Hits shown: ${totalCount} (${loadedCount} loaded${
                     scopeHasArchivedRows
-                      ? `, ${archivedCount} backend shown / ${archivedTotalCount} backend total`
+                      ? `, ${archivedCount} stored on backend shown / ${archivedTotalCount} stored on backend total`
                       : ""
                   })`}
             </div>
@@ -603,7 +603,7 @@ function SearchResult({
       ) : null}
       {hit.source === "archived" ? (
         <span style={{ float: "right", color: "#888", marginRight: 8 }}>
-          backend
+          stored on backend
         </span>
       ) : null}
       <StaticMarkdown

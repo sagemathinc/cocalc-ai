@@ -162,7 +162,7 @@ describe("chat search archived integration", () => {
       );
     });
 
-    expect(await screen.findByText("backend")).toBeTruthy();
+    expect((await screen.findAllByText(/stored on backend/i)).length).toBeGreaterThan(0);
     expect(await screen.findByText("archived match")).toBeTruthy();
   });
 
