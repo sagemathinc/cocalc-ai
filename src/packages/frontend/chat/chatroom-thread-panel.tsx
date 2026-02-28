@@ -328,6 +328,54 @@ export function ChatRoomThreadPanel({
     selectedThreadId,
   ]);
 
+  const hydrateThreadDate = useCallback(
+    async (targetDateMs: number): Promise<boolean> => {
+      if (!project_id || !path || !selectedThreadId) return false;
+      const dateKey = `${targetDateMs}`;
+      if (actions.getAllMessages()?.has(dateKey)) return true;
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      if (!hubProjects) return false;
+      let offset = 0;
+      const limit = 200;
+      for (let i = 0; i < 25; i++) {
+        const result = await hubProjects.chatStoreReadArchived({
+          project_id,
+          chat_path: path,
+          thread_id: selectedThreadId,
+          limit,
+          offset,
+        });
+        const rows = result.rows ?? [];
+        if (!rows.length) return actions.getAllMessages()?.has(dateKey) ?? false;
+        actions.hydrateArchivedRows(
+          rows.map((row) => row.row).filter((row) => row != null),
+        );
+        if (actions.getAllMessages()?.has(dateKey)) return true;
+        if (result.next_offset == null) break;
+        offset = result.next_offset;
+      }
+      return actions.getAllMessages()?.has(dateKey) ?? false;
+    },
+    [actions, path, project_id, selectedThreadId],
+  );
+
+  const openArchivedSearchHit = useCallback(
+    async (hit: ChatStoreSearchHit) => {
+      const targetDateMs =
+        typeof hit.date_ms === "number" && Number.isFinite(hit.date_ms)
+          ? hit.date_ms
+          : undefined;
+      if (targetDateMs == null) return;
+      try {
+        await hydrateThreadDate(targetDateMs);
+        actions.scrollToDate(targetDateMs);
+      } catch (err) {
+        setArchivedSearchError(`${err}`);
+      }
+    },
+    [actions, hydrateThreadDate],
+  );
+
   const setSearchQueryDebounced = useMemo(
     () =>
       debounce((value: string) => {
@@ -888,16 +936,16 @@ export function ChatRoomThreadPanel({
             {!selectedThreadId
               ? "Select a thread to search"
               : matchCount
-                ? `${normalizedCursor + 1}/${matchCount}`
-                : "0 matches"}
+                ? `Loaded: ${matchCount} hits (${normalizedCursor + 1}/${matchCount})`
+                : "Loaded: 0 hits"}
           </span>
           {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <span style={{ color: "#666", fontSize: 12 }}>
               {archivedSearchLoading
-                ? "Archived: searching…"
+                ? "Archived: searching..."
                 : archivedSearchError
                   ? "Archived: error"
-                  : `Archived: ${archivedMatchCount}`}
+                  : `Archived: ${archivedMatchCount} hits (showing ${Math.min(6, archivedMatchCount)})`}
             </span>
           ) : null}
           <Button
@@ -949,7 +997,14 @@ export function ChatRoomThreadPanel({
                   return (
                     <div
                       key={`${hit.segment_id}:${hit.row_id}`}
-                      style={{ marginBottom: 6, lineHeight: "16px" }}
+                      style={{
+                        marginBottom: 6,
+                        lineHeight: "16px",
+                        cursor: typeof hit.date_ms === "number" ? "pointer" : "default",
+                      }}
+                      onClick={() => {
+                        void openArchivedSearchHit(hit);
+                      }}
                     >
                       <div style={{ fontSize: 11, color: "#888" }}>{when}</div>
                       <div>{text || "(no preview)"}</div>

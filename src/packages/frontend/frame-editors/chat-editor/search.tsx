@@ -1,8 +1,8 @@
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import type { EditorDescription } from "@cocalc/frontend/frame-editors/frame-tree/types";
-import { Card, Input, Select, Switch } from "antd";
+import { Card, Input, Select } from "antd";
 import { path_split, separate_file_extension, set } from "@cocalc/util/misc";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { throttle } from "lodash";
 import { TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -20,7 +20,6 @@ import useSearchIndex from "@cocalc/frontend/frame-editors/generic/search/use-se
 const COMBINED_FEED_LABEL = "Combined feed";
 const ALL_MESSAGES_LABEL = "All messages";
 const ALL_MESSAGES_KEY = "__all_messages__";
-const RECENT_DAYS = 7;
 
 interface MatchHit {
   id: string;
@@ -79,9 +78,6 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const [archivedResult, setArchivedResult] = useState<MatchHit[]>([]);
   const [archivedSearchError, setArchivedSearchError] = useState<string>("");
   const [archivedSearchLoading, setArchivedSearchLoading] = useState<boolean>(false);
-  const [recentDaysOnly, setRecentDaysOnly] = useState<boolean | undefined>(
-    undefined,
-  );
   const saveSearch = useMemo(
     () =>
       throttle((value) => {
@@ -178,15 +174,6 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
 
   const searchScope = selectedThreadKey ?? threadOptions[0]?.key;
 
-  useEffect(() => {
-    setRecentDaysOnly(undefined);
-  }, [searchScope]);
-
-  const recentThreshold = useMemo(
-    () => Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000,
-    [],
-  );
-
   const scopeKeys = useMemo(() => {
     if (!messages) {
       return [];
@@ -201,18 +188,6 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     }
     return Array.from(messages.keys());
   }, [messages, threadIndex, searchScope]);
-
-  const scopeHasOlderMessages = useMemo(() => {
-    if (scopeKeys.length === 0) return false;
-    let oldestMs = Number.POSITIVE_INFINITY;
-    for (const key of scopeKeys) {
-      const ms = Number.parseFloat(key);
-      if (Number.isFinite(ms) && ms < oldestMs) {
-        oldestMs = ms;
-      }
-    }
-    return Number.isFinite(oldestMs) && oldestMs < recentThreshold;
-  }, [scopeKeys, recentThreshold]);
 
   const scopeHasArchivedRows = useMemo(() => {
     if (
@@ -229,39 +204,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     const value = meta?.archived_chat_rows;
     return typeof value === "number" && Number.isFinite(value) && value > 0;
   }, [chatActions, searchScope, cacheVersion]);
-
-  useEffect(() => {
-    if (scopeHasArchivedRows) {
-      if (recentDaysOnly !== false) {
-        setRecentDaysOnly(false);
-      }
-      return;
-    }
-    if (scopeHasOlderMessages) {
-      if (recentDaysOnly === undefined) {
-        setRecentDaysOnly(true);
-      }
-    } else if (recentDaysOnly !== false) {
-      setRecentDaysOnly(false);
-    }
-  }, [scopeHasArchivedRows, scopeHasOlderMessages, recentDaysOnly]);
-
-  const keysByDate = useMemo(() => {
-    if (scopeHasArchivedRows) {
-      return scopeKeys;
-    }
-    if (!recentDaysOnly) {
-      return scopeKeys;
-    }
-    return scopeKeys.filter((key) => {
-      const ms = Number.parseFloat(key);
-      return Number.isFinite(ms) ? ms >= recentThreshold : true;
-    });
-  }, [scopeKeys, recentDaysOnly, recentThreshold, scopeHasArchivedRows]);
-
-  const keysToScan = keysByDate;
-
-  const keysToScanSet = useMemo(() => new Set(keysToScan), [keysToScan]);
+  const keysToScanSet = useMemo(() => new Set(scopeKeys), [scopeKeys]);
 
   const resultLimit = useMemo(() => messages?.size ?? 0, [messages]);
 
@@ -370,6 +313,63 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     });
   }, [result, archivedResult]);
 
+  const hydratedThreadDate = useCallback(
+    async (threadId: string, targetDateMs: number): Promise<boolean> => {
+      if (!project_id || !path || !chatActions) return false;
+      const dateKey = `${targetDateMs}`;
+      if (chatActions.getAllMessages()?.has(dateKey)) return true;
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      if (!hubProjects) return false;
+      let offset = 0;
+      const limit = 200;
+      for (let i = 0; i < 25; i++) {
+        const result = await hubProjects.chatStoreReadArchived({
+          project_id,
+          chat_path: path,
+          thread_id: threadId,
+          limit,
+          offset,
+        });
+        const rows = result.rows ?? [];
+        if (!rows.length) return chatActions.getAllMessages()?.has(dateKey) ?? false;
+        chatActions.hydrateArchivedRows(
+          rows.map((row) => row.row).filter((row) => row != null),
+        );
+        if (chatActions.getAllMessages()?.has(dateKey)) return true;
+        if (result.next_offset == null) break;
+        offset = result.next_offset;
+      }
+      return chatActions.getAllMessages()?.has(dateKey) ?? false;
+    },
+    [chatActions, path, project_id],
+  );
+
+  const onSelectHit = useCallback(
+    async (hit: MatchHit) => {
+      const key = fragmentKey ?? "chat";
+      const dateMs = Number.parseFloat(hit.id);
+      if (!Number.isFinite(dateMs)) return;
+      if (
+        hit.source === "archived" &&
+        searchScope &&
+        searchScope !== COMBINED_FEED_KEY &&
+        searchScope !== ALL_MESSAGES_KEY
+      ) {
+        try {
+          await hydratedThreadDate(searchScope, dateMs);
+        } catch (err) {
+          setArchivedSearchError(`${err}`);
+        }
+      }
+      actions?.gotoFragment?.({ [key]: `${dateMs}` });
+    },
+    [actions, fragmentKey, hydratedThreadDate, searchScope],
+  );
+
+  const loadedCount = result.length;
+  const archivedCount = archivedResult.length;
+  const totalCount = combinedResult.length;
+
   return (
     <div className="smc-vfill">
       <Card
@@ -429,17 +429,6 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
               })),
             ]}
           />
-          {scopeHasOlderMessages && !scopeHasArchivedRows ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Switch
-                checked={recentDaysOnly ?? false}
-                onChange={(value) => setRecentDaysOnly(value)}
-              />
-              <span style={{ color: "#666" }}>
-                Search recent {RECENT_DAYS} days only
-              </span>
-            </div>
-          ) : null}
           <Input.Search
             style={{ fontSize, width: "100%" }}
             allowClear
@@ -459,6 +448,13 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
               saveSearch(nextValue);
             }}
           />
+          {search.trim() ? (
+            <div style={{ color: "#666", fontSize: 12 }}>
+              {archivedSearchLoading
+                ? `Searching… loaded: ${loadedCount}`
+                : `Hits: ${totalCount} total (${loadedCount} loaded${scopeHasArchivedRows ? `, ${archivedCount} archived` : ""})`}
+            </div>
+          ) : null}
         </div>
       </Card>
       <div className="smc-vfill">
@@ -471,9 +467,8 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
             <SearchResult
               key={`${hit.source ?? "live"}:${hit.id}`}
               hit={hit}
-              actions={actions}
+              onSelect={onSelectHit}
               fontSize={fontSize}
-              fragmentKey={fragmentKey}
             />
           ))}
         </div>
@@ -484,16 +479,13 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
 
 function SearchResult({
   hit,
-  actions,
+  onSelect,
   fontSize,
-  fragmentKey,
 }: {
   hit: MatchHit;
-  actions: any;
+  onSelect: (hit: MatchHit) => void | Promise<void>;
   fontSize: number;
-  fragmentKey?: string;
 }) {
-  const key = fragmentKey ?? "chat";
   const dateMs = Number.parseFloat(hit.id);
   const hasJumpTarget = Number.isFinite(dateMs);
   return (
@@ -511,7 +503,7 @@ function SearchResult({
       }}
       onClick={() => {
         if (!hasJumpTarget) return;
-        actions?.gotoFragment?.({ [key]: hit.id });
+        void onSelect(hit);
       }}
     >
       {hasJumpTarget ? (
