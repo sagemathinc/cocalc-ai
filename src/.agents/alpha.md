@@ -83,7 +83,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 ---
 
-### A0.4 First terminal on new project hangs
+### A0.4 (done) First terminal on new project hangs
 
 **Task:** "terminal on new project hangs immediately"
 
@@ -96,7 +96,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 ---
 
-### A0.5 (done) Lite codex shows false “unconfigured”
+### A0.5 (done) (done) Lite codex shows false “unconfigured”
 
 **Task:** "in lite mode chat with codex says unconfigured"
 
@@ -126,7 +126,7 @@ These items lock down secure multi-user cloud behavior.
 
 ---
 
-### A1.2 Project-host selection only allows definitely running hosts
+### A1.2 (done) Project-host selection only allows definitely running hosts
 
 **Task:** "project-host selection for workspace - only allow working definitely running hosts"
 
@@ -569,24 +569,29 @@ Done when:
 ##### P3.2b Execution semantics (single thread, agent-first)
 
 1. Thread model
+
 - Always target the visible Navigator thread (project-scoped).
 - No hidden side threads for assistant-originated actions.
 - If a turn is active: queue by default, with explicit immediate-send override.
 
 2. No copy/paste rule
+
 - Successful intents should apply edits directly when safe.
 - Agent responses should include what changed and where, not just prose.
 
 3. Preflight consistency
+
 - Before dispatch, attempt to save dirty source documents (best-effort).
 - Include document identity + timestamp/hash hints in context for conflict awareness.
 
 4. Apply path preference
+
 - Prefer browser/RTC-aware edits (via CoCalc CLI browser exec) when target docs are open.
 - Fallback to workspace file edits + open/focus target file if RTC route is unavailable.
 - Avoid silent divergence between on-disk and in-memory state.
 
 5. Safety + audit
+
 - Approval gate for destructive actions or package/system mutations when policy requires it.
 - Timetravel remains primary undo mechanism.
 - Non-blocking follow-up: add explicit agent-authored markers in timetravel history.
@@ -598,18 +603,22 @@ Done when:
 ##### P3.2c Migration order (highest impact first)
 
 1. Wave 1: Help Me Fix family (`intent:error-fix`, `intent:notebook-error`)
+
 - Replace all `HelpMeFix` one-shot sends with Navigator intent routing.
 - Keep existing buttons/placement initially; change backend behavior first.
 
 2. Wave 2: Editor/Jupyter assistant surfaces (`intent:editor-assistant`, `intent:jupyter-cell-assistant`)
+
 - Route title-bar Assistant and Jupyter cell tool into intent router.
 - Preserve UX affordances while removing direct one-shot LLM path.
 
 3. Wave 3: Generation flows (`intent:jupyter-generate-cell`, `intent:document-generate`, `intent:formula-generate`)
+
 - Keep preview UX where useful, but execution/apply goes through agent route.
 - Ensure generated output can be directly inserted/applied without copy/paste.
 
 4. Wave 4: Chat/host special intents (`intent:chat-summarize`, `intent:chat-regenerate`, `intent:host-recommendation`)
+
 - Move remaining special flows to adapters or keep explicitly scoped exceptions with rationale.
 
 Done when:
@@ -621,15 +630,18 @@ Done when:
 Manual acceptance checks:
 
 1. Trigger Help Me Fix from notebook/latex/rmd/qmd/formatter and verify:
+
 - intent appears in Navigator thread,
 - agent proposes/applies fix,
 - no manual copy/paste needed for standard fix flow.
 
 2. Trigger editor Assistant and Jupyter cell tool:
+
 - both route into same Navigator timeline,
 - active-turn queue/immediate behavior is correct.
 
 3. Trigger document/cell/formula generation:
+
 - generated result can be applied directly,
 - target doc/tab focuses correctly,
 - undo via timetravel works.

@@ -1,18 +1,16 @@
-import {
-  Button,
-  Card,
-  Popconfirm,
-  Space,
-  Tag,
-  Tooltip,
-  Typography,
-} from "antd";
+import { Button, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type {
   AcpStreamEvent,
   AcpStreamMessage as AcpLogStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
-import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  redux,
+  useEffect,
+  useMemo,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
@@ -172,7 +170,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   const toggleLabel = expanded ? "Hide log" : `${durationSummary} (show)`;
 
   const showCloseButton = IS_TOUCH || hovered;
-  const useVirtualizedEntries = virtualizeEntries && entries.length > VIRTUALIZE_THRESHOLD;
+  const useVirtualizedEntries =
+    virtualizeEntries && entries.length > VIRTUALIZE_THRESHOLD;
   const handleClickCapture = (e: React.MouseEvent) => {
     if (!onOpenFileLink) return;
     const target = e.target as HTMLElement | null;
@@ -300,17 +299,14 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   );
 
   return (
-    <Card
-      size="small"
+    <div
       style={{
         marginTop: 8,
         marginBottom: 8,
-        background: "white",
-        borderColor: COLORS.GRAY_L,
-        boxShadow: "none",
         position: "relative",
+        padding: "8px 10px",
+        fontSize: baseFontSize,
       }}
-      bodyStyle={{ padding: "8px 10px", fontSize: baseFontSize }}
       onMouseEnter={() => {
         if (!IS_TOUCH) setHovered(true);
       }}
@@ -354,7 +350,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
         )}
         {renderCloseButton({ position: "absolute", right: 6, bottom: 6 })}
       </Space>
-    </Card>
+    </div>
   );
 };
 
@@ -767,7 +763,10 @@ function PathLink({
       void (async () => {
         try {
           let isDir = actions.isDirViaCache?.(resolvedPath);
-          if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
+          if (
+            typeof isDir !== "boolean" &&
+            typeof actions.isDir === "function"
+          ) {
             isDir = await actions.isDir(resolvedPath);
           }
           if (isDir === true) {
@@ -899,10 +898,7 @@ function resolvePath(
   const normalizedBase = normalizeAbsoluteMaybe(basePath);
   if (normalizedBase && homePath) {
     const homePrefix = homePath.endsWith("/") ? homePath : `${homePath}/`;
-    if (
-      normalizedBase === homePath ||
-      normalizedBase.startsWith(homePrefix)
-    ) {
+    if (normalizedBase === homePath || normalizedBase.startsWith(homePrefix)) {
       const baseRel = normalizedBase.slice(homePrefix.length);
       // Some backend events are HOME-relative (e.g., "build/repo/src/file.ts").
       // If that prefix is present, resolve against HOME first; otherwise we'd
