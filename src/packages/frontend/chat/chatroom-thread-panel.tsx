@@ -789,12 +789,13 @@ export function ChatRoomThreadPanel({
     );
   }
 
-  const shouldShowCodexConfig =
-    selectedThread != null &&
-    Boolean(selectedThread.rootMessage) &&
-    Boolean(
-      actions?.isCodexThread?.(new Date(parseInt(selectedThread.key, 10))),
-    );
+  const shouldShowCodexConfig = Boolean(
+    selectedThreadId &&
+      (selectedThreadMeta?.agent_kind === "acp" ||
+        selectedThreadMeta?.acp_config != null ||
+        `${selectedThreadMeta?.agent_model ?? ""}`.includes("codex") ||
+        actions?.getCodexConfig?.(selectedThreadId) != null),
+  );
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread
