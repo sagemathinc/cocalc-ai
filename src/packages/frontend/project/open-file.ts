@@ -22,9 +22,8 @@ import {
 } from "@cocalc/util/misc";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { normalize } from "./utils";
-import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import { termPath } from "@cocalc/util/terminal/names";
+import { canonicalSyncPath, toAbsoluteProjectPath } from "./sync-path";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
 // preloaded, even background tabs.  This can make the UI much more responsive,
@@ -100,8 +99,9 @@ export async function open_file(
     change_history: true,
     explicit: false,
   });
+  const projectHome = getProjectHomeDirectory(actions.project_id);
   const hadTrailingSlash = opts.path.endsWith("/");
-  opts.path = toAbsoluteOpenPath(opts.path, actions.project_id);
+  opts.path = toAbsoluteOpenPath(opts.path, projectHome);
   if (hadTrailingSlash) {
     actions.open_directory(opts.path);
     return;
@@ -193,7 +193,7 @@ export async function open_file(
   }
   // Map resolved paths to canonical sync identities used by specific editors
   // (e.g. ipynb syncdb path, terminal path key).
-  syncPath = canonicalPath(syncPath);
+  syncPath = canonicalPath(syncPath, projectHome);
   if (!tabIsOpened()) {
     return;
   }
@@ -315,18 +315,8 @@ export async function open_file(
   }
 }
 
-function toAbsoluteOpenPath(path: string, projectId: string): string {
-  const home = getProjectHomeDirectory(projectId);
-  const normalized = normalize(path);
-  if (!normalized || normalized === ".") return home;
-  if (normalized === "~") return home;
-  if (normalized.startsWith("~/")) {
-    return normalizeAbsolutePath(normalized.slice(2), home);
-  }
-  if (normalized.startsWith("/")) {
-    return normalizeAbsolutePath(normalized);
-  }
-  return normalizeAbsolutePath(normalized, home);
+function toAbsoluteOpenPath(path: string, projectHome: string): string {
+  return toAbsoluteProjectPath(path, projectHome);
 }
 
 async function open_sagews_worksheet(
@@ -609,10 +599,6 @@ function get_side_chat_state(
   }
 }
 
-export function canonicalPath(path: string) {
-  const ext = filename_extension(path).toLowerCase();
-  if (ext === "term" && !path_split(path).tail.startsWith(".")) {
-    return termPath({ path, cmd: "", number: 0 });
-  }
-  return path;
+export function canonicalPath(path: string, projectHome = "/") {
+  return canonicalSyncPath(path, projectHome);
 }
