@@ -38,6 +38,10 @@ import {
   searchChatStoreArchived,
   vacuumChatStore,
 } from "./sqlite/chat-offload";
+import {
+  startChatOffloadBackgroundMaintenance,
+  stopChatOffloadBackgroundMaintenance,
+} from "./chat-offload-maintenance";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -206,6 +210,10 @@ export async function init({
   if (reflectUi) {
     setReflectUi(reflectUi);
   }
+  startChatOffloadBackgroundMaintenance();
+  process.once("exit", () => {
+    stopChatOffloadBackgroundMaintenance();
+  });
   await initUserQuery({ filename });
   const api = await client.subscribe(subject, { queue: "0" });
   listen(api, client);

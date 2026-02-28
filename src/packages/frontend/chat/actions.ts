@@ -194,6 +194,7 @@ export class ChatActions extends Actions<ChatState> {
   public frameTreeActions?: CodeEditorActions;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
+  private chatStoreRegistrationAttempted: Set<string> = new Set();
 
   set_syncdb = (
     syncdb: ImmerDB,
@@ -213,6 +214,30 @@ export class ChatActions extends Actions<ChatState> {
 
     // save periodically to disk
     this.syncdb.on("change", this.autosave);
+    this.ensureChatStoreRegistered();
+  };
+
+  private ensureChatStoreRegistered = (): void => {
+    const project_id = this.store?.get("project_id");
+    const path = this.store?.get("path");
+    if (!project_id || !path) return;
+    const key = `${project_id}:${path}`;
+    const hubProjects = webapp_client.conat_client?.hub?.projects;
+    if (!hubProjects) return;
+    if (this.chatStoreRegistrationAttempted.has(key)) return;
+    this.chatStoreRegistrationAttempted.add(key);
+    void hubProjects
+      .chatStoreStats({
+        project_id,
+        chat_path: path,
+      })
+      .catch((err) => {
+        console.warn("chat offload registration failed", {
+          project_id,
+          path,
+          err: `${err}`,
+        });
+      });
   };
 
   // Read the current chat messages directly from the SyncDoc (Immer).
