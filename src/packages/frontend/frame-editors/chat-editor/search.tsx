@@ -33,6 +33,15 @@ interface ThreadOption {
   newestTime: number;
 }
 
+function asArchivedFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes";
+  }
+  return false;
+}
+
 function threadLabelFromConfigRow(row: any, newestTime: number): string {
   const name = typeof row?.name === "string" ? row.name.trim() : "";
   if (name) return name;
@@ -98,8 +107,17 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const threadIndex = chatActions?.getThreadIndex?.();
 
   const threadOptions: ThreadOption[] = useMemo(() => {
+    const archivedByThreadId = new Map<string, boolean>();
+    for (const row0 of chatActions?.listThreadConfigRows?.() ?? []) {
+      const row =
+        row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
+      const threadId = `${row?.thread_id ?? ""}`.trim();
+      if (!threadId) continue;
+      archivedByThreadId.set(threadId, asArchivedFlag(row?.archived));
+    }
     const byKey = new Map<string, ThreadOption>();
     for (const entry of threadIndex?.values() ?? []) {
+      if (archivedByThreadId.get(entry.key) === true) continue;
       const rootMessage =
         entry.rootMessage ??
         (messages ? messages.get(entry.key) : undefined);
@@ -118,6 +136,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         !threadId ||
         threadId === COMBINED_FEED_KEY ||
         threadId === ALL_MESSAGES_KEY ||
+        archivedByThreadId.get(threadId) === true ||
         byKey.has(threadId)
       ) {
         continue;
@@ -170,6 +189,15 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   useEffect(() => {
     if (!selectedThreadKey && threadOptions.length > 0) {
       setSelectedThreadKey(threadOptions[0].key);
+      return;
+    }
+    if (
+      selectedThreadKey &&
+      selectedThreadKey !== COMBINED_FEED_KEY &&
+      selectedThreadKey !== ALL_MESSAGES_KEY &&
+      !threadOptions.some((thread) => thread.key === selectedThreadKey)
+    ) {
+      setSelectedThreadKey(threadOptions[0]?.key);
     }
   }, [selectedThreadKey, threadOptions]);
 
@@ -187,32 +215,35 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     ) {
       return Array.from(threadIndex.get(searchScope)?.messageKeys ?? []);
     }
-    return Array.from(messages.keys());
-  }, [messages, threadIndex, searchScope]);
-
-  const totalArchivedRowsInConfig = useMemo(() => {
-    const rows = chatActions?.listThreadConfigRows?.() ?? [];
-    let total = 0;
-    for (const row0 of rows) {
+    const archivedThreadIds = new Set<string>();
+    for (const row0 of chatActions?.listThreadConfigRows?.() ?? []) {
       const row =
         row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
-      const value = Number(row?.archived_chat_rows ?? 0);
-      if (Number.isFinite(value) && value > 0) total += value;
+      const threadId = `${row?.thread_id ?? ""}`.trim();
+      if (!threadId) continue;
+      if (asArchivedFlag(row?.archived)) archivedThreadIds.add(threadId);
     }
-    return total;
-  }, [chatActions, cacheVersion]);
+    return Array.from(messages.keys()).filter((key) => {
+      const msg = messages.get(key) as any;
+      const threadId = `${msg?.thread_id ?? ""}`.trim();
+      if (!threadId) return true;
+      return !archivedThreadIds.has(threadId);
+    });
+  }, [messages, threadIndex, searchScope, chatActions]);
 
   const scopeHasArchivedRows = useMemo(() => {
     if (!chatActions || !searchScope) return false;
     if (searchScope === COMBINED_FEED_KEY || searchScope === ALL_MESSAGES_KEY) {
-      return totalArchivedRowsInConfig > 0;
+      // Keep "all/combined" scoped to currently loaded rows only, so user-archived
+      // threads never appear through backend-row matches.
+      return false;
     }
     const meta = chatActions.getThreadMetadata?.(searchScope, {
       threadId: searchScope,
     });
     const value = meta?.archived_chat_rows;
     return typeof value === "number" && Number.isFinite(value) && value > 0;
-  }, [chatActions, searchScope, totalArchivedRowsInConfig, cacheVersion]);
+  }, [chatActions, searchScope, cacheVersion]);
   const keysToScanSet = useMemo(() => new Set(scopeKeys), [scopeKeys]);
 
   const resultLimit = useMemo(() => messages?.size ?? 0, [messages]);
@@ -410,12 +441,12 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         ) : null}
         {archivedSearchLoading ? (
           <div style={{ color: "#888", marginBottom: "10px", fontSize }}>
-            Searching archived history...
+            Searching backend history...
           </div>
         ) : null}
         {archivedSearchError ? (
           <div style={{ color: "#b71c1c", marginBottom: "10px", fontSize }}>
-            Archived search error: {archivedSearchError}
+            Backend search error: {archivedSearchError}
           </div>
         ) : null}
         <div
@@ -471,7 +502,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
                 ? `Searching… loaded: ${loadedCount}`
                 : `Hits shown: ${totalCount} (${loadedCount} loaded${
                     scopeHasArchivedRows
-                      ? `, ${archivedCount} archived shown / ${archivedTotalCount} archived total`
+                      ? `, ${archivedCount} backend shown / ${archivedTotalCount} backend total`
                       : ""
                   })`}
             </div>
@@ -532,7 +563,7 @@ function SearchResult({
       ) : null}
       {hit.source === "archived" ? (
         <span style={{ float: "right", color: "#888", marginRight: 8 }}>
-          archived
+          backend
         </span>
       ) : null}
       <StaticMarkdown

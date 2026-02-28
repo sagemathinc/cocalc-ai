@@ -1013,10 +1013,10 @@ export function ChatRoomThreadPanel({
             {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
               <span>
                 {archivedSearchLoading
-                  ? "Archived: searching..."
+                  ? "Backend: searching..."
                   : archivedSearchError
-                    ? "Archived: error"
-                    : `Archived: ${archivedSearchTotal} hits (${Math.min(
+                    ? "Backend: error"
+                    : `Backend: ${archivedSearchTotal} hits (${Math.min(
                         ARCHIVED_INLINE_PREVIEW_LIMIT,
                         archivedMatchCount,
                       )} shown)`}
@@ -1036,11 +1036,11 @@ export function ChatRoomThreadPanel({
               }}
             >
               {archivedSearchLoading ? (
-                <div>Searching archived history…</div>
+                <div>Searching backend-stored history…</div>
               ) : archivedSearchError ? (
                 <div style={{ color: "#b71c1c" }}>{archivedSearchError}</div>
               ) : archivedSearchHits.length === 0 ? (
-                <div>No archived matches.</div>
+                <div>No backend matches.</div>
               ) : (
                 archivedSearchHits
                   .slice(0, ARCHIVED_INLINE_PREVIEW_LIMIT)
@@ -1076,7 +1076,7 @@ export function ChatRoomThreadPanel({
         </div>
       ) : null}
       <Modal
-        title="Archived thread history"
+        title="Older thread history (stored on backend)"
         open={archivedHistoryOpen}
         width={680}
         onCancel={() => setArchivedHistoryOpen(false)}
@@ -1098,11 +1098,11 @@ export function ChatRoomThreadPanel({
       >
         <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
           {archivedHistoryLoading && archivedHistoryRows.length === 0 ? (
-            <div style={{ color: "#666" }}>Loading archived history…</div>
+            <div style={{ color: "#666" }}>Loading backend history…</div>
           ) : archivedHistoryError ? (
             <div style={{ color: "#b71c1c" }}>{archivedHistoryError}</div>
           ) : archivedHistoryRows.length === 0 ? (
-            <div style={{ color: "#666" }}>No archived rows for this thread.</div>
+            <div style={{ color: "#666" }}>No backend-stored rows for this thread.</div>
           ) : (
             archivedHistoryRows.map((row) => {
               const when =
@@ -1148,7 +1148,7 @@ export function ChatRoomThreadPanel({
         >
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             {archivedRowsCount.toLocaleString()} older message
-            {archivedRowsCount === 1 ? "" : "s"} archived
+            {archivedRowsCount === 1 ? "" : "s"} stored on backend
             {archivedLoadedOffset > 0 ? (
               <>
                 {" "}

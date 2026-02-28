@@ -109,7 +109,7 @@ describe("chat search archived integration", () => {
       );
     });
 
-    expect(await screen.findByText("archived")).toBeTruthy();
+    expect(await screen.findByText("backend")).toBeTruthy();
     expect(await screen.findByText("archived match")).toBeTruthy();
   });
 });
