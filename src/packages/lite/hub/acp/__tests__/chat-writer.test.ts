@@ -687,7 +687,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("concatenates multiple agent messages into final content", async () => {
+  it("uses summary text as authoritative final content", async () => {
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -712,13 +712,12 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await (writer as any).handle({
       type: "summary",
-      finalResponse: "",
+      finalResponse: "final response",
       seq: 2,
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect((writer as any).content).toContain("first");
-    expect((writer as any).content).toContain("second");
+    expect((writer as any).content).toBe("final response");
     (writer as any).dispose?.(true);
   });
 

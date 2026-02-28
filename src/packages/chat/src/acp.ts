@@ -51,12 +51,22 @@ export function appendStreamMessage(
 
 function joinStreamText(previousText: string, nextText: string): string {
   if (!previousText || !nextText) return previousText + nextText;
-  if (!needsMarkdownParagraphBreak(previousText, nextText)) {
+  const separator = streamJoinSeparator(previousText, nextText);
+  if (!separator) {
     return previousText + nextText;
   }
   const left = previousText.replace(/\s+$/, "");
   const right = nextText.replace(/^\s+/, "");
-  return `${left}\n\n${right}`;
+  return `${left}${separator}${right}`;
+}
+
+function streamJoinSeparator(
+  previousText: string,
+  nextText: string,
+): "" | " " | "\n\n" {
+  if (needsMarkdownParagraphBreak(previousText, nextText)) return "\n\n";
+  if (needsTextBoundarySpace(previousText, nextText)) return " ";
+  return "";
 }
 
 function needsMarkdownParagraphBreak(
@@ -67,6 +77,28 @@ function needsMarkdownParagraphBreak(
   const left = previousText.replace(/\s+$/, "");
   const right = nextText.replace(/^\s+/, "");
   return left.endsWith("**") && right.startsWith("**");
+}
+
+function needsTextBoundarySpace(
+  previousText: string,
+  nextText: string,
+): boolean {
+  if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
+  const left = previousText.replace(/\s+$/, "");
+  const right = nextText.replace(/^\s+/, "");
+  if (!left || !right) return false;
+  const leftLast = left[left.length - 1];
+  const rightFirst = right[0];
+  if (/[.!?;:]/.test(leftLast) && /[A-Za-z0-9`"'([{]/.test(rightFirst)) {
+    return true;
+  }
+  if (/[a-z0-9]/.test(leftLast) && /[A-Z]/.test(rightFirst)) {
+    return true;
+  }
+  if (/[)\]}`"'*]/.test(leftLast) && /[A-Za-z0-9`(]/.test(rightFirst)) {
+    return true;
+  }
+  return false;
 }
 
 export function extractEventText(
@@ -93,7 +125,7 @@ function mergeResponseText(
   if (cur.startsWith(prev)) return cur;
   if (prev.startsWith(cur)) return prev;
   if (prev.endsWith(cur)) return prev;
-  return `${prev}${cur}`;
+  return joinStreamText(prev, cur);
 }
 
 export function getLatestMessageText(

@@ -49,6 +49,17 @@ describe("appendStreamMessage", () => {
     expect(merged).toHaveLength(1);
     expect((merged[0] as any).event.text).toBe("**First block** **Second block**");
   });
+
+  test("inserts a separating space between sentence chunks", () => {
+    const events = [textEvent("message", "commit.", 1)];
+    const merged = appendStreamMessage(
+      events,
+      textEvent("message", "I found a follow-up", 2),
+    );
+
+    expect(merged).toHaveLength(1);
+    expect((merged[0] as any).event.text).toBe("commit. I found a follow-up");
+  });
 });
 
 describe("response text helpers", () => {

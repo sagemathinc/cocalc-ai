@@ -50,6 +50,7 @@ import {
   appendStreamMessage,
   extractEventText,
   getLatestMessageText,
+  getLatestSummaryText,
 } from "@cocalc/chat";
 import {
   resolveInlineCodeLinks,
@@ -1046,14 +1047,23 @@ export class ChatStreamWriter {
         this.finishedBy = "interrupt";
       } else {
         const finishedFromError = this.finishedBy === "error";
+        const latestSummary = getLatestSummaryText(this.events);
+        const hasSummary =
+          typeof latestSummary === "string" &&
+          latestSummary.trim().length > 0;
         const latestMessage = getLatestMessageText(this.events);
         const hasStreamedMessage =
           typeof latestMessage === "string" &&
           latestMessage.trim().length > 0;
+        const summaryText =
+          (hasSummary ? latestSummary : undefined) ??
+          (typeof payload.finalResponse === "string" &&
+          payload.finalResponse.trim().length > 0
+            ? payload.finalResponse
+            : undefined);
         const candidate =
-          (hasStreamedMessage
-            ? latestMessage
-            : payload.finalResponse) ??
+          summaryText ??
+          (hasStreamedMessage ? latestMessage : undefined) ??
           this.interruptedMessage ??
           this.content;
         const shouldApplySummary =
@@ -1063,20 +1073,7 @@ export class ChatStreamWriter {
             candidate.trim().length > 0 &&
             !looksLikeErrorEcho(candidate, this.lastErrorText));
         if (candidate != null && shouldApplySummary) {
-          if (
-            this.content &&
-            this.content.length > 0 &&
-            candidate.length > 0 &&
-            candidate !== this.content &&
-            !candidate.startsWith(this.content) &&
-            this.finishedBy !== "error"
-          ) {
-            // Multiple summaries can arrive; append new text if it doesn't already
-            // include the existing accumulated content.
-            this.content = `${this.content}${candidate}`;
-          } else {
-            this.content = candidate;
-          }
+          this.content = candidate;
           this.finishedBy = "summary";
         }
       }
