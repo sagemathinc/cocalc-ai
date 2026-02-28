@@ -61,6 +61,7 @@ const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   : "workspace-write";
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
+const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
   { value: "workspace-write", label: "Workspace write" },
@@ -175,6 +176,9 @@ export function ChatRoomThreadPanel({
     number | undefined
   >(undefined);
   const [archivedLoadInProgress, setArchivedLoadInProgress] = useState(false);
+  const [archivedLoadMode, setArchivedLoadMode] = useState<"more" | "all" | null>(
+    null,
+  );
   const [archivedLoadError, setArchivedLoadError] = useState("");
   const [archivedLoadOffsetByThread, setArchivedLoadOffsetByThread] = useState<
     Record<string, number>
@@ -274,7 +278,7 @@ export function ChatRoomThreadPanel({
     [project_id, path, selectedThreadId],
   );
 
-  const loadArchivedIntoThread = useCallback(async () => {
+  const loadArchivedIntoThread = useCallback(async (mode: "more" | "all" = "more") => {
     if (!project_id || !path || !selectedThreadId) {
       setArchivedLoadError("");
       return;
@@ -285,39 +289,57 @@ export function ChatRoomThreadPanel({
       return;
     }
     if (archivedLoadInProgress) return;
-    const offset = archivedLoadOffsetByThread[selectedThreadId] ?? 0;
+    const startOffset = archivedLoadOffsetByThread[selectedThreadId] ?? 0;
+    let offset = startOffset;
+    let totalRows = 0;
+    let totalApplied = 0;
+    let finished = false;
     setArchivedLoadInProgress(true);
+    setArchivedLoadMode(mode);
     setArchivedLoadError("");
     try {
-      const result = await hubProjects.chatStoreReadArchived({
-        project_id,
-        chat_path: path,
-        thread_id: selectedThreadId,
-        limit: ARCHIVED_HISTORY_LIMIT,
-        offset,
-      });
-      const rows = result.rows ?? [];
-      const hydrate = actions.hydrateArchivedRows(
-        rows.map((row) => row.row).filter((row) => row != null),
-      );
-      if (rows.length === 0) {
-        setArchivedLoadDoneByThread((prev) => ({ ...prev, [selectedThreadId]: true }));
-      } else {
+      for (let i = 0; i < 200; i++) {
+        const result = await hubProjects.chatStoreReadArchived({
+          project_id,
+          chat_path: path,
+          thread_id: selectedThreadId,
+          limit: ARCHIVED_HISTORY_LIMIT,
+          offset,
+        });
+        const rows = result.rows ?? [];
+        const hydrate = actions.hydrateArchivedRows(
+          rows.map((row) => row.row).filter((row) => row != null),
+        );
+        totalRows += rows.length;
+        totalApplied += hydrate.applied;
+        if (rows.length === 0 || result.next_offset == null) {
+          finished = true;
+          break;
+        }
+        offset = result.next_offset;
+        if (mode !== "all") break;
+      }
+      if (totalRows > 0) {
+        const nextOffset = startOffset + totalRows;
         setArchivedLoadOffsetByThread((prev) => ({
           ...prev,
-          [selectedThreadId]: offset + rows.length,
+          [selectedThreadId]: nextOffset,
         }));
       }
-      if (result.next_offset == null) {
-        setArchivedLoadDoneByThread((prev) => ({ ...prev, [selectedThreadId]: true }));
+      if (finished) {
+        setArchivedLoadDoneByThread((prev) => ({
+          ...prev,
+          [selectedThreadId]: true,
+        }));
       }
-      if (rows.length > 0 && hydrate.applied === 0) {
+      if (totalRows > 0 && totalApplied === 0) {
         setArchivedLoadError("No additional archived messages were loaded.");
       }
     } catch (err) {
       setArchivedLoadError(`${err}`);
     } finally {
       setArchivedLoadInProgress(false);
+      setArchivedLoadMode(null);
     }
   }, [
     actions,
@@ -886,85 +908,110 @@ export function ChatRoomThreadPanel({
             top: 44,
             right: threadImagePreview ? 116 : 12,
             zIndex: 21,
-            padding: "8px",
+            padding: "10px",
             display: "flex",
-            alignItems: "center",
+            flexDirection: "column",
+            alignItems: "stretch",
             gap: 8,
-            flexWrap: "wrap",
             background: "rgba(250,250,250,0.98)",
             border: "1px solid #ddd",
             borderRadius: 8,
             boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-            maxWidth: "min(90vw, 560px)",
+            width: "min(90vw, 560px)",
           }}
         >
-          <Input
-            ref={searchInputRef}
-            size="small"
-            allowClear
-            placeholder={
-              selectedThreadId
-                ? "Search this thread"
-                : "Select a thread to search"
-            }
-            value={threadSearchInput}
-            onChange={(e) => onSearchInputChange(e.target.value)}
-            onPressEnter={() => {
-              if (!matchCount) return;
-              setThreadSearchCursor((n) => n + 1);
-            }}
-            style={{ width: "min(320px, 100%)" }}
-            disabled={!selectedThreadId}
-          />
-          <div style={{ display: "inline-flex", gap: 8, whiteSpace: "nowrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Input
+              ref={searchInputRef}
+              size="small"
+              allowClear
+              placeholder={
+                selectedThreadId
+                  ? "Find in this thread"
+                  : "Select a thread to search"
+              }
+              value={threadSearchInput}
+              onChange={(e) => onSearchInputChange(e.target.value)}
+              onPressEnter={() => {
+                if (!matchCount) return;
+                setThreadSearchCursor((n) => n + 1);
+              }}
+              style={{ flex: 1, minWidth: 180 }}
+              disabled={!selectedThreadId}
+            />
             <Button
               size="small"
-              disabled={!selectedThreadId || !matchCount}
-              onClick={() => setThreadSearchCursor((n) => n - 1)}
+              type="text"
+              onClick={() => setThreadSearchOpen(false)}
             >
-              Prev
-            </Button>
-            <Button
-              size="small"
-              disabled={!selectedThreadId || !matchCount}
-              onClick={() => setThreadSearchCursor((n) => n + 1)}
-            >
-              Next
+              ×
             </Button>
           </div>
-          <span style={{ color: "#666", fontSize: 12 }}>
-            {!selectedThreadId
-              ? "Select a thread to search"
-              : matchCount
-                ? `Loaded: ${matchCount} hits (${normalizedCursor + 1}/${matchCount})`
-                : "Loaded: 0 hits"}
-          </span>
-          {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
-            <span style={{ color: "#666", fontSize: 12 }}>
-              {archivedSearchLoading
-                ? "Archived: searching..."
-                : archivedSearchError
-                  ? "Archived: error"
-                  : `Archived: ${archivedMatchCount} hits (showing ${Math.min(6, archivedMatchCount)})`}
-            </span>
-          ) : null}
-          <Button
-            size="small"
-            disabled={!selectedThreadId || !project_id || !path}
-            onClick={() => {
-              setArchivedHistoryOpen(true);
-              void loadArchivedHistory(0, false);
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
             }}
           >
-            History
-          </Button>
-          <Button
-            size="small"
-            type="text"
-            onClick={() => setThreadSearchOpen(false)}
+            <div style={{ display: "inline-flex", gap: 8, whiteSpace: "nowrap" }}>
+              <Button
+                size="small"
+                disabled={!selectedThreadId || !matchCount}
+                onClick={() => setThreadSearchCursor((n) => n - 1)}
+              >
+                Prev
+              </Button>
+              <Button
+                size="small"
+                disabled={!selectedThreadId || !matchCount}
+                onClick={() => setThreadSearchCursor((n) => n + 1)}
+              >
+                Next
+              </Button>
+            </div>
+            <Button
+              size="small"
+              disabled={!selectedThreadId || !project_id || !path}
+              onClick={() => {
+                setArchivedHistoryOpen(true);
+                void loadArchivedHistory(0, false);
+              }}
+            >
+              History
+            </Button>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+              color: "#666",
+              fontSize: 12,
+              borderTop: "1px solid #efefef",
+              paddingTop: 6,
+            }}
           >
-            ×
-          </Button>
+            <span>
+              {!selectedThreadId
+                ? "Select a thread to search"
+                : matchCount
+                  ? `Loaded: ${matchCount} hits (${normalizedCursor + 1}/${matchCount})`
+                  : "Loaded: 0 hits"}
+            </span>
+            {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
+              <span>
+                {archivedSearchLoading
+                  ? "Archived: searching..."
+                  : archivedSearchError
+                    ? "Archived: error"
+                    : `Archived: ${archivedMatchCount} hits (showing ${Math.min(ARCHIVED_INLINE_PREVIEW_LIMIT, archivedMatchCount)})`}
+              </span>
+            ) : null}
+          </div>
           {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <div
               style={{
@@ -973,7 +1020,6 @@ export function ChatRoomThreadPanel({
                 overflowY: "auto",
                 borderTop: "1px solid #e6e6e6",
                 paddingTop: 6,
-                marginTop: 2,
                 color: "#555",
                 fontSize: 12,
               }}
@@ -985,7 +1031,9 @@ export function ChatRoomThreadPanel({
               ) : archivedSearchHits.length === 0 ? (
                 <div>No archived matches.</div>
               ) : (
-                archivedSearchHits.slice(0, 6).map((hit) => {
+                archivedSearchHits
+                  .slice(0, ARCHIVED_INLINE_PREVIEW_LIMIT)
+                  .map((hit) => {
                   const when =
                     typeof hit.date_ms === "number"
                       ? new Date(hit.date_ms).toLocaleString()
@@ -1112,6 +1160,19 @@ export function ChatRoomThreadPanel({
                 : archivedLoadDone
                   ? "All loaded"
                   : "Load more"}
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => {
+                void loadArchivedIntoThread("all");
+              }}
+              disabled={archivedLoadInProgress || archivedLoadDone}
+            >
+              {archivedLoadInProgress && archivedLoadMode === "all"
+                ? "Loading all..."
+                : "Load all"}
             </Button>
             <Button
               size="small"
