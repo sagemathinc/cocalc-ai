@@ -12,6 +12,8 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 describe("canonicalPath", () => {
+  const HOME = "/home/wstein/work";
+
   it("keeps ipynb path unchanged", () => {
     expect(canonicalPath("/root/notebook.ipynb")).toBe("/root/notebook.ipynb");
   });
@@ -24,6 +26,10 @@ describe("canonicalPath", () => {
 
   it("keeps hidden term files unchanged", () => {
     expect(canonicalPath("/root/.shell.term")).toBe("/root/.shell.term");
+  });
+
+  it("normalizes relative paths to absolute using project home", () => {
+    expect(canonicalPath("notes/todo.md", HOME)).toBe("/home/wstein/work/notes/todo.md");
   });
 });
 

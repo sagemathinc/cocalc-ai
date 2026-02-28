@@ -122,6 +122,7 @@ import {
   normalizeDirectoryDestination,
 } from "@cocalc/frontend/project/action-paths";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
+import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 
 const { defaults, required } = misc;
 
@@ -1298,6 +1299,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private get_sync_path(path: string): string {
+    const homeDirectory = this.getHomeDirectoryForPaths();
     const sync_path = this.open_files?.get(path, "sync_path");
     if (typeof sync_path === "string" && sync_path.length > 0) {
       // Backward-compat: old sessions may persist ipynb tabs with sync_path
@@ -1307,17 +1309,31 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         misc.filename_extension(path).toLowerCase() === "ipynb" &&
         isJupyterPath(sync_path)
       ) {
-        return path;
+        const canonicalPath = canonicalSyncPath(path, homeDirectory);
+        if (this.open_files != null && this.open_files.get(path, "sync_path") !== canonicalPath) {
+          this.open_files.set(path, "sync_path", canonicalPath);
+        }
+        return canonicalPath;
       }
-      return sync_path;
+      const canonicalPath = canonicalSyncPath(sync_path, homeDirectory);
+      if (this.open_files != null && this.open_files.get(path, "sync_path") !== canonicalPath) {
+        this.open_files.set(path, "sync_path", canonicalPath);
+      }
+      return canonicalPath;
     }
-    return path;
+    const canonicalPath = canonicalSyncPath(path, homeDirectory);
+    if (this.open_files != null && this.open_files.get(path, "sync_path") !== canonicalPath) {
+      this.open_files.set(path, "sync_path", canonicalPath);
+    }
+    return canonicalPath;
   }
 
   private has_display_path_for_sync_path(
     sync_path: string,
     except_path?: string,
   ): boolean {
+    const homeDirectory = this.getHomeDirectoryForPaths();
+    const canonicalSync = canonicalSyncPath(sync_path, homeDirectory);
     const store = this.get_store();
     const open_files = store?.get("open_files");
     if (open_files == null) {
@@ -1330,10 +1346,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       const other_sync_path = open_files.getIn([display_path, "sync_path"]);
       if (typeof other_sync_path === "string") {
-        if (other_sync_path === sync_path) {
+        if (canonicalSyncPath(other_sync_path, homeDirectory) === canonicalSync) {
           found = true;
         }
-      } else if (display_path === sync_path) {
+      } else if (canonicalSyncPath(display_path, homeDirectory) === canonicalSync) {
         // Backward-compatible fallback for tabs opened before sync_path existed.
         found = true;
       }
