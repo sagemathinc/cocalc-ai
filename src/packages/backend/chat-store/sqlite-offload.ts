@@ -158,6 +158,7 @@ export interface SearchArchivedResult {
   chat_id: string;
   hits: SearchArchivedHit[];
   offset: number;
+  total_hits: number;
   next_offset?: number;
 }
 
@@ -1044,6 +1045,7 @@ export function searchChatStoreArchived({
       chat_id: ensureChatStore({ chat_path, db_path }).chat_id,
       hits: [],
       offset: Math.max(0, offset),
+      total_hits: 0,
     };
   }
   const chatPath = normalizeChatPath(chat_path);
@@ -1060,6 +1062,7 @@ export function searchChatStoreArchived({
   const normalizedOffset = Math.max(0, offset);
   const ftsParams = [...params, q, normalizedLimit, normalizedOffset];
   let rows: SearchArchivedHit[] = [];
+  let totalHits = 0;
   try {
     rows = db
       .prepare(
@@ -1072,6 +1075,15 @@ export function searchChatStoreArchived({
           LIMIT ? OFFSET ?`,
       )
       .all(...ftsParams) as unknown as SearchArchivedHit[];
+    const countRow = db
+      .prepare(
+        `SELECT COUNT(*) as c
+           FROM archived_rows_fts
+           JOIN archived_rows ar ON ar.row_id = archived_rows_fts.rowid
+          WHERE ${where.join(" AND ")} AND archived_rows_fts MATCH ?`,
+      )
+      .get(...params, q) as { c?: number } | undefined;
+    totalHits = Number(countRow?.c ?? 0);
   } catch (err) {
     logger.warn("chat-store archived FTS search failed; using fallback", {
       chatPath,
@@ -1104,12 +1116,31 @@ export function searchChatStoreArchived({
           LIMIT ? OFFSET ?`,
       )
       .all(...fallbackParams) as unknown as SearchArchivedHit[];
+    const fallbackCount = db
+      .prepare(
+        `SELECT COUNT(*) as c
+           FROM archived_rows ar
+          WHERE ${where.join(" AND ")}
+            AND (
+              LOWER(COALESCE(ar.excerpt, '')) LIKE ?
+              OR LOWER(ar.row_json) LIKE ?
+            )`,
+      )
+      .get(...params, likeNeedle, likeNeedle) as { c?: number } | undefined;
+    totalHits = Number(fallbackCount?.c ?? 0);
+  }
+  if (totalHits < rows.length) {
+    totalHits = rows.length;
   }
   return {
     chat_id,
     hits: rows,
     offset: normalizedOffset,
-    next_offset: rows.length === normalizedLimit ? normalizedOffset + rows.length : undefined,
+    total_hits: totalHits,
+    next_offset:
+      normalizedOffset + rows.length < totalHits
+        ? normalizedOffset + rows.length
+        : undefined,
   };
 }
 

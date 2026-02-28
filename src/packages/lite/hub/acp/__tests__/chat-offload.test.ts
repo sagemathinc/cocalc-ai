@@ -118,7 +118,20 @@ describe("chat offload sqlite store", () => {
       limit: 10,
     });
     expect(search.hits.length).toBe(1);
+    expect(search.total_hits).toBe(1);
     expect(search.hits[0].message_id).toBe("m1");
+
+    const pagedSearch = searchChatStoreArchived({
+      chat_path: chatPath,
+      db_path: dbPath,
+      query: "message",
+      limit: 1,
+      offset: 0,
+    });
+    expect(pagedSearch.hits.length).toBe(1);
+    expect(pagedSearch.total_hits).toBe(2);
+    expect(pagedSearch.next_offset).toBe(1);
+
     const searchThread2 = searchChatStoreArchived({
       chat_path: chatPath,
       db_path: dbPath,
@@ -127,6 +140,7 @@ describe("chat offload sqlite store", () => {
       limit: 10,
     });
     expect(searchThread2.hits.length).toBe(1);
+    expect(searchThread2.total_hits).toBe(1);
     expect(searchThread2.hits[0].message_id).toBe("m2");
     const searchMalformedFts = searchChatStoreArchived({
       chat_path: chatPath,
@@ -137,6 +151,7 @@ describe("chat offload sqlite store", () => {
       limit: 10,
     });
     expect(searchMalformedFts.hits.length).toBeGreaterThanOrEqual(1);
+    expect(searchMalformedFts.total_hits).toBeGreaterThanOrEqual(1);
     expect(searchMalformedFts.hits[0].message_id).toBe("m1");
 
     const del = deleteChatStoreData({

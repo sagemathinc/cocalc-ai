@@ -165,6 +165,7 @@ export function ChatRoomThreadPanel({
   const [archivedSearchHits, setArchivedSearchHits] = useState<ChatStoreSearchHit[]>(
     [],
   );
+  const [archivedSearchTotal, setArchivedSearchTotal] = useState(0);
   const [archivedSearchError, setArchivedSearchError] = useState("");
   const [archivedHistoryOpen, setArchivedHistoryOpen] = useState(false);
   const [archivedHistoryLoading, setArchivedHistoryLoading] = useState(false);
@@ -421,6 +422,7 @@ export function ChatRoomThreadPanel({
     setThreadSearchQuery("");
     setThreadSearchOpen(false);
     setArchivedSearchHits([]);
+    setArchivedSearchTotal(0);
     setArchivedSearchError("");
     setArchivedHistoryRows([]);
     setArchivedHistoryError("");
@@ -452,6 +454,7 @@ export function ChatRoomThreadPanel({
     ) {
       setArchivedSearchLoading(false);
       setArchivedSearchHits([]);
+      setArchivedSearchTotal(0);
       setArchivedSearchError("");
       return;
     }
@@ -463,6 +466,7 @@ export function ChatRoomThreadPanel({
       if (!hubProjects) {
         setArchivedSearchLoading(false);
         setArchivedSearchHits([]);
+        setArchivedSearchTotal(0);
         setArchivedSearchError("Conat project API is unavailable.");
         return;
       }
@@ -477,9 +481,13 @@ export function ChatRoomThreadPanel({
         });
         if (canceled) return;
         setArchivedSearchHits(result.hits ?? []);
+        setArchivedSearchTotal(
+          parseArchivedTotalCount(result, (result.hits ?? []).length),
+        );
       } catch (err) {
         if (canceled) return;
         setArchivedSearchHits([]);
+        setArchivedSearchTotal(0);
         setArchivedSearchError(`${err}`);
       } finally {
         if (!canceled) {
@@ -1008,7 +1016,10 @@ export function ChatRoomThreadPanel({
                   ? "Archived: searching..."
                   : archivedSearchError
                     ? "Archived: error"
-                    : `Archived: ${archivedMatchCount} hits (showing ${Math.min(ARCHIVED_INLINE_PREVIEW_LIMIT, archivedMatchCount)})`}
+                    : `Archived: ${archivedSearchTotal} hits (${Math.min(
+                        ARCHIVED_INLINE_PREVIEW_LIMIT,
+                        archivedMatchCount,
+                      )} shown)`}
               </span>
             ) : null}
           </div>
@@ -1222,6 +1233,19 @@ export function ChatRoomThreadPanel({
       />
     </div>
   );
+}
+
+function parseArchivedTotalCount(
+  response: { total_hits?: unknown; total?: unknown } | undefined,
+  fallback: number,
+): number {
+  const totalHits = Number(response?.total_hits);
+  if (Number.isFinite(totalHits) && totalHits >= 0) return Math.floor(totalHits);
+  const legacyTotal = Number(response?.total);
+  if (Number.isFinite(legacyTotal) && legacyTotal >= 0) {
+    return Math.floor(legacyTotal);
+  }
+  return fallback;
 }
 
 function getReasoningForModel({

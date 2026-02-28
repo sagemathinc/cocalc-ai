@@ -1153,6 +1153,7 @@ export async function chatStoreSearch({
   chat_id: string;
   hits: ChatStoreSearchHit[];
   offset: number;
+  total_hits: number;
   next_offset?: number;
 }> {
   await assertCollab({ account_id, project_id });

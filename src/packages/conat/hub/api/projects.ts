@@ -821,7 +821,13 @@ export interface Projects {
     thread_id?: string;
     limit?: number;
     offset?: number;
-  }) => Promise<{ chat_id: string; hits: ChatStoreSearchHit[]; offset: number; next_offset?: number }>;
+  }) => Promise<{
+    chat_id: string;
+    hits: ChatStoreSearchHit[];
+    offset: number;
+    total_hits: number;
+    next_offset?: number;
+  }>;
 
   chatStoreDelete: (opts: {
     account_id?: string;

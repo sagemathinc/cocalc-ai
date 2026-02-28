@@ -76,6 +76,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   );
   const [result, setResult] = useState<MatchHit[]>([]);
   const [archivedResult, setArchivedResult] = useState<MatchHit[]>([]);
+  const [archivedTotalCount, setArchivedTotalCount] = useState<number>(0);
   const [archivedSearchError, setArchivedSearchError] = useState<string>("");
   const [archivedSearchLoading, setArchivedSearchLoading] = useState<boolean>(false);
   const saveSearch = useMemo(
@@ -189,21 +190,29 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     return Array.from(messages.keys());
   }, [messages, threadIndex, searchScope]);
 
+  const totalArchivedRowsInConfig = useMemo(() => {
+    const rows = chatActions?.listThreadConfigRows?.() ?? [];
+    let total = 0;
+    for (const row0 of rows) {
+      const row =
+        row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
+      const value = Number(row?.archived_chat_rows ?? 0);
+      if (Number.isFinite(value) && value > 0) total += value;
+    }
+    return total;
+  }, [chatActions, cacheVersion]);
+
   const scopeHasArchivedRows = useMemo(() => {
-    if (
-      !chatActions ||
-      !searchScope ||
-      searchScope === COMBINED_FEED_KEY ||
-      searchScope === ALL_MESSAGES_KEY
-    ) {
-      return false;
+    if (!chatActions || !searchScope) return false;
+    if (searchScope === COMBINED_FEED_KEY || searchScope === ALL_MESSAGES_KEY) {
+      return totalArchivedRowsInConfig > 0;
     }
     const meta = chatActions.getThreadMetadata?.(searchScope, {
       threadId: searchScope,
     });
     const value = meta?.archived_chat_rows;
     return typeof value === "number" && Number.isFinite(value) && value > 0;
-  }, [chatActions, searchScope, cacheVersion]);
+  }, [chatActions, searchScope, totalArchivedRowsInConfig, cacheVersion]);
   const keysToScanSet = useMemo(() => new Set(scopeKeys), [scopeKeys]);
 
   const resultLimit = useMemo(() => messages?.size ?? 0, [messages]);
@@ -249,13 +258,12 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       !project_id ||
       !path ||
       !searchScope ||
-      searchScope === COMBINED_FEED_KEY ||
-      searchScope === ALL_MESSAGES_KEY ||
       !scopeHasArchivedRows
     ) {
       setArchivedSearchLoading(false);
       setArchivedSearchError("");
       setArchivedResult([]);
+      setArchivedTotalCount(0);
       return;
     }
     const hubProjects = webapp_client.conat_client?.hub?.projects;
@@ -263,8 +271,13 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       setArchivedSearchLoading(false);
       setArchivedSearchError("Conat project API is unavailable.");
       setArchivedResult([]);
+      setArchivedTotalCount(0);
       return;
     }
+    const threadId =
+      searchScope === COMBINED_FEED_KEY || searchScope === ALL_MESSAGES_KEY
+        ? undefined
+        : searchScope;
     let cancelled = false;
     setArchivedSearchLoading(true);
     setArchivedSearchError("");
@@ -274,17 +287,21 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
           project_id,
           chat_path: path,
           query,
-          thread_id: searchScope,
+          thread_id: threadId,
           limit: 100,
           offset: 0,
         });
         if (cancelled) return;
         const mapped = (response?.hits ?? []).map(mapArchivedHitToMatchHit);
         setArchivedResult(mapped);
+        setArchivedTotalCount(
+          parseArchivedTotalCount(response, mapped.length),
+        );
       } catch (err) {
         if (cancelled) return;
         setArchivedSearchError(`${err}`);
         setArchivedResult([]);
+        setArchivedTotalCount(0);
       } finally {
         if (!cancelled) {
           setArchivedSearchLoading(false);
@@ -452,7 +469,11 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
             <div style={{ color: "#666", fontSize: 12 }}>
               {archivedSearchLoading
                 ? `Searching… loaded: ${loadedCount}`
-                : `Hits: ${totalCount} total (${loadedCount} loaded${scopeHasArchivedRows ? `, ${archivedCount} archived` : ""})`}
+                : `Hits shown: ${totalCount} (${loadedCount} loaded${
+                    scopeHasArchivedRows
+                      ? `, ${archivedCount} archived shown / ${archivedTotalCount} archived total`
+                      : ""
+                  })`}
             </div>
           ) : null}
         </div>
@@ -530,4 +551,17 @@ function mapArchivedHitToMatchHit(hit: ChatStoreSearchHit): MatchHit {
   const id = dateMs != null ? `${dateMs}` : `${hit.segment_id}:${hit.row_id}`;
   const content = (hit.snippet ?? hit.excerpt ?? "").trim() || "(no preview)";
   return { id, content, source: "archived" };
+}
+
+function parseArchivedTotalCount(
+  response: { total_hits?: unknown; total?: unknown } | undefined,
+  fallback: number,
+): number {
+  const totalHits = Number(response?.total_hits);
+  if (Number.isFinite(totalHits) && totalHits >= 0) return Math.floor(totalHits);
+  const legacyTotal = Number(response?.total);
+  if (Number.isFinite(legacyTotal) && legacyTotal >= 0) {
+    return Math.floor(legacyTotal);
+  }
+  return fallback;
 }
