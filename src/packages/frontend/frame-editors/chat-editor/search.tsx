@@ -435,6 +435,14 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         hit.source === "archived" &&
         hit.threadId
       ) {
+        // In cross-thread scopes, lock onto the hit's thread first so follow-up
+        // navigation/search context is coherent.
+        if (
+          searchScope === COMBINED_FEED_KEY ||
+          searchScope === ALL_MESSAGES_KEY
+        ) {
+          setSelectedThreadKey(hit.threadId);
+        }
         try {
           await hydratedThreadDate(hit.threadId, dateMs);
         } catch (err) {
