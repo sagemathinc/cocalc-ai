@@ -8,3 +8,4 @@ Last Updated: September 2024.
 
 - Buckets & backups: [buckets.md](./buckets.md)
 - Frame tree menus and command/action context: [frame-tree-menus.md](./frame-tree-menus.md)
+- Browser runtime debugging + API wishlist: [browser-debugging.md](./browser-debugging.md)

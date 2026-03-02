@@ -38,3 +38,4 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 
 - Architecture/docs: `docs/`
 - Translation workflow: `docs/translation.md`
+- Browser runtime debugging via `cocalc browser`: `docs/browser-debugging.md`
