@@ -76,11 +76,9 @@ import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
 
-// how many ms between saving output during a running turn
-// so that everybody sees it.
+// How often to persist in-flight ACP metadata (thread state/usage/flags).
+// Message body content is persisted at terminal commits only.
 const COMMIT_INTERVAL = 2_000;
-const CONTENT_CHECKPOINT_INTERVAL_MS = 15_000;
-const CONTENT_CHECKPOINT_MIN_BYTES_DELTA = 2 * 1024;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
 const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
@@ -592,8 +590,6 @@ export class ChatStreamWriter {
   private events: AcpStreamMessage[] = [];
   private usage: AcpStreamUsage | null = null;
   private content = "";
-  private lastCommittedContent = "";
-  private lastFullCommitAtMs = 0;
   private lastCommittedThreadId: string | null = null;
   private lastCommittedUsageJson = "null";
   private lastCommittedInterrupted = false;
@@ -1183,41 +1179,28 @@ export class ChatStreamWriter {
   }
 
   private hasMetadataDelta(generating: boolean): boolean {
+    const usageChanged = this.lastCommittedUsageJson !== this.usageFingerprint();
     return (
       this.lastCommittedThreadId !== this.threadId ||
-      this.lastCommittedUsageJson !== this.usageFingerprint() ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
-      this.lastCommittedGenerating !== generating
+      this.lastCommittedGenerating !== generating ||
+      // During active runs we keep row churn minimal and stream live detail
+      // from AKV/pubsub. Persist usage changes at terminal commit.
+      (!generating && usageChanged)
     );
   }
 
   private shouldFullContentCommit({
     generating,
-    reason,
-    now,
   }: {
     generating: boolean;
-    reason: "throttled" | "terminal-verify" | "dispose";
-    now: number;
   }): boolean {
-    if (!generating) return true;
-    if (reason !== "throttled") return true;
-    if (this.lastFullCommitAtMs === 0) return true;
-    if (this.content === this.lastCommittedContent) return false;
-    const elapsed = now - this.lastFullCommitAtMs;
-    if (elapsed >= CONTENT_CHECKPOINT_INTERVAL_MS) return true;
-    const bytesDelta = Math.abs(
-      Buffer.byteLength(this.content, "utf8") -
-        Buffer.byteLength(this.lastCommittedContent, "utf8"),
-    );
-    return bytesDelta >= CONTENT_CHECKPOINT_MIN_BYTES_DELTA;
+    // During active runs we render from AKV/pubsub and avoid chat-row churn.
+    // Persist full message content only for terminal generating=false commits.
+    return generating !== true;
   }
 
-  private markCommitted(generating: boolean, fullContent: boolean): void {
-    if (fullContent) {
-      this.lastCommittedContent = this.content;
-      this.lastFullCommitAtMs = Date.now();
-    }
+  private markCommitted(generating: boolean): void {
     this.lastCommittedThreadId = this.threadId;
     this.lastCommittedUsageJson = this.usageFingerprint();
     this.lastCommittedInterrupted = this.interruptNotified;
@@ -1262,11 +1245,8 @@ export class ChatStreamWriter {
       });
       return false;
     }
-    const now = Date.now();
     const fullContent = this.shouldFullContentCommit({
       generating,
-      reason,
-      now,
     });
     const metadataDelta = this.hasMetadataDelta(generating);
     if (!fullContent && !metadataDelta) {
@@ -1279,7 +1259,7 @@ export class ChatStreamWriter {
           : this.buildChatMetadataUpdate(generating),
       );
       this.syncdb.commit();
-      this.markCommitted(generating, fullContent);
+      this.markCommitted(generating);
     } catch (err) {
       logger.warn("chat syncdb commit failed", {
         chatKey: this.chatKey,

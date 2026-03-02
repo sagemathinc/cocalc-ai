@@ -152,6 +152,20 @@ export function getLatestSummaryText(
   return latest;
 }
 
+export function getLatestEventLineText(
+  events: AcpStreamMessage[],
+): string | undefined {
+  for (let i = (events?.length ?? 0) - 1; i >= 0; i--) {
+    const evt = events[i];
+    if (evt?.type !== "event" || !eventHasText(evt.event)) continue;
+    const text = evt.event.text;
+    if (typeof text === "string" && text.trim().length > 0) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
 export function getBestResponseText(
   events: AcpStreamMessage[],
 ): string | undefined {

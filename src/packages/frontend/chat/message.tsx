@@ -30,6 +30,7 @@ import { COLORS } from "@cocalc/util/theme";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
+  getLatestEventLineText,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
@@ -322,6 +323,8 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const [openActivityDrawerToken, setOpenActivityDrawerToken] =
+    useState<number | undefined>(undefined);
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
@@ -531,8 +534,11 @@ export default function Message({
     if (!Array.isArray(codexBodyLog.events) || codexBodyLog.events.length === 0) {
       return undefined;
     }
+    if (effectiveGenerating) {
+      return getLatestEventLineText(codexBodyLog.events as any);
+    }
     return getBestResponseText(codexBodyLog.events as any);
-  }, [codexBodyLog.events]);
+  }, [codexBodyLog.events, effectiveGenerating]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -1091,6 +1097,12 @@ export default function Message({
   function renderMessageBody({ message_class }) {
     const value = renderedMessageValue;
     const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
+    const showInlineActivityShortcut = showCodexActivity && effectiveGenerating;
+    const openActivityFromMessage = (e: any) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.("a[href]")) return;
+      setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+    };
 
     return (
       <>
@@ -1117,17 +1129,28 @@ export default function Message({
           inlineCodeLinks={
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
+          openDrawerToken={openActivityDrawerToken}
         />
-        <StaticMarkdown
-          style={MARKDOWN_STYLE}
-          value={value}
-          className={message_class}
-          highlightQuery={searchHighlight}
-          inlineCodeLinks={
-            Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+        <div
+          onClick={showInlineActivityShortcut ? openActivityFromMessage : undefined}
+          style={showInlineActivityShortcut ? { cursor: "pointer" } : undefined}
+          title={
+            showInlineActivityShortcut
+              ? "Click to view full Codex activity log"
+              : undefined
           }
-          inlineCodeWorkspaceRoot={activityBasePath}
-        />
+        >
+          <StaticMarkdown
+            style={MARKDOWN_STYLE}
+            value={value}
+            className={message_class}
+            highlightQuery={searchHighlight}
+            inlineCodeLinks={
+              Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+            }
+            inlineCodeWorkspaceRoot={activityBasePath}
+          />
+        </div>
       </>
     );
   }

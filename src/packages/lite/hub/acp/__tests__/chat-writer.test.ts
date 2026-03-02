@@ -54,7 +54,11 @@ jest.mock("@cocalc/chat/server", () => ({
   releaseChatSyncDB: jest.fn(),
 }));
 
-type RecordedSet = { generating?: boolean; content?: string };
+type RecordedSet = {
+  generating?: boolean;
+  content?: string;
+  history?: unknown;
+};
 
 function makeFakeSyncDB() {
   const sets: RecordedSet[] = [];
@@ -474,7 +478,9 @@ describe("ChatStreamWriter", () => {
     await delay(0);
 
     expect(sets.length).toBeGreaterThan(0);
-    expect(sets[sets.length - 1].generating).toBe(true);
+    const last = sets[sets.length - 1];
+    expect(last.generating).toBe(true);
+    expect(last.history).toBeUndefined();
     (writer as any).dispose?.(true);
   });
 

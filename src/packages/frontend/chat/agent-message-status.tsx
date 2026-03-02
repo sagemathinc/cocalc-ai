@@ -57,6 +57,7 @@ interface AgentMessageStatusProps {
   fallbackLogRefs: LogRefs;
   activityContext: ActivityLogContext;
   inlineCodeLinks?: InlineCodeLink[];
+  openDrawerToken?: number;
 }
 
 export function AgentMessageStatus({
@@ -71,6 +72,7 @@ export function AgentMessageStatus({
   fallbackLogRefs,
   activityContext,
   inlineCodeLinks,
+  openDrawerToken,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -193,6 +195,12 @@ export function AgentMessageStatus({
     pendingRestoreRef.current = null;
     activityScrollPositions.set(persistKey, getSavedScrollPosition(node));
   }, [persistKey, showDrawer, contentVersion]);
+
+  useEffect(() => {
+    if (!show) return;
+    if (typeof openDrawerToken !== "number" || openDrawerToken <= 0) return;
+    setShowDrawer(true);
+  }, [show, openDrawerToken]);
 
   if (!show) return null;
 

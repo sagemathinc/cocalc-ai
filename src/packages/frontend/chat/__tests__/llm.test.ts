@@ -91,6 +91,7 @@ function makeMessage() {
   return {
     event: "chat" as const,
     sender_id: "user-1",
+    thread_id: "thread-test-1",
     history: [
       {
         author_id: "00000000-1000-4000-8000-000000000001",
@@ -290,7 +291,10 @@ describe("processLLM model resolution and Codex dispatch", () => {
     expect(mockQueryStream).toHaveBeenCalled();
     const args = mockQueryStream.mock.calls[0][0];
     expect(args.model).toBe("gpt-4");
-    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(reply_to, "gpt-4");
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
+      "thread-test-1",
+      "gpt-4",
+    );
   });
 
   it("routes codex models through processAcpLLM", async () => {
@@ -307,7 +311,7 @@ describe("processLLM model resolution and Codex dispatch", () => {
     });
     expect(processAcpLLM).toHaveBeenCalled();
     expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
-      reply_to,
+      "thread-test-1",
       "codex-agent",
     );
   });

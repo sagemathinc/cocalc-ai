@@ -3,6 +3,7 @@ import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import {
   appendStreamMessage,
   getBestResponseText,
+  getLatestEventLineText,
   getLatestMessageText,
   getLatestSummaryText,
 } from "../acp";
@@ -92,5 +93,14 @@ describe("response text helpers", () => {
       textEvent("message", "final", 1),
     ];
     expect(getBestResponseText(events)).toBe("final");
+  });
+
+  test("returns only the latest textual event line", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "first line", 1),
+      textEvent("thinking", "second line", 2),
+      textEvent("message", "latest line", 3),
+    ];
+    expect(getLatestEventLineText(events)).toBe("latest line");
   });
 });
