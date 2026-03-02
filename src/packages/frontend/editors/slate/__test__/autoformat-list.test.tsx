@@ -257,3 +257,32 @@ test("autoformat list marker in split quote text nodes keeps following text", ()
 
   focusSpy.mockRestore();
 });
+
+test("autoformat list marker in split top-level text nodes keeps following text", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [
+    {
+      type: "paragraph",
+      children: [{ text: "" }, { text: "-" }, { text: "foo" }],
+    },
+  ] as Descendant[];
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 1], offset: 1 });
+  editor.insertText(" ", true);
+
+  const listEntry = Editor.nodes(editor, {
+    at: [],
+    match: (node) => Element.isElement(node) && node.type === "bullet_list",
+  }).next().value as [Element, number[]] | undefined;
+  expect(listEntry).toBeDefined();
+  if (listEntry) {
+    expect(Editor.string(editor, listEntry[1])).toBe("foo");
+  }
+
+  focusSpy.mockRestore();
+});

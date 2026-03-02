@@ -905,15 +905,13 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   let r: boolean | Function = false;
   try {
     let paragraphTextOverride: string | undefined;
-    if (selection.focus.path.length >= 2 && selection.focus.path[selection.focus.path.length - 1] === 0) {
-      const paragraphEntry = Editor.above(editor, {
-        at: selection.focus.path,
-        match: (node) => Element.isElement(node) && node.type === "paragraph",
-      });
-      if (paragraphEntry) {
-        const [, paragraphPath] = paragraphEntry;
-        paragraphTextOverride = Editor.string(editor, paragraphPath).trimRight();
-      }
+    const paragraphEntry = Editor.above(editor, {
+      at: selection.focus.path,
+      match: (node) => Element.isElement(node) && node.type === "paragraph",
+    });
+    if (paragraphEntry) {
+      const [, paragraphPath] = paragraphEntry;
+      paragraphTextOverride = Editor.string(editor, paragraphPath).trimRight();
     }
     Editor.withoutNormalizing(editor, () => {
       editor.apply({
