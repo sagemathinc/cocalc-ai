@@ -105,7 +105,7 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
         return true;
       }
     }
-    if (pullParagraphIntoEmptyBlockquote(editor, path)) {
+    if (pullParagraphIntoPreviousBlockquote(editor, path)) {
       return true;
     }
     return;
@@ -125,7 +125,7 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   }
 }
 
-function pullParagraphIntoEmptyBlockquote(editor: Editor, path: Path): boolean {
+function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolean {
   if (path[path.length - 1] === 0) return false;
   const prevPath = Path.previous(path);
   let prevNode;
@@ -135,9 +135,6 @@ function pullParagraphIntoEmptyBlockquote(editor: Editor, path: Path): boolean {
     return false;
   }
   if (!Element.isElement(prevNode) || prevNode.type !== "blockquote") {
-    return false;
-  }
-  if (Editor.string(editor, prevPath) !== "") {
     return false;
   }
 
@@ -151,11 +148,21 @@ function pullParagraphIntoEmptyBlockquote(editor: Editor, path: Path): boolean {
       }
     }
     const updatedQuote = Editor.node(editor, prevPath)[0] as Element;
+    const lastQuoteChildIndex = Math.max(0, updatedQuote.children.length - 1);
+    const lastQuoteChildPath = prevPath.concat(lastQuoteChildIndex);
+    const joinBoundary = Editor.end(editor, lastQuoteChildPath);
     const insertIndex = updatedQuote.children.length;
     const targetPath = prevPath.concat(insertIndex);
     Transforms.moveNodes(editor, { at: path, to: targetPath });
-    const start = Editor.start(editor, targetPath);
-    Transforms.select(editor, start);
+    // Merge the inserted paragraph into the previous quote paragraph so
+    // backspace behaves like "remove newline" at the join boundary.
+    if (insertIndex > 0) {
+      Transforms.mergeNodes(editor, { at: targetPath });
+      Transforms.select(editor, joinBoundary);
+    } else {
+      const start = Editor.start(editor, targetPath);
+      Transforms.select(editor, start);
+    }
   });
 
   return true;

@@ -700,6 +700,46 @@ test("block editor: backspace at block start merges and keeps focus", async ({
   }).toBe("abcZ123\n\n456");
 });
 
+test("block editor: backspace at start of paragraph after quote joins into quote", async ({
+  page,
+}) => {
+  const markdown = "> foo bar\n";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 0 });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toBe("> foo bar");
+});
+
+test("block editor: backspace at start of text after quote preserves following text", async ({
+  page,
+}) => {
+  const markdown = "> foo bar\n\n stuff";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toBe("> foo bar stuff");
+});
+
 test("sync: remote change to other block applies without deferring", async ({
   page,
 }) => {
