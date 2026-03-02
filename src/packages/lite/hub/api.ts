@@ -34,6 +34,7 @@ import {
   getChatStoreStats,
   listChatStoreSegments,
   readChatStoreArchived,
+  readChatStoreArchivedHit,
   rotateChatStore,
   searchChatStoreArchived,
   vacuumChatStore,
@@ -445,6 +446,21 @@ export const hubApi: HubApi = {
         thread_id: opts.thread_id,
         limit: opts.limit,
         offset: opts.offset,
+      });
+    },
+    chatStoreReadArchivedHit: (opts: {
+      chat_path: string;
+      db_path?: string;
+      row_id?: number;
+      message_id?: string;
+      thread_id?: string;
+    }) => {
+      return readChatStoreArchivedHit({
+        chat_path: opts.chat_path,
+        db_path: opts.db_path,
+        row_id: opts.row_id,
+        message_id: opts.message_id,
+        thread_id: opts.thread_id,
       });
     },
     chatStoreSearch: (opts: {

@@ -135,6 +135,19 @@ export interface ReadArchivedResult {
   next_offset?: number;
 }
 
+export interface ReadArchivedHitOptions {
+  chat_path: string;
+  db_path?: string;
+  row_id?: number;
+  message_id?: string;
+  thread_id?: string;
+}
+
+export interface ReadArchivedHitResult {
+  chat_id: string;
+  row?: ArchivedRow;
+}
+
 export interface SearchArchivedOptions {
   chat_path: string;
   query: string;
@@ -1029,6 +1042,77 @@ export function readChatStoreArchived({
     rows: out,
     offset: Math.max(0, offset),
     next_offset: out.length === Math.max(1, limit) ? Math.max(0, offset) + out.length : undefined,
+  };
+}
+
+export function readChatStoreArchivedHit({
+  chat_path,
+  db_path,
+  row_id,
+  message_id,
+  thread_id,
+}: ReadArchivedHitOptions): ReadArchivedHitResult {
+  const chatPath = normalizeChatPath(chat_path);
+  const dbPath = resolveDbPath(db_path);
+  const db = openDb(dbPath);
+  const { chat_id } = getOrCreateChatId(db, chatPath);
+  const normalizedMessageId = `${message_id ?? ""}`.trim();
+  const normalizedThreadId = `${thread_id ?? ""}`.trim();
+  let raw:
+    | (Omit<ArchivedRow, "row"> & { row_json: string })
+    | undefined;
+  if (Number.isFinite(row_id)) {
+    raw = db
+      .prepare(
+        `SELECT row_id, segment_id, message_id, thread_id, sender_id, event, date_ms, excerpt, row_json
+           FROM archived_rows
+          WHERE chat_id = ? AND row_id = ?
+          LIMIT 1`,
+      )
+      .get(chat_id, Math.max(1, Math.floor(Number(row_id)))) as
+      | (Omit<ArchivedRow, "row"> & { row_json: string })
+      | undefined;
+  } else if (normalizedMessageId) {
+    const where = ["chat_id = ?", "message_id = ?"];
+    const params: any[] = [chat_id, normalizedMessageId];
+    if (normalizedThreadId) {
+      where.push("thread_id = ?");
+      params.push(normalizedThreadId);
+    }
+    raw = db
+      .prepare(
+        `SELECT row_id, segment_id, message_id, thread_id, sender_id, event, date_ms, excerpt, row_json
+           FROM archived_rows
+          WHERE ${where.join(" AND ")}
+          ORDER BY date_ms DESC, row_id DESC
+          LIMIT 1`,
+      )
+      .get(...params) as
+      | (Omit<ArchivedRow, "row"> & { row_json: string })
+      | undefined;
+  } else {
+    throw Error("either row_id or message_id must be provided");
+  }
+  if (!raw) return { chat_id };
+  let row: Json;
+  try {
+    row = JSON.parse(raw.row_json);
+  } catch {
+    row = {};
+  }
+  return {
+    chat_id,
+    row: {
+      row_id: raw.row_id,
+      segment_id: raw.segment_id,
+      message_id: raw.message_id,
+      thread_id: raw.thread_id,
+      sender_id: raw.sender_id,
+      event: raw.event,
+      date_ms: raw.date_ms,
+      excerpt: raw.excerpt,
+      row,
+    },
   };
 }
 

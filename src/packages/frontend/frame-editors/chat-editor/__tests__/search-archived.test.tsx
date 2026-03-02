@@ -19,6 +19,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         projects: {
           chatStoreSearch: jest.fn(),
           chatStoreReadArchived: jest.fn(),
+          chatStoreReadArchivedHit: jest.fn(),
         },
       },
     },
@@ -83,12 +84,29 @@ describe("chat search archived integration", () => {
   const chatStoreReadArchivedMock = (
     webapp_client.conat_client?.hub?.projects as any
   )?.chatStoreReadArchived as jest.Mock;
+  const chatStoreReadArchivedHitMock = (
+    webapp_client.conat_client?.hub?.projects as any
+  )?.chatStoreReadArchivedHit as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
     chatStoreReadArchivedMock.mockResolvedValue({
       rows: [],
       next_offset: undefined,
+    });
+    chatStoreReadArchivedHitMock.mockResolvedValue({
+      row: {
+        row_id: 7,
+        segment_id: "seg-a",
+        thread_id: "thread-1",
+        date_ms: 1700000099999,
+        row: {
+          event: "chat",
+          date: "2023-11-14T22:14:59.999Z",
+          thread_id: "thread-1",
+          history: [{ content: "hydrated row" }],
+        },
+      },
     });
     useSearchIndexMock.mockReturnValue({
       error: "",
@@ -283,10 +301,11 @@ describe("chat search archived integration", () => {
     fireEvent.click(await screen.findByText("cross-thread backend match"));
 
     await waitFor(() => {
-      expect(chatStoreReadArchivedMock).toHaveBeenCalledWith(
+      expect(chatStoreReadArchivedHitMock).toHaveBeenCalledWith(
         expect.objectContaining({
           project_id: "project-1",
           chat_path: "lite2.chat",
+          row_id: 7,
           thread_id: "thread-1",
         }),
       );

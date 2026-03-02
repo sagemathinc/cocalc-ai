@@ -25,6 +25,8 @@ interface MatchHit {
   id: string;
   content: string;
   threadId?: string;
+  rowId?: number;
+  messageId?: string;
   source?: "live" | "archived";
 }
 
@@ -395,33 +397,30 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     });
   }, [result, archivedResult]);
 
-  const hydratedThreadDate = useCallback(
-    async (threadId: string, targetDateMs: number): Promise<boolean> => {
-      if (!project_id || !path || !chatActions) return false;
-      const dateKey = `${targetDateMs}`;
-      if (chatActions.getAllMessages()?.has(dateKey)) return true;
+  const hydrateArchivedHit = useCallback(
+    async (hit: MatchHit): Promise<number | undefined> => {
+      if (!project_id || !path || !chatActions) return;
       const hubProjects = webapp_client.conat_client?.hub?.projects;
-      if (!hubProjects) return false;
-      let offset = 0;
-      const limit = 200;
-      for (let i = 0; i < 25; i++) {
-        const result = await hubProjects.chatStoreReadArchived({
-          project_id,
-          chat_path: path,
-          thread_id: threadId,
-          limit,
-          offset,
-        });
-        const rows = result.rows ?? [];
-        if (!rows.length) return chatActions.getAllMessages()?.has(dateKey) ?? false;
-        chatActions.hydrateArchivedRows(
-          rows.map((row) => row.row).filter((row) => row != null),
-        );
-        if (chatActions.getAllMessages()?.has(dateKey)) return true;
-        if (result.next_offset == null) break;
-        offset = result.next_offset;
+      if (!hubProjects) return;
+      const rowId = Number.parseInt(`${hit.rowId ?? ""}`, 10);
+      const response = await hubProjects.chatStoreReadArchivedHit({
+        project_id,
+        chat_path: path,
+        row_id: Number.isFinite(rowId) ? rowId : undefined,
+        message_id: `${hit.messageId ?? ""}`.trim() || undefined,
+        thread_id: `${hit.threadId ?? ""}`.trim() || undefined,
+      });
+      const row = response?.row?.row;
+      if (row != null) {
+        chatActions.hydrateArchivedRows([row]);
       }
-      return chatActions.getAllMessages()?.has(dateKey) ?? false;
+      const dateValue =
+        Number(response?.row?.date_ms) ||
+        Number((row as any)?.date_ms);
+      if (Number.isFinite(dateValue)) return dateValue;
+      const parsedHitDate = Number.parseFloat(hit.id);
+      if (Number.isFinite(parsedHitDate)) return parsedHitDate;
+      return undefined;
     },
     [chatActions, path, project_id],
   );
@@ -429,8 +428,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const onSelectHit = useCallback(
     async (hit: MatchHit) => {
       const key = fragmentKey ?? "chat";
-      const dateMs = Number.parseFloat(hit.id);
-      if (!Number.isFinite(dateMs)) return;
+      let dateMs = Number.parseFloat(hit.id);
       if (
         hit.source === "archived" &&
         hit.threadId
@@ -444,14 +442,18 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
           setSelectedThreadKey(hit.threadId);
         }
         try {
-          await hydratedThreadDate(hit.threadId, dateMs);
+          const hydratedDate = await hydrateArchivedHit(hit);
+          if (Number.isFinite(hydratedDate)) {
+            dateMs = hydratedDate as number;
+          }
         } catch (err) {
           setArchivedSearchError(`${err}`);
         }
       }
+      if (!Number.isFinite(dateMs)) return;
       actions?.gotoFragment?.({ [key]: `${dateMs}` });
     },
-    [actions, fragmentKey, hydratedThreadDate, searchScope],
+    [actions, fragmentKey, hydrateArchivedHit, searchScope],
   );
 
   const loadedCount = result.length;
@@ -625,7 +627,15 @@ function mapArchivedHitToMatchHit(hit: ChatStoreSearchHit): MatchHit {
     typeof hit?.thread_id === "string" && hit.thread_id.trim().length > 0
       ? hit.thread_id
       : undefined;
-  return { id, content, threadId, source: "archived" };
+  const rowId =
+    typeof hit?.row_id === "number" && Number.isFinite(hit.row_id)
+      ? hit.row_id
+      : undefined;
+  const messageId =
+    typeof hit?.message_id === "string" && hit.message_id.trim().length > 0
+      ? hit.message_id
+      : undefined;
+  return { id, content, threadId, rowId, messageId, source: "archived" };
 }
 
 function parseArchivedTotalCount(

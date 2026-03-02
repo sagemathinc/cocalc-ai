@@ -296,6 +296,7 @@ export const projects = {
   chatStoreRotate: authFirstRequireAccount,
   chatStoreListSegments: authFirstRequireAccount,
   chatStoreReadArchived: authFirstRequireAccount,
+  chatStoreReadArchivedHit: authFirstRequireAccount,
   chatStoreSearch: authFirstRequireAccount,
   chatStoreDelete: authFirstRequireAccount,
   chatStoreVacuum: authFirstRequireAccount,
@@ -811,6 +812,16 @@ export interface Projects {
     limit?: number;
     offset?: number;
   }) => Promise<{ chat_id: string; rows: ChatStoreArchivedRow[]; offset: number; next_offset?: number }>;
+
+  chatStoreReadArchivedHit: (opts: {
+    account_id?: string;
+    project_id: string;
+    chat_path: string;
+    db_path?: string;
+    row_id?: number;
+    message_id?: string;
+    thread_id?: string;
+  }) => Promise<{ chat_id: string; row?: ChatStoreArchivedRow }>;
 
   chatStoreSearch: (opts: {
     account_id?: string;
