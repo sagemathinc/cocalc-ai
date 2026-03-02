@@ -53,6 +53,7 @@ import {
   getChatStoreStats,
   listChatStoreSegments,
   readChatStoreArchived,
+  readChatStoreArchivedHit,
   rotateChatStore,
   searchChatStoreArchived,
   vacuumChatStore,
@@ -1128,6 +1129,33 @@ export async function chatStoreReadArchived({
     thread_id,
     limit,
     offset,
+  });
+}
+
+export async function chatStoreReadArchivedHit({
+  account_id,
+  project_id,
+  chat_path,
+  db_path,
+  row_id,
+  message_id,
+  thread_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  chat_path: string;
+  db_path?: string;
+  row_id?: number;
+  message_id?: string;
+  thread_id?: string;
+}): Promise<{ chat_id: string; row?: ChatStoreArchivedRow }> {
+  await assertCollab({ account_id, project_id });
+  return readChatStoreArchivedHit({
+    chat_path,
+    db_path,
+    row_id,
+    message_id,
+    thread_id,
   });
 }
 
