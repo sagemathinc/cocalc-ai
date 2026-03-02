@@ -619,6 +619,18 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
         if (event.defaultPrevented) return;
+        if (event.key === "Backspace" && editor.selection == null) {
+          // Guard against browser-native backspace behavior when Slate selection
+          // is temporarily unavailable (e.g., during async remap/sync churn).
+          const fallback =
+            blockSelectionPoint(editor, "end") ?? blockSelectionPoint(editor, "start");
+          if (fallback) {
+            Transforms.setSelection(editor, { anchor: fallback, focus: fallback });
+            ReactEditor.focus(editor);
+          }
+          event.preventDefault();
+          return;
+        }
         if (
           (event.ctrlKey || event.metaKey) &&
           !event.altKey &&
