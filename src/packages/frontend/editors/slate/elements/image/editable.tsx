@@ -116,7 +116,7 @@ register({
                 height: `${new_height}px`,
                 width: `${new_width}px`,
               });
-              editor.saveValue();
+              editor.saveValue?.();
               setWidth(new_width);
               setHeight(new_height);
             }}
