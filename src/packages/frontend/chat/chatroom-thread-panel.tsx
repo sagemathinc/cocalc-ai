@@ -41,6 +41,7 @@ import { newest_content } from "./utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import type {
   ChatStoreArchivedRow,
+  ChatStoreStats,
   ChatStoreSearchHit,
 } from "@cocalc/conat/hub/api/projects";
 import { ChatIconPicker } from "./chat-icon-picker";
@@ -187,6 +188,15 @@ export function ChatRoomThreadPanel({
   const [archivedLoadDoneByThread, setArchivedLoadDoneByThread] = useState<
     Record<string, boolean>
   >({});
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+  const [maintenanceBusy, setMaintenanceBusy] = useState<string | null>(null);
+  const [maintenanceError, setMaintenanceError] = useState("");
+  const [maintenanceStatus, setMaintenanceStatus] = useState("");
+  const [maintenanceStats, setMaintenanceStats] = useState<ChatStoreStats | null>(
+    null,
+  );
+  const [maintenanceDeleteDays, setMaintenanceDeleteDays] = useState("30");
   const searchInputRef = useRef<any>(null);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
@@ -353,52 +363,91 @@ export function ChatRoomThreadPanel({
     selectedThreadId,
   ]);
 
-  const hydrateThreadDate = useCallback(
-    async (targetDateMs: number): Promise<boolean> => {
-      if (!project_id || !path || !selectedThreadId) return false;
-      const dateKey = `${targetDateMs}`;
-      if (actions.getAllMessages()?.has(dateKey)) return true;
-      const hubProjects = webapp_client.conat_client?.hub?.projects;
-      if (!hubProjects) return false;
-      let offset = 0;
-      const limit = 200;
-      for (let i = 0; i < 25; i++) {
-        const result = await hubProjects.chatStoreReadArchived({
-          project_id,
-          chat_path: path,
-          thread_id: selectedThreadId,
-          limit,
-          offset,
-        });
-        const rows = result.rows ?? [];
-        if (!rows.length) return actions.getAllMessages()?.has(dateKey) ?? false;
-        actions.hydrateArchivedRows(
-          rows.map((row) => row.row).filter((row) => row != null),
-        );
-        if (actions.getAllMessages()?.has(dateKey)) return true;
-        if (result.next_offset == null) break;
-        offset = result.next_offset;
-      }
-      return actions.getAllMessages()?.has(dateKey) ?? false;
-    },
-    [actions, path, project_id, selectedThreadId],
-  );
-
   const openArchivedSearchHit = useCallback(
     async (hit: ChatStoreSearchHit) => {
-      const targetDateMs =
-        typeof hit.date_ms === "number" && Number.isFinite(hit.date_ms)
-          ? hit.date_ms
-          : undefined;
-      if (targetDateMs == null) return;
+      if (!project_id || !path) return;
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      if (!hubProjects) return;
       try {
-        await hydrateThreadDate(targetDateMs);
-        actions.scrollToDate(targetDateMs);
+        const hydrated = await hubProjects.chatStoreReadArchivedHit({
+          project_id,
+          chat_path: path,
+          row_id:
+            typeof hit.row_id === "number" && Number.isFinite(hit.row_id)
+              ? hit.row_id
+              : undefined,
+          message_id: `${hit.message_id ?? ""}`.trim() || undefined,
+          thread_id: `${hit.thread_id ?? ""}`.trim() || undefined,
+        });
+        const hydratedRow = hydrated?.row?.row;
+        if (hydratedRow != null) {
+          actions.hydrateArchivedRows([hydratedRow]);
+        }
+        const hydratedDateMs = Number(
+          hydrated?.row?.date_ms ??
+            (hydratedRow as any)?.date_ms ??
+            hit.date_ms,
+        );
+        if (!Number.isFinite(hydratedDateMs)) return;
+        actions.scrollToDate(hydratedDateMs);
       } catch (err) {
         setArchivedSearchError(`${err}`);
+        const fallbackDateMs =
+          typeof hit.date_ms === "number" && Number.isFinite(hit.date_ms)
+            ? hit.date_ms
+            : undefined;
+        if (fallbackDateMs == null) return;
+        actions.scrollToDate(fallbackDateMs);
       }
     },
-    [actions, hydrateThreadDate],
+    [actions, path, project_id],
+  );
+
+  const loadMaintenanceStats = useCallback(async () => {
+    if (!project_id || !path) {
+      setMaintenanceStats(null);
+      return;
+    }
+    const hubProjects = webapp_client.conat_client?.hub?.projects;
+    if (!hubProjects) {
+      setMaintenanceError("Conat project API is unavailable.");
+      return;
+    }
+    setMaintenanceLoading(true);
+    setMaintenanceError("");
+    try {
+      const stats = await hubProjects.chatStoreStats({
+        project_id,
+        chat_path: path,
+      });
+      setMaintenanceStats(stats);
+    } catch (err) {
+      setMaintenanceError(`${err}`);
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  }, [path, project_id]);
+
+  const runMaintenanceAction = useCallback(
+    async (label: string, action: () => Promise<any>) => {
+      setMaintenanceBusy(label);
+      setMaintenanceError("");
+      setMaintenanceStatus("");
+      try {
+        const result = await action();
+        setMaintenanceStatus(
+          typeof result?.reason === "string" && result.reason.trim().length > 0
+            ? `${label}: ${result.reason}`
+            : `${label}: complete`,
+        );
+        await loadMaintenanceStats();
+      } catch (err) {
+        setMaintenanceError(`${err}`);
+      } finally {
+        setMaintenanceBusy(null);
+      }
+    },
+    [loadMaintenanceStats],
   );
 
   const setSearchQueryDebounced = useMemo(
@@ -993,6 +1042,16 @@ export function ChatRoomThreadPanel({
             >
               History
             </Button>
+            <Button
+              size="small"
+              disabled={!project_id || !path}
+              onClick={() => {
+                setMaintenanceOpen(true);
+                void loadMaintenanceStats();
+              }}
+            >
+              Maintenance
+            </Button>
           </div>
           <div
             style={{
@@ -1133,6 +1192,205 @@ export function ChatRoomThreadPanel({
           )}
         </div>
       </Modal>
+      <Modal
+        title="Chat Store Maintenance"
+        open={maintenanceOpen}
+        width={700}
+        onCancel={() => setMaintenanceOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setMaintenanceOpen(false)}>
+            Close
+          </Button>,
+        ]}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 16,
+              color: "#444",
+              fontSize: 13,
+            }}
+          >
+            <span>Head rows: {maintenanceStats?.head_rows ?? "?"}</span>
+            <span>Head chat rows: {maintenanceStats?.head_chat_rows ?? "?"}</span>
+            <span>Head bytes: {formatBytes(maintenanceStats?.head_bytes)}</span>
+            <span>
+              Stored rows: {maintenanceStats?.archived_rows ?? "?"}
+            </span>
+            <span>
+              Stored bytes: {formatBytes(maintenanceStats?.archived_bytes)}
+            </span>
+            <span>Segments: {maintenanceStats?.segments ?? "?"}</span>
+            {maintenanceStats?.pending_rotate_status ? (
+              <span>Pending rotate: {maintenanceStats.pending_rotate_status}</span>
+            ) : null}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <Button
+              size="small"
+              loading={maintenanceLoading}
+              disabled={maintenanceBusy != null}
+              onClick={() => {
+                void loadMaintenanceStats();
+              }}
+            >
+              Refresh Stats
+            </Button>
+            <Button
+              size="small"
+              loading={maintenanceBusy === "Rotate now"}
+              disabled={!project_id || !path || maintenanceBusy != null}
+              onClick={() => {
+                const hubProjects = webapp_client.conat_client?.hub?.projects;
+                if (!hubProjects) return;
+                void runMaintenanceAction("Rotate now", () =>
+                  hubProjects.chatStoreRotate({
+                    project_id: project_id!,
+                    chat_path: path!,
+                    force: true,
+                    require_idle: false,
+                  }),
+                );
+              }}
+            >
+              Rotate Now
+            </Button>
+            <Button
+              size="small"
+              loading={maintenanceBusy === "Vacuum"}
+              disabled={!project_id || !path || maintenanceBusy != null}
+              onClick={() => {
+                const hubProjects = webapp_client.conat_client?.hub?.projects;
+                if (!hubProjects) return;
+                void runMaintenanceAction("Vacuum", () =>
+                  hubProjects.chatStoreVacuum({
+                    project_id: project_id!,
+                    chat_path: path!,
+                  }),
+                );
+              }}
+            >
+              Vacuum
+            </Button>
+            <Button
+              size="small"
+              danger
+              loading={maintenanceBusy === "Delete Thread Scope"}
+              disabled={
+                !project_id ||
+                !path ||
+                !selectedThreadId ||
+                maintenanceBusy != null
+              }
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    "Delete backend-stored rows for the current chat only?",
+                  )
+                ) {
+                  return;
+                }
+                const hubProjects = webapp_client.conat_client?.hub?.projects;
+                if (!hubProjects || !selectedThreadId) return;
+                void runMaintenanceAction("Delete Thread Scope", () =>
+                  hubProjects.chatStoreDelete({
+                    project_id: project_id!,
+                    chat_path: path!,
+                    scope: "thread",
+                    thread_id: selectedThreadId,
+                  }),
+                );
+              }}
+            >
+              Delete This Chat (Stored)
+            </Button>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <Input
+              size="small"
+              value={maintenanceDeleteDays}
+              onChange={(e) => setMaintenanceDeleteDays(e.target.value)}
+              style={{ width: 120 }}
+              placeholder="Days"
+            />
+            <Button
+              size="small"
+              danger
+              loading={maintenanceBusy === "Delete Older Scope"}
+              disabled={!project_id || !path || maintenanceBusy != null}
+              onClick={() => {
+                const days = Number(maintenanceDeleteDays);
+                if (!Number.isFinite(days) || days <= 0) {
+                  setMaintenanceError("Delete older: days must be a positive number.");
+                  return;
+                }
+                if (
+                  !window.confirm(
+                    `Delete backend-stored rows older than ${Math.floor(days)} days?`,
+                  )
+                ) {
+                  return;
+                }
+                const hubProjects = webapp_client.conat_client?.hub?.projects;
+                if (!hubProjects) return;
+                const before_date_ms =
+                  Date.now() - Math.floor(days) * 24 * 60 * 60 * 1000;
+                void runMaintenanceAction("Delete Older Scope", () =>
+                  hubProjects.chatStoreDelete({
+                    project_id: project_id!,
+                    chat_path: path!,
+                    scope: "before_date",
+                    before_date_ms,
+                  }),
+                );
+              }}
+            >
+              Delete Older Than N Days
+            </Button>
+            <Button
+              size="small"
+              danger
+              loading={maintenanceBusy === "Delete All Stored"}
+              disabled={!project_id || !path || maintenanceBusy != null}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    "Delete all backend-stored rows for this chat file?",
+                  )
+                ) {
+                  return;
+                }
+                const hubProjects = webapp_client.conat_client?.hub?.projects;
+                if (!hubProjects) return;
+                void runMaintenanceAction("Delete All Stored", () =>
+                  hubProjects.chatStoreDelete({
+                    project_id: project_id!,
+                    chat_path: path!,
+                    scope: "chat",
+                  }),
+                );
+              }}
+            >
+              Delete All Stored Rows
+            </Button>
+          </div>
+          {maintenanceStatus ? (
+            <div style={{ color: "#1b5e20", fontSize: 12 }}>{maintenanceStatus}</div>
+          ) : null}
+          {maintenanceError ? (
+            <div style={{ color: "#b71c1c", fontSize: 12 }}>{maintenanceError}</div>
+          ) : null}
+        </div>
+      </Modal>
       {selectedThreadId && archivedRowsCount > 0 ? (
         <div
           style={{
@@ -1249,6 +1507,20 @@ function parseArchivedTotalCount(
     return Math.floor(legacyTotal);
   }
   return fallback;
+}
+
+function formatBytes(value: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "?";
+  if (n < 1024) return `${Math.floor(n)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let x = n / 1024;
+  let i = 0;
+  while (x >= 1024 && i < units.length - 1) {
+    x /= 1024;
+    i += 1;
+  }
+  return `${x.toFixed(x >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
 function getReasoningForModel({
