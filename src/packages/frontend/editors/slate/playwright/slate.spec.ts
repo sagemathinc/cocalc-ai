@@ -428,6 +428,59 @@ test("backspace after multiline quote with blank quoted line appends to last quo
   }
 });
 
+test("backspace at start of quoted paragraph after empty quoted line removes only empty quoted line", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [
+        { type: "paragraph", children: [{ text: "foo" }] },
+        { type: "paragraph", children: [{ text: "" }] },
+        { type: "paragraph", children: [{ text: "bar" }] },
+      ],
+    },
+    { type: "paragraph", children: [{ text: "x" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 2, 0], offset: 0 },
+      focus: { path: [0, 2, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      const quoteChildren = quote.children ?? [];
+      expect(quoteChildren.length).toBe(2);
+      expect(nodeText(quoteChildren[0])).toBe("foo");
+      expect(nodeText(quoteChildren[1])).toBe("bar");
+      expect(quoteChildren.some((child) => child?.type === "blockquote")).toBe(
+        false,
+      );
+    }
+    const paragraph = value.find((node) => node?.type === "paragraph");
+    expect(nodeText(paragraph)).toBe("x");
+  }
+});
+
 test("autoformat quotes the current paragraph when typing > at start", async ({
   page,
 }) => {
@@ -956,6 +1009,62 @@ test("block editor: backspace at start of x after multi-line quote appends to fi
   }).toContain("> barx");
   await expect.poll(async () => {
     return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).not.toContain("> foox");
+});
+
+test("editable markdown: backspace at start of x after multi-line quote appends to final quoted line", async ({
+  page,
+}) => {
+  const markdown = "> foo\n>\n> bar\n\nx";
+  await page.goto(
+    `http://127.0.0.1:4172/?editable=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateEditableTest?.getMarkdown === "function";
+  });
+
+  let xPath: number[] | null = null;
+  await expect.poll(async () => {
+    xPath = await page.evaluate(() => {
+      const value = window.__slateEditableTest?.getValue?.() as
+        | any[]
+        | undefined;
+      if (!Array.isArray(value) || value.length === 0) return null;
+      const findPath = (node: any, path: number[]): number[] | null => {
+        if (typeof node?.text === "string" && node.text === "x") {
+          return path;
+        }
+        if (!Array.isArray(node?.children)) return null;
+        for (let i = 0; i < node.children.length; i++) {
+          const hit = findPath(node.children[i], [...path, i]);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      for (let i = 0; i < value.length; i++) {
+        const hit = findPath(value[i], [i]);
+        if (hit) return hit;
+      }
+      return null;
+    });
+    return xPath;
+  }).not.toBeNull();
+  expect(Array.isArray(xPath)).toBe(true);
+
+  await page.evaluate((path) => {
+    window.__slateEditableTest?.setSelection?.({
+      anchor: { path, offset: 0 },
+      focus: { path, offset: 0 },
+    } as any);
+  }, xPath);
+
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
   }).not.toContain("> foox");
 });
 

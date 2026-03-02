@@ -97,6 +97,35 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   }
 
   if (block.type === "paragraph") {
+    const quoteEntry = Editor.above(editor, {
+      at: path,
+      match: (node) => Element.isElement(node) && node.type === "blockquote",
+      mode: "lowest",
+    });
+    if (quoteEntry != null) {
+      const [, quotePath] = quoteEntry;
+      // At the start of a quoted paragraph with an empty quoted sibling above,
+      // remove that empty quoted line instead of delegating to Slate's default
+      // merge behavior, which can corrupt quote structure.
+      if (path.length === quotePath.length + 1 && path[path.length - 1] > 0) {
+        const prevSiblingPath = Path.previous(path);
+        const prevSibling = Editor.node(editor, prevSiblingPath)[0] as any;
+        if (
+          Element.isElement(prevSibling) &&
+          prevSibling.type === "paragraph" &&
+          isWhitespaceParagraph(prevSibling)
+        ) {
+          Editor.withoutNormalizing(editor, () => {
+            Transforms.removeNodes(editor, { at: prevSiblingPath });
+            const shiftedPath = Path.previous(path);
+            const start = Editor.start(editor, shiftedPath);
+            Transforms.select(editor, start);
+          });
+          return true;
+        }
+      }
+    }
+
     if (path[path.length - 1] > 1 && isWhitespaceParagraph(block)) {
       const prevPath = Path.previous(path);
       const prevNode = Editor.node(editor, prevPath)[0] as any;
