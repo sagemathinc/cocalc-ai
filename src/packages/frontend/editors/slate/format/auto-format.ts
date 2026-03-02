@@ -480,24 +480,16 @@ function autoformatListAtStart(editor: Editor): boolean {
     return false;
   }
 
-  let node;
-  try {
-    [node] = Editor.node(editor, selection.focus.path);
-  } catch {
+  const paragraphEntry = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) => Element.isElement(node) && node.type === "paragraph",
+  }) as [Element, Path] | undefined;
+  if (!paragraphEntry) {
     return false;
   }
+  const [, paragraphPath] = paragraphEntry;
 
-  if (!Text.isText(node)) {
-    return false;
-  }
-
-  const path = selection.focus.path;
-  const pos = path[path.length - 1];
-  if (path.length !== 2 || pos !== 0) {
-    return false;
-  }
-
-  const text = node.text;
+  const text = Editor.string(editor, paragraphPath);
   const markerMatch = text.match(/^([-*+]|\d+[.)])\s?/);
   if (!markerMatch) {
     return false;
@@ -505,22 +497,46 @@ function autoformatListAtStart(editor: Editor): boolean {
 
   const marker = markerMatch[1];
   const markerLen = marker.length;
-  const offset = selection.focus.offset;
-  if (offset !== markerLen && offset !== markerLen + 1) {
+  const paragraphStart = Editor.start(editor, paragraphPath);
+  let typedPrefix = "";
+  try {
+    typedPrefix = Editor.string(editor, {
+      anchor: paragraphStart,
+      focus: selection.focus,
+    });
+  } catch {
+    return false;
+  }
+  if (
+    typedPrefix !== marker &&
+    typedPrefix !== `${marker} `
+  ) {
     return false;
   }
 
-  const blockPath = path.slice(0, path.length - 1);
   const hasSpace = text.slice(markerLen, markerLen + 1) === " ";
   const deleteCount = hasSpace ? markerLen + 1 : markerLen;
 
   Editor.withoutNormalizing(editor, () => {
-    Transforms.delete(editor, {
-      at: { path, offset: 0 },
+    const afterMarker = Editor.after(editor, paragraphStart, {
+      unit: "character",
       distance: deleteCount,
     });
+    if (afterMarker) {
+      Transforms.delete(editor, {
+        at: {
+          anchor: paragraphStart,
+          focus: afterMarker,
+        },
+      });
+    } else {
+      Transforms.delete(editor, {
+        at: paragraphStart,
+        distance: deleteCount,
+      });
+    }
     Transforms.wrapNodes(editor, { type: "list_item" } as Element, {
-      at: blockPath,
+      at: paragraphPath,
     });
     const isOrdered = /^\d/.test(marker);
     Transforms.wrapNodes(
@@ -530,7 +546,7 @@ function autoformatListAtStart(editor: Editor): boolean {
         ...(isOrdered ? { start: parseInt(marker, 10) || 1 } : null),
         tight: true,
       } as Element,
-      { at: blockPath },
+      { at: paragraphPath },
     );
   });
 
@@ -579,14 +595,14 @@ function autoformatListAtStart(editor: Editor): boolean {
         // ignore invalid path
       }
     };
-    tryPath(blockPath);
-    tryPath(Path.next(blockPath));
-    if (blockPath[blockPath.length - 1] > 0) {
-      tryPath(Path.previous(blockPath));
+    tryPath(paragraphPath);
+    tryPath(Path.next(paragraphPath));
+    if (paragraphPath[paragraphPath.length - 1] > 0) {
+      tryPath(Path.previous(paragraphPath));
     }
   }
   if (!listPath) {
-    listPath = blockPath;
+    listPath = paragraphPath;
   }
   const listItemEntry = Editor.nodes(editor, {
     at: listPath,
@@ -616,7 +632,7 @@ function autoformatListAtStart(editor: Editor): boolean {
     (editor as any).__autoformatDidBlock = true;
     (editor as any).__autoformatSelection = { anchor: focus, focus };
     slateDebug("autoformat:list:focus", {
-      blockPath,
+      blockPath: paragraphPath,
       listItemPath,
       listPath,
       focus,
