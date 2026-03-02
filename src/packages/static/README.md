@@ -48,7 +48,7 @@ You will need to manually build the webpack assets, e.g., via
 
 ## More about development
 
-First we assume you have installed all dev dependencies everywhere for all modules \(`pnpm install; pnpm build-dev`\). To do interactive development of CoCalc, you optionally start typescript in watch mode as explained below. If you're using
+First we assume you have installed all dev dependencies everywhere for all modules \(`pnpm install; pnpm build:dev`\). To do interactive development of CoCalc, you optionally start typescript in watch mode as explained below. If you're using
 VS Code its LSP server handles this checking so you can skip this.
 
 To watch for typescript errors, in one terminal session (in this package/static directory!) start webpack running

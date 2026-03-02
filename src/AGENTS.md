@@ -10,11 +10,11 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 
 ## Preferred Commands
 
-- Full dev build: `pnpm build-dev`
+- Full dev build: `pnpm build:dev`
 - Full typecheck: `pnpm tsc`
 - Package typecheck (fast): `cd src/packages/<pkg> && pnpm tsc --build`
 - Package build: `cd src/packages/<pkg> && pnpm build`
-- For `next` / `static`: use `pnpm build-dev` instead of `pnpm build`
+- For `next` / `static`: use `pnpm build:dev` instead of `pnpm build`
 - Tests: run focused package/tests first; avoid full test suite unless needed
 - Dependency consistency check: `pnpm version-check`
 

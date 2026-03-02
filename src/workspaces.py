@@ -514,9 +514,9 @@ def build(args) -> None:
             # up the build
             return
         try:
-            if args.dev and '"build-dev"' in open(
+            if args.dev and '"build:dev"' in open(
                     os.path.join(CUR, path, 'package.json')).read():
-                cmd("pnpm run build-dev", package_path)
+                cmd("pnpm run build:dev", package_path)
             else:
                 cmd("pnpm run build", package_path)
         except Exception as err:

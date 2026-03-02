@@ -640,7 +640,7 @@ function assertFrontendInstrumentation({
       // ok
     } else {
       throw new Error(
-        `unable to detect jupyter virtualization instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+        `unable to detect jupyter virtualization instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build:dev' then 'pnpm -C src/packages/lite app'`,
       );
     }
   }
@@ -649,7 +649,7 @@ function assertFrontendInstrumentation({
       return;
     }
     throw new Error(
-      `unable to detect jupyter lazy-render instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+      `unable to detect jupyter lazy-render instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build:dev' then 'pnpm -C src/packages/lite app'`,
     );
   }
 }

@@ -6,11 +6,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "make": "pnpm run build",
-    "make-dev": "pnpm run build-dev",
     "build": "./workspaces.py install && ./workspaces.py build && pnpm python-api",
-    "build-dev": "./workspaces.py install && ./workspaces.py build --dev && pnpm python-api",
-    "build-lite": "./workspaces.py install && ./workspaces.py build --exclude=hub,server,next,file-server",
+    "build:dev": "./workspaces.py install && ./workspaces.py build --dev && pnpm python-api",
+    "build:lite": "./workspaces.py install && ./workspaces.py build --exclude=hub,server,next,file-server",
     "clean": "rm -rf packages/node_modules && ./workspaces.py clean ",
     "hub": "pnpm --dir packages/hub app",
     "hub:postgres": "pnpm --dir packages/hub app:postgres",

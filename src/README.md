@@ -68,10 +68,10 @@ CoCalc also runs a NATS server listening on two ports on localhost, one for TCP 
 these commands via [NPM run scripts](https://docs.npmjs.com/cli/v10/using-npm/scripts).
 
 ```sh
-~/cocalc/src$ pnpm build-dev
+~/cocalc/src$ pnpm build:dev
 ```
 
-This will do `pnpm install` for all packages, and also build the typescript code, and anything else into a dist directory for each module. Once `pnpm build-dev` finishes successfully, you can start using CoCalc by starting the database and the backend hub in two terminals. You can start the database and hub in any order.
+This will do `pnpm install` for all packages, and also build the typescript code, and anything else into a dist directory for each module. Once `pnpm build:dev` finishes successfully, you can start using CoCalc by starting the database and the backend hub in two terminals. You can start the database and hub in any order.
 
 ```sh
 ~/cocalc/src$ pnpm database    # in one terminal
@@ -99,7 +99,7 @@ The main \(only?\) difference is that static and next webpack builds are created
 If necessary, you can delete all the `node_modules` and `dist` directories in all packages and start over as follows:
 
 ```sh
-~/cocalc/src$ pnpm clean && pnpm build-dev
+~/cocalc/src$ pnpm clean && pnpm build:dev
 ```
 
 ## Doing Development
@@ -166,7 +166,7 @@ If you want a lightweight dev server without Next.js, you can run the hub with `
 
 ### 3. Building only what has changed
 
-The command `pnpm build (or build-dev)`, when run from the src directory, caches the fact that there was a successful build by touching a file `src/packages/package-name/.successful_build` . This caching _only_ does anything if you explicitly use the `pnpm build` command from the src/ directory, and is ignored when directly building in a subdirectory. You can do `pnpm build --exclude=static` periodically to rebuild precisely what needs to be built, except what is built using webpack \(e.g., via `pnpm static` as explained above\):
+The command `pnpm build (or build:dev)`, when run from the src directory, caches the fact that there was a successful build by touching a file `src/packages/package-name/.successful_build` . This caching _only_ does anything if you explicitly use the `pnpm build` command from the src/ directory, and is ignored when directly building in a subdirectory. You can do `pnpm build --exclude=static` periodically to rebuild precisely what needs to be built, except what is built using webpack \(e.g., via `pnpm static` as explained above\):
 
 ```sh
 ~/cocalc/src/$ pnpm build --exclude=static
