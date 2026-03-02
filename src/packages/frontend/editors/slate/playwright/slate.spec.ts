@@ -382,6 +382,52 @@ test("backspace after quoted text and paragraph text preserves both", async ({
   }
 });
 
+test("backspace after multiline quote with blank quoted line appends to last quoted paragraph", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [
+        { type: "paragraph", children: [{ text: "foo" }] },
+        { type: "paragraph", children: [{ text: "" }] },
+        { type: "paragraph", children: [{ text: "bar" }] },
+      ],
+    },
+    { type: "paragraph", children: [{ text: "x" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      expect(nodeText(quote)).toContain("foo");
+      expect(nodeText(quote)).toContain("barx");
+    }
+  }
+});
+
 test("autoformat quotes the current paragraph when typing > at start", async ({
   page,
 }) => {
@@ -888,6 +934,29 @@ test("block editor: backspace after empty quote does not crash", async ({
   await expect.poll(async () => {
     return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
   }).toContain("stuff");
+});
+
+test("block editor: backspace at start of x after multi-line quote appends to final quoted line", async ({
+  page,
+}) => {
+  const markdown = "> foo\n>\n> bar\n\nx";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+  await page.evaluate(() => {
+    return window.__slateBlockTest?.setSelection?.(0, "end");
+  });
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).not.toContain("> foox");
 });
 
 test("sync: remote change to other block applies without deferring", async ({

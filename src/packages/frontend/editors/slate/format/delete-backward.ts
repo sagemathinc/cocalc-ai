@@ -97,6 +97,34 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   }
 
   if (block.type === "paragraph") {
+    if (path[path.length - 1] > 1 && isWhitespaceParagraph(block)) {
+      const prevPath = Path.previous(path);
+      const prevNode = Editor.node(editor, prevPath)[0] as any;
+      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+        Transforms.removeNodes(editor, { at: prevPath });
+        return true;
+      }
+    }
+    if (path[path.length - 1] > 1) {
+      const immediatePrevPath = Path.previous(path);
+      const immediatePrevNode = Editor.node(editor, immediatePrevPath)[0] as any;
+      if (
+        Element.isElement(immediatePrevNode) &&
+        immediatePrevNode.type === "paragraph" &&
+        isWhitespaceParagraph(immediatePrevNode)
+      ) {
+        const quotePath = Path.previous(immediatePrevPath);
+        const quoteNode = Editor.node(editor, quotePath)[0] as any;
+        if (Element.isElement(quoteNode) && quoteNode.type === "blockquote") {
+          Editor.withoutNormalizing(editor, () => {
+            Transforms.removeNodes(editor, { at: immediatePrevPath });
+            const shiftedPath = Path.previous(path);
+            pullParagraphIntoPreviousBlockquote(editor, shiftedPath);
+          });
+          return true;
+        }
+      }
+    }
     if (path[path.length - 1] > 0 && isWhitespaceParagraph(block)) {
       const prevPath = Path.previous(path);
       const prevNode = Editor.node(editor, prevPath)[0] as any;
