@@ -7,6 +7,9 @@ async function waitForHarness(page) {
         if (typeof window.__chatComposerTest?.getInput === "function") {
           return "ready";
         }
+        if (typeof window.__chatSearchTest?.getSearchCalls === "function") {
+          return "ready";
+        }
         if (window.__chatHarnessBootError != null) {
           return `boot-error:${window.__chatHarnessBootError}`;
         }
@@ -420,5 +423,45 @@ test("composer editor mode: image-markdown-only shift+enter clears on repeated s
       return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
     })
     .toBe(2);
+  await expectHarnessHealthy(page);
+});
+
+test("archived search hit click hydrates and jumps to message", async ({ page }) => {
+  await page.goto("/?mode=archived-search");
+  await waitForHarness(page);
+
+  await expect(page.getByText("cross-thread backend match")).toBeVisible();
+  await page.getByText("cross-thread backend match").click();
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__chatSearchTest?.getReadHitCalls?.().length ?? 0,
+      );
+    })
+    .toBeGreaterThan(0);
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__chatSearchTest?.getHydratedDates?.().length ?? 0,
+      );
+    })
+    .toBeGreaterThan(0);
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__chatSearchTest?.getGotoCalls?.().length ?? 0,
+      );
+    })
+    .toBeGreaterThan(0);
+
+  const firstGoto = await page.evaluate(() => {
+    const calls = window.__chatSearchTest?.getGotoCalls?.() ?? [];
+    return calls[0] ?? null;
+  });
+  expect(firstGoto).toBeTruthy();
+  expect(Object.values(firstGoto as any)[0]).toMatch(/^\d+$/);
   await expectHarnessHealthy(page);
 });

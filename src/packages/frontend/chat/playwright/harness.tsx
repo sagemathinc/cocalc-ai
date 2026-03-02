@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { FrameContext, defaultFrameContext } from "../../frame-editors/frame-tree/frame-context";
 import ChatInput from "../input";
@@ -15,6 +15,12 @@ declare global {
       setOscillationEnabled: (enabled: boolean) => void;
       getSendButtonVisible: () => boolean;
       getSendButtonDisabled: () => boolean;
+    };
+    __chatSearchTest?: {
+      getSearchCalls: () => any[];
+      getReadHitCalls: () => any[];
+      getGotoCalls: () => any[];
+      getHydratedDates: () => number[];
     };
   }
 }
@@ -283,10 +289,118 @@ function Harness(): React.JSX.Element {
   if (mode === "composer") {
     return <ComposerHarness />;
   }
+  if (mode === "archived-search") {
+    return <ArchivedSearchHarness />;
+  }
   return (
     <InputHarness
       fixedMode={editorMode === "editor" || editorMode === "markdown" ? editorMode : "markdown"}
     />
+  );
+}
+
+function ArchivedSearchHarness(): React.JSX.Element {
+  const [searchInput, setSearchInput] = useState("the");
+  const [hits, setHits] = useState<any[]>([]);
+  const callsRef = useRef<{
+    search: any[];
+    readHit: any[];
+    goto: any[];
+    hydratedDates: number[];
+  }>({
+    search: [],
+    readHit: [],
+    goto: [],
+    hydratedDates: [],
+  });
+  const projectId = "project-1";
+  const chatPath = "chat-harness.chat";
+  const readHit = useCallback(async (hit: any) => {
+    const req = {
+      project_id: projectId,
+      chat_path: chatPath,
+      row_id: hit?.row_id,
+      message_id: hit?.message_id,
+      thread_id: hit?.thread_id,
+    };
+    callsRef.current.readHit.push(req);
+    const response = {
+      row: {
+        row_id: 7,
+        segment_id: "seg-a",
+        message_id: "m7",
+        thread_id: "thread-1",
+        date_ms: 1700000099999,
+        row: {
+          event: "chat",
+          date: "2023-11-14T22:14:59.999Z",
+          thread_id: "thread-1",
+          history: [{ content: "hydrated from backend" }],
+        },
+      },
+    };
+    const date = Number(response.row.date_ms);
+    if (Number.isFinite(date)) {
+      callsRef.current.hydratedDates.push(date);
+      callsRef.current.goto.push({ chat: `${date}` });
+    }
+  }, []);
+
+  useEffect(() => {
+    window.__chatSearchTest = {
+      getSearchCalls: () => [...callsRef.current.search],
+      getReadHitCalls: () => [...callsRef.current.readHit],
+      getGotoCalls: () => [...callsRef.current.goto],
+      getHydratedDates: () => [...callsRef.current.hydratedDates],
+    };
+  }, []);
+  useEffect(() => {
+    const q = searchInput.trim();
+    if (!q) {
+      setHits([]);
+      return;
+    }
+    const req = {
+      project_id: projectId,
+      chat_path: chatPath,
+      query: q,
+      thread_id: "thread-1",
+    };
+    callsRef.current.search.push(req);
+    setHits([
+      {
+        segment_id: "seg-a",
+        row_id: 7,
+        thread_id: "thread-1",
+        message_id: "m7",
+        date_ms: 1700000099999,
+        snippet: "cross-thread backend match",
+      },
+    ]);
+  }, [searchInput]);
+
+  return (
+    <div style={{ padding: 16, width: 900 }}>
+      <h3>Archived Search Harness</h3>
+      <input
+        data-testid="archived-search-input"
+        value={searchInput}
+        onChange={(e) => setSearchInput((e.target as HTMLInputElement).value)}
+      />
+      <div style={{ marginTop: 8 }}>
+        {hits.map((hit) => (
+          <div
+            key={`${hit.segment_id}:${hit.row_id}`}
+            style={{ cursor: "pointer", color: "#1a5fb4" }}
+            onClick={() => {
+              void readHit(hit);
+            }}
+          >
+            {hit.snippet}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
