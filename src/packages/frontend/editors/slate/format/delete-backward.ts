@@ -233,7 +233,16 @@ function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolea
         movedNode.type === "paragraph" &&
         mergeTargetNode.type === "paragraph"
       ) {
-        Transforms.mergeNodes(editor, { at: targetPath });
+        const insertPoint = Editor.end(editor, mergeTargetPath);
+        const movedChildren = JSON.parse(
+          JSON.stringify((movedNode as any).children ?? []),
+        );
+        if (Array.isArray(movedChildren) && movedChildren.length > 0) {
+          Transforms.insertFragment(editor, movedChildren as any, {
+            at: insertPoint,
+          } as any);
+        }
+        Transforms.removeNodes(editor, { at: targetPath });
         Transforms.select(editor, joinBoundary);
         return;
       }
