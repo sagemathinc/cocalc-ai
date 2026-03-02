@@ -480,47 +480,59 @@ function autoformatListAtStart(editor: Editor): boolean {
     return false;
   }
 
-  let node;
+  const paragraphEntry = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) => Element.isElement(node) && node.type === "paragraph",
+  }) as [Element, Path] | undefined;
+  if (!paragraphEntry) {
+    return false;
+  }
+  const [, paragraphPath] = paragraphEntry;
+
+  const listAncestor = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) =>
+      Element.isElement(node) &&
+      (node.type === "list_item" ||
+        node.type === "bullet_list" ||
+        node.type === "ordered_list"),
+  });
+  if (listAncestor) {
+    return false;
+  }
+
+  const paragraphStart = Editor.start(editor, paragraphPath);
+  let typedPrefix = "";
   try {
-    [node] = Editor.node(editor, selection.focus.path);
+    typedPrefix = Editor.string(editor, {
+      anchor: paragraphStart,
+      focus: selection.focus,
+    });
   } catch {
     return false;
   }
 
-  if (!Text.isText(node)) {
-    return false;
-  }
-
-  const path = selection.focus.path;
-  const pos = path[path.length - 1];
-  if (path.length !== 2 || pos !== 0) {
-    return false;
-  }
-
-  const text = node.text;
-  const markerMatch = text.match(/^([-*+]|\d+[.)])\s?/);
+  const markerMatch = typedPrefix.match(/^([-*+]|\d+[.)])\s?$/);
   if (!markerMatch) {
     return false;
   }
 
   const marker = markerMatch[1];
-  const markerLen = marker.length;
-  const offset = selection.focus.offset;
-  if (offset !== markerLen && offset !== markerLen + 1) {
+  const paragraphText = Editor.string(editor, paragraphPath);
+  const fullMarkerMatch = paragraphText.match(/^([-*+]|\d+[.)])(?:\s|$)/);
+  if (!fullMarkerMatch || fullMarkerMatch[1] !== marker) {
     return false;
   }
 
-  const blockPath = path.slice(0, path.length - 1);
-  const hasSpace = text.slice(markerLen, markerLen + 1) === " ";
-  const deleteCount = hasSpace ? markerLen + 1 : markerLen;
-
   Editor.withoutNormalizing(editor, () => {
     Transforms.delete(editor, {
-      at: { path, offset: 0 },
-      distance: deleteCount,
+      at: {
+        anchor: paragraphStart,
+        focus: selection.focus,
+      },
     });
     Transforms.wrapNodes(editor, { type: "list_item" } as Element, {
-      at: blockPath,
+      at: paragraphPath,
     });
     const isOrdered = /^\d/.test(marker);
     Transforms.wrapNodes(
@@ -530,12 +542,12 @@ function autoformatListAtStart(editor: Editor): boolean {
         ...(isOrdered ? { start: parseInt(marker, 10) || 1 } : null),
         tight: true,
       } as Element,
-      { at: blockPath },
+      { at: paragraphPath },
     );
   });
 
   const listEntry = Editor.above(editor, {
-    at: editor.selection ?? blockPath,
+    at: editor.selection ?? paragraphPath,
     match: (node) =>
       Element.isElement(node) &&
       (node.type === "bullet_list" || node.type === "ordered_list"),
@@ -579,14 +591,14 @@ function autoformatListAtStart(editor: Editor): boolean {
         // ignore invalid path
       }
     };
-    tryPath(blockPath);
-    tryPath(Path.next(blockPath));
-    if (blockPath[blockPath.length - 1] > 0) {
-      tryPath(Path.previous(blockPath));
+    tryPath(paragraphPath);
+    tryPath(Path.next(paragraphPath));
+    if (paragraphPath[paragraphPath.length - 1] > 0) {
+      tryPath(Path.previous(paragraphPath));
     }
   }
   if (!listPath) {
-    listPath = blockPath;
+    listPath = paragraphPath;
   }
   const listItemEntry = Editor.nodes(editor, {
     at: listPath,
@@ -616,7 +628,7 @@ function autoformatListAtStart(editor: Editor): boolean {
     (editor as any).__autoformatDidBlock = true;
     (editor as any).__autoformatSelection = { anchor: focus, focus };
     slateDebug("autoformat:list:focus", {
-      blockPath,
+      blockPath: paragraphPath,
       listItemPath,
       listPath,
       focus,
