@@ -80,6 +80,7 @@ export interface ThreadMetadataSnapshot {
   thread_icon?: string;
   thread_image?: string;
   archived_chat_rows?: number;
+  latest_chat_date_ms?: number;
   pin?: boolean;
   archived?: boolean;
   agent_kind?: ThreadAgentKind;
@@ -1148,6 +1149,18 @@ export class ChatActions extends Actions<ChatState> {
       }
       return undefined;
     };
+    const parseEpochMs = (value: any): number | undefined => {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.floor(value);
+      }
+      if (typeof value === "string") {
+        const asNum = Number(value);
+        if (Number.isFinite(asNum)) return Math.floor(asNum);
+        const d = new Date(value).valueOf();
+        if (Number.isFinite(d)) return Math.floor(d);
+      }
+      return undefined;
+    };
     const readString = (
       key: "name" | "thread_color" | "thread_icon" | "thread_image",
     ): string | undefined => {
@@ -1182,6 +1195,7 @@ export class ChatActions extends Actions<ChatState> {
       thread_icon: readString("thread_icon"),
       thread_image: readString("thread_image"),
       archived_chat_rows: parseCount(field<any>(cfg, "archived_chat_rows")),
+      latest_chat_date_ms: parseEpochMs(field<any>(cfg, "latest_chat_date_ms")),
       pin,
       archived,
       agent_kind,

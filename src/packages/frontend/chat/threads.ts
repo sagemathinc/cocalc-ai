@@ -138,6 +138,19 @@ function recencyKeyForDelta(delta: number): RecencyKey {
   return "older";
 }
 
+function parseEpochMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const num = Number(value);
+    if (Number.isFinite(num)) return Math.floor(num);
+    const date = new Date(value).valueOf();
+    if (Number.isFinite(date)) return Math.floor(date);
+  }
+  return undefined;
+}
+
 export function groupThreadsByRecency<
   T extends ThreadListItem & { isPinned?: boolean },
 >(threads: T[], options: GroupOptions = {}): ThreadSection<T>[] {
@@ -211,13 +224,15 @@ export function useThreadSections({
       if (!threadId || threadIdsInUse.has(threadId) || keysInUse.has(threadId)) {
         continue;
       }
-      const dateRaw =
-        field<string>(row, "updated_at") ?? field<string>(row, "date");
-      const dateMs = (() => {
-        if (!dateRaw) return 0;
-        const d = new Date(dateRaw);
-        return Number.isFinite(d.valueOf()) ? d.valueOf() : 0;
-      })();
+      const latestChatDateMs = parseEpochMs(field<any>(row, "latest_chat_date_ms"));
+      const archivedRows = Number(field<any>(row, "archived_chat_rows"));
+      const dateMs =
+        latestChatDateMs ??
+        (Number.isFinite(archivedRows) && archivedRows > 0
+          ? 0
+          : parseEpochMs(field<any>(row, "updated_at")) ??
+            parseEpochMs(field<any>(row, "date")) ??
+            0);
       const name = `${field<string>(row, "name") ?? ""}`.trim();
       extra.push({
         key: threadId,

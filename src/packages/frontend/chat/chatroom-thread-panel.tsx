@@ -1219,7 +1219,7 @@ export function ChatRoomThreadPanel({
                   <div>Vacuum: compact the SQLite file and reclaim disk space.</div>
                   <div>
                     Delete This Chat (Stored): delete backend-stored rows for the
-                    selected chat only.
+                    selected chat thread only.
                   </div>
                   <div>
                     Delete Older Than N Days: delete backend-stored rows older than

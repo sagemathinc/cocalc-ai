@@ -1,3 +1,34 @@
+/**
+ * Chat Store Offload (SQLite) architecture summary
+ *
+ * What this module implements:
+ * 1. Persistent backend store for older chat rows in a single SQLite DB
+ *    (default: ~/.local/share/cocalc/chats/offload-v1.sqlite3), keyed by
+ *    absolute chat file path (chat_registry.chat_path).
+ * 2. Rotation/compaction of large `.chat` JSONL files:
+ *    - keeps a bounded "head" in the chat file (recent + generating rows),
+ *    - moves older chat rows into archived_rows + FTS index,
+ *    - records immutable segment metadata in segments.
+ * 3. Crash-safe/resumable rotation:
+ *    - writes segment/index first,
+ *    - records pending state in maintenance_ops,
+ *    - rewrites head file via temp-file + rename,
+ *    - resumes/recovers pending rotate ops on subsequent API calls.
+ * 4. Read/query APIs used by hub/project-host routes:
+ *    - stats/list/read/search/delete/vacuum,
+ *    - direct hydrate-by-hit via row_id/message_id for fast jump-to-hit.
+ * 5. Thread-level archive accounting:
+ *    - rotation increments archived_chat_rows in chat-thread-config rows
+ *      retained in head, so UI can show "older messages stored on backend".
+ *
+ * Where this fits in the overall chat architecture:
+ * - Head/live chat state remains in the `.chat` syncdoc file for realtime
+ *   collaboration and editing.
+ * - Historical/offloaded rows are stored here and fetched on demand by
+ *   frontend search/load-more/hydrate flows through conat API methods.
+ * - This module is intentionally storage/maintenance focused; UI rendering,
+ *   thread selection, and ACP streaming behavior are handled elsewhere.
+ */
 import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync, statSync } from "node:fs";
 import { promises as fs } from "node:fs";
@@ -774,6 +805,7 @@ export async function rotateChatStore({
   });
   const archivedLines = archivedSorted.map((x) => x.row.line);
   const archivedCountByThreadId = new Map<string, number>();
+  const archivedNewestDateByThreadId = new Map<string, number>();
   for (const item of archivedSorted) {
     const threadId = `${item.row.thread_id ?? ""}`.trim();
     if (!threadId) continue;
@@ -781,6 +813,13 @@ export async function rotateChatStore({
       threadId,
       (archivedCountByThreadId.get(threadId) ?? 0) + 1,
     );
+    const rowDateMs = Number(item.row.date_ms);
+    if (Number.isFinite(rowDateMs)) {
+      const prev = archivedNewestDateByThreadId.get(threadId);
+      if (prev == null || rowDateMs > prev) {
+        archivedNewestDateByThreadId.set(threadId, rowDateMs);
+      }
+    }
   }
   const keptLines = parsed
     .map((row, idx) => ({ row, idx }))
@@ -797,9 +836,22 @@ export async function rotateChatStore({
       const prevCount = Number(cfg.archived_chat_rows ?? 0);
       const nextCount =
         (Number.isFinite(prevCount) ? prevCount : 0) + archivedCount;
+      const archivedNewestDate = archivedNewestDateByThreadId.get(threadId);
+      const prevLatestDate = Number(cfg.latest_chat_date_ms);
+      const nextLatestDate = Number.isFinite(archivedNewestDate)
+        ? Math.max(
+            Number.isFinite(prevLatestDate) ? prevLatestDate : 0,
+            archivedNewestDate!,
+          )
+        : Number.isFinite(prevLatestDate)
+          ? prevLatestDate
+          : undefined;
       return JSON.stringify({
         ...cfg,
         archived_chat_rows: nextCount,
+        ...(nextLatestDate != null
+          ? { latest_chat_date_ms: Math.floor(nextLatestDate) }
+          : {}),
       });
     });
   const archivedBytes = archivedLines.reduce(
