@@ -829,6 +829,28 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   }).toMatch(/```[\s\S]*foo[\s\S]*```[\s\S]*Y/);
 });
 
+test("block editor: autoformat list marker at start of quoted line preserves trailing text", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?block=1&md=%3E%20foo");
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+
+  await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 2 });
+  await page.keyboard.type("- ");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.() ?? "");
+  }).toContain("> - foo");
+});
+
 test("block editor: ArrowLeft at block start moves to previous block end", async ({
   page,
 }) => {

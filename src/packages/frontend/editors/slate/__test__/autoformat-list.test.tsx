@@ -158,3 +158,102 @@ test("autoformat list merges with following list without throwing", () => {
 
   focusSpy.mockRestore();
 });
+
+test("autoformat list marker at start of blockquote paragraph preserves trailing text", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo" }] }],
+    },
+  ] as Descendant[];
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0, 0], offset: 0 });
+  editor.insertText("-");
+  editor.insertText(" ", true);
+
+  const listEntry = Editor.nodes(editor, {
+    at: [],
+    match: (node) => Element.isElement(node) && node.type === "bullet_list",
+  }).next().value as [Element, number[]] | undefined;
+  expect(listEntry).toBeDefined();
+  if (listEntry) {
+    expect(Editor.string(editor, listEntry[1])).toBe("foo");
+  }
+
+  focusSpy.mockRestore();
+});
+
+test("autoformat list marker in blockquote preserves text with leading empty text leaf", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [
+    {
+      type: "blockquote",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ text: "" }, { text: "foo" }],
+        },
+      ],
+    },
+  ] as Descendant[];
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0, 1], offset: 0 });
+  editor.insertText("-");
+  editor.insertText(" ", true);
+
+  const listEntry = Editor.nodes(editor, {
+    at: [],
+    match: (node) => Element.isElement(node) && node.type === "bullet_list",
+  }).next().value as [Element, number[]] | undefined;
+  expect(listEntry).toBeDefined();
+  if (listEntry) {
+    expect(Editor.string(editor, listEntry[1])).toBe("foo");
+  }
+
+  focusSpy.mockRestore();
+});
+
+test("autoformat list marker in split quote text nodes keeps following text", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [
+    {
+      type: "blockquote",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ text: "" }, { text: "-" }, { text: "foo" }],
+        },
+      ],
+    },
+  ] as Descendant[];
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0, 1], offset: 1 });
+  editor.insertText(" ", true);
+
+  const listEntry = Editor.nodes(editor, {
+    at: [],
+    match: (node) => Element.isElement(node) && node.type === "bullet_list",
+  }).next().value as [Element, number[]] | undefined;
+  expect(listEntry).toBeDefined();
+  if (listEntry) {
+    expect(Editor.string(editor, listEntry[1])).toBe("foo");
+  }
+
+  focusSpy.mockRestore();
+});
