@@ -139,33 +139,57 @@ function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolea
   }
 
   Editor.withoutNormalizing(editor, () => {
-    const quoteNode = Editor.node(editor, prevPath)[0] as Element;
-    if (quoteNode.children.length > 0) {
+    // Remove trailing empty quote paragraphs so joins prefer meaningful text.
+    while (true) {
+      const quoteNode = Editor.node(editor, prevPath)[0] as Element;
+      if (!Array.isArray(quoteNode.children) || quoteNode.children.length <= 1) {
+        break;
+      }
       const lastIndex = quoteNode.children.length - 1;
       const lastPath = prevPath.concat(lastIndex);
-      if (Editor.string(editor, lastPath) === "") {
-        Transforms.removeNodes(editor, { at: lastPath });
+      const lastNode = Editor.node(editor, lastPath)[0];
+      if (
+        !Element.isElement(lastNode) ||
+        lastNode.type !== "paragraph" ||
+        Editor.string(editor, lastPath) !== ""
+      ) {
+        break;
+      }
+      Transforms.removeNodes(editor, { at: lastPath });
+    }
+
+    const quoteAfterTrim = Editor.node(editor, prevPath)[0] as Element;
+    const insertIndex = quoteAfterTrim.children.length;
+    const targetPath = prevPath.concat(insertIndex);
+    const mergeTargetPath =
+      insertIndex > 0 ? prevPath.concat(insertIndex - 1) : undefined;
+    const joinBoundary =
+      mergeTargetPath != null ? Editor.end(editor, mergeTargetPath) : undefined;
+
+    Transforms.moveNodes(editor, { at: path, to: targetPath });
+    if (mergeTargetPath != null && joinBoundary != null) {
+      const movedNode = Editor.node(editor, targetPath)[0];
+      const mergeTargetNode = Editor.node(editor, mergeTargetPath)[0];
+      if (
+        Element.isElement(movedNode) &&
+        Element.isElement(mergeTargetNode) &&
+        movedNode.type === "paragraph" &&
+        mergeTargetNode.type === "paragraph"
+      ) {
+        Transforms.mergeNodes(editor, { at: targetPath });
+        Transforms.select(editor, joinBoundary);
+        return;
       }
     }
-    const updatedQuote = Editor.node(editor, prevPath)[0] as Element;
-    const insertIndex = updatedQuote.children.length;
-    const joinBoundary =
-      insertIndex > 0
-        ? (() => {
-            const lastQuoteChildPath = prevPath.concat(insertIndex - 1);
-            return Editor.end(editor, lastQuoteChildPath);
-          })()
-        : undefined;
-    const targetPath = prevPath.concat(insertIndex);
-    Transforms.moveNodes(editor, { at: path, to: targetPath });
-    // Merge the inserted paragraph into the previous quote paragraph so
-    // backspace behaves like "remove newline" at the join boundary.
-    if (insertIndex > 0 && joinBoundary != null) {
-      Transforms.mergeNodes(editor, { at: targetPath });
-      Transforms.select(editor, joinBoundary);
-    } else {
+
+    try {
       const start = Editor.start(editor, targetPath);
       Transforms.select(editor, start);
+    } catch {
+      // If normalization changed the moved path shape, fall back to selecting
+      // the end of the blockquote to avoid throwing.
+      const end = Editor.end(editor, prevPath);
+      Transforms.select(editor, end);
     }
   });
 

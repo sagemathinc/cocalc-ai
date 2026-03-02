@@ -252,6 +252,136 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
   }
 });
 
+test("backspace with spacer + empty blockquote does not lose following text", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+
+  const initialValue = [
+    {
+      type: "paragraph",
+      spacer: true,
+      children: [{ text: "" }],
+    },
+    {
+      type: "blockquote",
+      children: [],
+    },
+    {
+      type: "paragraph",
+      spacer: false,
+      children: [{ text: "stuff" }],
+    },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [2, 0], offset: 0 },
+      focus: { path: [2, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+
+  expect(value).toBeDefined();
+  if (value) {
+    const allText = value.map((node) => nodeText(node)).join("\n");
+    expect(allText).toContain("stuff");
+  }
+});
+
+test("backspace after quoted text keeps quote content", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo bar" }] }],
+    },
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      expect(nodeText(quote)).toContain("foo bar");
+    }
+  }
+});
+
+test("backspace after quoted text and paragraph text preserves both", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo bar" }] }],
+    },
+    { type: "paragraph", children: [{ text: " stuff" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      expect(nodeText(quote)).toContain("foo bar stuff");
+    }
+  }
+});
+
 test("autoformat quotes the current paragraph when typing > at start", async ({
   page,
 }) => {
