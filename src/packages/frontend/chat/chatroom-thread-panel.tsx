@@ -1442,7 +1442,7 @@ export function ChatRoomThreadPanel({
       {selectedThreadId && archivedRowsCount > 0 ? (
         <div
           style={{
-            margin: "8px 12px 0 12px",
+            margin: shouldShowCodexConfig ? "44px 12px 0 12px" : "8px 12px 0 12px",
             padding: "8px 10px",
             border: "1px solid #ffe58f",
             background: "#fffbe6",
