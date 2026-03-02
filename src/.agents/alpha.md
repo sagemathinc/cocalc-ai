@@ -96,7 +96,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 ---
 
-### A0.5 (done) (done) Lite codex shows false “unconfigured”
+### A0.5 (done) Lite codex shows false “unconfigured”
 
 **Task:** "in lite mode chat with codex says unconfigured"
 
@@ -166,7 +166,7 @@ These items lock down secure multi-user cloud behavior.
 
 ---
 
-### A1.5 Launchpad startup port conflict handling
+### A1.5 Plus/Launchpad startup port conflict handling
 
 **Task:** "refuse to run with clear error if ports in use or auto-find port"
 
@@ -234,7 +234,7 @@ These are high-visibility issues for tester confidence.
 
 **Depends on:** can run independently; validate against A1 auth model for cloud mode.
 
-#### A2.4a Lite thread routing and intent injection
+#### A2.4a (started) Lite thread routing and intent injection
 
 For lite mode, all assistant-style entry points should route into one coherent codex thread by default.
 
