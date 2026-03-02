@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Select, Space, Tooltip } from "antd";
+import { Button, Input, Modal, Popover, Select, Space, Tooltip } from "antd";
 import {
   React,
   useCallback,
@@ -1193,7 +1193,55 @@ export function ChatRoomThreadPanel({
         </div>
       </Modal>
       <Modal
-        title="Chat Store Maintenance"
+        title={
+          <Space size={8}>
+            <span>Chat Store Maintenance</span>
+            <Popover
+              trigger={["hover", "click"]}
+              placement="bottomLeft"
+              content={
+                <div style={{ maxWidth: 520, fontSize: 12, lineHeight: 1.5 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <b>Storage model</b>: recent messages stay in this chat file
+                    (the realtime head), while older messages are stored in the
+                    backend SQLite chat store for scalability.
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <b>Head</b> stats are what remains in the chat file right now.
+                    <b> Stored</b> stats are historical rows kept in backend
+                    storage.
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    <b>Actions</b>:
+                  </div>
+                  <div>Refresh Stats: reload current counts/bytes.</div>
+                  <div>Rotate Now: move older head rows into backend storage.</div>
+                  <div>Vacuum: compact the SQLite file and reclaim disk space.</div>
+                  <div>
+                    Delete This Chat (Stored): delete backend-stored rows for the
+                    selected chat only.
+                  </div>
+                  <div>
+                    Delete Older Than N Days: delete backend-stored rows older than
+                    a cutoff date.
+                  </div>
+                  <div>
+                    Delete All Stored Rows: delete all backend-stored rows for this
+                    chat file.
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    These actions only affect backend-stored rows; they do not edit
+                    currently loaded head messages in the chat file.
+                  </div>
+                </div>
+              }
+            >
+              <Button size="small" shape="circle" style={{ width: 20, minWidth: 20 }}>
+                ?
+              </Button>
+            </Popover>
+          </Space>
+        }
         open={maintenanceOpen}
         width={700}
         onCancel={() => setMaintenanceOpen(false)}
