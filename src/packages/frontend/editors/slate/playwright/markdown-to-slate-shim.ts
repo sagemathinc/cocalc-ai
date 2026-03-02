@@ -7,6 +7,30 @@ export function markdown_to_slate(markdown: string): Descendant[] {
 
   while (i < lines.length) {
     const line = lines[i];
+    if (line.startsWith(">")) {
+      const quoteChildren: Descendant[] = [];
+      while (i < lines.length && lines[i].startsWith(">")) {
+        const content = lines[i].startsWith("> ")
+          ? lines[i].slice(2)
+          : lines[i].slice(1);
+        quoteChildren.push({
+          type: "paragraph",
+          children: [{ text: content }],
+        } as any);
+        i += 1;
+      }
+      if (quoteChildren.length === 0) {
+        quoteChildren.push({
+          type: "paragraph",
+          children: [{ text: "" }],
+        } as any);
+      }
+      nodes.push({
+        type: "blockquote",
+        children: quoteChildren,
+      } as any);
+      continue;
+    }
     if (line.startsWith("```")) {
       const info = line.slice(3).trim();
       i += 1;

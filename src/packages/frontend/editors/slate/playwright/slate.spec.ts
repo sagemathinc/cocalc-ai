@@ -1153,6 +1153,32 @@ test("editable markdown: backspace at start of x after multi-line quote appends 
   }).not.toContain("> foox");
 });
 
+test("editable markdown: typed quote flow then backspace before x keeps trailing quoted paragraph", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?editable=1&md=");
+  await page.waitForFunction(() => {
+    return typeof window.__slateEditableTest?.getMarkdown === "function";
+  });
+
+  const editor = page.locator("[data-slate-editor]").first();
+  await editor.click();
+  await page.keyboard.type("> foo");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("bar");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("x");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.() ?? "");
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.() ?? "");
+  }).not.toContain("> foox");
+});
+
 test("editable markdown: sync-set markdown then backspace before x appends to bar", async ({
   page,
 }) => {

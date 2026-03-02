@@ -205,10 +205,11 @@ function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolea
       const lastIndex = quoteNode.children.length - 1;
       const lastPath = prevPath.concat(lastIndex);
       const lastNode = Editor.node(editor, lastPath)[0];
+      const nodeText = Node.string(lastNode as any);
       if (
         !Element.isElement(lastNode) ||
         lastNode.type !== "paragraph" ||
-        Editor.string(editor, lastPath) !== ""
+        nodeText !== ""
       ) {
         break;
       }
