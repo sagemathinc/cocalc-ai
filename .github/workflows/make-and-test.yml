@@ -68,7 +68,7 @@ jobs:
           python -m ipykernel install --prefix=./jupyter-local --name python3-local --display-name "Python 3 (Local)"
 
       - name: build
-        run: cd src && pnpm build-dev
+        run: cd src && pnpm build
 
       - name: test
         timeout-minutes: 15
