@@ -32,7 +32,7 @@ heuristics.
 import { Editor, Element, Node, Path, Point, Range, Text, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
 import { markdownAutoformat } from "./auto-format";
-import { ensureRange, slateDebug } from "../slate-util";
+import { ensureRange, pointAtPath, slateDebug } from "../slate-util";
 
 function moveSelectionAfterInlineMath(editor, selection): Range | null {
   if (!selection) return selection;
@@ -145,6 +145,19 @@ export const withInsertText = (editor) => {
 
   editor.insertText = (text, autoFormat?) => {
     if (!text) return;
+    // Defensive: if selection drifts to a non-leaf/invalid path, recover before
+    // typing so markdown autoformat never operates on stale element paths.
+    if (editor.selection != null) {
+      try {
+        const safe = ensureRange(editor, editor.selection);
+        if (!Range.equals(editor.selection, safe)) {
+          editor.selection = safe;
+        }
+      } catch {
+        const anchor = pointAtPath(editor, []);
+        editor.selection = { anchor, focus: anchor };
+      }
+    }
     if (
       editor.selection == null &&
       (editor as any).__autoformatSelection != null

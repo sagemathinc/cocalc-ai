@@ -5,6 +5,7 @@ import { createEditor, Descendant, Editor, Element, Transforms } from "slate";
 import { withReact, ReactEditor } from "../slate-react";
 import { withAutoFormat } from "../format";
 import { withNormalize } from "../normalize";
+import { slate_to_markdown } from "../slate-to-markdown";
 
 const isSpacerParagraph = (node: Descendant): boolean =>
   Element.isElement(node) &&
@@ -185,6 +186,9 @@ test("autoformat list marker at start of blockquote paragraph preserves trailing
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
+  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
+    "foo",
+  );
 
   focusSpy.mockRestore();
 });
@@ -220,6 +224,9 @@ test("autoformat list marker in blockquote preserves text with leading empty tex
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
+  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
+    "foo",
+  );
 
   focusSpy.mockRestore();
 });
@@ -254,6 +261,9 @@ test("autoformat list marker in split quote text nodes keeps following text", ()
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
+  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
+    "foo",
+  );
 
   focusSpy.mockRestore();
 });
@@ -283,6 +293,52 @@ test("autoformat list marker in split top-level text nodes keeps following text"
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
+  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
+    "foo",
+  );
+
+  focusSpy.mockRestore();
+});
+
+test("autoformat '-x' with normalize keeps x", () => {
+  const editor = withAutoFormat(withNormalize(withReact(createEditor())));
+  editor.children = [{ type: "paragraph", children: [{ text: "-x" }] }] as Descendant[];
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0], offset: 1 });
+  editor.insertText(" ", true);
+
+  const md = slate_to_markdown(editor.children, { preserveBlankLines: false });
+  expect(md).toContain("x");
+  expect(md).toContain("- x");
+
+  focusSpy.mockRestore();
+});
+
+test("autoformat '> -x' with normalize keeps x", () => {
+  const editor = withAutoFormat(withNormalize(withReact(createEditor())));
+  editor.children = [
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "-x" }] }],
+    },
+  ] as Descendant[];
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0, 0], offset: 1 });
+  editor.insertText(" ", true);
+
+  const md = slate_to_markdown(editor.children, { preserveBlankLines: false });
+  expect(md).toContain("x");
+  expect(md).toContain("> - x");
 
   focusSpy.mockRestore();
 });
