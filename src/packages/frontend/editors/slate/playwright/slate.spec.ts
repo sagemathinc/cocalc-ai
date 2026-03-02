@@ -740,6 +740,26 @@ test("block editor: backspace at start of text after quote preserves following t
   }).toBe("> foo bar stuff");
 });
 
+test("block editor: backspace after empty quote does not crash", async ({
+  page,
+}) => {
+  const markdown = ">\n\nstuff";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toContain("stuff");
+});
+
 test("sync: remote change to other block applies without deferring", async ({
   page,
 }) => {

@@ -148,15 +148,19 @@ function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolea
       }
     }
     const updatedQuote = Editor.node(editor, prevPath)[0] as Element;
-    const lastQuoteChildIndex = Math.max(0, updatedQuote.children.length - 1);
-    const lastQuoteChildPath = prevPath.concat(lastQuoteChildIndex);
-    const joinBoundary = Editor.end(editor, lastQuoteChildPath);
     const insertIndex = updatedQuote.children.length;
+    const joinBoundary =
+      insertIndex > 0
+        ? (() => {
+            const lastQuoteChildPath = prevPath.concat(insertIndex - 1);
+            return Editor.end(editor, lastQuoteChildPath);
+          })()
+        : undefined;
     const targetPath = prevPath.concat(insertIndex);
     Transforms.moveNodes(editor, { at: path, to: targetPath });
     // Merge the inserted paragraph into the previous quote paragraph so
     // backspace behaves like "remove newline" at the join boundary.
-    if (insertIndex > 0) {
+    if (insertIndex > 0 && joinBoundary != null) {
       Transforms.mergeNodes(editor, { at: targetPath });
       Transforms.select(editor, joinBoundary);
     } else {
