@@ -461,8 +461,19 @@ function DiffBlock({
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [editingText, setEditingText] = useState("");
   const [pendingKey, setPendingKey] = useState<string>("");
+  const [hoveredLineIdx, setHoveredLineIdx] = useState<number | undefined>(
+    undefined,
+  );
   const draftAnchorId =
     draftAnchor == null ? "" : commentAnchorKey(draftAnchor);
+  const commentButtonSlotStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 22,
+    minWidth: 22,
+    height: 22,
+  } as const;
 
   const closeDraft = () => {
     setDraftAnchor(undefined);
@@ -551,6 +562,10 @@ function DiffBlock({
                 alignItems: "flex-start",
                 gap: 6,
               }}
+              onMouseEnter={() => setHoveredLineIdx(idx)}
+              onMouseLeave={() =>
+                setHoveredLineIdx((current) => (current === idx ? undefined : current))
+              }
             >
               <div
                 style={{
@@ -573,20 +588,24 @@ function DiffBlock({
                 {meta.newLineNumber ?? ""}
               </div>
               {commentEnabled && anchor ? (
-                <Button
-                  size="small"
-                  type="text"
-                  style={{ padding: "0 4px", minWidth: 20, height: 20 }}
-                  onClick={() => {
-                    setDraftAnchor(anchor);
-                    setDraftText("");
-                  }}
-                  title="Add inline comment"
-                >
-                  +
-                </Button>
+                <span style={commentButtonSlotStyle}>
+                  {hoveredLineIdx === idx ? (
+                    <Button
+                      size="small"
+                      type="primary"
+                      style={{ padding: 0, minWidth: 22, width: 22, height: 22 }}
+                      onClick={() => {
+                        setDraftAnchor(anchor);
+                        setDraftText("");
+                      }}
+                      title="Add inline comment"
+                    >
+                      +
+                    </Button>
+                  ) : null}
+                </span>
               ) : (
-                <span style={{ display: "inline-block", width: 20 }} />
+                <span style={commentButtonSlotStyle} />
               )}
               <div
                 style={{ flex: 1 }}
