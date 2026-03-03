@@ -1209,8 +1209,15 @@ export function GitCommitDrawer({
     ) => Record<string, GitReviewCommentV2>,
   ) => {
     if (!accountId || !commit || isHeadCommit(commit)) return;
+    const normalizedCommit = normalizeCommitSha(commit);
+    if (!normalizedCommit) return;
     const current = reviewRecord?.comments ?? {};
     const next = mutate({ ...current });
+    saveReviewDraft(normalizedCommit, {
+      reviewed: Boolean(reviewed),
+      note: `${reviewNote ?? ""}`,
+      comments: next,
+    });
     await saveReview({ comments: next, reviewed, note: reviewNote });
   };
 
@@ -1339,6 +1346,7 @@ export function GitCommitDrawer({
     saveReviewDraft(normalizedCommit, {
       reviewed: Boolean(reviewed),
       note: `${reviewNote ?? ""}`,
+      comments: reviewRecord?.comments ?? {},
     });
   }, [
     open,
@@ -1348,6 +1356,7 @@ export function GitCommitDrawer({
     reviewDirty,
     reviewed,
     reviewNote,
+    reviewRecord?.comments,
   ]);
 
   useEffect(() => {

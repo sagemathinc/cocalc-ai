@@ -51,6 +51,7 @@ export type GitReviewRecordV2 = {
 type GitReviewDraftV2 = {
   reviewed: boolean;
   note: string;
+  comments: Record<string, GitReviewCommentV2>;
   updated_at: number;
   revision: number;
 };
@@ -160,6 +161,7 @@ export function loadReviewDraft(commitSha?: string): GitReviewDraftV2 | undefine
     return {
       reviewed: Boolean(parsed.reviewed),
       note: `${parsed.note ?? ""}`,
+      comments: sanitizeComments(parsed.comments),
       updated_at:
         typeof parsed.updated_at === "number" ? parsed.updated_at : Date.now(),
       revision: typeof parsed.revision === "number" ? parsed.revision : 1,
@@ -171,7 +173,9 @@ export function loadReviewDraft(commitSha?: string): GitReviewDraftV2 | undefine
 
 export function saveReviewDraft(
   commitSha: string,
-  draft: Pick<GitReviewDraftV2, "reviewed" | "note">,
+  draft: Pick<GitReviewDraftV2, "reviewed" | "note"> & {
+    comments?: Record<string, GitReviewCommentV2>;
+  },
 ): void {
   const key = makeDraftKey(commitSha);
   if (!key) return;
@@ -179,6 +183,7 @@ export function saveReviewDraft(
   const next: GitReviewDraftV2 = {
     reviewed: Boolean(draft.reviewed),
     note: `${draft.note ?? ""}`,
+    comments: sanitizeComments(draft.comments ?? prev?.comments ?? {}),
     updated_at: Date.now(),
     revision: (prev?.revision ?? 0) + 1,
   };
@@ -212,10 +217,15 @@ export function mergeRecordWithDraft(
   };
   if (!draft) return normalizedRecord;
   if (draft.updated_at < normalizedRecord.updated_at) return normalizedRecord;
+  const draftComments = sanitizeComments(draft.comments);
   return {
     ...normalizedRecord,
     reviewed: draft.reviewed,
     note: draft.note,
+    comments:
+      Object.keys(draftComments).length > 0
+        ? draftComments
+        : normalizedRecord.comments,
     updated_at: draft.updated_at,
     revision: Math.max(normalizedRecord.revision, draft.revision),
   };
