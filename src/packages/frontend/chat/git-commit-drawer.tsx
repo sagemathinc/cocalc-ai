@@ -92,7 +92,15 @@ interface GitCommitDrawerProps {
   open: boolean;
   onClose: () => void;
   fontSize?: number;
+  onRequestAgentTurn?: (prompt: string) => void | Promise<void>;
 }
+
+type HeadStatusEntry = {
+  path: string;
+  displayPath: string;
+  statusCode: string;
+  statusLabel: string;
+};
 
 function parseCommitHash(commitHash?: string): string | undefined {
   const trimmed = `${commitHash ?? ""}`.trim();
@@ -177,6 +185,37 @@ function parseGitLogOutput(stdout: string): GitLogEntry[] {
       hash: normalizedHash,
       subject: subjectParts.join("\t").trim(),
     });
+  }
+  return entries;
+}
+
+function parseGitStatusOutput(stdout: string): HeadStatusEntry[] {
+  const lines = `${stdout ?? ""}`.split(/\r?\n/).filter((line) => line.trim().length);
+  const entries: HeadStatusEntry[] = [];
+  for (const line of lines) {
+    if (line.startsWith("##")) continue;
+    if (line.length < 3) continue;
+    const status = line.slice(0, 2);
+    const rawPath = line.slice(3).trim();
+    if (!rawPath) continue;
+    const displayPath = rawPath.includes(" -> ")
+      ? rawPath.split(" -> ").pop()?.trim() || rawPath
+      : rawPath;
+    const primary = status.replace(/\s/g, "")[0] ?? "?";
+    const statusCode = status.trim() || "??";
+    const statusLabel =
+      status === "??"
+        ? "untracked"
+        : primary === "A"
+          ? "added"
+          : primary === "D"
+            ? "deleted"
+            : primary === "R"
+              ? "renamed"
+              : primary === "M"
+                ? "modified"
+                : "changed";
+    entries.push({ path: displayPath, displayPath, statusCode, statusLabel });
   }
   return entries;
 }
@@ -327,6 +366,7 @@ export function GitCommitDrawer({
   open,
   onClose,
   fontSize = 14,
+  onRequestAgentTurn,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
   const [drawerSize, setDrawerSize] = useState<number>(readDrawerSize);
@@ -337,6 +377,16 @@ export function GitCommitDrawer({
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
   const [gitLogError, setGitLogError] = useState<string>("");
+  const [gitLogReloadCounter, setGitLogReloadCounter] = useState(0);
+  const [reloadCounter, setReloadCounter] = useState(0);
+  const [headStatusLoading, setHeadStatusLoading] = useState(false);
+  const [headStatusError, setHeadStatusError] = useState("");
+  const [headStatusEntries, setHeadStatusEntries] = useState<HeadStatusEntry[]>([]);
+  const [headActionId, setHeadActionId] = useState<string>("");
+  const [headCommitBusy, setHeadCommitBusy] = useState(false);
+  const [headCommitMessage, setHeadCommitMessage] = useState("");
+  const [headCommitError, setHeadCommitError] = useState("");
+  const [headCommitStatus, setHeadCommitStatus] = useState("");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [reviewedByCommit, setReviewedByCommit] = useState<Record<string, boolean>>(
     {},
@@ -417,7 +467,45 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, cwd]);
+  }, [open, projectId, cwd, gitLogReloadCounter]);
+
+  useEffect(() => {
+    if (!open || !isHeadSelected) return;
+    let cancelled = false;
+    (async () => {
+      if (!projectId) return;
+      setHeadStatusLoading(true);
+      setHeadStatusError("");
+      try {
+        const statusResult = await runGitCommand({
+          projectId,
+          cwd: repoRoot || cwd,
+          args: ["status", "--porcelain=v1", "--untracked-files=all"],
+        });
+        if (statusResult.exit_code !== 0) {
+          throw new Error(
+            (statusResult.stderr || statusResult.stdout || "git status failed").trim(),
+          );
+        }
+        if (!cancelled) {
+          setHeadStatusEntries(parseGitStatusOutput(statusResult.stdout ?? ""));
+          setHeadStatusError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setHeadStatusEntries([]);
+          setHeadStatusError(`${err ?? "Unable to load HEAD status."}`);
+        }
+      } finally {
+        if (!cancelled) {
+          setHeadStatusLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isHeadSelected, projectId, repoRoot, cwd, reloadCounter]);
 
   useEffect(() => {
     if (!open || commit || gitLog.length === 0) return;
@@ -724,7 +812,25 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, cwd, repoRoot, commit, contextLines, isHeadSelected]);
+  }, [
+    open,
+    projectId,
+    cwd,
+    repoRoot,
+    commit,
+    contextLines,
+    isHeadSelected,
+    reloadCounter,
+  ]);
+
+  const refreshView = () => {
+    setReloadCounter((n) => n + 1);
+  };
+
+  const refreshAll = () => {
+    setReloadCounter((n) => n + 1);
+    setGitLogReloadCounter((n) => n + 1);
+  };
 
   const projectActions = projectId ? redux.getProjectActions(projectId) : undefined;
 
@@ -760,6 +866,145 @@ export function GitCommitDrawer({
       return;
     }
     setSelectedCommit(gitLog[commitIndex + 1]?.hash);
+  };
+
+  const runHeadAction = async (actionId: string, fn: () => Promise<void>) => {
+    setHeadActionId(actionId);
+    setHeadCommitStatus("");
+    setHeadCommitError("");
+    try {
+      await fn();
+      refreshView();
+    } catch (err) {
+      setHeadCommitError(`${err ?? "Unable to complete HEAD action."}`);
+    } finally {
+      setHeadActionId("");
+    }
+  };
+
+  const addHeadPath = async (path: string) => {
+    if (!projectId) return;
+    await runHeadAction(`add:${path}`, async () => {
+      const result = await runGitCommand({
+        projectId,
+        cwd: repoRoot || cwd,
+        args: ["add", "--", path],
+      });
+      if (result.exit_code !== 0) {
+        throw new Error((result.stderr || result.stdout || "git add failed").trim());
+      }
+    });
+  };
+
+  const addAllHeadPaths = async () => {
+    if (!projectId) return;
+    const paths = Array.from(
+      new Set(
+        headStatusEntries
+          .map((entry) => entry.path)
+          .filter((path) => `${path}`.trim().length > 0),
+      ),
+    );
+    if (paths.length === 0) return;
+    await runHeadAction("add-all", async () => {
+      const result = await runGitCommand({
+        projectId,
+        cwd: repoRoot || cwd,
+        args: ["add", "--", ...paths],
+      });
+      if (result.exit_code !== 0) {
+        throw new Error((result.stderr || result.stdout || "git add failed").trim());
+      }
+    });
+  };
+
+  const ignoreHeadPath = async (path: string) => {
+    if (!projectId) return;
+    await runHeadAction(`ignore:${path}`, async () => {
+      const script =
+        'touch .gitignore\nif ! grep -Fqx -- "$1" .gitignore; then printf "%s\\n" "$1" >> .gitignore; fi';
+      const result = await webapp_client.project_client.exec({
+        project_id: projectId,
+        path: repoRoot || cwd,
+        command: "bash",
+        args: ["-lc", script, "cocalc-git-ignore", path],
+        err_on_exit: false,
+        timeout: 30,
+      });
+      if (result.exit_code !== 0) {
+        throw new Error(
+          (result.stderr || result.stdout || "unable to update .gitignore").trim(),
+        );
+      }
+    });
+  };
+
+  const requestAgentCommit = async ({
+    includeSummary,
+  }: {
+    includeSummary: boolean;
+  }) => {
+    const trimmed = headCommitMessage.trim();
+    if (!onRequestAgentTurn) {
+      setHeadCommitError("No active codex thread available for this action.");
+      return;
+    }
+    let prompt = "";
+    if (includeSummary) {
+      prompt = trimmed
+        ? [
+            "Please commit these changes.",
+            `Use this exact first line for the commit message: "${trimmed}"`,
+            "Then include a detailed explanatory body.",
+          ].join("\n")
+        : "Please commit these changes with a concise first line and a detailed explanatory body.";
+    } else {
+      prompt = trimmed
+        ? `Please commit these changes with this exact commit message:\n${trimmed}`
+        : "Please commit";
+    }
+    setHeadCommitBusy(true);
+    setHeadCommitError("");
+    setHeadCommitStatus("");
+    try {
+      await onRequestAgentTurn(prompt);
+      setHeadCommitStatus("Sent commit request to codex.");
+    } catch (err) {
+      setHeadCommitError(`${err ?? "Unable to send commit request to codex."}`);
+    } finally {
+      setHeadCommitBusy(false);
+    }
+  };
+
+  const doHeadCommit = async () => {
+    if (!projectId) return;
+    const trimmed = headCommitMessage.trim();
+    if (!trimmed) {
+      await requestAgentCommit({ includeSummary: false });
+      return;
+    }
+    setHeadCommitBusy(true);
+    setHeadCommitError("");
+    setHeadCommitStatus("");
+    try {
+      const result = await runGitCommand({
+        projectId,
+        cwd: repoRoot || cwd,
+        args: ["commit", "-m", headCommitMessage],
+      });
+      if (result.exit_code !== 0) {
+        throw new Error((result.stderr || result.stdout || "git commit failed").trim());
+      }
+      setHeadCommitMessage("");
+      setHeadCommitStatus(
+        (result.stdout || "Commit created successfully.").trim(),
+      );
+      refreshAll();
+    } catch (err) {
+      setHeadCommitError(`${err ?? "Unable to create commit."}`);
+    } finally {
+      setHeadCommitBusy(false);
+    }
   };
   const bumpContext = (delta: -1 | 1) => {
     const idx = CONTEXT_OPTIONS.findIndex((opt) => opt.value === contextLines);
@@ -911,83 +1156,219 @@ export function GitCommitDrawer({
       {gitLogError ? (
         <Alert type="warning" message={gitLogError} showIcon style={{ marginBottom: 10 }} />
       ) : null}
-      <div
-        style={{
-          border: `1px solid ${COLORS.GRAY_LL}`,
-          borderRadius: 8,
-          padding: 10,
-          marginBottom: 12,
-          background: "#fafafa",
-        }}
-      >
+      {isHeadSelected ? (
         <div
           style={{
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 8,
+            padding: 10,
+            marginBottom: 12,
+            background: "#fafafa",
             display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
+            flexDirection: "column",
             gap: 10,
-            marginBottom: 8,
-            flexWrap: "wrap",
           }}
         >
-          <Checkbox
-            checked={reviewed}
-            disabled={reviewLoading || reviewSaving || !commit || isHeadSelected}
-            onChange={(e) => {
-              const next = e.target.checked;
-              setReviewed(next);
-              setReviewDirty(true);
-              void saveReview({ reviewed: next });
+          <div style={{ fontWeight: 600 }}>Commit changes</div>
+          <Input.TextArea
+            value={headCommitMessage}
+            disabled={headCommitBusy}
+            placeholder="or leave blank to let the agent write the message"
+            autoSize={{ minRows: 2, maxRows: 6 }}
+            onChange={(e) => setHeadCommitMessage(e.target.value)}
+          />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button size="small" type="primary" onClick={() => void doHeadCommit()}>
+              Commit
+            </Button>
+            <Button
+              size="small"
+              onClick={() => void requestAgentCommit({ includeSummary: true })}
+              disabled={headCommitBusy}
+            >
+              Commit with AI Summary
+            </Button>
+            <Button
+              size="small"
+              onClick={() => setHeadCommitMessage("")}
+              disabled={headCommitBusy || headCommitMessage.length === 0}
+            >
+              Clear
+            </Button>
+          </div>
+          {headCommitError ? (
+            <Alert type="error" showIcon message={headCommitError} />
+          ) : null}
+          {headCommitStatus ? (
+            <Alert type="success" showIcon message={headCommitStatus} />
+          ) : null}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
             }}
           >
-            <span style={{ fontWeight: 600 }}>Reviewed</span>
-          </Checkbox>
-          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-            {reviewSaving ? "Saving..." : null}
-            {!reviewSaving && reviewUpdatedAt ? (
-              <>
-                Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
-              </>
-            ) : null}
+            <div style={{ fontWeight: 600 }}>Uncommitted files</div>
+            <Button
+              size="small"
+              onClick={() => void addAllHeadPaths()}
+              disabled={headActionId.length > 0 || headStatusEntries.length === 0}
+            >
+              Add all
+            </Button>
           </div>
+          {headStatusError ? (
+            <Alert type="warning" showIcon message={headStatusError} />
+          ) : null}
+          {headStatusLoading ? (
+            <div style={{ padding: "12px 0", textAlign: "center" }}>
+              <Spin size="small" />
+            </div>
+          ) : null}
+          {!headStatusLoading && headStatusEntries.length === 0 ? (
+            <Typography.Text type="secondary">
+              No uncommitted changes.
+            </Typography.Text>
+          ) : null}
+          {!headStatusLoading && headStatusEntries.length > 0
+            ? headStatusEntries.map((entry) => {
+                const addBusy = headActionId === `add:${entry.path}`;
+                const ignoreBusy = headActionId === `ignore:${entry.path}`;
+                return (
+                  <div
+                    key={`${entry.statusCode}:${entry.path}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      border: `1px solid ${COLORS.GRAY_LL}`,
+                      borderRadius: 6,
+                      padding: "6px 8px",
+                    }}
+                  >
+                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                      <Typography.Text code style={{ marginBottom: 0 }}>
+                        {entry.statusCode}
+                      </Typography.Text>
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, fontFamily: "monospace" }}
+                        onClick={() => void openFile(entry.path)}
+                      >
+                        {entry.displayPath}
+                      </Button>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {entry.statusLabel}
+                      </Typography.Text>
+                    </div>
+                    <Space.Compact size="small">
+                      <Button
+                        size="small"
+                        onClick={() => void addHeadPath(entry.path)}
+                        loading={addBusy}
+                        disabled={Boolean(headActionId) && !addBusy}
+                      >
+                        Add
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => void ignoreHeadPath(entry.path)}
+                        loading={ignoreBusy}
+                        disabled={Boolean(headActionId) && !ignoreBusy}
+                      >
+                        Ignore
+                      </Button>
+                    </Space.Compact>
+                  </div>
+                );
+              })
+            : null}
         </div>
-        <Input.TextArea
-          value={reviewNote}
-          disabled={reviewLoading || !commit || isHeadSelected}
-          placeholder="Review note (your private commit review note)"
-          autoSize={{ minRows: 2, maxRows: 6 }}
-          onChange={(e) => {
-            setReviewNote(e.target.value);
-            setReviewDirty(true);
-          }}
-          onBlur={() => {
-            if (reviewDirty) {
-              void saveReview({ note: reviewNote });
-            }
-          }}
-        />
+      ) : (
         <div
           style={{
-            marginTop: 8,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            flexWrap: "wrap",
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 8,
+            padding: 10,
+            marginBottom: 12,
+            background: "#fafafa",
           }}
         >
-          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-            {reviewError || (reviewLoading ? "Loading review state..." : "")}
-          </div>
-          <Button
-            size="small"
-            disabled={!reviewDirty || reviewSaving || !commit || isHeadSelected}
-            onClick={() => void saveReview({ note: reviewNote, reviewed })}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: 8,
+              flexWrap: "wrap",
+            }}
           >
-            Save note
-          </Button>
+            <Checkbox
+              checked={reviewed}
+              disabled={reviewLoading || reviewSaving || !commit || isHeadSelected}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setReviewed(next);
+                setReviewDirty(true);
+                void saveReview({ reviewed: next });
+              }}
+            >
+              <span style={{ fontWeight: 600 }}>Reviewed</span>
+            </Checkbox>
+            <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+              {reviewSaving ? "Saving..." : null}
+              {!reviewSaving && reviewUpdatedAt ? (
+                <>
+                  Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
+                </>
+              ) : null}
+            </div>
+          </div>
+          <Input.TextArea
+            value={reviewNote}
+            disabled={reviewLoading || !commit || isHeadSelected}
+            placeholder="Review note (your private commit review note)"
+            autoSize={{ minRows: 2, maxRows: 6 }}
+            onChange={(e) => {
+              setReviewNote(e.target.value);
+              setReviewDirty(true);
+            }}
+            onBlur={() => {
+              if (reviewDirty) {
+                void saveReview({ note: reviewNote });
+              }
+            }}
+          />
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+              {reviewError || (reviewLoading ? "Loading review state..." : "")}
+            </div>
+            <Button
+              size="small"
+              disabled={!reviewDirty || reviewSaving || !commit || isHeadSelected}
+              onClick={() => void saveReview({ note: reviewNote, reviewed })}
+            >
+              Save note
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
       {loading ? (
         <div style={{ padding: "32px 0", textAlign: "center" }}>
           <Spin />

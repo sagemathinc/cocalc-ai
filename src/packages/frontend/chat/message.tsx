@@ -1603,6 +1603,19 @@ export default function Message({
     actions.scrollToIndex(index);
   }
 
+  function sendGitBrowserAgentPrompt(prompt: string) {
+    if (actions == null) return;
+    const trimmed = `${prompt ?? ""}`.trim();
+    if (!trimmed) return;
+    actions.sendReply({
+      message:
+        typeof (message as any)?.toJS === "function"
+          ? (message as any).toJS()
+          : message,
+      reply: trimmed,
+    });
+  }
+
   function renderComposeReply() {
     if (!replying) return;
 
@@ -1850,6 +1863,7 @@ export default function Message({
         open={openCommitHash != null}
         onClose={() => setOpenCommitHash(undefined)}
         fontSize={font_size}
+        onRequestAgentTurn={sendGitBrowserAgentPrompt}
       />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>

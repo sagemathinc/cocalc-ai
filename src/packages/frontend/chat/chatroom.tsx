@@ -283,6 +283,9 @@ export function ChatPanel({
   const [gitBrowserCommitHash, setGitBrowserCommitHash] = useState<
     string | undefined
   >(undefined);
+  const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
+    string | undefined
+  >(undefined);
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -814,10 +817,36 @@ export function ChatPanel({
           ? codexConfig.workingDirectory.trim()
           : undefined;
       setGitBrowserCwd(wd);
+      setGitBrowserThreadKey(threadKey);
       setGitBrowserCommitHash(undefined);
       setGitBrowserOpen(true);
     },
     [actions],
+  );
+
+  const sendGitBrowserAgentPrompt = useCallback(
+    async (prompt: string) => {
+      const trimmed = `${prompt ?? ""}`.trim();
+      if (!trimmed) return;
+      const targetThreadKey =
+        gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+      const thread_id = normalizeThreadKey(targetThreadKey);
+      const metadata =
+        targetThreadKey != null
+          ? actions.getThreadMetadata?.(targetThreadKey, { threadId: thread_id })
+          : undefined;
+      const threadDate =
+        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
+      const reply_to =
+        threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
+      actions.sendChat({
+        extraInput: trimmed,
+        reply_to,
+        reply_thread_id: thread_id,
+        preserveSelectedThread: true,
+      });
+    },
+    [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
   );
 
   const renderChatContent = () => (
@@ -954,8 +983,12 @@ export function ChatPanel({
         cwdOverride={gitBrowserCwd}
         commitHash={gitBrowserCommitHash}
         open={gitBrowserOpen}
-        onClose={() => setGitBrowserOpen(false)}
+        onClose={() => {
+          setGitBrowserOpen(false);
+          setGitBrowserThreadKey(undefined);
+        }}
         fontSize={fontSize}
+        onRequestAgentTurn={sendGitBrowserAgentPrompt}
       />
     </div>
   );
