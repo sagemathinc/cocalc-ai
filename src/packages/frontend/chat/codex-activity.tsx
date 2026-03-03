@@ -866,6 +866,7 @@ function DiffPreview({
   );
   return (
     <div
+      className="cocalc-slate-code-block"
       style={{
         marginTop: 6,
         fontFamily: "monospace",
