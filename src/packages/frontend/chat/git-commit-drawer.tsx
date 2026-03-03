@@ -32,7 +32,6 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
-  clearReviewDraft,
   loadReviewRecord,
   normalizeCommitSha,
   saveReviewDraft,
@@ -98,6 +97,7 @@ type HeadStatusEntry = {
   displayPath: string;
   statusCode: string;
   statusLabel: string;
+  tracked: boolean;
 };
 
 function parseCommitHash(commitHash?: string): string | undefined {
@@ -201,6 +201,7 @@ function parseGitStatusOutput(stdout: string): HeadStatusEntry[] {
       : rawPath;
     const primary = status.replace(/\s/g, "")[0] ?? "?";
     const statusCode = status.trim() || "??";
+    const tracked = status !== "??";
     const statusLabel =
       status === "??"
         ? "untracked"
@@ -213,7 +214,7 @@ function parseGitStatusOutput(stdout: string): HeadStatusEntry[] {
               : primary === "M"
                 ? "modified"
                 : "changed";
-    entries.push({ path: displayPath, displayPath, statusCode, statusLabel });
+    entries.push({ path: displayPath, displayPath, statusCode, statusLabel, tracked });
   }
   return entries;
 }
@@ -380,11 +381,9 @@ export function GitCommitDrawer({
   const [headStatusLoading, setHeadStatusLoading] = useState(false);
   const [headStatusError, setHeadStatusError] = useState("");
   const [headStatusEntries, setHeadStatusEntries] = useState<HeadStatusEntry[]>([]);
-  const [headActionId, setHeadActionId] = useState<string>("");
   const [headCommitBusy, setHeadCommitBusy] = useState(false);
   const [headCommitMessage, setHeadCommitMessage] = useState("");
   const [headCommitError, setHeadCommitError] = useState("");
-  const [headCommitStatus, setHeadCommitStatus] = useState("");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [reviewedByCommit, setReviewedByCommit] = useState<Record<string, boolean>>(
     {},
@@ -852,10 +851,6 @@ export function GitCommitDrawer({
     reloadCounter,
   ]);
 
-  const refreshView = () => {
-    setReloadCounter((n) => n + 1);
-  };
-
   const refreshAll = () => {
     setReloadCounter((n) => n + 1);
     setGitLogReloadCounter((n) => n + 1);
@@ -897,77 +892,6 @@ export function GitCommitDrawer({
     setSelectedCommit(gitLog[commitIndex + 1]?.hash);
   };
 
-  const runHeadAction = async (actionId: string, fn: () => Promise<void>) => {
-    setHeadActionId(actionId);
-    setHeadCommitStatus("");
-    setHeadCommitError("");
-    try {
-      await fn();
-      refreshView();
-    } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to complete HEAD action."}`);
-    } finally {
-      setHeadActionId("");
-    }
-  };
-
-  const addHeadPath = async (path: string) => {
-    if (!projectId) return;
-    await runHeadAction(`add:${path}`, async () => {
-      const result = await runGitCommand({
-        projectId,
-        cwd: repoRoot || cwd,
-        args: ["add", "--", path],
-      });
-      if (result.exit_code !== 0) {
-        throw new Error((result.stderr || result.stdout || "git add failed").trim());
-      }
-    });
-  };
-
-  const addAllHeadPaths = async () => {
-    if (!projectId) return;
-    const paths = Array.from(
-      new Set(
-        headStatusEntries
-          .map((entry) => entry.path)
-          .filter((path) => `${path}`.trim().length > 0),
-      ),
-    );
-    if (paths.length === 0) return;
-    await runHeadAction("add-all", async () => {
-      const result = await runGitCommand({
-        projectId,
-        cwd: repoRoot || cwd,
-        args: ["add", "--", ...paths],
-      });
-      if (result.exit_code !== 0) {
-        throw new Error((result.stderr || result.stdout || "git add failed").trim());
-      }
-    });
-  };
-
-  const ignoreHeadPath = async (path: string) => {
-    if (!projectId) return;
-    await runHeadAction(`ignore:${path}`, async () => {
-      const script =
-        'touch .gitignore\nif ! grep -Fqx -- "$1" .gitignore; then printf "%s\\n" "$1" >> .gitignore; fi';
-      const result = await webapp_client.project_client.exec({
-        project_id: projectId,
-        path: repoRoot || cwd,
-        command: "bash",
-        args: ["-lc", script, "cocalc-git-ignore", path],
-        err_on_exit: false,
-        timeout: 30,
-      });
-      if (result.exit_code !== 0) {
-        throw new Error(
-          (result.stderr || result.stdout || "unable to update .gitignore").trim(),
-        );
-      }
-    });
-  };
-
   const requestAgentCommit = async ({
     includeSummary,
   }: {
@@ -982,22 +906,22 @@ export function GitCommitDrawer({
     if (includeSummary) {
       prompt = trimmed
         ? [
-            "Please commit these changes.",
+            "Please commit all tracked changes in the current repository.",
+            "Do not include untracked files.",
             `Use this exact first line for the commit message: "${trimmed}"`,
             "Then include a detailed explanatory body.",
           ].join("\n")
-        : "Please commit these changes with a concise first line and a detailed explanatory body.";
+        : "Please commit all tracked changes with a concise first line and a detailed explanatory body. Do not include untracked files.";
     } else {
       prompt = trimmed
-        ? `Please commit these changes with this exact commit message:\n${trimmed}`
-        : "Please commit";
+        ? `Please commit all tracked changes with this exact commit message:\n${trimmed}\nDo not include untracked files.`
+        : "Please commit all tracked changes. Do not include untracked files.";
     }
     setHeadCommitBusy(true);
     setHeadCommitError("");
-    setHeadCommitStatus("");
     try {
       await onRequestAgentTurn(prompt);
-      setHeadCommitStatus("Sent commit request to codex.");
+      onClose();
     } catch (err) {
       setHeadCommitError(`${err ?? "Unable to send commit request to codex."}`);
     } finally {
@@ -1014,22 +938,22 @@ export function GitCommitDrawer({
     }
     setHeadCommitBusy(true);
     setHeadCommitError("");
-    setHeadCommitStatus("");
     try {
       const result = await runGitCommand({
         projectId,
         cwd: repoRoot || cwd,
-        args: ["commit", "-m", headCommitMessage],
+        args: ["commit", "-a", "-m", headCommitMessage],
       });
       if (result.exit_code !== 0) {
         throw new Error((result.stderr || result.stdout || "git commit failed").trim());
       }
       setHeadCommitMessage("");
-      setHeadCommitStatus(
-        (result.stdout || "Commit created successfully.").trim(),
-      );
-      clearReviewDraft(commit);
       refreshAll();
+      alert_message({
+        type: "info",
+        message: (result.stdout || "Commit created successfully.").trim(),
+      });
+      onClose();
     } catch (err) {
       setHeadCommitError(`${err ?? "Unable to create commit."}`);
     } finally {
@@ -1208,15 +1132,16 @@ export function GitCommitDrawer({
             onChange={(e) => setHeadCommitMessage(e.target.value)}
           />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Button size="small" type="primary" onClick={() => void doHeadCommit()}>
-              Commit
-            </Button>
             <Button
               size="small"
+              type="primary"
               onClick={() => void requestAgentCommit({ includeSummary: true })}
               disabled={headCommitBusy}
             >
               Commit with AI Summary
+            </Button>
+            <Button size="small" onClick={() => void doHeadCommit()}>
+              Commit
             </Button>
             <Button
               size="small"
@@ -1226,31 +1151,14 @@ export function GitCommitDrawer({
               Clear
             </Button>
           </div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Commit uses all tracked changes only (`git commit -a`). Untracked files are excluded.
+          </Typography.Text>
           {headCommitError ? (
             <Alert type="error" showIcon message={headCommitError} />
           ) : null}
-          {headCommitStatus ? (
-            <Alert type="success" showIcon message={headCommitStatus} />
-          ) : null}
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ fontWeight: 600 }}>Uncommitted files</div>
-            <Button
-              size="small"
-              onClick={() => void addAllHeadPaths()}
-              disabled={headActionId.length > 0 || headStatusEntries.length === 0}
-            >
-              Add all
-            </Button>
-          </div>
+          <div style={{ fontWeight: 600 }}>Uncommitted files</div>
           {headStatusError ? (
             <Alert type="warning" showIcon message={headStatusError} />
           ) : null}
@@ -1266,8 +1174,6 @@ export function GitCommitDrawer({
           ) : null}
           {!headStatusLoading && headStatusEntries.length > 0
             ? headStatusEntries.map((entry) => {
-                const addBusy = headActionId === `add:${entry.path}`;
-                const ignoreBusy = headActionId === `ignore:${entry.path}`;
                 return (
                   <div
                     key={`${entry.statusCode}:${entry.path}`}
@@ -1282,9 +1188,6 @@ export function GitCommitDrawer({
                     }}
                   >
                     <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                      <Typography.Text code style={{ marginBottom: 0 }}>
-                        {entry.statusCode}
-                      </Typography.Text>
                       <Button
                         type="link"
                         size="small"
@@ -1295,26 +1198,12 @@ export function GitCommitDrawer({
                       </Button>
                       <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                         {entry.statusLabel}
+                        {!entry.tracked ? " (not included by Commit)" : ""}
                       </Typography.Text>
                     </div>
-                    <Space.Compact size="small">
-                      <Button
-                        size="small"
-                        onClick={() => void addHeadPath(entry.path)}
-                        loading={addBusy}
-                        disabled={Boolean(headActionId) && !addBusy}
-                      >
-                        Add
-                      </Button>
-                      <Button
-                        size="small"
-                        onClick={() => void ignoreHeadPath(entry.path)}
-                        loading={ignoreBusy}
-                        disabled={Boolean(headActionId) && !ignoreBusy}
-                      >
-                        Ignore
-                      </Button>
-                    </Space.Compact>
+                    <Typography.Text code style={{ marginBottom: 0 }}>
+                      {entry.statusCode}
+                    </Typography.Text>
                   </div>
                 );
               })

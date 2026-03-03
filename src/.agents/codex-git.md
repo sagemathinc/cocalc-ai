@@ -250,35 +250,19 @@ When viewing `HEAD`, show a compact file list for uncommitted and not-ignored pa
 Each row:
 
 - file path,
-- status badge (`M`, `A`, `D`, `??`),
-- `Add` button,
-- `Ignore` button,
+- status label (`modified`, `added`, `deleted`, `untracked`),
 - `Open` button.
 
 Recommended commands:
 
 - list: `git status --porcelain=v1 --untracked-files=all`
-- add one: `git add -- <path>`
-- add all: `git add -- <path1> <path2> ...`
-
-`Ignore` behavior:
-
-- append exact relative path to `.gitignore` if missing,
-- refresh HEAD list/diff.
-
-Optional warning:
-
-- for tracked files, warn that ignore does not untrack existing history.
-
-Why:
-
-- untracked files do not appear in `git diff HEAD` until staged.
 
 Commit button behavior:
 
-- `Commit` + nonempty input: direct commit.
-- `Commit` + empty input: create agent turn `"Please commit"`.
-- `Commit with AI Summary`: always create agent turn; if text provided, require it as first line.
+- `Commit` + nonempty input: direct `git commit -a -m` (all tracked changes only).
+- `Commit` + empty input: create agent turn `"Please commit all tracked changes"`.
+- `Commit with AI Summary`: always create agent turn; if text provided, require it as first line and include a detailed body.
+- Untracked files are shown but explicitly excluded from this one-click commit path.
 
 ---
 
@@ -364,6 +348,20 @@ Example top-level shape:
 
 ---
 
+## Chat Linkage Ideas (Planned, not yet implemented)
+
+1. Commit-aware in-thread search shortcut:
+   - In git browser, add a `Find in chat` action for selected commit.
+   - It should open in-thread search and prefill commit SHA.
+   - Search should include backend/offloaded chat messages.
+
+2. Direct human commits should still be logged in chat:
+   - For direct `git commit -a -m` path, append a chat message in the codex thread with commit SHA and subject.
+   - This is a log-only chat event (no agent turn triggered).
+   - Goal: keep commit context discoverable via chat search.
+
+---
+
 ## Acceptance Criteria
 
 1. Comments for commit `X` appear across different repo roots/workspaces for the same account.
@@ -393,9 +391,10 @@ Example top-level shape:
 6. Implement HEAD commit panel:
    - commit message input,
    - `Commit` and `Commit with AI Summary` actions.
-7. Implement HEAD staging helpers:
+7. Implement HEAD status helpers:
    - file/status list from `git status --porcelain`,
-   - per-row `Add` and `Ignore`, plus `Add all`.
+   - clear tracked vs untracked labeling,
+   - one-click commit path remains tracked-only (`git commit -a`).
 8. Implement submit flow (commit mode only):
    - collect actionable draft comments,
    - emit structured payload to agent turn,
