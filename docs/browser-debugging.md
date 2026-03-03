@@ -91,6 +91,7 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - "target context" banner in output: API URL, browser id, project id, active path
 - Guardrail warning if browser session URL host/port mismatches `COCALC_API_URL`
 - Optional dry-run mode that shows which session would be targeted
+- Way to run the lite daemon and full hub daemon (launchpad) so that it is easy to get exactly the env needed, e.g., a valid `COCALC_BEARER_TOKEN`, etc. by just running a pnpm command.
 
 ## Known good pattern for live bug work
 
