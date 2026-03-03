@@ -466,12 +466,19 @@ function main() {
     `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
     LOCAL_PROJECT_ID;
 
-  let browserId =
-    `${process.env.COCALC_BROWSER_ID ?? ""}`.trim() ||
-    `${profile?.browser_id ?? ""}`.trim();
-  if (withBrowser && !browserId) {
-    browserId =
-      getBrowserId({ apiUrl, bearer: bearerExport, accountId, mode, hubPassword }) || "";
+  const envBrowserId = `${process.env.COCALC_BROWSER_ID ?? ""}`.trim();
+  const profileBrowserId = `${profile?.browser_id ?? ""}`.trim();
+  let browserId = envBrowserId || profileBrowserId;
+  if (withBrowser) {
+    const discoveredBrowserId = getBrowserId({
+      apiUrl,
+      bearer: bearerExport,
+      accountId,
+      mode,
+      hubPassword,
+    });
+    // With --with-browser, prefer fresh discovery and avoid exporting stale ids.
+    browserId = discoveredBrowserId || "";
   }
 
   const exportsMap = {
