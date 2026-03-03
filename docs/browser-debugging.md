@@ -16,6 +16,13 @@ In practice, these bugs often come from runtime differences:
 
 ## Minimal workflow (recommended)
 
+0. Bootstrap env quickly (recommended).
+   - Lite: `pnpm --dir src dev:env:lite`
+   - Hub: `pnpm --dir src dev:env:hub`
+   - Apply exports into current shell:
+     - `eval "$(pnpm --dir src dev:env:lite)"`
+     - `eval "$(pnpm --dir src dev:env:hub)"`
+
 1. Confirm target server and auth context.
    - `cd src && pnpm lite:daemon:status`
    - Read the `url` (e.g. `http://localhost:7003`).
