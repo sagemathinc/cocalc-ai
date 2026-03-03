@@ -162,6 +162,7 @@ interface ChatRoomSidebarContentProps {
     threadColor?: string,
     threadIcon?: string,
   ) => void;
+  openGitBrowser: (threadKey: string) => void;
   openExportModal: (threadKey: string, label: string, isAI: boolean) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
@@ -178,6 +179,7 @@ export function ChatRoomSidebarContent({
   archivedThreads,
   combinedThread,
   openRenameModal,
+  openGitBrowser,
   openExportModal,
   openForkModal,
   confirmDeleteThread,
@@ -199,10 +201,20 @@ export function ChatRoomSidebarContent({
     hasCustomName: boolean,
     isPinned: boolean,
     isAI: boolean,
+    isCodexThread: boolean,
     threadColor?: string,
     threadIcon?: string,
-  ): MenuProps => ({
-    items: [
+  ): MenuProps => {
+    const codexItems: NonNullable<MenuProps["items"]> = isCodexThread
+      ? [
+          {
+            key: "git-browser",
+            label: "Git browser",
+          },
+        ]
+      : [];
+    return {
+      items: [
       {
         key: "rename",
         label: "Settings",
@@ -215,6 +227,7 @@ export function ChatRoomSidebarContent({
         key: "archive",
         label: "Archive chat",
       },
+      ...codexItems,
       {
         type: "divider",
       },
@@ -270,11 +283,14 @@ export function ChatRoomSidebarContent({
           return;
         }
         antdMessage.success("Chat archived.");
+      } else if (key === "git-browser") {
+        openGitBrowser(threadKey);
       } else if (key === "delete") {
         confirmDeleteThread(threadKey, plainLabel);
       }
     },
-  });
+    };
+  };
 
   const handleMarkSectionRead = (section: ThreadSectionWithUnread): void => {
     if (!actions?.markThreadRead) return;
@@ -309,6 +325,15 @@ export function ChatRoomSidebarContent({
     const allowMenu = key !== combinedThread?.key;
     const showMenu =
       allowMenu && (isHovered || selectedThreadKey === key || isMenuOpen);
+    const codexConfig = actions?.getCodexConfig?.(key);
+    const model =
+      typeof codexConfig?.model === "string"
+        ? codexConfig.model
+        : (actions?.getThreadMetadata?.(key)?.agent_model as string | undefined);
+    const isCodexThread =
+      isAI &&
+      typeof model === "string" &&
+      model.toLowerCase().includes("codex");
     const isRecentlyActive =
       thread.lastActivityAt != null &&
       activityNow - thread.lastActivityAt < ACTIVITY_RECENT_MS;
@@ -384,6 +409,7 @@ export function ChatRoomSidebarContent({
                 hasCustomName,
                 isPinned,
                 isAI,
+                isCodexThread,
                 threadColor,
                 threadIcon,
               )}

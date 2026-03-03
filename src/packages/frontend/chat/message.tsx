@@ -146,7 +146,10 @@ function linkifyCommitHashes(text: string): string {
             (hash, offset: number, source: string) => {
               const before = source[offset - 1] ?? "";
               const after = source[offset + hash.length] ?? "";
-              if (before === "/" || after === "/") return hash;
+              // Don't link hash-like tokens inside URLs/query params/UUIDs.
+              if (/[-/=?&#:]/.test(before) || /[-/=?&#:]/.test(after)) {
+                return hash;
+              }
               return `[${hash}](${GIT_COMMIT_LINK_SCHEME}${hash})`;
             },
           );
@@ -595,8 +598,11 @@ export default function Message({
     [codexBodyValue, effectiveGenerating, rowMessageValue],
   );
   const renderedMessageMarkdown = useMemo(
-    () => linkifyCommitHashes(renderedMessageValue),
-    [renderedMessageValue],
+    () =>
+      is_viewers_message
+        ? renderedMessageValue
+        : linkifyCommitHashes(renderedMessageValue),
+    [is_viewers_message, renderedMessageValue],
   );
 
   const threadKeyForSession = useMemo(

@@ -14,6 +14,7 @@ import {
   Select,
   Space,
   Spin,
+  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -85,6 +86,7 @@ type CommitReviewRecord = {
 interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
+  cwdOverride?: string;
   commitHash?: string;
   open: boolean;
   onClose: () => void;
@@ -313,6 +315,7 @@ function DiffBlock({
 export function GitCommitDrawer({
   projectId,
   sourcePath,
+  cwdOverride,
   commitHash,
   open,
   onClose,
@@ -347,7 +350,11 @@ export function GitCommitDrawer({
   );
   const [reviewDirty, setReviewDirty] = useState(false);
 
-  const cwd = useMemo(() => containingPath(sourcePath ?? ".") || ".", [sourcePath]);
+  const cwd = useMemo(() => {
+    const override = `${cwdOverride ?? ""}`.trim();
+    if (override) return override;
+    return containingPath(sourcePath ?? ".") || ".";
+  }, [sourcePath, cwdOverride]);
 
   useEffect(() => {
     if (!open) return;
@@ -403,6 +410,11 @@ export function GitCommitDrawer({
       cancelled = true;
     };
   }, [open, projectId, cwd]);
+
+  useEffect(() => {
+    if (!open || commit || gitLog.length === 0) return;
+    setSelectedCommit(gitLog[0].hash);
+  }, [open, commit, gitLog]);
 
   const commitIndex = useMemo(() => {
     if (!commit) return -1;
@@ -610,8 +622,14 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     if (!open) return;
-    if (!projectId || !commit) {
+    if (!projectId) {
       setError("Invalid commit or missing project.");
+      setData(undefined);
+      return;
+    }
+    if (!commit) {
+      setLoading(false);
+      setError("");
       setData(undefined);
       return;
     }
@@ -747,7 +765,17 @@ export function GitCommitDrawer({
         >
           <span>{`Commit ${commit ?? ""}`}</span>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: COLORS.GRAY_D, fontSize: 12 }}>Context</span>
+            <Tooltip title="Context lines around changes. Shortcuts: [ decrease, ] increase">
+              <span
+                style={{
+                  color: COLORS.GRAY_D,
+                  fontSize: 12,
+                  cursor: "help",
+                }}
+              >
+                Context
+              </span>
+            </Tooltip>
             <Select
               size="small"
               value={contextLines}
@@ -791,20 +819,35 @@ export function GitCommitDrawer({
           optionFilterProp="search"
         />
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Segmented
-            size="small"
-            value={reviewFilter}
-            options={REVIEW_FILTER_OPTIONS}
-            onChange={(value) => setReviewFilter(value as ReviewFilter)}
-            style={{ margin: 0 }}
-          />
+          <div style={{ display: "flex", alignItems: "center", height: 24 }}>
+            <Segmented
+              size="small"
+              value={reviewFilter}
+              options={REVIEW_FILTER_OPTIONS}
+              onChange={(value) => setReviewFilter(value as ReviewFilter)}
+              style={{
+                margin: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                lineHeight: "24px",
+              }}
+            />
+          </div>
           <Space.Compact size="small">
-            <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
-              Newer
-            </Button>
-            <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
-              Older
-            </Button>
+            <Tooltip title="Newer commit (shortcut: k)">
+              <span style={{ display: "inline-flex" }}>
+                <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
+                  Newer
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="Older commit (shortcut: j)">
+              <span style={{ display: "inline-flex" }}>
+                <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
+                  Older
+                </Button>
+              </span>
+            </Tooltip>
           </Space.Compact>
         </div>
       </div>

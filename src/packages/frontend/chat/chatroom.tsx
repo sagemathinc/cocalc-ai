@@ -21,6 +21,7 @@ import type { ChatActions } from "./actions";
 import { ChatRoomComposer } from "./composer";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
+import { GitCommitDrawer } from "./git-commit-drawer";
 import type { ChatRoomModalHandlers } from "./chatroom-modals";
 import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
@@ -275,6 +276,13 @@ export function ChatPanel({
   }, [desc]);
   const [newThreadSetup, setNewThreadSetup] =
     useState<NewThreadSetup>(defaultNewThreadSetup);
+  const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
+  const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
+    undefined,
+  );
+  const [gitBrowserCommitHash, setGitBrowserCommitHash] = useState<
+    string | undefined
+  >(undefined);
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -790,6 +798,28 @@ export function ChatPanel({
     setNewThreadSetup(defaultNewThreadSetup);
   }
 
+  const openGitBrowserForThread = useCallback(
+    (threadKey: string) => {
+      const threadId = normalizeThreadKey(threadKey);
+      const metadata = actions.getThreadMetadata?.(threadKey, {
+        threadId,
+      });
+      const codexConfig =
+        actions.getCodexConfig?.(threadId ?? threadKey) ??
+        metadata?.acp_config ??
+        undefined;
+      const wd =
+        typeof codexConfig?.workingDirectory === "string" &&
+        codexConfig.workingDirectory.trim()
+          ? codexConfig.workingDirectory.trim()
+          : undefined;
+      setGitBrowserCwd(wd);
+      setGitBrowserCommitHash(undefined);
+      setGitBrowserOpen(true);
+    },
+    [actions],
+  );
+
   const renderChatContent = () => (
     <div className="smc-vfill" style={GRID_STYLE}>
       <ChatRoomThreadPanel
@@ -893,6 +923,7 @@ export function ChatPanel({
                 _icon,
               ) => undefined)
             }
+            openGitBrowser={openGitBrowserForThread}
             openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
             confirmDeleteThread={
@@ -916,6 +947,15 @@ export function ChatPanel({
         selectedThreadKey={selectedThreadKey}
         setSelectedThreadKey={setSelectedThreadKey}
         onHandlers={setThreadActionHandlers}
+      />
+      <GitCommitDrawer
+        projectId={project_id}
+        sourcePath={path}
+        cwdOverride={gitBrowserCwd}
+        commitHash={gitBrowserCommitHash}
+        open={gitBrowserOpen}
+        onClose={() => setGitBrowserOpen(false)}
+        fontSize={fontSize}
       />
     </div>
   );
