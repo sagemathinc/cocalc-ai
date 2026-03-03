@@ -67,12 +67,16 @@ import {
 import { SyncOutlined } from "@ant-design/icons";
 import { AgentMessageStatus } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
+import { GitCommitDrawer } from "./git-commit-drawer";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
 const MARKDOWN_STYLE = undefined;
 
 const BORDER = "2px solid #ccc";
+
+const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
+const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
 
 
 const THREAD_STYLE_SINGLE: CSS = {
@@ -119,6 +123,45 @@ const NON_RUNNING_USER_ONLY_STATES = new Set([
   "sent",
   "not-sent",
 ]);
+
+function linkifyCommitHashes(text: string): string {
+  if (!text || !/[0-9a-f]{7,40}/i.test(text)) return text;
+  const fencedChunks = text.split(/(```[\s\S]*?```)/g);
+  return fencedChunks
+    .map((chunk, idx) => {
+      if (idx % 2 === 1) return chunk;
+      const inlineChunks = chunk.split(/(`[^`\n]*`)/g);
+      return inlineChunks
+        .map((part, jdx) => {
+          if (jdx % 2 === 1) {
+            // Inline code span. If it is exactly a git hash, keep the code
+            // appearance while making it clickable.
+            const m = /^`([0-9a-f]{7,40})`$/i.exec(part);
+            if (!m) return part;
+            const hash = m[1];
+            return [`[\`${hash}\`](${GIT_COMMIT_LINK_SCHEME}${hash})`].join("");
+          }
+          return part.replace(
+            COMMIT_HASH_BOUNDARY_RE,
+            (hash, offset: number, source: string) => {
+              const before = source[offset - 1] ?? "";
+              const after = source[offset + hash.length] ?? "";
+              if (before === "/" || after === "/") return hash;
+              return `[${hash}](${GIT_COMMIT_LINK_SCHEME}${hash})`;
+            },
+          );
+        })
+        .join("");
+    })
+    .join("");
+}
+
+function parseGitCommitLink(href?: string | null): string | undefined {
+  if (!href || !href.startsWith(GIT_COMMIT_LINK_SCHEME)) return undefined;
+  const hash = href.slice(GIT_COMMIT_LINK_SCHEME.length).trim();
+  if (!/^[0-9a-f]{7,40}$/i.test(hash)) return undefined;
+  return hash;
+}
 
 export function computeAcpStateToRender({
   acpState,
@@ -325,6 +368,9 @@ export default function Message({
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] =
     useState<number | undefined>(undefined);
+  const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
+    undefined,
+  );
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
@@ -547,6 +593,10 @@ export default function Message({
         generating: effectiveGenerating,
       }),
     [codexBodyValue, effectiveGenerating, rowMessageValue],
+  );
+  const renderedMessageMarkdown = useMemo(
+    () => linkifyCommitHashes(renderedMessageValue),
+    [renderedMessageValue],
   );
 
   const threadKeyForSession = useMemo(
@@ -1095,13 +1145,22 @@ export default function Message({
   }
 
   function renderMessageBody({ message_class }) {
-    const value = renderedMessageValue;
+    const value = renderedMessageMarkdown;
     const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
     const showInlineActivityShortcut = showCodexActivity && effectiveGenerating;
     const openActivityFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       if (target?.closest?.("a[href]")) return;
       setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+    };
+    const openCommitFromMessage = (e: any) => {
+      const target = e.target as HTMLElement | null;
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      const hash = parseGitCommitLink(anchor?.getAttribute("href"));
+      if (!hash) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOpenCommitHash(hash);
     };
 
     return (
@@ -1132,6 +1191,7 @@ export default function Message({
           openDrawerToken={openActivityDrawerToken}
         />
         <div
+          onClickCapture={openCommitFromMessage}
           onClick={showInlineActivityShortcut ? openActivityFromMessage : undefined}
           style={showInlineActivityShortcut ? { cursor: "pointer" } : undefined}
           title={
@@ -1157,8 +1217,17 @@ export default function Message({
 
   function renderZenMessageDrawer() {
     if (!showZenMessage) return null;
-    const value = renderedMessageValue;
+    const value = renderedMessageMarkdown;
     const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
+    const openCommitFromMessage = (e: any) => {
+      const target = e.target as HTMLElement | null;
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      const hash = parseGitCommitLink(anchor?.getAttribute("href"));
+      if (!hash) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOpenCommitHash(hash);
+    };
     return (
       <Drawer
         title={get_user_name(field(message, "sender_id"))}
@@ -1169,15 +1238,17 @@ export default function Message({
         destroyOnHidden
       >
         <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 8px 24px 8px" }}>
-          <StaticMarkdown
-            style={{ fontSize: `${font_size ?? 14}px` }}
-            value={value}
-            highlightQuery={searchHighlight}
-            inlineCodeLinks={
-              Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-            }
-            inlineCodeWorkspaceRoot={activityBasePath}
-          />
+          <div onClickCapture={openCommitFromMessage}>
+            <StaticMarkdown
+              style={{ fontSize: `${font_size ?? 14}px` }}
+              value={value}
+              highlightQuery={searchHighlight}
+              inlineCodeLinks={
+                Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+              }
+              inlineCodeWorkspaceRoot={activityBasePath}
+            />
+          </div>
         </div>
       </Drawer>
     );
@@ -1730,6 +1801,14 @@ export default function Message({
       {renderCols()}
       {renderFoldedRow()}
       {renderZenMessageDrawer()}
+      <GitCommitDrawer
+        projectId={project_id}
+        sourcePath={path}
+        commitHash={openCommitHash}
+        open={openCommitHash != null}
+        onClose={() => setOpenCommitHash(undefined)}
+        fontSize={font_size}
+      />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>
           <Divider>{renderAcpState()}</Divider>
