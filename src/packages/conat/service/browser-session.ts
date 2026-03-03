@@ -44,8 +44,12 @@ export type BrowserActionName =
   | "drag"
   | "type"
   | "press"
+  | "navigate"
+  | "scroll_by"
+  | "scroll_to"
   | "wait_for_selector"
-  | "wait_for_url";
+  | "wait_for_url"
+  | "batch";
 
 export type BrowserCoordinateSpace =
   | "viewport"
@@ -76,6 +80,14 @@ export type BrowserScreenshotMetadata = {
 };
 
 export type BrowserActionRequest =
+  | BrowserAtomicActionRequest
+  | {
+      name: "batch";
+      actions: BrowserAtomicActionRequest[];
+      continue_on_error?: boolean;
+    };
+
+export type BrowserAtomicActionRequest =
   | {
       name: "click";
       selector: string;
@@ -130,6 +142,29 @@ export type BrowserActionRequest =
       shift?: boolean;
       meta?: boolean;
       timeout_ms?: number;
+    }
+  | {
+      name: "navigate";
+      url: string;
+      wait_for_url_ms?: number;
+      replace?: boolean;
+    }
+  | {
+      name: "scroll_by";
+      dx?: number;
+      dy?: number;
+      behavior?: "auto" | "smooth";
+    }
+  | {
+      name: "scroll_to";
+      selector?: string;
+      top?: number;
+      left?: number;
+      behavior?: "auto" | "smooth";
+      block?: "start" | "center" | "end" | "nearest";
+      inline?: "start" | "center" | "end" | "nearest";
+      timeout_ms?: number;
+      poll_ms?: number;
     }
   | {
       name: "wait_for_selector";

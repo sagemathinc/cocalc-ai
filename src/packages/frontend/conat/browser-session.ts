@@ -18,6 +18,7 @@ import {
 } from "./extensions-runtime";
 import {
   createBrowserSessionService,
+  type BrowserAtomicActionRequest,
   type BrowserActionName,
   type BrowserActionRequest,
   type BrowserActionResult,
@@ -556,8 +557,12 @@ function normalizePolicy(policy: unknown): BrowserExecPolicyV1 | undefined {
       x === "drag" ||
       x === "type" ||
       x === "press" ||
+      x === "navigate" ||
+      x === "scroll_by" ||
+      x === "scroll_to" ||
       x === "wait_for_selector" ||
-      x === "wait_for_url",
+      x === "wait_for_url" ||
+      x === "batch",
   );
   return {
     version: BROWSER_EXEC_POLICY_VERSION,
@@ -3267,6 +3272,213 @@ export function createBrowserSessionAutomation({
       throw Error("action must be specified");
     }
 
+    if (action.name === "batch") {
+      const steps = Array.isArray(action.actions) ? action.actions : [];
+      if (!steps.length) {
+        throw Error("batch requires at least one action");
+      }
+      const continueOnError = !!action.continue_on_error;
+      const results: Array<Record<string, unknown>> = [];
+      let failed = 0;
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const stepName = `${(step as any)?.name ?? ""}`.trim();
+        if (!stepName || stepName === "batch") {
+          const message = `batch step ${i} has invalid action name '${stepName || "<empty>"}'`;
+          if (!continueOnError) {
+            throw Error(message);
+          }
+          failed += 1;
+          results.push({
+            index: i,
+            ok: false,
+            action_name: stepName || "",
+            error: message,
+          });
+          continue;
+        }
+        try {
+          const stepResult = await executeBrowserAction({
+            project_id,
+            action: step as BrowserAtomicActionRequest,
+          });
+          results.push({
+            index: i,
+            ok: true,
+            action_name: stepResult.name,
+            result: stepResult,
+          });
+        } catch (err) {
+          const message = `${err}`;
+          if (!continueOnError) {
+            throw Error(`batch step ${i} (${stepName}) failed: ${message}`);
+          }
+          failed += 1;
+          results.push({
+            index: i,
+            ok: false,
+            action_name: stepName,
+            error: message,
+          });
+        }
+      }
+      return {
+        name: "batch",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        step_count: steps.length,
+        failed_steps: failed,
+        continue_on_error: continueOnError,
+        results,
+      };
+    }
+
+    if (action.name === "navigate") {
+      const url = `${action.url ?? ""}`.trim();
+      if (!url) {
+        throw Error("navigate requires a non-empty url");
+      }
+      let resolvedUrl = "";
+      try {
+        resolvedUrl = new URL(url, location.href).toString();
+      } catch (err) {
+        throw Error(`invalid navigate url '${url}': ${err}`);
+      }
+      const wait_for_url_ms = asFiniteNonNegative(action.wait_for_url_ms) ?? 0;
+      const before = `${location.href ?? ""}`;
+      if (action.replace) {
+        location.replace(resolvedUrl);
+      } else {
+        location.assign(resolvedUrl);
+      }
+      if (wait_for_url_ms > 0) {
+        const deadline = Date.now() + wait_for_url_ms;
+        for (;;) {
+          const href = `${location.href ?? ""}`;
+          if (href !== before || href === resolvedUrl) {
+            break;
+          }
+          if (Date.now() >= deadline) {
+            throw Error("timed out waiting for URL change after navigate");
+          }
+          await sleepMs(50);
+        }
+      }
+      return {
+        name: "navigate",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        from_url: before,
+        target_url: resolvedUrl,
+        replace: !!action.replace,
+      };
+    }
+
+    if (action.name === "scroll_by") {
+      const dx = Number(action.dx ?? 0);
+      const dy = Number(action.dy ?? 0);
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
+        throw Error("scroll_by requires finite dx/dy");
+      }
+      const behavior =
+        `${action.behavior ?? "auto"}`.trim() === "smooth" ? "smooth" : "auto";
+      const before = {
+        x: Number(window.scrollX || window.pageXOffset || 0),
+        y: Number(window.scrollY || window.pageYOffset || 0),
+      };
+      window.scrollBy({ left: dx, top: dy, behavior });
+      await sleepMs(behavior === "smooth" ? 160 : 30);
+      const after = {
+        x: Number(window.scrollX || window.pageXOffset || 0),
+        y: Number(window.scrollY || window.pageYOffset || 0),
+      };
+      return {
+        name: "scroll_by",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        input: { dx, dy, behavior },
+        before_scroll: before,
+        after_scroll: after,
+      };
+    }
+
+    if (action.name === "scroll_to") {
+      const behavior =
+        `${action.behavior ?? "auto"}`.trim() === "smooth" ? "smooth" : "auto";
+      const before = {
+        x: Number(window.scrollX || window.pageXOffset || 0),
+        y: Number(window.scrollY || window.pageYOffset || 0),
+      };
+      const selector = `${action.selector ?? ""}`.trim();
+      if (selector) {
+        const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+        const poll_ms = asFinitePositive(action.poll_ms) ?? 100;
+        const { element } = await waitForSelectorState({
+          selector,
+          state: "attached",
+          timeout_ms,
+          poll_ms,
+        });
+        if (!element) {
+          throw Error(`selector '${selector}' not found`);
+        }
+        const block =
+          `${action.block ?? "center"}`.trim().toLowerCase() as
+            | "start"
+            | "center"
+            | "end"
+            | "nearest";
+        const inline =
+          `${action.inline ?? "nearest"}`.trim().toLowerCase() as
+            | "start"
+            | "center"
+            | "end"
+            | "nearest";
+        element.scrollIntoView({
+          behavior,
+          block:
+            block === "start" || block === "end" || block === "nearest"
+              ? block
+              : "center",
+          inline:
+            inline === "start" || inline === "center" || inline === "end"
+              ? inline
+              : "nearest",
+        });
+      } else {
+        const top = Number(action.top ?? window.scrollY ?? 0);
+        const left = Number(action.left ?? window.scrollX ?? 0);
+        if (!Number.isFinite(top) || !Number.isFinite(left)) {
+          throw Error("scroll_to requires finite top/left when selector is not provided");
+        }
+        window.scrollTo({ top, left, behavior });
+      }
+      await sleepMs(behavior === "smooth" ? 180 : 30);
+      const after = {
+        x: Number(window.scrollX || window.pageXOffset || 0),
+        y: Number(window.scrollY || window.pageYOffset || 0),
+      };
+      return {
+        name: "scroll_to",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        ...(selector ? { selector } : {}),
+        input: {
+          ...(action.top != null ? { top: Number(action.top) } : {}),
+          ...(action.left != null ? { left: Number(action.left) } : {}),
+          behavior,
+          ...(action.block ? { block: action.block } : {}),
+          ...(action.inline ? { inline: action.inline } : {}),
+        },
+        before_scroll: before,
+        after_scroll: after,
+      };
+    }
+
     if (action.name === "wait_for_url") {
       const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
       const poll_ms = asFinitePositive(action.poll_ms) ?? 100;
@@ -3798,6 +4010,25 @@ export function createBrowserSessionAutomation({
         posture,
         policy,
       });
+      if (actionName === "batch") {
+        const steps = Array.isArray((action as any)?.actions)
+          ? ((action as any).actions as Array<{ name?: string }>)
+          : [];
+        for (let i = 0; i < steps.length; i++) {
+          const stepName = `${steps[i]?.name ?? ""}`.trim() as BrowserActionName;
+          if (!stepName || stepName === "batch") {
+            throw Error(
+              `invalid batch step ${i}: action name must be a non-empty non-batch action`,
+            );
+          }
+          enforceActionPolicy({
+            project_id,
+            action_name: stepName,
+            posture,
+            policy,
+          });
+        }
+      }
       return {
         ok: true,
         result: await executeBrowserAction({ project_id, action }),

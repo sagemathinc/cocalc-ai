@@ -635,6 +635,47 @@ Execution flow:
 - Every mutating call logged with timestamp, actor, workspace, args summary.
 - Support dry-run for destructive families when feasible.
 
+#### 11.3.1 Browser action surface expansion (implemented)
+
+The typed browser action API now includes:
+
+- `navigate`
+  - fields: `url`, `replace?`, `wait_for_url_ms?`
+- `scroll_by`
+  - fields: `dx?`, `dy?`, `behavior?`
+- `scroll_to`
+  - selector mode: `selector`, `block?`, `inline?`, `timeout_ms?`, `poll_ms?`
+  - absolute mode: `top?`, `left?`, `behavior?`
+- `batch`
+  - fields: `actions: BrowserAtomicActionRequest[]`, `continue_on_error?`
+  - executes multiple typed steps in one RPC call to reduce latency/races
+
+CLI coverage:
+
+- `cocalc browser action navigate <url> ...`
+- `cocalc browser action scroll-by <dy> [dx] ...`
+- `cocalc browser action scroll-to [--selector ... | --top ... --left ...] ...`
+- `cocalc browser action batch --file <actions.json> ...`
+
+Batch file format:
+
+```json
+{
+  "continue_on_error": false,
+  "actions": [
+    { "name": "navigate", "url": "http://localhost:7003/..." },
+    { "name": "scroll_to", "selector": ".cell", "block": "center" },
+    { "name": "wait_for_selector", "selector": ".plot-container", "state": "visible" },
+    { "name": "click", "selector": ".run-button" }
+  ]
+}
+```
+
+Current practical guidance for notebook/virtualized UIs:
+
+- Prefer `scroll_to` before interaction when DOM virtualization is present.
+- For iframe-heavy outputs (e.g., plotly inside iframe), top-document coordinate actions can miss inner targets; this is a known limitation and motivates frame-aware routing.
+
 #### 11.4 Data contracts and ergonomics
 
 - Paths are absolute everywhere.
