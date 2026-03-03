@@ -228,7 +228,10 @@ export function ChatLog({
     } else if (scrollToBottomRef?.current) {
       scrollToBottomRef.current(true);
     }
-  }, [searchJumpDate, searchJumpToken, sortedDates]);
+    // Intentionally do not depend on sortedDates: otherwise unrelated message
+    // list updates can repeatedly re-center an old match long after the user
+    // initiated the search jump.
+  }, [searchJumpDate, searchJumpToken]);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const manualScrollRef = useRef<boolean>(false);

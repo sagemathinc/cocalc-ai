@@ -18,6 +18,7 @@ import {
   Typography,
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   useEffect,
   useMemo,
@@ -661,7 +662,10 @@ function DiffBlock({
                           enableUpload={true}
                         />
                       ) : (
-                        <div style={{ whiteSpace: "pre-wrap" }}>{comment.body_md}</div>
+                        <StaticMarkdown
+                          value={comment.body_md}
+                          style={{ fontSize: codeFontSize }}
+                        />
                       )}
                       <div
                         style={{
