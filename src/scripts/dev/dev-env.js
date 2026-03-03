@@ -20,6 +20,8 @@ const cp = require("node:child_process");
 const ROOT = path.resolve(__dirname, "../..");
 const LITE_DAEMON = path.join(ROOT, "scripts", "dev", "lite-daemon.sh");
 const HUB_DAEMON = path.join(ROOT, "scripts", "dev", "hub-daemon.sh");
+const LOCAL_CLI_BIN = path.join(ROOT, "packages", "cli", "dist", "bin", "cocalc.js");
+const LOCAL_CLI_BIN_DIR = path.join(ROOT, "packages", "cli", "node_modules", ".bin");
 const LOCAL_PROJECT_ID = "00000000-1000-4000-8000-000000000000";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -405,6 +407,9 @@ function emitShell(exportsMap, meta) {
     console.log(`# warning: ${meta.mode} daemon is currently stopped`);
     console.log(`# start it with: pnpm ${meta.mode}:daemon:start`);
   }
+  if (meta.prependPath && `${meta.prependPath}`.trim()) {
+    console.log(`export PATH=${shellEscape(`${meta.prependPath}`.trim())}:"$PATH"`);
+  }
   for (const [k, v] of Object.entries(exportsMap)) {
     console.log(`export ${k}=${shellEscape(v)}`);
   }
@@ -489,6 +494,11 @@ function main() {
     COCALC_BROWSER_ID: browserId,
     COCALC_DEV_ENV_MODE: mode,
   };
+  let prependPath = "";
+  if (fs.existsSync(LOCAL_CLI_BIN) && fs.existsSync(LOCAL_CLI_BIN_DIR)) {
+    prependPath = LOCAL_CLI_BIN_DIR;
+    exportsMap.COCALC_CLI_BIN = LOCAL_CLI_BIN;
+  }
   if (mode === "lite" && source.connectionPath) {
     exportsMap.COCALC_LITE_CONNECTION_INFO = source.connectionPath;
   }
@@ -506,6 +516,8 @@ function main() {
     has_account_id: !!accountId,
     project_id: projectId,
     browser_id: browserId || undefined,
+    cli_bin: exportsMap.COCALC_CLI_BIN || undefined,
+    path_prepend: prependPath || undefined,
     exports: exportsMap,
     auth_config_path: auth.path,
   };
@@ -515,7 +527,12 @@ function main() {
     return;
   }
   if (shell) {
-    emitShell(exportsMap, { mode, startedDaemon: daemon.started, running: daemon.running });
+    emitShell(exportsMap, {
+      mode,
+      startedDaemon: daemon.started,
+      running: daemon.running,
+      prependPath,
+    });
     return;
   }
   console.log(payload);
