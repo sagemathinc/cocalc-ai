@@ -1510,6 +1510,7 @@ export function createBrowserSessionAutomation({
 
   const installRuntimeCapture = (): void => {
     const g = globalThis as any;
+    g.__cocalc_browser_runtime_capture_emit = appendRuntimeEvent;
     if (g.__cocalc_browser_runtime_capture_installed) {
       return;
     }
@@ -1535,7 +1536,8 @@ export function createBrowserSessionAutomation({
             .map((x) => safeStringifyForRuntimeLog(x))
             .filter((x) => x.length > 0)
             .join(" ");
-          appendRuntimeEvent({
+          const emit = (globalThis as any).__cocalc_browser_runtime_capture_emit;
+          emit?.({
             kind: "console",
             level,
             message,
@@ -1556,6 +1558,53 @@ export function createBrowserSessionAutomation({
     console.info = bindMethod("info");
     console.warn = bindMethod("warn");
     console.error = bindMethod("error");
+
+    globalThis.addEventListener("error", (event: ErrorEvent) => {
+      try {
+        const emit = (globalThis as any).__cocalc_browser_runtime_capture_emit;
+        emit?.({
+          kind: "uncaught_error",
+          level: "error",
+          message:
+            `${event?.message ?? ""}`.trim() ||
+            safeStringifyForRuntimeLog((event as any)?.error),
+          source: `${event?.filename ?? ""}`.trim() || undefined,
+          line:
+            Number.isFinite(Number(event?.lineno ?? NaN))
+              ? Number(event?.lineno)
+              : undefined,
+          column:
+            Number.isFinite(Number(event?.colno ?? NaN))
+              ? Number(event?.colno)
+              : undefined,
+          stack:
+            `${(event as any)?.error?.stack ?? ""}`.trim() || undefined,
+        });
+      } catch {
+        // ignore capture failures
+      }
+    });
+    globalThis.addEventListener(
+      "unhandledrejection",
+      (event: PromiseRejectionEvent) => {
+        try {
+          const reason = (event as any)?.reason;
+          const message = safeStringifyForRuntimeLog(reason);
+          const emit = (globalThis as any).__cocalc_browser_runtime_capture_emit;
+          emit?.({
+            kind: "unhandled_rejection",
+            level: "error",
+            message: message.trim() || "<unhandled rejection>",
+            stack:
+              typeof reason === "object" && reason != null
+                ? `${(reason as any)?.stack ?? ""}`.trim() || undefined
+                : undefined,
+          });
+        } catch {
+          // ignore capture failures
+        }
+      },
+    );
   };
   installRuntimeCapture();
 
