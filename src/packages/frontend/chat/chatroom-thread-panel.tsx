@@ -127,7 +127,6 @@ interface ChatRoomThreadPanelProps {
   onNewThreadSetupChange: (next: NewThreadSetup) => void;
   showThreadImagePreview?: boolean;
   hideChatTypeSelector?: boolean;
-  externalSearchRequest?: { query: string; token: number } | null;
 }
 
 export function ChatRoomThreadPanel({
@@ -157,7 +156,6 @@ export function ChatRoomThreadPanel({
   onNewThreadSetupChange,
   showThreadImagePreview = true,
   hideChatTypeSelector = false,
-  externalSearchRequest = null,
 }: ChatRoomThreadPanelProps) {
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchInput, setThreadSearchInput] = useState("");
@@ -590,25 +588,6 @@ export function ChatRoomThreadPanel({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-
-  useEffect(() => {
-    const query = `${externalSearchRequest?.query ?? ""}`.trim();
-    const token = externalSearchRequest?.token;
-    if (!token || !query || !selectedThreadId) return;
-    setSearchQueryDebounced.cancel();
-    setThreadSearchOpen(true);
-    setThreadSearchInput(query);
-    setThreadSearchQuery(query);
-    setThreadSearchCursor(0);
-    setTimeout(() => {
-      searchInputRef.current?.focus?.();
-    }, 0);
-  }, [
-    externalSearchRequest?.token,
-    externalSearchRequest?.query,
-    selectedThreadId,
-    setSearchQueryDebounced,
-  ]);
 
   const onSearchInputChange = (value: string) => {
     setThreadSearchInput(value);

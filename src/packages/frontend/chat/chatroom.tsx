@@ -37,6 +37,7 @@ import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageByLookup,
   markChatAsReadIfUnseen,
+  newest_content,
 } from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
@@ -50,6 +51,7 @@ import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
 } from "./agent-session-index";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -286,10 +288,6 @@ export function ChatPanel({
   const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
-  const [gitBrowserFindInChat, setGitBrowserFindInChat] = useState<{
-    query: string;
-    token: number;
-  } | null>(null);
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -884,22 +882,114 @@ export function ChatPanel({
   );
 
   const findCommitInCurrentChat = useCallback(
-    (query: string) => {
-      const trimmed = `${query ?? ""}`.trim();
-      if (!trimmed) return;
-      const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
-      if (targetThreadKey && targetThreadKey !== selectedThreadKey) {
-        setAllowAutoSelectThread(false);
-        setSelectedThreadKey(targetThreadKey);
+    async (query: string) => {
+      const normalized = `${query ?? ""}`.trim().toLowerCase();
+      if (!normalized || !project_id || !path) return;
+      const searchTerm = /^[0-9a-f]{7,40}$/i.test(normalized)
+        ? normalized.slice(0, 10)
+        : normalized;
+      const searchTermLower = searchTerm.toLowerCase();
+
+      const frameActions = actions.frameTreeActions as any;
+      let searchFrameId =
+        frameActions?.show_focused_frame_of_type?.("search", "col", false, 0.8) ??
+        undefined;
+      if (!searchFrameId) {
+        await frameActions?.show_search?.();
+        searchFrameId =
+          frameActions?.show_focused_frame_of_type?.("search", "col", false, 0.8) ??
+          undefined;
       }
-      setGitBrowserFindInChat({ query: trimmed, token: Date.now() });
+      if (searchFrameId) {
+        frameActions?.set_frame_data?.({
+          id: searchFrameId,
+          search: searchTerm,
+          searchThread: "__all_messages__",
+        });
+      }
+
+      let localBestDateMs: number | undefined;
+      const allMessages = actions.getAllMessages?.();
+      for (const msg of allMessages?.values?.() ?? []) {
+        const d = dateValue(msg)?.valueOf?.();
+        if (!Number.isFinite(d)) continue;
+        const text = newest_content(msg).replace(/<[^>]*>/g, " ").toLowerCase();
+        if (!text.includes(searchTermLower)) continue;
+        if (localBestDateMs == null || (d as number) > localBestDateMs) {
+          localBestDateMs = d as number;
+        }
+      }
+
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      let archivedBestDateMs: number | undefined;
+      let archivedBest:
+        | { row_id?: number; message_id?: string; thread_id?: string }
+        | undefined;
+      if (hubProjects) {
+        try {
+          const archived = await hubProjects.chatStoreSearch({
+            project_id,
+            chat_path: path,
+            query: searchTerm,
+            limit: 50,
+            offset: 0,
+          });
+          for (const hit of archived?.hits ?? []) {
+            const dateMs = Number(hit?.date_ms);
+            if (!Number.isFinite(dateMs)) continue;
+            if (archivedBestDateMs == null || dateMs > archivedBestDateMs) {
+              archivedBestDateMs = dateMs;
+              archivedBest = {
+                row_id: hit?.row_id,
+                message_id: hit?.message_id,
+                thread_id: hit?.thread_id,
+              };
+            }
+          }
+        } catch {
+          // ignore backend search errors; local hits may still exist
+        }
+      }
+
+      const bestDateMs =
+        localBestDateMs == null
+          ? archivedBestDateMs
+          : archivedBestDateMs == null
+            ? localBestDateMs
+            : Math.max(localBestDateMs, archivedBestDateMs);
+
+      if (
+        bestDateMs != null &&
+        Number.isFinite(bestDateMs) &&
+        archivedBestDateMs != null &&
+        bestDateMs === archivedBestDateMs &&
+        archivedBest &&
+        hubProjects
+      ) {
+        try {
+          const rowResp = await hubProjects.chatStoreReadArchivedHit({
+            project_id,
+            chat_path: path,
+            row_id: archivedBest.row_id,
+            message_id: archivedBest.message_id,
+            thread_id: archivedBest.thread_id,
+          });
+          const row = rowResp?.row?.row;
+          if (row != null) {
+            actions.hydrateArchivedRows?.([row]);
+          }
+        } catch {
+          // ignore hydration failures and still navigate by fragment
+        }
+      }
+
+      if (bestDateMs != null && Number.isFinite(bestDateMs)) {
+        actions.setFragment?.(new Date(bestDateMs));
+      }
+      setGitBrowserOpen(false);
+      setGitBrowserThreadKey(undefined);
     },
-    [
-      gitBrowserThreadKey,
-      selectedThreadKey,
-      setAllowAutoSelectThread,
-      setSelectedThreadKey,
-    ],
+    [actions, path, project_id],
   );
 
   const renderChatContent = () => (
@@ -933,7 +1023,6 @@ export function ChatPanel({
         onNewThreadSetupChange={setNewThreadSetup}
         showThreadImagePreview={showThreadImagePreview}
         hideChatTypeSelector={hideChatTypeSelector}
-        externalSearchRequest={gitBrowserFindInChat}
       />
       <ChatRoomComposer
         actions={actions}

@@ -91,7 +91,7 @@ interface GitCommitDrawerProps {
   fontSize?: number;
   onRequestAgentTurn?: (prompt: string) => void | Promise<void>;
   onDirectCommitLogged?: (info: { hash: string; subject: string }) => void | Promise<void>;
-  onFindInChat?: (query: string) => void;
+  onFindInChat?: (query: string) => void | Promise<void>;
 }
 
 type HeadStatusEntry = {
@@ -1049,8 +1049,8 @@ export function GitCommitDrawer({
     const next = CONTEXT_OPTIONS[nextIdx]?.value;
     if (next && next !== contextLines) setContextLines(next);
   };
-  const canFindInChat =
-    typeof onFindInChat === "function" && Boolean(commit) && !isHeadSelected;
+  const canFindInChat = typeof onFindInChat === "function";
+  const findInChatEnabled = canFindInChat && Boolean(commit) && !isHeadSelected;
 
   useEffect(() => {
     if (!open) return;
@@ -1190,9 +1190,10 @@ export function GitCommitDrawer({
           {canFindInChat ? (
             <Button
               size="small"
+              disabled={!findInChatEnabled}
               onClick={() => {
                 if (!commit || !onFindInChat) return;
-                onFindInChat(commit);
+                void onFindInChat(commit);
               }}
             >
               Find in chat
