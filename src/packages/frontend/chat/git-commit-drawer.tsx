@@ -31,6 +31,14 @@ import { highlightCodeHtml } from "@cocalc/frontend/editors/slate/elements/code-
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  clearReviewDraft,
+  loadReviewRecord,
+  normalizeCommitSha,
+  saveReviewDraft,
+  saveReviewRecord,
+  type GitReviewRecordV2,
+} from "./git-review-store";
 
 const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
@@ -39,7 +47,6 @@ const HEAD_REF = "HEAD";
 const DEFAULT_CONTEXT_LINES = 3;
 const GIT_LOG_FETCH_COUNT = 600;
 const GIT_LOG_WINDOW_SIZE = 100;
-const REVIEW_STORE_NAME = "cocalc-commit-review-v1";
 const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
@@ -74,15 +81,6 @@ type GitLogEntry = {
 };
 
 type ReviewFilter = "all" | "reviewed" | "unreviewed";
-
-type CommitReviewRecord = {
-  version: 1;
-  reviewed: boolean;
-  note?: string;
-  updated_at: number;
-  account_id: string;
-  commit: string;
-};
 
 interface GitCommitDrawerProps {
   projectId?: string;
@@ -407,6 +405,9 @@ export function GitCommitDrawer({
     undefined,
   );
   const [reviewDirty, setReviewDirty] = useState(false);
+  const [reviewRecord, setReviewRecord] = useState<GitReviewRecordV2 | undefined>(
+    undefined,
+  );
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -628,14 +629,9 @@ export function GitCommitDrawer({
     let cancelled = false;
     (async () => {
       try {
-        const cn = webapp_client.conat_client.conat();
-        const kv = cn.sync.akv<CommitReviewRecord>({
-          account_id: accountId,
-          name: REVIEW_STORE_NAME,
-        });
         const entries = await Promise.all(
           hashes.map(async (hash) => {
-            const rec = await kv.get(hash);
+            const rec = await loadReviewRecord({ accountId, commitSha: hash });
             return [hash, Boolean(rec?.reviewed)] as const;
           }),
         );
@@ -658,28 +654,29 @@ export function GitCommitDrawer({
 
   const loadReview = async () => {
     if (!open || !accountId || !commit) return;
-    if (isHeadCommit(commit)) {
+    const normalizedCommit = normalizeCommitSha(commit);
+    if (isHeadCommit(commit) || !normalizedCommit) {
       setReviewLoading(false);
       setReviewError("");
       setReviewed(false);
       setReviewNote("");
       setReviewUpdatedAt(undefined);
       setReviewDirty(false);
+      setReviewRecord(undefined);
       return;
     }
     setReviewLoading(true);
     setReviewError("");
     try {
-      const cn = webapp_client.conat_client.conat();
-      const kv = cn.sync.akv<CommitReviewRecord>({
-        account_id: accountId,
-        name: REVIEW_STORE_NAME,
+      const rec = await loadReviewRecord({
+        accountId,
+        commitSha: normalizedCommit,
       });
-      const rec = await kv.get(commit);
+      setReviewRecord(rec);
       setReviewed(Boolean(rec?.reviewed));
       setReviewedByCommit((prev) => ({
         ...prev,
-        [commit]: Boolean(rec?.reviewed),
+        [normalizedCommit]: Boolean(rec?.reviewed),
       }));
       setReviewNote(typeof rec?.note === "string" ? rec.note : "");
       setReviewUpdatedAt(
@@ -693,6 +690,7 @@ export function GitCommitDrawer({
       setReviewNote("");
       setReviewUpdatedAt(undefined);
       setReviewDirty(false);
+      setReviewRecord(undefined);
     } finally {
       setReviewLoading(false);
     }
@@ -704,31 +702,42 @@ export function GitCommitDrawer({
   }, [open, accountId, commit]);
 
   const saveReview = async (
-    next: Partial<Pick<CommitReviewRecord, "reviewed" | "note">> = {},
+    next: Partial<Pick<GitReviewRecordV2, "reviewed" | "note">> = {},
   ) => {
     if (!accountId || !commit || isHeadCommit(commit)) return;
+    const normalizedCommit = normalizeCommitSha(commit);
+    if (!normalizedCommit) return;
     const nextReviewed = next.reviewed ?? reviewed;
     const nextNote = next.note ?? reviewNote;
     setReviewSaving(true);
     setReviewError("");
     try {
-      const cn = webapp_client.conat_client.conat();
-      const kv = cn.sync.akv<CommitReviewRecord>({
+      const base =
+        reviewRecord ??
+        ({
+          version: 2,
+          account_id: accountId,
+          commit_sha: normalizedCommit,
+          reviewed: false,
+          note: "",
+          comments: {},
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          revision: 1,
+        } as GitReviewRecordV2);
+      const payload = await saveReviewRecord({
+        ...base,
         account_id: accountId,
-        name: REVIEW_STORE_NAME,
-      });
-      const now = Date.now();
-      const payload: CommitReviewRecord = {
-        version: 1,
+        commit_sha: normalizedCommit,
         reviewed: Boolean(nextReviewed),
         note: `${nextNote ?? ""}`,
-        updated_at: now,
-        account_id: accountId,
-        commit,
-      };
-      await kv.set(commit, payload);
-      setReviewUpdatedAt(now);
-      setReviewedByCommit((prev) => ({ ...prev, [commit]: payload.reviewed }));
+      });
+      setReviewRecord(payload);
+      setReviewUpdatedAt(payload.updated_at);
+      setReviewedByCommit((prev) => ({
+        ...prev,
+        [normalizedCommit]: payload.reviewed,
+      }));
       setReviewDirty(false);
       setReviewError("");
     } catch (err) {
@@ -737,6 +746,26 @@ export function GitCommitDrawer({
       setReviewSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!open || !commit || isHeadCommit(commit)) return;
+    const normalizedCommit = normalizeCommitSha(commit);
+    if (!normalizedCommit) return;
+    if (reviewLoading || reviewSaving) return;
+    if (!reviewDirty) return;
+    saveReviewDraft(normalizedCommit, {
+      reviewed: Boolean(reviewed),
+      note: `${reviewNote ?? ""}`,
+    });
+  }, [
+    open,
+    commit,
+    reviewLoading,
+    reviewSaving,
+    reviewDirty,
+    reviewed,
+    reviewNote,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -999,6 +1028,7 @@ export function GitCommitDrawer({
       setHeadCommitStatus(
         (result.stdout || "Commit created successfully.").trim(),
       );
+      clearReviewDraft(commit);
       refreshAll();
     } catch (err) {
       setHeadCommitError(`${err ?? "Unable to create commit."}`);
