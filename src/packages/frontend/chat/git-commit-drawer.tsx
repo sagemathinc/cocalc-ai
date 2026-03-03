@@ -10,7 +10,9 @@ import {
   Drawer,
   Empty,
   Input,
+  Segmented,
   Select,
+  Space,
   Spin,
   Typography,
 } from "antd";
@@ -33,13 +35,22 @@ const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const DEFAULT_CONTEXT_LINES = 3;
-const GIT_LOG_FETCH_COUNT = 300;
-const GIT_LOG_WINDOW_SIZE = 50;
+const GIT_LOG_FETCH_COUNT = 600;
+const GIT_LOG_WINDOW_SIZE = 100;
 const REVIEW_STORE_NAME = "cocalc-commit-review-v1";
+const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
+const DEFAULT_DRAWER_SIZE = 920;
+const MIN_DRAWER_SIZE = 520;
+const MAX_DRAWER_SIZE = 1800;
 const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
 }));
+const REVIEW_FILTER_OPTIONS = [
+  { label: "All", value: "all" },
+  { label: "Reviewed", value: "reviewed" },
+  { label: "Unreviewed", value: "unreviewed" },
+];
 
 type GitShowFile = {
   path: string;
@@ -59,6 +70,8 @@ type GitLogEntry = {
   hash: string;
   subject: string;
 };
+
+type ReviewFilter = "all" | "reviewed" | "unreviewed";
 
 type CommitReviewRecord = {
   version: 1;
@@ -159,10 +172,28 @@ function parseGitLogOutput(stdout: string): GitLogEntry[] {
   return entries;
 }
 
-function truncateSubject(subject: string, max = 40): string {
-  const s = `${subject ?? ""}`.trim();
-  if (s.length <= max) return s;
-  return `${s.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+function clampDrawerSize(size: number): number {
+  if (!Number.isFinite(size)) return DEFAULT_DRAWER_SIZE;
+  return Math.max(MIN_DRAWER_SIZE, Math.min(MAX_DRAWER_SIZE, Math.round(size)));
+}
+
+function readDrawerSize(): number {
+  try {
+    const raw = localStorage.getItem(DRAWER_SIZE_STORAGE_KEY);
+    if (!raw) return DEFAULT_DRAWER_SIZE;
+    const parsed = Number(raw);
+    return clampDrawerSize(parsed);
+  } catch {
+    return DEFAULT_DRAWER_SIZE;
+  }
+}
+
+function persistDrawerSize(size: number): void {
+  try {
+    localStorage.setItem(DRAWER_SIZE_STORAGE_KEY, String(clampDrawerSize(size)));
+  } catch {
+    // ignore
+  }
 }
 
 function resolveOpenPath(repoRoot: string | undefined, filePath: string): string {
@@ -196,6 +227,14 @@ function languageHintFromPath(path: string): string {
 
 function splitLinesPreserve(text: string): string[] {
   return text.split(/\n/);
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return Boolean(target.closest('[contenteditable="true"], .slate-editor'));
 }
 
 function DiffBlock({
@@ -280,6 +319,7 @@ export function GitCommitDrawer({
   fontSize = 14,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
+  const [drawerSize, setDrawerSize] = useState<number>(readDrawerSize);
   const [contextLines, setContextLines] = useState<number>(DEFAULT_CONTEXT_LINES);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -287,6 +327,10 @@ export function GitCommitDrawer({
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
   const [gitLogError, setGitLogError] = useState<string>("");
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
+  const [reviewedByCommit, setReviewedByCommit] = useState<Record<string, boolean>>(
+    {},
+  );
   const incomingCommit = useMemo(() => parseCommitHash(commitHash), [commitHash]);
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
@@ -365,6 +409,14 @@ export function GitCommitDrawer({
     return gitLog.findIndex((entry) => entry.hash === commit);
   }, [gitLog, commit]);
 
+  useEffect(() => {
+    if (!open || !commit || gitLog.length === 0 || commitIndex >= 0) return;
+    const prefixMatches = gitLog.filter((entry) => entry.hash.startsWith(commit));
+    if (prefixMatches.length === 1) {
+      setSelectedCommit(prefixMatches[0].hash);
+    }
+  }, [open, commit, gitLog, commitIndex]);
+
   const visibleLogEntries = useMemo(() => {
     if (gitLog.length === 0) return [] as GitLogEntry[];
     if (commitIndex < 0) {
@@ -377,33 +429,128 @@ export function GitCommitDrawer({
     return gitLog.slice(start, end);
   }, [gitLog, commitIndex]);
 
+  const filteredLogEntries = useMemo(() => {
+    if (reviewFilter === "all") return visibleLogEntries;
+    return visibleLogEntries.filter((entry) => {
+      const isReviewed = Boolean(reviewedByCommit[entry.hash]);
+      return reviewFilter === "reviewed" ? isReviewed : !isReviewed;
+    });
+  }, [visibleLogEntries, reviewFilter, reviewedByCommit]);
+
   const logOptions = useMemo(() => {
-    const options = visibleLogEntries.map((entry) => ({
+    const makeOptionLabel = (entry: GitLogEntry, fallback = false) => (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          minWidth: 0,
+          width: "100%",
+        }}
+      >
+        <Checkbox
+          checked={Boolean(reviewedByCommit[entry.hash])}
+          disabled
+          style={{ pointerEvents: "none", marginInlineEnd: 0 }}
+        />
+        <span
+          style={{
+            fontFamily: "monospace",
+            whiteSpace: "nowrap",
+            color: fallback ? COLORS.GRAY_D : undefined,
+          }}
+        >
+          {entry.hash.slice(0, 10)}
+        </span>
+        <span
+          style={{
+            minWidth: 0,
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            color: fallback ? COLORS.GRAY_D : undefined,
+          }}
+          title={entry.subject || (fallback ? "selected commit" : "")}
+        >
+          {entry.subject || (fallback ? "(selected commit)" : "")}
+        </span>
+      </div>
+    );
+    const options = filteredLogEntries.map((entry) => ({
       value: entry.hash,
-      label: `${entry.hash.slice(0, 10)}  ${truncateSubject(entry.subject)}`,
+      label: makeOptionLabel(entry),
+      search: `${entry.hash} ${entry.subject}`.trim(),
     }));
     if (commit && !options.some((opt) => opt.value === commit)) {
+      const fallback: GitLogEntry = { hash: commit, subject: "selected commit" };
       options.unshift({
         value: commit,
-        label: `${commit.slice(0, 10)}  (selected commit)`,
+        label: makeOptionLabel(fallback, true),
+        search: `${commit} selected commit`,
       });
     }
     return options;
-  }, [visibleLogEntries, commit]);
+  }, [filteredLogEntries, commit, reviewedByCommit]);
+
+  useEffect(() => {
+    if (!open || !accountId) return;
+    const hashes = Array.from(
+      new Set(
+        [
+          ...visibleLogEntries.map((entry) => entry.hash),
+          commit,
+        ].filter((hash): hash is string => Boolean(hash)),
+      ),
+    );
+    if (hashes.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cn = webapp_client.conat_client.conat();
+        const kv = cn.sync.akv<CommitReviewRecord>({
+          account_id: accountId,
+          name: REVIEW_STORE_NAME,
+        });
+        const entries = await Promise.all(
+          hashes.map(async (hash) => {
+            const rec = await kv.get(hash);
+            return [hash, Boolean(rec?.reviewed)] as const;
+          }),
+        );
+        if (cancelled) return;
+        setReviewedByCommit((prev) => {
+          const next = { ...prev };
+          for (const [hash, isReviewed] of entries) {
+            next[hash] = isReviewed;
+          }
+          return next;
+        });
+      } catch {
+        // ignore transient dropdown review indicator failures
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accountId, visibleLogEntries, commit]);
 
   const loadReview = async () => {
-    if (!open || !projectId || !accountId || !commit) return;
+    if (!open || !accountId || !commit) return;
     setReviewLoading(true);
     setReviewError("");
     try {
       const cn = webapp_client.conat_client.conat();
       const kv = cn.sync.akv<CommitReviewRecord>({
-        project_id: projectId,
+        account_id: accountId,
         name: REVIEW_STORE_NAME,
       });
-      const key = `${accountId}:${commit}`;
-      const rec = await kv.get(key);
+      const rec = await kv.get(commit);
       setReviewed(Boolean(rec?.reviewed));
+      setReviewedByCommit((prev) => ({
+        ...prev,
+        [commit]: Boolean(rec?.reviewed),
+      }));
       setReviewNote(typeof rec?.note === "string" ? rec.note : "");
       setReviewUpdatedAt(
         typeof rec?.updated_at === "number" ? rec.updated_at : undefined,
@@ -424,12 +571,12 @@ export function GitCommitDrawer({
   useEffect(() => {
     void loadReview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, projectId, accountId, commit]);
+  }, [open, accountId, commit]);
 
   const saveReview = async (
     next: Partial<Pick<CommitReviewRecord, "reviewed" | "note">> = {},
   ) => {
-    if (!projectId || !accountId || !commit) return;
+    if (!accountId || !commit) return;
     const nextReviewed = next.reviewed ?? reviewed;
     const nextNote = next.note ?? reviewNote;
     setReviewSaving(true);
@@ -437,7 +584,7 @@ export function GitCommitDrawer({
     try {
       const cn = webapp_client.conat_client.conat();
       const kv = cn.sync.akv<CommitReviewRecord>({
-        project_id: projectId,
+        account_id: accountId,
         name: REVIEW_STORE_NAME,
       });
       const now = Date.now();
@@ -449,8 +596,9 @@ export function GitCommitDrawer({
         account_id: accountId,
         commit,
       };
-      await kv.set(`${accountId}:${commit}`, payload);
+      await kv.set(commit, payload);
       setReviewUpdatedAt(now);
+      setReviewedByCommit((prev) => ({ ...prev, [commit]: payload.reviewed }));
       setReviewDirty(false);
       setReviewError("");
     } catch (err) {
@@ -542,6 +690,48 @@ export function GitCommitDrawer({
     if (!canGoOlder) return;
     setSelectedCommit(gitLog[commitIndex + 1]?.hash);
   };
+  const bumpContext = (delta: -1 | 1) => {
+    const idx = CONTEXT_OPTIONS.findIndex((opt) => opt.value === contextLines);
+    const nextIdx = Math.max(
+      0,
+      Math.min(CONTEXT_OPTIONS.length - 1, idx + delta),
+    );
+    const next = CONTEXT_OPTIONS[nextIdx]?.value;
+    if (next && next !== contextLines) setContextLines(next);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (evt: KeyboardEvent) => {
+      if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
+      if (isEditableEventTarget(evt.target)) return;
+      if (evt.key === "j") {
+        evt.preventDefault();
+        if (canGoOlder) {
+          setSelectedCommit(gitLog[commitIndex + 1]?.hash);
+        }
+        return;
+      }
+      if (evt.key === "k") {
+        evt.preventDefault();
+        if (canGoNewer) {
+          setSelectedCommit(gitLog[commitIndex - 1]?.hash);
+        }
+        return;
+      }
+      if (evt.key === "[") {
+        evt.preventDefault();
+        bumpContext(-1);
+        return;
+      }
+      if (evt.key === "]") {
+        evt.preventDefault();
+        bumpContext(1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, canGoOlder, canGoNewer, commitIndex, gitLog, contextLines]);
 
   return (
     <Drawer
@@ -569,7 +759,14 @@ export function GitCommitDrawer({
         </div>
       }
       placement="right"
-      width="70vw"
+      size={drawerSize}
+      resizable={{
+        onResize: (value) => {
+          const next = clampDrawerSize(value);
+          setDrawerSize(next);
+          persistDrawerSize(next);
+        },
+      }}
       open={open}
       onClose={onClose}
       destroyOnHidden
@@ -591,14 +788,25 @@ export function GitCommitDrawer({
           onChange={(value) => setSelectedCommit(value)}
           placeholder="git log"
           style={{ minWidth: 360, flex: "1 1 360px" }}
-          optionFilterProp="label"
+          optionFilterProp="search"
         />
-        <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
-          Newer
-        </Button>
-        <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
-          Older
-        </Button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Segmented
+            size="small"
+            value={reviewFilter}
+            options={REVIEW_FILTER_OPTIONS}
+            onChange={(value) => setReviewFilter(value as ReviewFilter)}
+            style={{ margin: 0 }}
+          />
+          <Space.Compact size="small">
+            <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
+              Newer
+            </Button>
+            <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
+              Older
+            </Button>
+          </Space.Compact>
+        </div>
       </div>
       {gitLogError ? (
         <Alert type="warning" message={gitLogError} showIcon style={{ marginBottom: 10 }} />
