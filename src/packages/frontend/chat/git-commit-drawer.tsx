@@ -17,6 +17,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import {
   useEffect,
   useMemo,
@@ -644,10 +645,20 @@ function DiffBlock({
                       }}
                     >
                       {isEditing ? (
-                        <Input.TextArea
-                          autoSize={{ minRows: 2, maxRows: 8 }}
+                        <MarkdownInput
+                          cacheId={`git-inline-edit:${filePath}:${comment.id}`}
                           value={editingText}
-                          onChange={(e) => setEditingText(e.target.value)}
+                          onChange={setEditingText}
+                          onShiftEnter={() => void saveEdit()}
+                          placeholder="Edit inline review comment..."
+                          fontSize={codeFontSize}
+                          autoGrow
+                          autoGrowMaxHeight={220}
+                          hideHelp
+                          minimal
+                          compact
+                          enableMentions={false}
+                          enableUpload={true}
                         />
                       ) : (
                         <div style={{ whiteSpace: "pre-wrap" }}>{comment.body_md}</div>
@@ -722,11 +733,20 @@ function DiffBlock({
                   background: "#fff",
                 }}
               >
-                <Input.TextArea
-                  autoSize={{ minRows: 2, maxRows: 8 }}
+                <MarkdownInput
+                  cacheId={`git-inline-draft:${filePath}:${anchorId}`}
                   value={draftText}
-                  onChange={(e) => setDraftText(e.target.value)}
+                  onChange={setDraftText}
+                  onShiftEnter={() => void saveDraft()}
                   placeholder="Add inline review comment..."
+                  fontSize={codeFontSize}
+                  autoGrow
+                  autoGrowMaxHeight={220}
+                  hideHelp
+                  minimal
+                  compact
+                  enableMentions={false}
+                  enableUpload={true}
                 />
                 <div
                   style={{
