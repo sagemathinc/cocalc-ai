@@ -423,6 +423,7 @@ function DiffBlock({
   fontSize,
   comments,
   commentEnabled,
+  commentDisabledMessage,
   onCreateComment,
   onUpdateComment,
   onResolveComment,
@@ -433,6 +434,7 @@ function DiffBlock({
   fontSize: number;
   comments: GitReviewCommentV2[];
   commentEnabled: boolean;
+  commentDisabledMessage?: string;
   onCreateComment: (anchor: CommentAnchor, body: string) => Promise<void>;
   onUpdateComment: (id: string, body: string) => Promise<void>;
   onResolveComment: (id: string) => Promise<void>;
@@ -587,7 +589,7 @@ function DiffBlock({
               >
                 {meta.newLineNumber ?? ""}
               </div>
-              {commentEnabled && anchor ? (
+              {anchor ? (
                 <span style={commentButtonSlotStyle}>
                   {hoveredLineIdx === idx ? (
                     <Button
@@ -595,10 +597,25 @@ function DiffBlock({
                       type="primary"
                       style={{ padding: 0, minWidth: 22, width: 22, height: 22 }}
                       onClick={() => {
+                        if (!commentEnabled) {
+                          alert_message({
+                            type: "info",
+                            message:
+                              commentDisabledMessage ??
+                              "Please commit first, then comment.",
+                            timeout: 4,
+                          });
+                          return;
+                        }
                         setDraftAnchor(anchor);
                         setDraftText("");
                       }}
-                      title="Add inline comment"
+                      title={
+                        commentEnabled
+                          ? "Add inline comment"
+                          : commentDisabledMessage ??
+                            "Please commit first, then comment."
+                      }
                     >
                       +
                     </Button>
@@ -2187,6 +2204,11 @@ export function GitCommitDrawer({
                     fontSize={fontSize}
                     comments={fileComments}
                     commentEnabled={!isHeadSelected}
+                    commentDisabledMessage={
+                      isHeadSelected
+                        ? "Please commit first, then comment."
+                        : undefined
+                    }
                     onCreateComment={createInlineComment}
                     onUpdateComment={updateInlineComment}
                     onResolveComment={resolveInlineComment}
