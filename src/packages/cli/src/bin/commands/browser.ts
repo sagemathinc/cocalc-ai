@@ -157,6 +157,15 @@ function randomSpawnId(): string {
   return `pw-${Date.now().toString(36)}-${rand}`;
 }
 
+function isSeaMode(): boolean {
+  try {
+    const sea = require("node:sea") as { isSea?: () => boolean };
+    return typeof sea?.isSea === "function" ? !!sea.isSea() : false;
+  } catch {
+    return false;
+  }
+}
+
 function ensureSpawnStateDir(): void {
   mkdirSync(SPAWN_STATE_DIR, { recursive: true });
 }
@@ -998,6 +1007,11 @@ export function registerBrowserCommand(
         },
         command: Command,
       ) => {
+        if (isSeaMode()) {
+          throw new Error(
+            "browser session spawn is unsupported in standalone SEA binary; use JS CLI (e.g. node ./packages/cli/dist/bin/cocalc.js ...).",
+          );
+        }
         await deps.withContext(command, "browser session spawn", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
           const globals = deps.globalsFrom(command);

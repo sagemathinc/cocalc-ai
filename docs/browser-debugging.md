@@ -71,6 +71,7 @@ You now have two explicit ways to target browser automation:
    - Destroy by spawn id or browser id:
      - `cocalc browser session destroy <spawn_id_or_browser_id>`
    - Best when you want deterministic automation that is unaffected by background-tab throttling or dev browsing activity.
+   - Note: `spawn` is intentionally unsupported in the standalone SEA binary; use the JS CLI build (`node ./packages/cli/dist/bin/cocalc.js ...`) for this dev workflow.
 
 ### Useful spawn options
 
