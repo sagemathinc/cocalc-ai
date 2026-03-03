@@ -6,15 +6,23 @@
 import {
   Alert,
   Button,
+  Checkbox,
   Drawer,
   Empty,
+  Input,
   Select,
   Spin,
   Typography,
 } from "antd";
-import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
+import { TimeAgo } from "@cocalc/frontend/components";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { highlightCodeHtml } from "@cocalc/frontend/editors/slate/elements/code-block/prism";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -25,6 +33,9 @@ const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const DEFAULT_CONTEXT_LINES = 3;
+const GIT_LOG_FETCH_COUNT = 300;
+const GIT_LOG_WINDOW_SIZE = 50;
+const REVIEW_STORE_NAME = "cocalc-commit-review-v1";
 const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
@@ -42,6 +53,20 @@ type GitShowParsed = {
   linesTruncated: boolean;
   originalLineCount: number;
   shownLineCount: number;
+};
+
+type GitLogEntry = {
+  hash: string;
+  subject: string;
+};
+
+type CommitReviewRecord = {
+  version: 1;
+  reviewed: boolean;
+  note?: string;
+  updated_at: number;
+  account_id: string;
+  commit: string;
 };
 
 interface GitCommitDrawerProps {
@@ -117,6 +142,27 @@ function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
     originalLineCount: allLines.length,
     shownLineCount: lines.length,
   };
+}
+
+function parseGitLogOutput(stdout: string): GitLogEntry[] {
+  const lines = `${stdout ?? ""}`.split(/\r?\n/).filter((line) => line.trim().length);
+  const entries: GitLogEntry[] = [];
+  for (const line of lines) {
+    const [hash, ...subjectParts] = line.split("\t");
+    const normalizedHash = `${hash ?? ""}`.trim().toLowerCase();
+    if (!COMMIT_HASH_RE.test(normalizedHash)) continue;
+    entries.push({
+      hash: normalizedHash,
+      subject: subjectParts.join("\t").trim(),
+    });
+  }
+  return entries;
+}
+
+function truncateSubject(subject: string, max = 40): string {
+  const s = `${subject ?? ""}`.trim();
+  if (s.length <= max) return s;
+  return `${s.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
 function resolveOpenPath(repoRoot: string | undefined, filePath: string): string {
@@ -233,11 +279,186 @@ export function GitCommitDrawer({
   onClose,
   fontSize = 14,
 }: GitCommitDrawerProps) {
+  const accountId = useTypedRedux("account", "account_id");
   const [contextLines, setContextLines] = useState<number>(DEFAULT_CONTEXT_LINES);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
-  const commit = useMemo(() => parseCommitHash(commitHash), [commitHash]);
+  const [repoRoot, setRepoRoot] = useState<string>("");
+  const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
+  const [gitLogError, setGitLogError] = useState<string>("");
+  const incomingCommit = useMemo(() => parseCommitHash(commitHash), [commitHash]);
+  const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
+    incomingCommit,
+  );
+  const commit = selectedCommit;
+
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewUpdatedAt, setReviewUpdatedAt] = useState<number | undefined>(
+    undefined,
+  );
+  const [reviewDirty, setReviewDirty] = useState(false);
+
+  const cwd = useMemo(() => containingPath(sourcePath ?? ".") || ".", [sourcePath]);
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedCommit(incomingCommit);
+  }, [incomingCommit, open]);
+
+  useEffect(() => {
+    if (!open || !projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rootResult = await runGitCommand({
+          projectId,
+          cwd,
+          args: ["rev-parse", "--show-toplevel"],
+        });
+        if (rootResult.exit_code !== 0) {
+          throw new Error(
+            (rootResult.stderr || rootResult.stdout || "not a git repository").trim(),
+          );
+        }
+        const root = `${rootResult.stdout ?? ""}`.trim();
+        if (!cancelled) {
+          setRepoRoot(root);
+          setGitLogError("");
+        }
+        const logResult = await runGitCommand({
+          projectId,
+          cwd: root || cwd,
+          args: [
+            "log",
+            `-n${GIT_LOG_FETCH_COUNT}`,
+            "--format=%H%x09%s",
+            "--date-order",
+          ],
+        });
+        if (logResult.exit_code !== 0) {
+          throw new Error((logResult.stderr || logResult.stdout || "git log failed").trim());
+        }
+        const entries = parseGitLogOutput(logResult.stdout ?? "");
+        if (!cancelled) {
+          setGitLog(entries);
+          setGitLogError("");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setRepoRoot("");
+        setGitLog([]);
+        setGitLogError(`${err ?? "Unable to load git log."}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectId, cwd]);
+
+  const commitIndex = useMemo(() => {
+    if (!commit) return -1;
+    return gitLog.findIndex((entry) => entry.hash === commit);
+  }, [gitLog, commit]);
+
+  const visibleLogEntries = useMemo(() => {
+    if (gitLog.length === 0) return [] as GitLogEntry[];
+    if (commitIndex < 0) {
+      return gitLog.slice(0, GIT_LOG_WINDOW_SIZE);
+    }
+    const half = Math.floor(GIT_LOG_WINDOW_SIZE / 2);
+    let start = Math.max(0, commitIndex - half);
+    let end = Math.min(gitLog.length, start + GIT_LOG_WINDOW_SIZE);
+    start = Math.max(0, end - GIT_LOG_WINDOW_SIZE);
+    return gitLog.slice(start, end);
+  }, [gitLog, commitIndex]);
+
+  const logOptions = useMemo(() => {
+    const options = visibleLogEntries.map((entry) => ({
+      value: entry.hash,
+      label: `${entry.hash.slice(0, 10)}  ${truncateSubject(entry.subject)}`,
+    }));
+    if (commit && !options.some((opt) => opt.value === commit)) {
+      options.unshift({
+        value: commit,
+        label: `${commit.slice(0, 10)}  (selected commit)`,
+      });
+    }
+    return options;
+  }, [visibleLogEntries, commit]);
+
+  const loadReview = async () => {
+    if (!open || !projectId || !accountId || !commit) return;
+    setReviewLoading(true);
+    setReviewError("");
+    try {
+      const cn = webapp_client.conat_client.conat();
+      const kv = cn.sync.akv<CommitReviewRecord>({
+        project_id: projectId,
+        name: REVIEW_STORE_NAME,
+      });
+      const key = `${accountId}:${commit}`;
+      const rec = await kv.get(key);
+      setReviewed(Boolean(rec?.reviewed));
+      setReviewNote(typeof rec?.note === "string" ? rec.note : "");
+      setReviewUpdatedAt(
+        typeof rec?.updated_at === "number" ? rec.updated_at : undefined,
+      );
+      setReviewDirty(false);
+      setReviewError("");
+    } catch (err) {
+      setReviewError(`${err ?? "Unable to load review state."}`);
+      setReviewed(false);
+      setReviewNote("");
+      setReviewUpdatedAt(undefined);
+      setReviewDirty(false);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadReview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, projectId, accountId, commit]);
+
+  const saveReview = async (
+    next: Partial<Pick<CommitReviewRecord, "reviewed" | "note">> = {},
+  ) => {
+    if (!projectId || !accountId || !commit) return;
+    const nextReviewed = next.reviewed ?? reviewed;
+    const nextNote = next.note ?? reviewNote;
+    setReviewSaving(true);
+    setReviewError("");
+    try {
+      const cn = webapp_client.conat_client.conat();
+      const kv = cn.sync.akv<CommitReviewRecord>({
+        project_id: projectId,
+        name: REVIEW_STORE_NAME,
+      });
+      const now = Date.now();
+      const payload: CommitReviewRecord = {
+        version: 1,
+        reviewed: Boolean(nextReviewed),
+        note: `${nextNote ?? ""}`,
+        updated_at: now,
+        account_id: accountId,
+        commit,
+      };
+      await kv.set(`${accountId}:${commit}`, payload);
+      setReviewUpdatedAt(now);
+      setReviewDirty(false);
+      setReviewError("");
+    } catch (err) {
+      setReviewError(`${err ?? "Unable to save review state."}`);
+    } finally {
+      setReviewSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -252,21 +473,9 @@ export function GitCommitDrawer({
     setData(undefined);
     (async () => {
       try {
-        const cwd = containingPath(sourcePath ?? ".") || ".";
-        const rootResult = await runGitCommand({
-          projectId,
-          cwd,
-          args: ["rev-parse", "--show-toplevel"],
-        });
-        if (rootResult.exit_code !== 0) {
-          throw new Error(
-            (rootResult.stderr || rootResult.stdout || "not a git repository").trim(),
-          );
-        }
-        const repoRoot = `${rootResult.stdout ?? ""}`.trim();
         const showResult = await runGitCommand({
           projectId,
-          cwd,
+          cwd: repoRoot || cwd,
           args: [
             "-c",
             "core.pager=cat",
@@ -285,7 +494,7 @@ export function GitCommitDrawer({
             (showResult.stderr || showResult.stdout || "git show failed").trim(),
           );
         }
-        const parsed = parseGitShowOutput(showResult.stdout ?? "", repoRoot);
+        const parsed = parseGitShowOutput(showResult.stdout ?? "", repoRoot || undefined);
         if (!cancelled) {
           setData(parsed);
           setError("");
@@ -302,7 +511,7 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, sourcePath, commit, contextLines]);
+  }, [open, projectId, cwd, repoRoot, commit, contextLines]);
 
   const projectActions = projectId ? redux.getProjectActions(projectId) : undefined;
 
@@ -310,7 +519,7 @@ export function GitCommitDrawer({
     if (!projectActions) return;
     try {
       await projectActions.open_file({
-        path: resolveOpenPath(data?.repoRoot, filePath),
+        path: resolveOpenPath(repoRoot || data?.repoRoot, filePath),
         foreground: true,
         explicit: true,
       });
@@ -321,6 +530,17 @@ export function GitCommitDrawer({
         message: `Unable to open file '${filePath}' (${err})`,
       });
     }
+  };
+
+  const canGoNewer = commitIndex > 0;
+  const canGoOlder = commitIndex >= 0 && commitIndex < gitLog.length - 1;
+  const goNewer = () => {
+    if (!canGoNewer) return;
+    setSelectedCommit(gitLog[commitIndex - 1]?.hash);
+  };
+  const goOlder = () => {
+    if (!canGoOlder) return;
+    setSelectedCommit(gitLog[commitIndex + 1]?.hash);
   };
 
   return (
@@ -354,6 +574,112 @@ export function GitCommitDrawer({
       onClose={onClose}
       destroyOnHidden
     >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <Select
+          showSearch
+          size="small"
+          value={commit}
+          options={logOptions}
+          onChange={(value) => setSelectedCommit(value)}
+          placeholder="git log"
+          style={{ minWidth: 360, flex: "1 1 360px" }}
+          optionFilterProp="label"
+        />
+        <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
+          Newer
+        </Button>
+        <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
+          Older
+        </Button>
+      </div>
+      {gitLogError ? (
+        <Alert type="warning" message={gitLogError} showIcon style={{ marginBottom: 10 }} />
+      ) : null}
+      <div
+        style={{
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 8,
+          padding: 10,
+          marginBottom: 12,
+          background: "#fafafa",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            marginBottom: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <Checkbox
+            checked={reviewed}
+            disabled={reviewLoading || reviewSaving || !commit}
+            onChange={(e) => {
+              const next = e.target.checked;
+              setReviewed(next);
+              setReviewDirty(true);
+              void saveReview({ reviewed: next });
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>Reviewed</span>
+          </Checkbox>
+          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+            {reviewSaving ? "Saving..." : null}
+            {!reviewSaving && reviewUpdatedAt ? (
+              <>
+                Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
+              </>
+            ) : null}
+          </div>
+        </div>
+        <Input.TextArea
+          value={reviewNote}
+          disabled={reviewLoading || !commit}
+          placeholder="Review note (your private commit review note)"
+          autoSize={{ minRows: 2, maxRows: 6 }}
+          onChange={(e) => {
+            setReviewNote(e.target.value);
+            setReviewDirty(true);
+          }}
+          onBlur={() => {
+            if (reviewDirty) {
+              void saveReview({ note: reviewNote });
+            }
+          }}
+        />
+        <div
+          style={{
+            marginTop: 8,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+            {reviewError || (reviewLoading ? "Loading review state..." : "")}
+          </div>
+          <Button
+            size="small"
+            disabled={!reviewDirty || reviewSaving || !commit}
+            onClick={() => void saveReview({ note: reviewNote, reviewed })}
+          >
+            Save note
+          </Button>
+        </div>
+      </div>
       {loading ? (
         <div style={{ padding: "32px 0", textAlign: "center" }}>
           <Spin />
