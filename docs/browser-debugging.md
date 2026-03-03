@@ -28,7 +28,8 @@ In practice, these bugs often come from runtime differences:
    - Read the `url` (e.g. `http://localhost:7003`).
 
 2. List browser sessions for that exact server.
-   - `COCALC_API_URL=http://localhost:7003 COCALC_BEARER_TOKEN='' cocalc browser session list`
+   - `COCALC_API_URL=http://localhost:7003 COCALC_BEARER_TOKEN='' cocalc browser session list --active-only`
+   - Optionally scope to a workspace: `... --project-id <uuid>`
 
 3. Use the returned `browser_id` explicitly in every command.
    - `COCALC_API_URL=http://localhost:7003 COCALC_BROWSER_ID=<id> COCALC_BEARER_TOKEN='' cocalc browser exec-api`
@@ -49,6 +50,8 @@ In practice, these bugs often come from runtime differences:
 
 7. Capture a screenshot when visual state matters.
    - `cocalc browser screenshot --selector body --out /tmp/repro.png`
+   - If page churn is high, wait for quiescence before capture:
+     - `cocalc browser screenshot --wait-for-idle 750ms --selector body --out /tmp/repro.png`
 
 8. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
 
@@ -56,6 +59,9 @@ In practice, these bugs often come from runtime differences:
 
 - Always set `COCALC_API_URL` for each command when using multiple servers.
 - In lite mode, `COCALC_BEARER_TOKEN=''` is often correct.
+- Use session-targeting flags to avoid ambiguous browser selection:
+  - `--active-only`
+  - `--session-project-id <uuid>` on non-list commands
 - If behavior does not match code, assume stale JS bundle first.
 - For Slate bugs, check both:
   - `editor.selection` shape/path
@@ -68,9 +74,12 @@ These are improvements that would speed up real debugging and reduce mistakes.
 
 ### Session targeting
 
-- `cocalc browser session list --api <url> --project-id <id> --active-only`
-- `cocalc browser use --api <url> <browser_id>` scoped by API URL
-- Better default-session resolution when multiple servers are active
+- Implemented:
+  - `cocalc browser session list --project-id <id> --active-only`
+  - `--session-project-id <id>` and `--active-only` on browser automation commands
+- Remaining:
+  - `cocalc browser use --api <url> <browser_id>` scoped by API URL
+  - Better default-session resolution when multiple servers are active
 
 ### Better runtime inspection helpers
 
@@ -94,9 +103,10 @@ These are improvements that would speed up real debugging and reduce mistakes.
 
 - First pass now exists:
   - `cocalc browser screenshot --selector "<css>" --out /tmp/repro.png`
+- Added:
+  - `--wait-for-idle <duration>` (bounded wait; capture still proceeds if wait ceiling is reached)
 - Follow-ups:
   - `--fullpage` / viewport-mode controls
-  - `--wait-for-idle`
   - direct blob/attachment output
   - richer failure diagnostics when client-side renderer cannot load
 
@@ -108,8 +118,11 @@ These are improvements that would speed up real debugging and reduce mistakes.
 
 ### Safety/diagnostics
 
-- "target context" banner in output: API URL, browser id, project id, active path
-- Guardrail warning if browser session URL host/port mismatches `COCALC_API_URL`
+- Implemented:
+  - target context fields in command output (API URL, browser id, project id, session URL)
+  - mismatch warning field when session URL origin differs from API origin
+- Remaining:
+  - pretty "target context banner" display in non-JSON mode
 - Optional dry-run mode that shows which session would be targeted
 - Way to run the lite daemon and full hub daemon (launchpad) so that it is easy to get exactly the env needed, e.g., a valid `COCALC_BEARER_TOKEN`, etc. by just running a pnpm command.
 

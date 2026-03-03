@@ -120,6 +120,49 @@ function resolveBrowserSession(
   throw new Error(`browser session '${browserHint}' not found`);
 }
 
+function sessionMatchesProject(
+  session: BrowserSessionInfo,
+  projectId: string | undefined,
+): boolean {
+  const target = `${projectId ?? ""}`.trim();
+  if (!target) return true;
+  if (`${session.active_project_id ?? ""}`.trim() === target) {
+    return true;
+  }
+  return (session.open_projects ?? []).some(
+    (p) => `${p?.project_id ?? ""}`.trim() === target,
+  );
+}
+
+function sessionTargetContext(
+  ctx: any,
+  sessionInfo: BrowserSessionInfo,
+  project_id?: string,
+): Record<string, unknown> {
+  const apiUrl = `${ctx?.apiBaseUrl ?? ""}`.trim();
+  const sessionUrl = `${sessionInfo?.url ?? ""}`.trim();
+  let target_warning = "";
+  if (apiUrl && sessionUrl) {
+    try {
+      const apiOrigin = new URL(apiUrl).origin;
+      const sessionOrigin = new URL(sessionUrl).origin;
+      if (apiOrigin !== sessionOrigin) {
+        target_warning =
+          `browser session URL origin (${sessionOrigin}) differs from API origin (${apiOrigin})`;
+      }
+    } catch {
+      // ignore parse failures
+    }
+  }
+  return {
+    target_api_url: apiUrl,
+    target_browser_id: sessionInfo.browser_id,
+    target_session_url: sessionUrl,
+    ...(project_id ? { target_project_id: project_id } : {}),
+    ...(target_warning ? { target_warning } : {}),
+  };
+}
+
 function loadProfileSelection(
   deps: Pick<
     BrowserCommandDeps,
@@ -179,30 +222,49 @@ async function chooseBrowserSession({
   browserHint,
   fallbackBrowserId,
   requireDiscovery = false,
+  sessionProjectId,
+  activeOnly = false,
 }: {
   ctx: any;
   browserHint?: string;
   fallbackBrowserId?: string;
   requireDiscovery?: boolean;
+  sessionProjectId?: string;
+  activeOnly?: boolean;
 }): Promise<BrowserSessionInfo> {
   let sessions: BrowserSessionInfo[] | undefined;
   const getSessions = async (): Promise<BrowserSessionInfo[]> => {
     if (sessions) return sessions;
     sessions = (await ctx.hub.system.listBrowserSessions({
-      include_stale: true,
+      include_stale: !activeOnly,
     })) as BrowserSessionInfo[];
+    sessions = (sessions ?? []).filter((s) =>
+      activeOnly ? !s.stale : true,
+    );
+    sessions = sessions.filter((s) => sessionMatchesProject(s, sessionProjectId));
     return sessions;
   };
 
   const explicitHint = normalizeBrowserId(browserHint);
-  if (explicitHint && !requireDiscovery && isLikelyExactBrowserId(explicitHint)) {
+  if (
+    explicitHint &&
+    !requireDiscovery &&
+    isLikelyExactBrowserId(explicitHint) &&
+    !activeOnly &&
+    !`${sessionProjectId ?? ""}`.trim()
+  ) {
     return directBrowserSessionInfo(explicitHint);
   }
   if (explicitHint) {
     return resolveBrowserSession(await getSessions(), explicitHint);
   }
   const savedHint = normalizeBrowserId(fallbackBrowserId);
-  if (savedHint && !requireDiscovery) {
+  if (
+    savedHint &&
+    !requireDiscovery &&
+    !activeOnly &&
+    !`${sessionProjectId ?? ""}`.trim()
+  ) {
     return directBrowserSessionInfo(savedHint);
   }
   const resolvedSessions = await getSessions();
@@ -217,6 +279,11 @@ async function chooseBrowserSession({
     return active[0];
   }
   if (active.length === 0) {
+    if (`${sessionProjectId ?? ""}`.trim()) {
+      throw new Error(
+        `no active browser sessions found for project '${sessionProjectId}'`,
+      );
+    }
     throw new Error(
       "no active browser sessions found; open CoCalc in a browser first",
     );
@@ -233,13 +300,16 @@ function isExecTerminal(status: BrowserExecStatus): boolean {
 function browserScreenshotScript({
   selector,
   scale,
+  waitForIdleMs,
 }: {
   selector: string;
   scale: number;
+  waitForIdleMs: number;
 }): string {
   return `
 const selector = ${JSON.stringify(selector)};
 const scale = ${JSON.stringify(scale)};
+const waitForIdleMs = ${JSON.stringify(waitForIdleMs)};
 const libraryUrls = [
   "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
   "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
@@ -273,6 +343,46 @@ const loadScript = async (url) => {
     document.head.appendChild(script);
   });
 };
+const waitForDomIdle = async (idleMs) => {
+  if (!Number.isFinite(idleMs) || idleMs <= 0) return false;
+  const maxWaitMs = Math.max(1000, Math.min(30000, Math.floor(idleMs * 20)));
+  const timedOut = await new Promise((resolve) => {
+    let timer = undefined;
+    let maxTimer = undefined;
+    let done = false;
+    const finish = (maxedOut) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (maxTimer) clearTimeout(maxTimer);
+      observer.disconnect();
+      resolve(!!maxedOut);
+    };
+    const schedule = () => {
+      if (done) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => finish(false), idleMs);
+    };
+    const root = document.documentElement || document.body;
+    const observer = new MutationObserver(() => {
+      schedule();
+    });
+    if (root) {
+      observer.observe(root, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+    }
+    maxTimer = setTimeout(() => finish(true), maxWaitMs);
+    schedule();
+  });
+  await new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(undefined))),
+  );
+  return timedOut;
+};
 let html2canvas = (window).html2canvas;
 if (typeof html2canvas !== "function") {
   let lastError = "";
@@ -295,6 +405,7 @@ const root = document.querySelector(selector);
 if (!root) {
   throw new Error(\`selector did not match any element: \${selector}\`);
 }
+const wait_for_idle_timed_out = await waitForDomIdle(waitForIdleMs);
 const canvas = await html2canvas(root, {
   scale,
   useCORS: true,
@@ -315,6 +426,8 @@ return {
   width: Number(canvas.width || 0),
   height: Number(canvas.height || 0),
   page_url: location.href,
+  wait_for_idle_ms: waitForIdleMs,
+  wait_for_idle_timed_out,
   png_data_url,
 };
 `.trim();
@@ -370,6 +483,11 @@ export function registerBrowserCommand(
     .command("list")
     .description("list browser sessions for the signed-in account")
     .option("--include-stale", "include stale/inactive sessions")
+    .option("--active-only", "include only active sessions")
+    .option(
+      "--project-id <id>",
+      "filter to sessions targeting this active/open workspace/project id",
+    )
     .option(
       "--max-age-ms <ms>",
       "consider session stale if heartbeat is older than this",
@@ -377,7 +495,12 @@ export function registerBrowserCommand(
     )
     .action(
       async (
-        opts: { includeStale?: boolean; maxAgeMs?: string },
+        opts: {
+          includeStale?: boolean;
+          activeOnly?: boolean;
+          projectId?: string;
+          maxAgeMs?: string;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser session list", async (ctx) => {
@@ -385,11 +508,18 @@ export function registerBrowserCommand(
           if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
             throw new Error("--max-age-ms must be a positive number");
           }
+          if (opts.includeStale && opts.activeOnly) {
+            throw new Error("--include-stale and --active-only cannot both be set");
+          }
+          const projectId = `${opts.projectId ?? ""}`.trim();
           const sessions = (await ctx.hub.system.listBrowserSessions({
-            include_stale: !!opts.includeStale,
+            include_stale: opts.activeOnly ? false : !!opts.includeStale,
             max_age_ms: Math.floor(maxAgeMs),
           })) as BrowserSessionInfo[];
-          return sessions.map((s) => ({
+          return (sessions ?? [])
+            .filter((s) => (opts.activeOnly ? !s.stale : true))
+            .filter((s) => sessionMatchesProject(s, projectId))
+            .map((s) => ({
             browser_id: s.browser_id,
             session_name: s.session_name ?? "",
             active_project_id: s.active_project_id ?? "",
@@ -398,7 +528,7 @@ export function registerBrowserCommand(
             updated_at: s.updated_at,
             created_at: s.created_at,
             url: s.url ?? "",
-          }));
+            }));
         });
       },
     );
@@ -449,13 +579,24 @@ export function registerBrowserCommand(
       "--browser <id>",
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
-    .action(async (opts: { browser?: string }, command: Command) => {
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .action(
+      async (
+        opts: { browser?: string; sessionProjectId?: string; activeOnly?: boolean },
+        command: Command,
+      ) => {
       await deps.withContext(command, "browser exec-api", async (ctx) => {
         const profileSelection = loadProfileSelection(deps, command);
         const sessionInfo = await chooseBrowserSession({
           ctx,
           browserHint: browserHintFromOption(opts.browser),
           fallbackBrowserId: profileSelection.browser_id,
+          sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+          activeOnly: !!opts.activeOnly,
         });
         const browserClient = deps.createBrowserSessionClient({
           account_id: ctx.accountId,
@@ -473,13 +614,24 @@ export function registerBrowserCommand(
       "--browser <id>",
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
-    .action(async (opts: { browser?: string }, command: Command) => {
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .action(
+      async (
+        opts: { browser?: string; sessionProjectId?: string; activeOnly?: boolean },
+        command: Command,
+      ) => {
       await deps.withContext(command, "browser files", async (ctx) => {
         const profileSelection = loadProfileSelection(deps, command);
         const sessionInfo = await chooseBrowserSession({
           ctx,
           browserHint: browserHintFromOption(opts.browser),
           fallbackBrowserId: profileSelection.browser_id,
+          sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+          activeOnly: !!opts.activeOnly,
         });
         const browserClient = deps.createBrowserSessionClient({
           account_id: ctx.accountId,
@@ -492,6 +644,7 @@ export function registerBrowserCommand(
           project_id: row.project_id,
           title: row.title ?? "",
           path: row.path,
+          ...sessionTargetContext(ctx, sessionInfo, row.project_id),
         }));
       });
     });
@@ -513,6 +666,11 @@ export function registerBrowserCommand(
       "--background",
       "open in background (do not focus project/file in browser)",
     )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
     .action(
       async (
         workspace: string | undefined,
@@ -521,6 +679,8 @@ export function registerBrowserCommand(
           browser?: string;
           projectId?: string;
           background?: boolean;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
         },
         command: Command,
       ) => {
@@ -540,6 +700,9 @@ export function registerBrowserCommand(
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || project_id,
+            activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -565,6 +728,7 @@ export function registerBrowserCommand(
             paths: cleanPaths,
             opened: cleanPaths.length,
             background: !!opts.background,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
           };
         });
       },
@@ -583,11 +747,21 @@ export function registerBrowserCommand(
       "--browser <id>",
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
     .action(
       async (
         workspace: string | undefined,
         paths: string[],
-        opts: { browser?: string; projectId?: string },
+        opts: {
+          browser?: string;
+          projectId?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser close", async (ctx) => {
@@ -606,6 +780,9 @@ export function registerBrowserCommand(
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || project_id,
+            activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -627,6 +804,7 @@ export function registerBrowserCommand(
             project_id,
             paths: cleanPaths,
             closed: cleanPaths.length,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
           };
         });
       },
@@ -647,6 +825,11 @@ export function registerBrowserCommand(
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
     .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
       "--selector <css>",
       "CSS selector for screenshot root element",
       "body",
@@ -661,16 +844,23 @@ export function registerBrowserCommand(
       "--timeout <duration>",
       "timeout for screenshot capture (e.g. 30s, 2m)",
     )
+    .option(
+      "--wait-for-idle <duration>",
+      "wait for DOM idle before capture (e.g. 250ms, 2s)",
+    )
     .action(
       async (
         opts: {
           workspace?: string;
           projectId?: string;
           browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
           selector?: string;
           scale?: string;
           out?: string;
           timeout?: string;
+          waitForIdle?: string;
         },
         command: Command,
       ) => {
@@ -684,6 +874,11 @@ export function registerBrowserCommand(
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
             requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
           });
           const project_id = projectIdHint
             ? projectIdHint
@@ -710,6 +905,9 @@ export function registerBrowserCommand(
           if (!Number.isFinite(scale) || scale <= 0) {
             throw new Error("--scale must be a positive number");
           }
+          const waitForIdleMs = `${opts.waitForIdle ?? ""}`.trim()
+            ? Math.max(0, durationToMs(opts.waitForIdle, 1_000))
+            : 0;
           const outputPath =
             `${opts.out ?? ""}`.trim() ||
             `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
@@ -722,7 +920,7 @@ export function registerBrowserCommand(
           }) as BrowserSessionClient;
           const started = await browserClient.startExec({
             project_id,
-            code: browserScreenshotScript({ selector, scale }),
+            code: browserScreenshotScript({ selector, scale, waitForIdleMs }),
           });
           const op = await waitForExecOperation({
             browserClient,
@@ -753,7 +951,10 @@ export function registerBrowserCommand(
             width: Number(result?.width ?? 0),
             height: Number(result?.height ?? 0),
             selector,
+            wait_for_idle_ms: Number(result?.wait_for_idle_ms ?? waitForIdleMs),
+            wait_for_idle_timed_out: !!result?.wait_for_idle_timed_out,
             page_url: `${result?.page_url ?? ""}`,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
           };
         });
       },
@@ -802,6 +1003,8 @@ export function registerBrowserCommand(
           workspace?: string;
           projectId?: string;
           browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
           file?: string;
           stdin?: boolean;
           timeout?: string;
@@ -821,6 +1024,11 @@ export function registerBrowserCommand(
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
             requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
           });
           const project_id = projectIdHint
             ? projectIdHint
@@ -884,6 +1092,7 @@ export function registerBrowserCommand(
                 browser_id: sessionInfo.browser_id,
                 project_id,
                 ...started,
+                ...sessionTargetContext(ctx, sessionInfo, project_id),
               };
             }
             const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
@@ -902,6 +1111,7 @@ export function registerBrowserCommand(
             return {
               browser_id: sessionInfo.browser_id,
               ...op,
+              ...sessionTargetContext(ctx, sessionInfo, project_id),
             };
           }
           const response = await browserClient.exec({
@@ -913,6 +1123,7 @@ export function registerBrowserCommand(
             project_id,
             ok: !!response?.ok,
             result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
           };
         });
       },
@@ -926,13 +1137,23 @@ export function registerBrowserCommand(
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
     .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
       "--timeout <duration>",
       "rpc timeout per status request (e.g. 30s, 5m)",
     )
     .action(
       async (
         exec_id: string,
-        opts: { browser?: string; timeout?: string },
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          timeout?: string;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser exec-get", async (ctx) => {
@@ -941,6 +1162,8 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -952,6 +1175,7 @@ export function registerBrowserCommand(
           return {
             browser_id: sessionInfo.browser_id,
             ...op,
+            ...sessionTargetContext(ctx, sessionInfo),
           };
         });
       },
@@ -965,6 +1189,11 @@ export function registerBrowserCommand(
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
     .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
       "--poll-ms <duration>",
       "poll interval while waiting (e.g. 250ms, 2s)",
       "1s",
@@ -976,7 +1205,13 @@ export function registerBrowserCommand(
     .action(
       async (
         exec_id: string,
-        opts: { browser?: string; pollMs?: string; timeout?: string },
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          pollMs?: string;
+          timeout?: string;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser exec-wait", async (ctx) => {
@@ -985,6 +1220,8 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
           });
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
@@ -1009,6 +1246,7 @@ export function registerBrowserCommand(
           return {
             browser_id: sessionInfo.browser_id,
             ...op,
+            ...sessionTargetContext(ctx, sessionInfo),
           };
         });
       },
@@ -1022,13 +1260,23 @@ export function registerBrowserCommand(
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
     )
     .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
       "--timeout <duration>",
       "rpc timeout for cancel request (e.g. 30s, 5m)",
     )
     .action(
       async (
         exec_id: string,
-        opts: { browser?: string; timeout?: string },
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          timeout?: string;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser exec-cancel", async (ctx) => {
@@ -1037,6 +1285,8 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -1048,6 +1298,7 @@ export function registerBrowserCommand(
           return {
             browser_id: sessionInfo.browser_id,
             ...canceled,
+            ...sessionTargetContext(ctx, sessionInfo),
           };
         });
       },
