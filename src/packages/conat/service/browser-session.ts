@@ -44,6 +44,7 @@ export type BrowserActionName =
   | "drag"
   | "type"
   | "press"
+  | "reload"
   | "navigate"
   | "scroll_by"
   | "scroll_to"
@@ -142,6 +143,11 @@ export type BrowserAtomicActionRequest =
       shift?: boolean;
       meta?: boolean;
       timeout_ms?: number;
+    }
+  | {
+      name: "reload";
+      // Best-effort hard reload request. Browser behavior may vary.
+      hard?: boolean;
     }
   | {
       name: "navigate";

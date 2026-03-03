@@ -670,6 +670,7 @@ function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
         x === "drag" ||
         x === "type" ||
         x === "press" ||
+        x === "reload" ||
         x === "navigate" ||
         x === "scroll_by" ||
         x === "scroll_to" ||
@@ -728,6 +729,35 @@ async function resolveBrowserPolicyAndPosture({
     };
   }
   return { posture: resolvedPosture, ...(policy ? { policy } : {}) };
+}
+
+function withBrowserExecStaleSessionHint({
+  err,
+  posture,
+  policy,
+  browserId,
+}: {
+  err: unknown;
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+  browserId?: string;
+}): Error {
+  const base = err instanceof Error ? err.message : `${err}`;
+  const msg = `${base ?? ""}`;
+  const quickjsExpected = posture === "prod" && !policy?.allow_raw_exec;
+  if (
+    quickjsExpected &&
+    (msg.includes("raw browser exec is blocked in prod posture") ||
+      msg.includes("QuickJSUseAfterFree"))
+  ) {
+    const reloadCmd = browserId
+      ? `cocalc browser action reload --browser ${browserId} --posture prod`
+      : "cocalc browser action reload --posture prod";
+    return new Error(
+      `${msg}\n\nThis browser session is likely stale after a frontend rebuild. Reload the target session and retry.\nTry: ${reloadCmd}\nIf needed, use --hard or manually hard-refresh the tab.`,
+    );
+  }
+  return err instanceof Error ? err : new Error(msg);
 }
 
 function browserHintFromOption(value: unknown): string | undefined {
@@ -2416,12 +2446,22 @@ export function registerBrowserCommand(
             apiBaseUrl: ctx.apiBaseUrl,
           });
           if (opts.async) {
-            const started = await browserClient.startExec({
-              project_id,
-              code: script,
-              posture,
-              policy,
-            });
+            let started;
+            try {
+              started = await browserClient.startExec({
+                project_id,
+                code: script,
+                posture,
+                policy,
+              });
+            } catch (err) {
+              throw withBrowserExecStaleSessionHint({
+                err,
+                posture,
+                policy,
+                browserId: sessionInfo.browser_id,
+              });
+            }
             if (!opts.wait) {
               return {
                 browser_id: sessionInfo.browser_id,
@@ -2451,12 +2491,22 @@ export function registerBrowserCommand(
               ...sessionTargetContext(ctx, sessionInfo, project_id),
             };
           }
-          const response = await browserClient.exec({
-            project_id,
-            code: script,
-            posture,
-            policy,
-          });
+          let response;
+          try {
+            response = await browserClient.exec({
+              project_id,
+              code: script,
+              posture,
+              policy,
+            });
+          } catch (err) {
+            throw withBrowserExecStaleSessionHint({
+              err,
+              posture,
+              policy,
+              browserId: sessionInfo.browser_id,
+            });
+          }
           return {
             browser_id: sessionInfo.browser_id,
             project_id,
@@ -3405,6 +3455,101 @@ export function registerBrowserCommand(
               ...(regex ? { regex } : {}),
               ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
               poll_ms: pollMs,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("reload")
+    .description("reload the targeted browser session page")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--hard",
+      "best-effort hard refresh; appends a cache-busting query parameter and replaces current URL",
+    )
+    .action(
+      async (
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          hard?: boolean;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action reload", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: ctx.timeoutMs,
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "reload",
+              hard: !!opts.hard,
             },
           });
           return {

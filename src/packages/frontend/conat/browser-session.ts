@@ -586,6 +586,7 @@ function isAllowedActionName(value: unknown): value is BrowserActionName {
     clean === "drag" ||
     clean === "type" ||
     clean === "press" ||
+    clean === "reload" ||
     clean === "navigate" ||
     clean === "scroll_by" ||
     clean === "scroll_to" ||
@@ -3055,6 +3056,7 @@ export function createBrowserSessionAutomation({
     drag: (x1, y1, x2, y2, opts = {}) => __exec("drag", { x1, y1, x2, y2, ...opts }),
     type: (selector, text, opts = {}) => __exec("type", { selector, text, ...opts }),
     press: (key, opts = {}) => __exec("press", { key, ...opts }),
+    reload: (opts = {}) => __exec("reload", opts),
     scrollBy: (dy, dx = 0, opts = {}) => __exec("scroll_by", { dy, dx, ...opts }),
     scrollTo: (opts = {}) => __exec("scroll_to", opts),
     waitForSelector: (selector, opts = {}) => __exec("wait_for_selector", { selector, ...opts }),
@@ -3583,6 +3585,41 @@ export function createBrowserSessionAutomation({
         from_url: before,
         target_url: resolvedUrl,
         replace: !!action.replace,
+      };
+    }
+
+    if (action.name === "reload") {
+      const before = `${location.href ?? ""}`;
+      const hard = !!action.hard;
+      let target_url = before;
+      if (hard) {
+        try {
+          const u = new URL(before);
+          u.searchParams.set("_cocalc_reload", `${Date.now()}`);
+          target_url = u.toString();
+        } catch {
+          target_url = `${before}${before.includes("?") ? "&" : "?"}_cocalc_reload=${Date.now()}`;
+        }
+      }
+      // Delay enough to let RPC response flush before navigation tears down page context.
+      const delay_ms = hard ? 150 : 50;
+      setTimeout(() => {
+        if (hard) {
+          location.replace(target_url);
+        } else {
+          location.reload();
+        }
+      }, delay_ms);
+      return {
+        name: "reload",
+        ok: true,
+        page_url: before,
+        elapsed_ms: Date.now() - started,
+        from_url: before,
+        target_url,
+        hard_requested: hard,
+        delay_ms,
+        scheduled: true,
       };
     }
 

@@ -108,6 +108,10 @@ cocalc browser exec \
   --project-id "$COCALC_PROJECT_ID" \
   --browser "$COCALC_BROWSER_ID" \
   --file script.js
+# if the session is stale after a frontend rebuild:
+cocalc browser action reload --browser "$COCALC_BROWSER_ID" --posture prod
+# best-effort hard refresh:
+cocalc browser action reload --browser "$COCALC_BROWSER_ID" --posture prod --hard
 ```
 
 Exec posture note:
