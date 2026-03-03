@@ -18,6 +18,8 @@ import {
 } from "./extensions-runtime";
 import {
   createBrowserSessionService,
+  type BrowserAutomationPosture,
+  type BrowserExecPolicyV1,
   type BrowserExecOperation,
   type BrowserOpenFileInfo,
   type BrowserSessionServiceApi,
@@ -40,6 +42,7 @@ const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
+const BROWSER_EXEC_POLICY_VERSION = 1;
 type BrowserNotifyType = "error" | "default" | "success" | "info" | "warning";
 type BrowserSyncDocType = "string" | "db" | "immer";
 
@@ -512,6 +515,86 @@ function sanitizePathList(paths: unknown): string[] {
   return paths
     .map((path) => `${path ?? ""}`.trim())
     .filter((path) => path.length > 0);
+}
+
+function normalizePosture(value: unknown): BrowserAutomationPosture {
+  const v = `${value ?? ""}`.trim().toLowerCase();
+  return v === "prod" ? "prod" : "dev";
+}
+
+function normalizePolicy(policy: unknown): BrowserExecPolicyV1 | undefined {
+  if (!policy || typeof policy !== "object") {
+    return undefined;
+  }
+  const row = policy as Record<string, unknown>;
+  const version = Number(row.version ?? BROWSER_EXEC_POLICY_VERSION);
+  if (version !== BROWSER_EXEC_POLICY_VERSION) {
+    throw Error(
+      `unsupported browser exec policy version '${row.version ?? ""}' (expected ${BROWSER_EXEC_POLICY_VERSION})`,
+    );
+  }
+  const asStringArray = (value: unknown): string[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const out = value
+      .map((x) => `${x ?? ""}`.trim())
+      .filter((x) => x.length > 0);
+    return out.length > 0 ? out : undefined;
+  };
+  const allow_raw_exec =
+    row.allow_raw_exec == null ? undefined : !!row.allow_raw_exec;
+  const allowed_project_ids = asStringArray(row.allowed_project_ids);
+  const allowed_origins = asStringArray(row.allowed_origins);
+  return {
+    version: BROWSER_EXEC_POLICY_VERSION,
+    ...(allow_raw_exec != null ? { allow_raw_exec } : {}),
+    ...(allowed_project_ids ? { allowed_project_ids } : {}),
+    ...(allowed_origins ? { allowed_origins } : {}),
+  };
+}
+
+function enforceExecPolicy({
+  project_id,
+  posture,
+  policy,
+}: {
+  project_id: string;
+  posture?: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+}): {
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+} {
+  const normalizedPosture = normalizePosture(posture);
+  const normalizedPolicy = normalizePolicy(policy);
+  if (normalizedPosture !== "prod") {
+    return { posture: normalizedPosture, ...(normalizedPolicy ? { policy: normalizedPolicy } : {}) };
+  }
+
+  if (!normalizedPolicy?.allow_raw_exec) {
+    throw Error(
+      "raw browser exec is blocked in prod posture; provide explicit policy.allow_raw_exec=true or use typed browser actions",
+    );
+  }
+
+  const allowedProjects = normalizedPolicy.allowed_project_ids ?? [];
+  if (allowedProjects.length > 0 && !allowedProjects.includes(project_id)) {
+    throw Error(
+      `browser exec denied by policy: project '${project_id}' not in allowed_project_ids`,
+    );
+  }
+
+  const allowedOrigins = normalizedPolicy.allowed_origins ?? [];
+  if (allowedOrigins.length > 0) {
+    const currentOrigin =
+      typeof location !== "undefined" ? `${location.origin ?? ""}`.trim() : "";
+    if (!currentOrigin || !allowedOrigins.includes(currentOrigin)) {
+      throw Error(
+        `browser exec denied by policy: origin '${currentOrigin || "<unknown>"}' not in allowed_origins`,
+      );
+    }
+  }
+
+  return { posture: normalizedPosture, ...(normalizedPolicy ? { policy: normalizedPolicy } : {}) };
 }
 
 function asFinitePositive(value: unknown): number | undefined {
@@ -1201,6 +1284,12 @@ function createExecId(): string {
   return `exec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+type BrowserExecPendingOperation = BrowserExecOperation & {
+  code: string;
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+};
+
 export function createBrowserSessionAutomation({
   client,
   hub,
@@ -1217,7 +1306,7 @@ export function createBrowserSessionAutomation({
   let inFlight: Promise<void> | undefined;
   const execOps = new Map<
     string,
-    BrowserExecOperation & { code: string }
+    BrowserExecPendingOperation
   >();
   const managedSyncDocs = new Map<
     string,
@@ -1453,7 +1542,7 @@ export function createBrowserSessionAutomation({
     }
   };
 
-  const getExecOp = (exec_id: string): BrowserExecOperation & { code: string } => {
+  const getExecOp = (exec_id: string): BrowserExecPendingOperation => {
     const clean = `${exec_id ?? ""}`.trim();
     if (!clean) {
       throw Error("exec_id must be specified");
@@ -2806,9 +2895,7 @@ export function createBrowserSessionAutomation({
     }, delayMs);
   };
 
-  const toPublicExecOp = (
-    op: BrowserExecOperation & { code: string },
-  ): BrowserExecOperation => {
+  const toPublicExecOp = (op: BrowserExecPendingOperation): BrowserExecOperation => {
     const {
       exec_id,
       project_id,
@@ -2833,7 +2920,7 @@ export function createBrowserSessionAutomation({
     };
   };
 
-  const runExecOperation = async (op: BrowserExecOperation & { code: string }) => {
+  const runExecOperation = async (op: BrowserExecPendingOperation) => {
     if (op.status !== "pending") return;
     op.status = "running";
     op.started_at = new Date().toISOString();
@@ -2883,11 +2970,14 @@ export function createBrowserSessionAutomation({
       }),
     closeFile: async ({ project_id, path }) =>
       await closeFileInProject({ project_id, path }),
-    exec: async ({ project_id, code }) => ({
-      ok: true,
-      result: await executeBrowserScript({ project_id, code }),
-    }),
-    startExec: async ({ project_id, code }) => {
+    exec: async ({ project_id, code, posture, policy }) => {
+      enforceExecPolicy({ project_id, posture, policy });
+      return {
+        ok: true,
+        result: await executeBrowserScript({ project_id, code }),
+      };
+    },
+    startExec: async ({ project_id, code, posture, policy }) => {
       const script = `${code ?? ""}`;
       if (!script.trim()) {
         throw Error("code must be specified");
@@ -2900,13 +2990,16 @@ export function createBrowserSessionAutomation({
       if (!isValidUUID(project_id)) {
         throw Error("project_id must be a UUID");
       }
+      const enforced = enforceExecPolicy({ project_id, posture, policy });
       const exec_id = createExecId();
-      const op: BrowserExecOperation & { code: string } = {
+      const op: BrowserExecPendingOperation = {
         exec_id,
         project_id,
         status: "pending",
         created_at: new Date().toISOString(),
         code: script,
+        posture: enforced.posture,
+        ...(enforced.policy ? { policy: enforced.policy } : {}),
       };
       execOps.set(exec_id, op);
       pruneExecOps();

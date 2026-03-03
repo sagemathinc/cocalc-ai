@@ -36,6 +36,18 @@ export type BrowserExecOperation = {
   result?: unknown;
 };
 
+export type BrowserAutomationPosture = "dev" | "prod";
+
+export type BrowserExecPolicyV1 = {
+  version: 1;
+  // Explicitly allow raw JS execution in prod posture.
+  allow_raw_exec?: boolean;
+  // Optional hard scope for project/workspace ids.
+  allowed_project_ids?: string[];
+  // Optional hard scope for browser location.origin values.
+  allowed_origins?: string[];
+};
+
 export interface BrowserSessionServiceApi {
   getExecApiDeclaration: () => Promise<string>;
   getSessionInfo: () => Promise<{
@@ -59,10 +71,14 @@ export interface BrowserSessionServiceApi {
   exec: (opts: {
     project_id: string;
     code: string;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
   }) => Promise<{ ok: true; result: unknown }>;
   startExec: (opts: {
     project_id: string;
     code: string;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
   }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
   getExec: (opts: {
     exec_id: string;

@@ -21,6 +21,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  BrowserAutomationPosture,
+  BrowserExecPolicyV1,
+} from "@cocalc/conat/service/browser-session";
 import { basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import { durationToMs } from "../../core/utils";
 
@@ -29,6 +33,8 @@ type BrowserSessionClient = {
   startExec: (opts: {
     project_id: string;
     code: string;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
   }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
   getExec: (opts: {
     exec_id: string;
@@ -56,6 +62,8 @@ type BrowserSessionClient = {
   exec: (opts: {
     project_id: string;
     code: string;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
   }) => Promise<{ ok: true; result: unknown }>;
 };
 
@@ -462,6 +470,63 @@ function resolveSpawnStateById(id: string): { file: string; state: SpawnStateRec
 function normalizeBrowserId(value: unknown): string | undefined {
   const id = `${value ?? ""}`.trim();
   return id.length > 0 ? id : undefined;
+}
+
+function normalizeBrowserPosture(value: unknown): BrowserAutomationPosture | undefined {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean) return undefined;
+  if (clean === "dev" || clean === "prod") return clean;
+  throw new Error(`invalid browser posture '${value}'; expected 'dev' or 'prod'`);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const h = `${hostname ?? ""}`.trim().toLowerCase();
+  return h === "localhost" || h === "::1" || h.startsWith("127.");
+}
+
+function defaultPostureForApiUrl(apiUrl: string): BrowserAutomationPosture {
+  try {
+    const host = new URL(apiUrl).hostname;
+    return isLoopbackHostname(host) ? "dev" : "prod";
+  } catch {
+    return "dev";
+  }
+}
+
+function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`invalid JSON in browser exec policy: ${err}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("browser exec policy must be a JSON object");
+  }
+  const row = parsed as Record<string, unknown>;
+  const version = Number(row.version ?? 1);
+  if (version !== 1) {
+    throw new Error(`unsupported browser exec policy version '${row.version ?? ""}'; expected 1`);
+  }
+  const cleanStringArray = (value: unknown): string[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const out = value
+      .map((x) => `${x ?? ""}`.trim())
+      .filter((x) => x.length > 0);
+    return out.length ? out : undefined;
+  };
+  return {
+    version: 1,
+    ...(row.allow_raw_exec == null
+      ? {}
+      : { allow_raw_exec: !!row.allow_raw_exec }),
+    ...(cleanStringArray(row.allowed_project_ids)
+      ? { allowed_project_ids: cleanStringArray(row.allowed_project_ids) }
+      : {}),
+    ...(cleanStringArray(row.allowed_origins)
+      ? { allowed_origins: cleanStringArray(row.allowed_origins) }
+      : {}),
+  };
 }
 
 function browserHintFromOption(value: unknown): string | undefined {
@@ -1665,6 +1730,18 @@ export function registerBrowserCommand(
     )
     .option("--stdin", "read javascript from stdin")
     .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option(
+      "--policy-file <path>",
+      "JSON file with browser exec policy (required for controlled raw exec in prod posture)",
+    )
+    .option(
+      "--allow-raw-exec",
+      "explicitly allow raw JS exec (sets policy.allow_raw_exec=true)",
+    )
+    .option(
       "--async",
       "start execution asynchronously and return an exec id",
     )
@@ -1692,6 +1769,9 @@ export function registerBrowserCommand(
           activeOnly?: boolean;
           file?: string;
           stdin?: boolean;
+          posture?: string;
+          policyFile?: string;
+          allowRawExec?: boolean;
           timeout?: string;
           async?: boolean;
           wait?: boolean;
@@ -1767,15 +1847,35 @@ export function registerBrowserCommand(
           if (!script) {
             throw new Error("javascript code must be specified");
           }
+          const posture =
+            normalizeBrowserPosture(opts.posture) ??
+            normalizeBrowserPosture(process.env.COCALC_BROWSER_POSTURE) ??
+            defaultPostureForApiUrl(`${ctx.apiBaseUrl ?? ""}`);
+          let policy: BrowserExecPolicyV1 | undefined;
+          const policyFile = `${opts.policyFile ?? ""}`.trim();
+          if (policyFile) {
+            const policyRaw = await readFile(policyFile, "utf8");
+            policy = parseBrowserExecPolicy(policyRaw);
+          }
+          if (opts.allowRawExec) {
+            policy = {
+              ...(policy ?? { version: 1 }),
+              version: 1,
+              allow_raw_exec: true,
+            };
+          }
           if (opts.async) {
             const started = await browserClient.startExec({
               project_id,
               code: script,
+              posture,
+              policy,
             });
             if (!opts.wait) {
               return {
                 browser_id: sessionInfo.browser_id,
                 project_id,
+                posture,
                 ...started,
                 ...sessionTargetContext(ctx, sessionInfo, project_id),
               };
@@ -1795,6 +1895,7 @@ export function registerBrowserCommand(
             }
             return {
               browser_id: sessionInfo.browser_id,
+              posture,
               ...op,
               ...sessionTargetContext(ctx, sessionInfo, project_id),
             };
@@ -1802,10 +1903,13 @@ export function registerBrowserCommand(
           const response = await browserClient.exec({
             project_id,
             code: script,
+            posture,
+            policy,
           });
           return {
             browser_id: sessionInfo.browser_id,
             project_id,
+            posture,
             ok: !!response?.ok,
             result: response?.result ?? null,
             ...sessionTargetContext(ctx, sessionInfo, project_id),
