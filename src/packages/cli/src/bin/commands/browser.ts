@@ -1565,7 +1565,14 @@ export function registerBrowserCommand(
       "--chromium <path>",
       "explicit Chromium executable path (defaults to auto-detect from PATH)",
     )
-    .option("--headless", "launch Chromium in headless mode")
+    .option(
+      "--headless",
+      "launch Chromium in headless mode (default)",
+    )
+    .option(
+      "--headed",
+      "launch Chromium in visible headed mode",
+    )
     .option(
       "--ready-timeout <duration>",
       "timeout for daemon startup readiness (e.g. 10s, 1m)",
@@ -1591,6 +1598,7 @@ export function registerBrowserCommand(
           spawnId?: string;
           chromium?: string;
           headless?: boolean;
+          headed?: boolean;
           readyTimeout?: string;
           timeout?: string;
           use?: boolean;
@@ -1666,11 +1674,15 @@ export function registerBrowserCommand(
               `missing daemon script '${daemonScript}' (build @cocalc/cli first)`,
             );
           }
+          if (opts.headless && opts.headed) {
+            throw new Error("choose only one of --headless or --headed");
+          }
+          const spawnHeadless = opts.headed ? false : true;
           writeDaemonConfig(daemonConfigPath, {
             spawn_id: spawnId,
             state_file: stateFile,
             target_url: markedTargetUrl,
-            headless: !!opts.headless,
+            headless: spawnHeadless,
             timeout_ms: parseDiscoveryTimeout(opts.readyTimeout, DEFAULT_READY_TIMEOUT_MS),
             executable_path: chromiumPath,
             session_name: sessionName,

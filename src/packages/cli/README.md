@@ -124,6 +124,7 @@ If you need an isolated browser target (instead of the developer's live tab),
 spawn a dedicated Playwright-backed Chromium session:
 
 ```bash
+# spawn defaults to headless; add --headed for a visible window
 cocalc browser session spawn --use
 cocalc browser session spawned
 # ... run browser exec/open/screenshot commands ...
