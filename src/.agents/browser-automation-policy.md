@@ -54,7 +54,7 @@ Policy schema (`version: 1`):
   "allow_raw_exec": true,
   "allowed_project_ids": ["<workspace-uuid>"],
   "allowed_origins": ["https://example.cocalc.com"],
-  "allowed_actions": ["click", "type", "press", "wait_for_selector", "wait_for_url"]
+  "allowed_actions": ["click", "click_at", "drag", "type", "press", "wait_for_selector", "wait_for_url"]
 }
 ```
 
@@ -99,7 +99,7 @@ However, this should complement (not replace) action-level policy:
 ### Phase B: Typed actions (first pass complete)
 
 - implemented:
-  - `browser action click/type/press/wait-for-selector/wait-for-url`
+  - `browser action click/click-at/drag/type/press/wait-for-selector/wait-for-url`
   - action policy allow-list (`allowed_actions`)
 - remaining:
   - classify actions (`read`, `input`, `navigate`, `privileged`)

@@ -26,7 +26,9 @@ import type {
   BrowserActionRequest,
   BrowserActionResult,
   BrowserAutomationPosture,
+  BrowserCoordinateSpace,
   BrowserExecPolicyV1,
+  BrowserScreenshotMetadata,
 } from "@cocalc/conat/service/browser-session";
 import { basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import { durationToMs } from "../../core/utils";
@@ -511,6 +513,47 @@ function parseOptionalDurationMs(
   return durationToMs(clean, fallbackMs);
 }
 
+function parseCoordinateSpace(value: unknown): BrowserCoordinateSpace {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean || clean === "viewport") return "viewport";
+  if (
+    clean === "selector" ||
+    clean === "image" ||
+    clean === "normalized"
+  ) {
+    return clean;
+  }
+  throw new Error(
+    `invalid coordinate space '${value}'; expected viewport|selector|image|normalized`,
+  );
+}
+
+function parseRequiredNumber(value: unknown, label: string): number {
+  const num = Number(`${value ?? ""}`.trim());
+  if (!Number.isFinite(num)) {
+    throw new Error(`${label} must be a finite number`);
+  }
+  return num;
+}
+
+async function readScreenshotMeta(
+  metaFile: string | undefined,
+): Promise<BrowserScreenshotMetadata | undefined> {
+  const clean = `${metaFile ?? ""}`.trim();
+  if (!clean) return undefined;
+  const raw = await readFile(clean, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`invalid JSON in screenshot meta file '${clean}': ${err}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`screenshot meta file '${clean}' must contain a JSON object`);
+  }
+  return parsed as BrowserScreenshotMetadata;
+}
+
 function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
   let parsed: unknown;
   try {
@@ -539,6 +582,8 @@ function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
       .map((x) => `${x ?? ""}`.trim())
       .filter((x): x is BrowserActionName =>
         x === "click" ||
+        x === "click_at" ||
+        x === "drag" ||
         x === "type" ||
         x === "press" ||
         x === "wait_for_selector" ||
@@ -955,6 +1000,17 @@ const root = document.querySelector(selector);
 if (!root) {
   throw new Error(\`selector did not match any element: \${selector}\`);
 }
+const rect = root.getBoundingClientRect();
+const selector_rect_css = {
+  left: Number(rect.left || 0),
+  top: Number(rect.top || 0),
+  width: Number(rect.width || 0),
+  height: Number(rect.height || 0),
+};
+const viewport_css = {
+  width: Number(window.innerWidth || 0),
+  height: Number(window.innerHeight || 0),
+};
 const wait_for_idle_timed_out = await waitForDomIdle(waitForIdleMs);
 const canvas = await html2canvas(root, {
   scale,
@@ -976,6 +1032,26 @@ return {
   width: Number(canvas.width || 0),
   height: Number(canvas.height || 0),
   page_url: location.href,
+  captured_at: new Date().toISOString(),
+  capture_scale: Number(scale || 1),
+  device_pixel_ratio: Number(window.devicePixelRatio || 1),
+  scroll_x: Number(window.scrollX || window.pageXOffset || 0),
+  scroll_y: Number(window.scrollY || window.pageYOffset || 0),
+  selector_rect_css,
+  viewport_css,
+  screenshot_meta: {
+    page_url: location.href,
+    captured_at: new Date().toISOString(),
+    selector,
+    image_width: Number(canvas.width || 0),
+    image_height: Number(canvas.height || 0),
+    capture_scale: Number(scale || 1),
+    device_pixel_ratio: Number(window.devicePixelRatio || 1),
+    scroll_x: Number(window.scrollX || window.pageXOffset || 0),
+    scroll_y: Number(window.scrollY || window.pageYOffset || 0),
+    selector_rect_css,
+    viewport_css,
+  },
   wait_for_idle_ms: waitForIdleMs,
   wait_for_idle_timed_out,
   png_data_url,
@@ -1702,6 +1778,10 @@ export function registerBrowserCommand(
       "--wait-for-idle <duration>",
       "wait for DOM idle before capture (e.g. 250ms, 2s)",
     )
+    .option(
+      "--meta-out <path>",
+      "optional output path for screenshot metadata JSON",
+    )
     .action(
       async (
         opts: {
@@ -1713,6 +1793,7 @@ export function registerBrowserCommand(
           selector?: string;
           scale?: string;
           out?: string;
+          metaOut?: string;
           timeout?: string;
           waitForIdle?: string;
         },
@@ -1754,6 +1835,7 @@ export function registerBrowserCommand(
             `${opts.out ?? ""}`.trim() ||
             `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const metaOutPath = `${opts.metaOut ?? ""}`.trim();
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
@@ -1784,11 +1866,32 @@ export function registerBrowserCommand(
           const base64 = pngDataUrl.slice("data:image/png;base64,".length);
           const png = Buffer.from(base64, "base64");
           await writeFile(outputPath, png);
+          const screenshotMeta = (result?.screenshot_meta ?? {
+            page_url: `${result?.page_url ?? ""}`,
+            captured_at: `${result?.captured_at ?? ""}`,
+            selector,
+            image_width: Number(result?.width ?? 0),
+            image_height: Number(result?.height ?? 0),
+            capture_scale: Number(result?.capture_scale ?? scale),
+            device_pixel_ratio: Number(result?.device_pixel_ratio ?? 1),
+            scroll_x: Number(result?.scroll_x ?? 0),
+            scroll_y: Number(result?.scroll_y ?? 0),
+            selector_rect_css: result?.selector_rect_css,
+            viewport_css: result?.viewport_css,
+          }) as BrowserScreenshotMetadata;
+          if (metaOutPath) {
+            await writeFile(
+              metaOutPath,
+              `${JSON.stringify(screenshotMeta, null, 2)}\n`,
+              "utf8",
+            );
+          }
 
           return {
             browser_id: sessionInfo.browser_id,
             project_id,
             output_path: resolvePath(outputPath),
+            ...(metaOutPath ? { meta_output_path: resolvePath(metaOutPath) } : {}),
             bytes: png.byteLength,
             width: Number(result?.width ?? 0),
             height: Number(result?.height ?? 0),
@@ -1796,6 +1899,7 @@ export function registerBrowserCommand(
             wait_for_idle_ms: Number(result?.wait_for_idle_ms ?? waitForIdleMs),
             wait_for_idle_timed_out: !!result?.wait_for_idle_timed_out,
             page_url: `${result?.page_url ?? ""}`,
+            screenshot_meta: screenshotMeta,
             ...sessionTargetContext(ctx, sessionInfo, project_id),
           };
         });
@@ -2108,6 +2212,337 @@ export function registerBrowserCommand(
               ...(waitForNavigationMs != null
                 ? { wait_for_navigation_ms: waitForNavigationMs }
                 : {}),
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("click-at <x> <y>")
+    .description(
+      "click at coordinates (useful for canvas/plotly); supports screenshot metadata mapping",
+    )
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--space <viewport|selector|image|normalized>",
+      "coordinate space for x/y",
+      "viewport",
+    )
+    .option("--selector <css>", "selector anchor for selector/image space")
+    .option(
+      "--meta-file <path>",
+      "screenshot metadata JSON from 'browser screenshot --meta-out'",
+    )
+    .option(
+      "--strict-meta",
+      "require current page url (and selector, if provided) to match metadata",
+    )
+    .option("--button <left|middle|right>", "mouse button", "left")
+    .option("--click-count <n>", "number of clicks", "1")
+    .option(
+      "--timeout <duration>",
+      "timeout for locating/interacting with element (e.g. 30s, 2m)",
+    )
+    .option(
+      "--wait-for-navigation <duration>",
+      "after click, wait for URL change up to this duration",
+    )
+    .action(
+      async (
+        x: string,
+        y: string,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          space?: string;
+          selector?: string;
+          metaFile?: string;
+          strictMeta?: boolean;
+          button?: string;
+          clickCount?: string;
+          timeout?: string;
+          waitForNavigation?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action click-at", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const waitForNavigationMs = parseOptionalDurationMs(
+            opts.waitForNavigation,
+            5_000,
+          );
+          const space = parseCoordinateSpace(opts.space);
+          const screenshotMeta = await readScreenshotMeta(opts.metaFile);
+          const selector =
+            `${opts.selector ?? ""}`.trim() ||
+            `${screenshotMeta?.selector ?? ""}`.trim();
+          if (
+            (space === "selector" || space === "image") &&
+            !selector
+          ) {
+            throw new Error(
+              "--selector (or screenshot metadata with selector) is required for selector/image coordinate space",
+            );
+          }
+          const button = `${opts.button ?? "left"}`.trim() as
+            | "left"
+            | "middle"
+            | "right";
+          if (!["left", "middle", "right"].includes(button)) {
+            throw new Error("--button must be one of left|middle|right");
+          }
+          const clickCount = Number(opts.clickCount ?? "1");
+          if (!Number.isFinite(clickCount) || clickCount <= 0) {
+            throw new Error("--click-count must be a positive number");
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "click_at",
+              x: parseRequiredNumber(x, "x"),
+              y: parseRequiredNumber(y, "y"),
+              space,
+              ...(selector ? { selector } : {}),
+              button,
+              click_count: Math.floor(clickCount),
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+              ...(waitForNavigationMs != null
+                ? { wait_for_navigation_ms: waitForNavigationMs }
+                : {}),
+              ...(screenshotMeta ? { screenshot_meta: screenshotMeta } : {}),
+              strict_meta: !!opts.strictMeta,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("drag <x1> <y1> <x2> <y2>")
+    .description(
+      "drag from one coordinate to another (useful for plotly/canvas interactions)",
+    )
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--space <viewport|selector|image|normalized>",
+      "coordinate space for x/y pairs",
+      "viewport",
+    )
+    .option("--selector <css>", "selector anchor for selector/image space")
+    .option(
+      "--meta-file <path>",
+      "screenshot metadata JSON from 'browser screenshot --meta-out'",
+    )
+    .option(
+      "--strict-meta",
+      "require current page url (and selector, if provided) to match metadata",
+    )
+    .option("--button <left|middle|right>", "mouse button for drag", "left")
+    .option("--steps <n>", "number of intermediate move steps", "14")
+    .option(
+      "--hold <duration>",
+      "optional hold duration after mousedown before moving",
+    )
+    .option(
+      "--timeout <duration>",
+      "timeout for locating/interacting with element (e.g. 30s, 2m)",
+    )
+    .action(
+      async (
+        x1: string,
+        y1: string,
+        x2: string,
+        y2: string,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          space?: string;
+          selector?: string;
+          metaFile?: string;
+          strictMeta?: boolean;
+          button?: string;
+          steps?: string;
+          hold?: string;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action drag", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const holdMs = parseOptionalDurationMs(opts.hold, 100);
+          const space = parseCoordinateSpace(opts.space);
+          const screenshotMeta = await readScreenshotMeta(opts.metaFile);
+          const selector =
+            `${opts.selector ?? ""}`.trim() ||
+            `${screenshotMeta?.selector ?? ""}`.trim();
+          if (
+            (space === "selector" || space === "image") &&
+            !selector
+          ) {
+            throw new Error(
+              "--selector (or screenshot metadata with selector) is required for selector/image coordinate space",
+            );
+          }
+          const button = `${opts.button ?? "left"}`.trim() as
+            | "left"
+            | "middle"
+            | "right";
+          if (!["left", "middle", "right"].includes(button)) {
+            throw new Error("--button must be one of left|middle|right");
+          }
+          const steps = Math.floor(parseRequiredNumber(opts.steps ?? "14", "steps"));
+          if (!Number.isFinite(steps) || steps < 1) {
+            throw new Error("--steps must be a positive integer");
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "drag",
+              x1: parseRequiredNumber(x1, "x1"),
+              y1: parseRequiredNumber(y1, "y1"),
+              x2: parseRequiredNumber(x2, "x2"),
+              y2: parseRequiredNumber(y2, "y2"),
+              space,
+              ...(selector ? { selector } : {}),
+              button,
+              steps,
+              ...(holdMs != null ? { hold_ms: holdMs } : {}),
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+              ...(screenshotMeta ? { screenshot_meta: screenshotMeta } : {}),
+              strict_meta: !!opts.strictMeta,
             },
           });
           return {

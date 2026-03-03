@@ -40,10 +40,40 @@ export type BrowserAutomationPosture = "dev" | "prod";
 
 export type BrowserActionName =
   | "click"
+  | "click_at"
+  | "drag"
   | "type"
   | "press"
   | "wait_for_selector"
   | "wait_for_url";
+
+export type BrowserCoordinateSpace =
+  | "viewport"
+  | "selector"
+  | "image"
+  | "normalized";
+
+export type BrowserScreenshotMetadata = {
+  page_url?: string;
+  captured_at?: string;
+  selector?: string;
+  image_width?: number;
+  image_height?: number;
+  capture_scale?: number;
+  device_pixel_ratio?: number;
+  scroll_x?: number;
+  scroll_y?: number;
+  selector_rect_css?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+  viewport_css?: {
+    width: number;
+    height: number;
+  };
+};
 
 export type BrowserActionRequest =
   | {
@@ -53,6 +83,34 @@ export type BrowserActionRequest =
       click_count?: number;
       timeout_ms?: number;
       wait_for_navigation_ms?: number;
+    }
+  | {
+      name: "click_at";
+      x: number;
+      y: number;
+      space?: BrowserCoordinateSpace;
+      selector?: string;
+      button?: "left" | "middle" | "right";
+      click_count?: number;
+      timeout_ms?: number;
+      wait_for_navigation_ms?: number;
+      screenshot_meta?: BrowserScreenshotMetadata;
+      strict_meta?: boolean;
+    }
+  | {
+      name: "drag";
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      space?: BrowserCoordinateSpace;
+      selector?: string;
+      button?: "left" | "middle" | "right";
+      steps?: number;
+      hold_ms?: number;
+      timeout_ms?: number;
+      screenshot_meta?: BrowserScreenshotMetadata;
+      strict_meta?: boolean;
     }
   | {
       name: "type";
