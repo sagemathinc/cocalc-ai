@@ -429,6 +429,14 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('[contenteditable="true"], .slate-editor'));
 }
 
+function isNotGitRepoError(message: string): boolean {
+  const text = `${message ?? ""}`.toLowerCase();
+  return (
+    text.includes("not a git repository") ||
+    text.includes("stopping at filesystem boundary")
+  );
+}
+
 function DiffBlock({
   filePath,
   lines,
@@ -766,8 +774,10 @@ export function GitCommitDrawer({
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
   const [gitLogError, setGitLogError] = useState<string>("");
+  const [nonRepoError, setNonRepoError] = useState<string>("");
   const [gitLogReloadCounter, setGitLogReloadCounter] = useState(0);
   const [reloadCounter, setReloadCounter] = useState(0);
+  const [repoBootstrapBusy, setRepoBootstrapBusy] = useState(false);
   const [headStatusLoading, setHeadStatusLoading] = useState(false);
   const [headStatusError, setHeadStatusError] = useState("");
   const [headStatusEntries, setHeadStatusEntries] = useState<HeadStatusEntry[]>([]);
@@ -829,6 +839,7 @@ export function GitCommitDrawer({
         const root = `${rootResult.stdout ?? ""}`.trim();
         if (!cancelled) {
           setRepoRoot(root);
+          setNonRepoError("");
           setGitLogError("");
         }
         const logResult = await runGitCommand({
@@ -847,13 +858,16 @@ export function GitCommitDrawer({
         const entries = parseGitLogOutput(logResult.stdout ?? "");
         if (!cancelled) {
           setGitLog(entries);
+          setNonRepoError("");
           setGitLogError("");
         }
       } catch (err) {
         if (cancelled) return;
+        const message = `${err ?? "Unable to load git log."}`;
         setRepoRoot("");
         setGitLog([]);
-        setGitLogError(`${err ?? "Unable to load git log."}`);
+        setGitLogError(message);
+        setNonRepoError(isNotGitRepoError(message) ? message : "");
       }
     })();
     return () => {
@@ -916,6 +930,15 @@ export function GitCommitDrawer({
       setSelectedCommit(prefixMatches[0].hash);
     }
   }, [open, commit, isHeadSelected, gitLog, commitIndex]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (nonRepoError) {
+      setError("");
+      setLoading(false);
+      setData(undefined);
+    }
+  }, [open, nonRepoError]);
 
   const visibleLogEntries = useMemo(() => {
     if (gitLog.length === 0) return [] as GitLogEntry[];
@@ -1324,6 +1347,12 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     if (!open) return;
+    if (nonRepoError) {
+      setLoading(false);
+      setError("");
+      setData(undefined);
+      return;
+    }
     if (!projectId) {
       setError("Invalid commit or missing project.");
       setData(undefined);
@@ -1404,12 +1433,67 @@ export function GitCommitDrawer({
     commit,
     contextLines,
     isHeadSelected,
+    nonRepoError,
     reloadCounter,
   ]);
 
   const refreshAll = () => {
     setReloadCounter((n) => n + 1);
     setGitLogReloadCounter((n) => n + 1);
+  };
+
+  const initializeGitRepo = async () => {
+    if (!projectId) return;
+    setRepoBootstrapBusy(true);
+    setGitLogError("");
+    try {
+      let result = await runGitCommand({
+        projectId,
+        cwd,
+        args: ["init", "-b", "main"],
+      });
+      if (result.exit_code !== 0) {
+        result = await runGitCommand({
+          projectId,
+          cwd,
+          args: ["init"],
+        });
+      }
+      if (result.exit_code !== 0) {
+        throw new Error((result.stderr || result.stdout || "git init failed").trim());
+      }
+      setNonRepoError("");
+      setSelectedCommit(HEAD_REF);
+      refreshAll();
+      alert_message({ type: "info", message: "Initialized a new git repository." });
+    } catch (err) {
+      setGitLogError(`${err ?? "Unable to initialize git repository."}`);
+    } finally {
+      setRepoBootstrapBusy(false);
+    }
+  };
+
+  const requestAgentRepoSetup = async () => {
+    if (!onRequestAgentTurn) return;
+    setRepoBootstrapBusy(true);
+    try {
+      const prompt = [
+        "Set up this folder as a clean git repository for ongoing agent collaboration.",
+        `Working directory: ${cwd}`,
+        "Please do all of the following:",
+        "1. Initialize git in this directory.",
+        "2. Add a sensible .gitignore (exclude generated/build artifacts).",
+        "3. Stage appropriate source files.",
+        "4. Create an initial commit with a clear message.",
+        "5. Summarize exactly what you included/excluded.",
+      ].join("\n");
+      await onRequestAgentTurn(prompt);
+      onClose();
+    } catch (err) {
+      setGitLogError(`${err ?? "Unable to send setup request to codex."}`);
+    } finally {
+      setRepoBootstrapBusy(false);
+    }
   };
 
   const addUntrackedFile = async (path: string) => {
@@ -1602,6 +1686,10 @@ export function GitCommitDrawer({
   };
   const canFindInChat = typeof onFindInChat === "function";
   const findInChatEnabled = canFindInChat && Boolean(commit) && !isHeadSelected;
+  const hasTrackedHeadChanges = useMemo(
+    () => headStatusEntries.some((entry) => entry.tracked),
+    [headStatusEntries],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -1688,74 +1776,113 @@ export function GitCommitDrawer({
       onClose={onClose}
       destroyOnHidden
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 10,
-          flexWrap: "wrap",
-        }}
-      >
-        <Select
-          showSearch
-          size="small"
-          value={commit}
-          options={logOptions}
-          onChange={(value) => setSelectedCommit(value)}
-          placeholder="git log"
-          style={{ minWidth: 360, flex: "1 1 360px" }}
-          optionFilterProp="search"
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", height: 24 }}>
-            <Segmented
-              size="small"
-              value={reviewFilter}
-              options={REVIEW_FILTER_OPTIONS}
-              onChange={(value) => setReviewFilter(value as ReviewFilter)}
-              style={{
-                margin: 0,
-                display: "inline-flex",
-                alignItems: "center",
-                lineHeight: "24px",
-              }}
-            />
+      {!nonRepoError ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <Select
+            showSearch
+            size="small"
+            value={commit}
+            options={logOptions}
+            onChange={(value) => setSelectedCommit(value)}
+            placeholder="git log"
+            style={{ minWidth: 360, flex: "1 1 360px" }}
+            optionFilterProp="search"
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", height: 24 }}>
+              <Segmented
+                size="small"
+                value={reviewFilter}
+                options={REVIEW_FILTER_OPTIONS}
+                onChange={(value) => setReviewFilter(value as ReviewFilter)}
+                style={{
+                  margin: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  lineHeight: "24px",
+                }}
+              />
+            </div>
+            <Space.Compact size="small">
+              <Tooltip title="Newer commit (shortcut: k)">
+                <span style={{ display: "inline-flex" }}>
+                  <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
+                    Newer
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Older commit (shortcut: j)">
+                <span style={{ display: "inline-flex" }}>
+                  <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
+                    Older
+                  </Button>
+                </span>
+              </Tooltip>
+            </Space.Compact>
+            {canFindInChat ? (
+              <Button
+                size="small"
+                disabled={!findInChatEnabled}
+                onClick={() => {
+                  if (!commit || !onFindInChat) return;
+                  void onFindInChat(commit);
+                }}
+              >
+                Find in chat
+              </Button>
+            ) : null}
           </div>
-          <Space.Compact size="small">
-            <Tooltip title="Newer commit (shortcut: k)">
-              <span style={{ display: "inline-flex" }}>
-                <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
-                  Newer
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title="Older commit (shortcut: j)">
-              <span style={{ display: "inline-flex" }}>
-                <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
-                  Older
-                </Button>
-              </span>
-            </Tooltip>
-          </Space.Compact>
-          {canFindInChat ? (
-            <Button
-              size="small"
-              disabled={!findInChatEnabled}
-              onClick={() => {
-                if (!commit || !onFindInChat) return;
-                void onFindInChat(commit);
-              }}
-            >
-              Find in chat
-            </Button>
-          ) : null}
         </div>
-      </div>
+      ) : null}
       {gitLogError ? (
         <Alert type="warning" message={gitLogError} showIcon style={{ marginBottom: 10 }} />
       ) : null}
-      {isHeadSelected ? (
+      {nonRepoError ? (
+        <div
+          style={{
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+            background: "#fafafa",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <Typography.Text strong>This folder is not a git repository.</Typography.Text>
+          <Typography.Text type="secondary" style={{ whiteSpace: "pre-wrap" }}>
+            {nonRepoError}
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            Path: <code>{cwd}</code>
+          </Typography.Text>
+          <Space wrap>
+            <Button
+              type="primary"
+              onClick={() => void initializeGitRepo()}
+              loading={repoBootstrapBusy}
+            >
+              Initialize Git Repo
+            </Button>
+            <Button
+              onClick={() => void requestAgentRepoSetup()}
+              disabled={!onRequestAgentTurn}
+              loading={repoBootstrapBusy}
+            >
+              Ask Agent to Set Up Repo
+            </Button>
+          </Space>
+        </div>
+      ) : isHeadSelected ? (
         <div
           style={{
             border: `1px solid ${COLORS.GRAY_LL}`,
@@ -1781,11 +1908,15 @@ export function GitCommitDrawer({
               size="small"
               type="primary"
               onClick={() => void requestAgentCommit({ includeSummary: true })}
-              disabled={headCommitBusy}
+              disabled={headCommitBusy || !hasTrackedHeadChanges}
             >
               Commit with AI Summary
             </Button>
-            <Button size="small" onClick={() => void doHeadCommit()}>
+            <Button
+              size="small"
+              onClick={() => void doHeadCommit()}
+              disabled={!hasTrackedHeadChanges}
+            >
               Commit
             </Button>
             <Button
@@ -1799,6 +1930,11 @@ export function GitCommitDrawer({
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Commit uses all tracked changes only (`git commit -a`). Untracked files are excluded.
           </Typography.Text>
+          {!hasTrackedHeadChanges ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              No tracked changes are currently staged for one-click commit.
+            </Typography.Text>
+          ) : null}
           {headCommitError ? (
             <Alert type="error" showIcon message={headCommitError} />
           ) : null}
