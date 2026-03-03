@@ -80,6 +80,21 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - Wait helpers: `waitForSelector`, `waitForUrl`, `waitForIdle`
 - Snapshot helper: DOM snapshot or screenshot from CLI
 
+### Screenshot support (high priority)
+
+- Add a first-class command:
+  - `cocalc browser screenshot --fullpage`
+  - `cocalc browser screenshot --selector "<css>"`
+  - `cocalc browser screenshot --path /tmp/repro.png`
+  - `cocalc browser screenshot --wait-for-idle`
+- Return structured output including:
+  - saved path
+  - image dimensions
+  - target context (API URL, browser id, project id, active URL)
+- Optional follow-ups:
+  - emit as blob/attachment for chat debugging
+  - include an automatic timestamped default output path
+
 ### Script ergonomics
 
 - `--json` structured output mode for script results and errors
@@ -92,6 +107,19 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - Guardrail warning if browser session URL host/port mismatches `COCALC_API_URL`
 - Optional dry-run mode that shows which session would be targeted
 - Way to run the lite daemon and full hub daemon (launchpad) so that it is easy to get exactly the env needed, e.g., a valid `COCALC_BEARER_TOKEN`, etc. by just running a pnpm command.
+
+## Implementation pointers
+
+Most of this command surface is implemented in:
+
+- `src/packages/cli/src/bin/commands/browser/*`
+- `src/packages/cli/src/bin/cocalc.ts`
+
+Recommended approach:
+
+1. Implement screenshot as a new `browser` subcommand in CLI.
+2. Reuse existing browser session resolution and context output.
+3. Keep output compatible with agent workflows (`--json` + shell-friendly text).
 
 ## Known good pattern for live bug work
 
