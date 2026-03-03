@@ -68,6 +68,7 @@ import { SyncOutlined } from "@ant-design/icons";
 import { AgentMessageStatus } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
+import { findInChatAndOpenFirstResult } from "./find-in-chat";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -1603,6 +1604,49 @@ export default function Message({
     actions.scrollToIndex(index);
   }
 
+  function sendGitBrowserAgentPrompt(prompt: string) {
+    if (actions == null) return;
+    const trimmed = `${prompt ?? ""}`.trim();
+    if (!trimmed) return;
+    actions.sendReply({
+      message:
+        typeof (message as any)?.toJS === "function"
+          ? (message as any).toJS()
+          : message,
+      reply: trimmed,
+    });
+  }
+
+  function logGitBrowserDirectCommit({
+    hash,
+    subject,
+  }: {
+    hash: string;
+    subject: string;
+  }) {
+    if (actions == null || !messageThreadId) return;
+    const commit = `${hash ?? ""}`.trim();
+    if (!commit) return;
+    const reply_to = threadRootIso ? new Date(threadRootIso) : undefined;
+    const lines = ["Committed manually.", `Commit: ${commit}`];
+    if (`${subject ?? ""}`.trim()) {
+      lines.push(`Subject: ${subject.trim()}`);
+    }
+    actions.sendChat({
+      extraInput: lines.join("\n"),
+      reply_to,
+      reply_thread_id: messageThreadId,
+      preserveSelectedThread: true,
+      skipModelDispatch: true,
+    });
+  }
+
+  function findCommitInCurrentChat(query: string) {
+    if (actions == null || !project_id || !path) return;
+    void findInChatAndOpenFirstResult({ actions, project_id, path, query });
+    setOpenCommitHash(undefined);
+  }
+
   function renderComposeReply() {
     if (!replying) return;
 
@@ -1850,6 +1894,9 @@ export default function Message({
         open={openCommitHash != null}
         onClose={() => setOpenCommitHash(undefined)}
         fontSize={font_size}
+        onRequestAgentTurn={sendGitBrowserAgentPrompt}
+        onDirectCommitLogged={logGitBrowserDirectCommit}
+        onFindInChat={findCommitInCurrentChat}
       />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>

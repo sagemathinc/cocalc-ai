@@ -79,12 +79,14 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const [searchInput, setSearchInput] = useState<string>(
     desc?.get?.("data-search") ?? "",
   );
+  const externalSearch = `${desc?.get?.("data-search") ?? ""}`;
+  const externalSearchThread = `${desc?.get?.("data-searchThread") ?? ""}`.trim();
   const { error, setError, index, doRefresh, fragmentKey, isIndexing } =
     useSearchIndex();
   const messageCache = chatActions?.messageCache;
   const [cacheVersion, setCacheVersion] = useState<number>(0);
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | undefined>(
-    undefined,
+    externalSearchThread || undefined,
   );
   const [result, setResult] = useState<MatchHit[]>([]);
   const [archivedResult, setArchivedResult] = useState<MatchHit[]>([]);
@@ -225,6 +227,18 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       setSelectedThreadKey(threadOptions[0]?.key);
     }
   }, [selectedThreadKey, threadOptions]);
+
+  useEffect(() => {
+    if (externalSearch === search && externalSearch === searchInput) return;
+    setSearchInput(externalSearch);
+    setSearch(externalSearch);
+  }, [externalSearch, search, searchInput]);
+
+  useEffect(() => {
+    if (!externalSearchThread) return;
+    if (selectedThreadKey === externalSearchThread) return;
+    setSelectedThreadKey(externalSearchThread);
+  }, [externalSearchThread, selectedThreadKey]);
 
   const searchScope = selectedThreadKey ?? threadOptions[0]?.key;
 

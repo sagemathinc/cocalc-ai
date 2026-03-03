@@ -461,6 +461,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAgent,
     threadAppearance,
     preserveSelectedThread,
+    skipModelDispatch,
   }: {
     input?: string;
     sender_id?: string;
@@ -487,6 +488,8 @@ export class ChatActions extends Actions<ChatState> {
     };
     // if true, don't switch selected thread (e.g., combined feed)
     preserveSelectedThread?: boolean;
+    // if true, append message but never dispatch to model/agent runtime
+    skipModelDispatch?: boolean;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -690,14 +693,18 @@ export class ChatActions extends Actions<ChatState> {
     });
     track("send_chat", { project_id, path });
 
-    (async () => {
-      await this.processLLM({
-        message,
-        reply_to: resolvedReplyToIso ? new Date(resolvedReplyToIso) : time_stamp,
-        tag,
-        acpSendMode: send_mode,
-      });
-    })();
+    if (!skipModelDispatch) {
+      (async () => {
+        await this.processLLM({
+          message,
+          reply_to: resolvedReplyToIso
+            ? new Date(resolvedReplyToIso)
+            : time_stamp,
+          tag,
+          acpSendMode: send_mode,
+        });
+      })();
+    }
     return time_stamp_str;
   };
 

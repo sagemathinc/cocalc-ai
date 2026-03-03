@@ -50,6 +50,7 @@ import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
 } from "./agent-session-index";
+import { findInChatAndOpenFirstResult } from "./find-in-chat";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -281,6 +282,9 @@ export function ChatPanel({
     undefined,
   );
   const [gitBrowserCommitHash, setGitBrowserCommitHash] = useState<
+    string | undefined
+  >(undefined);
+  const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
 
@@ -814,10 +818,75 @@ export function ChatPanel({
           ? codexConfig.workingDirectory.trim()
           : undefined;
       setGitBrowserCwd(wd);
+      setGitBrowserThreadKey(threadKey);
       setGitBrowserCommitHash(undefined);
       setGitBrowserOpen(true);
     },
     [actions],
+  );
+
+  const sendGitBrowserAgentPrompt = useCallback(
+    async (prompt: string) => {
+      const trimmed = `${prompt ?? ""}`.trim();
+      if (!trimmed) return;
+      const targetThreadKey =
+        gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+      const thread_id = normalizeThreadKey(targetThreadKey);
+      const metadata =
+        targetThreadKey != null
+          ? actions.getThreadMetadata?.(targetThreadKey, { threadId: thread_id })
+          : undefined;
+      const threadDate =
+        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
+      const reply_to =
+        threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
+      actions.sendChat({
+        extraInput: trimmed,
+        reply_to,
+        reply_thread_id: thread_id,
+        preserveSelectedThread: true,
+      });
+    },
+    [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
+  );
+
+  const logGitBrowserDirectCommit = useCallback(
+    async ({ hash, subject }: { hash: string; subject: string }) => {
+      const commit = `${hash ?? ""}`.trim();
+      if (!commit) return;
+      const targetThreadKey =
+        gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+      const thread_id = normalizeThreadKey(targetThreadKey);
+      const metadata =
+        targetThreadKey != null
+          ? actions.getThreadMetadata?.(targetThreadKey, { threadId: thread_id })
+          : undefined;
+      const threadDate =
+        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
+      const reply_to =
+        threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
+      const lines = ["Committed manually.", `Commit: ${commit}`];
+      if (`${subject ?? ""}`.trim()) {
+        lines.push(`Subject: ${subject.trim()}`);
+      }
+      actions.sendChat({
+        extraInput: lines.join("\n"),
+        reply_to,
+        reply_thread_id: thread_id,
+        preserveSelectedThread: true,
+        skipModelDispatch: true,
+      });
+    },
+    [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
+  );
+
+  const findCommitInCurrentChat = useCallback(
+    async (query: string) => {
+      await findInChatAndOpenFirstResult({ actions, project_id, path, query });
+      setGitBrowserOpen(false);
+      setGitBrowserThreadKey(undefined);
+    },
+    [actions, path, project_id],
   );
 
   const renderChatContent = () => (
@@ -954,8 +1023,14 @@ export function ChatPanel({
         cwdOverride={gitBrowserCwd}
         commitHash={gitBrowserCommitHash}
         open={gitBrowserOpen}
-        onClose={() => setGitBrowserOpen(false)}
+        onClose={() => {
+          setGitBrowserOpen(false);
+          setGitBrowserThreadKey(undefined);
+        }}
         fontSize={fontSize}
+        onRequestAgentTurn={sendGitBrowserAgentPrompt}
+        onDirectCommitLogged={logGitBrowserDirectCommit}
+        onFindInChat={findCommitInCurrentChat}
       />
     </div>
   );
