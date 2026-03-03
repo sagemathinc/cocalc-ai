@@ -68,6 +68,7 @@ import { SyncOutlined } from "@ant-design/icons";
 import { AgentMessageStatus } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
+import { findInChatAndOpenFirstResult } from "./find-in-chat";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -1640,6 +1641,12 @@ export default function Message({
     });
   }
 
+  function findCommitInCurrentChat(query: string) {
+    if (actions == null || !project_id || !path) return;
+    void findInChatAndOpenFirstResult({ actions, project_id, path, query });
+    setOpenCommitHash(undefined);
+  }
+
   function renderComposeReply() {
     if (!replying) return;
 
@@ -1889,6 +1896,7 @@ export default function Message({
         fontSize={font_size}
         onRequestAgentTurn={sendGitBrowserAgentPrompt}
         onDirectCommitLogged={logGitBrowserDirectCommit}
+        onFindInChat={findCommitInCurrentChat}
       />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>
