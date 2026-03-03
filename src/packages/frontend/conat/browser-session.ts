@@ -18,6 +18,9 @@ import {
 } from "./extensions-runtime";
 import {
   createBrowserSessionService,
+  type BrowserActionName,
+  type BrowserActionRequest,
+  type BrowserActionResult,
   type BrowserAutomationPosture,
   type BrowserExecPolicyV1,
   type BrowserExecOperation,
@@ -544,12 +547,57 @@ function normalizePolicy(policy: unknown): BrowserExecPolicyV1 | undefined {
     row.allow_raw_exec == null ? undefined : !!row.allow_raw_exec;
   const allowed_project_ids = asStringArray(row.allowed_project_ids);
   const allowed_origins = asStringArray(row.allowed_origins);
+  const allowed_actions = asStringArray(row.allowed_actions)?.filter(
+    (x): x is BrowserActionName =>
+      x === "click" ||
+      x === "type" ||
+      x === "press" ||
+      x === "wait_for_selector" ||
+      x === "wait_for_url",
+  );
   return {
     version: BROWSER_EXEC_POLICY_VERSION,
     ...(allow_raw_exec != null ? { allow_raw_exec } : {}),
     ...(allowed_project_ids ? { allowed_project_ids } : {}),
     ...(allowed_origins ? { allowed_origins } : {}),
+    ...(allowed_actions?.length ? { allowed_actions } : {}),
   };
+}
+
+function enforcePolicyScope({
+  project_id,
+  posture,
+  policy,
+}: {
+  project_id: string;
+  posture?: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+}): {
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+} {
+  const normalizedPosture = normalizePosture(posture);
+  const normalizedPolicy = normalizePolicy(policy);
+
+  const allowedProjects = normalizedPolicy?.allowed_project_ids ?? [];
+  if (allowedProjects.length > 0 && !allowedProjects.includes(project_id)) {
+    throw Error(
+      `browser exec denied by policy: project '${project_id}' not in allowed_project_ids`,
+    );
+  }
+
+  const allowedOrigins = normalizedPolicy?.allowed_origins ?? [];
+  if (allowedOrigins.length > 0) {
+    const currentOrigin =
+      typeof location !== "undefined" ? `${location.origin ?? ""}`.trim() : "";
+    if (!currentOrigin || !allowedOrigins.includes(currentOrigin)) {
+      throw Error(
+        `browser exec denied by policy: origin '${currentOrigin || "<unknown>"}' not in allowed_origins`,
+      );
+    }
+  }
+
+  return { posture: normalizedPosture, ...(normalizedPolicy ? { policy: normalizedPolicy } : {}) };
 }
 
 function enforceExecPolicy({
@@ -564,37 +612,43 @@ function enforceExecPolicy({
   posture: BrowserAutomationPosture;
   policy?: BrowserExecPolicyV1;
 } {
-  const normalizedPosture = normalizePosture(posture);
-  const normalizedPolicy = normalizePolicy(policy);
-  if (normalizedPosture !== "prod") {
-    return { posture: normalizedPosture, ...(normalizedPolicy ? { policy: normalizedPolicy } : {}) };
+  const scoped = enforcePolicyScope({ project_id, posture, policy });
+  if (scoped.posture !== "prod") {
+    return scoped;
   }
-
-  if (!normalizedPolicy?.allow_raw_exec) {
+  if (!scoped.policy?.allow_raw_exec) {
     throw Error(
       "raw browser exec is blocked in prod posture; provide explicit policy.allow_raw_exec=true or use typed browser actions",
     );
   }
+  return scoped;
+}
 
-  const allowedProjects = normalizedPolicy.allowed_project_ids ?? [];
-  if (allowedProjects.length > 0 && !allowedProjects.includes(project_id)) {
+function enforceActionPolicy({
+  project_id,
+  action_name,
+  posture,
+  policy,
+}: {
+  project_id: string;
+  action_name: BrowserActionName;
+  posture?: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+}): {
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+} {
+  const scoped = enforcePolicyScope({ project_id, posture, policy });
+  if (scoped.posture !== "prod") {
+    return scoped;
+  }
+  const allowed = scoped.policy?.allowed_actions ?? [];
+  if (allowed.length > 0 && !allowed.includes(action_name)) {
     throw Error(
-      `browser exec denied by policy: project '${project_id}' not in allowed_project_ids`,
+      `browser action denied by policy: action '${action_name}' not in allowed_actions`,
     );
   }
-
-  const allowedOrigins = normalizedPolicy.allowed_origins ?? [];
-  if (allowedOrigins.length > 0) {
-    const currentOrigin =
-      typeof location !== "undefined" ? `${location.origin ?? ""}`.trim() : "";
-    if (!currentOrigin || !allowedOrigins.includes(currentOrigin)) {
-      throw Error(
-        `browser exec denied by policy: origin '${currentOrigin || "<unknown>"}' not in allowed_origins`,
-      );
-    }
-  }
-
-  return { posture: normalizedPosture, ...(normalizedPolicy ? { policy: normalizedPolicy } : {}) };
+  return scoped;
 }
 
 function asFinitePositive(value: unknown): number | undefined {
@@ -2853,6 +2907,382 @@ export function createBrowserSessionAutomation({
     }
   };
 
+  const sleepMs = async (ms: number): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  };
+
+  const isElementVisible = (element: Element | null): boolean => {
+    if (!element || !(element as any).isConnected) return false;
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(element);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.opacity === "0"
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  const querySelectorSafe = (selector: string): Element | null => {
+    try {
+      return document.querySelector(selector);
+    } catch (err) {
+      throw Error(`invalid selector '${selector}': ${err}`);
+    }
+  };
+
+  const waitForSelectorState = async ({
+    selector,
+    state,
+    timeout_ms,
+    poll_ms,
+  }: {
+    selector: string;
+    state: "attached" | "visible" | "hidden" | "detached";
+    timeout_ms: number;
+    poll_ms: number;
+  }): Promise<{ element: Element | null; state: string }> => {
+    const started = Date.now();
+    const deadline = started + timeout_ms;
+    for (;;) {
+      const element = querySelectorSafe(selector);
+      const visible = isElementVisible(element);
+      const ok =
+        state === "attached"
+          ? !!element
+          : state === "visible"
+            ? !!element && visible
+            : state === "hidden"
+              ? !element || !visible
+              : !element;
+      if (ok) {
+        return { element, state };
+      }
+      if (Date.now() >= deadline) {
+        throw Error(
+          `timed out waiting for selector '${selector}' to become ${state}`,
+        );
+      }
+      await sleepMs(Math.max(20, poll_ms));
+    }
+  };
+
+  const dispatchClick = ({
+    element,
+    button,
+    clickIndex,
+    clickCount,
+  }: {
+    element: Element;
+    button: "left" | "middle" | "right";
+    clickIndex: number;
+    clickCount: number;
+  }) => {
+    const target = element as HTMLElement;
+    const detail = clickIndex + 1;
+    const buttonNum = button === "middle" ? 1 : button === "right" ? 2 : 0;
+    if (button === "left" && clickCount === 1 && typeof target.click === "function") {
+      target.click();
+      return;
+    }
+    const init: MouseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: buttonNum,
+      buttons: buttonNum === 0 ? 1 : buttonNum === 1 ? 4 : 2,
+      detail,
+    };
+    target.dispatchEvent(new MouseEvent("mousedown", init));
+    target.dispatchEvent(new MouseEvent("mouseup", init));
+    if (button === "right") {
+      target.dispatchEvent(new MouseEvent("contextmenu", init));
+    } else if (button === "middle") {
+      target.dispatchEvent(new MouseEvent("auxclick", init));
+    } else {
+      target.dispatchEvent(new MouseEvent("click", init));
+      if (detail === 2) {
+        target.dispatchEvent(new MouseEvent("dblclick", init));
+      }
+    }
+  };
+
+  const executeBrowserAction = async ({
+    project_id,
+    action,
+  }: {
+    project_id: string;
+    action: BrowserActionRequest;
+  }): Promise<BrowserActionResult> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      throw Error("browser automation actions require a DOM environment");
+    }
+    const started = Date.now();
+    if (!action || typeof action !== "object") {
+      throw Error("action must be specified");
+    }
+
+    if (action.name === "wait_for_url") {
+      const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+      const poll_ms = asFinitePositive(action.poll_ms) ?? 100;
+      const url = `${action.url ?? ""}`.trim();
+      const includes = `${action.includes ?? ""}`.trim();
+      const rawRegex = `${action.regex ?? ""}`.trim();
+      let regex: RegExp | undefined;
+      if (rawRegex) {
+        try {
+          const m = rawRegex.match(/^\/(.*)\/([gimsuy]*)$/);
+          regex = m ? new RegExp(m[1], m[2]) : new RegExp(rawRegex);
+        } catch (err) {
+          throw Error(`invalid regex '${rawRegex}': ${err}`);
+        }
+      }
+      if (!url && !includes && !regex) {
+        throw Error("wait_for_url requires url, includes, or regex");
+      }
+      const matches = (href: string) =>
+        (!url || href === url) &&
+        (!includes || href.includes(includes)) &&
+        (!regex || regex.test(href));
+      const deadline = started + timeout_ms;
+      for (;;) {
+        const href = `${location.href ?? ""}`;
+        if (matches(href)) {
+          return {
+            name: "wait_for_url",
+            ok: true,
+            page_url: href,
+            elapsed_ms: Date.now() - started,
+            ...(url ? { expected_url: url } : {}),
+            ...(includes ? { includes } : {}),
+            ...(rawRegex ? { regex: rawRegex } : {}),
+          };
+        }
+        if (Date.now() >= deadline) {
+          throw Error("timed out waiting for URL match");
+        }
+        await sleepMs(Math.max(20, poll_ms));
+      }
+    }
+
+    if (action.name === "wait_for_selector") {
+      const selector = `${action.selector ?? ""}`.trim();
+      if (!selector) {
+        throw Error("selector must be specified");
+      }
+      const state = action.state ?? "visible";
+      const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+      const poll_ms = asFinitePositive(action.poll_ms) ?? 100;
+      const { element } = await waitForSelectorState({
+        selector,
+        state,
+        timeout_ms,
+        poll_ms,
+      });
+      return {
+        name: "wait_for_selector",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        selector,
+        state,
+        matched: !!element,
+      };
+    }
+
+    if (action.name === "click") {
+      const selector = `${action.selector ?? ""}`.trim();
+      if (!selector) {
+        throw Error("selector must be specified");
+      }
+      const button = action.button ?? "left";
+      if (!["left", "middle", "right"].includes(button)) {
+        throw Error("button must be one of left|middle|right");
+      }
+      const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+      const click_count = Math.max(
+        1,
+        Math.floor(asFinitePositive(action.click_count) ?? 1),
+      );
+      const wait_for_navigation_ms =
+        asFiniteNonNegative(action.wait_for_navigation_ms) ?? 0;
+      const before = `${location.href ?? ""}`;
+      const { element } = await waitForSelectorState({
+        selector,
+        state: "visible",
+        timeout_ms,
+        poll_ms: 50,
+      });
+      if (!element) {
+        throw Error(`selector '${selector}' not found`);
+      }
+      if (element instanceof HTMLElement) {
+        element.scrollIntoView({ block: "center", inline: "center" });
+      }
+      for (let i = 0; i < click_count; i++) {
+        dispatchClick({ element, button, clickIndex: i, clickCount: click_count });
+      }
+      let navigation_changed = false;
+      if (wait_for_navigation_ms > 0) {
+        const navDeadline = Date.now() + wait_for_navigation_ms;
+        for (;;) {
+          const href = `${location.href ?? ""}`;
+          if (href !== before) {
+            navigation_changed = true;
+            break;
+          }
+          if (Date.now() >= navDeadline) break;
+          await sleepMs(50);
+        }
+      }
+      return {
+        name: "click",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        selector,
+        button,
+        click_count,
+        navigation_changed,
+        before_url: before,
+      };
+    }
+
+    if (action.name === "type") {
+      const selector = `${action.selector ?? ""}`.trim();
+      if (!selector) {
+        throw Error("selector must be specified");
+      }
+      const text = `${action.text ?? ""}`;
+      const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+      const append = !!action.append && !action.clear;
+      const clear = !!action.clear;
+      const { element } = await waitForSelectorState({
+        selector,
+        state: "visible",
+        timeout_ms,
+        poll_ms: 50,
+      });
+      if (!element) {
+        throw Error(`selector '${selector}' not found`);
+      }
+      if (element instanceof HTMLElement) {
+        element.focus();
+      }
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement
+      ) {
+        if (clear) {
+          element.value = "";
+        }
+        element.value = append ? `${element.value}${text}` : text;
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+        if (typeof element.setSelectionRange === "function") {
+          const pos = element.value.length;
+          element.setSelectionRange(pos, pos);
+        }
+      } else if ((element as HTMLElement).isContentEditable) {
+        const editable = element as HTMLElement;
+        if (clear || !append) {
+          editable.textContent = "";
+        }
+        editable.textContent = `${editable.textContent ?? ""}${text}`;
+        editable.dispatchEvent(new Event("input", { bubbles: true }));
+      } else {
+        throw Error(
+          `selector '${selector}' does not target a typeable input/textarea/contenteditable element`,
+        );
+      }
+      if (action.submit && element instanceof HTMLElement) {
+        const form = element.closest("form") as HTMLFormElement | null;
+        if (form && typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        } else if (form) {
+          form.submit();
+        }
+      }
+      return {
+        name: "type",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        selector,
+        chars: text.length,
+        append,
+        clear,
+        submitted: !!action.submit,
+      };
+    }
+
+    if (action.name === "press") {
+      const key = `${action.key ?? ""}`.trim();
+      if (!key) {
+        throw Error("key must be specified");
+      }
+      const timeout_ms = asFinitePositive(action.timeout_ms) ?? 30_000;
+      const selector = `${action.selector ?? ""}`.trim();
+      let target: Element | null = null;
+      if (selector) {
+        const found = await waitForSelectorState({
+          selector,
+          state: "visible",
+          timeout_ms,
+          poll_ms: 50,
+        });
+        target = found.element;
+      } else {
+        target = (document.activeElement as Element | null) ?? document.body;
+      }
+      if (!target) {
+        throw Error("unable to determine target for key press");
+      }
+      if (target instanceof HTMLElement) {
+        target.focus();
+      }
+      const init: KeyboardEventInit = {
+        key,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        ctrlKey: !!action.ctrl,
+        altKey: !!action.alt,
+        shiftKey: !!action.shift,
+        metaKey: !!action.meta,
+      };
+      const keyDown = new KeyboardEvent("keydown", init);
+      const proceed = target.dispatchEvent(keyDown);
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
+      if (proceed && key === "Enter" && target instanceof HTMLElement) {
+        const form = target.closest("form") as HTMLFormElement | null;
+        if (form && typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        }
+      }
+      return {
+        name: "press",
+        ok: true,
+        page_url: location.href,
+        elapsed_ms: Date.now() - started,
+        key,
+        ...(selector ? { selector } : {}),
+        ctrl: !!action.ctrl,
+        alt: !!action.alt,
+        shift: !!action.shift,
+        meta: !!action.meta,
+      };
+    }
+
+    throw Error(`unsupported browser action '${(action as any).name ?? ""}'`);
+  };
+
   const clearTimer = () => {
     if (timer) {
       clearTimeout(timer);
@@ -2975,6 +3405,22 @@ export function createBrowserSessionAutomation({
       return {
         ok: true,
         result: await executeBrowserScript({ project_id, code }),
+      };
+    },
+    action: async ({ project_id, action, posture, policy }) => {
+      const actionName = `${(action as any)?.name ?? ""}`.trim() as BrowserActionName;
+      if (!actionName) {
+        throw Error("action.name must be specified");
+      }
+      enforceActionPolicy({
+        project_id,
+        action_name: actionName,
+        posture,
+        policy,
+      });
+      return {
+        ok: true,
+        result: await executeBrowserAction({ project_id, action }),
       };
     },
     startExec: async ({ project_id, code, posture, policy }) => {

@@ -35,7 +35,7 @@ The CLI can override via `--posture dev|prod` (or env var `COCALC_BROWSER_POSTUR
 
 ## Current Baseline (implemented)
 
-`browser exec` now accepts:
+`browser exec` and `browser action` now accept:
 
 - `posture`
 - `policy`
@@ -43,6 +43,7 @@ The CLI can override via `--posture dev|prod` (or env var `COCALC_BROWSER_POSTUR
 In `prod` posture:
 
 - raw JS exec is blocked unless policy explicitly sets `allow_raw_exec: true`.
+- typed actions are allowed by default, optionally constrained by `allowed_actions`.
 - optional project and origin scoping are enforced.
 
 Policy schema (`version: 1`):
@@ -52,7 +53,8 @@ Policy schema (`version: 1`):
   "version": 1,
   "allow_raw_exec": true,
   "allowed_project_ids": ["<workspace-uuid>"],
-  "allowed_origins": ["https://example.cocalc.com"]
+  "allowed_origins": ["https://example.cocalc.com"],
+  "allowed_actions": ["click", "type", "press", "wait_for_selector", "wait_for_url"]
 }
 ```
 
@@ -65,7 +67,7 @@ Notes:
 
 Even with `allow_raw_exec`, JS is still Turing-complete and hard to reason about for risk.
 
-Long-term safe model requires:
+Long-term safe model still requires:
 
 1. typed action API (`click`, `type`, `press`, `waitForSelector`, etc.),
 2. server-side policy checks for each action verb,
@@ -94,11 +96,14 @@ However, this should complement (not replace) action-level policy:
 - posture + policy enforcement in browser-session service
 - prod blocks raw exec by default
 
-### Phase B: Typed actions
+### Phase B: Typed actions (first pass complete)
 
-- add `browser action click/type/press/wait-for-selector/wait-for-url`
-- classify actions (`read`, `input`, `navigate`, `privileged`)
-- enforce policy per action instead of raw script
+- implemented:
+  - `browser action click/type/press/wait-for-selector/wait-for-url`
+  - action policy allow-list (`allowed_actions`)
+- remaining:
+  - classify actions (`read`, `input`, `navigate`, `privileged`)
+  - privileged-action gating and approvals
 
 ### Phase C: Approval + audit
 
@@ -133,4 +138,3 @@ Future:
 
 - Building complete policy UX before baseline enforcement exists.
 - Pretending prod safety exists while unrestricted raw JS remains default.
-

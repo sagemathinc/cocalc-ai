@@ -22,6 +22,9 @@ import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
+  BrowserActionName,
+  BrowserActionRequest,
+  BrowserActionResult,
   BrowserAutomationPosture,
   BrowserExecPolicyV1,
 } from "@cocalc/conat/service/browser-session";
@@ -65,6 +68,12 @@ type BrowserSessionClient = {
     posture?: BrowserAutomationPosture;
     policy?: BrowserExecPolicyV1;
   }) => Promise<{ ok: true; result: unknown }>;
+  action: (opts: {
+    project_id: string;
+    action: BrowserActionRequest;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }) => Promise<{ ok: true; result: BrowserActionResult }>;
 };
 
 type BrowserExecStatus =
@@ -493,6 +502,15 @@ function defaultPostureForApiUrl(apiUrl: string): BrowserAutomationPosture {
   }
 }
 
+function parseOptionalDurationMs(
+  value: unknown,
+  fallbackMs: number,
+): number | undefined {
+  const clean = `${value ?? ""}`.trim();
+  if (!clean) return undefined;
+  return durationToMs(clean, fallbackMs);
+}
+
 function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
   let parsed: unknown;
   try {
@@ -515,6 +533,19 @@ function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
       .filter((x) => x.length > 0);
     return out.length ? out : undefined;
   };
+  const cleanActionArray = (value: unknown): BrowserActionName[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const out = value
+      .map((x) => `${x ?? ""}`.trim())
+      .filter((x): x is BrowserActionName =>
+        x === "click" ||
+        x === "type" ||
+        x === "press" ||
+        x === "wait_for_selector" ||
+        x === "wait_for_url",
+      );
+    return out.length ? out : undefined;
+  };
   return {
     version: 1,
     ...(row.allow_raw_exec == null
@@ -526,7 +557,44 @@ function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
     ...(cleanStringArray(row.allowed_origins)
       ? { allowed_origins: cleanStringArray(row.allowed_origins) }
       : {}),
+    ...(cleanActionArray(row.allowed_actions)
+      ? { allowed_actions: cleanActionArray(row.allowed_actions) }
+      : {}),
   };
+}
+
+async function resolveBrowserPolicyAndPosture({
+  posture,
+  policyFile,
+  allowRawExec,
+  apiBaseUrl,
+}: {
+  posture?: string;
+  policyFile?: string;
+  allowRawExec?: boolean;
+  apiBaseUrl?: string;
+}): Promise<{
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+}> {
+  const resolvedPosture =
+    normalizeBrowserPosture(posture) ??
+    normalizeBrowserPosture(process.env.COCALC_BROWSER_POSTURE) ??
+    defaultPostureForApiUrl(`${apiBaseUrl ?? ""}`);
+  let policy: BrowserExecPolicyV1 | undefined;
+  const cleanPolicyFile = `${policyFile ?? ""}`.trim();
+  if (cleanPolicyFile) {
+    const policyRaw = await readFile(cleanPolicyFile, "utf8");
+    policy = parseBrowserExecPolicy(policyRaw);
+  }
+  if (allowRawExec) {
+    policy = {
+      ...(policy ?? { version: 1 }),
+      version: 1,
+      allow_raw_exec: true,
+    };
+  }
+  return { posture: resolvedPosture, ...(policy ? { policy } : {}) };
 }
 
 function browserHintFromOption(value: unknown): string | undefined {
@@ -607,6 +675,42 @@ function sessionTargetContext(
     ...(project_id ? { target_project_id: project_id } : {}),
     ...(target_warning ? { target_warning } : {}),
   };
+}
+
+async function resolveTargetProjectId({
+  deps,
+  ctx,
+  workspace,
+  projectId,
+  sessionInfo,
+}: {
+  deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+  ctx: any;
+  workspace?: string;
+  projectId?: string;
+  sessionInfo: BrowserSessionInfo;
+}): Promise<string> {
+  const projectIdHint = `${projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  const workspaceHint = `${workspace ?? ""}`.trim();
+  if (projectIdHint) {
+    return isValidUUID(projectIdHint)
+      ? projectIdHint
+      : (await deps.resolveWorkspace(ctx, projectIdHint)).project_id;
+  }
+  if (workspaceHint) {
+    return (await deps.resolveWorkspace(ctx, workspaceHint)).project_id;
+  }
+  if (`${sessionInfo.active_project_id ?? ""}`.trim()) {
+    return (await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)).project_id;
+  }
+  if (sessionInfo.open_projects?.length === 1 && sessionInfo.open_projects[0]?.project_id) {
+    return (
+      await deps.resolveWorkspace(ctx, sessionInfo.open_projects[0].project_id)
+    ).project_id;
+  }
+  throw new Error(
+    "workspace/project is required; pass --project-id, -w/--workspace, or focus a workspace tab in the target browser session",
+  );
 }
 
 function loadProfileSelection(
@@ -1630,25 +1734,13 @@ export function registerBrowserCommand(
               undefined,
             activeOnly: !!opts.activeOnly,
           });
-          const project_id = projectIdHint
-            ? projectIdHint
-            : workspaceHint
-              ? (await deps.resolveWorkspace(ctx, workspaceHint)).project_id
-              : sessionInfo.active_project_id
-                ? (await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)).project_id
-                : sessionInfo.open_projects?.length === 1 &&
-                    sessionInfo.open_projects[0]?.project_id
-                  ? (
-                      await deps.resolveWorkspace(
-                        ctx,
-                        sessionInfo.open_projects[0].project_id,
-                      )
-                    ).project_id
-                  : (() => {
-                      throw new Error(
-                        "workspace/project is required; pass --project-id, -w/--workspace, or focus a workspace tab in the target browser session",
-                      );
-                    })();
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
 
           const selector = `${opts.selector ?? "body"}`.trim() || "body";
           const scale = Number(opts.scale ?? "1");
@@ -1795,25 +1887,13 @@ export function registerBrowserCommand(
               undefined,
             activeOnly: !!opts.activeOnly,
           });
-          const project_id = projectIdHint
-            ? projectIdHint
-            : workspaceHint
-              ? (await deps.resolveWorkspace(ctx, workspaceHint)).project_id
-              : sessionInfo.active_project_id
-                ? (await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)).project_id
-                : sessionInfo.open_projects?.length === 1 &&
-                    sessionInfo.open_projects[0]?.project_id
-                  ? (
-                      await deps.resolveWorkspace(
-                        ctx,
-                        sessionInfo.open_projects[0].project_id,
-                      )
-                    ).project_id
-                  : (() => {
-                      throw new Error(
-                        "workspace/project is required; pass --project-id, -w/--workspace, or focus a workspace tab in the target browser session",
-                      );
-                    })();
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -1847,23 +1927,12 @@ export function registerBrowserCommand(
           if (!script) {
             throw new Error("javascript code must be specified");
           }
-          const posture =
-            normalizeBrowserPosture(opts.posture) ??
-            normalizeBrowserPosture(process.env.COCALC_BROWSER_POSTURE) ??
-            defaultPostureForApiUrl(`${ctx.apiBaseUrl ?? ""}`);
-          let policy: BrowserExecPolicyV1 | undefined;
-          const policyFile = `${opts.policyFile ?? ""}`.trim();
-          if (policyFile) {
-            const policyRaw = await readFile(policyFile, "utf8");
-            policy = parseBrowserExecPolicy(policyRaw);
-          }
-          if (opts.allowRawExec) {
-            policy = {
-              ...(policy ?? { version: 1 }),
-              version: 1,
-              allow_raw_exec: true,
-            };
-          }
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            allowRawExec: opts.allowRawExec,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
           if (opts.async) {
             const started = await browserClient.startExec({
               project_id,
@@ -1905,6 +1974,625 @@ export function registerBrowserCommand(
             code: script,
             posture,
             policy,
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  const action = browser
+    .command("action")
+    .description("run typed browser automation actions without raw JS");
+
+  action
+    .command("click <selector>")
+    .description("click an element by CSS selector")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--button <left|middle|right>", "mouse button", "left")
+    .option("--click-count <n>", "number of clicks", "1")
+    .option(
+      "--timeout <duration>",
+      "timeout for locating/interacting with element (e.g. 30s, 2m)",
+    )
+    .option(
+      "--wait-for-navigation <duration>",
+      "after click, wait for URL change up to this duration",
+    )
+    .action(
+      async (
+        selector: string,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          button?: string;
+          clickCount?: string;
+          timeout?: string;
+          waitForNavigation?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action click", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const waitForNavigationMs = parseOptionalDurationMs(
+            opts.waitForNavigation,
+            5_000,
+          );
+          const cleanSelector = `${selector ?? ""}`.trim();
+          if (!cleanSelector) {
+            throw new Error("selector must be specified");
+          }
+          const button = `${opts.button ?? "left"}`.trim() as
+            | "left"
+            | "middle"
+            | "right";
+          if (!["left", "middle", "right"].includes(button)) {
+            throw new Error("--button must be one of left|middle|right");
+          }
+          const clickCount = Number(opts.clickCount ?? "1");
+          if (!Number.isFinite(clickCount) || clickCount <= 0) {
+            throw new Error("--click-count must be a positive number");
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "click",
+              selector: cleanSelector,
+              button,
+              click_count: Math.floor(clickCount),
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+              ...(waitForNavigationMs != null
+                ? { wait_for_navigation_ms: waitForNavigationMs }
+                : {}),
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("type <selector> <text...>")
+    .description("type text into an input/textarea/contenteditable target")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--append", "append text instead of replacing existing value")
+    .option("--clear", "clear existing content before typing")
+    .option("--submit", "submit closest form after typing")
+    .option(
+      "--timeout <duration>",
+      "timeout for locating/interacting with element (e.g. 30s, 2m)",
+    )
+    .action(
+      async (
+        selector: string,
+        text: string[],
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          append?: boolean;
+          clear?: boolean;
+          submit?: boolean;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action type", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const cleanSelector = `${selector ?? ""}`.trim();
+          const cleanText = (text ?? []).join(" ");
+          if (!cleanSelector) {
+            throw new Error("selector must be specified");
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "type",
+              selector: cleanSelector,
+              text: cleanText,
+              append: !!opts.append,
+              clear: !!opts.clear,
+              submit: !!opts.submit,
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("press <key>")
+    .description("dispatch a key press on target selector (or active element)")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--selector <css>", "optional CSS selector to focus before key press")
+    .option("--ctrl", "press Control/Ctrl modifier")
+    .option("--alt", "press Alt modifier")
+    .option("--shift", "press Shift modifier")
+    .option("--meta", "press Meta/Command modifier")
+    .option(
+      "--timeout <duration>",
+      "timeout for locating/interacting with element (e.g. 30s, 2m)",
+    )
+    .action(
+      async (
+        key: string,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          selector?: string;
+          ctrl?: boolean;
+          alt?: boolean;
+          shift?: boolean;
+          meta?: boolean;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action press", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const cleanKey = `${key ?? ""}`.trim();
+          if (!cleanKey) {
+            throw new Error("key must be specified");
+          }
+          const cleanSelector = `${opts.selector ?? ""}`.trim();
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "press",
+              key: cleanKey,
+              ...(cleanSelector ? { selector: cleanSelector } : {}),
+              ctrl: !!opts.ctrl,
+              alt: !!opts.alt,
+              shift: !!opts.shift,
+              meta: !!opts.meta,
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("wait-for-selector <selector>")
+    .description("wait for selector state transition")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--state <attached|visible|hidden|detached>",
+      "desired selector state",
+      "visible",
+    )
+    .option(
+      "--timeout <duration>",
+      "timeout for wait operation (e.g. 30s, 2m)",
+    )
+    .option(
+      "--poll-ms <duration>",
+      "poll interval while waiting (e.g. 100ms, 1s)",
+      "100ms",
+    )
+    .action(
+      async (
+        selector: string,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          state?: string;
+          timeout?: string;
+          pollMs?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(
+          command,
+          "browser action wait-for-selector",
+          async (ctx) => {
+            const profileSelection = loadProfileSelection(deps, command);
+            const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+            const browserHint = browserHintFromOption(opts.browser) ?? "";
+            const workspaceHint = `${opts.workspace ?? ""}`.trim();
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint,
+              fallbackBrowserId: profileSelection.browser_id,
+              requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() ||
+                `${projectIdHint ?? ""}`.trim() ||
+                undefined,
+              activeOnly: !!opts.activeOnly,
+            });
+            const project_id = await resolveTargetProjectId({
+              deps,
+              ctx,
+              workspace: workspaceHint,
+              projectId: projectIdHint,
+              sessionInfo,
+            });
+            const { posture, policy } = await resolveBrowserPolicyAndPosture({
+              posture: opts.posture,
+              policyFile: opts.policyFile,
+              apiBaseUrl: ctx.apiBaseUrl,
+            });
+            const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+            const pollMs = Math.max(20, durationToMs(`${opts.pollMs ?? "100ms"}`, 100));
+            const cleanSelector = `${selector ?? ""}`.trim();
+            const state = `${opts.state ?? "visible"}`.trim().toLowerCase() as
+              | "attached"
+              | "visible"
+              | "hidden"
+              | "detached";
+            if (!cleanSelector) {
+              throw new Error("selector must be specified");
+            }
+            if (!["attached", "visible", "hidden", "detached"].includes(state)) {
+              throw new Error("--state must be one of attached|visible|hidden|detached");
+            }
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+              timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+            }) as BrowserSessionClient;
+            const response = await browserClient.action({
+              project_id,
+              posture,
+              policy,
+              action: {
+                name: "wait_for_selector",
+                selector: cleanSelector,
+                state,
+                ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+                poll_ms: pollMs,
+              },
+            });
+            return {
+              browser_id: sessionInfo.browser_id,
+              project_id,
+              posture,
+              ok: !!response?.ok,
+              result: response?.result ?? null,
+              ...sessionTargetContext(ctx, sessionInfo, project_id),
+            };
+          },
+        );
+      },
+    );
+
+  action
+    .command("wait-for-url [pattern]")
+    .description("wait for URL match by exact URL, substring, or regex")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--url <value>", "exact URL match")
+    .option("--includes <value>", "URL substring match")
+    .option("--regex <value>", "JavaScript regex pattern")
+    .option(
+      "--timeout <duration>",
+      "timeout for wait operation (e.g. 30s, 2m)",
+    )
+    .option(
+      "--poll-ms <duration>",
+      "poll interval while waiting (e.g. 100ms, 1s)",
+      "100ms",
+    )
+    .action(
+      async (
+        pattern: string | undefined,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          url?: string;
+          includes?: string;
+          regex?: string;
+          timeout?: string;
+          pollMs?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action wait-for-url", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const pollMs = Math.max(20, durationToMs(`${opts.pollMs ?? "100ms"}`, 100));
+          const cleanPattern = `${pattern ?? ""}`.trim();
+          const url = `${opts.url ?? ""}`.trim();
+          const includes = `${opts.includes ?? cleanPattern}`.trim();
+          const regex = `${opts.regex ?? ""}`.trim();
+          if (!url && !includes && !regex) {
+            throw new Error(
+              "URL matcher required: pass [pattern], --url, --includes, or --regex",
+            );
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "wait_for_url",
+              ...(url ? { url } : {}),
+              ...(includes ? { includes } : {}),
+              ...(regex ? { regex } : {}),
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+              poll_ms: pollMs,
+            },
           });
           return {
             browser_id: sessionInfo.browser_id,

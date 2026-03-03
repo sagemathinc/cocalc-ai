@@ -38,6 +38,65 @@ export type BrowserExecOperation = {
 
 export type BrowserAutomationPosture = "dev" | "prod";
 
+export type BrowserActionName =
+  | "click"
+  | "type"
+  | "press"
+  | "wait_for_selector"
+  | "wait_for_url";
+
+export type BrowserActionRequest =
+  | {
+      name: "click";
+      selector: string;
+      button?: "left" | "middle" | "right";
+      click_count?: number;
+      timeout_ms?: number;
+      wait_for_navigation_ms?: number;
+    }
+  | {
+      name: "type";
+      selector: string;
+      text: string;
+      append?: boolean;
+      clear?: boolean;
+      submit?: boolean;
+      timeout_ms?: number;
+    }
+  | {
+      name: "press";
+      key: string;
+      selector?: string;
+      ctrl?: boolean;
+      alt?: boolean;
+      shift?: boolean;
+      meta?: boolean;
+      timeout_ms?: number;
+    }
+  | {
+      name: "wait_for_selector";
+      selector: string;
+      state?: "attached" | "visible" | "hidden" | "detached";
+      timeout_ms?: number;
+      poll_ms?: number;
+    }
+  | {
+      name: "wait_for_url";
+      url?: string;
+      includes?: string;
+      regex?: string;
+      timeout_ms?: number;
+      poll_ms?: number;
+    };
+
+export type BrowserActionResult = {
+  name: BrowserActionName;
+  ok: true;
+  page_url?: string;
+  elapsed_ms?: number;
+  [key: string]: unknown;
+};
+
 export type BrowserExecPolicyV1 = {
   version: 1;
   // Explicitly allow raw JS execution in prod posture.
@@ -46,6 +105,8 @@ export type BrowserExecPolicyV1 = {
   allowed_project_ids?: string[];
   // Optional hard scope for browser location.origin values.
   allowed_origins?: string[];
+  // Optional allow-list for typed action names.
+  allowed_actions?: BrowserActionName[];
 };
 
 export interface BrowserSessionServiceApi {
@@ -74,6 +135,12 @@ export interface BrowserSessionServiceApi {
     posture?: BrowserAutomationPosture;
     policy?: BrowserExecPolicyV1;
   }) => Promise<{ ok: true; result: unknown }>;
+  action: (opts: {
+    project_id: string;
+    action: BrowserActionRequest;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }) => Promise<{ ok: true; result: BrowserActionResult }>;
   startExec: (opts: {
     project_id: string;
     code: string;
