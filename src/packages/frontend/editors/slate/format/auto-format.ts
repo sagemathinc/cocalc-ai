@@ -480,47 +480,59 @@ function autoformatListAtStart(editor: Editor): boolean {
     return false;
   }
 
-  let node;
+  const paragraphEntry = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) => Element.isElement(node) && node.type === "paragraph",
+  }) as [Element, Path] | undefined;
+  if (!paragraphEntry) {
+    return false;
+  }
+  const [, paragraphPath] = paragraphEntry;
+
+  const listAncestor = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) =>
+      Element.isElement(node) &&
+      (node.type === "list_item" ||
+        node.type === "bullet_list" ||
+        node.type === "ordered_list"),
+  });
+  if (listAncestor) {
+    return false;
+  }
+
+  const paragraphStart = Editor.start(editor, paragraphPath);
+  let typedPrefix = "";
   try {
-    [node] = Editor.node(editor, selection.focus.path);
+    typedPrefix = Editor.string(editor, {
+      anchor: paragraphStart,
+      focus: selection.focus,
+    });
   } catch {
     return false;
   }
 
-  if (!Text.isText(node)) {
-    return false;
-  }
-
-  const path = selection.focus.path;
-  const pos = path[path.length - 1];
-  if (path.length !== 2 || pos !== 0) {
-    return false;
-  }
-
-  const text = node.text;
-  const markerMatch = text.match(/^([-*+]|\d+[.)])\s?/);
+  const markerMatch = typedPrefix.match(/^([-*+]|\d+[.)])\s?$/);
   if (!markerMatch) {
     return false;
   }
 
   const marker = markerMatch[1];
-  const markerLen = marker.length;
-  const offset = selection.focus.offset;
-  if (offset !== markerLen && offset !== markerLen + 1) {
+  const paragraphText = Editor.string(editor, paragraphPath);
+  const fullMarkerMatch = paragraphText.match(/^([-*+]|\d+[.)])(?:\s|$)/);
+  if (!fullMarkerMatch || fullMarkerMatch[1] !== marker) {
     return false;
   }
 
-  const blockPath = path.slice(0, path.length - 1);
-  const hasSpace = text.slice(markerLen, markerLen + 1) === " ";
-  const deleteCount = hasSpace ? markerLen + 1 : markerLen;
-
   Editor.withoutNormalizing(editor, () => {
     Transforms.delete(editor, {
-      at: { path, offset: 0 },
-      distance: deleteCount,
+      at: {
+        anchor: paragraphStart,
+        focus: selection.focus,
+      },
     });
     Transforms.wrapNodes(editor, { type: "list_item" } as Element, {
-      at: blockPath,
+      at: paragraphPath,
     });
     const isOrdered = /^\d/.test(marker);
     Transforms.wrapNodes(
@@ -530,12 +542,12 @@ function autoformatListAtStart(editor: Editor): boolean {
         ...(isOrdered ? { start: parseInt(marker, 10) || 1 } : null),
         tight: true,
       } as Element,
-      { at: blockPath },
+      { at: paragraphPath },
     );
   });
 
   const listEntry = Editor.above(editor, {
-    at: editor.selection ?? blockPath,
+    at: editor.selection ?? paragraphPath,
     match: (node) =>
       Element.isElement(node) &&
       (node.type === "bullet_list" || node.type === "ordered_list"),
@@ -579,14 +591,14 @@ function autoformatListAtStart(editor: Editor): boolean {
         // ignore invalid path
       }
     };
-    tryPath(blockPath);
-    tryPath(Path.next(blockPath));
-    if (blockPath[blockPath.length - 1] > 0) {
-      tryPath(Path.previous(blockPath));
+    tryPath(paragraphPath);
+    tryPath(Path.next(paragraphPath));
+    if (paragraphPath[paragraphPath.length - 1] > 0) {
+      tryPath(Path.previous(paragraphPath));
     }
   }
   if (!listPath) {
-    listPath = blockPath;
+    listPath = paragraphPath;
   }
   const listItemEntry = Editor.nodes(editor, {
     at: listPath,
@@ -616,7 +628,7 @@ function autoformatListAtStart(editor: Editor): boolean {
     (editor as any).__autoformatDidBlock = true;
     (editor as any).__autoformatSelection = { anchor: focus, focus };
     slateDebug("autoformat:list:focus", {
-      blockPath,
+      blockPath: paragraphPath,
       listItemPath,
       listPath,
       focus,
@@ -905,15 +917,13 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   let r: boolean | Function = false;
   try {
     let paragraphTextOverride: string | undefined;
-    if (selection.focus.path.length >= 2 && selection.focus.path[selection.focus.path.length - 1] === 0) {
-      const paragraphEntry = Editor.above(editor, {
-        at: selection.focus.path,
-        match: (node) => Element.isElement(node) && node.type === "paragraph",
-      });
-      if (paragraphEntry) {
-        const [, paragraphPath] = paragraphEntry;
-        paragraphTextOverride = Editor.string(editor, paragraphPath).trimRight();
-      }
+    const paragraphEntry = Editor.above(editor, {
+      at: selection.focus.path,
+      match: (node) => Element.isElement(node) && node.type === "paragraph",
+    });
+    if (paragraphEntry) {
+      const [, paragraphPath] = paragraphEntry;
+      paragraphTextOverride = Editor.string(editor, paragraphPath).trimRight();
     }
     Editor.withoutNormalizing(editor, () => {
       editor.apply({
@@ -1036,10 +1046,12 @@ function markdownAutoformatAt(
   text = text.slice(start + 1).trim();
   if (text.length == 0) return false;
 
+  let allowBlockAutoformatFromSplitMarker = false;
+
   // If we're at the start of a paragraph and doing a block-level autoformat
   // (e.g., list), include the rest of the paragraph text so it doesn't get
   // dropped when we replace the paragraph with a block element.
-  if (path.length >= 2 && pos === 0 && start <= 0) {
+  if (path.length >= 2 && start <= 0) {
     const paragraphText =
       paragraphTextOverride ??
       (() => {
@@ -1051,8 +1063,13 @@ function markdownAutoformatAt(
         const [, paragraphPath] = paragraphEntry;
         return Editor.string(editor, paragraphPath).trimRight();
       })();
-    if (paragraphText.length > 0) {
+    const markerOnlyHere = /^([-*+]|\d+[.)])\s*$/.test(text);
+    const paragraphStartsWithMarker = /^([-*+]|\d+[.)])/.test(paragraphText);
+    const useFullParagraph =
+      pos === 0 || (markerOnlyHere && paragraphStartsWithMarker);
+    if (useFullParagraph && paragraphText.length > 0) {
       text = paragraphText;
+      allowBlockAutoformatFromSplitMarker = pos > 0 && markerOnlyHere;
       // If a list marker was typed without a space (e.g., "-foo") and
       // the autoformat is triggered by the space key, insert the missing
       // space so markdown parsing recognizes the list.
@@ -1121,7 +1138,7 @@ function markdownAutoformatAt(
     Text.isText(doc[0].children[0]);
 
   if (!isInline) {
-    if (start > 0 || pos > 0) {
+    if (start > 0 || (pos > 0 && !allowBlockAutoformatFromSplitMarker)) {
       return false;
     }
   }

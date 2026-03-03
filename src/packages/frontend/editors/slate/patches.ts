@@ -104,6 +104,15 @@ function normalizeLocation(editor: Editor, location) {
     return ensurePoint(editor, location);
   }
   if (Path.isPath(location)) {
+    try {
+      if (Node.has(editor, location)) {
+        // Preserve valid Path locations as paths so core Slate APIs such as
+        // Editor.string(editor, path) continue to mean "the full node range".
+        return location;
+      }
+    } catch {
+      // fall through to point coercion below
+    }
     return pointAtPath(editor, location);
   }
   return location;

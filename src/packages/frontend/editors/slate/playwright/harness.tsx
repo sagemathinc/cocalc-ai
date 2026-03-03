@@ -78,6 +78,15 @@ declare global {
       getSelectionA: () => Range | null;
       getSelectionB: () => Range | null;
     };
+    __slateEditableTest?: {
+      getMarkdown: () => string;
+      setMarkdown: (value: string) => void;
+      setSelection: (range: Range) => boolean;
+      getSelection: () => Range | null;
+      setSelectionFromMarkdownPosition: (pos: { line: number; ch: number }) => boolean;
+      getSelectionMarkdownPos: () => { line: number; ch: number } | null;
+      getValue: () => Descendant[];
+    };
   }
 }
 
@@ -121,6 +130,7 @@ function Harness(): React.JSX.Element {
       ? new URLSearchParams()
       : new URLSearchParams(window.location.search);
   const blockMode = params.get("block") === "1";
+  const editableMode = params.get("editable") === "1";
   const collabBlockMode = params.get("collabBlock") === "1";
   const collabMode = params.get("collab") === "1";
   const autoformatMode = params.get("autoformat") === "1";
@@ -361,6 +371,92 @@ function Harness(): React.JSX.Element {
                 controlRef={controlRefB}
               />
             </div>
+          </div>
+        </FrameContext.Provider>
+      </HarnessErrorBoundary>
+    );
+  }
+
+  if (editableMode) {
+    class FakeSyncstring {
+      value: string;
+      listeners: Set<() => void>;
+      constructor(initial: string) {
+        this.value = initial;
+        this.listeners = new Set();
+      }
+      to_str() {
+        return this.value;
+      }
+      set(value: string) {
+        this.value = value;
+        this.emit();
+      }
+      on(event: string, cb: () => void) {
+        if (event === "change") this.listeners.add(cb);
+      }
+      removeListener(event: string, cb: () => void) {
+        if (event === "change") this.listeners.delete(cb);
+      }
+      emit() {
+        for (const cb of this.listeners) cb();
+      }
+    }
+
+    const [markdown, setMarkdown] = useState<string>(initialMarkdown);
+    const syncRef = useRef(new FakeSyncstring(markdown));
+    const controlRef = useRef<any>(null);
+    const getValueRef = useRef<() => string>(() => "");
+
+    useEffect(() => {
+      window.__slateEditableTest = {
+        getMarkdown: () => getValueRef.current?.() ?? "",
+        setMarkdown: (value: string) => {
+          syncRef.current.set(value);
+          setMarkdown(value);
+        },
+        setSelection: (range: Range) => {
+          return controlRef.current?.setSelection?.(range) ?? false;
+        },
+        getSelection: () => {
+          return controlRef.current?.getSelection?.() ?? null;
+        },
+        setSelectionFromMarkdownPosition: (pos: { line: number; ch: number }) => {
+          return controlRef.current?.setSelectionFromMarkdownPosition?.(pos) ?? false;
+        },
+        getSelectionMarkdownPos: () => {
+          return controlRef.current?.getMarkdownPositionForSelection?.() ?? null;
+        },
+        getValue: () => {
+          return controlRef.current?.getValue?.() ?? [];
+        },
+      };
+    }, []);
+
+    const actions = {
+      _syncstring: syncRef.current,
+      set_value: (value: string) => {
+        syncRef.current.set(value);
+        setMarkdown(value);
+      },
+      syncstring_commit: () => undefined,
+    };
+
+    return (
+      <HarnessErrorBoundary>
+        <FrameContext.Provider value={defaultFrameContext}>
+          <div style={{ padding: 16, width: 460, height: 320 }}>
+            <EditableMarkdown
+              value={markdown}
+              actions={actions}
+              minimal={true}
+              height="300px"
+              noVfill={true}
+              hidePath={true}
+              disableWindowing={true}
+              controlRef={controlRef}
+              getValueRef={getValueRef}
+            />
           </div>
         </FrameContext.Provider>
       </HarnessErrorBoundary>

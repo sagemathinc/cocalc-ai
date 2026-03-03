@@ -4,7 +4,7 @@
  */
 
 import { useCallback } from "react";
-import { Descendant, Editor, Transforms } from "slate";
+import { Descendant, Editor, Range, Transforms } from "slate";
 import { ReactEditor } from "./slate-react";
 import type { SlateEditor } from "./types";
 import { blockSelectionPoint, pointFromOffsetInDoc } from "./block-selection-utils";
@@ -61,24 +61,46 @@ export function useBlockSelection(options: Options) {
       if (!Editor.hasPath(editor, anchor.path) || !Editor.hasPath(editor, focus.path)) {
         return false;
       }
+      const desired = { anchor, focus };
       try {
         // Preserve prior behavior: focus first, then set selection.
         ReactEditor.focus(editor);
-        Transforms.setSelection(editor, { anchor, focus });
+        Transforms.setSelection(editor, desired);
       } catch (_err) {
         // If focus fails due stale DOM selection mapping, retry with a fresh selection.
         try {
-          Transforms.setSelection(editor, { anchor, focus });
+          Transforms.setSelection(editor, desired);
           ReactEditor.focus(editor);
         } catch (_retryErr) {
           // Last resort: clear selection state and retry once.
           try {
             Transforms.deselect(editor);
             ReactEditor.focus(editor);
-            Transforms.setSelection(editor, { anchor, focus });
+            Transforms.setSelection(editor, desired);
           } catch (_lastErr) {
             return false;
           }
+        }
+      }
+      // Some async remap flows can drop selection immediately after setSelection;
+      // validate and retry once so callers don't get a false success.
+      if (
+        editor.selection == null ||
+        !Range.isRange(editor.selection) ||
+        !Range.equals(editor.selection, desired)
+      ) {
+        try {
+          Transforms.setSelection(editor, desired);
+          ReactEditor.focus(editor);
+        } catch {
+          return false;
+        }
+        if (
+          editor.selection == null ||
+          !Range.isRange(editor.selection) ||
+          !Range.equals(editor.selection, desired)
+        ) {
+          return false;
         }
       }
       return true;

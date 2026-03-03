@@ -18,3 +18,20 @@ test("stripBlankParagraphs keeps non-whitespace paragraphs even if blank flag is
   expect(withoutBlanks).toHaveLength(1);
   expect(withoutBlanks[0]?.["type"]).toBe("paragraph");
 });
+
+test("markdown parser preserves blank quoted line between quoted paragraphs", () => {
+  const markdown = "> foo\n> \n> bar\n\nx";
+  const doc = markdown_to_slate(markdown, false, {}) as any[];
+  const quote = doc.find((n) => n?.type === "blockquote");
+  expect(quote).toBeTruthy();
+  expect(Array.isArray(quote?.children)).toBe(true);
+  if (Array.isArray(quote?.children)) {
+    expect(quote.children.length).toBe(3);
+    expect(quote.children[0]?.type).toBe("paragraph");
+    expect(quote.children[1]?.type).toBe("paragraph");
+    expect(quote.children[2]?.type).toBe("paragraph");
+    expect(quote.children[0]?.children?.[0]?.text ?? "").toContain("foo");
+    expect(quote.children[1]?.children?.[0]?.text ?? "").toBe("");
+    expect(quote.children[2]?.children?.[0]?.text ?? "").toContain("bar");
+  }
+});

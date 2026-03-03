@@ -183,7 +183,7 @@ These items lock down secure multi-user cloud behavior.
 
 These are high-visibility issues for tester confidence.
 
-### A2.1 Plus/Lite drag-and-drop upload broken on remote machines
+### A2.1 (done) Plus/Lite drag-and-drop upload broken on remote machines
 
 **Task:** "plus/lite drag-n-drop upload doesn't work"
 
@@ -196,7 +196,7 @@ These are high-visibility issues for tester confidence.
 
 ---
 
-### A2.2 Slate image resize crash
+### A2.2 (done) Slate image resize crash
 
 **Task:** "resizing image in markdown block mode crashes (`saveValue` error)"
 
@@ -222,7 +222,7 @@ These are high-visibility issues for tester confidence.
 
 ---
 
-### A2.4 Agent/codex first - turns include CLI info + skill for browser use
+### A2.4 (done - basic) Agent/codex first - turns include CLI info + skill for browser use
 
 **Task:** "codex turns have agent CLI information and skill"
 

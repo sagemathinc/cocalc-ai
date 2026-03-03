@@ -97,6 +97,63 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   }
 
   if (block.type === "paragraph") {
+    const quoteEntry = Editor.above(editor, {
+      at: path,
+      match: (node) => Element.isElement(node) && node.type === "blockquote",
+      mode: "lowest",
+    });
+    if (quoteEntry != null) {
+      const [, quotePath] = quoteEntry;
+      // At the start of a quoted paragraph with an empty quoted sibling above,
+      // remove that empty quoted line instead of delegating to Slate's default
+      // merge behavior, which can corrupt quote structure.
+      if (path.length === quotePath.length + 1 && path[path.length - 1] > 0) {
+        const prevSiblingPath = Path.previous(path);
+        const prevSibling = Editor.node(editor, prevSiblingPath)[0] as any;
+        if (
+          Element.isElement(prevSibling) &&
+          prevSibling.type === "paragraph" &&
+          isWhitespaceParagraph(prevSibling)
+        ) {
+          Editor.withoutNormalizing(editor, () => {
+            Transforms.removeNodes(editor, { at: prevSiblingPath });
+            const shiftedPath = Path.previous(path);
+            const start = Editor.start(editor, shiftedPath);
+            Transforms.select(editor, start);
+          });
+          return true;
+        }
+      }
+    }
+
+    if (path[path.length - 1] > 1 && isWhitespaceParagraph(block)) {
+      const prevPath = Path.previous(path);
+      const prevNode = Editor.node(editor, prevPath)[0] as any;
+      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+        Transforms.removeNodes(editor, { at: prevPath });
+        return true;
+      }
+    }
+    if (path[path.length - 1] > 1) {
+      const immediatePrevPath = Path.previous(path);
+      const immediatePrevNode = Editor.node(editor, immediatePrevPath)[0] as any;
+      if (
+        Element.isElement(immediatePrevNode) &&
+        immediatePrevNode.type === "paragraph" &&
+        isWhitespaceParagraph(immediatePrevNode)
+      ) {
+        const quotePath = Path.previous(immediatePrevPath);
+        const quoteNode = Editor.node(editor, quotePath)[0] as any;
+        if (Element.isElement(quoteNode) && quoteNode.type === "blockquote") {
+          Editor.withoutNormalizing(editor, () => {
+            Transforms.removeNodes(editor, { at: immediatePrevPath });
+            const shiftedPath = Path.previous(path);
+            pullParagraphIntoPreviousBlockquote(editor, shiftedPath);
+          });
+          return true;
+        }
+      }
+    }
     if (path[path.length - 1] > 0 && isWhitespaceParagraph(block)) {
       const prevPath = Path.previous(path);
       const prevNode = Editor.node(editor, prevPath)[0] as any;
@@ -105,7 +162,7 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
         return true;
       }
     }
-    if (pullParagraphIntoEmptyBlockquote(editor, path)) {
+    if (pullParagraphIntoPreviousBlockquote(editor, path)) {
       return true;
     }
     return;
@@ -125,7 +182,7 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   }
 }
 
-function pullParagraphIntoEmptyBlockquote(editor: Editor, path: Path): boolean {
+function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolean {
   if (path[path.length - 1] === 0) return false;
   const prevPath = Path.previous(path);
   let prevNode;
@@ -137,25 +194,70 @@ function pullParagraphIntoEmptyBlockquote(editor: Editor, path: Path): boolean {
   if (!Element.isElement(prevNode) || prevNode.type !== "blockquote") {
     return false;
   }
-  if (Editor.string(editor, prevPath) !== "") {
-    return false;
-  }
 
   Editor.withoutNormalizing(editor, () => {
-    const quoteNode = Editor.node(editor, prevPath)[0] as Element;
-    if (quoteNode.children.length > 0) {
+    // Remove trailing empty quote paragraphs so joins prefer meaningful text.
+    while (true) {
+      const quoteNode = Editor.node(editor, prevPath)[0] as Element;
+      if (!Array.isArray(quoteNode.children) || quoteNode.children.length <= 1) {
+        break;
+      }
       const lastIndex = quoteNode.children.length - 1;
       const lastPath = prevPath.concat(lastIndex);
-      if (Editor.string(editor, lastPath) === "") {
-        Transforms.removeNodes(editor, { at: lastPath });
+      const lastNode = Editor.node(editor, lastPath)[0];
+      const nodeText = Node.string(lastNode as any);
+      if (
+        !Element.isElement(lastNode) ||
+        lastNode.type !== "paragraph" ||
+        nodeText !== ""
+      ) {
+        break;
+      }
+      Transforms.removeNodes(editor, { at: lastPath });
+    }
+
+    const quoteAfterTrim = Editor.node(editor, prevPath)[0] as Element;
+    const insertIndex = quoteAfterTrim.children.length;
+    const targetPath = prevPath.concat(insertIndex);
+    const mergeTargetPath =
+      insertIndex > 0 ? prevPath.concat(insertIndex - 1) : undefined;
+    const joinBoundary =
+      mergeTargetPath != null ? Editor.end(editor, mergeTargetPath) : undefined;
+
+    Transforms.moveNodes(editor, { at: path, to: targetPath });
+    if (mergeTargetPath != null && joinBoundary != null) {
+      const movedNode = Editor.node(editor, targetPath)[0];
+      const mergeTargetNode = Editor.node(editor, mergeTargetPath)[0];
+      if (
+        Element.isElement(movedNode) &&
+        Element.isElement(mergeTargetNode) &&
+        movedNode.type === "paragraph" &&
+        mergeTargetNode.type === "paragraph"
+      ) {
+        const insertPoint = Editor.end(editor, mergeTargetPath);
+        const movedChildren = JSON.parse(
+          JSON.stringify((movedNode as any).children ?? []),
+        );
+        if (Array.isArray(movedChildren) && movedChildren.length > 0) {
+          Transforms.insertFragment(editor, movedChildren as any, {
+            at: insertPoint,
+          } as any);
+        }
+        Transforms.removeNodes(editor, { at: targetPath });
+        Transforms.select(editor, joinBoundary);
+        return;
       }
     }
-    const updatedQuote = Editor.node(editor, prevPath)[0] as Element;
-    const insertIndex = updatedQuote.children.length;
-    const targetPath = prevPath.concat(insertIndex);
-    Transforms.moveNodes(editor, { at: path, to: targetPath });
-    const start = Editor.start(editor, targetPath);
-    Transforms.select(editor, start);
+
+    try {
+      const start = Editor.start(editor, targetPath);
+      Transforms.select(editor, start);
+    } catch {
+      // If normalization changed the moved path shape, fall back to selecting
+      // the end of the blockquote to avoid throwing.
+      const end = Editor.end(editor, prevPath);
+      Transforms.select(editor, end);
+    }
   });
 
   return true;

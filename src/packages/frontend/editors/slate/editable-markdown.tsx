@@ -207,6 +207,7 @@ interface Props {
   controlRef?: MutableRefObject<{
     setSelection?: (selection: any) => boolean;
     getSelection?: () => any;
+    getValue?: () => any;
     moveCursorToEndOfLine: () => void;
     allowNextValueUpdateWhileFocused?: () => void;
     setValueNow?: (value: string) => void;
@@ -432,6 +433,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           }
         },
         getSelection: () => ed.selection ?? null,
+        getValue: () => ed.children,
         moveCursorToEndOfLine: () => control.moveCursorToEndOfLine(ed),
         allowNextValueUpdateWhileFocused: () => {
           allowFocusedValueUpdateRef.current = true;

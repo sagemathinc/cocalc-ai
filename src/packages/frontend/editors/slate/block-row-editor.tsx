@@ -56,6 +56,7 @@ import { buildCodeBlockDecorations } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
 import { debugSyncLog } from "./block-sync-utils";
 import { normalizeBlockMarkdown } from "./block-markdown-utils";
+import useUpload from "./upload";
 
 const USE_BLOCK_GAP_CURSOR = false;
 const USE_BLOCK_CODE_SPACERS = false;
@@ -618,6 +619,18 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
         if (event.defaultPrevented) return;
+        if (event.key === "Backspace" && editor.selection == null) {
+          // Guard against browser-native backspace behavior when Slate selection
+          // is temporarily unavailable (e.g., during async remap/sync churn).
+          const fallback =
+            blockSelectionPoint(editor, "end") ?? blockSelectionPoint(editor, "start");
+          if (fallback) {
+            Transforms.setSelection(editor, { anchor: fallback, focus: fallback });
+            ReactEditor.focus(editor);
+          }
+          event.preventDefault();
+          return;
+        }
         if (
           (event.ctrlKey || event.metaKey) &&
           !event.altKey &&
@@ -1127,7 +1140,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       gapCursor?.index === index && gapCursor.side === "after";
     const showBoundary = SHOW_BLOCK_BOUNDARIES && index > 0;
 
-    return (
+    const rowBody = (
       <div
         ref={rowRef}
         style={{
@@ -1321,6 +1334,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         )}
       </div>
     );
+    return useUpload(editor as SlateEditor, rowBody);
   },
   (prev, next) => {
     const prevGap =

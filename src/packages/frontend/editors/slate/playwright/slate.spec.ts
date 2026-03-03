@@ -252,6 +252,320 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
   }
 });
 
+test("backspace with spacer + empty blockquote does not lose following text", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+
+  const initialValue = [
+    {
+      type: "paragraph",
+      spacer: true,
+      children: [{ text: "" }],
+    },
+    {
+      type: "blockquote",
+      children: [],
+    },
+    {
+      type: "paragraph",
+      spacer: false,
+      children: [{ text: "stuff" }],
+    },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [2, 0], offset: 0 },
+      focus: { path: [2, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+
+  expect(value).toBeDefined();
+  if (value) {
+    const allText = value.map((node) => nodeText(node)).join("\n");
+    expect(allText).toContain("stuff");
+  }
+});
+
+test("backspace after quoted text keeps quote content", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo bar" }] }],
+    },
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      expect(nodeText(quote)).toContain("foo bar");
+    }
+  }
+});
+
+test("backspace after quoted text and paragraph text preserves both", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo bar" }] }],
+    },
+    { type: "paragraph", children: [{ text: " stuff" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      expect(nodeText(quote)).toContain("foo bar stuff");
+    }
+  }
+});
+
+test("backspace after multiline quote with blank quoted line appends to last quoted paragraph", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [
+        { type: "paragraph", children: [{ text: "foo" }] },
+        { type: "paragraph", children: [{ text: "" }] },
+        { type: "paragraph", children: [{ text: "bar" }] },
+      ],
+    },
+    { type: "paragraph", children: [{ text: "x" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      expect(nodeText(quote)).toContain("foo");
+      expect(nodeText(quote)).toContain("barx");
+    }
+  }
+});
+
+test("backspace at start of quoted paragraph after empty quoted line removes only empty quoted line", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [
+        { type: "paragraph", children: [{ text: "foo" }] },
+        { type: "paragraph", children: [{ text: "" }] },
+        { type: "paragraph", children: [{ text: "bar" }] },
+      ],
+    },
+    { type: "paragraph", children: [{ text: "x" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 2, 0], offset: 0 },
+      focus: { path: [0, 2, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Backspace");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value).toBeDefined();
+  if (value) {
+    const quote = value.find((node) => node?.type === "blockquote");
+    expect(quote).toBeTruthy();
+    if (quote) {
+      const quoteChildren = quote.children ?? [];
+      expect(quoteChildren.length).toBe(2);
+      expect(nodeText(quoteChildren[0])).toBe("foo");
+      expect(nodeText(quoteChildren[1])).toBe("bar");
+      expect(quoteChildren.some((child) => child?.type === "blockquote")).toBe(
+        false,
+      );
+    }
+    const paragraph = value.find((node) => node?.type === "paragraph");
+    expect(nodeText(paragraph)).toBe("x");
+  }
+});
+
+test("backspace from paragraph below quote with embedded softbreak lines appends to bar (not foo)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            { text: "foo" },
+            {
+              type: "softbreak",
+              isInline: true,
+              isVoid: true,
+              children: [{ text: "" }],
+            },
+            {
+              type: "softbreak",
+              isInline: true,
+              isVoid: true,
+              children: [{ text: "" }],
+            },
+            { text: "bar" },
+          ],
+        },
+      ],
+    },
+    { type: "paragraph", children: [{ text: "x" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+  await page.keyboard.press("Backspace");
+
+  const text = await page.evaluate(() => window.__slateTest?.getText?.() ?? "");
+  expect(text).toContain("barx");
+  expect(text).not.toContain("foox");
+});
+
+test("backspace from paragraph below two-paragraph quote appends to bar (not foo)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+  await page.locator("[data-slate-editor]").click();
+
+  const initialValue = [
+    {
+      type: "blockquote",
+      children: [
+        { type: "paragraph", children: [{ text: "foo" }] },
+        { type: "paragraph", children: [{ text: "bar" }] },
+      ],
+    },
+    { type: "paragraph", children: [{ text: "x" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+  await page.keyboard.press("Backspace");
+
+  const text = await page.evaluate(() => window.__slateTest?.getText?.() ?? "");
+  expect(text).toContain("barx");
+  expect(text).not.toContain("foox");
+});
+
 test("autoformat quotes the current paragraph when typing > at start", async ({
   page,
 }) => {
@@ -515,6 +829,28 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   }).toMatch(/```[\s\S]*foo[\s\S]*```[\s\S]*Y/);
 });
 
+test("block editor: autoformat list marker at start of quoted line preserves trailing text", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?block=1&md=%3E%20foo");
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+
+  await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 2 });
+  await page.keyboard.type("- ");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.() ?? "");
+  }).toContain("> - foo");
+});
+
 test("block editor: ArrowLeft at block start moves to previous block end", async ({
   page,
 }) => {
@@ -698,6 +1034,202 @@ test("block editor: backspace at block start merges and keeps focus", async ({
   await expect.poll(async () => {
     return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
   }).toBe("abcZ123\n\n456");
+});
+
+test("block editor: backspace at start of paragraph after quote joins into quote", async ({
+  page,
+}) => {
+  const markdown = "> foo bar\n";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 0 });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toBe("> foo bar");
+});
+
+test("block editor: backspace at start of text after quote preserves following text", async ({
+  page,
+}) => {
+  const markdown = "> foo bar\n\n stuff";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toBe("> foo bar stuff");
+});
+
+test("block editor: backspace after empty quote does not crash", async ({
+  page,
+}) => {
+  const markdown = ">\n\nstuff";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toContain("stuff");
+});
+
+test("block editor: backspace at start of x after multi-line quote appends to final quoted line", async ({
+  page,
+}) => {
+  const markdown = "> foo\n>\n> bar\n\nx";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+  await page.evaluate(() => {
+    return window.__slateBlockTest?.setSelection?.(0, "end");
+  });
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).not.toContain("> foox");
+});
+
+test("editable markdown: backspace at start of x after multi-line quote appends to final quoted line", async ({
+  page,
+}) => {
+  const markdown = "> foo\n>\n> bar\n\nx";
+  await page.goto(
+    `http://127.0.0.1:4172/?editable=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateEditableTest?.getMarkdown === "function";
+  });
+
+  let xPath: number[] | null = null;
+  await expect.poll(async () => {
+    xPath = await page.evaluate(() => {
+      const value = window.__slateEditableTest?.getValue?.() as
+        | any[]
+        | undefined;
+      if (!Array.isArray(value) || value.length === 0) return null;
+      const findPath = (node: any, path: number[]): number[] | null => {
+        if (typeof node?.text === "string" && node.text === "x") {
+          return path;
+        }
+        if (!Array.isArray(node?.children)) return null;
+        for (let i = 0; i < node.children.length; i++) {
+          const hit = findPath(node.children[i], [...path, i]);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      for (let i = 0; i < value.length; i++) {
+        const hit = findPath(value[i], [i]);
+        if (hit) return hit;
+      }
+      return null;
+    });
+    return xPath;
+  }).not.toBeNull();
+  expect(Array.isArray(xPath)).toBe(true);
+
+  await page.evaluate((path) => {
+    window.__slateEditableTest?.setSelection?.({
+      anchor: { path, offset: 0 },
+      focus: { path, offset: 0 },
+    } as any);
+  }, xPath);
+
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
+  }).not.toContain("> foox");
+});
+
+test("editable markdown: typed quote flow then backspace before x keeps trailing quoted paragraph", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?editable=1&md=");
+  await page.waitForFunction(() => {
+    return typeof window.__slateEditableTest?.getMarkdown === "function";
+  });
+
+  const editor = page.locator("[data-slate-editor]").first();
+  await editor.click();
+  await page.keyboard.type("> foo");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("bar");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("x");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.() ?? "");
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.() ?? "");
+  }).not.toContain("> foox");
+});
+
+test("editable markdown: sync-set markdown then backspace before x appends to bar", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?editable=1&md=");
+  await page.waitForFunction(() => {
+    return typeof window.__slateEditableTest?.setMarkdown === "function";
+  });
+
+  await page.evaluate(() => {
+    window.__slateEditableTest?.setMarkdown?.("> foo\n>\n> bar\n\nx");
+  });
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
+  }).toContain("> bar");
+
+  await page.evaluate(() => {
+    window.__slateEditableTest?.setSelectionFromMarkdownPosition?.({
+      line: 6,
+      ch: 0,
+    });
+  });
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
+  }).toContain("> barx");
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
+  }).not.toContain("> foox");
 });
 
 test("sync: remote change to other block applies without deferring", async ({
