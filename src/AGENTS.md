@@ -31,6 +31,9 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 ## Git and Validation
 
 - Commit messages should be prefixed by area/package, e.g. `frontend/chat: ...`.
+- By default, write commit messages with:
+  - a concise first line (subject), and
+  - a detailed explanatory body (one or more paragraphs describing intent, key changes, and rationale).
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `prettier -w <file>` on modified files as needed.
 
