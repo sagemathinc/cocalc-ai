@@ -839,25 +839,24 @@ export class CodexExecAgent implements AcpAgent {
         {
           const readInfo = this.parseReadOnlyCommand(item.command, cwd);
           if (readInfo) {
-            const pathForEvent = this.toHomeRelative(readInfo.path, cwd);
-            const bytes =
-              item.aggregated_output != null
-                ? Buffer.byteLength(item.aggregated_output)
-                : undefined;
-            await stream({
-              type: "event",
-              event: {
-                type: "file",
-                path: pathForEvent,
-                operation: "read",
-                cwd,
-                command: item.command,
-                line: readInfo.line,
-                limit: readInfo.limit,
-                bytes,
-              },
-            });
-            return;
+            const stat = await this.statRegularFile(readInfo.path);
+            if (stat) {
+              const pathForEvent = this.toHomeRelative(readInfo.path, cwd);
+              await stream({
+                type: "event",
+                event: {
+                  type: "file",
+                  path: pathForEvent,
+                  operation: "read",
+                  cwd,
+                  command: item.command,
+                  line: readInfo.line,
+                  limit: readInfo.limit,
+                  bytes: stat.size,
+                },
+              });
+              return;
+            }
           }
         }
         {
@@ -1504,6 +1503,29 @@ export class CodexExecAgent implements AcpAgent {
   private logCache(event: string, data: Record<string, unknown>): void {
     if (!process.env.COCALC_LOG_CODEX_CACHE) return;
     logger.debug("codex-exec: cache", { event, ...data });
+  }
+
+  private async statRegularFile(pathAbs: string): Promise<{ size: number } | null> {
+    try {
+      const stat = await fs.stat(pathAbs);
+      if (!stat.isFile()) return null;
+      return { size: stat.size };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (
+        code === "ENOENT" ||
+        code === "ENOTDIR" ||
+        code === "EACCES" ||
+        code === "EPERM"
+      ) {
+        return null;
+      }
+      logger.debug("codex-exec: failed to stat read candidate", {
+        path: pathAbs,
+        err,
+      });
+      return null;
+    }
   }
 
   private isPathUnderRoot(pathAbs: string, root: string): boolean {
