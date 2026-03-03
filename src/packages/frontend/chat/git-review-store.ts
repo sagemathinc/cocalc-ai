@@ -14,13 +14,33 @@ type LegacyCommitReviewRecord = {
   commit?: string;
 };
 
+export type GitReviewCommentSide = "new" | "old" | "context";
+export type GitReviewCommentStatus = "draft" | "submitted" | "resolved";
+
+export type GitReviewCommentV2 = {
+  id: string;
+  file_path: string;
+  side: GitReviewCommentSide;
+  line?: number;
+  hunk_header?: string;
+  hunk_hash?: string;
+  snippet?: string;
+  body_md: string;
+  status: GitReviewCommentStatus;
+  submitted_at?: number;
+  submission_turn_id?: string;
+  created_at: number;
+  updated_at: number;
+  local_revision: number;
+};
+
 export type GitReviewRecordV2 = {
   version: 2;
   account_id: string;
   commit_sha: string;
   reviewed: boolean;
   note: string;
-  comments: Record<string, unknown>;
+  comments: Record<string, GitReviewCommentV2>;
   last_submitted_at?: number;
   last_submission_turn_id?: string;
   created_at: number;
@@ -74,6 +94,60 @@ function emptyRecord({
     updated_at: now,
     revision: 1,
   };
+}
+
+function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
+  const raw: any = input;
+  const id = `${raw?.id ?? ""}`.trim();
+  const filePath = `${raw?.file_path ?? ""}`.trim();
+  const body = `${raw?.body_md ?? ""}`;
+  if (!id || !filePath) return undefined;
+  const sideRaw = `${raw?.side ?? ""}`.trim().toLowerCase();
+  const side: GitReviewCommentSide =
+    sideRaw === "old" || sideRaw === "context" ? sideRaw : "new";
+  const statusRaw = `${raw?.status ?? ""}`.trim().toLowerCase();
+  const status: GitReviewCommentStatus =
+    statusRaw === "submitted" || statusRaw === "resolved" ? statusRaw : "draft";
+  const lineNum = Number(raw?.line);
+  const createdAt = Number(raw?.created_at);
+  const updatedAt = Number(raw?.updated_at);
+  const localRevision = Number(raw?.local_revision);
+  const submittedAt = Number(raw?.submitted_at);
+  return {
+    id,
+    file_path: filePath,
+    side,
+    line: Number.isFinite(lineNum) ? lineNum : undefined,
+    hunk_header:
+      typeof raw?.hunk_header === "string" ? raw.hunk_header : undefined,
+    hunk_hash: typeof raw?.hunk_hash === "string" ? raw.hunk_hash : undefined,
+    snippet: typeof raw?.snippet === "string" ? raw.snippet : undefined,
+    body_md: body,
+    status,
+    submitted_at: Number.isFinite(submittedAt) ? submittedAt : undefined,
+    submission_turn_id:
+      typeof raw?.submission_turn_id === "string"
+        ? raw.submission_turn_id
+        : undefined,
+    created_at: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    updated_at: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
+    local_revision: Number.isFinite(localRevision)
+      ? Math.max(1, localRevision)
+      : 1,
+  };
+}
+
+function sanitizeComments(
+  input: unknown,
+): Record<string, GitReviewCommentV2> {
+  const out: Record<string, GitReviewCommentV2> = {};
+  if (!input || typeof input !== "object") return out;
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    const comment = sanitizeComment(value);
+    if (!comment) continue;
+    out[`${key}`] = comment;
+  }
+  return out;
 }
 
 export function loadReviewDraft(commitSha?: string): GitReviewDraftV2 | undefined {
@@ -132,14 +206,18 @@ export function mergeRecordWithDraft(
   if (!record && !draft) return undefined;
   if (!record && draft) return undefined;
   if (!record) return undefined;
-  if (!draft) return record;
-  if (draft.updated_at < record.updated_at) return record;
-  return {
+  const normalizedRecord = {
     ...record,
+    comments: sanitizeComments(record.comments),
+  };
+  if (!draft) return normalizedRecord;
+  if (draft.updated_at < normalizedRecord.updated_at) return normalizedRecord;
+  return {
+    ...normalizedRecord,
     reviewed: draft.reviewed,
     note: draft.note,
     updated_at: draft.updated_at,
-    revision: Math.max(record.revision, draft.revision),
+    revision: Math.max(normalizedRecord.revision, draft.revision),
   };
 }
 
@@ -213,6 +291,7 @@ export async function saveReviewRecord(
     commit_sha: commitSha,
     note: `${record.note ?? ""}`,
     reviewed: Boolean(record.reviewed),
+    comments: sanitizeComments(record.comments),
     updated_at: now,
     revision: Math.max(1, (record.revision ?? 0) + 1),
   };
@@ -220,4 +299,3 @@ export async function saveReviewRecord(
   clearReviewDraft(commitSha);
   return payload;
 }
-

@@ -33,6 +33,8 @@ import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   loadReviewRecord,
+  type GitReviewCommentSide,
+  type GitReviewCommentV2,
   normalizeCommitSha,
   saveReviewDraft,
   saveReviewRecord,
@@ -100,6 +102,29 @@ type HeadStatusEntry = {
   statusCode: string;
   statusLabel: string;
   tracked: boolean;
+};
+
+type DiffLineMeta = {
+  raw: string;
+  isCode: boolean;
+  prefix: string;
+  body: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
+  hunkHeader?: string;
+  hunkHash?: string;
+  side?: GitReviewCommentSide;
+  lineNumber?: number;
+  commentable: boolean;
+};
+
+type CommentAnchor = {
+  filePath: string;
+  side: GitReviewCommentSide;
+  line: number;
+  hunk_header?: string;
+  hunk_hash?: string;
+  snippet?: string;
 };
 
 function parseCommitHash(commitHash?: string): string | undefined {
@@ -278,6 +303,124 @@ function splitLinesPreserve(text: string): string[] {
   return text.split(/\n/);
 }
 
+function hashString(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function parseHunkStarts(
+  line: string,
+): { oldStart: number; newStart: number } | undefined {
+  const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+  if (!m) return undefined;
+  const oldStart = Number(m[1]);
+  const newStart = Number(m[2]);
+  if (!Number.isFinite(oldStart) || !Number.isFinite(newStart)) return undefined;
+  return { oldStart, newStart };
+}
+
+function buildDiffLineMetas(lines: string[]): DiffLineMeta[] {
+  let oldLine: number | undefined;
+  let newLine: number | undefined;
+  let hunkHeader: string | undefined;
+  let hunkHash: string | undefined;
+  return lines.map((line) => {
+    const isCode = isDiffContentLine(line);
+    const prefix = isCode ? line[0] : "";
+    const body = isCode ? line.slice(1) : line;
+    if (line.startsWith("@@ ")) {
+      const starts = parseHunkStarts(line);
+      oldLine = starts?.oldStart;
+      newLine = starts?.newStart;
+      hunkHeader = line;
+      hunkHash = hashString(line);
+      return {
+        raw: line,
+        isCode,
+        prefix,
+        body,
+        hunkHeader,
+        hunkHash,
+        commentable: false,
+      };
+    }
+    let oldLineNumber: number | undefined;
+    let newLineNumber: number | undefined;
+    let side: GitReviewCommentSide | undefined;
+    let lineNumber: number | undefined;
+    if (isCode) {
+      if (prefix === "+") {
+        newLineNumber = newLine;
+        if (newLine != null) newLine += 1;
+        side = "new";
+        lineNumber = newLineNumber;
+      } else if (prefix === "-") {
+        oldLineNumber = oldLine;
+        if (oldLine != null) oldLine += 1;
+        side = "old";
+        lineNumber = oldLineNumber;
+      } else if (prefix === " ") {
+        oldLineNumber = oldLine;
+        newLineNumber = newLine;
+        if (oldLine != null) oldLine += 1;
+        if (newLine != null) newLine += 1;
+        side = "context";
+        lineNumber = newLineNumber ?? oldLineNumber;
+      }
+    }
+    return {
+      raw: line,
+      isCode,
+      prefix,
+      body,
+      oldLineNumber,
+      newLineNumber,
+      hunkHeader,
+      hunkHash,
+      side,
+      lineNumber,
+      commentable:
+        !!isCode &&
+        !!hunkHash &&
+        side != null &&
+        lineNumber != null &&
+        Number.isFinite(lineNumber),
+    };
+  });
+}
+
+function makeCommentAnchor(meta: DiffLineMeta, filePath: string): CommentAnchor | undefined {
+  if (!meta.commentable || !meta.side || !meta.lineNumber) return undefined;
+  return {
+    filePath,
+    side: meta.side,
+    line: meta.lineNumber,
+    hunk_header: meta.hunkHeader,
+    hunk_hash: meta.hunkHash,
+    snippet: meta.body.slice(0, 240),
+  };
+}
+
+function commentAnchorKey({
+  side,
+  line,
+  hunk_hash,
+}: {
+  side: GitReviewCommentSide;
+  line?: number;
+  hunk_hash?: string;
+}): string {
+  return `${side}:${line ?? 0}:${hunk_hash ?? ""}`;
+}
+
+function makeCommentId(): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `gitc-${Date.now().toString(36)}-${rand}`;
+}
+
 function isEditableEventTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -287,31 +430,103 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
 }
 
 function DiffBlock({
+  filePath,
   lines,
   languageHint,
   fontSize,
+  comments,
+  commentEnabled,
+  onCreateComment,
+  onUpdateComment,
+  onResolveComment,
 }: {
+  filePath: string;
   lines: string[];
   languageHint: string;
   fontSize: number;
+  comments: GitReviewCommentV2[];
+  commentEnabled: boolean;
+  onCreateComment: (anchor: CommentAnchor, body: string) => Promise<void>;
+  onUpdateComment: (id: string, body: string) => Promise<void>;
+  onResolveComment: (id: string) => Promise<void>;
 }) {
   const codeFontSize = Math.max(11, fontSize - 1);
-  const lineMetas = useMemo(
-    () =>
-      lines.map((line) => {
-        const isCode = isDiffContentLine(line);
-        const prefix = isCode ? line[0] : "";
-        const body = isCode ? line.slice(1) : line;
-        return { raw: line, isCode, prefix, body };
-      }),
-    [lines],
-  );
+  const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
   const highlightedByLine = useMemo(() => {
     const codeBodies = lineMetas.filter((x) => x.isCode).map((x) => x.body);
     if (codeBodies.length === 0) return [] as string[];
     const highlighted = highlightCodeHtml(codeBodies.join("\n"), languageHint);
     return splitLinesPreserve(highlighted);
   }, [lineMetas, languageHint]);
+  const commentsByAnchor = useMemo(() => {
+    const byAnchor = new Map<string, GitReviewCommentV2[]>();
+    for (const comment of comments) {
+      if (comment.status === "resolved") continue;
+      const key = commentAnchorKey(comment);
+      const existing = byAnchor.get(key) ?? [];
+      existing.push(comment);
+      byAnchor.set(key, existing);
+    }
+    return byAnchor;
+  }, [comments]);
+  const [draftAnchor, setDraftAnchor] = useState<CommentAnchor | undefined>(
+    undefined,
+  );
+  const [draftText, setDraftText] = useState("");
+  const [editingId, setEditingId] = useState<string | undefined>(undefined);
+  const [editingText, setEditingText] = useState("");
+  const [pendingKey, setPendingKey] = useState<string>("");
+  const draftAnchorId =
+    draftAnchor == null ? "" : commentAnchorKey(draftAnchor);
+
+  const closeDraft = () => {
+    setDraftAnchor(undefined);
+    setDraftText("");
+  };
+
+  const saveDraft = async () => {
+    if (!draftAnchor) return;
+    const trimmed = draftText.trim();
+    if (!trimmed) return;
+    const key = `create:${commentAnchorKey(draftAnchor)}`;
+    setPendingKey(key);
+    try {
+      await onCreateComment(draftAnchor, trimmed);
+      closeDraft();
+    } finally {
+      setPendingKey("");
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editingId) return;
+    const trimmed = editingText.trim();
+    if (!trimmed) return;
+    const key = `edit:${editingId}`;
+    setPendingKey(key);
+    try {
+      await onUpdateComment(editingId, trimmed);
+      setEditingId(undefined);
+      setEditingText("");
+    } finally {
+      setPendingKey("");
+    }
+  };
+
+  const resolveComment = async (id: string) => {
+    const key = `resolve:${id}`;
+    setPendingKey(key);
+    try {
+      await onResolveComment(id);
+      if (editingId === id) {
+        setEditingId(undefined);
+        setEditingText("");
+      }
+    } finally {
+      setPendingKey("");
+    }
+  };
+
   let highlightedIdx = -1;
   return (
     <div
@@ -342,17 +557,188 @@ function DiffBlock({
           const highlightedLine = highlightedByLine[highlightedIdx] ?? escapeText(meta.body);
           return `${escapeText(meta.prefix)}${highlightedLine}`;
         })();
+        const anchor = makeCommentAnchor(meta, filePath);
+        const anchorId = anchor == null ? "" : commentAnchorKey(anchor);
+        const lineComments =
+          anchor == null ? [] : commentsByAnchor.get(anchorId) ?? [];
+        const showDraft = draftAnchorId !== "" && draftAnchorId === anchorId;
         return (
-          <div
-            key={idx}
-            style={{
-              background,
-              padding: "2px 8px",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-            }}
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
+          <div key={idx}>
+            <div
+              style={{
+                background,
+                padding: "2px 8px",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 6,
+              }}
+            >
+              <div
+                style={{
+                  color: COLORS.GRAY_D,
+                  minWidth: 32,
+                  textAlign: "right",
+                  userSelect: "none",
+                }}
+              >
+                {meta.oldLineNumber ?? ""}
+              </div>
+              <div
+                style={{
+                  color: COLORS.GRAY_D,
+                  minWidth: 32,
+                  textAlign: "right",
+                  userSelect: "none",
+                }}
+              >
+                {meta.newLineNumber ?? ""}
+              </div>
+              {commentEnabled && anchor ? (
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ padding: "0 4px", minWidth: 20, height: 20 }}
+                  onClick={() => {
+                    setDraftAnchor(anchor);
+                    setDraftText("");
+                  }}
+                  title="Add inline comment"
+                >
+                  +
+                </Button>
+              ) : (
+                <span style={{ display: "inline-block", width: 20 }} />
+              )}
+              <div
+                style={{ flex: 1 }}
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            </div>
+            {lineComments.length > 0
+              ? lineComments.map((comment) => {
+                  const isEditing = editingId === comment.id;
+                  return (
+                    <div
+                      key={comment.id}
+                      style={{
+                        margin: "0 8px 6px 92px",
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: 6,
+                        padding: 8,
+                        background: "#fff",
+                      }}
+                    >
+                      {isEditing ? (
+                        <Input.TextArea
+                          autoSize={{ minRows: 2, maxRows: 8 }}
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                        />
+                      ) : (
+                        <div style={{ whiteSpace: "pre-wrap" }}>{comment.body_md}</div>
+                      )}
+                      <div
+                        style={{
+                          marginTop: 6,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                        }}
+                      >
+                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                          {comment.side}:{comment.line ?? "?"}
+                        </Typography.Text>
+                        <Space.Compact size="small">
+                          {isEditing ? (
+                            <>
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={() => void saveEdit()}
+                                disabled={!editingText.trim()}
+                                loading={pendingKey === `edit:${comment.id}`}
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => {
+                                  setEditingId(undefined);
+                                  setEditingText("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                size="small"
+                                onClick={() => {
+                                  setEditingId(comment.id);
+                                  setEditingText(comment.body_md);
+                                }}
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => void resolveComment(comment.id)}
+                                loading={pendingKey === `resolve:${comment.id}`}
+                              >
+                                Resolve
+                              </Button>
+                            </>
+                          )}
+                        </Space.Compact>
+                      </div>
+                    </div>
+                  );
+                })
+              : null}
+            {showDraft ? (
+              <div
+                style={{
+                  margin: "0 8px 8px 92px",
+                  border: `1px solid ${COLORS.GRAY_LL}`,
+                  borderRadius: 6,
+                  padding: 8,
+                  background: "#fff",
+                }}
+              >
+                <Input.TextArea
+                  autoSize={{ minRows: 2, maxRows: 8 }}
+                  value={draftText}
+                  onChange={(e) => setDraftText(e.target.value)}
+                  placeholder="Add inline review comment..."
+                />
+                <div
+                  style={{
+                    marginTop: 6,
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: 8,
+                  }}
+                >
+                  <Button size="small" onClick={closeDraft}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => void saveDraft()}
+                    disabled={!draftText.trim()}
+                    loading={pendingKey === `create:${anchorId}`}
+                  >
+                    Add comment
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         );
       })}
     </div>
@@ -412,6 +798,7 @@ export function GitCommitDrawer({
   const [reviewRecord, setReviewRecord] = useState<GitReviewRecordV2 | undefined>(
     undefined,
   );
+  const [reviewSubmitBusy, setReviewSubmitBusy] = useState(false);
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -706,13 +1093,23 @@ export function GitCommitDrawer({
   }, [open, accountId, commit]);
 
   const saveReview = async (
-    next: Partial<Pick<GitReviewRecordV2, "reviewed" | "note">> = {},
+    next: Partial<
+      Pick<
+        GitReviewRecordV2,
+        | "reviewed"
+        | "note"
+        | "comments"
+        | "last_submitted_at"
+        | "last_submission_turn_id"
+      >
+    > = {},
   ) => {
     if (!accountId || !commit || isHeadCommit(commit)) return;
     const normalizedCommit = normalizeCommitSha(commit);
     if (!normalizedCommit) return;
     const nextReviewed = next.reviewed ?? reviewed;
     const nextNote = next.note ?? reviewNote;
+    const nextComments = next.comments ?? reviewRecord?.comments ?? {};
     setReviewSaving(true);
     setReviewError("");
     try {
@@ -735,6 +1132,15 @@ export function GitCommitDrawer({
         commit_sha: normalizedCommit,
         reviewed: Boolean(nextReviewed),
         note: `${nextNote ?? ""}`,
+        comments: nextComments,
+        last_submitted_at:
+          typeof next.last_submitted_at === "number"
+            ? next.last_submitted_at
+            : base.last_submitted_at,
+        last_submission_turn_id:
+          typeof next.last_submission_turn_id === "string"
+            ? next.last_submission_turn_id
+            : base.last_submission_turn_id,
       });
       setReviewRecord(payload);
       setReviewUpdatedAt(payload.updated_at);
@@ -748,6 +1154,151 @@ export function GitCommitDrawer({
       setReviewError(`${err ?? "Unable to save review state."}`);
     } finally {
       setReviewSaving(false);
+    }
+  };
+
+  const inlineComments = useMemo(
+    () =>
+      Object.values(reviewRecord?.comments ?? {}).filter(
+        (comment) => comment.status !== "resolved",
+      ),
+    [reviewRecord],
+  );
+  const actionableInlineComments = useMemo(
+    () =>
+      inlineComments.filter(
+        (comment) =>
+          comment.status === "draft" &&
+          (comment.submitted_at == null ||
+            (comment.updated_at ?? 0) > (comment.submitted_at ?? 0)),
+      ),
+    [inlineComments],
+  );
+
+  const mutateInlineComments = async (
+    mutate: (
+      comments: Record<string, GitReviewCommentV2>,
+    ) => Record<string, GitReviewCommentV2>,
+  ) => {
+    if (!accountId || !commit || isHeadCommit(commit)) return;
+    const current = reviewRecord?.comments ?? {};
+    const next = mutate({ ...current });
+    await saveReview({ comments: next, reviewed, note: reviewNote });
+  };
+
+  const createInlineComment = async (anchor: CommentAnchor, body: string) => {
+    const trimmed = `${body ?? ""}`.trim();
+    if (!trimmed) return;
+    const now = Date.now();
+    await mutateInlineComments((comments) => {
+      const id = makeCommentId();
+      comments[id] = {
+        id,
+        file_path: anchor.filePath,
+        side: anchor.side,
+        line: anchor.line,
+        hunk_header: anchor.hunk_header,
+        hunk_hash: anchor.hunk_hash,
+        snippet: anchor.snippet,
+        body_md: trimmed,
+        status: "draft",
+        created_at: now,
+        updated_at: now,
+        local_revision: 1,
+      };
+      return comments;
+    });
+  };
+
+  const updateInlineComment = async (id: string, body: string) => {
+    const trimmed = `${body ?? ""}`.trim();
+    if (!id || !trimmed) return;
+    const now = Date.now();
+    await mutateInlineComments((comments) => {
+      const existing = comments[id];
+      if (!existing) return comments;
+      comments[id] = {
+        ...existing,
+        body_md: trimmed,
+        status: "draft",
+        updated_at: now,
+        local_revision: (existing.local_revision ?? 0) + 1,
+      };
+      return comments;
+    });
+  };
+
+  const resolveInlineComment = async (id: string) => {
+    if (!id) return;
+    const now = Date.now();
+    await mutateInlineComments((comments) => {
+      const existing = comments[id];
+      if (!existing) return comments;
+      comments[id] = {
+        ...existing,
+        status: "resolved",
+        updated_at: now,
+        local_revision: (existing.local_revision ?? 0) + 1,
+      };
+      return comments;
+    });
+  };
+
+  const sendInlineReviewToAgent = async () => {
+    if (!onRequestAgentTurn || !commit || isHeadSelected) return;
+    const actionable = actionableInlineComments;
+    if (actionable.length === 0) return;
+    const gitCommand = `git show --no-color -U${contextLines} ${commit}`;
+    const payload = {
+      target: { git_command: gitCommand },
+      comments: actionable.map((comment) => ({
+        file_path: comment.file_path,
+        side: comment.side,
+        line: comment.line,
+        hunk_header: comment.hunk_header,
+        hunk_hash: comment.hunk_hash,
+        snippet: comment.snippet,
+        comment: comment.body_md,
+        id: comment.id,
+      })),
+    };
+    const prompt = [
+      "Please review and address these inline commit comments.",
+      `Target diff: ${gitCommand}`,
+      "Return what you changed and any follow-up questions.",
+      "```json",
+      JSON.stringify(payload, null, 2),
+      "```",
+    ].join("\n");
+    setReviewSubmitBusy(true);
+    try {
+      await onRequestAgentTurn(prompt);
+      const now = Date.now();
+      const turnId = `git-review-${now}`;
+      await mutateInlineComments((comments) => {
+        for (const comment of actionable) {
+          const existing = comments[comment.id];
+          if (!existing) continue;
+          comments[comment.id] = {
+            ...existing,
+            status: "submitted",
+            submitted_at: now,
+            submission_turn_id: turnId,
+            updated_at: Math.max(existing.updated_at ?? now, now),
+            local_revision: Math.max(1, existing.local_revision ?? 1),
+          };
+        }
+        return comments;
+      });
+      await saveReview({
+        last_submitted_at: now,
+        last_submission_turn_id: turnId,
+      });
+      onClose();
+    } catch (err) {
+      setReviewError(`${err ?? "Unable to send review comments to codex."}`);
+    } finally {
+      setReviewSubmitBusy(false);
     }
   };
 
@@ -1369,7 +1920,7 @@ export function GitCommitDrawer({
           <Input.TextArea
             value={reviewNote}
             disabled={reviewLoading || !commit || isHeadSelected}
-            placeholder="Review note (your private commit review note)"
+            placeholder="Private review note (not sent to agent)"
             autoSize={{ minRows: 2, maxRows: 6 }}
             onChange={(e) => {
               setReviewNote(e.target.value);
@@ -1381,6 +1932,10 @@ export function GitCommitDrawer({
               }
             }}
           />
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 6 }}>
+            This note and the Reviewed checkbox are private state only. They are not sent to
+            the agent.
+          </Typography.Text>
           <div
             style={{
               marginTop: 8,
@@ -1393,6 +1948,9 @@ export function GitCommitDrawer({
           >
             <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
               {reviewError || (reviewLoading ? "Loading review state..." : "")}
+              {!reviewError && !reviewLoading && inlineComments.length > 0
+                ? ` · ${inlineComments.length} inline comments`
+                : ""}
             </div>
             <Button
               size="small"
@@ -1401,6 +1959,45 @@ export function GitCommitDrawer({
             >
               Save note
             </Button>
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: 6,
+              background: "#fff",
+              padding: "8px 10px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Send only draft inline diff comments (created with the <code>+</code> buttons in
+              the patch below).
+            </Typography.Text>
+            <Space.Compact size="small">
+              <Button
+                size="small"
+                type="primary"
+                disabled={
+                  actionableInlineComments.length === 0 ||
+                  reviewSubmitBusy ||
+                  reviewSaving ||
+                  !onRequestAgentTurn
+                }
+                loading={reviewSubmitBusy}
+                onClick={() => void sendInlineReviewToAgent()}
+              >
+                {`Send inline comments to agent${
+                  actionableInlineComments.length > 0
+                    ? ` (${actionableInlineComments.length})`
+                    : ""
+                }`}
+              </Button>
+            </Space.Compact>
           </div>
         </div>
       )}
@@ -1431,6 +2028,9 @@ export function GitCommitDrawer({
           ) : (
             data.files.map((file, idx) => {
               const languageHint = languageHintFromPath(file.path);
+              const fileComments = inlineComments.filter(
+                (comment) => comment.file_path === file.path,
+              );
               return (
                 <div key={`${file.path}-${idx}`}>
                   <div
@@ -1453,12 +2053,19 @@ export function GitCommitDrawer({
                     </Button>
                     <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                       {filenameMode(file.path, "text")}
+                      {fileComments.length > 0 ? ` · ${fileComments.length} comments` : ""}
                     </Typography.Text>
                   </div>
                   <DiffBlock
+                    filePath={file.path}
                     lines={file.lines}
                     languageHint={languageHint}
                     fontSize={fontSize}
+                    comments={fileComments}
+                    commentEnabled={!isHeadSelected}
+                    onCreateComment={createInlineComment}
+                    onUpdateComment={updateInlineComment}
+                    onResolveComment={resolveInlineComment}
                   />
                 </div>
               );
