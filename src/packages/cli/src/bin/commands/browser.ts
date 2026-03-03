@@ -7,7 +7,8 @@ or opening files in that browser session.
 */
 
 import { Command } from "commander";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import { isValidUUID } from "@cocalc/util/misc";
 import { durationToMs } from "../../core/utils";
@@ -227,6 +228,96 @@ async function chooseBrowserSession({
 
 function isExecTerminal(status: BrowserExecStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "canceled";
+}
+
+function browserScreenshotScript({
+  selector,
+  scale,
+}: {
+  selector: string;
+  scale: number;
+}): string {
+  return `
+const selector = ${JSON.stringify(selector)};
+const scale = ${JSON.stringify(scale)};
+const libraryUrls = [
+  "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+  "https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js",
+];
+const loadScript = async (url) => {
+  await new Promise((resolve, reject) => {
+    const existing = Array.from(document.querySelectorAll("script")).find(
+      (s) => s.src === url,
+    );
+    if (existing && (window).html2canvas) {
+      resolve(undefined);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    const timer = setTimeout(
+      () => reject(new Error(\`timed out loading \${url}\`)),
+      15000,
+    );
+    script.onload = () => resolve(undefined);
+    script.onerror = () => reject(new Error(\`failed to load \${url}\`));
+    script.onload = () => {
+      clearTimeout(timer);
+      resolve(undefined);
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error(\`failed to load \${url}\`));
+    };
+    document.head.appendChild(script);
+  });
+};
+let html2canvas = (window).html2canvas;
+if (typeof html2canvas !== "function") {
+  let lastError = "";
+  for (const url of libraryUrls) {
+    try {
+      await loadScript(url);
+      html2canvas = (window).html2canvas;
+      if (typeof html2canvas === "function") break;
+    } catch (err) {
+      lastError = \`\${err}\`;
+    }
+  }
+  if (typeof html2canvas !== "function") {
+    throw new Error(
+      \`unable to initialize screenshot renderer (html2canvas): \${lastError || "library unavailable"}\`,
+    );
+  }
+}
+const root = document.querySelector(selector);
+if (!root) {
+  throw new Error(\`selector did not match any element: \${selector}\`);
+}
+const canvas = await html2canvas(root, {
+  scale,
+  useCORS: true,
+  allowTaint: true,
+  backgroundColor: null,
+  logging: false,
+});
+if (!canvas || typeof canvas.toDataURL !== "function") {
+  throw new Error("screenshot renderer did not return a canvas");
+}
+const png_data_url = canvas.toDataURL("image/png");
+if (typeof png_data_url !== "string" || !png_data_url.startsWith("data:image/png;base64,")) {
+  throw new Error("invalid PNG data returned by screenshot renderer");
+}
+return {
+  ok: true,
+  selector,
+  width: Number(canvas.width || 0),
+  height: Number(canvas.height || 0),
+  page_url: location.href,
+  png_data_url,
+};
+`.trim();
 }
 
 async function waitForExecOperation({
@@ -536,6 +627,133 @@ export function registerBrowserCommand(
             project_id,
             paths: cleanPaths,
             closed: cleanPaths.length,
+          };
+        });
+      },
+    );
+
+  browser
+    .command("screenshot")
+    .description(
+      "capture a PNG screenshot from a target browser session and save it locally",
+    )
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--selector <css>",
+      "CSS selector for screenshot root element",
+      "body",
+    )
+    .option(
+      "--scale <n>",
+      "render scale for screenshot capture",
+      "1",
+    )
+    .option("--out <path>", "output PNG path on local machine")
+    .option(
+      "--timeout <duration>",
+      "timeout for screenshot capture (e.g. 30s, 2m)",
+    )
+    .action(
+      async (
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          selector?: string;
+          scale?: string;
+          out?: string;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser screenshot", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+          });
+          const project_id = projectIdHint
+            ? projectIdHint
+            : workspaceHint
+              ? (await deps.resolveWorkspace(ctx, workspaceHint)).project_id
+              : sessionInfo.active_project_id
+                ? (await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)).project_id
+                : sessionInfo.open_projects?.length === 1 &&
+                    sessionInfo.open_projects[0]?.project_id
+                  ? (
+                      await deps.resolveWorkspace(
+                        ctx,
+                        sessionInfo.open_projects[0].project_id,
+                      )
+                    ).project_id
+                  : (() => {
+                      throw new Error(
+                        "workspace/project is required; pass --project-id, -w/--workspace, or focus a workspace tab in the target browser session",
+                      );
+                    })();
+
+          const selector = `${opts.selector ?? "body"}`.trim() || "body";
+          const scale = Number(opts.scale ?? "1");
+          if (!Number.isFinite(scale) || scale <= 0) {
+            throw new Error("--scale must be a positive number");
+          }
+          const outputPath =
+            `${opts.out ?? ""}`.trim() ||
+            `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+          const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: timeoutMs,
+          }) as BrowserSessionClient;
+          const started = await browserClient.startExec({
+            project_id,
+            code: browserScreenshotScript({ selector, scale }),
+          });
+          const op = await waitForExecOperation({
+            browserClient,
+            exec_id: started.exec_id,
+            pollMs: 1_000,
+            timeoutMs,
+          });
+          if (op.status === "failed") {
+            throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+          }
+          if (op.status === "canceled") {
+            throw new Error(`browser exec ${op.exec_id} was canceled`);
+          }
+          const result = (op?.result ?? {}) as any;
+          const pngDataUrl = `${result?.png_data_url ?? ""}`.trim();
+          if (!pngDataUrl.startsWith("data:image/png;base64,")) {
+            throw new Error("browser screenshot capture returned invalid PNG data");
+          }
+          const base64 = pngDataUrl.slice("data:image/png;base64,".length);
+          const png = Buffer.from(base64, "base64");
+          await writeFile(outputPath, png);
+
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            output_path: resolvePath(outputPath),
+            bytes: png.byteLength,
+            width: Number(result?.width ?? 0),
+            height: Number(result?.height ?? 0),
+            selector,
+            page_url: `${result?.page_url ?? ""}`,
           };
         });
       },
