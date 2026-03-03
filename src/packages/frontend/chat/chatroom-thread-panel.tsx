@@ -197,6 +197,7 @@ export function ChatRoomThreadPanel({
     null,
   );
   const [maintenanceDeleteDays, setMaintenanceDeleteDays] = useState("30");
+  const [threadNearTop, setThreadNearTop] = useState(false);
   const searchInputRef = useRef<any>(null);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
@@ -251,6 +252,14 @@ export function ChatRoomThreadPanel({
   const archivedLoadDone = selectedThreadId
     ? !!archivedLoadDoneByThread[selectedThreadId]
     : false;
+  const showArchivedBanner =
+    !!selectedThreadId &&
+    archivedRowsCount > 0 &&
+    (threadSearchOpen || threadNearTop);
+
+  useEffect(() => {
+    setThreadNearTop(false);
+  }, [selectedThreadId]);
 
   const loadArchivedHistory = useCallback(
     async (offset = 0, append = false) => {
@@ -300,6 +309,11 @@ export function ChatRoomThreadPanel({
       return;
     }
     if (archivedLoadInProgress) return;
+    const anchorDateMs = (() => {
+      const oldestVisible = selectedThreadMessages[0];
+      const d = oldestVisible ? dateValue(oldestVisible) : undefined;
+      return d ? d.valueOf() : undefined;
+    })();
     const startOffset = archivedLoadOffsetByThread[selectedThreadId] ?? 0;
     let offset = startOffset;
     let totalRows = 0;
@@ -348,6 +362,15 @@ export function ChatRoomThreadPanel({
           "No additional backend-stored messages were loaded.",
         );
       }
+      if (
+        totalApplied > 0 &&
+        typeof anchorDateMs === "number" &&
+        Number.isFinite(anchorDateMs)
+      ) {
+        setTimeout(() => {
+          actions.scrollToDate(anchorDateMs);
+        }, 0);
+      }
     } catch (err) {
       setArchivedLoadError(`${err}`);
     } finally {
@@ -360,6 +383,7 @@ export function ChatRoomThreadPanel({
     archivedLoadOffsetByThread,
     path,
     project_id,
+    selectedThreadMessages,
     selectedThreadId,
   ]);
 
@@ -1439,7 +1463,7 @@ export function ChatRoomThreadPanel({
           ) : null}
         </div>
       </Modal>
-      {selectedThreadId && archivedRowsCount > 0 ? (
+      {showArchivedBanner ? (
         <div
           style={{
             margin: shouldShowCodexConfig ? "44px 12px 0 12px" : "8px 12px 0 12px",
@@ -1539,6 +1563,7 @@ export function ChatRoomThreadPanel({
         searchJumpDate={activeSearchMatchDate}
         searchJumpToken={threadSearchJumpToken}
         searchQuery={threadSearchQuery}
+        onAtTopStateChange={setThreadNearTop}
       />
     </div>
   );

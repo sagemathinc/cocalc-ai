@@ -67,6 +67,7 @@ type ActivityEntry =
       cwd?: string;
       output: string;
       truncated?: boolean;
+      completed?: boolean;
       exitStatus?: {
         exitCode?: number;
         signal?: string;
@@ -535,7 +536,7 @@ function coalesceFileReads(entries: ActivityEntry[]): ActivityEntry[] {
             : undefined;
         merged[merged.length - 1] = {
           ...last,
-          bytes,
+          bytes: typeof bytes === "number" && bytes > 0 ? bytes : undefined,
           truncated: last.truncated || entry.truncated,
           // Multiple read slices: clear scope so we don't mislead with a line range.
           line: undefined,
@@ -616,20 +617,28 @@ function createEventEntry({
         cwd: event.cwd,
         output: "",
         truncated: event.truncated,
-        exitStatus: event.exitStatus,
+        exitStatus: undefined,
+        completed: false,
       };
       terminals.set(event.terminalId, entry);
       rows.push(entry);
     }
     if (event.phase === "start") {
+      // Reset transient state for each new command run in the same terminal.
+      entry.output = "";
+      entry.truncated = event.truncated;
+      entry.exitStatus = undefined;
+      entry.completed = false;
       entry.command = event.command ?? entry.command;
       entry.args = event.args ?? entry.args;
       entry.cwd = event.cwd ?? entry.cwd;
+      entry.time = time ?? entry.time;
     } else if (event.phase === "data") {
       entry.output = (entry.output ?? "") + (event.chunk ?? "");
       entry.truncated = event.truncated ?? entry.truncated;
       entry.time = time ?? entry.time;
     } else if (event.phase === "exit") {
+      entry.completed = true;
       entry.exitStatus = event.exitStatus ?? entry.exitStatus;
       if (event.output != null) {
         entry.output = event.output;
@@ -986,7 +995,7 @@ function TerminalRow({
         ) : null}
         {!outputText && !entry.truncated ? (
           <Text type="secondary" style={{ fontSize: secondarySize }}>
-            {entry.exitStatus ? "No output." : "Waiting for output…"}
+            {entry.completed ? "No output." : "Waiting for output…"}
           </Text>
         ) : null}
         {entry.truncated ? (
@@ -1036,7 +1045,9 @@ function FileRow({
   const commandLine = formatCommand(entry.command, entry.args);
   const scope = formatReadScope(entry);
   const sizeLabel =
-    typeof entry.bytes === "number" ? formatByteCount(entry.bytes) : undefined;
+    typeof entry.bytes === "number" && entry.bytes > 0
+      ? formatByteCount(entry.bytes)
+      : undefined;
   const pathNode = (
     <PathLink
       path={entry.path}
@@ -1223,11 +1234,12 @@ function toFencedCodeBlock(content: string, language = ""): string {
 }
 
 function formatTerminalStatus(entry: {
+  completed?: boolean;
   exitStatus?: { exitCode?: number; signal?: string };
 }): string | undefined {
   const status = entry.exitStatus;
   if (status == null) {
-    return "Running…";
+    return entry.completed ? "" : "Running…";
   }
   if (status.signal) {
     return `Terminated (${status.signal})`;
@@ -1235,7 +1247,10 @@ function formatTerminalStatus(entry: {
   if (typeof status.exitCode === "number") {
     return status.exitCode === 0 ? "" : `Exited with code ${status.exitCode}`;
   }
-  return "Completed";
+  if (!entry.completed) {
+    return "Running…";
+  }
+  return "";
 }
 
 function formatByteCount(bytes: number): string {
@@ -1328,7 +1343,7 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
               ? "Created"
               : "Wrote";
         const parts = [`- File: ${action} ${path}`];
-        if (typeof entry.bytes === "number") {
+        if (typeof entry.bytes === "number" && entry.bytes > 0) {
           parts.push(`(${formatByteCount(entry.bytes)})`);
         }
         const scope = formatReadScope(entry);

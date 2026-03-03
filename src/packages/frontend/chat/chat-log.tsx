@@ -75,6 +75,7 @@ interface Props {
   searchJumpDate?: string;
   searchJumpToken?: number;
   searchQuery?: string;
+  onAtTopStateChange?: (atTop: boolean) => void;
 }
 
 export function ChatLog({
@@ -98,6 +99,7 @@ export function ChatLog({
   searchJumpDate,
   searchJumpToken,
   searchQuery,
+  onAtTopStateChange,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -311,6 +313,7 @@ export function ChatLog({
           composerTargetKey,
           composerFocused,
           searchQuery,
+          onAtTopStateChange,
         }}
       />
       <Composing
@@ -525,6 +528,7 @@ export function MessageList({
   showThreadHeaders,
   onSelectThread,
   searchQuery,
+  onAtTopStateChange,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -550,6 +554,7 @@ export function MessageList({
   showThreadHeaders?: boolean;
   onSelectThread?: (threadKey: string) => void;
   searchQuery?: string;
+  onAtTopStateChange?: (atTop: boolean) => void;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const [atBottom, setAtBottom] = useState(true);
@@ -731,6 +736,7 @@ export function MessageList({
       totalCount={sortedDates.length + 1}
       cacheId={cacheId}
       initialTopMostItemIndex={initialIndex}
+      atTopThreshold={240}
       itemSize={(el) => {
         const h = el.getBoundingClientRect().height;
         const data = el.getAttribute("data-item-index");
@@ -767,6 +773,7 @@ export function MessageList({
             }
           : undefined
       }
+      atTopStateChange={onAtTopStateChange}
       followOutput={!manualScroll && atBottom ? "smooth" : false}
     />
   );

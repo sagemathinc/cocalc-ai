@@ -222,6 +222,7 @@ export function ChatPanel({
   } | null>(null);
   const visitedThreadsRef = useRef<Set<string>>(new Set());
   const unreadSeenRef = useRef<Map<string, number>>(new Map());
+  const newestSeenRef = useRef<Map<string, number>>(new Map());
   const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
@@ -527,8 +528,11 @@ export function ChatPanel({
 
     const unread = Math.max(thread.unreadCount ?? 0, 0);
     const prevUnread = unreadSeenRef.current.get(thread.key) ?? 0;
+    const newest = Number.isFinite(thread.newestTime) ? thread.newestTime : 0;
+    const prevNewest = newestSeenRef.current.get(thread.key) ?? newest;
     const visited = visitedThreadsRef.current.has(thread.key);
     const hasNewUnread = unread > 0 && unread !== prevUnread;
+    const newestAdvanced = newest > prevNewest;
 
     const scrollToFirstUnread = () => {
       const total = thread.messageCount ?? 0;
@@ -538,10 +542,24 @@ export function ChatPanel({
     };
 
     if (hasNewUnread || (!visited && unread > 0)) {
-      scrollToFirstUnread();
+      if (visited && hasNewUnread && !newestAdvanced) {
+        // Archived/history hydration can increase thread.messageCount (and thus
+        // unreadCount) without any new newest message. Keep viewport stable.
+        actions.markThreadRead?.(thread.key, thread.messageCount);
+        unreadSeenRef.current.set(thread.key, unread);
+        newestSeenRef.current.set(thread.key, newest);
+        return;
+      }
+      if (thread.isAI) {
+        lastScrollRequestRef.current = { thread: thread.key, reason: "unread" };
+        actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+      } else {
+        scrollToFirstUnread();
+      }
       actions.markThreadRead?.(thread.key, thread.messageCount);
       visitedThreadsRef.current.add(thread.key);
       unreadSeenRef.current.set(thread.key, unread);
+      newestSeenRef.current.set(thread.key, newest);
       return;
     }
 
@@ -550,11 +568,13 @@ export function ChatPanel({
       actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
       visitedThreadsRef.current.add(thread.key);
       unreadSeenRef.current.set(thread.key, unread);
+      newestSeenRef.current.set(thread.key, newest);
       return;
     }
 
     // Already visited and no new unread: preserve existing scroll (cached per thread via virtuoso cacheId).
     unreadSeenRef.current.set(thread.key, unread);
+    newestSeenRef.current.set(thread.key, newest);
   }, [singleThreadView, selectedThreadKey, threads, actions]);
 
   const totalUnread = useMemo(
