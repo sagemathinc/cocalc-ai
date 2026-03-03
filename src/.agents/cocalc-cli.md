@@ -1167,12 +1167,12 @@ Sandbox execution model:
 
 Important constraints of this first slice:
 
-- Runtime now uses the Asyncify-capable QuickJS variant
-  (`@jitl/quickjs-wasmfile-release-asyncify` via `quickjs-emscripten-core`),
-  so async host callbacks are possible in follow-up iterations.
-- Current bridge is intentionally still planning-oriented for determinism:
-  sandbox scripts emit action steps and host executes those steps after script
-  evaluation.
+- Runtime uses the Asyncify-capable QuickJS variant
+  (`@jitl/quickjs-wasmfile-release-asyncify` via `quickjs-emscripten-core`).
+- Sandbox `api.*` calls execute immediately through policy-gated host actions
+  and return structured results, so scripts can compose multi-step logic.
+- Determinism and safety still come from typed action allowlists, per-action
+  policy checks, and strict action-count / payload-size caps.
 
 Security posture:
 

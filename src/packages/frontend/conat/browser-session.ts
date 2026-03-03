@@ -92,8 +92,9 @@ const BROWSER_EXEC_API_DECLARATION = `/**
  * - paths are absolute (e.g. "/home/user/file.txt")
  * - api.projectId is the workspace id passed to browser exec
  * - In prod posture, if policy.allow_raw_exec is not true, exec runs in a
- *   QuickJS sandbox with a constrained planning API (api.navigate/click/type/...)
- *   and host actions are executed after sandbox evaluation.
+ *   QuickJS sandbox with a constrained API (api.navigate/click/type/...) where
+ *   each api call executes immediately via policy-gated host actions and
+ *   returns structured results to the script.
  */
 export type BrowserOpenFileInfo = {
   project_id: string;
@@ -2977,41 +2978,56 @@ export function createBrowserSessionAutomation({
 
     const QuickJS = await getQuickJSAsyncifyModule();
     const vm = QuickJS.newContext();
-    const plannedActions: BrowserAtomicActionRequest[] = [];
+    let actionCount = 0;
+    const actionResults: BrowserActionResult[] = [];
     try {
-      const emitAction = vm.newFunction("__emit_action_json", (payloadHandle) => {
-        assertExecNotCanceled(isCanceled);
-        const payloadJson = vm.getString(payloadHandle);
-        if (payloadJson.length > MAX_SANDBOX_ACTION_JSON_LENGTH) {
-          throw Error(
-            `sandbox action payload is too large (${payloadJson.length} chars); max ${MAX_SANDBOX_ACTION_JSON_LENGTH}`,
-          );
-        }
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(payloadJson);
-        } catch (err) {
-          throw Error(`sandbox action payload must be valid JSON: ${err}`);
-        }
-        if (!parsed || typeof parsed !== "object") {
-          throw Error("sandbox action payload must be an object");
-        }
-        const row = parsed as Record<string, unknown>;
-        const name = `${row.name ?? ""}`.trim();
-        if (!isAllowedActionName(name) || name === "batch") {
-          throw Error(
-            `sandbox action name '${name || "<empty>"}' is not supported`,
-          );
-        }
-        if (plannedActions.length >= MAX_SANDBOX_ACTIONS) {
-          throw Error(
-            `sandbox action count exceeded max ${MAX_SANDBOX_ACTIONS}`,
-          );
-        }
-        plannedActions.push(parsed as BrowserAtomicActionRequest);
-        return vm.newNumber(plannedActions.length);
-      });
-      emitAction.consume((fn) => vm.setProp(vm.global, "__emit_action_json", fn));
+      const executeAction = vm.newAsyncifiedFunction(
+        "__exec_action_json",
+        async (payloadHandle) => {
+          assertExecNotCanceled(isCanceled);
+          const payloadJson = vm.getString(payloadHandle);
+          if (payloadJson.length > MAX_SANDBOX_ACTION_JSON_LENGTH) {
+            throw Error(
+              `sandbox action payload is too large (${payloadJson.length} chars); max ${MAX_SANDBOX_ACTION_JSON_LENGTH}`,
+            );
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(payloadJson);
+          } catch (err) {
+            throw Error(`sandbox action payload must be valid JSON: ${err}`);
+          }
+          if (!parsed || typeof parsed !== "object") {
+            throw Error("sandbox action payload must be an object");
+          }
+          const row = parsed as Record<string, unknown>;
+          const name = `${row.name ?? ""}`.trim();
+          if (!isAllowedActionName(name) || name === "batch") {
+            throw Error(
+              `sandbox action name '${name || "<empty>"}' is not supported`,
+            );
+          }
+          if (actionCount >= MAX_SANDBOX_ACTIONS) {
+            throw Error(
+              `sandbox action count exceeded max ${MAX_SANDBOX_ACTIONS}`,
+            );
+          }
+          const action = parsed as BrowserAtomicActionRequest;
+          enforceActionPolicy({
+            project_id,
+            action_name: name as BrowserActionName,
+            posture: "prod",
+            policy,
+          });
+          const result = await executeBrowserAction({ project_id, action });
+          actionCount += 1;
+          actionResults.push(result);
+          return vm.newString(JSON.stringify(toSerializableValue(result)));
+        },
+      );
+      executeAction.consume((fn) =>
+        vm.setProp(vm.global, "__exec_action_json", fn),
+      );
 
       const sandboxMeta = vm.newString(
         JSON.stringify({
@@ -3026,23 +3042,23 @@ export function createBrowserSessionAutomation({
       const prelude = `
 (() => {
   const __meta = JSON.parse(globalThis.__sandbox_meta_json || "{}");
-  const __emit = (name, payload) =>
-    globalThis.__emit_action_json(JSON.stringify({ name, ...(payload || {}) }));
+  const __exec = (name, payload) =>
+    JSON.parse(globalThis.__exec_action_json(JSON.stringify({ name, ...(payload || {}) })));
   const api = Object.freeze({
     projectId: __meta.project_id,
     pageUrl: __meta.page_url,
     origin: __meta.origin,
-    action: (name, payload = {}) => __emit(name, payload),
-    navigate: (url, opts = {}) => __emit("navigate", { url, ...opts }),
-    click: (selector, opts = {}) => __emit("click", { selector, ...opts }),
-    clickAt: (x, y, opts = {}) => __emit("click_at", { x, y, ...opts }),
-    drag: (x1, y1, x2, y2, opts = {}) => __emit("drag", { x1, y1, x2, y2, ...opts }),
-    type: (selector, text, opts = {}) => __emit("type", { selector, text, ...opts }),
-    press: (key, opts = {}) => __emit("press", { key, ...opts }),
-    scrollBy: (dy, dx = 0, opts = {}) => __emit("scroll_by", { dy, dx, ...opts }),
-    scrollTo: (opts = {}) => __emit("scroll_to", opts),
-    waitForSelector: (selector, opts = {}) => __emit("wait_for_selector", { selector, ...opts }),
-    waitForUrl: (opts = {}) => __emit("wait_for_url", opts),
+    action: (name, payload = {}) => __exec(name, payload),
+    navigate: (url, opts = {}) => __exec("navigate", { url, ...opts }),
+    click: (selector, opts = {}) => __exec("click", { selector, ...opts }),
+    clickAt: (x, y, opts = {}) => __exec("click_at", { x, y, ...opts }),
+    drag: (x1, y1, x2, y2, opts = {}) => __exec("drag", { x1, y1, x2, y2, ...opts }),
+    type: (selector, text, opts = {}) => __exec("type", { selector, text, ...opts }),
+    press: (key, opts = {}) => __exec("press", { key, ...opts }),
+    scrollBy: (dy, dx = 0, opts = {}) => __exec("scroll_by", { dy, dx, ...opts }),
+    scrollTo: (opts = {}) => __exec("scroll_to", opts),
+    waitForSelector: (selector, opts = {}) => __exec("wait_for_selector", { selector, ...opts }),
+    waitForUrl: (opts = {}) => __exec("wait_for_url", opts),
   });
   globalThis.api = api;
 })();`;
@@ -3054,7 +3070,9 @@ export function createBrowserSessionAutomation({
       }
       preludeResult.value.dispose();
 
-      const scriptResult = vm.evalCode(`(() => { ${script}\n})()`);
+      const scriptResult = await vm.evalCodeAsync(
+        `(async () => { ${script}\n})()`,
+      );
       let sandboxValue: unknown;
       if (scriptResult.error) {
         const message = vm.dump(scriptResult.error);
@@ -3065,30 +3083,10 @@ export function createBrowserSessionAutomation({
         scriptResult.value.dispose();
       }
 
-      const actionResults: BrowserActionResult[] = [];
-      for (let i = 0; i < plannedActions.length; i++) {
-        assertExecNotCanceled(isCanceled);
-        const action = plannedActions[i];
-        const actionName = `${(action as any)?.name ?? ""}`.trim() as BrowserActionName;
-        if (!actionName || actionName === "batch") {
-          throw Error(
-            `invalid sandbox action at index ${i}: '${actionName || "<empty>"}'`,
-          );
-        }
-        enforceActionPolicy({
-          project_id,
-          action_name: actionName,
-          posture: "prod",
-          policy,
-        });
-        const result = await executeBrowserAction({ project_id, action });
-        actionResults.push(result);
-      }
-
       return toSerializableValue({
         mode: "quickjs_wasm",
         script_result: toSerializableValue(sandboxValue),
-        action_count: plannedActions.length,
+        action_count: actionCount,
         ...(actionResults.length > 0 ? { actions: actionResults } : {}),
       });
     } finally {
