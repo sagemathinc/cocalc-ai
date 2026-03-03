@@ -204,6 +204,7 @@
     "url": "https://github.com/sagemathinc/cocalc/issues"
   },
   "dependencies": {
+    "@tootallnate/quickjs-emscripten": "0.23.0",
     "immer": "^11.1.0"
   }
 }

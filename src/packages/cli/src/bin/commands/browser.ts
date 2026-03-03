@@ -2309,7 +2309,7 @@ export function registerBrowserCommand(
     )
     .option(
       "--policy-file <path>",
-      "JSON file with browser exec policy (required for controlled raw exec in prod posture)",
+      "JSON file with browser exec policy (prod defaults to sandboxed exec unless allow_raw_exec=true)",
     )
     .option(
       "--allow-raw-exec",

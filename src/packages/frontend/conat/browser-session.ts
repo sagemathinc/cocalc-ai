@@ -40,6 +40,7 @@ import type { ConatService } from "@cocalc/conat/service";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { client_db } from "@cocalc/util/db-schema/client-db";
 import { termPath } from "@cocalc/util/terminal/names";
+import { getQuickJS } from "@tootallnate/quickjs-emscripten";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -48,9 +49,12 @@ const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_SANDBOX_ACTIONS = 512;
+const MAX_SANDBOX_ACTION_JSON_LENGTH = 100_000;
 const BROWSER_EXEC_POLICY_VERSION = 1;
 type BrowserNotifyType = "error" | "default" | "success" | "info" | "warning";
 type BrowserSyncDocType = "string" | "db" | "immer";
+type BrowserExecMode = "raw_js" | "quickjs_wasm";
 
 const BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available via 'cocalc browser exec'.
@@ -79,6 +83,9 @@ const BROWSER_EXEC_API_DECLARATION = `/**
  * Notes:
  * - paths are absolute (e.g. "/home/user/file.txt")
  * - api.projectId is the workspace id passed to browser exec
+ * - In prod posture, if policy.allow_raw_exec is not true, exec runs in a
+ *   QuickJS sandbox with a constrained planning API (api.navigate/click/type/...)
+ *   and host actions are executed after sandbox evaluation.
  */
 export type BrowserOpenFileInfo = {
   project_id: string;
@@ -551,18 +558,7 @@ function normalizePolicy(policy: unknown): BrowserExecPolicyV1 | undefined {
   const allowed_project_ids = asStringArray(row.allowed_project_ids);
   const allowed_origins = asStringArray(row.allowed_origins);
   const allowed_actions = asStringArray(row.allowed_actions)?.filter(
-    (x): x is BrowserActionName =>
-      x === "click" ||
-      x === "click_at" ||
-      x === "drag" ||
-      x === "type" ||
-      x === "press" ||
-      x === "navigate" ||
-      x === "scroll_by" ||
-      x === "scroll_to" ||
-      x === "wait_for_selector" ||
-      x === "wait_for_url" ||
-      x === "batch",
+    (x): x is BrowserActionName => isAllowedActionName(x),
   );
   return {
     version: BROWSER_EXEC_POLICY_VERSION,
@@ -571,6 +567,23 @@ function normalizePolicy(policy: unknown): BrowserExecPolicyV1 | undefined {
     ...(allowed_origins ? { allowed_origins } : {}),
     ...(allowed_actions?.length ? { allowed_actions } : {}),
   };
+}
+
+function isAllowedActionName(value: unknown): value is BrowserActionName {
+  const clean = `${value ?? ""}`.trim();
+  return (
+    clean === "click" ||
+    clean === "click_at" ||
+    clean === "drag" ||
+    clean === "type" ||
+    clean === "press" ||
+    clean === "navigate" ||
+    clean === "scroll_by" ||
+    clean === "scroll_to" ||
+    clean === "wait_for_selector" ||
+    clean === "wait_for_url" ||
+    clean === "batch"
+  );
 }
 
 function enforcePolicyScope({
@@ -621,16 +634,28 @@ function enforceExecPolicy({
   posture: BrowserAutomationPosture;
   policy?: BrowserExecPolicyV1;
 } {
-  const scoped = enforcePolicyScope({ project_id, posture, policy });
-  if (scoped.posture !== "prod") {
-    return scoped;
-  }
-  if (!scoped.policy?.allow_raw_exec) {
-    throw Error(
-      "raw browser exec is blocked in prod posture; provide explicit policy.allow_raw_exec=true or use typed browser actions",
-    );
-  }
-  return scoped;
+  return enforcePolicyScope({ project_id, posture, policy });
+}
+
+function resolveExecMode({
+  project_id,
+  posture,
+  policy,
+}: {
+  project_id: string;
+  posture?: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+}): {
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+  mode: BrowserExecMode;
+} {
+  const scoped = enforceExecPolicy({ project_id, posture, policy });
+  const mode: BrowserExecMode =
+    scoped.posture === "prod" && !scoped.policy?.allow_raw_exec
+      ? "quickjs_wasm"
+      : "raw_js";
+  return { ...scoped, mode };
 }
 
 function enforceActionPolicy({
@@ -1350,6 +1375,7 @@ function createExecId(): string {
 type BrowserExecPendingOperation = BrowserExecOperation & {
   code: string;
   posture: BrowserAutomationPosture;
+  mode: BrowserExecMode;
   policy?: BrowserExecPolicyV1;
 };
 
@@ -2880,7 +2906,7 @@ export function createBrowserSessionAutomation({
     return { api, cleanup };
   };
 
-  const executeBrowserScript = async ({
+  const executeBrowserScriptRaw = async ({
     project_id,
     code,
     isCanceled,
@@ -2914,6 +2940,176 @@ export function createBrowserSessionAutomation({
     } finally {
       await cleanup();
     }
+  };
+
+  const executeBrowserScriptQuickJSSandbox = async ({
+    project_id,
+    code,
+    policy,
+    isCanceled,
+  }: {
+    project_id: string;
+    code: string;
+    policy?: BrowserExecPolicyV1;
+    isCanceled?: () => boolean;
+  }): Promise<unknown> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    const script = `${code ?? ""}`;
+    if (!script.trim()) {
+      throw Error("code must be specified");
+    }
+    if (script.length > MAX_EXEC_CODE_LENGTH) {
+      throw Error(
+        `code is too long (${script.length} chars); max ${MAX_EXEC_CODE_LENGTH}`,
+      );
+    }
+    assertExecNotCanceled(isCanceled);
+
+    const QuickJS = await getQuickJS();
+    const vm = QuickJS.newContext();
+    const plannedActions: BrowserAtomicActionRequest[] = [];
+    try {
+      const emitAction = vm.newFunction("__emit_action_json", (payloadHandle) => {
+        assertExecNotCanceled(isCanceled);
+        const payloadJson = vm.getString(payloadHandle);
+        if (payloadJson.length > MAX_SANDBOX_ACTION_JSON_LENGTH) {
+          throw Error(
+            `sandbox action payload is too large (${payloadJson.length} chars); max ${MAX_SANDBOX_ACTION_JSON_LENGTH}`,
+          );
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(payloadJson);
+        } catch (err) {
+          throw Error(`sandbox action payload must be valid JSON: ${err}`);
+        }
+        if (!parsed || typeof parsed !== "object") {
+          throw Error("sandbox action payload must be an object");
+        }
+        const row = parsed as Record<string, unknown>;
+        const name = `${row.name ?? ""}`.trim();
+        if (!isAllowedActionName(name) || name === "batch") {
+          throw Error(
+            `sandbox action name '${name || "<empty>"}' is not supported`,
+          );
+        }
+        if (plannedActions.length >= MAX_SANDBOX_ACTIONS) {
+          throw Error(
+            `sandbox action count exceeded max ${MAX_SANDBOX_ACTIONS}`,
+          );
+        }
+        plannedActions.push(parsed as BrowserAtomicActionRequest);
+        return vm.newNumber(plannedActions.length);
+      });
+      emitAction.consume((fn) => vm.setProp(vm.global, "__emit_action_json", fn));
+
+      const sandboxMeta = vm.newString(
+        JSON.stringify({
+          project_id,
+          page_url: `${location.href ?? ""}`,
+          origin: `${location.origin ?? ""}`,
+        }),
+      );
+      vm.setProp(vm.global, "__sandbox_meta_json", sandboxMeta);
+      sandboxMeta.dispose();
+
+      const prelude = `
+(() => {
+  const __meta = JSON.parse(globalThis.__sandbox_meta_json || "{}");
+  const __emit = (name, payload) =>
+    globalThis.__emit_action_json(JSON.stringify({ name, ...(payload || {}) }));
+  const api = Object.freeze({
+    projectId: __meta.project_id,
+    pageUrl: __meta.page_url,
+    origin: __meta.origin,
+    action: (name, payload = {}) => __emit(name, payload),
+    navigate: (url, opts = {}) => __emit("navigate", { url, ...opts }),
+    click: (selector, opts = {}) => __emit("click", { selector, ...opts }),
+    clickAt: (x, y, opts = {}) => __emit("click_at", { x, y, ...opts }),
+    drag: (x1, y1, x2, y2, opts = {}) => __emit("drag", { x1, y1, x2, y2, ...opts }),
+    type: (selector, text, opts = {}) => __emit("type", { selector, text, ...opts }),
+    press: (key, opts = {}) => __emit("press", { key, ...opts }),
+    scrollBy: (dy, dx = 0, opts = {}) => __emit("scroll_by", { dy, dx, ...opts }),
+    scrollTo: (opts = {}) => __emit("scroll_to", opts),
+    waitForSelector: (selector, opts = {}) => __emit("wait_for_selector", { selector, ...opts }),
+    waitForUrl: (opts = {}) => __emit("wait_for_url", opts),
+  });
+  globalThis.api = api;
+})();`;
+      const preludeResult = vm.evalCode(prelude);
+      if (preludeResult.error) {
+        const message = vm.dump(preludeResult.error);
+        preludeResult.error.dispose();
+        throw Error(`failed to initialize quickjs sandbox api: ${message}`);
+      }
+      preludeResult.value.dispose();
+
+      const scriptResult = vm.evalCode(`(() => { ${script}\n})()`);
+      let sandboxValue: unknown;
+      if (scriptResult.error) {
+        const message = vm.dump(scriptResult.error);
+        scriptResult.error.dispose();
+        throw Error(`quickjs sandbox execution failed: ${message}`);
+      } else {
+        sandboxValue = vm.dump(scriptResult.value);
+        scriptResult.value.dispose();
+      }
+
+      const actionResults: BrowserActionResult[] = [];
+      for (let i = 0; i < plannedActions.length; i++) {
+        assertExecNotCanceled(isCanceled);
+        const action = plannedActions[i];
+        const actionName = `${(action as any)?.name ?? ""}`.trim() as BrowserActionName;
+        if (!actionName || actionName === "batch") {
+          throw Error(
+            `invalid sandbox action at index ${i}: '${actionName || "<empty>"}'`,
+          );
+        }
+        enforceActionPolicy({
+          project_id,
+          action_name: actionName,
+          posture: "prod",
+          policy,
+        });
+        const result = await executeBrowserAction({ project_id, action });
+        actionResults.push(result);
+      }
+
+      return toSerializableValue({
+        mode: "quickjs_wasm",
+        script_result: toSerializableValue(sandboxValue),
+        action_count: plannedActions.length,
+        ...(actionResults.length > 0 ? { actions: actionResults } : {}),
+      });
+    } finally {
+      vm.dispose();
+    }
+  };
+
+  const executeBrowserScript = async ({
+    project_id,
+    code,
+    mode,
+    policy,
+    isCanceled,
+  }: {
+    project_id: string;
+    code: string;
+    mode: BrowserExecMode;
+    policy?: BrowserExecPolicyV1;
+    isCanceled?: () => boolean;
+  }): Promise<unknown> => {
+    if (mode === "quickjs_wasm") {
+      return await executeBrowserScriptQuickJSSandbox({
+        project_id,
+        code,
+        policy,
+        isCanceled,
+      });
+    }
+    return await executeBrowserScriptRaw({ project_id, code, isCanceled });
   };
 
   const sleepMs = async (ms: number): Promise<void> => {
@@ -3950,6 +4146,8 @@ export function createBrowserSessionAutomation({
       const result = await executeBrowserScript({
         project_id: op.project_id,
         code: op.code,
+        mode: op.mode,
+        policy: op.policy,
         isCanceled: () => !!op.cancel_requested,
       });
       if (op.cancel_requested) {
@@ -3993,10 +4191,15 @@ export function createBrowserSessionAutomation({
     closeFile: async ({ project_id, path }) =>
       await closeFileInProject({ project_id, path }),
     exec: async ({ project_id, code, posture, policy }) => {
-      enforceExecPolicy({ project_id, posture, policy });
+      const enforced = resolveExecMode({ project_id, posture, policy });
       return {
         ok: true,
-        result: await executeBrowserScript({ project_id, code }),
+        result: await executeBrowserScript({
+          project_id,
+          code,
+          mode: enforced.mode,
+          policy: enforced.policy,
+        }),
       };
     },
     action: async ({ project_id, action, posture, policy }) => {
@@ -4047,7 +4250,7 @@ export function createBrowserSessionAutomation({
       if (!isValidUUID(project_id)) {
         throw Error("project_id must be a UUID");
       }
-      const enforced = enforceExecPolicy({ project_id, posture, policy });
+      const enforced = resolveExecMode({ project_id, posture, policy });
       const exec_id = createExecId();
       const op: BrowserExecPendingOperation = {
         exec_id,
@@ -4056,6 +4259,7 @@ export function createBrowserSessionAutomation({
         created_at: new Date().toISOString(),
         code: script,
         posture: enforced.posture,
+        mode: enforced.mode,
         ...(enforced.policy ? { policy: enforced.policy } : {}),
       };
       execOps.set(exec_id, op);

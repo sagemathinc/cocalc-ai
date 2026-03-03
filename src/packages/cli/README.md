@@ -110,6 +110,12 @@ cocalc browser exec \
   --file script.js
 ```
 
+Exec posture note:
+
+- `--posture dev`: raw browser JS exec is allowed by default.
+- `--posture prod`: sandboxed exec is the default; raw exec requires policy
+  opt-in (`allow_raw_exec=true`).
+
 If you need an isolated browser target (instead of the developer's live tab),
 spawn a dedicated Playwright-backed Chromium session:
 

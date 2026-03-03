@@ -495,6 +495,9 @@ importers:
 
   frontend:
     dependencies:
+      '@tootallnate/quickjs-emscripten':
+        specifier: 0.23.0
+        version: 0.23.0
       immer:
         specifier: ^11.1.0
         version: 11.1.0

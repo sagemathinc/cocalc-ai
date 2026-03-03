@@ -192,7 +192,8 @@ export type BrowserActionResult = {
 
 export type BrowserExecPolicyV1 = {
   version: 1;
-  // Explicitly allow raw JS execution in prod posture.
+  // In prod posture, raw JS execution is disabled by default and exec runs in
+  // a constrained sandbox mode. Set this to true to permit raw JS evaluation.
   allow_raw_exec?: boolean;
   // Optional hard scope for project/workspace ids.
   allowed_project_ids?: string[];
