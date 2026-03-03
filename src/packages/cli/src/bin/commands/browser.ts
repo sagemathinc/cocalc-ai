@@ -35,6 +35,17 @@ import { durationToMs } from "../../core/utils";
 
 type BrowserSessionClient = {
   getExecApiDeclaration: () => Promise<string>;
+  listRuntimeEvents: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    kinds?: BrowserRuntimeEventKind[];
+    levels?: BrowserRuntimeEventLevel[];
+  }) => Promise<{
+    events: BrowserRuntimeEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
+  }>;
   startExec: (opts: {
     project_id: string;
     code: string;
@@ -95,6 +106,32 @@ type BrowserExecOperation = {
   cancel_requested?: boolean;
   error?: string;
   result?: unknown;
+};
+
+type BrowserRuntimeEventKind =
+  | "console"
+  | "uncaught_error"
+  | "unhandled_rejection";
+
+type BrowserRuntimeEventLevel =
+  | "trace"
+  | "debug"
+  | "log"
+  | "info"
+  | "warn"
+  | "error";
+
+type BrowserRuntimeEvent = {
+  seq: number;
+  ts: string;
+  kind: BrowserRuntimeEventKind;
+  level: BrowserRuntimeEventLevel;
+  message: string;
+  source?: string;
+  line?: number;
+  column?: number;
+  stack?: string;
+  url?: string;
 };
 
 type SpawnCookie = {
@@ -618,6 +655,54 @@ function parseScrollAlign(
     return clean;
   }
   throw new Error(`invalid --${label} '${value}'; expected start|center|end|nearest`);
+}
+
+function parseRuntimeEventLevels(
+  value: unknown,
+): BrowserRuntimeEventLevel[] | undefined {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean) return undefined;
+  const parts = clean
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
+  if (parts.length === 0) return undefined;
+  const allowed = new Set<BrowserRuntimeEventLevel>([
+    "trace",
+    "debug",
+    "log",
+    "info",
+    "warn",
+    "error",
+  ]);
+  const out: BrowserRuntimeEventLevel[] = [];
+  for (const part of parts) {
+    if (!allowed.has(part as BrowserRuntimeEventLevel)) {
+      throw new Error(
+        `invalid --level '${part}'; expected comma-separated trace,debug,log,info,warn,error`,
+      );
+    }
+    out.push(part as BrowserRuntimeEventLevel);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function formatRuntimeEventLine(event: BrowserRuntimeEvent): string {
+  const ts = `${event.ts ?? ""}`.trim() || nowIso();
+  const level = `${event.level ?? "log"}`.toUpperCase();
+  const kind =
+    event.kind === "console"
+      ? "console"
+      : event.kind === "uncaught_error"
+        ? "uncaught"
+        : "rejection";
+  const sourceBits: string[] = [];
+  if (event.source) sourceBits.push(`${event.source}`);
+  if (event.line != null || event.column != null) {
+    sourceBits.push(`${event.line ?? "?"}:${event.column ?? "?"}`);
+  }
+  const source = sourceBits.length > 0 ? ` (${sourceBits.join(" ")})` : "";
+  return `${ts} [${level}] [${kind}] ${event.message}${source}`;
 }
 
 async function readScreenshotMeta(
@@ -1853,6 +1938,144 @@ export function registerBrowserCommand(
             state_file: file,
             state_file_removed: stateFileRemoved,
           };
+        });
+      },
+    );
+
+  const logs = browser.command("logs").description("browser runtime logs");
+
+  logs
+    .command("tail")
+    .description("tail browser console runtime logs from the target session")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option("--lines <n>", "number of events per fetch", "200")
+    .option("--since-seq <n>", "fetch events after this sequence number")
+    .option(
+      "--level <csv>",
+      "optional level filter: trace,debug,log,info,warn,error (comma-separated)",
+    )
+    .option("--follow", "follow log stream by polling for new events")
+    .option("--poll-ms <duration>", "poll interval for --follow", "1s")
+    .option("--timeout <duration>", "max follow time before returning")
+    .action(
+      async (
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          lines?: string;
+          sinceSeq?: string;
+          level?: string;
+          follow?: boolean;
+          pollMs?: string;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser logs tail", async (ctx) => {
+          const globals = deps.globalsFrom(command);
+          const wantsJson = !!globals.json || globals.output === "json";
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const lines = Number(opts.lines ?? "200");
+          if (!Number.isFinite(lines) || lines <= 0) {
+            throw new Error("--lines must be a positive integer");
+          }
+          const levelFilter = parseRuntimeEventLevels(opts.level);
+          const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
+          const hasSinceSeq = sinceSeqRaw.length > 0;
+          let afterSeq: number | undefined;
+          if (hasSinceSeq) {
+            const parsed = Number(sinceSeqRaw);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+              throw new Error("--since-seq must be a non-negative integer");
+            }
+            afterSeq = Math.floor(parsed);
+          }
+          const follow = !!opts.follow;
+          const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
+          const timeoutMs = `${opts.timeout ?? ""}`.trim()
+            ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
+            : undefined;
+          const startedAt = Date.now();
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
+          }) as BrowserSessionClient;
+          let printed = 0;
+          let latestDropped = 0;
+          let latestBuffered = 0;
+          let allEvents: BrowserRuntimeEvent[] = [];
+          const emitEvents = (events: BrowserRuntimeEvent[]) => {
+            if (events.length === 0) return;
+            if (wantsJson && follow) {
+              for (const event of events) {
+                process.stdout.write(`${JSON.stringify(event)}\n`);
+              }
+              return;
+            }
+            if (!wantsJson) {
+              for (const event of events) {
+                process.stdout.write(`${formatRuntimeEventLine(event)}\n`);
+              }
+            }
+          };
+          for (;;) {
+            const result = await browserClient.listRuntimeEvents({
+              ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+              limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
+              kinds: ["console"],
+              ...(levelFilter ? { levels: levelFilter } : {}),
+            });
+            const events = Array.isArray(result?.events) ? result.events : [];
+            latestDropped = Number(result?.dropped ?? latestDropped);
+            latestBuffered = Number(result?.total_buffered ?? latestBuffered);
+            emitEvents(events);
+            printed += events.length;
+            allEvents = allEvents.concat(events);
+            afterSeq = Number(result?.next_seq ?? afterSeq ?? 0);
+            if (!follow) {
+              break;
+            }
+            if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
+              break;
+            }
+            await sleep(pollMs);
+          }
+          const base = {
+            browser_id: sessionInfo.browser_id,
+            printed,
+            next_seq: afterSeq ?? 0,
+            dropped: latestDropped,
+            total_buffered: latestBuffered,
+            ...sessionTargetContext(ctx, sessionInfo),
+          };
+          if (wantsJson && !follow) {
+            return {
+              ...base,
+              events: allEvents,
+            };
+          }
+          if (wantsJson && follow) {
+            return null;
+          }
+          return base;
         });
       },
     );

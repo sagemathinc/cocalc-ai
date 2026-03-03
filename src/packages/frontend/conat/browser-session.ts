@@ -27,6 +27,9 @@ import {
   type BrowserExecPolicyV1,
   type BrowserExecOperation,
   type BrowserOpenFileInfo,
+  type BrowserRuntimeEvent,
+  type BrowserRuntimeEventKind,
+  type BrowserRuntimeEventLevel,
   type BrowserScreenshotMetadata,
   type BrowserSessionServiceApi,
 } from "@cocalc/conat/service/browser-session";
@@ -53,6 +56,8 @@ const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_RUNTIME_EVENTS = 5_000;
+const MAX_RUNTIME_MESSAGE_LENGTH = 2_000;
 const MAX_SANDBOX_ACTIONS = 512;
 const MAX_SANDBOX_ACTION_JSON_LENGTH = 100_000;
 const BROWSER_EXEC_POLICY_VERSION = 1;
@@ -764,6 +769,49 @@ function asText(value: unknown): string {
   }
 }
 
+function truncateRuntimeMessage(text: string): string {
+  if (text.length <= MAX_RUNTIME_MESSAGE_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, MAX_RUNTIME_MESSAGE_LENGTH)}…`;
+}
+
+function safeStringifyForRuntimeLog(value: unknown): string {
+  try {
+    if (value instanceof Error) {
+      const msg = `${value.name || "Error"}: ${value.message || ""}`.trim();
+      if (value.stack) {
+        return `${msg}\n${value.stack}`;
+      }
+      return msg;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "number" || typeof value === "boolean" || value == null) {
+      return `${value}`;
+    }
+    const seen = new WeakSet<object>();
+    return JSON.stringify(value, (_key, next) => {
+      if (typeof next === "object" && next != null) {
+        if (seen.has(next as object)) {
+          return "[Circular]";
+        }
+        seen.add(next as object);
+      }
+      if (typeof next === "bigint") {
+        return `${next}n`;
+      }
+      if (typeof next === "function") {
+        return `[Function ${next.name || "anonymous"}]`;
+      }
+      return next;
+    });
+  } catch {
+    return `${value}`;
+  }
+}
+
 function sanitizeBashOptions(opts: unknown): BrowserBashOptions {
   if (opts == null || typeof opts !== "object") {
     return {};
@@ -1407,6 +1455,9 @@ export function createBrowserSessionAutomation({
     string,
     BrowserExecPendingOperation
   >();
+  const runtimeEvents: BrowserRuntimeEvent[] = [];
+  let runtimeEventSeq = 0;
+  let runtimeEventsDropped = 0;
   const managedSyncDocs = new Map<
     string,
     {
@@ -1416,6 +1467,97 @@ export function createBrowserSessionAutomation({
     }
   >();
   const extensionsRuntime = new BrowserExtensionsRuntime();
+
+  const appendRuntimeEvent = ({
+    kind,
+    level,
+    message,
+    source,
+    line,
+    column,
+    stack,
+  }: {
+    kind: BrowserRuntimeEventKind;
+    level: BrowserRuntimeEventLevel;
+    message: string;
+    source?: string;
+    line?: number;
+    column?: number;
+    stack?: string;
+  }): void => {
+    const text = truncateRuntimeMessage(`${message ?? ""}`.trim() || "<empty>");
+    runtimeEventSeq += 1;
+    runtimeEvents.push({
+      seq: runtimeEventSeq,
+      ts: new Date().toISOString(),
+      kind,
+      level,
+      message: text,
+      ...(source ? { source } : {}),
+      ...(line != null ? { line } : {}),
+      ...(column != null ? { column } : {}),
+      ...(stack ? { stack: truncateRuntimeMessage(stack) } : {}),
+      ...(typeof location !== "undefined" && location.href
+        ? { url: `${location.href}` }
+        : {}),
+    });
+    if (runtimeEvents.length > MAX_RUNTIME_EVENTS) {
+      const drop = runtimeEvents.length - MAX_RUNTIME_EVENTS;
+      runtimeEvents.splice(0, drop);
+      runtimeEventsDropped += drop;
+    }
+  };
+
+  const installRuntimeCapture = (): void => {
+    const g = globalThis as any;
+    if (g.__cocalc_browser_runtime_capture_installed) {
+      return;
+    }
+    g.__cocalc_browser_runtime_capture_installed = true;
+
+    const originalConsole = {
+      trace: console.trace,
+      debug: console.debug,
+      log: console.log,
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+    };
+    const bindMethod = (name: keyof typeof originalConsole): ((...args: any[]) => void) => {
+      const original = originalConsole[name];
+      if (typeof original !== "function") {
+        return (..._args: any[]) => {};
+      }
+      return (...args: any[]) => {
+        try {
+          const level = name as BrowserRuntimeEventLevel;
+          const message = args
+            .map((x) => safeStringifyForRuntimeLog(x))
+            .filter((x) => x.length > 0)
+            .join(" ");
+          appendRuntimeEvent({
+            kind: "console",
+            level,
+            message,
+          });
+        } catch {
+          // ignore capture failures
+        }
+        try {
+          (original as any).apply(console, args);
+        } catch {
+          // ignore console errors
+        }
+      };
+    };
+    console.trace = bindMethod("trace");
+    console.debug = bindMethod("debug");
+    console.log = bindMethod("log");
+    console.info = bindMethod("info");
+    console.warn = bindMethod("warn");
+    console.error = bindMethod("error");
+  };
+  installRuntimeCapture();
 
   const closeManagedSyncDoc = async (key: string): Promise<void> => {
     const entry = managedSyncDocs.get(key);
@@ -4228,6 +4370,57 @@ export function createBrowserSessionAutomation({
   const impl: BrowserSessionServiceApi = {
     getExecApiDeclaration: async () => BROWSER_EXEC_API_DECLARATION,
     getSessionInfo: async () => buildSessionSnapshot(client),
+    listRuntimeEvents: async (opts) => {
+      const after_seq = Number(opts?.after_seq ?? 0);
+      const limitRaw = Number(opts?.limit ?? 200);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.max(1, Math.min(5_000, Math.floor(limitRaw)))
+        : 200;
+      const kinds = new Set<BrowserRuntimeEventKind>(
+        Array.isArray(opts?.kinds)
+          ? opts.kinds
+              .map((x) => `${x ?? ""}`.trim())
+              .filter((x): x is BrowserRuntimeEventKind =>
+                x === "console" ||
+                x === "uncaught_error" ||
+                x === "unhandled_rejection",
+              )
+          : [],
+      );
+      const levels = new Set<BrowserRuntimeEventLevel>(
+        Array.isArray(opts?.levels)
+          ? opts.levels
+              .map((x) => `${x ?? ""}`.trim())
+              .filter((x): x is BrowserRuntimeEventLevel =>
+                x === "trace" ||
+                x === "debug" ||
+                x === "log" ||
+                x === "info" ||
+                x === "warn" ||
+                x === "error",
+              )
+          : [],
+      );
+      const filtered = runtimeEvents.filter((event) => {
+        if (Number.isFinite(after_seq) && event.seq <= after_seq) {
+          return false;
+        }
+        if (kinds.size > 0 && !kinds.has(event.kind)) {
+          return false;
+        }
+        if (levels.size > 0 && !levels.has(event.level)) {
+          return false;
+        }
+        return true;
+      });
+      const events = filtered.slice(Math.max(0, filtered.length - limit));
+      return {
+        events,
+        next_seq: runtimeEventSeq,
+        dropped: runtimeEventsDropped,
+        total_buffered: runtimeEvents.length,
+      };
+    },
     listOpenFiles: async () => {
       const snapshot = buildSessionSnapshot(client);
       return flattenOpenFiles(snapshot.open_projects);
@@ -4351,6 +4544,9 @@ export function createBrowserSessionAutomation({
           service = undefined;
         }
       });
+      runtimeEvents.length = 0;
+      runtimeEventSeq = 0;
+      runtimeEventsDropped = 0;
       closed = false;
       accountId = cleanAccountId;
       service = createBrowserSessionService({
@@ -4371,6 +4567,9 @@ export function createBrowserSessionAutomation({
       closed = true;
       clearTimer();
       execOps.clear();
+      runtimeEvents.length = 0;
+      runtimeEventSeq = 0;
+      runtimeEventsDropped = 0;
       await closeAllManagedSyncDocs();
       extensionsRuntime.clear();
       if (service) {

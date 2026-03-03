@@ -196,6 +196,32 @@ export type BrowserActionResult = {
   [key: string]: unknown;
 };
 
+export type BrowserRuntimeEventKind =
+  | "console"
+  | "uncaught_error"
+  | "unhandled_rejection";
+
+export type BrowserRuntimeEventLevel =
+  | "trace"
+  | "debug"
+  | "log"
+  | "info"
+  | "warn"
+  | "error";
+
+export type BrowserRuntimeEvent = {
+  seq: number;
+  ts: string;
+  kind: BrowserRuntimeEventKind;
+  level: BrowserRuntimeEventLevel;
+  message: string;
+  source?: string;
+  line?: number;
+  column?: number;
+  stack?: string;
+  url?: string;
+};
+
 export type BrowserExecPolicyV1 = {
   version: 1;
   // In prod posture, raw JS execution is disabled by default and exec runs in
@@ -217,6 +243,17 @@ export interface BrowserSessionServiceApi {
     url?: string;
     active_project_id?: string;
     open_projects: BrowserOpenProjectState[];
+  }>;
+  listRuntimeEvents: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    kinds?: BrowserRuntimeEventKind[];
+    levels?: BrowserRuntimeEventLevel[];
+  }) => Promise<{
+    events: BrowserRuntimeEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
   }>;
   listOpenFiles: () => Promise<BrowserOpenFileInfo[]>;
   openFile: (opts: {
