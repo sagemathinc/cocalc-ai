@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BrowserActionName,
@@ -137,7 +137,30 @@ type SpawnStateRecord = {
   session_name?: string;
   browser_id?: string;
   session_url?: string;
+  ipc_dir?: string;
 };
+
+type ScreenshotRenderer = "auto" | "dom" | "native" | "media";
+
+type SpawnedScreenshotRequest = {
+  request_id: string;
+  action: "screenshot";
+  selector: string;
+  wait_for_idle_ms: number;
+  timeout_ms: number;
+};
+
+type SpawnedScreenshotResponse =
+  | {
+      ok: true;
+      request_id: string;
+      result: Record<string, unknown>;
+    }
+  | {
+      ok: false;
+      request_id: string;
+      error: string;
+    };
 
 const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
@@ -478,6 +501,34 @@ function resolveSpawnStateById(id: string): { file: string; state: SpawnStateRec
   return listSpawnStates().find((x) => `${x.state.browser_id ?? ""}`.trim() === clean);
 }
 
+function resolveSpawnIpcDir({
+  file,
+  state,
+}: {
+  file: string;
+  state: SpawnStateRecord;
+}): string {
+  const explicit = `${state.ipc_dir ?? ""}`.trim();
+  if (explicit) return explicit;
+  return join(dirname(file), `${state.spawn_id}.ipc`);
+}
+
+function resolveSpawnStateByBrowserId(
+  browser_id: string,
+): { file: string; state: SpawnStateRecord } | undefined {
+  const clean = `${browser_id ?? ""}`.trim();
+  if (!clean) return undefined;
+  const match = listSpawnStates().find(
+    ({ state }) =>
+      `${state.browser_id ?? ""}`.trim() === clean &&
+      Number.isInteger(Number(state.pid)) &&
+      Number(state.pid) > 0,
+  );
+  if (!match) return undefined;
+  if (!isProcessRunning(Number(match.state.pid))) return undefined;
+  return match;
+}
+
 function normalizeBrowserId(value: unknown): string | undefined {
   const id = `${value ?? ""}`.trim();
   return id.length > 0 ? id : undefined;
@@ -525,6 +576,15 @@ function parseCoordinateSpace(value: unknown): BrowserCoordinateSpace {
   }
   throw new Error(
     `invalid coordinate space '${value}'; expected viewport|selector|image|normalized`,
+  );
+}
+
+function parseScreenshotRenderer(value: unknown): ScreenshotRenderer {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean || clean === "auto") return "auto";
+  if (clean === "dom" || clean === "native" || clean === "media") return clean;
+  throw new Error(
+    `invalid screenshot renderer '${value}'; expected auto|dom|native|media`,
   );
 }
 
@@ -892,7 +952,7 @@ function isExecTerminal(status: BrowserExecStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "canceled";
 }
 
-function browserScreenshotScript({
+function browserScreenshotDomScript({
   selector,
   scale,
   waitForIdleMs,
@@ -1057,6 +1117,233 @@ return {
   png_data_url,
 };
 `.trim();
+}
+
+function browserScreenshotMediaScript({
+  selector,
+  waitForIdleMs,
+}: {
+  selector: string;
+  waitForIdleMs: number;
+}): string {
+  return `
+const selector = ${JSON.stringify(selector)};
+const waitForIdleMs = ${JSON.stringify(waitForIdleMs)};
+const waitForDomIdle = async (idleMs) => {
+  if (!Number.isFinite(idleMs) || idleMs <= 0) return false;
+  const maxWaitMs = Math.max(1000, Math.min(30000, Math.floor(idleMs * 20)));
+  const timedOut = await new Promise((resolve) => {
+    let timer = undefined;
+    let maxTimer = undefined;
+    let done = false;
+    const finish = (maxedOut) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (maxTimer) clearTimeout(maxTimer);
+      observer.disconnect();
+      resolve(!!maxedOut);
+    };
+    const schedule = () => {
+      if (done) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => finish(false), idleMs);
+    };
+    const root = document.documentElement || document.body;
+    const observer = new MutationObserver(() => schedule());
+    if (root) {
+      observer.observe(root, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+    }
+    maxTimer = setTimeout(() => finish(true), maxWaitMs);
+    schedule();
+  });
+  await new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(undefined))),
+  );
+  return timedOut;
+};
+if (!navigator?.mediaDevices?.getDisplayMedia) {
+  throw new Error("screen capture is unavailable in this browser/session");
+}
+const root = document.querySelector(selector);
+if (!root) {
+  throw new Error(\`selector did not match any element: \${selector}\`);
+}
+const rect = root.getBoundingClientRect();
+const selector_rect_css = {
+  left: Number(rect.left || 0),
+  top: Number(rect.top || 0),
+  width: Number(rect.width || 0),
+  height: Number(rect.height || 0),
+};
+const viewport_css = {
+  width: Number(window.innerWidth || 0),
+  height: Number(window.innerHeight || 0),
+};
+const wait_for_idle_timed_out = await waitForDomIdle(waitForIdleMs);
+let stream;
+try {
+  stream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: false,
+  });
+} catch (err) {
+  throw new Error(
+    \`screen capture permission denied or blocked: \${err}. Approve the browser share prompt and select this tab, then retry.\`,
+  );
+}
+try {
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.muted = true;
+  video.playsInline = true;
+  await video.play();
+  if (!video.videoWidth || !video.videoHeight) {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("timed out waiting for captured frame")),
+        5000,
+      );
+      video.onloadedmetadata = () => {
+        clearTimeout(timeout);
+        resolve(undefined);
+      };
+      video.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error("captured media stream failed"));
+      };
+    });
+  }
+  const scaleX = Number(video.videoWidth || 0) / Math.max(1, viewport_css.width);
+  const scaleY = Number(video.videoHeight || 0) / Math.max(1, viewport_css.height);
+  const sx = Math.max(0, Math.floor(selector_rect_css.left * scaleX));
+  const sy = Math.max(0, Math.floor(selector_rect_css.top * scaleY));
+  const sw = Math.max(1, Math.floor(selector_rect_css.width * scaleX));
+  const sh = Math.max(1, Math.floor(selector_rect_css.height * scaleY));
+  const canvas = document.createElement("canvas");
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("unable to create 2d context for captured frame");
+  }
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+  const png_data_url = canvas.toDataURL("image/png");
+  const capture_scale = Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1;
+  return {
+    ok: true,
+    selector,
+    width: Number(canvas.width || 0),
+    height: Number(canvas.height || 0),
+    page_url: location.href,
+    captured_at: new Date().toISOString(),
+    capture_scale,
+    capture_scale_y: Number.isFinite(scaleY) && scaleY > 0 ? scaleY : capture_scale,
+    device_pixel_ratio: Number(window.devicePixelRatio || 1),
+    scroll_x: Number(window.scrollX || window.pageXOffset || 0),
+    scroll_y: Number(window.scrollY || window.pageYOffset || 0),
+    selector_rect_css,
+    viewport_css,
+    screenshot_meta: {
+      page_url: location.href,
+      captured_at: new Date().toISOString(),
+      selector,
+      image_width: Number(canvas.width || 0),
+      image_height: Number(canvas.height || 0),
+      capture_scale,
+      device_pixel_ratio: Number(window.devicePixelRatio || 1),
+      scroll_x: Number(window.scrollX || window.pageXOffset || 0),
+      scroll_y: Number(window.scrollY || window.pageYOffset || 0),
+      selector_rect_css,
+      viewport_css,
+    },
+    wait_for_idle_ms: waitForIdleMs,
+    wait_for_idle_timed_out,
+    png_data_url,
+  };
+} finally {
+  try {
+    if (stream) {
+      for (const track of stream.getTracks?.() ?? []) {
+        try {
+          track.stop();
+        } catch {}
+      }
+    }
+  } catch {}
+}
+`.trim();
+}
+
+async function captureScreenshotViaSpawnedDaemon({
+  browser_id,
+  selector,
+  waitForIdleMs,
+  timeoutMs,
+}: {
+  browser_id: string;
+  selector: string;
+  waitForIdleMs: number;
+  timeoutMs: number;
+}): Promise<{
+  result: Record<string, unknown>;
+  spawned: { file: string; state: SpawnStateRecord };
+}> {
+  const spawned = resolveSpawnStateByBrowserId(browser_id);
+  if (!spawned) {
+    throw new Error(`no local spawned browser daemon found for browser '${browser_id}'`);
+  }
+  const ipcDir = resolveSpawnIpcDir(spawned);
+  mkdirSync(ipcDir, { recursive: true });
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const requestPath = join(ipcDir, `${requestId}.request.json`);
+  const responsePath = join(ipcDir, `${requestId}.response.json`);
+  const payload: SpawnedScreenshotRequest = {
+    request_id: requestId,
+    action: "screenshot",
+    selector,
+    wait_for_idle_ms: waitForIdleMs,
+    timeout_ms: timeoutMs,
+  };
+  await writeFile(requestPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const started = Date.now();
+  for (;;) {
+    if (existsSync(responsePath)) {
+      const raw = await readFile(responsePath, "utf8");
+      try {
+        unlinkSync(responsePath);
+      } catch {
+        // best-effort cleanup
+      }
+      let parsed: SpawnedScreenshotResponse;
+      try {
+        parsed = JSON.parse(raw) as SpawnedScreenshotResponse;
+      } catch (err) {
+        throw new Error(`invalid spawned screenshot response: ${err}`);
+      }
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("invalid spawned screenshot response payload");
+      }
+      if (!parsed.ok) {
+        throw new Error(`${parsed.error || "spawned screenshot request failed"}`);
+      }
+      return { result: parsed.result ?? {}, spawned };
+    }
+    if (Date.now() - started > timeoutMs) {
+      try {
+        unlinkSync(requestPath);
+      } catch {
+        // ignore cleanup races
+      }
+      throw new Error("timed out waiting for spawned screenshot response");
+    }
+    await sleep(100);
+  }
 }
 
 async function waitForExecOperation({
@@ -1760,13 +2047,18 @@ export function registerBrowserCommand(
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
+      "--renderer <mode>",
+      "screenshot renderer: auto|native|dom|media (default auto)",
+      "auto",
+    )
+    .option(
       "--selector <css>",
       "CSS selector for screenshot root element",
       "body",
     )
     .option(
       "--scale <n>",
-      "render scale for screenshot capture",
+      "render scale for DOM screenshot renderer",
       "1",
     )
     .option("--out <path>", "output PNG path on local machine")
@@ -1790,6 +2082,7 @@ export function registerBrowserCommand(
           browser?: string;
           sessionProjectId?: string;
           activeOnly?: boolean;
+          renderer?: string;
           selector?: string;
           scale?: string;
           out?: string;
@@ -1824,6 +2117,7 @@ export function registerBrowserCommand(
           });
 
           const selector = `${opts.selector ?? "body"}`.trim() || "body";
+          const requestedRenderer = parseScreenshotRenderer(opts.renderer);
           const scale = Number(opts.scale ?? "1");
           if (!Number.isFinite(scale) || scale <= 0) {
             throw new Error("--scale must be a positive number");
@@ -1836,29 +2130,77 @@ export function registerBrowserCommand(
             `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const metaOutPath = `${opts.metaOut ?? ""}`.trim();
-          const browserClient = deps.createBrowserSessionClient({
-            account_id: ctx.accountId,
-            browser_id: sessionInfo.browser_id,
-            client: ctx.remote.client,
-            timeout: timeoutMs,
-          }) as BrowserSessionClient;
-          const started = await browserClient.startExec({
-            project_id,
-            code: browserScreenshotScript({ selector, scale, waitForIdleMs }),
-          });
-          const op = await waitForExecOperation({
-            browserClient,
-            exec_id: started.exec_id,
-            pollMs: 1_000,
-            timeoutMs,
-          });
-          if (op.status === "failed") {
-            throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+          let rendererUsed: ScreenshotRenderer = requestedRenderer;
+          let result: any;
+          let spawnedUsed:
+            | {
+                file: string;
+                state: SpawnStateRecord;
+              }
+            | undefined;
+
+          if (requestedRenderer === "native" || requestedRenderer === "auto") {
+            try {
+              const nativeResult = await captureScreenshotViaSpawnedDaemon({
+                browser_id: sessionInfo.browser_id,
+                selector,
+                waitForIdleMs,
+                timeoutMs,
+              });
+              result = nativeResult.result;
+              spawnedUsed = nativeResult.spawned;
+              rendererUsed = "native";
+            } catch (err) {
+              if (requestedRenderer === "native") {
+                throw err;
+              }
+            }
           }
-          if (op.status === "canceled") {
-            throw new Error(`browser exec ${op.exec_id} was canceled`);
+
+          if (!result) {
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+              timeout: timeoutMs,
+            }) as BrowserSessionClient;
+            const modeForExec: ScreenshotRenderer =
+              requestedRenderer === "media"
+                ? "media"
+                : requestedRenderer === "dom"
+                  ? "dom"
+                  : "dom";
+            const script =
+              modeForExec === "media"
+                ? browserScreenshotMediaScript({
+                    selector,
+                    waitForIdleMs,
+                  })
+                : browserScreenshotDomScript({
+                    selector,
+                    scale,
+                    waitForIdleMs,
+                  });
+            const started = await browserClient.startExec({
+              project_id,
+              code: script,
+            });
+            const op = await waitForExecOperation({
+              browserClient,
+              exec_id: started.exec_id,
+              pollMs: 1_000,
+              timeoutMs,
+            });
+            if (op.status === "failed") {
+              throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+            }
+            if (op.status === "canceled") {
+              throw new Error(`browser exec ${op.exec_id} was canceled`);
+            }
+            result = (op?.result ?? {}) as any;
+            rendererUsed = modeForExec;
           }
-          const result = (op?.result ?? {}) as any;
+
           const pngDataUrl = `${result?.png_data_url ?? ""}`.trim();
           if (!pngDataUrl.startsWith("data:image/png;base64,")) {
             throw new Error("browser screenshot capture returned invalid PNG data");
@@ -1895,6 +2237,14 @@ export function registerBrowserCommand(
             bytes: png.byteLength,
             width: Number(result?.width ?? 0),
             height: Number(result?.height ?? 0),
+            renderer_requested: requestedRenderer,
+            renderer_used: rendererUsed,
+            ...(spawnedUsed
+              ? {
+                  spawn_id: spawnedUsed.state.spawn_id,
+                  spawn_state_file: spawnedUsed.file,
+                }
+              : {}),
             selector,
             wait_for_idle_ms: Number(result?.wait_for_idle_ms ?? waitForIdleMs),
             wait_for_idle_timed_out: !!result?.wait_for_idle_timed_out,
