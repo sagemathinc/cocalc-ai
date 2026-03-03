@@ -27,7 +27,6 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { filenameMode } from "@cocalc/frontend/file-associations";
-import { highlightCodeHtml } from "@cocalc/frontend/editors/slate/elements/code-block/prism";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -40,6 +39,11 @@ import {
   saveReviewRecord,
   type GitReviewRecordV2,
 } from "./git-review-store";
+import {
+  highlightPrismLines,
+  isDiffContentLine,
+  languageHintFromPath,
+} from "./diff-prism";
 
 const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
@@ -278,31 +282,6 @@ function resolveOpenPath(repoRoot: string | undefined, filePath: string): string
   return `${prefix}/${filePath}`.replace(/\/+/g, "/");
 }
 
-function escapeText(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function isDiffContentLine(line: string): boolean {
-  if (!line) return false;
-  if (line.startsWith("+++ ") || line.startsWith("--- ")) return false;
-  const prefix = line[0];
-  return prefix === "+" || prefix === "-" || prefix === " ";
-}
-
-function languageHintFromPath(path: string): string {
-  const base = `${path ?? ""}`.trim().toLowerCase();
-  const ext = base.includes(".") ? base.split(".").pop() ?? "" : "";
-  if (!ext) return "text";
-  return ext;
-}
-
-function splitLinesPreserve(text: string): string[] {
-  return text.split(/\n/);
-}
-
 function hashString(value: string): string {
   let hash = 5381;
   for (let i = 0; i < value.length; i++) {
@@ -460,12 +439,10 @@ function DiffBlock({
 }) {
   const codeFontSize = Math.max(11, fontSize - 1);
   const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
-  const highlightedByLine = useMemo(() => {
-    const codeBodies = lineMetas.filter((x) => x.isCode).map((x) => x.body);
-    if (codeBodies.length === 0) return [] as string[];
-    const highlighted = highlightCodeHtml(codeBodies.join("\n"), languageHint);
-    return splitLinesPreserve(highlighted);
-  }, [lineMetas, languageHint]);
+  const highlightedByLine = useMemo(
+    () => highlightPrismLines(lineMetas, languageHint),
+    [lineMetas, languageHint],
+  );
   const commentsByAnchor = useMemo(() => {
     const byAnchor = new Map<string, GitReviewCommentV2[]>();
     for (const comment of comments) {
@@ -535,7 +512,6 @@ function DiffBlock({
     }
   };
 
-  let highlightedIdx = -1;
   return (
     <div
       className="cocalc-slate-code-block"
@@ -557,14 +533,7 @@ function DiffBlock({
             : prefix === "-" && !meta.raw.startsWith("--- ")
               ? "#ffeef0"
               : "transparent";
-        const html = (() => {
-          if (!meta.isCode) {
-            return escapeText(meta.raw);
-          }
-          highlightedIdx += 1;
-          const highlightedLine = highlightedByLine[highlightedIdx] ?? escapeText(meta.body);
-          return `${escapeText(meta.prefix)}${highlightedLine}`;
-        })();
+        const html = highlightedByLine[idx] ?? "";
         const anchor = makeCommentAnchor(meta, filePath);
         const anchorId = anchor == null ? "" : commentAnchorKey(anchor);
         const lineComments =

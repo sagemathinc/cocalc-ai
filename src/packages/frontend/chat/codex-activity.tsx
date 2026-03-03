@@ -20,6 +20,11 @@ import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  buildPrismLineMetasFromPlain,
+  highlightPrismLines,
+  languageHintFromPath,
+} from "./diff-prism";
 
 const VIRTUALIZE_THRESHOLD = 20;
 
@@ -429,7 +434,11 @@ function ActivityRow({
               />
             </span>
           </TimestampTooltip>
-          <DiffPreview diff={entry.diff} fontSize={fontSize} />
+          <DiffPreview
+            diff={entry.diff}
+            fontSize={fontSize}
+            languageHint={languageHintFromPath(entry.path)}
+          />
         </div>
       );
     case "terminal":
@@ -831,9 +840,11 @@ function PathLink({
 function DiffPreview({
   diff,
   fontSize,
+  languageHint,
 }: {
   diff: LineDiffResult;
   fontSize: number;
+  languageHint: string;
 }) {
   if (!diff?.lines?.length) {
     // ?'s for old input
@@ -845,6 +856,14 @@ function DiffPreview({
   }
   const codeFontSize = Math.max(11, fontSize - 1);
   const chunkEnds = new Set(diff.chunkBoundaries ?? []);
+  const lineMetas = useMemo(
+    () => buildPrismLineMetasFromPlain(diff.lines),
+    [diff.lines],
+  );
+  const highlightedByLine = useMemo(
+    () => highlightPrismLines(lineMetas, languageHint),
+    [lineMetas, languageHint],
+  );
   return (
     <div
       style={{
@@ -856,7 +875,7 @@ function DiffPreview({
         overflow: "hidden",
       }}
     >
-      {diff.lines.map((line, i) => {
+      {diff.lines.map((_line, i) => {
         const op = diff.types[i] ?? 0;
         const gutter = diff.gutters[i] ?? "";
         const background =
@@ -865,6 +884,7 @@ function DiffPreview({
         const borderTop = chunkEnds.has(i)
           ? `1px solid ${COLORS.GRAY_L}`
           : "none";
+        const html = highlightedByLine[i] ?? "";
         return (
           <div
             key={i}
@@ -880,7 +900,11 @@ function DiffPreview({
             }}
           >
             <span style={{ color: COLORS.GRAY_D }}>{gutter}</span>
-            <span>{line.length ? line : " "}</span>
+            <span
+              dangerouslySetInnerHTML={{
+                __html: html.length > 0 ? html : "&nbsp;",
+              }}
+            />
           </div>
         );
       })}
