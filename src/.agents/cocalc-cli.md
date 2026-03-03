@@ -1167,10 +1167,12 @@ Sandbox execution model:
 
 Important constraints of this first slice:
 
-- Current QuickJS package variant in this repo does not include Asyncify, so
-  async host callbacks from inside QuickJS are not available yet.
-- As a result, sandbox scripts are planning-oriented: they emit action steps
-  and host executes those steps after script evaluation.
+- Runtime now uses the Asyncify-capable QuickJS variant
+  (`@jitl/quickjs-wasmfile-release-asyncify` via `quickjs-emscripten-core`),
+  so async host callbacks are possible in follow-up iterations.
+- Current bridge is intentionally still planning-oriented for determinism:
+  sandbox scripts emit action steps and host executes those steps after script
+  evaluation.
 
 Security posture:
 

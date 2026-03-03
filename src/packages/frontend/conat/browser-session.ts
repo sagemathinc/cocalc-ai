@@ -40,7 +40,11 @@ import type { ConatService } from "@cocalc/conat/service";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { client_db } from "@cocalc/util/db-schema/client-db";
 import { termPath } from "@cocalc/util/terminal/names";
-import { getQuickJS } from "@tootallnate/quickjs-emscripten";
+import quickjsAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
+import {
+  memoizePromiseFactory,
+  newQuickJSAsyncWASMModuleFromVariant,
+} from "quickjs-emscripten-core";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -55,6 +59,10 @@ const BROWSER_EXEC_POLICY_VERSION = 1;
 type BrowserNotifyType = "error" | "default" | "success" | "info" | "warning";
 type BrowserSyncDocType = "string" | "db" | "immer";
 type BrowserExecMode = "raw_js" | "quickjs_wasm";
+
+const getQuickJSAsyncifyModule = memoizePromiseFactory(async () => {
+  return await newQuickJSAsyncWASMModuleFromVariant(quickjsAsyncifyVariant);
+});
 
 const BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available via 'cocalc browser exec'.
@@ -2967,7 +2975,7 @@ export function createBrowserSessionAutomation({
     }
     assertExecNotCanceled(isCanceled);
 
-    const QuickJS = await getQuickJS();
+    const QuickJS = await getQuickJSAsyncifyModule();
     const vm = QuickJS.newContext();
     const plannedActions: BrowserAtomicActionRequest[] = [];
     try {
