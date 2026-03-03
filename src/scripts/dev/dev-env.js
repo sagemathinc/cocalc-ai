@@ -179,15 +179,9 @@ function getHubEnvValues() {
   };
 }
 
-function getBrowserId({ apiUrl, bearer, accountId }) {
-  const args = ["--json", "--api", apiUrl];
-  if (bearer) args.push("--bearer", bearer);
-  if (accountId) args.push("--account-id", accountId);
-  args.push("browser", "session", "list");
-  const res = run("cocalc", args);
-  if (res.status !== 0) return undefined;
+function parseBrowserIdFromResult(stdout) {
   try {
-    const parsed = JSON.parse(res.stdout || "{}");
+    const parsed = JSON.parse(stdout || "{}");
     const data = Array.isArray(parsed?.data) ? parsed.data : [];
     if (!data.length) return undefined;
     const active = data.filter((x) => x && x.stale !== true);
@@ -201,6 +195,27 @@ function getBrowserId({ apiUrl, bearer, accountId }) {
   } catch {
     return undefined;
   }
+}
+
+function getBrowserId({ apiUrl, bearer, accountId, mode }) {
+  const attempts = [];
+  attempts.push({ bearer: `${bearer ?? ""}`.trim(), accountId: `${accountId ?? ""}`.trim() });
+  // In lite mode, bearer tokens may be agent-scoped and invalid for account RPC.
+  // Retry with no bearer to allow unauthenticated local dev routing.
+  if (mode === "lite" && attempts[0].bearer) {
+    attempts.push({ bearer: "", accountId: `${accountId ?? ""}`.trim() });
+  }
+  for (const attempt of attempts) {
+    const args = ["--json", "--api", apiUrl];
+    if (attempt.bearer) args.push("--bearer", attempt.bearer);
+    if (attempt.accountId) args.push("--account-id", attempt.accountId);
+    args.push("browser", "session", "list");
+    const res = run("cocalc", args);
+    if (res.status !== 0) continue;
+    const browserId = parseBrowserIdFromResult(res.stdout || "");
+    if (browserId) return browserId;
+  }
+  return undefined;
 }
 
 function shellEscape(val) {
@@ -250,10 +265,17 @@ function main() {
     throw new Error(`unable to resolve COCALC_API_URL for ${mode}`);
   }
 
+  // For lite, only use daemon connection token (never agent_token, never profile/env bearer).
+  // agent_token is ACP-scoped and can break account RPC auth.
+  const liteConnectionBearer = `${mode === "lite" ? source.connectionInfo?.token ?? "" : ""}`.trim();
+  const explicitBearer = `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim();
+  const profileBearer = `${profile?.bearer ?? ""}`.trim();
   const bearer =
-    `${mode === "lite" ? source.connectionInfo?.agent_token ?? source.connectionInfo?.token ?? "" : ""}`.trim() ||
-    `${profile?.bearer ?? ""}`.trim() ||
-    `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim();
+    mode === "lite" ? liteConnectionBearer : explicitBearer || profileBearer || liteConnectionBearer;
+
+  // If lite has no bearer token, export a whitespace sentinel so downstream CLI
+  // does not silently fall back to auth-profile bearer (which might be wrong).
+  const bearerExport = mode === "lite" && !bearer ? " " : bearer;
 
   const accountId =
     `${mode === "lite" ? source.connectionInfo?.account_id ?? "" : ""}`.trim() ||
@@ -267,12 +289,12 @@ function main() {
     `${process.env.COCALC_BROWSER_ID ?? ""}`.trim() ||
     `${profile?.browser_id ?? ""}`.trim();
   if (withBrowser && !browserId) {
-    browserId = getBrowserId({ apiUrl, bearer, accountId }) || "";
+    browserId = getBrowserId({ apiUrl, bearer, accountId, mode }) || "";
   }
 
   const exportsMap = {
     COCALC_API_URL: apiUrl,
-    COCALC_BEARER_TOKEN: bearer,
+    COCALC_BEARER_TOKEN: bearerExport,
     COCALC_ACCOUNT_ID: accountId,
     COCALC_PROJECT_ID: projectId,
     COCALC_BROWSER_ID: browserId,
@@ -287,7 +309,7 @@ function main() {
     started_daemon: daemon.started,
     daemon_running: daemon.running,
     api_url: apiUrl,
-    has_bearer: !!bearer,
+    has_bearer: !!`${bearer}`.trim(),
     has_account_id: !!accountId,
     project_id: projectId,
     browser_id: browserId || undefined,
