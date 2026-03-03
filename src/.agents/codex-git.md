@@ -253,6 +253,11 @@ Each row:
 - status label (`modified`, `added`, `deleted`, `untracked`),
 - `Open` button.
 
+For **untracked** files only:
+
+- `Add` button (track this path),
+- `Ignore` button (append exact path to `.gitignore`).
+
 Recommended commands:
 
 - list: `git status --porcelain=v1 --untracked-files=all`
@@ -394,6 +399,7 @@ Example top-level shape:
 7. Implement HEAD status helpers:
    - file/status list from `git status --porcelain`,
    - clear tracked vs untracked labeling,
+   - untracked-only `Add` / `Ignore` controls,
    - one-click commit path remains tracked-only (`git commit -a`).
 8. Implement submit flow (commit mode only):
    - collect actionable draft comments,

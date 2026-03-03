@@ -381,6 +381,7 @@ export function GitCommitDrawer({
   const [headStatusLoading, setHeadStatusLoading] = useState(false);
   const [headStatusError, setHeadStatusError] = useState("");
   const [headStatusEntries, setHeadStatusEntries] = useState<HeadStatusEntry[]>([]);
+  const [headStatusAction, setHeadStatusAction] = useState<string>("");
   const [headCommitBusy, setHeadCommitBusy] = useState(false);
   const [headCommitMessage, setHeadCommitMessage] = useState("");
   const [headCommitError, setHeadCommitError] = useState("");
@@ -856,6 +857,55 @@ export function GitCommitDrawer({
     setGitLogReloadCounter((n) => n + 1);
   };
 
+  const addUntrackedFile = async (path: string) => {
+    if (!projectId) return;
+    setHeadStatusAction(`add:${path}`);
+    setHeadCommitError("");
+    try {
+      const result = await runGitCommand({
+        projectId,
+        cwd: repoRoot || cwd,
+        args: ["add", "--", path],
+      });
+      if (result.exit_code !== 0) {
+        throw new Error((result.stderr || result.stdout || "git add failed").trim());
+      }
+      setReloadCounter((n) => n + 1);
+    } catch (err) {
+      setHeadCommitError(`${err ?? "Unable to add untracked file."}`);
+    } finally {
+      setHeadStatusAction("");
+    }
+  };
+
+  const ignoreUntrackedFile = async (path: string) => {
+    if (!projectId) return;
+    setHeadStatusAction(`ignore:${path}`);
+    setHeadCommitError("");
+    try {
+      const script =
+        'touch .gitignore\nif ! grep -Fqx -- "$1" .gitignore; then printf "%s\\n" "$1" >> .gitignore; fi';
+      const result = await webapp_client.project_client.exec({
+        project_id: projectId,
+        path: repoRoot || cwd,
+        command: "bash",
+        args: ["-lc", script, "cocalc-git-ignore", path],
+        err_on_exit: false,
+        timeout: 30,
+      });
+      if (result.exit_code !== 0) {
+        throw new Error(
+          (result.stderr || result.stdout || "unable to update .gitignore").trim(),
+        );
+      }
+      setReloadCounter((n) => n + 1);
+    } catch (err) {
+      setHeadCommitError(`${err ?? "Unable to ignore untracked file."}`);
+    } finally {
+      setHeadStatusAction("");
+    }
+  };
+
   const projectActions = projectId ? redux.getProjectActions(projectId) : undefined;
 
   const openFile = async (filePath: string) => {
@@ -1201,9 +1251,31 @@ export function GitCommitDrawer({
                         {!entry.tracked ? " (not included by Commit)" : ""}
                       </Typography.Text>
                     </div>
-                    <Typography.Text code style={{ marginBottom: 0 }}>
-                      {entry.statusCode}
-                    </Typography.Text>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Typography.Text code style={{ marginBottom: 0 }}>
+                        {entry.statusCode}
+                      </Typography.Text>
+                      {!entry.tracked ? (
+                        <Space.Compact size="small">
+                          <Button
+                            size="small"
+                            onClick={() => void addUntrackedFile(entry.path)}
+                            loading={headStatusAction === `add:${entry.path}`}
+                            disabled={Boolean(headStatusAction)}
+                          >
+                            Add
+                          </Button>
+                          <Button
+                            size="small"
+                            onClick={() => void ignoreUntrackedFile(entry.path)}
+                            loading={headStatusAction === `ignore:${entry.path}`}
+                            disabled={Boolean(headStatusAction)}
+                          >
+                            Ignore
+                          </Button>
+                        </Space.Compact>
+                      ) : null}
+                    </div>
                   </div>
                 );
               })
