@@ -367,6 +367,46 @@ Example top-level shape:
 
 ---
 
+## Non-Repo Bootstrap UX (Planned)
+
+When git browser opens in a folder that is not a git repo, avoid showing raw
+git fatal errors and offer guided bootstrap.
+
+### Mode A: Minimal (safe default)
+
+- Detect non-repo via `git rev-parse --show-toplevel` failure.
+- Replace error with a friendly panel:
+  - "This folder is not a git repository."
+  - show current target path clearly.
+- Actions:
+  - `Initialize Git Repo` (runs `git init`, optionally sets default branch to `main`),
+  - `Ask Agent to Set Up Repo` (delegates to codex turn).
+- After init, refresh into HEAD view.
+
+Guardrails:
+
+- never auto-init; explicit click only,
+- warn when inside another repo / potential nested repo case.
+
+### Mode B: Maximal (AI-assisted project-aware setup)
+
+For users unfamiliar with git (e.g., LaTeX authors), offer a one-click "smart"
+setup flow that uses agent guidance and automation:
+
+- initialize repo (`git init`),
+- stage likely source artifacts (e.g., `.tex`, images, bibliography, code),
+- create/append `.gitignore` entries for generated artifacts (e.g. LaTeX build outputs),
+- create a clean initial commit,
+- post a concise setup summary in chat.
+
+Design intent:
+
+- keep the default path simple and transparent (Mode A),
+- allow high-leverage "do the right thing" onboarding (Mode B),
+- ensure resulting commit history is cleaner for ongoing codex collaboration.
+
+---
+
 ## Acceptance Criteria
 
 1. Comments for commit `X` appear across different repo roots/workspaces for the same account.
@@ -418,3 +458,7 @@ Example top-level shape:
 
    - account-wide JSON export,
    - merge import with dry-run summary and backup snapshot.
+12. Add non-repo bootstrap UX:
+
+   - minimal init flow (Mode A),
+   - optional AI-assisted smart setup flow (Mode B).
