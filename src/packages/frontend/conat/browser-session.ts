@@ -3065,22 +3065,30 @@ export function createBrowserSessionAutomation({
       const preludeResult = vm.evalCode(prelude);
       if (preludeResult.error) {
         const message = vm.dump(preludeResult.error);
-        preludeResult.error.dispose();
+        if (preludeResult.error.alive) {
+          preludeResult.error.dispose();
+        }
         throw Error(`failed to initialize quickjs sandbox api: ${message}`);
       }
-      preludeResult.value.dispose();
+      if (preludeResult.value.alive) {
+        preludeResult.value.dispose();
+      }
 
       const scriptResult = await vm.evalCodeAsync(
-        `(async () => { ${script}\n})()`,
+        `(() => { ${script}\n})()`,
       );
       let sandboxValue: unknown;
       if (scriptResult.error) {
         const message = vm.dump(scriptResult.error);
-        scriptResult.error.dispose();
+        if (scriptResult.error.alive) {
+          scriptResult.error.dispose();
+        }
         throw Error(`quickjs sandbox execution failed: ${message}`);
       } else {
         sandboxValue = vm.dump(scriptResult.value);
-        scriptResult.value.dispose();
+        if (scriptResult.value.alive) {
+          scriptResult.value.dispose();
+        }
       }
 
       return toSerializableValue({
