@@ -52,6 +52,11 @@ In practice, these bugs often come from runtime differences:
    - `cocalc browser screenshot --selector body --out /tmp/repro.png`
    - If page churn is high, wait for quiescence before capture:
      - `cocalc browser screenshot --wait-for-idle 750ms --selector body --out /tmp/repro.png`
+   - Renderer selection:
+     - `--renderer auto` (default): native Playwright capture for spawned sessions, DOM renderer otherwise
+     - `--renderer native`: require spawned Playwright capture
+     - `--renderer dom`: force DOM renderer (`html2canvas`)
+     - `--renderer media`: use browser Screen Capture API (explicit user share approval)
 
 8. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
 
@@ -133,6 +138,10 @@ These are improvements that would speed up real debugging and reduce mistakes.
   - `cocalc browser screenshot --selector "<css>" --out /tmp/repro.png`
 - Added:
   - `--wait-for-idle <duration>` (bounded wait; capture still proceeds if wait ceiling is reached)
+- Added:
+  - `--renderer auto|native|dom|media`
+  - native mode routes through spawned Playwright daemon for true compositor pixels
+  - media mode uses `getDisplayMedia` and requires explicit browser share approval
 - Follow-ups:
   - `--fullpage` / viewport-mode controls
   - direct blob/attachment output
