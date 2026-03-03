@@ -185,6 +185,9 @@ type SpawnedScreenshotRequest = {
   selector: string;
   wait_for_idle_ms: number;
   timeout_ms: number;
+  full_page?: boolean;
+  viewport_width?: number;
+  viewport_height?: number;
 };
 
 type SpawnedScreenshotResponse =
@@ -1428,11 +1431,17 @@ async function captureScreenshotViaSpawnedDaemon({
   selector,
   waitForIdleMs,
   timeoutMs,
+  fullPage,
+  viewportWidth,
+  viewportHeight,
 }: {
   browser_id: string;
   selector: string;
   waitForIdleMs: number;
   timeoutMs: number;
+  fullPage: boolean;
+  viewportWidth?: number;
+  viewportHeight?: number;
 }): Promise<{
   result: Record<string, unknown>;
   spawned: { file: string; state: SpawnStateRecord };
@@ -1452,6 +1461,9 @@ async function captureScreenshotViaSpawnedDaemon({
     selector,
     wait_for_idle_ms: waitForIdleMs,
     timeout_ms: timeoutMs,
+    ...(fullPage ? { full_page: true } : {}),
+    ...(viewportWidth != null ? { viewport_width: viewportWidth } : {}),
+    ...(viewportHeight != null ? { viewport_height: viewportHeight } : {}),
   };
   await writeFile(requestPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   const started = Date.now();
@@ -2481,6 +2493,12 @@ export function registerBrowserCommand(
       "body",
     )
     .option(
+      "--fullpage",
+      "capture full-page screenshot (native renderer; DOM renderer uses html root)",
+    )
+    .option("--viewport-width <n>", "set viewport width before capture (native)")
+    .option("--viewport-height <n>", "set viewport height before capture (native)")
+    .option(
       "--scale <n>",
       "render scale for DOM screenshot renderer",
       "1",
@@ -2508,6 +2526,9 @@ export function registerBrowserCommand(
           activeOnly?: boolean;
           renderer?: string;
           selector?: string;
+          fullpage?: boolean;
+          viewportWidth?: string;
+          viewportHeight?: string;
           scale?: string;
           out?: string;
           metaOut?: string;
@@ -2540,11 +2561,45 @@ export function registerBrowserCommand(
             sessionInfo,
           });
 
-          const selector = `${opts.selector ?? "body"}`.trim() || "body";
+          const fullPage = !!opts.fullpage;
+          const selectorRaw = `${opts.selector ?? ""}`.trim();
+          const selector = selectorRaw || (fullPage ? "html" : "body");
           const requestedRenderer = parseScreenshotRenderer(opts.renderer);
           const scale = Number(opts.scale ?? "1");
           if (!Number.isFinite(scale) || scale <= 0) {
             throw new Error("--scale must be a positive number");
+          }
+          const viewportWidth = `${opts.viewportWidth ?? ""}`.trim()
+            ? Math.floor(Number(opts.viewportWidth))
+            : undefined;
+          const viewportHeight = `${opts.viewportHeight ?? ""}`.trim()
+            ? Math.floor(Number(opts.viewportHeight))
+            : undefined;
+          if ((viewportWidth == null) !== (viewportHeight == null)) {
+            throw new Error("--viewport-width and --viewport-height must be provided together");
+          }
+          if (
+            viewportWidth != null &&
+            (!Number.isFinite(viewportWidth) || viewportWidth <= 0)
+          ) {
+            throw new Error("--viewport-width must be a positive integer");
+          }
+          if (
+            viewportHeight != null &&
+            (!Number.isFinite(viewportHeight) || viewportHeight <= 0)
+          ) {
+            throw new Error("--viewport-height must be a positive integer");
+          }
+          if (requestedRenderer === "media" && fullPage) {
+            throw new Error("--fullpage is not supported with --renderer media");
+          }
+          if (
+            requestedRenderer === "media" &&
+            (viewportWidth != null || viewportHeight != null)
+          ) {
+            throw new Error(
+              "--viewport-width/--viewport-height are not supported with --renderer media",
+            );
           }
           const waitForIdleMs = `${opts.waitForIdle ?? ""}`.trim()
             ? Math.max(0, durationToMs(opts.waitForIdle, 1_000))
@@ -2570,6 +2625,9 @@ export function registerBrowserCommand(
                 selector,
                 waitForIdleMs,
                 timeoutMs,
+                fullPage,
+                viewportWidth,
+                viewportHeight,
               });
               result = nativeResult.result;
               spawnedUsed = nativeResult.spawned;
@@ -2577,6 +2635,11 @@ export function registerBrowserCommand(
             } catch (err) {
               if (requestedRenderer === "native") {
                 throw err;
+              }
+              if (viewportWidth != null || viewportHeight != null) {
+                throw new Error(
+                  `${err}\n\nviewport controls require native screenshot capture from a spawned browser session; retry with --renderer native after 'cocalc browser session spawn --use'.`,
+                );
               }
             }
           }
@@ -2670,6 +2733,9 @@ export function registerBrowserCommand(
                 }
               : {}),
             selector,
+            full_page: !!result?.full_page || fullPage,
+            ...(viewportWidth != null ? { viewport_width: viewportWidth } : {}),
+            ...(viewportHeight != null ? { viewport_height: viewportHeight } : {}),
             wait_for_idle_ms: Number(result?.wait_for_idle_ms ?? waitForIdleMs),
             wait_for_idle_timed_out: !!result?.wait_for_idle_timed_out,
             page_url: `${result?.page_url ?? ""}`,
