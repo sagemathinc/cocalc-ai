@@ -223,6 +223,7 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
       symlinks: true,
       modules: ["node_modules"],
       fallback: {
+        fs: false,
         stream: require.resolve("stream-browserify"),
         path: require.resolve("path-browserify"),
         util: require.resolve("util/"),
