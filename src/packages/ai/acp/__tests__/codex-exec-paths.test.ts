@@ -79,4 +79,36 @@ describe("CodexExecAgent pre-content path heuristics", () => {
       statRegularFile("/home/wstein/build/cocalc-lite3/src/missing.tex"),
     ).resolves.toBeNull();
   });
+
+  it("maps /root and /scratch paths to host mounts in project-host mode", async () => {
+    const statSpy = jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => true,
+      size: 123,
+    } as any);
+    await expect(
+      (agent as any).statRegularFile("/root/work/foo.tex", {
+        containerPathMap: {
+          rootHostPath: "/host/home",
+          scratchHostPath: "/host/scratch",
+        },
+      }),
+    ).resolves.toEqual({ size: 123 });
+    expect(statSpy).toHaveBeenCalledWith("/host/home/work/foo.tex");
+  });
+
+  it("rejects non-/root and non-/scratch paths in project-host mode", async () => {
+    const statSpy = jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => true,
+      size: 123,
+    } as any);
+    await expect(
+      (agent as any).statRegularFile("/etc/passwd", {
+        containerPathMap: {
+          rootHostPath: "/host/home",
+          scratchHostPath: "/host/scratch",
+        },
+      }),
+    ).resolves.toBeNull();
+    expect(statSpy).not.toHaveBeenCalled();
+  });
 });

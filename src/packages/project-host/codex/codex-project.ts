@@ -42,6 +42,7 @@ type ContainerInfo = {
   codexPath: string;
   cliPath?: string;
   home: string;
+  scratch?: string;
 };
 
 type OptionalBindMount = {
@@ -318,6 +319,7 @@ async function ensureContainer({
       codexPath: containerPath,
       cliPath: cliBinary?.containerPath,
       home,
+      scratch,
     };
   }
 
@@ -473,6 +475,7 @@ async function ensureContainer({
     codexPath: containerPath,
     cliPath: cliBinary?.containerPath,
     home,
+    scratch,
   };
 }
 
@@ -505,6 +508,8 @@ export type SpawnCodexInProjectContainerResult = {
   cwd?: string;
   authRuntime: CodexAuthRuntime;
   containerName: string;
+  home: string;
+  scratch?: string;
 };
 
 export async function spawnCodexInProjectContainer({
@@ -607,6 +612,8 @@ export async function spawnCodexInProjectContainer({
     cwd,
     authRuntime,
     containerName: info.name,
+    home: info.home,
+    scratch: info.scratch,
   };
 }
 
@@ -644,6 +651,10 @@ export function initCodexProjectRunner(): void {
         args: spawned.args,
         cwd: spawned.cwd,
         authSource: spawned.authRuntime.source,
+        containerPathMap: {
+          rootHostPath: spawned.home,
+          scratchHostPath: spawned.scratch,
+        },
       };
     },
   });

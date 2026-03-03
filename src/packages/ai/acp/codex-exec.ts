@@ -33,7 +33,10 @@ import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { trackProcessRoot } from "@cocalc/backend/process-tracker";
 import type { AcpEvaluateRequest, AcpAgent, AcpStreamHandler } from "./types";
-import { getCodexProjectSpawner } from "./codex-project";
+import {
+  getCodexProjectSpawner,
+  type CodexProjectContainerPathMap,
+} from "./codex-project";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
 import {
   findSessionFile,
@@ -259,6 +262,7 @@ export class CodexExecAgent implements AcpAgent {
       let cmd = this.opts.binaryPath ?? "codex";
       let proc: ReturnType<typeof spawn>;
       let authSource: string | undefined;
+      let containerPathMap: CodexProjectContainerPathMap | undefined;
       const attemptStartedAt = Date.now();
       if (projectSpawner && projectId) {
         const spawned = await projectSpawner.spawnCodexExec({
@@ -272,6 +276,7 @@ export class CodexExecAgent implements AcpAgent {
         proc = spawned.proc;
         cmd = spawned.cmd;
         authSource = spawned.authSource;
+        containerPathMap = spawned.containerPathMap;
         logger.debug("codex-exec: spawning via project container", {
           cmd,
           args: redactArgsForLog(spawned.args),
@@ -462,6 +467,7 @@ export class CodexExecAgent implements AcpAgent {
               (resp) => {
                 finalResponse = resp;
               },
+              containerPathMap,
             );
             break;
           case "error":
@@ -811,6 +817,7 @@ export class CodexExecAgent implements AcpAgent {
     cwd: string,
     preContentCache: LRUCache<string, PreContentEntry>,
     onFinalResponse: (text: string) => void,
+    containerPathMap?: CodexProjectContainerPathMap,
   ): Promise<void> {
     switch (item.type) {
       case "agent_message":
@@ -839,7 +846,9 @@ export class CodexExecAgent implements AcpAgent {
         {
           const readInfo = this.parseReadOnlyCommand(item.command, cwd);
           if (readInfo) {
-            const stat = await this.statRegularFile(readInfo.path);
+            const stat = await this.statRegularFile(readInfo.path, {
+              containerPathMap,
+            });
             if (stat) {
               const pathForEvent = this.toHomeRelative(readInfo.path, cwd);
               await stream({
@@ -1505,9 +1514,14 @@ export class CodexExecAgent implements AcpAgent {
     logger.debug("codex-exec: cache", { event, ...data });
   }
 
-  private async statRegularFile(pathAbs: string): Promise<{ size: number } | null> {
+  private async statRegularFile(
+    pathAbs: string,
+    opts: { containerPathMap?: CodexProjectContainerPathMap } = {},
+  ): Promise<{ size: number } | null> {
+    const hostPath = this.resolveStatPath(pathAbs, opts.containerPathMap);
+    if (!hostPath) return null;
     try {
-      const stat = await fs.stat(pathAbs);
+      const stat = await fs.stat(hostPath);
       if (!stat.isFile()) return null;
       return { size: stat.size };
     } catch (err) {
@@ -1521,11 +1535,37 @@ export class CodexExecAgent implements AcpAgent {
         return null;
       }
       logger.debug("codex-exec: failed to stat read candidate", {
-        path: pathAbs,
+        path: hostPath,
+        sourcePath: pathAbs,
         err,
       });
       return null;
     }
+  }
+
+  private resolveStatPath(
+    pathAbs: string,
+    containerPathMap?: CodexProjectContainerPathMap,
+  ): string | undefined {
+    if (!containerPathMap) return pathAbs;
+    const normalized = path.posix.normalize(pathAbs);
+    if (normalized === "/root" || normalized.startsWith("/root/")) {
+      if (!containerPathMap.rootHostPath) return undefined;
+      const suffix = normalized.slice("/root".length).replace(/^\/+/, "");
+      return suffix
+        ? path.join(containerPathMap.rootHostPath, suffix)
+        : containerPathMap.rootHostPath;
+    }
+    if (normalized === "/scratch" || normalized.startsWith("/scratch/")) {
+      if (!containerPathMap.scratchHostPath) return undefined;
+      const suffix = normalized.slice("/scratch".length).replace(/^\/+/, "");
+      return suffix
+        ? path.join(containerPathMap.scratchHostPath, suffix)
+        : containerPathMap.scratchHostPath;
+    }
+    // Containerized Codex paths outside /root or /scratch are ignored as
+    // heuristic read candidates.
+    return undefined;
   }
 
   private isPathUnderRoot(pathAbs: string, root: string): boolean {

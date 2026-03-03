@@ -9,6 +9,11 @@ export type CodexProjectSpawnOptions = {
   forceRefreshSiteKey?: boolean;
 };
 
+export type CodexProjectContainerPathMap = {
+  rootHostPath?: string;
+  scratchHostPath?: string;
+};
+
 export type CodexProjectSpawner = {
   spawnCodexExec: (opts: CodexProjectSpawnOptions) => Promise<{
     proc: ChildProcess;
@@ -16,6 +21,7 @@ export type CodexProjectSpawner = {
     args: string[];
     cwd?: string;
     authSource?: string;
+    containerPathMap?: CodexProjectContainerPathMap;
   }>;
 };
 
