@@ -24,7 +24,7 @@ import { COLORS } from "@cocalc/util/theme";
 const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
-const DEFAULT_CONTEXT_LINES = 10;
+const DEFAULT_CONTEXT_LINES = 3;
 const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
@@ -141,52 +141,78 @@ function isDiffContentLine(line: string): boolean {
   return prefix === "+" || prefix === "-" || prefix === " ";
 }
 
-function renderLineHtml(line: string, mode: string): string {
-  if (!isDiffContentLine(line)) {
-    return escapeText(line);
-  }
-  const prefix = line[0];
-  const body = line.slice(1);
-  const highlighted = highlightCodeHtml(body, mode);
-  return `${escapeText(prefix)}${highlighted}`;
+function languageHintFromPath(path: string): string {
+  const base = `${path ?? ""}`.trim().toLowerCase();
+  const ext = base.includes(".") ? base.split(".").pop() ?? "" : "";
+  if (!ext) return "text";
+  return ext;
+}
+
+function splitLinesPreserve(text: string): string[] {
+  return text.split(/\n/);
 }
 
 function DiffBlock({
   lines,
-  mode,
+  languageHint,
   fontSize,
 }: {
   lines: string[];
-  mode: string;
+  languageHint: string;
   fontSize: number;
 }) {
   const codeFontSize = Math.max(11, fontSize - 1);
+  const lineMetas = useMemo(
+    () =>
+      lines.map((line) => {
+        const isCode = isDiffContentLine(line);
+        const prefix = isCode ? line[0] : "";
+        const body = isCode ? line.slice(1) : line;
+        return { raw: line, isCode, prefix, body };
+      }),
+    [lines],
+  );
+  const highlightedByLine = useMemo(() => {
+    const codeBodies = lineMetas.filter((x) => x.isCode).map((x) => x.body);
+    if (codeBodies.length === 0) return [] as string[];
+    const highlighted = highlightCodeHtml(codeBodies.join("\n"), languageHint);
+    return splitLinesPreserve(highlighted);
+  }, [lineMetas, languageHint]);
+  let highlightedIdx = -1;
   return (
     <div
+      className="cocalc-slate-code-block"
       style={{
         border: `1px solid ${COLORS.GRAY_L}`,
         borderRadius: 6,
         overflow: "hidden",
         fontFamily: "monospace",
         fontSize: codeFontSize,
+        padding: 0,
+        marginBottom: 0,
       }}
     >
-      {lines.map((line, idx) => {
-        const prefix = line[0];
+      {lineMetas.map((meta, idx) => {
+        const prefix = meta.raw[0];
         const background =
-          prefix === "+" && !line.startsWith("+++ ")
+          prefix === "+" && !meta.raw.startsWith("+++ ")
             ? "#e6ffed"
-            : prefix === "-" && !line.startsWith("--- ")
+            : prefix === "-" && !meta.raw.startsWith("--- ")
               ? "#ffeef0"
               : "transparent";
-        const html = renderLineHtml(line, mode);
+        const html = (() => {
+          if (!meta.isCode) {
+            return escapeText(meta.raw);
+          }
+          highlightedIdx += 1;
+          const highlightedLine = highlightedByLine[highlightedIdx] ?? escapeText(meta.body);
+          return `${escapeText(meta.prefix)}${highlightedLine}`;
+        })();
         return (
           <div
             key={idx}
             style={{
               background,
-              borderBottom:
-                idx === lines.length - 1 ? "none" : `1px solid ${COLORS.GRAY_LL}`,
               padding: "2px 8px",
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
@@ -288,6 +314,7 @@ export function GitCommitDrawer({
         foreground: true,
         explicit: true,
       });
+      onClose();
     } catch (err) {
       alert_message({
         type: "error",
@@ -298,23 +325,35 @@ export function GitCommitDrawer({
 
   return (
     <Drawer
-      title={`Commit ${commit ?? ""}`}
+      title={
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            width: "100%",
+          }}
+        >
+          <span>{`Commit ${commit ?? ""}`}</span>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: COLORS.GRAY_D, fontSize: 12 }}>Context</span>
+            <Select
+              size="small"
+              value={contextLines}
+              options={CONTEXT_OPTIONS}
+              onChange={(value) => setContextLines(value)}
+              style={{ width: 120 }}
+            />
+          </div>
+        </div>
+      }
       placement="right"
       width="70vw"
       open={open}
       onClose={onClose}
       destroyOnHidden
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <span style={{ color: COLORS.GRAY_D }}>Context:</span>
-        <Select
-          size="small"
-          value={contextLines}
-          options={CONTEXT_OPTIONS}
-          onChange={(value) => setContextLines(value)}
-          style={{ width: 130 }}
-        />
-      </div>
       {loading ? (
         <div style={{ padding: "32px 0", textAlign: "center" }}>
           <Spin />
@@ -341,7 +380,7 @@ export function GitCommitDrawer({
             <Empty description="No file changes in this commit." />
           ) : (
             data.files.map((file, idx) => {
-              const mode = filenameMode(file.path, "text");
+              const languageHint = languageHintFromPath(file.path);
               return (
                 <div key={`${file.path}-${idx}`}>
                   <div
@@ -354,12 +393,23 @@ export function GitCommitDrawer({
                       flexWrap: "wrap",
                     }}
                   >
-                    <Typography.Text code>{file.path}</Typography.Text>
-                    <Button size="small" onClick={() => void openFile(file.path)}>
-                      Open file
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, fontFamily: "monospace" }}
+                      onClick={() => void openFile(file.path)}
+                    >
+                      {file.path}
                     </Button>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {filenameMode(file.path, "text")}
+                    </Typography.Text>
                   </div>
-                  <DiffBlock lines={file.lines} mode={mode} fontSize={fontSize} />
+                  <DiffBlock
+                    lines={file.lines}
+                    languageHint={languageHint}
+                    fontSize={fontSize}
+                  />
                 </div>
               );
             })
