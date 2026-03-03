@@ -77,6 +77,7 @@ const BORDER = "2px solid #ccc";
 
 const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
 const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
+const HEAD_REF = "HEAD";
 
 
 const THREAD_STYLE_SINGLE: CSS = {
@@ -164,6 +165,23 @@ function parseGitCommitLink(href?: string | null): string | undefined {
   const hash = href.slice(GIT_COMMIT_LINK_SCHEME.length).trim();
   if (!/^[0-9a-f]{7,40}$/i.test(hash)) return undefined;
   return hash;
+}
+
+function extractFirstCommitMention(text: string): string | undefined {
+  if (!text || !/[0-9a-f]{7,40}/i.test(text)) return undefined;
+  const re = /\b[0-9a-f]{7,40}\b/gi;
+  let match: RegExpExecArray | null = null;
+  while ((match = re.exec(text)) != null) {
+    const hash = match[0];
+    const offset = match.index;
+    const before = text[offset - 1] ?? "";
+    const after = text[offset + hash.length] ?? "";
+    if (/[-/=?&#:]/.test(before) || /[-/=?&#:]/.test(after)) {
+      continue;
+    }
+    return hash.toLowerCase();
+  }
+  return undefined;
 }
 
 export function computeAcpStateToRender({
@@ -1061,6 +1079,23 @@ export default function Message({
       );
     }
 
+    if (isCodexThread && !is_viewers_message) {
+      buttons.push(
+        <Tooltip key="git-browser" placement="bottom" title="Open git browser">
+          <Button
+            size="small"
+            type="text"
+            style={{ color: COLORS.GRAY_M }}
+            onClick={() => {
+              const hash = extractFirstCommitMention(renderedMessageValue);
+              setOpenCommitHash(hash ?? HEAD_REF);
+            }}
+            icon={<Icon name="git" />}
+          />
+        </Tooltip>,
+      );
+    }
+
     if (isLLMThread && msgWrittenByLLM) {
       buttons.push(
         <span key="regenerate">
@@ -1810,6 +1845,7 @@ export default function Message({
       <GitCommitDrawer
         projectId={project_id}
         sourcePath={path}
+        cwdOverride={activityBasePath}
         commitHash={openCommitHash}
         open={openCommitHash != null}
         onClose={() => setOpenCommitHash(undefined)}

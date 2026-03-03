@@ -35,6 +35,7 @@ import { COLORS } from "@cocalc/util/theme";
 const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
+const HEAD_REF = "HEAD";
 const DEFAULT_CONTEXT_LINES = 3;
 const GIT_LOG_FETCH_COUNT = 600;
 const GIT_LOG_WINDOW_SIZE = 100;
@@ -95,8 +96,14 @@ interface GitCommitDrawerProps {
 
 function parseCommitHash(commitHash?: string): string | undefined {
   const trimmed = `${commitHash ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.toUpperCase() === HEAD_REF) return HEAD_REF;
   if (!COMMIT_HASH_RE.test(trimmed)) return undefined;
   return trimmed.toLowerCase();
+}
+
+function isHeadCommit(commit?: string): boolean {
+  return `${commit ?? ""}`.toUpperCase() === HEAD_REF;
 }
 
 async function runGitCommand({
@@ -339,6 +346,7 @@ export function GitCommitDrawer({
     incomingCommit,
   );
   const commit = selectedCommit;
+  const isHeadSelected = isHeadCommit(commit);
 
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -422,12 +430,12 @@ export function GitCommitDrawer({
   }, [gitLog, commit]);
 
   useEffect(() => {
-    if (!open || !commit || gitLog.length === 0 || commitIndex >= 0) return;
+    if (!open || !commit || isHeadSelected || gitLog.length === 0 || commitIndex >= 0) return;
     const prefixMatches = gitLog.filter((entry) => entry.hash.startsWith(commit));
     if (prefixMatches.length === 1) {
       setSelectedCommit(prefixMatches[0].hash);
     }
-  }, [open, commit, gitLog, commitIndex]);
+  }, [open, commit, isHeadSelected, gitLog, commitIndex]);
 
   const visibleLogEntries = useMemo(() => {
     if (gitLog.length === 0) return [] as GitLogEntry[];
@@ -489,11 +497,21 @@ export function GitCommitDrawer({
         </span>
       </div>
     );
-    const options = filteredLogEntries.map((entry) => ({
-      value: entry.hash,
-      label: makeOptionLabel(entry),
-      search: `${entry.hash} ${entry.subject}`.trim(),
-    }));
+    const options = [
+      {
+        value: HEAD_REF,
+        label: makeOptionLabel({
+          hash: HEAD_REF,
+          subject: "Uncommitted changes (git diff HEAD)",
+        }),
+        search: "HEAD uncommitted changes git diff",
+      },
+      ...filteredLogEntries.map((entry) => ({
+        value: entry.hash,
+        label: makeOptionLabel(entry),
+        search: `${entry.hash} ${entry.subject}`.trim(),
+      })),
+    ];
     if (commit && !options.some((opt) => opt.value === commit)) {
       const fallback: GitLogEntry = { hash: commit, subject: "selected commit" };
       options.unshift({
@@ -512,7 +530,10 @@ export function GitCommitDrawer({
         [
           ...visibleLogEntries.map((entry) => entry.hash),
           commit,
-        ].filter((hash): hash is string => Boolean(hash)),
+        ].filter(
+          (hash): hash is string =>
+            Boolean(hash) && COMMIT_HASH_RE.test(`${hash ?? ""}`),
+        ),
       ),
     );
     if (hashes.length === 0) return;
@@ -549,6 +570,15 @@ export function GitCommitDrawer({
 
   const loadReview = async () => {
     if (!open || !accountId || !commit) return;
+    if (isHeadCommit(commit)) {
+      setReviewLoading(false);
+      setReviewError("");
+      setReviewed(false);
+      setReviewNote("");
+      setReviewUpdatedAt(undefined);
+      setReviewDirty(false);
+      return;
+    }
     setReviewLoading(true);
     setReviewError("");
     try {
@@ -588,7 +618,7 @@ export function GitCommitDrawer({
   const saveReview = async (
     next: Partial<Pick<CommitReviewRecord, "reviewed" | "note">> = {},
   ) => {
-    if (!accountId || !commit) return;
+    if (!accountId || !commit || isHeadCommit(commit)) return;
     const nextReviewed = next.reviewed ?? reviewed;
     const nextNote = next.note ?? reviewNote;
     setReviewSaving(true);
@@ -639,25 +669,42 @@ export function GitCommitDrawer({
     setData(undefined);
     (async () => {
       try {
+        const args = isHeadSelected
+          ? [
+              "-c",
+              "core.pager=cat",
+              "diff",
+              "--no-color",
+              "--patch",
+              "--find-renames",
+              "--find-copies",
+              `-U${contextLines}`,
+              "HEAD",
+            ]
+          : [
+              "-c",
+              "core.pager=cat",
+              "show",
+              "--no-color",
+              "--patch",
+              "--find-renames",
+              "--find-copies",
+              `-U${contextLines}`,
+              "--format=fuller",
+              commit,
+            ];
         const showResult = await runGitCommand({
           projectId,
           cwd: repoRoot || cwd,
-          args: [
-            "-c",
-            "core.pager=cat",
-            "show",
-            "--no-color",
-            "--patch",
-            "--find-renames",
-            "--find-copies",
-            `-U${contextLines}`,
-            "--format=fuller",
-            commit,
-          ],
+          args,
         });
         if (showResult.exit_code !== 0) {
           throw new Error(
-            (showResult.stderr || showResult.stdout || "git show failed").trim(),
+            (
+              showResult.stderr ||
+              showResult.stdout ||
+              (isHeadSelected ? "git diff failed" : "git show failed")
+            ).trim(),
           );
         }
         const parsed = parseGitShowOutput(showResult.stdout ?? "", repoRoot || undefined);
@@ -677,7 +724,7 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, cwd, repoRoot, commit, contextLines]);
+  }, [open, projectId, cwd, repoRoot, commit, contextLines, isHeadSelected]);
 
   const projectActions = projectId ? redux.getProjectActions(projectId) : undefined;
 
@@ -698,14 +745,20 @@ export function GitCommitDrawer({
     }
   };
 
-  const canGoNewer = commitIndex > 0;
-  const canGoOlder = commitIndex >= 0 && commitIndex < gitLog.length - 1;
+  const canGoNewer = !isHeadSelected && commitIndex > 0;
+  const canGoOlder = isHeadSelected
+    ? gitLog.length > 0
+    : commitIndex >= 0 && commitIndex < gitLog.length - 1;
   const goNewer = () => {
     if (!canGoNewer) return;
     setSelectedCommit(gitLog[commitIndex - 1]?.hash);
   };
   const goOlder = () => {
     if (!canGoOlder) return;
+    if (isHeadSelected) {
+      setSelectedCommit(gitLog[0]?.hash);
+      return;
+    }
     setSelectedCommit(gitLog[commitIndex + 1]?.hash);
   };
   const bumpContext = (delta: -1 | 1) => {
@@ -726,7 +779,11 @@ export function GitCommitDrawer({
       if (evt.key === "j") {
         evt.preventDefault();
         if (canGoOlder) {
-          setSelectedCommit(gitLog[commitIndex + 1]?.hash);
+          if (isHeadSelected) {
+            setSelectedCommit(gitLog[0]?.hash);
+          } else {
+            setSelectedCommit(gitLog[commitIndex + 1]?.hash);
+          }
         }
         return;
       }
@@ -749,7 +806,7 @@ export function GitCommitDrawer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, canGoOlder, canGoNewer, commitIndex, gitLog, contextLines]);
+  }, [open, canGoOlder, canGoNewer, commitIndex, gitLog, contextLines, isHeadSelected]);
 
   return (
     <Drawer
@@ -875,7 +932,7 @@ export function GitCommitDrawer({
         >
           <Checkbox
             checked={reviewed}
-            disabled={reviewLoading || reviewSaving || !commit}
+            disabled={reviewLoading || reviewSaving || !commit || isHeadSelected}
             onChange={(e) => {
               const next = e.target.checked;
               setReviewed(next);
@@ -896,7 +953,7 @@ export function GitCommitDrawer({
         </div>
         <Input.TextArea
           value={reviewNote}
-          disabled={reviewLoading || !commit}
+          disabled={reviewLoading || !commit || isHeadSelected}
           placeholder="Review note (your private commit review note)"
           autoSize={{ minRows: 2, maxRows: 6 }}
           onChange={(e) => {
@@ -924,7 +981,7 @@ export function GitCommitDrawer({
           </div>
           <Button
             size="small"
-            disabled={!reviewDirty || reviewSaving || !commit}
+            disabled={!reviewDirty || reviewSaving || !commit || isHeadSelected}
             onClick={() => void saveReview({ note: reviewNote, reviewed })}
           >
             Save note
@@ -999,7 +1056,12 @@ export function GitCommitDrawer({
               description={
                 <span>
                   Output was truncated for UI performance. Use terminal for full output, e.g.{" "}
-                  <code>{`git show --no-color -U${contextLines} ${commit} | less`}</code>.
+                  <code>
+                    {isHeadSelected
+                      ? `git diff --no-color -U${contextLines} HEAD | less`
+                      : `git show --no-color -U${contextLines} ${commit} | less`}
+                  </code>
+                  .
                 </span>
               }
             />
