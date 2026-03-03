@@ -39,6 +39,7 @@
     "@cocalc/util": "workspace:*",
     "ascii-table3": "^1.0.1",
     "commander": "^14.0.1",
+    "playwright-core": "^1.57.0",
     "reflect-sync": "0.15.1"
   },
   "devDependencies": {

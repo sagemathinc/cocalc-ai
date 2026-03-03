@@ -55,6 +55,32 @@ In practice, these bugs often come from runtime differences:
 
 8. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
 
+## Session modes
+
+You now have two explicit ways to target browser automation:
+
+1. **Live user session** (what the developer is currently seeing)
+   - Keep using `cocalc browser session list`, `cocalc browser session use <id>`, and `--browser`.
+   - Best when you want the agent to inspect the exact UI state in your active tab.
+
+2. **Dedicated agent session** (isolated Playwright-backed Chromium)
+   - Spawn:
+     - `cocalc browser session spawn --use`
+   - List local spawned sessions:
+     - `cocalc browser session spawned`
+   - Destroy by spawn id or browser id:
+     - `cocalc browser session destroy <spawn_id_or_browser_id>`
+   - Best when you want deterministic automation that is unaffected by background-tab throttling or dev browsing activity.
+
+### Useful spawn options
+
+- `--project-id <uuid>` or `--workspace <name>`: open a workspace route immediately.
+- `--target-url <url>`: override route selection completely.
+- `--headless`: run without visible window.
+- `--chromium <path>`: explicit browser binary.
+- `--ready-timeout` / `--timeout`: startup and heartbeat discovery budgets.
+- `--use`: save discovered browser id to current auth profile.
+
 ## Practical debugging tips
 
 - Always set `COCALC_API_URL` for each command when using multiple servers.
@@ -67,6 +93,7 @@ In practice, these bugs often come from runtime differences:
   - `editor.selection` shape/path
   - what `editor.range(path)` and `editor.string(path)` return at runtime
 - If two editors are present, never assume `querySelector(...)` returns the active one.
+- Prefer **spawned sessions** for long-running scripted repros; prefer **live sessions** for exact user-visible issues.
 
 ## Browser API Wishlist
 
