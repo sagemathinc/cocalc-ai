@@ -539,6 +539,15 @@ def tsc(args) -> None:
     v = packages(args)
     CUR = os.path.abspath('.')
 
+    def has_missing_dist_with_incremental_cache(package_path: str) -> bool:
+        """
+        TypeScript project builds can report success from tsbuildinfo cache even if
+        emitted output was deleted. Detect that state so we can force a rebuild.
+        """
+        return os.path.exists(os.path.join(package_path, "tsconfig.tsbuildinfo")) and not os.path.exists(
+            os.path.join(package_path, "dist")
+        )
+
     def f(path: str) -> None:
         package_path = os.path.join(CUR, path)
         if (path.endswith('next')):
@@ -549,6 +558,11 @@ def tsc(args) -> None:
         if not os.path.exists(os.path.join(package_path, 'tsconfig.json')):
             return
         cmd("pnpm exec tsc --build", package_path)
+        if has_missing_dist_with_incremental_cache(package_path):
+            print(
+                f"{package_path}: dist missing after incremental build; forcing TypeScript rebuild"
+            )
+            cmd("pnpm exec tsc --build --force", package_path)
 
     if args.parallel:
         thread_map(f, v)
