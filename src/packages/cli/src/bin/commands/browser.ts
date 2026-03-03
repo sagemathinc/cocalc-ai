@@ -2224,6 +2224,115 @@ export function registerBrowserCommand(
     );
 
   browser
+    .command("target-resolve")
+    .description(
+      "dry-run browser target resolution (session + workspace/project) without performing an action",
+    )
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--require-discovery",
+      "force hub discovery even when browser id appears exact",
+    )
+    .action(
+      async (
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          requireDiscovery?: boolean;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser target-resolve", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery:
+              !!opts.requireDiscovery ||
+              (workspaceHint.length === 0 && projectIdHint.length === 0),
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          let resolvedProjectId: string | undefined;
+          let projectError: string | undefined;
+          try {
+            resolvedProjectId = await resolveTargetProjectId({
+              deps,
+              ctx,
+              workspace: workspaceHint,
+              projectId: projectIdHint,
+              sessionInfo,
+            });
+          } catch (err) {
+            projectError = `${err}`;
+          }
+          let workspaceSummary:
+            | {
+                workspace_id: string;
+                title?: string;
+                host_id?: string | null;
+              }
+            | undefined;
+          if (resolvedProjectId) {
+            try {
+              const ws = await deps.resolveWorkspace(ctx, resolvedProjectId);
+              workspaceSummary = {
+                workspace_id: ws.project_id,
+                ...(ws.title ? { title: ws.title } : {}),
+                ...(ws.host_id != null ? { host_id: ws.host_id } : {}),
+              };
+            } catch {
+              // best-effort enrichment only
+            }
+          }
+          return {
+            browser_id: sessionInfo.browser_id,
+            session_name: sessionInfo.session_name ?? "",
+            active_project_id: sessionInfo.active_project_id ?? "",
+            open_projects: sessionInfo.open_projects?.length ?? 0,
+            requested: {
+              browser: browserHint || undefined,
+              workspace: workspaceHint || undefined,
+              project_id: projectIdHint || undefined,
+              session_project_id: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+              active_only: !!opts.activeOnly,
+              require_discovery: !!opts.requireDiscovery,
+            },
+            resolved: {
+              project_id: resolvedProjectId,
+              ...(workspaceSummary ? { workspace: workspaceSummary } : {}),
+              ...(projectError ? { project_error: projectError } : {}),
+            },
+            ...sessionTargetContext(ctx, sessionInfo, resolvedProjectId),
+          };
+        });
+      },
+    );
+
+  browser
     .command("exec-api")
     .description(
       "print the TypeScript declaration for the browser exec API supported by the selected browser session",
