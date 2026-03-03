@@ -1616,6 +1616,30 @@ export default function Message({
     });
   }
 
+  function logGitBrowserDirectCommit({
+    hash,
+    subject,
+  }: {
+    hash: string;
+    subject: string;
+  }) {
+    if (actions == null || !messageThreadId) return;
+    const commit = `${hash ?? ""}`.trim();
+    if (!commit) return;
+    const reply_to = threadRootIso ? new Date(threadRootIso) : undefined;
+    const lines = ["Committed manually.", `Commit: ${commit}`];
+    if (`${subject ?? ""}`.trim()) {
+      lines.push(`Subject: ${subject.trim()}`);
+    }
+    actions.sendChat({
+      extraInput: lines.join("\n"),
+      reply_to,
+      reply_thread_id: messageThreadId,
+      preserveSelectedThread: true,
+      skipModelDispatch: true,
+    });
+  }
+
   function renderComposeReply() {
     if (!replying) return;
 
@@ -1864,6 +1888,7 @@ export default function Message({
         onClose={() => setOpenCommitHash(undefined)}
         fontSize={font_size}
         onRequestAgentTurn={sendGitBrowserAgentPrompt}
+        onDirectCommitLogged={logGitBrowserDirectCommit}
       />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>

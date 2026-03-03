@@ -90,6 +90,8 @@ interface GitCommitDrawerProps {
   onClose: () => void;
   fontSize?: number;
   onRequestAgentTurn?: (prompt: string) => void | Promise<void>;
+  onDirectCommitLogged?: (info: { hash: string; subject: string }) => void | Promise<void>;
+  onFindInChat?: (query: string) => void;
 }
 
 type HeadStatusEntry = {
@@ -366,6 +368,8 @@ export function GitCommitDrawer({
   onClose,
   fontSize = 14,
   onRequestAgentTurn,
+  onDirectCommitLogged,
+  onFindInChat,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
   const [drawerSize, setDrawerSize] = useState<number>(readDrawerSize);
@@ -997,6 +1001,32 @@ export function GitCommitDrawer({
       if (result.exit_code !== 0) {
         throw new Error((result.stderr || result.stdout || "git commit failed").trim());
       }
+      let commitHash = "";
+      let subject = "";
+      try {
+        const latest = await runGitCommand({
+          projectId,
+          cwd: repoRoot || cwd,
+          args: ["log", "-1", "--format=%H%x09%s"],
+        });
+        if (latest.exit_code === 0) {
+          const [hash, ...subjectParts] = `${latest.stdout ?? ""}`.trim().split("\t");
+          commitHash = `${hash ?? ""}`.trim();
+          subject = subjectParts.join("\t").trim();
+        }
+      } catch {
+        // ignore metadata lookup errors; commit already succeeded
+      }
+      if (onDirectCommitLogged && commitHash) {
+        try {
+          await onDirectCommitLogged({ hash: commitHash, subject });
+        } catch (err) {
+          alert_message({
+            type: "warning",
+            message: `Commit created, but chat log append failed (${err})`,
+          });
+        }
+      }
       setHeadCommitMessage("");
       refreshAll();
       alert_message({
@@ -1019,6 +1049,8 @@ export function GitCommitDrawer({
     const next = CONTEXT_OPTIONS[nextIdx]?.value;
     if (next && next !== contextLines) setContextLines(next);
   };
+  const canFindInChat =
+    typeof onFindInChat === "function" && Boolean(commit) && !isHeadSelected;
 
   useEffect(() => {
     if (!open) return;
@@ -1155,6 +1187,17 @@ export function GitCommitDrawer({
               </span>
             </Tooltip>
           </Space.Compact>
+          {canFindInChat ? (
+            <Button
+              size="small"
+              onClick={() => {
+                if (!commit || !onFindInChat) return;
+                onFindInChat(commit);
+              }}
+            >
+              Find in chat
+            </Button>
+          ) : null}
         </div>
       </div>
       {gitLogError ? (

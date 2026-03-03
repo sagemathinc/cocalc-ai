@@ -286,6 +286,10 @@ export function ChatPanel({
   const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
+  const [gitBrowserFindInChat, setGitBrowserFindInChat] = useState<{
+    query: string;
+    token: number;
+  } | null>(null);
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -849,6 +853,55 @@ export function ChatPanel({
     [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
   );
 
+  const logGitBrowserDirectCommit = useCallback(
+    async ({ hash, subject }: { hash: string; subject: string }) => {
+      const commit = `${hash ?? ""}`.trim();
+      if (!commit) return;
+      const targetThreadKey =
+        gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+      const thread_id = normalizeThreadKey(targetThreadKey);
+      const metadata =
+        targetThreadKey != null
+          ? actions.getThreadMetadata?.(targetThreadKey, { threadId: thread_id })
+          : undefined;
+      const threadDate =
+        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
+      const reply_to =
+        threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
+      const lines = ["Committed manually.", `Commit: ${commit}`];
+      if (`${subject ?? ""}`.trim()) {
+        lines.push(`Subject: ${subject.trim()}`);
+      }
+      actions.sendChat({
+        extraInput: lines.join("\n"),
+        reply_to,
+        reply_thread_id: thread_id,
+        preserveSelectedThread: true,
+        skipModelDispatch: true,
+      });
+    },
+    [actions, gitBrowserThreadKey, selectedThreadKey, composerTargetKey],
+  );
+
+  const findCommitInCurrentChat = useCallback(
+    (query: string) => {
+      const trimmed = `${query ?? ""}`.trim();
+      if (!trimmed) return;
+      const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
+      if (targetThreadKey && targetThreadKey !== selectedThreadKey) {
+        setAllowAutoSelectThread(false);
+        setSelectedThreadKey(targetThreadKey);
+      }
+      setGitBrowserFindInChat({ query: trimmed, token: Date.now() });
+    },
+    [
+      gitBrowserThreadKey,
+      selectedThreadKey,
+      setAllowAutoSelectThread,
+      setSelectedThreadKey,
+    ],
+  );
+
   const renderChatContent = () => (
     <div className="smc-vfill" style={GRID_STYLE}>
       <ChatRoomThreadPanel
@@ -880,6 +933,7 @@ export function ChatPanel({
         onNewThreadSetupChange={setNewThreadSetup}
         showThreadImagePreview={showThreadImagePreview}
         hideChatTypeSelector={hideChatTypeSelector}
+        externalSearchRequest={gitBrowserFindInChat}
       />
       <ChatRoomComposer
         actions={actions}
@@ -989,6 +1043,8 @@ export function ChatPanel({
         }}
         fontSize={fontSize}
         onRequestAgentTurn={sendGitBrowserAgentPrompt}
+        onDirectCommitLogged={logGitBrowserDirectCommit}
+        onFindInChat={findCommitInCurrentChat}
       />
     </div>
   );
