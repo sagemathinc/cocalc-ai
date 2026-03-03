@@ -71,6 +71,13 @@ detect_hub_postgres_data_dir() {
   sed -n "s/.*dataDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
 }
 
+detect_hub_public_hostname() {
+  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+    return 0
+  fi
+  sed -n "s/.*hostname: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <init|start|stop|restart|status|logs|env>
@@ -359,6 +366,17 @@ show_status() {
   echo "state:  $STATE_DIR"
   echo "stdout: $HUB_STDOUT_LOG"
   echo "debug:  $HUB_DEBUG_FILE"
+  local hub_host hub_url public_hostname
+  hub_host="$HUB_BIND_HOST"
+  if [ "$hub_host" = "0.0.0.0" ] || [ -z "$hub_host" ]; then
+    hub_host="127.0.0.1"
+  fi
+  hub_url="http://$hub_host:$HUB_PORT"
+  echo "hub url: $hub_url"
+  public_hostname="$(detect_hub_public_hostname || true)"
+  if [ -n "$public_hostname" ]; then
+    echo "public url: https://$public_hostname"
+  fi
   local pg_host pg_data
   pg_host="$(detect_hub_postgres_socket_dir || true)"
   pg_data="$(detect_hub_postgres_data_dir || true)"

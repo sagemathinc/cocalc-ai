@@ -21,6 +21,8 @@
     "lite:daemon:status": "bash ./scripts/dev/lite-daemon.sh status",
     "lite:daemon:logs": "bash ./scripts/dev/lite-daemon.sh logs",
     "lite:daemon:env": "bash ./scripts/dev/lite-daemon.sh env",
+    "dev:env:lite": "node ./scripts/dev/dev-env.js lite --with-browser --start",
+    "dev:env:hub": "node ./scripts/dev/dev-env.js hub --with-browser --no-start",
     "lite:test:e2e": "bash ./scripts/dev/lite-playwright.sh",
     "lite:test:e2e:headed": "bash ./scripts/dev/lite-playwright.sh --headed",
     "lite:test:e2e:strict": "COCALC_JUPYTER_E2E_REQUIRE_KERNEL=1 bash ./scripts/dev/lite-playwright.sh",

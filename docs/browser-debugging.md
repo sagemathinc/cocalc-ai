@@ -16,6 +16,13 @@ In practice, these bugs often come from runtime differences:
 
 ## Minimal workflow (recommended)
 
+0. Bootstrap env quickly (recommended).
+   - Lite: `pnpm --dir src dev:env:lite`
+   - Hub: `pnpm --dir src dev:env:hub`
+   - Apply exports into current shell:
+     - `eval "$(pnpm -s --dir src dev:env:lite)"`
+     - `eval "$(pnpm -s --dir src dev:env:hub)"`
+
 1. Confirm target server and auth context.
    - `cd src && pnpm lite:daemon:status`
    - Read the `url` (e.g. `http://localhost:7003`).
@@ -40,7 +47,10 @@ In practice, these bugs often come from runtime differences:
    - Call `editor.insertText(...)`
    - Return `before/after` children snapshots
 
-7. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
+7. Capture a screenshot when visual state matters.
+   - `cocalc browser screenshot --selector body --out /tmp/repro.png`
+
+8. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
 
 ## Practical debugging tips
 
@@ -80,20 +90,15 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - Wait helpers: `waitForSelector`, `waitForUrl`, `waitForIdle`
 - Snapshot helper: DOM snapshot or screenshot from CLI
 
-### Screenshot support (high priority)
+### Screenshot support (next iterations)
 
-- Add a first-class command:
-  - `cocalc browser screenshot --fullpage`
-  - `cocalc browser screenshot --selector "<css>"`
-  - `cocalc browser screenshot --path /tmp/repro.png`
-  - `cocalc browser screenshot --wait-for-idle`
-- Return structured output including:
-  - saved path
-  - image dimensions
-  - target context (API URL, browser id, project id, active URL)
-- Optional follow-ups:
-  - emit as blob/attachment for chat debugging
-  - include an automatic timestamped default output path
+- First pass now exists:
+  - `cocalc browser screenshot --selector "<css>" --out /tmp/repro.png`
+- Follow-ups:
+  - `--fullpage` / viewport-mode controls
+  - `--wait-for-idle`
+  - direct blob/attachment output
+  - richer failure diagnostics when client-side renderer cannot load
 
 ### Script ergonomics
 
