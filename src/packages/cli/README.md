@@ -110,6 +110,16 @@ cocalc browser exec \
   --file script.js
 ```
 
+If you need an isolated browser target (instead of the developer's live tab),
+spawn a dedicated Playwright-backed Chromium session:
+
+```bash
+cocalc browser session spawn --use
+cocalc browser session spawned
+# ... run browser exec/open/screenshot commands ...
+cocalc browser session destroy <spawn_id_or_browser_id>
+```
+
 For scoped/agent tokens, prefer `--project-id` + `--browser` (or the matching
 env vars) to avoid discovery calls that may require broader hub permissions.
 

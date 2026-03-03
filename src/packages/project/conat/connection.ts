@@ -21,8 +21,6 @@ import { getLogger } from "@cocalc/project/logger";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { versionCheckLoop } from "./hub";
 
-const data = { ...backendData, ...projectData };
-
 const logger = getLogger("conat:connection");
 
 function normalizeProjectId(candidate?: string): string | undefined {
@@ -45,7 +43,7 @@ export function getIdentity({
   const normalized = normalizeProjectId(project_id);
   if (!normalized) {
     const infoProjectId = normalizeProjectId(client.info?.user?.project_id);
-    project_id = infoProjectId ?? data.project_id;
+    project_id = infoProjectId ?? projectData.project_id;
   } else {
     project_id = normalized;
   }
@@ -60,11 +58,13 @@ export function connectToConat(
   },
 ): ConatClient {
   logger.debug("connectToConat");
-  const apiKey = options?.apiKey ?? data.apiKey;
+  const apiKey = options?.apiKey ?? backendData.apiKey;
   const project_id =
-    normalizeProjectId(options?.project_id) ?? data.project_id;
-  const secretToken = options?.secretToken ?? data.secretToken;
-  const address = options?.address ?? data.conatServer;
+    normalizeProjectId(options?.project_id) ?? projectData.project_id;
+  const secretToken = options?.secretToken ?? projectData.secretToken;
+  // NOTE: read mutable backendData.conatServer at call-time (not module init),
+  // so lite can override with setConatServer(...) after boot.
+  const address = options?.address ?? backendData.conatServer;
 
   let Cookie;
   if (apiKey) {
@@ -96,7 +96,7 @@ export function connectToConat(
 export function init() {
   setConatClient({
     conat: connectToConat,
-    project_id: data.project_id,
+    project_id: projectData.project_id,
     getLogger,
   });
 }

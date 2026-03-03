@@ -36,6 +36,137 @@ export type BrowserExecOperation = {
   result?: unknown;
 };
 
+export type BrowserAutomationPosture = "dev" | "prod";
+
+export type BrowserActionName =
+  | "click"
+  | "click_at"
+  | "drag"
+  | "type"
+  | "press"
+  | "wait_for_selector"
+  | "wait_for_url";
+
+export type BrowserCoordinateSpace =
+  | "viewport"
+  | "selector"
+  | "image"
+  | "normalized";
+
+export type BrowserScreenshotMetadata = {
+  page_url?: string;
+  captured_at?: string;
+  selector?: string;
+  image_width?: number;
+  image_height?: number;
+  capture_scale?: number;
+  device_pixel_ratio?: number;
+  scroll_x?: number;
+  scroll_y?: number;
+  selector_rect_css?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+  viewport_css?: {
+    width: number;
+    height: number;
+  };
+};
+
+export type BrowserActionRequest =
+  | {
+      name: "click";
+      selector: string;
+      button?: "left" | "middle" | "right";
+      click_count?: number;
+      timeout_ms?: number;
+      wait_for_navigation_ms?: number;
+    }
+  | {
+      name: "click_at";
+      x: number;
+      y: number;
+      space?: BrowserCoordinateSpace;
+      selector?: string;
+      button?: "left" | "middle" | "right";
+      click_count?: number;
+      timeout_ms?: number;
+      wait_for_navigation_ms?: number;
+      screenshot_meta?: BrowserScreenshotMetadata;
+      strict_meta?: boolean;
+    }
+  | {
+      name: "drag";
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      space?: BrowserCoordinateSpace;
+      selector?: string;
+      button?: "left" | "middle" | "right";
+      steps?: number;
+      hold_ms?: number;
+      timeout_ms?: number;
+      screenshot_meta?: BrowserScreenshotMetadata;
+      strict_meta?: boolean;
+    }
+  | {
+      name: "type";
+      selector: string;
+      text: string;
+      append?: boolean;
+      clear?: boolean;
+      submit?: boolean;
+      timeout_ms?: number;
+    }
+  | {
+      name: "press";
+      key: string;
+      selector?: string;
+      ctrl?: boolean;
+      alt?: boolean;
+      shift?: boolean;
+      meta?: boolean;
+      timeout_ms?: number;
+    }
+  | {
+      name: "wait_for_selector";
+      selector: string;
+      state?: "attached" | "visible" | "hidden" | "detached";
+      timeout_ms?: number;
+      poll_ms?: number;
+    }
+  | {
+      name: "wait_for_url";
+      url?: string;
+      includes?: string;
+      regex?: string;
+      timeout_ms?: number;
+      poll_ms?: number;
+    };
+
+export type BrowserActionResult = {
+  name: BrowserActionName;
+  ok: true;
+  page_url?: string;
+  elapsed_ms?: number;
+  [key: string]: unknown;
+};
+
+export type BrowserExecPolicyV1 = {
+  version: 1;
+  // Explicitly allow raw JS execution in prod posture.
+  allow_raw_exec?: boolean;
+  // Optional hard scope for project/workspace ids.
+  allowed_project_ids?: string[];
+  // Optional hard scope for browser location.origin values.
+  allowed_origins?: string[];
+  // Optional allow-list for typed action names.
+  allowed_actions?: BrowserActionName[];
+};
+
 export interface BrowserSessionServiceApi {
   getExecApiDeclaration: () => Promise<string>;
   getSessionInfo: () => Promise<{
@@ -59,10 +190,20 @@ export interface BrowserSessionServiceApi {
   exec: (opts: {
     project_id: string;
     code: string;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
   }) => Promise<{ ok: true; result: unknown }>;
+  action: (opts: {
+    project_id: string;
+    action: BrowserActionRequest;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }) => Promise<{ ok: true; result: BrowserActionResult }>;
   startExec: (opts: {
     project_id: string;
     code: string;
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
   }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
   getExec: (opts: {
     exec_id: string;
