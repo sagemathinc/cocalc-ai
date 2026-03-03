@@ -14,6 +14,7 @@ interface Props {
   fontSize?: number;
   persistKey: string;
   basePath?: string;
+  chatPath?: string;
   durationLabel?: string;
   projectId?: string;
   logStore?: string;
@@ -37,6 +38,7 @@ export function CodexLogPanel({
   fontSize,
   persistKey,
   basePath,
+  chatPath,
   durationLabel,
   projectId,
   logStore,
@@ -111,6 +113,7 @@ export function CodexLogPanel({
       fontSize={fontSize}
       persistKey={persistKey}
       basePath={basePath}
+      chatPath={chatPath}
       durationLabel={durationLabel}
       projectId={projectId}
       onJumpToBottom={onJumpToBottom}

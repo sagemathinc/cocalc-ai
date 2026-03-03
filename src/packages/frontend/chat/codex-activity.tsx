@@ -17,7 +17,7 @@ import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
-import { plural } from "@cocalc/util/misc";
+import { containingPath, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -103,6 +103,7 @@ export interface CodexActivityProps {
   persistKey?: string;
   projectId?: string;
   basePath?: string;
+  chatPath?: string;
   inlineCodeLinks?: InlineCodeLink[];
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
@@ -124,6 +125,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   persistKey,
   projectId,
   basePath,
+  chatPath,
   inlineCodeLinks,
   onDeleteEvents,
   onDeleteAllEvents,
@@ -135,8 +137,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
   const resolvedBasePath = useMemo(
-    () => detectBasePath(basePath, entries),
-    [basePath, entries],
+    () => detectBasePath(basePath, entries, chatPath),
+    [basePath, entries, chatPath],
   );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
@@ -972,15 +974,22 @@ function normalizeAbsoluteMaybe(path?: string): string | undefined {
 function detectBasePath(
   configuredBasePath: string | undefined,
   entries: ActivityEntry[],
+  chatPath?: string,
 ): string | undefined {
-  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
-  if (explicit) return explicit;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
-    if (entry.kind !== "terminal") continue;
-    const cwd = normalizeAbsoluteMaybe(entry.cwd);
+    const cwd =
+      entry.kind === "terminal" || entry.kind === "file"
+        ? normalizeAbsoluteMaybe(entry.cwd)
+        : undefined;
     if (cwd) return cwd;
   }
+  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
+  if (explicit) return explicit;
+  const chatDir = chatPath
+    ? normalizeAbsoluteMaybe(containingPath(chatPath))
+    : undefined;
+  if (chatDir) return chatDir;
   return undefined;
 }
 

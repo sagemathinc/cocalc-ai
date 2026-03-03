@@ -247,6 +247,7 @@ export function AgentMessageStatus({
             fontSize={fontSize}
             persistKey={persistKey}
             basePath={activityBasePath}
+            chatPath={path}
             logStore={fallbackLogRefs.store}
             logKey={fallbackLogRefs.key}
             logSubject={fallbackLogRefs.subject}
