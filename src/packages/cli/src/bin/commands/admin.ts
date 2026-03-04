@@ -1,14 +1,81 @@
 import { Command } from "commander";
+import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 
 export type AdminCommandDeps = {
   withContext: any;
+  resolveAccountByIdentifier: any;
+  normalizeUrl: any;
+  isValidUUID: any;
 };
 
 export function registerAdminCommand(program: Command, deps: AdminCommandDeps): Command {
-  const { withContext } = deps;
+  const { withContext, resolveAccountByIdentifier, normalizeUrl, isValidUUID } = deps;
 
   const admin = program.command("admin").description("site admin operations");
   const adminUser = admin.command("user").description("admin user management");
+
+  admin
+    .command("search <query>")
+    .description(
+      "search users by partial name, email, account_id, or project_id (admin-only)",
+    )
+    .option("--limit <n>", "max rows (default 20)")
+    .option("--only-email", "search only by exact email matches")
+    .action(
+      async (
+        query: string,
+        opts: { limit?: string; onlyEmail?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "admin search", async (ctx) => {
+          const normalizedQuery = `${query ?? ""}`.trim().toLowerCase();
+          if (!normalizedQuery) {
+            throw new Error("query must be non-empty");
+          }
+
+          const limit = opts.limit == null ? 20 : Number(opts.limit);
+          if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit <= 0) {
+            throw new Error("--limit must be a positive integer");
+          }
+          const cappedLimit = Math.min(limit, ADMIN_SEARCH_LIMIT);
+
+          const rows = (await ctx.hub.system.userSearch({
+            query: normalizedQuery,
+            admin: true,
+            limit: cappedLimit,
+            only_email: !!opts.onlyEmail,
+          })) as Array<{
+            account_id: string;
+            first_name?: string;
+            last_name?: string;
+            name?: string;
+            email_address?: string;
+            last_active?: number;
+            created?: number;
+            banned?: boolean;
+            email_address_verified?: boolean;
+          }>;
+
+          return (rows ?? []).map((row) => ({
+            account_id: row.account_id,
+            name:
+              `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+              row.name ||
+              "",
+            first_name: row.first_name ?? "",
+            last_name: row.last_name ?? "",
+            email_address: row.email_address ?? null,
+            email_address_verified:
+              row.email_address_verified == null
+                ? null
+                : !!row.email_address_verified,
+            banned: row.banned == null ? null : !!row.banned,
+            last_active: row.last_active ?? null,
+            created: row.created ?? null,
+          }));
+        });
+      },
+    );
 
   adminUser
     .command("create")
@@ -67,6 +134,74 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
           });
 
           return created;
+        });
+      },
+    );
+
+  adminUser
+    .command("issue-auth-token <user>")
+    .description(
+      "issue an impersonation auth token for a user (account id, email, or name query)",
+    )
+    .option(
+      "--password <password>",
+      "password fallback for non-admin callers (normally not needed for admins)",
+    )
+    .option(
+      "--lang <locale>",
+      "optional lang_temp query parameter in generated sign-in URL",
+    )
+    .action(
+      async (
+        user: string,
+        opts: {
+          password?: string;
+          lang?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin user issue-auth-token", async (ctx) => {
+          const identifier = `${user ?? ""}`.trim();
+          if (!identifier) {
+            throw new Error("user identifier must be non-empty");
+          }
+
+          const resolved = isValidUUID(identifier)
+            ? { account_id: identifier }
+            : await resolveAccountByIdentifier(ctx, identifier);
+          const userAccountId = `${resolved?.account_id ?? ""}`.trim();
+          if (!userAccountId) {
+            throw new Error(`unable to resolve account for '${identifier}'`);
+          }
+
+          const token = await ctx.hub.system.generateUserAuthToken({
+            user_account_id: userAccountId,
+            password: opts.password,
+          });
+
+          // Prefer the configured public DNS/site URL when available so generated
+          // impersonation links work from other machines/browsers.
+          let base = normalizeUrl(ctx.apiBaseUrl).replace(/\/+$/, "");
+          try {
+            const site = await ctx.hub.system.getPublicSiteUrl({});
+            const publicUrl = `${site?.url ?? ""}`.trim();
+            if (publicUrl) {
+              base = normalizeUrl(publicUrl).replace(/\/+$/, "");
+            }
+          } catch {
+            // Keep fallback to current apiBaseUrl for older hubs / local-only setups.
+          }
+          const signInUrl = new URL(`${base}/auth/impersonate`);
+          signInUrl.searchParams.set("auth_token", token);
+          if (opts.lang?.trim()) {
+            signInUrl.searchParams.set("lang_temp", opts.lang.trim());
+          }
+
+          return {
+            user_account_id: userAccountId,
+            token,
+            url: signInUrl.toString(),
+          };
         });
       },
     );

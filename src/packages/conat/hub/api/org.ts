@@ -93,6 +93,8 @@ export interface Org {
     account_id?: string;
     // user = account_id or email address
     user: string;
+    // expiration as milliseconds since epoch
+    expire?: number;
   }) => Promise<{ token: string; url: string }>;
 
   expireToken: (opts: { account_id?: string; token: string }) => Promise<void>;

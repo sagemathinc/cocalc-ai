@@ -18,8 +18,10 @@ import { capitalize, closest_kernel_match, rpad_html } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   Button,
+  Checkbox,
   Drawer,
   Divider,
+  Modal,
   Popover,
   Popconfirm,
   Progress,
@@ -140,6 +142,7 @@ export function Kernel({
   const trust: undefined | boolean = useRedux([name, "trust"]);
   const read_only: undefined | boolean = useRedux([name, "read_only"]);
   const redux_kernel = useRedux([name, "kernel"]);
+  const kernel_undecided = redux_kernel == null;
   const no_kernel = redux_kernel === "";
   // no redux_kernel or empty string (!) means there is no kernel
   const kernel: string | null = !redux_kernel ? null : redux_kernel;
@@ -182,12 +185,19 @@ export function Kernel({
     }
   }, [backend_state]);
   const [kernelDrawerOpen, setKernelDrawerOpen] = React.useState<boolean>(false);
+  const [defaultKernelOnSelect, setDefaultKernelOnSelect] =
+    React.useState<boolean>(false);
   const [kernelDrawerWidth, setKernelDrawerWidth] = React.useState<
     number | undefined
   >(readKernelDrawerWidth);
   useEffect(() => {
     setKernelDrawerOpen(!!show_kernel_selector);
   }, [show_kernel_selector]);
+  useEffect(() => {
+    if (!kernelDrawerOpen) {
+      setDefaultKernelOnSelect(false);
+    }
+  }, [kernelDrawerOpen]);
 
   // render functions start there
 
@@ -197,6 +207,12 @@ export function Kernel({
 
   function closeKernelDrawer() {
     actions.hide_select_kernel();
+  }
+
+  function onKernelSelectedFromPrompt(kernelName: string) {
+    if (!kernel_undecided || !defaultKernelOnSelect) return;
+    if (!kernelName) return;
+    actions.kernel_dont_ask_again(true);
   }
 
   function handleDrawerResize(next: number) {
@@ -780,7 +796,7 @@ export function Kernel({
     );
   }
 
-  if (!no_kernel && kernel == null) {
+  if (!no_kernel && kernel == null && !kernelDrawerOpen) {
     return null;
   }
 
@@ -860,32 +876,92 @@ export function Kernel({
           )}
         </div>
       )}
-      <Drawer
-        open={kernelDrawerOpen}
-        onClose={closeKernelDrawer}
-        placement="right"
-        size={kernelDrawerWidth}
-        resizable={{ onResize: handleDrawerResize }}
-        title={get_kernel_name()}
-        extra={renderDrawerActions()}
-      >
-        <Tabs
-          size="small"
-          defaultActiveKey="kernels"
-          items={[
-            {
-              key: "kernels",
-              label: "Kernels",
-              children: <KernelSelector actions={actions} embedded />,
-            },
-            {
-              key: "info",
-              label: "Info",
-              children: renderKernelDetails(),
-            },
-          ]}
-        />
-      </Drawer>
+      {kernel_undecided ? (
+        <Modal
+          open={kernelDrawerOpen}
+          onCancel={closeKernelDrawer}
+          title={intl.formatMessage({
+            id: "jupyter.status.select_kernel_modal_title",
+            defaultMessage: "Select a kernel",
+          })}
+          width={Math.min(760, Math.max(520, (kernelDrawerWidth ?? 640) - 120))}
+          footer={
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <Checkbox
+                checked={defaultKernelOnSelect}
+                onChange={(e) => setDefaultKernelOnSelect(e.target.checked)}
+              >
+                {intl.formatMessage({
+                  id: "jupyter.status.default_kernel_on_select",
+                  defaultMessage: "Default to this kernel in the future",
+                })}
+              </Checkbox>
+              <Button onClick={closeKernelDrawer}>
+                {intl.formatMessage(labels.cancel)}
+              </Button>
+            </div>
+          }
+          destroyOnClose={false}
+          maskClosable={false}
+        >
+          <Tabs
+            size="small"
+            defaultActiveKey="kernels"
+            items={[
+              {
+                key: "kernels",
+                label: "Kernels",
+                children: (
+                  <KernelSelector
+                    actions={actions}
+                    embedded
+                    onSelectKernel={onKernelSelectedFromPrompt}
+                  />
+                ),
+              },
+              {
+                key: "info",
+                label: "Info",
+                children: renderKernelDetails(),
+              },
+            ]}
+          />
+        </Modal>
+      ) : (
+        <Drawer
+          open={kernelDrawerOpen}
+          onClose={closeKernelDrawer}
+          placement="right"
+          size={kernelDrawerWidth}
+          resizable={{ onResize: handleDrawerResize }}
+          title={get_kernel_name()}
+          extra={renderDrawerActions()}
+        >
+          <Tabs
+            size="small"
+            defaultActiveKey="kernels"
+            items={[
+              {
+                key: "kernels",
+                label: "Kernels",
+                children: <KernelSelector actions={actions} embedded />,
+              },
+              {
+                key: "info",
+                label: "Info",
+                children: renderKernelDetails(),
+              },
+            ]}
+          />
+        </Drawer>
+      )}
     </>
   );
 }

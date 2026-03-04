@@ -109,8 +109,17 @@ export async function get_kernel_data_by_name(
 export async function getPythonKernelName() {
   const kernels = await get_kernel_data();
   for (const x of kernels) {
-    const name = x.name.toLowerCase();
-    if (name.includes("python") && !name.includes("python2")) {
+    const language = (x.language ?? "").toLowerCase();
+    if (language === "python") {
+      return x.name;
+    }
+    const name = (x.name ?? "").toLowerCase();
+    const displayName = (x.display_name ?? "").toLowerCase();
+    if (
+      (name.includes("python") || displayName.includes("python")) &&
+      !name.includes("python2") &&
+      !displayName.includes("python2")
+    ) {
       return x.name;
     }
   }

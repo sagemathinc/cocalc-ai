@@ -193,6 +193,11 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `workspace snapshot list`
 - `host resolve-connection`
 - `host issue-http-token`
+- `admin search`
+- `admin user create`
+- `admin user issue-auth-token`
+- `org token create`
+- `org token expire`
 - `workspace proxy url`
 - `workspace proxy curl`
 - `op list`

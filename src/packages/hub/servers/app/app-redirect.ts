@@ -17,13 +17,30 @@ export default function init(
   const winston = getLogger("app-redirect");
   const v: string[] = [];
   const routes = new Set(APP_ROUTES);
-  if (opts.includeAuth) {
-    routes.add("auth");
-  }
   for (const path of routes) {
     v.push(`/${path}*`);
   }
-  router.get(v, (req, res) => {
+  if (opts.includeAuth) {
+    // Only client-side auth pages should route through the SPA.  Everything
+    // else under /auth (e.g. /auth/impersonate) must remain available for
+    // server-side handlers registered later.
+    v.push("/auth");
+    v.push("/auth/");
+    v.push("/auth/sign-in*");
+    v.push("/auth/sign-up*");
+    v.push("/auth/password-reset*");
+  }
+  router.get(v, (req, res, next) => {
+    if (opts.includeAuth && req.path.startsWith("/auth/")) {
+      const uiAuthPrefixes = [
+        "/auth/sign-in",
+        "/auth/sign-up",
+        "/auth/password-reset",
+      ];
+      if (!uiAuthPrefixes.some((prefix) => req.path.startsWith(prefix))) {
+        return next();
+      }
+    }
     winston.debug(req.url);
     const url = new URL("http://host");
     url.searchParams.set("target", req.url);

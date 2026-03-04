@@ -32,6 +32,7 @@ import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
 import { secretToken } from "@cocalc/project/data";
+import { resolveAppProxyTarget } from "@cocalc/project/app-servers/control";
 import {
   PROJECT_PROXY_AUTH_HEADER,
   getSingleHeaderValue,
@@ -68,38 +69,42 @@ export async function startProxyServer({
   });
 
   const proxyServer = http.createServer((req, res) => {
-    try {
-      const target = getTarget(req);
-      if (!hasValidInternalProxySecret(req)) {
-        res.writeHead(403, { "Content-Type": "text/plain" });
-        res.end("Forbidden\n");
-        return;
+    (async () => {
+      try {
+        const target = await getTarget(req);
+        if (!hasValidInternalProxySecret(req)) {
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          res.end("Forbidden\n");
+          return;
+        }
+        proxy.web(req, res, { target, prependPath: false });
+      } catch {
+        // Not matched — 404 so it's obvious when a wrong base is used.
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found\n");
       }
-      proxy.web(req, res, { target, prependPath: false });
-    } catch {
-      // Not matched — 404 so it's obvious when a wrong base is used.
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found\n");
-    }
+    })();
   });
 
   proxyServer.on("upgrade", (req, socket, head) => {
-    try {
-      const target = getTarget(req);
-      if (!hasValidInternalProxySecret(req)) {
-        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    (async () => {
+      try {
+        const target = await getTarget(req);
+        if (!hasValidInternalProxySecret(req)) {
+          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        proxy.ws(req, socket, head, {
+          target,
+        });
+      } catch {
+        // Not matched — close gracefully.
+        socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
         socket.destroy();
         return;
       }
-      proxy.ws(req, socket, head, {
-        target,
-      });
-    } catch {
-      // Not matched — close gracefully.
-      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+    })();
   });
 
   await listen({
@@ -128,9 +133,9 @@ export function attachProxyServer({
   const { proxy, getTarget } = createProxyResolver({ base_url, host });
 
   if (app) {
-    app.use((req, res, next) => {
+    app.use(async (req, res, next) => {
       try {
-        const target = getTarget(req);
+        const target = await getTarget(req);
         if (!hasValidInternalProxySecret(req)) {
           res.writeHead(403, { "Content-Type": "text/plain" });
           res.end("Forbidden\n");
@@ -145,19 +150,21 @@ export function attachProxyServer({
 
   if (httpServer) {
     httpServer.prependListener("upgrade", (req, socket, head) => {
-      try {
-        const target = getTarget(req);
-        if (!hasValidInternalProxySecret(req)) {
-          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-          socket.destroy();
+      (async () => {
+        try {
+          const target = await getTarget(req);
+          if (!hasValidInternalProxySecret(req)) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          proxy.ws(req, socket, head, {
+            target,
+          });
+        } catch {
           return;
         }
-        proxy.ws(req, socket, head, {
-          target,
-        });
-      } catch {
-        return;
-      }
+      })();
     });
   }
 }
@@ -198,7 +205,7 @@ function createProxyResolver({
   const proxyPattern = buildPattern(base, "proxy");
   const portPattern = buildPattern(base, "port");
 
-  function getTarget(req: http.IncomingMessage) {
+  async function getTarget(req: http.IncomingMessage) {
     const url = req.url ?? "";
     const mPort = portPattern.exec(url);
     if (mPort) {
@@ -212,6 +219,14 @@ function createProxyResolver({
       // Rewrite path by mutating req.url before proxying
       req.url = rest;
       return { port, host };
+    }
+
+    const appTarget = await resolveAppProxyTarget({ base, url });
+    if (appTarget) {
+      if (appTarget.rewritePath != null) {
+        req.url = appTarget.rewritePath;
+      }
+      return { port: appTarget.port, host };
     }
 
     logger.debug("URL not matched", { url });

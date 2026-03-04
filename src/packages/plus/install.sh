@@ -25,8 +25,13 @@ if [[ "$OS" == "darwin" && "$ARCH" != "arm64" ]]; then
   exit 1
 fi
 
-DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-BIN_HOME="${XDG_BIN_HOME:-$HOME/.local/bin}"
+if [[ "$OS" == "darwin" ]]; then
+  DATA_HOME="${XDG_DATA_HOME:-$HOME/Library/Application Support}"
+  BIN_HOME="${XDG_BIN_HOME:-$HOME/Library/Application Support/cocalc-plus/bin}"
+else
+  DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+  BIN_HOME="${XDG_BIN_HOME:-$HOME/.local/bin}"
+fi
 INSTALL_ROOT="${COCALC_PLUS_HOME:-$DATA_HOME/cocalc-plus}"
 BIN_DIR="$INSTALL_ROOT/bin"
 TOOLS_DIR="$INSTALL_ROOT/tools"

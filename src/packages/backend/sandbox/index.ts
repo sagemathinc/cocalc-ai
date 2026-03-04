@@ -245,6 +245,8 @@ const INTERNAL_METHODS = new Set([
   "openAt2Roots",
   "openAt2InitErrors",
   "openAt2ModeLogged",
+  "sandboxBasePathCache",
+  "resolveSandboxBasePathForComparison",
 ]);
 
 export class SandboxedFilesystem {
@@ -261,6 +263,7 @@ export class SandboxedFilesystem {
   private openAt2Roots = new Map<string, OpenAt2SandboxRoot | null>();
   private openAt2InitErrors = new Map<string, Error>();
   private openAt2ModeLogged = new Set<string>();
+  private sandboxBasePathCache = new Map<string, string>();
   private lastOnDisk = new LRU<string, string>({
     maxSize: MAX_LAST_ON_DISK,
     sizeCalculation: (value) => value.length + 1, // must be positive!
@@ -870,18 +873,37 @@ export class SandboxedFilesystem {
     );
   };
 
+  private resolveSandboxBasePathForComparison = async (
+    sandboxBasePath: string,
+  ): Promise<string> => {
+    const cached = this.sandboxBasePathCache.get(sandboxBasePath);
+    if (cached != null) {
+      return cached;
+    }
+    let resolved = sandboxBasePath;
+    try {
+      resolved = await realpath(sandboxBasePath);
+    } catch {
+      // Keep the original path if we cannot canonicalize.
+    }
+    this.sandboxBasePathCache.set(sandboxBasePath, resolved);
+    return resolved;
+  };
+
   private ensureFdInSandbox = async (
     fd: number,
     sandboxBasePath: string,
     path: string,
   ): Promise<void> => {
-    if (this.unsafeMode) {
+    if (this.unsafeMode || process.platform !== "linux") {
       return;
     }
     // Verify the actual opened inode is still inside the sandbox boundary.
     // This closes the TOCTOU window between path validation and read/write.
     const resolved = await realpath(`/proc/self/fd/${fd}`);
-    if (!this.isInsideSandbox(resolved, sandboxBasePath)) {
+    const compareBase =
+      await this.resolveSandboxBasePathForComparison(sandboxBasePath);
+    if (!this.isInsideSandbox(resolved, compareBase)) {
       throw Error(`realpath of '${path}' resolves to a path outside of sandbox`);
     }
   };
@@ -916,7 +938,9 @@ export class SandboxedFilesystem {
       throw stale;
     }
     const resolved = await realpath(pathInSandbox);
-    if (!this.isInsideSandbox(resolved, sandboxBasePath)) {
+    const compareBase =
+      await this.resolveSandboxBasePathForComparison(sandboxBasePath);
+    if (!this.isInsideSandbox(resolved, compareBase)) {
       throw Error(`realpath of '${path}' resolves to a path outside of sandbox`);
     }
   };
@@ -978,7 +1002,9 @@ export class SandboxedFilesystem {
     // we resolve to the realpath:
     try {
       const p = await realpath(pathInSandbox);
-      if (p != sandboxBasePath && !p.startsWith(sandboxBasePath + "/")) {
+      const compareBase =
+        await this.resolveSandboxBasePathForComparison(sandboxBasePath);
+      if (!this.isInsideSandbox(p, compareBase)) {
         throw Error(
           `realpath of '${path}' resolves to a path outside of sandbox`,
         );

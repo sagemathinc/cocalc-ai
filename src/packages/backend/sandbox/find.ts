@@ -12,6 +12,8 @@ for finding filesnames in a directory tree that match a pattern.
 import type { FindOptions } from "@cocalc/conat/files/fs";
 export type { FindOptions };
 import exec, { type ExecOutput, validate } from "./exec";
+import { platform } from "node:os";
+import { basename } from "node:path";
 
 export default async function find(
   path: string,
@@ -20,11 +22,18 @@ export default async function find(
   if (path == null) {
     throw Error("path must be specified");
   }
-  return await exec({
+  let selectedOptions = options ?? [];
+  let printfFormat: string | undefined;
+  if (platform() === "darwin") {
+    ({ options: selectedOptions, printfFormat } = rewriteDarwinPrintf(
+      selectedOptions,
+    ));
+  }
+  const output = await exec({
     cmd: "find",
     cwd: path,
     prefixArgs: [path ? path : "."],
-    options,
+    options: selectedOptions,
     darwin,
     linux,
     maxSize,
@@ -32,6 +41,63 @@ export default async function find(
     whitelist,
     safety: [],
   });
+  if (printfFormat == null) {
+    return output;
+  }
+  return applyPrintfProjection(output, path, printfFormat);
+}
+
+function rewriteDarwinPrintf(options: string[]): {
+  options: string[];
+  printfFormat?: string;
+} {
+  const rewritten: string[] = [];
+  let printfFormat: string | undefined;
+  for (let i = 0; i < options.length; i++) {
+    const opt = options[i];
+    if (opt === "-printf") {
+      const format = options[i + 1];
+      if (format == null) {
+        throw Error("Option -printf requires a value");
+      }
+      if (format !== "%f\n" && format !== "%P\n") {
+        throw Error(`Unsupported -printf format on darwin: ${format}`);
+      }
+      printfFormat = format;
+      i += 1;
+      continue;
+    }
+    rewritten.push(opt);
+  }
+  if (printfFormat != null) {
+    rewritten.push("-print");
+  }
+  return { options: rewritten, printfFormat };
+}
+
+function applyPrintfProjection(
+  output: ExecOutput,
+  rootPath: string,
+  printfFormat: string,
+): ExecOutput {
+  const root = rootPath === "" ? "." : rootPath;
+  const text = Buffer.from(output.stdout).toString("utf8");
+  const inputLines = text.split(/\r?\n/g).filter((line) => line.length > 0);
+  const lines = inputLines.map((line) => {
+    if (printfFormat === "%f\n") {
+      return basename(line);
+    }
+    if (line === root) {
+      return "";
+    }
+    if (line.startsWith(root + "/")) {
+      return line.slice(root.length + 1);
+    }
+    return line;
+  });
+  const projected =
+    lines.length === 0 ? "" : lines.filter((line) => line.length > 0).join("\n") + "\n";
+  return { ...output, stdout: Buffer.from(projected) };
 }
 
 const whitelist = {

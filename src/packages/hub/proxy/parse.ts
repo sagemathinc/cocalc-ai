@@ -1,13 +1,9 @@
-type ProxyType = "port" | "raw" | "server" | "files" | "proxy" | "conat";
-
-const TYPE_SEGMENTS = new Set([
-  "port",
-  "raw",
-  "server",
-  "files",
-  "proxy",
-  "conat",
-]);
+import {
+  getProxyRouteDefinition,
+  PROXY_TYPE_SEGMENTS,
+  type ProxyRouteDefinition,
+  type ProxyType,
+} from "./routes";
 
 export function parseReq(
   url: string, // with base_path removed (url does start with /)
@@ -16,6 +12,7 @@ export function parseReq(
 ): {
   key: string; // used for caching
   type: ProxyType;
+  route: ProxyRouteDefinition;
   project_id: string; // the uuid of the target project containing the service being proxied
   port_desc: string; // description of port; "" for raw, or a number or "jupyter"
   internal_url: string | undefined; // url at target of thing we are proxying to; this is ONLY set in case type == 'server'.
@@ -25,24 +22,23 @@ export function parseReq(
   }
   const v = url.split("/").slice(1);
   const project_id = v[0];
-  if (!TYPE_SEGMENTS.has(v[1])) {
+  const route = getProxyRouteDefinition(v[1]);
+  if (!route) {
     throw Error(
-      `invalid type -- "${v[1]}" must be one of '${Array.from(TYPE_SEGMENTS).join(", ")}' in url="${url}"`,
+      `invalid type -- "${v[1]}" must be one of '${Array.from(PROXY_TYPE_SEGMENTS).join(", ")}' in url="${url}"`,
     );
   }
-  const type: ProxyType = v[1] as ProxyType;
+  const type: ProxyType = route.type;
   let internal_url: string | undefined = undefined;
-  let port_desc: string;
-  if (type == "raw" || type == "files" || type == "conat") {
+  let port_desc = "";
+  if (!route.requiresPortDesc) {
     port_desc = "";
-  } else if (type === "port") {
+  } else if (!route.allowsInternalUrl) {
     port_desc = v[2];
-  } else if (type === "server" || type == "proxy") {
+  } else {
     port_desc = v[2];
     internal_url = v.slice(3).join("/");
-  } else {
-    throw Error(`unknown type "${type}"`);
   }
   const key = `${remember_me}-${api_key}-${project_id}-${type}-${port_desc}-${internal_url}`;
-  return { key, type, project_id, port_desc, internal_url };
+  return { key, type, route, project_id, port_desc, internal_url };
 }

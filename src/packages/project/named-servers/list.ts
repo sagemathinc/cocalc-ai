@@ -14,8 +14,8 @@ To add another one, define a new entry in SPEC:
   use process.env so that the env can influence command line options.
 */
 
-import { exec } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 
 import { NamedServerName } from "@cocalc/util/types/servers";
@@ -37,6 +37,35 @@ const JUPYTERLAB_DATA =
   process.env.COCALC_JUPYTER_LAB_iopub_data_rate_limit ?? 2000000;
 const JUPYTERLAB_MSGS =
   process.env.COCALC_JUPYTER_LAB_iopub_msg_rate_limit ?? 50;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function resolveServerUser(): Promise<string> {
+  let name = `${process.env.USER ?? ""}`.trim();
+  if (!name) {
+    try {
+      name = `${userInfo().username ?? ""}`.trim();
+    } catch {
+      // ignore and keep fallback
+    }
+  }
+  if (!name) {
+    return "user";
+  }
+  if (process.platform !== "linux") {
+    return name;
+  }
+  try {
+    const passwd = await readFile("/etc/passwd", "utf8");
+    return new RegExp(`^${escapeRegex(name)}:`,"m").test(passwd)
+      ? name
+      : "user";
+  } catch {
+    return name;
+  }
+}
 
 async function rserver(
   _ip: string,
@@ -60,14 +89,9 @@ async function rserver(
   // to tell it where to listen to, but for some reason that doesn't work. Hence $ip is ignored.
   // The default is 0.0.0.0, which works (and it's fine, because we proxy it anyway).
 
-  // Check, if the user $USER exists in /etc/passwd using grep. If not, call the user "user".
-  // Just process.env.USER does not work in development, i.e. when the "random id" user does not exist.
-  const user = await new Promise<string>((resolve) => {
-    const name = process.env.USER ?? "user";
-    exec(`grep "^${name}:" /etc/passwd`, (err) => {
-      resolve(err ? "user" : name);
-    });
-  });
+  // On Linux dev setups, USER can be synthetic and missing from /etc/passwd.
+  // Keep the historical "fallback to user" behavior there, but avoid shelling out.
+  const user = await resolveServerUser();
 
   // watch out, this will be prefixed with #!/bin/sh and piped into stdout/stderr files
   // part from that, rserver must be in the $PATH

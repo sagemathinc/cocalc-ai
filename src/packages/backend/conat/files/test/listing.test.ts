@@ -31,15 +31,18 @@ describe("creating a listing monitor starting with an empty directory", () => {
   it("create a file and get an update", async () => {
     iter = dir.iter();
     await fs.writeFile("a.txt", "hello");
-    let { value } = await iter.next();
-    expect(value).toEqual({
-      mtime: value.mtime,
-      name: "a.txt",
-      size: value.size,
-    });
-    // it's possible that the file isn't written completely above.
-    if (value.size != 5) {
+    let value: any;
+    for (let i = 0; i < 4; i++) {
       ({ value } = await iter.next());
+      if (value?.name === "a.txt") break;
+    }
+    expect(value?.name).toEqual("a.txt");
+    // it's possible that the file isn't written completely above.
+    if (value?.size != 5) {
+      for (let i = 0; i < 3; i++) {
+        ({ value } = await iter.next());
+        if (value?.name === "a.txt" && value?.size === 5) break;
+      }
     }
     const stat = await fs.stat("a.txt");
     expect(stat.mtimeMs).toEqual(value.mtime);

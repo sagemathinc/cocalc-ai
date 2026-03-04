@@ -58,9 +58,14 @@ const ALL_LANGS_LABEL_STYLE: CSS = {
 interface KernelSelectorProps {
   actions: JupyterActions;
   embedded?: boolean;
+  onSelectKernel?: (kernelName: string) => void;
 }
 
-export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
+export function KernelSelector({
+  actions,
+  embedded,
+  onSelectKernel,
+}: KernelSelectorProps) {
   const intl = useIntl();
   const sectionStyle: CSS = embedded ? { marginTop: "8px" } : SELECTION_STYLE;
 
@@ -132,6 +137,7 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
         key={key}
         size={embedded ? "small" : "middle"}
         onClick={() => {
+          onSelectKernel?.(name);
           actions.select_kernel(name);
           track("jupyter", {
             action: "select-kernel",

@@ -12,6 +12,7 @@ import { registerWorkspaceFileCommands } from "./workspace/file";
 import { registerWorkspaceLifecycleCommands } from "./workspace/lifecycle";
 import { registerWorkspaceOpsCommands } from "./workspace/ops";
 import { registerWorkspaceBasicCommands } from "./workspace/basic";
+import { registerWorkspaceAppCommands } from "./workspace/app";
 
 export type WorkspaceCommandDeps = {
   withContext: any;
@@ -99,6 +100,7 @@ export type WorkspaceCommandDeps = {
   fetchWithTimeout: any;
   buildCookieHeader: any;
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM: string;
+  resolveWorkspaceProjectApi: any;
 };
 
 export function registerWorkspaceCommand(program: Command, deps: WorkspaceCommandDeps): Command {
@@ -112,6 +114,7 @@ registerWorkspaceCodexCommands(workspace, deps);
 registerWorkspaceCollabCommands(workspace, deps);
 registerWorkspaceFileCommands(workspace, deps);
 registerWorkspaceLifecycleCommands(workspace, deps);
+registerWorkspaceAppCommands(workspace, deps);
 
   return workspace;
 }

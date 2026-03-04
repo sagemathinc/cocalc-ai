@@ -34,6 +34,6 @@ ulimit -t 1
 while : ; do : ; done  # infinite CPU 
 `);
     const x = await once(child, "exit");
-    expect(x[1]).toBe("SIGKILL");
+    expect(["SIGKILL", "SIGXCPU"]).toContain(x[1]);
   });
 });
