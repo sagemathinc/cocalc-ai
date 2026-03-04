@@ -121,6 +121,7 @@ load_config() {
   HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SOFTWARE_BASE_URL_FORCE:-}"
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
   HUB_SELF_HOST_PAIR_URL="${HUB_SELF_HOST_PAIR_URL:-}"
+  HUB_CLOUDFLARED_PID_FILE="${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}"
 
   if [ -z "$HUB_SOFTWARE_BASE_URL_FORCE" ] && [ "$HUB_USE_LOCAL_SOFTWARE" = "1" ]; then
     if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
@@ -137,6 +138,34 @@ load_config() {
       fi
     fi
   fi
+}
+
+stop_cloudflared() {
+  local pid_file="${HUB_CLOUDFLARED_PID_FILE:-$STATE_DIR/cloudflared.pid}"
+  if [ ! -f "$pid_file" ]; then
+    return 0
+  fi
+  local pid
+  pid="$(tr -dc '0-9' < "$pid_file" | head -c 16 || true)"
+  if [ -z "$pid" ]; then
+    rm -f "$pid_file"
+    return 0
+  fi
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 1 20); do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+    echo "cloudflared stopped (pid $pid)"
+  fi
+  rm -f "$pid_file"
 }
 
 have_local_tools_bundle() {
@@ -290,6 +319,7 @@ start_daemon() {
     else
       export COCALC_SELF_HOST_PAIR_URL="http://127.0.0.1:$HUB_PORT"
     fi
+    export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$HUB_CLOUDFLARED_PID_FILE"
     if command -v setsid >/dev/null 2>&1; then
       nohup setsid bash -c "$HUB_CMD" >>"$HUB_STDOUT_LOG" 2>&1 < /dev/null &
     else
@@ -323,36 +353,45 @@ start_daemon() {
 }
 
 stop_daemon() {
+  local keep_cloudflared="${1:-0}"
   load_config
+  local stopped=0
   if ! is_running; then
     echo "hub daemon is not running"
     rm -f "$PID_FILE"
-    return 0
-  fi
-
-  local pid pids
-  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-  pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids_on_config_port)" | awk 'NF' | sort -u)"
-  if [ -n "$pids" ]; then
-    echo "$pids" | xargs -r kill >/dev/null 2>&1 || true
-  fi
-
-  local i
-  for i in $(seq 1 30); do
-    if ! is_running; then
-      rm -f "$PID_FILE"
-      echo "hub daemon stopped"
-      return 0
+    stopped=1
+  else
+    local pid pids
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids_on_config_port)" | awk 'NF' | sort -u)"
+    if [ -n "$pids" ]; then
+      echo "$pids" | xargs -r kill >/dev/null 2>&1 || true
     fi
-    sleep 1
-  done
 
-  pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids_on_config_port)" | awk 'NF' | sort -u)"
-  if [ -n "$pids" ]; then
-    echo "$pids" | xargs -r kill -9 >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 1 30); do
+      if ! is_running; then
+        rm -f "$PID_FILE"
+        echo "hub daemon stopped"
+        stopped=1
+        break
+      fi
+      sleep 1
+    done
+
+    if [ "$stopped" != "1" ]; then
+      pids="$(printf "%s\n%s\n" "$pid" "$(find_hub_pids_on_config_port)" | awk 'NF' | sort -u)"
+      if [ -n "$pids" ]; then
+        echo "$pids" | xargs -r kill -9 >/dev/null 2>&1 || true
+      fi
+      rm -f "$PID_FILE"
+      echo "hub daemon killed"
+    fi
   fi
-  rm -f "$PID_FILE"
-  echo "hub daemon killed"
+
+  if [ "$keep_cloudflared" != "1" ]; then
+    stop_cloudflared
+  fi
 }
 
 show_status() {
@@ -415,6 +454,7 @@ HUB_HOST_IP=$HUB_HOST_IP
 HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_NODE_BIN=$HUB_NODE_BIN
 HUB_SELF_HOST_PAIR_URL=$HUB_SELF_HOST_PAIR_URL
+HUB_CLOUDFLARED_PID_FILE=$HUB_CLOUDFLARED_PID_FILE
 EOF
 }
 
@@ -440,7 +480,7 @@ case "$cmd" in
     stop_daemon
     ;;
   restart)
-    stop_daemon
+    stop_daemon 1
     start_daemon
     ;;
   status)

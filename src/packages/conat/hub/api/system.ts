@@ -31,6 +31,7 @@ export const system = {
   deleteOpenAiApiKey: authFirst,
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
+  getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
@@ -292,6 +293,8 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<CodexPaymentSourceInfo>;
+
+  getPublicSiteUrl: (opts?: { account_id?: string }) => Promise<{ url: string }>;
 
   testR2Credentials: (opts: {
     account_id?: string;

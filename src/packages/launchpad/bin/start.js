@@ -17,7 +17,7 @@ function prependPath(dir) {
 
 (async () => {
   try {
-    applyLaunchpadDefaults();
+    await applyLaunchpadDefaults();
     // Avoid inheriting stale postgres socket/user from a different checkout.
     if (process.env.COCALC_DB === "pglite") {
       delete process.env.PGHOST;
