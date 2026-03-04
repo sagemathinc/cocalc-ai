@@ -479,4 +479,39 @@ export type BrowserActionRegisterUtils = {
   durationToMs: (value: unknown, fallbackMs: number) => number;
 };
 
+export type BrowserHarnessRegisterUtils = {
+  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  browserHintFromOption: (value: unknown) => string | undefined;
+  chooseBrowserSession: (opts: {
+    ctx: BrowserCommandContext;
+    browserHint?: string;
+    fallbackBrowserId?: string;
+    requireDiscovery?: boolean;
+    sessionProjectId?: string;
+    activeOnly?: boolean;
+  }) => Promise<BrowserSessionInfo>;
+  resolveTargetProjectId: (opts: {
+    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    ctx: BrowserCommandContext;
+    workspace?: string;
+    projectId?: string;
+    sessionInfo: BrowserSessionInfo;
+  }) => Promise<string>;
+  resolveBrowserPolicyAndPosture: (opts: {
+    posture?: string;
+    policyFile?: string;
+    allowRawExec?: boolean;
+    apiBaseUrl?: string;
+  }) => Promise<{
+    posture: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }>;
+  sessionTargetContext: (
+    ctx: BrowserCommandContext,
+    sessionInfo: BrowserSessionInfo,
+    project_id?: string,
+  ) => Record<string, unknown>;
+  durationToMs: (value: unknown, fallbackMs: number) => number;
+};
+
 export type { BrowserAtomicActionRequest };

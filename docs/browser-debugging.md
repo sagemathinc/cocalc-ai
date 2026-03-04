@@ -131,6 +131,28 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - High-level actions: click, type, keypress, focus selector
 - Wait helpers: `waitForSelector`, `waitForUrl`, `waitForIdle`
 - Snapshot helper: DOM snapshot or screenshot from CLI
+- Added harness layer:
+  - `cocalc browser harness run --plan <plan.json>`
+  - runs multi-step action/exec/sleep plans with per-step retries
+  - optional automatic recovery (`reload` / `hard-reload`) between retries
+  - structured artifact/report output in `report_dir/report.json`
+  - failure capture support (`screenshot`, `runtime events`, `network trace`)
+
+Example harness plan:
+
+```json
+{
+  "name": "explorer smoke",
+  "default_retries": 1,
+  "default_recovery": "reload",
+  "steps": [
+    { "name": "open explorer", "action": { "name": "navigate", "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/" } },
+    { "name": "wait list", "action": { "name": "wait_for_selector", "selector": ".smc-vfill", "state": "visible", "timeout_ms": 20000 } },
+    { "name": "scroll", "action": { "name": "scroll_by", "dy": 800 } },
+    { "name": "probe title", "exec": "return document.title" }
+  ]
+}
+```
 
 ### Screenshot support (next iterations)
 
