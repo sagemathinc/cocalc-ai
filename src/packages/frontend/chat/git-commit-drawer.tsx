@@ -442,6 +442,9 @@ function DiffBlock({
   onResolveComment: (id: string) => Promise<void>;
 }) {
   const codeFontSize = Math.max(11, fontSize - 1);
+  const commentFontSize = Math.max(13, fontSize);
+  const commentFontFamily =
+    'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
   const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
   const highlightedByLine = useMemo(
     () => highlightPrismLines(lineMetas, languageHint),
@@ -639,12 +642,31 @@ function DiffBlock({
                       key={comment.id}
                       style={{
                         margin: "0 8px 6px 92px",
-                        border: `1px solid ${COLORS.GRAY_LL}`,
-                        borderRadius: 6,
-                        padding: 8,
+                        border: `1px solid #d9d9d9`,
+                        borderLeft: `4px solid ${COLORS.BLUE}`,
+                        borderRadius: 8,
+                        padding: "10px 12px",
                         background: "#fff",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        fontFamily: commentFontFamily,
                       }}
                     >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Typography.Text strong style={{ fontSize: 13 }}>
+                          Inline review comment
+                        </Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                          {comment.side}:{comment.line ?? "?"}
+                        </Typography.Text>
+                      </div>
                       {isEditing ? (
                         <MarkdownInput
                           cacheId={`git-inline-edit:${filePath}:${comment.id}`}
@@ -652,7 +674,7 @@ function DiffBlock({
                           onChange={setEditingText}
                           onShiftEnter={() => void saveEdit()}
                           placeholder="Edit inline review comment..."
-                          fontSize={codeFontSize}
+                          fontSize={commentFontSize}
                           autoGrow
                           autoGrowMaxHeight={220}
                           hideHelp
@@ -664,12 +686,16 @@ function DiffBlock({
                       ) : (
                         <StaticMarkdown
                           value={comment.body_md}
-                          style={{ fontSize: codeFontSize }}
+                          style={{
+                            fontSize: commentFontSize,
+                            fontFamily: commentFontFamily,
+                            lineHeight: 1.5,
+                          }}
                         />
                       )}
                       <div
                         style={{
-                          marginTop: 6,
+                          marginTop: 10,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
@@ -677,7 +703,7 @@ function DiffBlock({
                         }}
                       >
                         <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                          {comment.side}:{comment.line ?? "?"}
+                          Draft status
                         </Typography.Text>
                         <Space.Compact size="small">
                           {isEditing ? (
@@ -714,6 +740,7 @@ function DiffBlock({
                               </Button>
                               <Button
                                 size="small"
+                                type="primary"
                                 onClick={() => void resolveComment(comment.id)}
                                 loading={pendingKey === `resolve:${comment.id}`}
                               >
@@ -731,19 +758,25 @@ function DiffBlock({
               <div
                 style={{
                   margin: "0 8px 8px 92px",
-                  border: `1px solid ${COLORS.GRAY_LL}`,
-                  borderRadius: 6,
-                  padding: 8,
+                  border: `1px solid #d9d9d9`,
+                  borderLeft: `4px solid ${COLORS.BLUE}`,
+                  borderRadius: 8,
+                  padding: "10px 12px",
                   background: "#fff",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                  fontFamily: commentFontFamily,
                 }}
               >
+                <Typography.Text strong style={{ fontSize: 13 }}>
+                  Add inline review comment
+                </Typography.Text>
                 <MarkdownInput
                   cacheId={`git-inline-draft:${filePath}:${anchorId}`}
                   value={draftText}
                   onChange={setDraftText}
                   onShiftEnter={() => void saveDraft()}
                   placeholder="Add inline review comment..."
-                  fontSize={codeFontSize}
+                  fontSize={commentFontSize}
                   autoGrow
                   autoGrowMaxHeight={220}
                   hideHelp
