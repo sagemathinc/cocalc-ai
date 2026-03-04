@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 
 export type AdminCommandDeps = {
   withContext: any;
@@ -12,6 +13,69 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
 
   const admin = program.command("admin").description("site admin operations");
   const adminUser = admin.command("user").description("admin user management");
+
+  admin
+    .command("search <query>")
+    .description(
+      "search users by partial name, email, account_id, or project_id (admin-only)",
+    )
+    .option("--limit <n>", "max rows (default 20)")
+    .option("--only-email", "search only by exact email matches")
+    .action(
+      async (
+        query: string,
+        opts: { limit?: string; onlyEmail?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "admin search", async (ctx) => {
+          const normalizedQuery = `${query ?? ""}`.trim().toLowerCase();
+          if (!normalizedQuery) {
+            throw new Error("query must be non-empty");
+          }
+
+          const limit = opts.limit == null ? 20 : Number(opts.limit);
+          if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit <= 0) {
+            throw new Error("--limit must be a positive integer");
+          }
+          const cappedLimit = Math.min(limit, ADMIN_SEARCH_LIMIT);
+
+          const rows = (await ctx.hub.system.userSearch({
+            query: normalizedQuery,
+            admin: true,
+            limit: cappedLimit,
+            only_email: !!opts.onlyEmail,
+          })) as Array<{
+            account_id: string;
+            first_name?: string;
+            last_name?: string;
+            name?: string;
+            email_address?: string;
+            last_active?: number;
+            created?: number;
+            banned?: boolean;
+            email_address_verified?: boolean;
+          }>;
+
+          return (rows ?? []).map((row) => ({
+            account_id: row.account_id,
+            name:
+              `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+              row.name ||
+              "",
+            first_name: row.first_name ?? "",
+            last_name: row.last_name ?? "",
+            email_address: row.email_address ?? null,
+            email_address_verified:
+              row.email_address_verified == null
+                ? null
+                : !!row.email_address_verified,
+            banned: row.banned == null ? null : !!row.banned,
+            last_active: row.last_active ?? null,
+            created: row.created ?? null,
+          }));
+        });
+      },
+    );
 
   adminUser
     .command("create")
