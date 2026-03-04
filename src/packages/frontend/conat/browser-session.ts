@@ -68,6 +68,8 @@ const MAX_RUNTIME_EVENTS = 5_000;
 const MAX_RUNTIME_MESSAGE_LENGTH = 2_000;
 const MAX_NETWORK_TRACE_EVENTS = 50_000;
 const MAX_NETWORK_TRACE_PREVIEW_CHARS = 4_000;
+const MAX_NETWORK_TRACE_INTERNAL_SUBJECTS = 2_000;
+const NETWORK_TRACE_INTERNAL_SUBJECT_TTL_MS = 10 * 60 * 1000;
 const MAX_SANDBOX_ACTIONS = 512;
 const MAX_SANDBOX_ACTION_JSON_LENGTH = 100_000;
 const BROWSER_EXEC_POLICY_VERSION = 1;
@@ -1472,9 +1474,16 @@ export function createBrowserSessionAutomation({
   let networkTraceSeq = 0;
   let networkTraceDropped = 0;
   let stopConatTraceListener: (() => void) | undefined;
+  const internalTraceReplySubjects = new Map<string, number>();
+  const INTERNAL_TRACE_METHODS = new Set<string>([
+    "listNetworkTrace",
+    "configureNetworkTrace",
+    "clearNetworkTrace",
+  ]);
   const networkTraceConfig: {
     enabled: boolean;
     include_decoded: boolean;
+    include_internal: boolean;
     max_events: number;
     max_preview_chars: number;
     subject_prefixes: string[];
@@ -1482,6 +1491,7 @@ export function createBrowserSessionAutomation({
   } = {
     enabled: false,
     include_decoded: false,
+    include_internal: false,
     max_events: 5_000,
     max_preview_chars: MAX_NETWORK_TRACE_PREVIEW_CHARS,
     subject_prefixes: [],
@@ -1637,11 +1647,124 @@ export function createBrowserSessionAutomation({
   };
   installRuntimeCapture();
 
+  const pruneInternalTraceReplySubjects = (now: number = Date.now()): void => {
+    for (const [subject, expiry] of internalTraceReplySubjects.entries()) {
+      if (expiry <= now) {
+        internalTraceReplySubjects.delete(subject);
+      }
+    }
+    if (internalTraceReplySubjects.size <= MAX_NETWORK_TRACE_INTERNAL_SUBJECTS) {
+      return;
+    }
+    const entries = [...internalTraceReplySubjects.entries()].sort(
+      (a, b) => a[1] - b[1],
+    );
+    const extra =
+      internalTraceReplySubjects.size - MAX_NETWORK_TRACE_INTERNAL_SUBJECTS;
+    for (let i = 0; i < extra; i += 1) {
+      internalTraceReplySubjects.delete(entries[i][0]);
+    }
+  };
+
+  const rememberInternalTraceReplySubject = (subject: string): void => {
+    const clean = `${subject ?? ""}`.trim();
+    if (!clean) return;
+    const now = Date.now();
+    pruneInternalTraceReplySubjects(now);
+    internalTraceReplySubjects.set(
+      clean,
+      now + NETWORK_TRACE_INTERNAL_SUBJECT_TTL_MS,
+    );
+  };
+
+  const isInternalTraceReplySubject = (subject: string): boolean => {
+    const clean = `${subject ?? ""}`.trim();
+    if (!clean) return false;
+    const now = Date.now();
+    const expiry = internalTraceReplySubjects.get(clean);
+    if (expiry == null) {
+      return false;
+    }
+    if (expiry <= now) {
+      internalTraceReplySubjects.delete(clean);
+      return false;
+    }
+    return true;
+  };
+
+  const extractInternalTraceMethodName = (
+    decodedPreview: unknown,
+  ): string | undefined => {
+    const text = `${decodedPreview ?? ""}`.trim();
+    if (!text) return undefined;
+    try {
+      const row = JSON.parse(text) as { name?: unknown };
+      const name = `${row?.name ?? ""}`.trim();
+      return name || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const getReplySubjectFromHeaders = (headers: unknown): string | undefined => {
+    if (!headers || typeof headers !== "object") {
+      return undefined;
+    }
+    const row = headers as Record<string, unknown>;
+    const reply = `${row["CN-Reply"] ?? ""}`.trim();
+    return reply || undefined;
+  };
+
+  const removeBufferedEventsByChunkAndSubject = ({
+    chunk_id,
+    subject,
+  }: {
+    chunk_id?: string;
+    subject: string;
+  }): void => {
+    const chunkId = `${chunk_id ?? ""}`.trim();
+    if (!chunkId) return;
+    for (let i = networkTraceEvents.length - 1; i >= 0; i -= 1) {
+      const event = networkTraceEvents[i];
+      if (
+        `${event.chunk_id ?? ""}`.trim() === chunkId &&
+        `${event.subject ?? ""}`.trim() === subject
+      ) {
+        networkTraceEvents.splice(i, 1);
+      }
+    }
+  };
+
   const appendNetworkTraceEvent = (event: ConatTraceEvent): void => {
     if (!networkTraceConfig.enabled) {
       return;
     }
     const subject = `${event.subject ?? ""}`.trim();
+    if (!networkTraceConfig.include_internal) {
+      if (isInternalTraceReplySubject(subject)) {
+        return;
+      }
+      if (
+        `${event.phase ?? ""}`.trim() === "recv_message" &&
+        subject.includes(".browser-session")
+      ) {
+        const methodName = extractInternalTraceMethodName(event.decoded_preview);
+        if (
+          methodName != null &&
+          INTERNAL_TRACE_METHODS.has(methodName)
+        ) {
+          const replySubject = getReplySubjectFromHeaders(event.headers);
+          if (replySubject) {
+            rememberInternalTraceReplySubject(replySubject);
+          }
+          removeBufferedEventsByChunkAndSubject({
+            chunk_id: `${event.chunk_id ?? ""}`.trim() || undefined,
+            subject,
+          });
+          return;
+        }
+      }
+    }
     if (networkTraceConfig.subject_prefixes.length > 0) {
       const ok = networkTraceConfig.subject_prefixes.some((prefix) =>
         subject.startsWith(prefix),
@@ -4539,6 +4662,9 @@ export function createBrowserSessionAutomation({
         if (opts.include_decoded != null) {
           networkTraceConfig.include_decoded = !!opts.include_decoded;
         }
+        if (opts.include_internal != null) {
+          networkTraceConfig.include_internal = !!opts.include_internal;
+        }
         if (opts.max_events != null && Number.isFinite(Number(opts.max_events))) {
           networkTraceConfig.max_events = Math.max(
             100,
@@ -4574,6 +4700,7 @@ export function createBrowserSessionAutomation({
       return {
         enabled: networkTraceConfig.enabled,
         include_decoded: networkTraceConfig.include_decoded,
+        include_internal: networkTraceConfig.include_internal,
         max_events: networkTraceConfig.max_events,
         max_preview_chars: networkTraceConfig.max_preview_chars,
         subject_prefixes: [...networkTraceConfig.subject_prefixes],
@@ -4643,6 +4770,7 @@ export function createBrowserSessionAutomation({
       const cleared = networkTraceEvents.length;
       networkTraceEvents.length = 0;
       networkTraceDropped = 0;
+      internalTraceReplySubjects.clear();
       return { ok: true, cleared, next_seq: networkTraceSeq };
     },
     listRuntimeEvents: async (opts) => {
@@ -4825,6 +4953,7 @@ export function createBrowserSessionAutomation({
       networkTraceEvents.length = 0;
       networkTraceSeq = 0;
       networkTraceDropped = 0;
+      internalTraceReplySubjects.clear();
       ensureConatTraceListener();
       closed = false;
       accountId = cleanAccountId;
@@ -4852,6 +4981,7 @@ export function createBrowserSessionAutomation({
       networkTraceEvents.length = 0;
       networkTraceSeq = 0;
       networkTraceDropped = 0;
+      internalTraceReplySubjects.clear();
       if (stopConatTraceListener) {
         stopConatTraceListener();
         stopConatTraceListener = undefined;

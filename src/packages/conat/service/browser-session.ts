@@ -280,6 +280,7 @@ export interface BrowserSessionServiceApi {
   configureNetworkTrace: (opts?: {
     enabled?: boolean;
     include_decoded?: boolean;
+    include_internal?: boolean;
     max_events?: number;
     max_preview_chars?: number;
     subject_prefixes?: string[];
@@ -287,6 +288,7 @@ export interface BrowserSessionServiceApi {
   }) => Promise<{
     enabled: boolean;
     include_decoded: boolean;
+    include_internal: boolean;
     max_events: number;
     max_preview_chars: number;
     subject_prefixes: string[];
