@@ -113,8 +113,9 @@ These are improvements that would speed up real debugging and reduce mistakes.
   - API-scoped browser default persistence via:
     - `cocalc browser session use <browser_id> [--api-url <url>]`
     - `cocalc browser session clear [--api-url <url>]`
+  - top-level alias:
+    - `cocalc browser use <browser_id> [--api-url <url>]`
 - Remaining:
-  - top-level alias `cocalc browser use --api <url> <browser_id>`
   - Better default-session resolution when multiple servers are active
 
 ### Better runtime inspection helpers
