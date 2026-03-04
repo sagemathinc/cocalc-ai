@@ -69,6 +69,7 @@ import { AgentMessageStatus } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
+import { setChatOverlayOpen } from "./drawer-overlay-state";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -244,6 +245,7 @@ interface Props {
   dim?: boolean;
   searchHighlight?: string;
   openActivityToken?: number;
+  onOverlayOpenChange?: (open: boolean) => void;
 }
 
 export function resolveEditedMessageForSave(
@@ -303,6 +305,7 @@ export default function Message({
   dim,
   searchHighlight,
   openActivityToken,
+  onOverlayOpenChange,
 }: Props) {
   const intl = useIntl();
 
@@ -392,6 +395,7 @@ export default function Message({
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] =
     useState<number | undefined>(undefined);
+  const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
   );
@@ -458,6 +462,18 @@ export default function Message({
     }
     return `${minutes}:${pad(seconds)}`;
   }, [elapsedMs]);
+
+  const anyOverlayOpen = isActivityDrawerOpen || openCommitHash != null;
+  const overlayKey = `${project_id ?? "no-project"}:${path ?? "no-path"}:${date}`;
+
+  useEffect(() => {
+    setChatOverlayOpen(overlayKey, anyOverlayOpen);
+    onOverlayOpenChange?.(anyOverlayOpen);
+    return () => {
+      setChatOverlayOpen(overlayKey, false);
+      onOverlayOpenChange?.(false);
+    };
+  }, [anyOverlayOpen, onOverlayOpenChange, overlayKey]);
 
   const msgWrittenByLLM = useMemo(() => {
     const author_id = firstHistoryEntry?.author_id;
@@ -1246,6 +1262,7 @@ export default function Message({
               ? openGitBrowserFromMessage
               : undefined
           }
+          onDrawerOpenChange={setIsActivityDrawerOpen}
         />
         <div
           onClickCapture={openCommitFromMessage}
