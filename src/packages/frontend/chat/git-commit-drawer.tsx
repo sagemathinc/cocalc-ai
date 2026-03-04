@@ -853,21 +853,21 @@ function DiffBlock({
                             <>
                               <Button
                                 size="small"
-                                type="primary"
-                                onClick={() => void saveEdit(editingText)}
-                                disabled={!editingText.trim()}
-                                loading={pendingKey === `edit:${comment.id}`}
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                size="small"
                                 onClick={() => {
                                   setEditingId(undefined);
                                   setEditingText("");
                                 }}
                               >
                                 Cancel
+                              </Button>
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={() => void saveEdit(editingText)}
+                                disabled={!editingText.trim()}
+                                loading={pendingKey === `edit:${comment.id}`}
+                              >
+                                Save
                               </Button>
                             </>
                           ) : (
@@ -2483,7 +2483,7 @@ export function GitCommitDrawer({
               marginTop: 8,
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              justifyContent: "flex-start",
               gap: 8,
               flexWrap: "wrap",
             }}
@@ -2494,42 +2494,52 @@ export function GitCommitDrawer({
                 ? ` · ${inlineComments.length} inline comments`
                 : ""}
             </div>
-            <Button
-              size="small"
-              disabled={
-                !reviewNoteEditing ||
-                !noteDirty ||
-                reviewSaving ||
-                !currentReviewCommit ||
-                isHeadSelected ||
-                reviewStateCommit !== currentReviewCommit
-              }
-              onClick={() => {
-                if (!currentReviewCommit) return;
-                const nextNote = reviewNoteDraft;
-                setReviewNote(nextNote);
-                setReviewDirty(true);
-                setReviewNoteEditing(false);
-                void saveReview({ note: nextNote, reviewed });
-              }}
-            >
-              Save note
-            </Button>
-            <Button
-              size="small"
-              disabled={reviewSaving || !currentReviewCommit || isHeadSelected}
-              onClick={() => {
-                if (!reviewNoteEditing) {
+            {reviewNoteEditing ? (
+              <Space.Compact size="small">
+                <Button
+                  size="small"
+                  disabled={reviewSaving || !currentReviewCommit || isHeadSelected}
+                  onClick={() => {
+                    setReviewNoteDraft(reviewNote);
+                    setReviewNoteEditing(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  disabled={
+                    !noteDirty ||
+                    reviewSaving ||
+                    !currentReviewCommit ||
+                    isHeadSelected ||
+                    reviewStateCommit !== currentReviewCommit
+                  }
+                  onClick={() => {
+                    if (!currentReviewCommit) return;
+                    const nextNote = reviewNoteDraft;
+                    setReviewNote(nextNote);
+                    setReviewDirty(true);
+                    setReviewNoteEditing(false);
+                    void saveReview({ note: nextNote, reviewed });
+                  }}
+                >
+                  Save note
+                </Button>
+              </Space.Compact>
+            ) : (
+              <Button
+                size="small"
+                disabled={reviewSaving || !currentReviewCommit || isHeadSelected}
+                onClick={() => {
                   setReviewNoteDraft(reviewNote);
                   setReviewNoteEditing(true);
-                  return;
-                }
-                setReviewNoteDraft(reviewNote);
-                setReviewNoteEditing(false);
-              }}
-            >
-              {reviewNoteEditing ? "Cancel" : "Edit"}
-            </Button>
+                }}
+              >
+                Edit
+              </Button>
+            )}
           </div>
           <div
             style={{
