@@ -8,7 +8,6 @@ import {
   openNotebookPage,
   resolveAcpMode,
   resolveBaseUrl,
-  resolveLiteDaemonHome,
   uniqueNotebookPath,
 } from "./helpers";
 
@@ -40,8 +39,17 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
   );
 
   const { base_url, auth_token } = await resolveBaseUrl();
-  const liteHome = await resolveLiteDaemonHome();
-  const navigatorChatPath = join(liteHome, ".local", "share", "cocalc", "navigator.chat");
+  const home = process.env.HOME ?? process.cwd();
+  const navigatorChatPath =
+    process.platform === "darwin"
+      ? join(
+          home,
+          "Library",
+          "Application Support",
+          "cocalc",
+          "navigator.chat",
+        )
+      : join(home, ".local", "share", "cocalc", "navigator.chat");
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-help-me-fix-agent");
   await ensureNotebook(path_ipynb, [
     codeCell("1/0", {
