@@ -5,15 +5,17 @@ Register browser runtime observability commands:
 */
 
 import { Command } from "commander";
-
-type BrowserSessionClient = any;
-type BrowserRuntimeEvent = any;
-type BrowserNetworkTraceEvent = any;
+import type {
+  BrowserCommandDeps,
+  BrowserNetworkTraceEvent,
+  BrowserObservabilityRegisterUtils,
+  BrowserRuntimeEvent,
+} from "./types";
 
 type RegisterObservabilityDeps = {
   browser: Command;
-  deps: any;
-  utils: Record<string, any>;
+  deps: BrowserCommandDeps;
+  utils: BrowserObservabilityRegisterUtils;
 };
 
 export function registerBrowserObservabilityCommands({
@@ -111,7 +113,7 @@ export function registerBrowserObservabilityCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
-          }) as BrowserSessionClient;
+          });
           let printed = 0;
           let latestDropped = 0;
           let latestBuffered = 0;
@@ -242,7 +244,7 @@ export function registerBrowserObservabilityCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
-          }) as BrowserSessionClient;
+          });
           let printed = 0;
           let latestDropped = 0;
           let latestBuffered = 0;
@@ -422,7 +424,7 @@ export function registerBrowserObservabilityCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
-          }) as BrowserSessionClient;
+          });
           if (opts.clear) {
             await browserClient.clearNetworkTrace();
           }
@@ -536,7 +538,7 @@ export function registerBrowserObservabilityCommands({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
-          }) as BrowserSessionClient;
+          });
           const cleared = await browserClient.clearNetworkTrace();
           return {
             browser_id: sessionInfo.browser_id,

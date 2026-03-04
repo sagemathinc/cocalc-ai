@@ -23,8 +23,6 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BrowserActionName,
-  BrowserActionRequest,
-  BrowserActionResult,
   BrowserAutomationPosture,
   BrowserCoordinateSpace,
   BrowserExecPolicyV1,
@@ -35,259 +33,28 @@ import { durationToMs } from "../../core/utils";
 import { registerBrowserActionCommands } from "./browser/register-action-commands";
 import { registerBrowserObservabilityCommands } from "./browser/register-observability-commands";
 import { registerBrowserSessionCommands } from "./browser/register-session-commands";
-
-type BrowserSessionClient = {
-  getExecApiDeclaration: () => Promise<string>;
-  configureNetworkTrace: (opts?: {
-    enabled?: boolean;
-    include_decoded?: boolean;
-    include_internal?: boolean;
-    protocols?: BrowserNetworkTraceProtocol[];
-    max_events?: number;
-    max_preview_chars?: number;
-    subject_prefixes?: string[];
-    addresses?: string[];
-  }) => Promise<{
-    enabled: boolean;
-    include_decoded: boolean;
-    include_internal: boolean;
-    protocols: BrowserNetworkTraceProtocol[];
-    max_events: number;
-    max_preview_chars: number;
-    subject_prefixes: string[];
-    addresses: string[];
-    buffered: number;
-    dropped: number;
-    next_seq: number;
-  }>;
-  listNetworkTrace: (opts?: {
-    after_seq?: number;
-    limit?: number;
-    protocol?: BrowserNetworkTraceProtocol;
-    protocols?: BrowserNetworkTraceProtocol[];
-    direction?: BrowserNetworkTraceDirection;
-    phases?: BrowserNetworkTracePhase[];
-    subject_prefix?: string;
-    address?: string;
-    include_decoded?: boolean;
-  }) => Promise<{
-    events: BrowserNetworkTraceEvent[];
-    next_seq: number;
-    dropped: number;
-    total_buffered: number;
-  }>;
-  clearNetworkTrace: () => Promise<{ ok: true; cleared: number; next_seq: number }>;
-  listRuntimeEvents: (opts?: {
-    after_seq?: number;
-    limit?: number;
-    kinds?: BrowserRuntimeEventKind[];
-    levels?: BrowserRuntimeEventLevel[];
-  }) => Promise<{
-    events: BrowserRuntimeEvent[];
-    next_seq: number;
-    dropped: number;
-    total_buffered: number;
-  }>;
-  startExec: (opts: {
-    project_id: string;
-    code: string;
-    posture?: BrowserAutomationPosture;
-    policy?: BrowserExecPolicyV1;
-  }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
-  getExec: (opts: {
-    exec_id: string;
-  }) => Promise<BrowserExecOperation>;
-  cancelExec: (opts: {
-    exec_id: string;
-  }) => Promise<{ ok: true; exec_id: string; status: BrowserExecStatus }>;
-  listOpenFiles: () => Promise<
-    {
-      project_id: string;
-      title?: string;
-      path: string;
-    }[]
-  >;
-  openFile: (opts: {
-    project_id: string;
-    path: string;
-    foreground?: boolean;
-    foreground_project?: boolean;
-  }) => Promise<{ ok: true }>;
-  closeFile: (opts: {
-    project_id: string;
-    path: string;
-  }) => Promise<{ ok: true }>;
-  exec: (opts: {
-    project_id: string;
-    code: string;
-    posture?: BrowserAutomationPosture;
-    policy?: BrowserExecPolicyV1;
-  }) => Promise<{ ok: true; result: unknown }>;
-  action: (opts: {
-    project_id: string;
-    action: BrowserActionRequest;
-    posture?: BrowserAutomationPosture;
-    policy?: BrowserExecPolicyV1;
-  }) => Promise<{ ok: true; result: BrowserActionResult }>;
-};
-
-type BrowserExecStatus =
-  | "pending"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "canceled";
-
-type BrowserExecOperation = {
-  exec_id: string;
-  project_id: string;
-  status: BrowserExecStatus;
-  created_at: string;
-  started_at?: string;
-  finished_at?: string;
-  cancel_requested?: boolean;
-  error?: string;
-  result?: unknown;
-};
-
-type BrowserRuntimeEventKind =
-  | "console"
-  | "uncaught_error"
-  | "unhandled_rejection";
-
-type BrowserRuntimeEventLevel =
-  | "trace"
-  | "debug"
-  | "log"
-  | "info"
-  | "warn"
-  | "error";
-
-type BrowserRuntimeEvent = {
-  seq: number;
-  ts: string;
-  kind: BrowserRuntimeEventKind;
-  level: BrowserRuntimeEventLevel;
-  message: string;
-  source?: string;
-  line?: number;
-  column?: number;
-  stack?: string;
-  url?: string;
-};
-
-type BrowserNetworkTraceProtocol = "conat" | "http" | "ws";
-
-type BrowserNetworkTraceDirection = "send" | "recv";
-
-type BrowserNetworkTracePhase =
-  | "publish_chunk"
-  | "recv_chunk"
-  | "recv_message"
-  | "drop_chunk_seq"
-  | "drop_chunk_timeout"
-  | "http_request"
-  | "http_response"
-  | "http_error"
-  | "ws_open"
-  | "ws_send"
-  | "ws_message"
-  | "ws_close"
-  | "ws_error";
-
-type BrowserNetworkTraceEvent = {
-  seq: number;
-  ts: string;
-  protocol: BrowserNetworkTraceProtocol;
-  direction: BrowserNetworkTraceDirection;
-  phase: BrowserNetworkTracePhase;
-  client_id?: string;
-  address?: string;
-  subject?: string;
-  chunk_id?: string;
-  chunk_seq?: number;
-  chunk_done?: boolean;
-  chunk_bytes?: number;
-  raw_bytes?: number;
-  encoding?: number;
-  headers?: Record<string, unknown>;
-  decoded_preview?: string;
-  decode_error?: string;
-  message?: string;
-  target_url?: string;
-  method?: string;
-  status?: number;
-  duration_ms?: number;
-  url?: string;
-};
-
-type SpawnCookie = {
-  name: string;
-  value: string;
-  url: string;
-  domain?: string;
-  path?: string;
-  secure?: boolean;
-  httpOnly?: boolean;
-  sameSite?: "Strict" | "Lax" | "None";
-  expires?: number;
-};
-
-type PlaywrightDaemonConfig = {
-  spawn_id: string;
-  state_file: string;
-  target_url: string;
-  headless?: boolean;
-  timeout_ms?: number;
-  executable_path?: string;
-  session_name?: string;
-  cookies?: SpawnCookie[];
-};
-
-type SpawnStateRecord = {
-  spawn_id: string;
-  pid: number;
-  status: "starting" | "ready" | "stopping" | "stopped" | "failed";
-  target_url: string;
-  created_at: string;
-  updated_at: string;
-  started_at?: string;
-  stopped_at?: string;
-  ready_at?: string;
-  reason?: string;
-  error?: string;
-  page_url?: string;
-  executable_path?: string;
-  session_name?: string;
-  browser_id?: string;
-  session_url?: string;
-  ipc_dir?: string;
-};
-
-type ScreenshotRenderer = "auto" | "dom" | "native" | "media";
-
-type SpawnedScreenshotRequest = {
-  request_id: string;
-  action: "screenshot";
-  selector: string;
-  wait_for_idle_ms: number;
-  timeout_ms: number;
-  full_page?: boolean;
-  viewport_width?: number;
-  viewport_height?: number;
-};
-
-type SpawnedScreenshotResponse =
-  | {
-      ok: true;
-      request_id: string;
-      result: Record<string, unknown>;
-    }
-  | {
-      ok: false;
-      request_id: string;
-      error: string;
-    };
+import type {
+  BrowserActionRegisterUtils,
+  BrowserCommandDeps,
+  BrowserExecOperation,
+  BrowserExecStatus,
+  BrowserNetworkTraceDirection,
+  BrowserNetworkTraceEvent,
+  BrowserNetworkTracePhase,
+  BrowserNetworkTraceProtocol,
+  BrowserObservabilityRegisterUtils,
+  BrowserRuntimeEvent,
+  BrowserRuntimeEventLevel,
+  BrowserSessionClient,
+  BrowserSessionRegisterUtils,
+  PlaywrightDaemonConfig,
+  ScreenshotRenderer,
+  SpawnCookie,
+  SpawnedScreenshotRequest,
+  SpawnedScreenshotResponse,
+  SpawnStateRecord,
+} from "./browser/types";
+export type { BrowserCommandDeps } from "./browser/types";
 
 const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
@@ -301,17 +68,6 @@ const SPAWN_STATE_DIR = join(
   "browser-sessions",
   "v1",
 );
-
-export type BrowserCommandDeps = {
-  withContext: any;
-  authConfigPath: any;
-  loadAuthConfig: any;
-  saveAuthConfig: any;
-  selectedProfileName: any;
-  globalsFrom: any;
-  resolveWorkspace: any;
-  createBrowserSessionClient: any;
-};
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1129,7 +885,7 @@ async function resolveTargetProjectId({
   sessionInfo,
 }: {
   deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
-  ctx: any;
+  ctx: Parameters<BrowserCommandDeps["resolveWorkspace"]>[0];
   workspace?: string;
   projectId?: string;
   sessionInfo: BrowserSessionInfo;
@@ -1144,8 +900,9 @@ async function resolveTargetProjectId({
   if (workspaceHint) {
     return (await deps.resolveWorkspace(ctx, workspaceHint)).project_id;
   }
-  if (`${sessionInfo.active_project_id ?? ""}`.trim()) {
-    return (await deps.resolveWorkspace(ctx, sessionInfo.active_project_id)).project_id;
+  const activeProjectId = `${sessionInfo.active_project_id ?? ""}`.trim();
+  if (activeProjectId) {
+    return (await deps.resolveWorkspace(ctx, activeProjectId)).project_id;
   }
   if (sessionInfo.open_projects?.length === 1 && sessionInfo.open_projects[0]?.project_id) {
     return (
@@ -1738,65 +1495,63 @@ export function registerBrowserCommand(
     .command("browser")
     .description("browser session discovery and automation");
 
-  registerBrowserSessionCommands({
-    browser,
-    deps,
-    utils: {
-      loadProfileSelection,
-      saveProfileBrowserId,
-      resolveBrowserSession,
-      randomSpawnId,
-      spawnStateFile,
-      readSpawnState,
-      isProcessRunning,
-      resolveSpawnTargetUrl,
-      withSpawnMarker,
-      resolveChromiumExecutablePath,
-      resolveSecret,
-      buildSpawnCookies,
-      writeDaemonConfig,
-      parseDiscoveryTimeout,
-      waitForSpawnStateReady,
-      waitForSpawnedSession,
-      nowIso,
-      terminateSpawnedProcess,
-      listSpawnStates,
-      resolveSpawnStateById,
-      isSeaMode,
-      sessionMatchesProject,
-      sessionTargetContext,
-      writeSpawnState,
-      DEFAULT_READY_TIMEOUT_MS,
-      DEFAULT_DISCOVERY_TIMEOUT_MS,
-      DEFAULT_DESTROY_TIMEOUT_MS,
-      SPAWN_STATE_DIR,
-      spawnProcess,
-      resolvePath,
-      join,
-      existsSync,
-      unlinkSync,
-      isValidUUID,
-    },
-  });
+  const sessionUtils: BrowserSessionRegisterUtils = {
+    loadProfileSelection,
+    saveProfileBrowserId,
+    resolveBrowserSession,
+    randomSpawnId,
+    spawnStateFile,
+    readSpawnState,
+    isProcessRunning,
+    resolveSpawnTargetUrl,
+    withSpawnMarker,
+    resolveChromiumExecutablePath,
+    resolveSecret,
+    buildSpawnCookies,
+    writeDaemonConfig,
+    parseDiscoveryTimeout,
+    waitForSpawnStateReady,
+    waitForSpawnedSession,
+    nowIso,
+    terminateSpawnedProcess,
+    listSpawnStates,
+    resolveSpawnStateById,
+    isSeaMode,
+    sessionMatchesProject,
+    sessionTargetContext,
+    writeSpawnState,
+    DEFAULT_READY_TIMEOUT_MS,
+    DEFAULT_DISCOVERY_TIMEOUT_MS,
+    DEFAULT_DESTROY_TIMEOUT_MS,
+    SPAWN_STATE_DIR,
+    spawnProcess,
+    resolvePath,
+    join,
+    existsSync,
+    unlinkSync,
+    isValidUUID,
+  };
+  registerBrowserSessionCommands({ browser, deps, utils: sessionUtils });
 
+  const observabilityUtils: BrowserObservabilityRegisterUtils = {
+    loadProfileSelection,
+    chooseBrowserSession,
+    browserHintFromOption,
+    parseRuntimeEventLevels,
+    formatRuntimeEventLine,
+    durationToMs,
+    sessionTargetContext,
+    parseNetworkDirection,
+    parseNetworkProtocols,
+    parseNetworkPhases,
+    formatNetworkTraceLine,
+    parseCsvStrings,
+    sleep,
+  };
   registerBrowserObservabilityCommands({
     browser,
     deps,
-    utils: {
-      loadProfileSelection,
-      chooseBrowserSession,
-      browserHintFromOption,
-      parseRuntimeEventLevels,
-      formatRuntimeEventLine,
-      durationToMs,
-      sessionTargetContext,
-      parseNetworkDirection,
-      parseNetworkProtocols,
-      parseNetworkPhases,
-      formatNetworkTraceLine,
-      parseCsvStrings,
-      sleep,
-    },
+    utils: observabilityUtils,
   });
 
   browser
@@ -2636,25 +2391,22 @@ export function registerBrowserCommand(
       },
     );
 
-  registerBrowserActionCommands({
-    browser,
-    deps,
-    utils: {
-      loadProfileSelection,
-      browserHintFromOption,
-      chooseBrowserSession,
-      resolveTargetProjectId,
-      resolveBrowserPolicyAndPosture,
-      parseOptionalDurationMs,
-      parseCoordinateSpace,
-      readScreenshotMeta,
-      parseRequiredNumber,
-      sessionTargetContext,
-      parseScrollBehavior,
-      parseScrollAlign,
-      durationToMs,
-    },
-  });
+  const actionUtils: BrowserActionRegisterUtils = {
+    loadProfileSelection,
+    browserHintFromOption,
+    chooseBrowserSession,
+    resolveTargetProjectId,
+    resolveBrowserPolicyAndPosture,
+    parseOptionalDurationMs,
+    parseCoordinateSpace,
+    readScreenshotMeta,
+    parseRequiredNumber,
+    sessionTargetContext,
+    parseScrollBehavior,
+    parseScrollAlign,
+    durationToMs,
+  };
+  registerBrowserActionCommands({ browser, deps, utils: actionUtils });
 
   browser
     .command("exec-get <exec_id>")

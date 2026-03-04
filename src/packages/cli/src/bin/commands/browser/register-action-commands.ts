@@ -8,27 +8,16 @@ independently from session/discovery/logging commands.
 
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
-
-type BrowserSessionClient = any;
+import type {
+  BrowserAtomicActionRequest,
+  BrowserActionRegisterUtils,
+  BrowserCommandDeps,
+} from "./types";
 
 type RegisterActionDeps = {
   browser: Command;
-  deps: any;
-  utils: {
-    loadProfileSelection: (...args: any[]) => any;
-    browserHintFromOption: (...args: any[]) => any;
-    chooseBrowserSession: (...args: any[]) => any;
-    resolveTargetProjectId: (...args: any[]) => any;
-    resolveBrowserPolicyAndPosture: (...args: any[]) => any;
-    parseOptionalDurationMs: (...args: any[]) => any;
-    parseCoordinateSpace: (...args: any[]) => any;
-    readScreenshotMeta: (...args: any[]) => any;
-    parseRequiredNumber: (...args: any[]) => any;
-    sessionTargetContext: (...args: any[]) => any;
-    parseScrollBehavior: (...args: any[]) => any;
-    parseScrollAlign: (...args: any[]) => any;
-    durationToMs: (...args: any[]) => any;
-  };
+  deps: BrowserCommandDeps;
+  utils: BrowserActionRegisterUtils;
 };
 
 export function registerBrowserActionCommands({
@@ -158,7 +147,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -319,7 +308,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -484,7 +473,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -604,7 +593,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -721,7 +710,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -852,7 +841,7 @@ export function registerBrowserActionCommands({
               browser_id: sessionInfo.browser_id,
               client: ctx.remote.client,
               timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-            }) as BrowserSessionClient;
+            });
             const response = await browserClient.action({
               project_id,
               posture,
@@ -975,7 +964,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -1074,7 +1063,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: ctx.timeoutMs,
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -1177,7 +1166,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.waitForUrl, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -1275,7 +1264,7 @@ export function registerBrowserActionCommands({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -1417,7 +1406,7 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
@@ -1510,7 +1499,7 @@ export function registerBrowserActionCommands({
             parsed && typeof parsed === "object" && !Array.isArray(parsed)
               ? (parsed as Record<string, unknown>)
               : undefined;
-          const actions = Array.isArray(parsed)
+          const actions: BrowserAtomicActionRequest[] | undefined = Array.isArray(parsed)
             ? parsed
             : Array.isArray(parsedObject?.actions)
               ? parsedObject?.actions
@@ -1557,14 +1546,14 @@ export function registerBrowserActionCommands({
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const response = await browserClient.action({
             project_id,
             posture,
             policy,
             action: {
               name: "batch",
-              actions: actions as any,
+              actions,
               continue_on_error: continueOnError,
             },
           });

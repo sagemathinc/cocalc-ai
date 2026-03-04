@@ -3,14 +3,17 @@ Register `cocalc browser session ...` subcommands.
 */
 
 import { Command } from "commander";
-
-type BrowserSessionInfo = any;
-type SpawnStateRecord = any;
+import type {
+  BrowserCommandDeps,
+  BrowserSessionRegisterUtils,
+  SpawnStateRecord,
+} from "./types";
+import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 
 type RegisterSessionDeps = {
   browser: Command;
-  deps: any;
-  utils: Record<string, any>;
+  deps: BrowserCommandDeps;
+  utils: BrowserSessionRegisterUtils;
 };
 
 export function registerBrowserSessionCommands({
@@ -421,10 +424,11 @@ export function registerBrowserSessionCommands({
             ),
           });
           let removedRemoteSession = false;
-          if (`${state.browser_id ?? ""}`.trim()) {
+          const browserId = `${state.browser_id ?? ""}`.trim();
+          if (browserId) {
             try {
               const removed = await ctx.hub.system.removeBrowserSession({
-                browser_id: state.browser_id,
+                browser_id: browserId,
               });
               removedRemoteSession = !!removed?.removed;
             } catch {
