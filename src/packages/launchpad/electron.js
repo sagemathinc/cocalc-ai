@@ -95,8 +95,8 @@ function buildMenu() {
 
 async function main() {
   // Spin up CoCalc Launchpad and Electron
-  applyLaunchpadDefaults();
-    logLaunchpadConfig();
+  await applyLaunchpadDefaults();
+  logLaunchpadConfig();
 
   await app.whenReady();
   require("@cocalc/hub/hub");
