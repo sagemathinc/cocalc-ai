@@ -222,7 +222,7 @@ export type BrowserRuntimeEvent = {
   url?: string;
 };
 
-export type BrowserNetworkTraceProtocol = "conat";
+export type BrowserNetworkTraceProtocol = "conat" | "http" | "ws";
 
 export type BrowserNetworkTraceDirection = "send" | "recv";
 
@@ -231,7 +231,15 @@ export type BrowserNetworkTracePhase =
   | "recv_chunk"
   | "recv_message"
   | "drop_chunk_seq"
-  | "drop_chunk_timeout";
+  | "drop_chunk_timeout"
+  | "http_request"
+  | "http_response"
+  | "http_error"
+  | "ws_open"
+  | "ws_send"
+  | "ws_message"
+  | "ws_close"
+  | "ws_error";
 
 export type BrowserNetworkTraceEvent = {
   seq: number;
@@ -252,6 +260,10 @@ export type BrowserNetworkTraceEvent = {
   decoded_preview?: string;
   decode_error?: string;
   message?: string;
+  target_url?: string;
+  method?: string;
+  status?: number;
+  duration_ms?: number;
   url?: string;
 };
 
@@ -281,6 +293,7 @@ export interface BrowserSessionServiceApi {
     enabled?: boolean;
     include_decoded?: boolean;
     include_internal?: boolean;
+    protocols?: BrowserNetworkTraceProtocol[];
     max_events?: number;
     max_preview_chars?: number;
     subject_prefixes?: string[];
@@ -289,6 +302,7 @@ export interface BrowserSessionServiceApi {
     enabled: boolean;
     include_decoded: boolean;
     include_internal: boolean;
+    protocols: BrowserNetworkTraceProtocol[];
     max_events: number;
     max_preview_chars: number;
     subject_prefixes: string[];
@@ -301,6 +315,7 @@ export interface BrowserSessionServiceApi {
     after_seq?: number;
     limit?: number;
     protocol?: BrowserNetworkTraceProtocol;
+    protocols?: BrowserNetworkTraceProtocol[];
     direction?: BrowserNetworkTraceDirection;
     phases?: BrowserNetworkTracePhase[];
     subject_prefix?: string;

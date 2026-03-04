@@ -175,6 +175,7 @@ export class ConatClient extends EventEmitter {
       this._conatClient = connectToConat({
         address: this.address,
         inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
+        auth: (cb) => cb({ browser_id: this.client.browser_id }),
         routeSubject: (subject: string) => {
           const project_id = this.extractProjectIdFromSubject(subject);
           if (!project_id) {

@@ -819,6 +819,7 @@ export class ConatServer extends EventEmitter {
           this.options.strictCloudflareProxy,
         ),
       }),
+      browser_id: getBrowserId(socket),
     };
     const address = this.stats[socket.id].address
       ? `ip:${this.stats[socket.id].address}`
@@ -1730,6 +1731,14 @@ function parseForwardedForHeader(header: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function getBrowserId(socket): string | undefined {
+  const value = `${socket?.handshake?.auth?.browser_id ?? ""}`.trim();
+  if (!value) return;
+  // Keep intentionally strict; browser_id is expected to be a short random token.
+  if (!/^[A-Za-z0-9_-]{6,128}$/.test(value)) return;
+  return value;
 }
 
 function resolveStrictCloudflareProxy(

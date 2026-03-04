@@ -111,6 +111,8 @@ export interface BrowserSessionInfo {
   created_at: string;
   updated_at: string;
   stale: boolean;
+  connected?: boolean;
+  connection_count?: number;
 }
 
 export interface System {
