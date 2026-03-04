@@ -76,8 +76,19 @@ type GitShowFile = {
   lines: string[];
 };
 
+type GitShowSummary = {
+  commit?: string;
+  author?: string;
+  authorDate?: string;
+  committer?: string;
+  commitDate?: string;
+  message: string;
+  extraHeaderLines: string[];
+};
+
 type GitShowParsed = {
   summaryLines: string[];
+  summary: GitShowSummary;
   files: GitShowFile[];
   repoRoot?: string;
   linesTruncated: boolean;
@@ -201,12 +212,77 @@ function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
 
   return {
     summaryLines,
+    summary: parseGitShowSummary(summaryLines),
     files,
     repoRoot,
     linesTruncated,
     originalLineCount: allLines.length,
     shownLineCount: lines.length,
   };
+}
+
+function parseGitShowSummary(summaryLines: string[]): GitShowSummary {
+  const parsed: GitShowSummary = {
+    message: "",
+    extraHeaderLines: [],
+  };
+  const messageLines: string[] = [];
+  let inMessage = false;
+  for (const line of summaryLines) {
+    if (inMessage) {
+      if (line.startsWith("    ")) {
+        messageLines.push(line.slice(4));
+      } else {
+        messageLines.push(line);
+      }
+      continue;
+    }
+    const commitMatch = /^commit\s+([0-9a-f]{7,40})/i.exec(line);
+    if (commitMatch) {
+      parsed.commit = `${commitMatch[1]}`.toLowerCase();
+      continue;
+    }
+    const authorMatch = /^Author:\s*(.+)$/i.exec(line);
+    if (authorMatch) {
+      parsed.author = `${authorMatch[1]}`.trim();
+      continue;
+    }
+    const authorDateMatch = /^AuthorDate:\s*(.+)$/i.exec(line);
+    if (authorDateMatch) {
+      parsed.authorDate = `${authorDateMatch[1]}`.trim();
+      continue;
+    }
+    const committerMatch = /^Commit:\s*(.+)$/i.exec(line);
+    if (committerMatch) {
+      parsed.committer = `${committerMatch[1]}`.trim();
+      continue;
+    }
+    const commitDateMatch = /^CommitDate:\s*(.+)$/i.exec(line);
+    if (commitDateMatch) {
+      parsed.commitDate = `${commitDateMatch[1]}`.trim();
+      continue;
+    }
+    const legacyDateMatch = /^Date:\s*(.+)$/i.exec(line);
+    if (legacyDateMatch && !parsed.authorDate) {
+      parsed.authorDate = `${legacyDateMatch[1]}`.trim();
+      continue;
+    }
+    if (line.trim() === "") {
+      if (
+        parsed.commit ||
+        parsed.author ||
+        parsed.authorDate ||
+        parsed.committer ||
+        parsed.commitDate
+      ) {
+        inMessage = true;
+      }
+      continue;
+    }
+    parsed.extraHeaderLines.push(line);
+  }
+  parsed.message = messageLines.join("\n").trimEnd();
+  return parsed;
 }
 
 function parseGitLogOutput(stdout: string): GitLogEntry[] {
@@ -1889,7 +1965,7 @@ export function GitCommitDrawer({
                 style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
                 optionFilterProp="search"
               />
-              <div style={{ display: "flex", alignItems: "center", height: 24 }}>
+              <div style={{ display: "inline-flex", alignItems: "center" }}>
                 <Segmented
                   size="small"
                   value={reviewFilter}
@@ -1897,9 +1973,7 @@ export function GitCommitDrawer({
                   onChange={(value) => setReviewFilter(value as ReviewFilter)}
                   style={{
                     margin: 0,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    lineHeight: "24px",
+                    verticalAlign: "middle",
                   }}
                 />
               </div>
@@ -2310,16 +2384,95 @@ export function GitCommitDrawer({
       {!loading && !error && data ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {data.summaryLines.length ? (
-            <Typography.Paragraph
-              style={{
-                marginBottom: 0,
-                fontFamily: "monospace",
-                whiteSpace: "pre-wrap",
-                fontSize: Math.max(11, fontSize - 1),
-              }}
-            >
-              {data.summaryLines.join("\n")}
-            </Typography.Paragraph>
+            (() => {
+              const summary = data.summary;
+              const rows: Array<{ label: string; value?: string }> = [
+                {
+                  label: "Commit",
+                  value: summary.commit ?? (isHeadSelected ? HEAD_REF : commit ?? ""),
+                },
+                { label: "Author", value: summary.author },
+                { label: "Author Date", value: summary.authorDate },
+                { label: "Committer", value: summary.committer },
+                { label: "Commit Date", value: summary.commitDate },
+              ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
+              return (
+                <div
+                  style={{
+                    border: `1px solid ${CARD_BORDER_COLOR}`,
+                    borderRadius: 8,
+                    borderLeft: `4px solid ${COLORS.BLUE}`,
+                    padding: "10px 12px",
+                    background: "#fff",
+                    boxShadow: CARD_SHADOW,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  <Typography.Text strong style={{ fontSize: 13 }}>
+                    Commit details
+                  </Typography.Text>
+                  {rows.length ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "120px 1fr",
+                        columnGap: 12,
+                        rowGap: 6,
+                      }}
+                    >
+                      {rows.map((row) => (
+                        <div
+                          key={`${row.label}:${row.value ?? ""}`}
+                          style={{ display: "contents" }}
+                        >
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {row.label}
+                          </Typography.Text>
+                          <Typography.Text
+                            style={{
+                              fontSize: 12,
+                              fontFamily: row.label === "Commit" ? "monospace" : undefined,
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {row.value}
+                          </Typography.Text>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {summary.message ? (
+                    <div
+                      style={{
+                        borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                        paddingTop: 10,
+                      }}
+                    >
+                      <StaticMarkdown
+                        value={summary.message}
+                        style={{
+                          fontSize: Math.max(13, fontSize),
+                          lineHeight: 1.55,
+                        }}
+                      />
+                    </div>
+                  ) : summary.extraHeaderLines.length ? (
+                    <Typography.Paragraph
+                      style={{
+                        marginBottom: 0,
+                        fontFamily: "monospace",
+                        whiteSpace: "pre-wrap",
+                        fontSize: Math.max(11, fontSize - 1),
+                      }}
+                    >
+                      {summary.extraHeaderLines.join("\n")}
+                    </Typography.Paragraph>
+                  ) : null}
+                </div>
+              );
+            })()
           ) : null}
           {data.files.length === 0 ? (
             <Empty description="No file changes in this commit." />
