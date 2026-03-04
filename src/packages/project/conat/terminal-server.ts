@@ -1,7 +1,6 @@
 import { terminalServer, type Options } from "@cocalc/conat/project/terminal";
 import { spawn } from "node-pty";
 import { getIdentity } from "./connection";
-import { readlink, realpath } from "node:fs/promises";
 import { getLogger } from "@cocalc/project/logger";
 import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
 import { data } from "@cocalc/backend/data";
@@ -9,6 +8,10 @@ import { randomId } from "@cocalc/conat/names";
 import { join } from "path";
 import { debounce } from "lodash";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
+import {
+  supportsTerminalCwdLookup,
+  terminalCwdForPid,
+} from "./terminal/cwd";
 
 const logger = getLogger("project:conat:terminal-server");
 
@@ -18,7 +21,7 @@ export function init(opts) {
   terminalServer({
     ...opts,
     spawn,
-    cwd,
+    cwd: terminalCwdForPid,
     preHook,
     postHook,
   });
@@ -66,14 +69,14 @@ async function postHook({ options, pty }) {
   });
   await messageSpool.start();
 
-  if (process.platform == "linux" && process.env.HOME != null) {
+  if (supportsTerminalCwdLookup() && process.env.HOME != null) {
     let cur: string | undefined = "";
     pty.on(
       "data",
       debounce(
         async () => {
           try {
-            const c = await cwd(pty.pid);
+            const c = await terminalCwdForPid(pty.pid);
             if (c != cur) {
               cur = c;
               pty.emit("broadcast", "update-cwd", cur);
@@ -85,26 +88,4 @@ async function postHook({ options, pty }) {
       ),
     );
   }
-}
-
-// get current working directory of a process, if possible
-// TODO: non-linux?
-async function cwd(pid: number): Promise<string | undefined> {
-  if (process.env.HOME == null || process.platform != "linux") {
-    return;
-  }
-  // we reply with the current working directory of the underlying terminal process,
-  // which is why we use readlink and proc below.
-  // [hsy/dev] wrapping in realpath, because I had the odd case, where the project's
-  // home included a symlink, hence the "startsWith" below didn't remove the home dir.
-  const home = await realpath(process.env.HOME);
-  let c;
-  try {
-    c = await readlink(`/proc/${pid}/cwd`);
-  } catch {
-    return;
-  }
-  // try to send back a relative path, because the webapp does not
-  // understand absolute paths
-  return c.startsWith(home) ? c.slice(home.length + 1) : c;
 }
