@@ -108,12 +108,23 @@ cocalc browser exec \
   --project-id "$COCALC_PROJECT_ID" \
   --browser "$COCALC_BROWSER_ID" \
   --file script.js
+# if the session is stale after a frontend rebuild:
+cocalc browser action reload --browser "$COCALC_BROWSER_ID" --posture prod
+# best-effort hard refresh:
+cocalc browser action reload --browser "$COCALC_BROWSER_ID" --posture prod --hard
 ```
+
+Exec posture note:
+
+- `--posture dev`: raw browser JS exec is allowed by default.
+- `--posture prod`: sandboxed exec is the default; raw exec requires policy
+  opt-in (`allow_raw_exec=true`).
 
 If you need an isolated browser target (instead of the developer's live tab),
 spawn a dedicated Playwright-backed Chromium session:
 
 ```bash
+# spawn defaults to headless; add --headed for a visible window
 cocalc browser session spawn --use
 cocalc browser session spawned
 # ... run browser exec/open/screenshot commands ...

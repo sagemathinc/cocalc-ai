@@ -1143,3 +1143,40 @@ Phase 2 (polish and broader parity):
 Proceed with `src/packages/cli` and implement Phase 0 only first.
 
 This gives immediate value for smoke tests while preserving a coherent long-term command model aligned with Sprites-style workflows and CoCalc’s host/workspace architecture.
+
+## Browser Exec: Prod Sandbox (QuickJS-WASM)
+
+Status (implemented first slice):
+
+- `browser exec --posture prod` now defaults to a QuickJS-WASM sandbox when
+  `policy.allow_raw_exec` is not set to `true`.
+- Raw `new Function(...)` evaluation remains available only when explicitly
+  opted in via `allow_raw_exec=true`.
+
+Sandbox execution model:
+
+- Agent script runs inside QuickJS (isolated from page JS globals).
+- A constrained bridge exposes `globalThis.api` helpers:
+  - `api.action(name, payload)`
+  - `api.navigate(...)`, `api.click(...)`, `api.clickAt(...)`, `api.drag(...)`
+  - `api.type(...)`, `api.press(...)`
+  - `api.scrollBy(...)`, `api.scrollTo(...)`
+  - `api.waitForSelector(...)`, `api.waitForUrl(...)`
+- Script emits planned actions; host executes them sequentially using existing
+  typed action machinery and policy checks.
+
+Important constraints of this first slice:
+
+- Runtime uses the Asyncify-capable QuickJS variant
+  (`@jitl/quickjs-wasmfile-release-asyncify` via `quickjs-emscripten-core`).
+- Sandbox `api.*` calls execute immediately through policy-gated host actions
+  and return structured results, so scripts can compose multi-step logic.
+- Determinism and safety still come from typed action allowlists, per-action
+  policy checks, and strict action-count / payload-size caps.
+
+Security posture:
+
+- In prod posture, this gives a safer default than raw page-context JS.
+- Policy checks still apply per action (project/origin/action allowlists).
+- Additional approvals/guards for destructive actions are still required for
+  full production hardening.

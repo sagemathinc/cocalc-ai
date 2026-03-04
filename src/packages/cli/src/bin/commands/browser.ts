@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BrowserActionName,
@@ -137,7 +137,30 @@ type SpawnStateRecord = {
   session_name?: string;
   browser_id?: string;
   session_url?: string;
+  ipc_dir?: string;
 };
+
+type ScreenshotRenderer = "auto" | "dom" | "native" | "media";
+
+type SpawnedScreenshotRequest = {
+  request_id: string;
+  action: "screenshot";
+  selector: string;
+  wait_for_idle_ms: number;
+  timeout_ms: number;
+};
+
+type SpawnedScreenshotResponse =
+  | {
+      ok: true;
+      request_id: string;
+      result: Record<string, unknown>;
+    }
+  | {
+      ok: false;
+      request_id: string;
+      error: string;
+    };
 
 const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
@@ -478,6 +501,34 @@ function resolveSpawnStateById(id: string): { file: string; state: SpawnStateRec
   return listSpawnStates().find((x) => `${x.state.browser_id ?? ""}`.trim() === clean);
 }
 
+function resolveSpawnIpcDir({
+  file,
+  state,
+}: {
+  file: string;
+  state: SpawnStateRecord;
+}): string {
+  const explicit = `${state.ipc_dir ?? ""}`.trim();
+  if (explicit) return explicit;
+  return join(dirname(file), `${state.spawn_id}.ipc`);
+}
+
+function resolveSpawnStateByBrowserId(
+  browser_id: string,
+): { file: string; state: SpawnStateRecord } | undefined {
+  const clean = `${browser_id ?? ""}`.trim();
+  if (!clean) return undefined;
+  const match = listSpawnStates().find(
+    ({ state }) =>
+      `${state.browser_id ?? ""}`.trim() === clean &&
+      Number.isInteger(Number(state.pid)) &&
+      Number(state.pid) > 0,
+  );
+  if (!match) return undefined;
+  if (!isProcessRunning(Number(match.state.pid))) return undefined;
+  return match;
+}
+
 function normalizeBrowserId(value: unknown): string | undefined {
   const id = `${value ?? ""}`.trim();
   return id.length > 0 ? id : undefined;
@@ -528,12 +579,45 @@ function parseCoordinateSpace(value: unknown): BrowserCoordinateSpace {
   );
 }
 
+function parseScreenshotRenderer(value: unknown): ScreenshotRenderer {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean || clean === "auto") return "auto";
+  if (clean === "dom" || clean === "native" || clean === "media") return clean;
+  throw new Error(
+    `invalid screenshot renderer '${value}'; expected auto|dom|native|media`,
+  );
+}
+
 function parseRequiredNumber(value: unknown, label: string): number {
   const num = Number(`${value ?? ""}`.trim());
   if (!Number.isFinite(num)) {
     throw new Error(`${label} must be a finite number`);
   }
   return num;
+}
+
+function parseScrollBehavior(value: unknown): "auto" | "smooth" {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean || clean === "auto") return "auto";
+  if (clean === "smooth") return "smooth";
+  throw new Error(`invalid scroll behavior '${value}'; expected auto|smooth`);
+}
+
+function parseScrollAlign(
+  value: unknown,
+  label: "block" | "inline",
+): "start" | "center" | "end" | "nearest" {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean) return label === "block" ? "center" : "nearest";
+  if (
+    clean === "start" ||
+    clean === "center" ||
+    clean === "end" ||
+    clean === "nearest"
+  ) {
+    return clean;
+  }
+  throw new Error(`invalid --${label} '${value}'; expected start|center|end|nearest`);
 }
 
 async function readScreenshotMeta(
@@ -586,8 +670,13 @@ function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
         x === "drag" ||
         x === "type" ||
         x === "press" ||
+        x === "reload" ||
+        x === "navigate" ||
+        x === "scroll_by" ||
+        x === "scroll_to" ||
         x === "wait_for_selector" ||
-        x === "wait_for_url",
+        x === "wait_for_url" ||
+        x === "batch",
       );
     return out.length ? out : undefined;
   };
@@ -640,6 +729,35 @@ async function resolveBrowserPolicyAndPosture({
     };
   }
   return { posture: resolvedPosture, ...(policy ? { policy } : {}) };
+}
+
+function withBrowserExecStaleSessionHint({
+  err,
+  posture,
+  policy,
+  browserId,
+}: {
+  err: unknown;
+  posture: BrowserAutomationPosture;
+  policy?: BrowserExecPolicyV1;
+  browserId?: string;
+}): Error {
+  const base = err instanceof Error ? err.message : `${err}`;
+  const msg = `${base ?? ""}`;
+  const quickjsExpected = posture === "prod" && !policy?.allow_raw_exec;
+  if (
+    quickjsExpected &&
+    (msg.includes("raw browser exec is blocked in prod posture") ||
+      msg.includes("QuickJSUseAfterFree"))
+  ) {
+    const reloadCmd = browserId
+      ? `cocalc browser action reload --browser ${browserId} --posture prod`
+      : "cocalc browser action reload --posture prod";
+    return new Error(
+      `${msg}\n\nThis browser session is likely stale after a frontend rebuild. Reload the target session and retry.\nTry: ${reloadCmd}\nIf needed, use --hard or manually hard-refresh the tab.`,
+    );
+  }
+  return err instanceof Error ? err : new Error(msg);
 }
 
 function browserHintFromOption(value: unknown): string | undefined {
@@ -892,7 +1010,7 @@ function isExecTerminal(status: BrowserExecStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "canceled";
 }
 
-function browserScreenshotScript({
+function browserScreenshotDomScript({
   selector,
   scale,
   waitForIdleMs,
@@ -1059,6 +1177,233 @@ return {
 `.trim();
 }
 
+function browserScreenshotMediaScript({
+  selector,
+  waitForIdleMs,
+}: {
+  selector: string;
+  waitForIdleMs: number;
+}): string {
+  return `
+const selector = ${JSON.stringify(selector)};
+const waitForIdleMs = ${JSON.stringify(waitForIdleMs)};
+const waitForDomIdle = async (idleMs) => {
+  if (!Number.isFinite(idleMs) || idleMs <= 0) return false;
+  const maxWaitMs = Math.max(1000, Math.min(30000, Math.floor(idleMs * 20)));
+  const timedOut = await new Promise((resolve) => {
+    let timer = undefined;
+    let maxTimer = undefined;
+    let done = false;
+    const finish = (maxedOut) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (maxTimer) clearTimeout(maxTimer);
+      observer.disconnect();
+      resolve(!!maxedOut);
+    };
+    const schedule = () => {
+      if (done) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => finish(false), idleMs);
+    };
+    const root = document.documentElement || document.body;
+    const observer = new MutationObserver(() => schedule());
+    if (root) {
+      observer.observe(root, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+    }
+    maxTimer = setTimeout(() => finish(true), maxWaitMs);
+    schedule();
+  });
+  await new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(undefined))),
+  );
+  return timedOut;
+};
+if (!navigator?.mediaDevices?.getDisplayMedia) {
+  throw new Error("screen capture is unavailable in this browser/session");
+}
+const root = document.querySelector(selector);
+if (!root) {
+  throw new Error(\`selector did not match any element: \${selector}\`);
+}
+const rect = root.getBoundingClientRect();
+const selector_rect_css = {
+  left: Number(rect.left || 0),
+  top: Number(rect.top || 0),
+  width: Number(rect.width || 0),
+  height: Number(rect.height || 0),
+};
+const viewport_css = {
+  width: Number(window.innerWidth || 0),
+  height: Number(window.innerHeight || 0),
+};
+const wait_for_idle_timed_out = await waitForDomIdle(waitForIdleMs);
+let stream;
+try {
+  stream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: false,
+  });
+} catch (err) {
+  throw new Error(
+    \`screen capture permission denied or blocked: \${err}. Approve the browser share prompt and select this tab, then retry.\`,
+  );
+}
+try {
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.muted = true;
+  video.playsInline = true;
+  await video.play();
+  if (!video.videoWidth || !video.videoHeight) {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("timed out waiting for captured frame")),
+        5000,
+      );
+      video.onloadedmetadata = () => {
+        clearTimeout(timeout);
+        resolve(undefined);
+      };
+      video.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error("captured media stream failed"));
+      };
+    });
+  }
+  const scaleX = Number(video.videoWidth || 0) / Math.max(1, viewport_css.width);
+  const scaleY = Number(video.videoHeight || 0) / Math.max(1, viewport_css.height);
+  const sx = Math.max(0, Math.floor(selector_rect_css.left * scaleX));
+  const sy = Math.max(0, Math.floor(selector_rect_css.top * scaleY));
+  const sw = Math.max(1, Math.floor(selector_rect_css.width * scaleX));
+  const sh = Math.max(1, Math.floor(selector_rect_css.height * scaleY));
+  const canvas = document.createElement("canvas");
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("unable to create 2d context for captured frame");
+  }
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+  const png_data_url = canvas.toDataURL("image/png");
+  const capture_scale = Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1;
+  return {
+    ok: true,
+    selector,
+    width: Number(canvas.width || 0),
+    height: Number(canvas.height || 0),
+    page_url: location.href,
+    captured_at: new Date().toISOString(),
+    capture_scale,
+    capture_scale_y: Number.isFinite(scaleY) && scaleY > 0 ? scaleY : capture_scale,
+    device_pixel_ratio: Number(window.devicePixelRatio || 1),
+    scroll_x: Number(window.scrollX || window.pageXOffset || 0),
+    scroll_y: Number(window.scrollY || window.pageYOffset || 0),
+    selector_rect_css,
+    viewport_css,
+    screenshot_meta: {
+      page_url: location.href,
+      captured_at: new Date().toISOString(),
+      selector,
+      image_width: Number(canvas.width || 0),
+      image_height: Number(canvas.height || 0),
+      capture_scale,
+      device_pixel_ratio: Number(window.devicePixelRatio || 1),
+      scroll_x: Number(window.scrollX || window.pageXOffset || 0),
+      scroll_y: Number(window.scrollY || window.pageYOffset || 0),
+      selector_rect_css,
+      viewport_css,
+    },
+    wait_for_idle_ms: waitForIdleMs,
+    wait_for_idle_timed_out,
+    png_data_url,
+  };
+} finally {
+  try {
+    if (stream) {
+      for (const track of stream.getTracks?.() ?? []) {
+        try {
+          track.stop();
+        } catch {}
+      }
+    }
+  } catch {}
+}
+`.trim();
+}
+
+async function captureScreenshotViaSpawnedDaemon({
+  browser_id,
+  selector,
+  waitForIdleMs,
+  timeoutMs,
+}: {
+  browser_id: string;
+  selector: string;
+  waitForIdleMs: number;
+  timeoutMs: number;
+}): Promise<{
+  result: Record<string, unknown>;
+  spawned: { file: string; state: SpawnStateRecord };
+}> {
+  const spawned = resolveSpawnStateByBrowserId(browser_id);
+  if (!spawned) {
+    throw new Error(`no local spawned browser daemon found for browser '${browser_id}'`);
+  }
+  const ipcDir = resolveSpawnIpcDir(spawned);
+  mkdirSync(ipcDir, { recursive: true });
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const requestPath = join(ipcDir, `${requestId}.request.json`);
+  const responsePath = join(ipcDir, `${requestId}.response.json`);
+  const payload: SpawnedScreenshotRequest = {
+    request_id: requestId,
+    action: "screenshot",
+    selector,
+    wait_for_idle_ms: waitForIdleMs,
+    timeout_ms: timeoutMs,
+  };
+  await writeFile(requestPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const started = Date.now();
+  for (;;) {
+    if (existsSync(responsePath)) {
+      const raw = await readFile(responsePath, "utf8");
+      try {
+        unlinkSync(responsePath);
+      } catch {
+        // best-effort cleanup
+      }
+      let parsed: SpawnedScreenshotResponse;
+      try {
+        parsed = JSON.parse(raw) as SpawnedScreenshotResponse;
+      } catch (err) {
+        throw new Error(`invalid spawned screenshot response: ${err}`);
+      }
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("invalid spawned screenshot response payload");
+      }
+      if (!parsed.ok) {
+        throw new Error(`${parsed.error || "spawned screenshot request failed"}`);
+      }
+      return { result: parsed.result ?? {}, spawned };
+    }
+    if (Date.now() - started > timeoutMs) {
+      try {
+        unlinkSync(requestPath);
+      } catch {
+        // ignore cleanup races
+      }
+      throw new Error("timed out waiting for spawned screenshot response");
+    }
+    await sleep(100);
+  }
+}
+
 async function waitForExecOperation({
   browserClient,
   exec_id,
@@ -1220,7 +1565,14 @@ export function registerBrowserCommand(
       "--chromium <path>",
       "explicit Chromium executable path (defaults to auto-detect from PATH)",
     )
-    .option("--headless", "launch Chromium in headless mode")
+    .option(
+      "--headless",
+      "launch Chromium in headless mode (default)",
+    )
+    .option(
+      "--headed",
+      "launch Chromium in visible headed mode",
+    )
     .option(
       "--ready-timeout <duration>",
       "timeout for daemon startup readiness (e.g. 10s, 1m)",
@@ -1246,6 +1598,7 @@ export function registerBrowserCommand(
           spawnId?: string;
           chromium?: string;
           headless?: boolean;
+          headed?: boolean;
           readyTimeout?: string;
           timeout?: string;
           use?: boolean;
@@ -1321,11 +1674,15 @@ export function registerBrowserCommand(
               `missing daemon script '${daemonScript}' (build @cocalc/cli first)`,
             );
           }
+          if (opts.headless && opts.headed) {
+            throw new Error("choose only one of --headless or --headed");
+          }
+          const spawnHeadless = opts.headed ? false : true;
           writeDaemonConfig(daemonConfigPath, {
             spawn_id: spawnId,
             state_file: stateFile,
             target_url: markedTargetUrl,
-            headless: !!opts.headless,
+            headless: spawnHeadless,
             timeout_ms: parseDiscoveryTimeout(opts.readyTimeout, DEFAULT_READY_TIMEOUT_MS),
             executable_path: chromiumPath,
             session_name: sessionName,
@@ -1760,13 +2117,18 @@ export function registerBrowserCommand(
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
+      "--renderer <mode>",
+      "screenshot renderer: auto|native|dom|media (default auto)",
+      "auto",
+    )
+    .option(
       "--selector <css>",
       "CSS selector for screenshot root element",
       "body",
     )
     .option(
       "--scale <n>",
-      "render scale for screenshot capture",
+      "render scale for DOM screenshot renderer",
       "1",
     )
     .option("--out <path>", "output PNG path on local machine")
@@ -1790,6 +2152,7 @@ export function registerBrowserCommand(
           browser?: string;
           sessionProjectId?: string;
           activeOnly?: boolean;
+          renderer?: string;
           selector?: string;
           scale?: string;
           out?: string;
@@ -1824,6 +2187,7 @@ export function registerBrowserCommand(
           });
 
           const selector = `${opts.selector ?? "body"}`.trim() || "body";
+          const requestedRenderer = parseScreenshotRenderer(opts.renderer);
           const scale = Number(opts.scale ?? "1");
           if (!Number.isFinite(scale) || scale <= 0) {
             throw new Error("--scale must be a positive number");
@@ -1836,29 +2200,77 @@ export function registerBrowserCommand(
             `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const metaOutPath = `${opts.metaOut ?? ""}`.trim();
-          const browserClient = deps.createBrowserSessionClient({
-            account_id: ctx.accountId,
-            browser_id: sessionInfo.browser_id,
-            client: ctx.remote.client,
-            timeout: timeoutMs,
-          }) as BrowserSessionClient;
-          const started = await browserClient.startExec({
-            project_id,
-            code: browserScreenshotScript({ selector, scale, waitForIdleMs }),
-          });
-          const op = await waitForExecOperation({
-            browserClient,
-            exec_id: started.exec_id,
-            pollMs: 1_000,
-            timeoutMs,
-          });
-          if (op.status === "failed") {
-            throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+          let rendererUsed: ScreenshotRenderer = requestedRenderer;
+          let result: any;
+          let spawnedUsed:
+            | {
+                file: string;
+                state: SpawnStateRecord;
+              }
+            | undefined;
+
+          if (requestedRenderer === "native" || requestedRenderer === "auto") {
+            try {
+              const nativeResult = await captureScreenshotViaSpawnedDaemon({
+                browser_id: sessionInfo.browser_id,
+                selector,
+                waitForIdleMs,
+                timeoutMs,
+              });
+              result = nativeResult.result;
+              spawnedUsed = nativeResult.spawned;
+              rendererUsed = "native";
+            } catch (err) {
+              if (requestedRenderer === "native") {
+                throw err;
+              }
+            }
           }
-          if (op.status === "canceled") {
-            throw new Error(`browser exec ${op.exec_id} was canceled`);
+
+          if (!result) {
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+              timeout: timeoutMs,
+            }) as BrowserSessionClient;
+            const modeForExec: ScreenshotRenderer =
+              requestedRenderer === "media"
+                ? "media"
+                : requestedRenderer === "dom"
+                  ? "dom"
+                  : "dom";
+            const script =
+              modeForExec === "media"
+                ? browserScreenshotMediaScript({
+                    selector,
+                    waitForIdleMs,
+                  })
+                : browserScreenshotDomScript({
+                    selector,
+                    scale,
+                    waitForIdleMs,
+                  });
+            const started = await browserClient.startExec({
+              project_id,
+              code: script,
+            });
+            const op = await waitForExecOperation({
+              browserClient,
+              exec_id: started.exec_id,
+              pollMs: 1_000,
+              timeoutMs,
+            });
+            if (op.status === "failed") {
+              throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+            }
+            if (op.status === "canceled") {
+              throw new Error(`browser exec ${op.exec_id} was canceled`);
+            }
+            result = (op?.result ?? {}) as any;
+            rendererUsed = modeForExec;
           }
-          const result = (op?.result ?? {}) as any;
+
           const pngDataUrl = `${result?.png_data_url ?? ""}`.trim();
           if (!pngDataUrl.startsWith("data:image/png;base64,")) {
             throw new Error("browser screenshot capture returned invalid PNG data");
@@ -1895,6 +2307,14 @@ export function registerBrowserCommand(
             bytes: png.byteLength,
             width: Number(result?.width ?? 0),
             height: Number(result?.height ?? 0),
+            renderer_requested: requestedRenderer,
+            renderer_used: rendererUsed,
+            ...(spawnedUsed
+              ? {
+                  spawn_id: spawnedUsed.state.spawn_id,
+                  spawn_state_file: spawnedUsed.file,
+                }
+              : {}),
             selector,
             wait_for_idle_ms: Number(result?.wait_for_idle_ms ?? waitForIdleMs),
             wait_for_idle_timed_out: !!result?.wait_for_idle_timed_out,
@@ -1931,7 +2351,7 @@ export function registerBrowserCommand(
     )
     .option(
       "--policy-file <path>",
-      "JSON file with browser exec policy (required for controlled raw exec in prod posture)",
+      "JSON file with browser exec policy (prod defaults to sandboxed exec unless allow_raw_exec=true)",
     )
     .option(
       "--allow-raw-exec",
@@ -2038,12 +2458,22 @@ export function registerBrowserCommand(
             apiBaseUrl: ctx.apiBaseUrl,
           });
           if (opts.async) {
-            const started = await browserClient.startExec({
-              project_id,
-              code: script,
-              posture,
-              policy,
-            });
+            let started;
+            try {
+              started = await browserClient.startExec({
+                project_id,
+                code: script,
+                posture,
+                policy,
+              });
+            } catch (err) {
+              throw withBrowserExecStaleSessionHint({
+                err,
+                posture,
+                policy,
+                browserId: sessionInfo.browser_id,
+              });
+            }
             if (!opts.wait) {
               return {
                 browser_id: sessionInfo.browser_id,
@@ -2073,12 +2503,22 @@ export function registerBrowserCommand(
               ...sessionTargetContext(ctx, sessionInfo, project_id),
             };
           }
-          const response = await browserClient.exec({
-            project_id,
-            code: script,
-            posture,
-            policy,
-          });
+          let response;
+          try {
+            response = await browserClient.exec({
+              project_id,
+              code: script,
+              posture,
+              policy,
+            });
+          } catch (err) {
+            throw withBrowserExecStaleSessionHint({
+              err,
+              posture,
+              policy,
+              browserId: sessionInfo.browser_id,
+            });
+          }
           return {
             browser_id: sessionInfo.browser_id,
             project_id,
@@ -3027,6 +3467,585 @@ export function registerBrowserCommand(
               ...(regex ? { regex } : {}),
               ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
               poll_ms: pollMs,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("reload")
+    .description("reload the targeted browser session page")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--hard",
+      "best-effort hard refresh; appends a cache-busting query parameter and replaces current URL",
+    )
+    .action(
+      async (
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          hard?: boolean;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action reload", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: ctx.timeoutMs,
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "reload",
+              hard: !!opts.hard,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("navigate <url>")
+    .description("navigate browser session to a URL")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--replace", "replace current history entry instead of pushing")
+    .option(
+      "--wait-for-url <duration>",
+      "after navigate, wait up to this duration for URL change",
+    )
+    .action(
+      async (
+        url: string,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          replace?: boolean;
+          waitForUrl?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action navigate", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const cleanUrl = `${url ?? ""}`.trim();
+          if (!cleanUrl) {
+            throw new Error("url must be specified");
+          }
+          const waitForUrlMs = parseOptionalDurationMs(opts.waitForUrl, 5_000);
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.waitForUrl, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "navigate",
+              url: cleanUrl,
+              replace: !!opts.replace,
+              ...(waitForUrlMs != null ? { wait_for_url_ms: waitForUrlMs } : {}),
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("scroll-by <dy> [dx]")
+    .description("scroll viewport by delta values")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--behavior <auto|smooth>", "scroll behavior", "auto")
+    .action(
+      async (
+        dy: string,
+        dx: string | undefined,
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          behavior?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action scroll-by", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const dyValue = parseRequiredNumber(dy, "dy");
+          const dxValue = dx == null ? 0 : parseRequiredNumber(dx, "dx");
+          const behavior = parseScrollBehavior(opts.behavior);
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "scroll_by",
+              dx: dxValue,
+              dy: dyValue,
+              behavior,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("scroll-to")
+    .description(
+      "scroll to selector (recommended) or explicit top/left coordinates",
+    )
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option("--selector <css>", "CSS selector target to bring into view")
+    .option("--top <n>", "absolute vertical scroll position")
+    .option("--left <n>", "absolute horizontal scroll position")
+    .option("--behavior <auto|smooth>", "scroll behavior", "auto")
+    .option(
+      "--block <start|center|end|nearest>",
+      "vertical alignment when selector is provided",
+      "center",
+    )
+    .option(
+      "--inline <start|center|end|nearest>",
+      "horizontal alignment when selector is provided",
+      "nearest",
+    )
+    .option(
+      "--timeout <duration>",
+      "timeout when waiting for selector (e.g. 30s, 2m)",
+    )
+    .option(
+      "--poll-ms <duration>",
+      "poll interval while waiting for selector",
+      "100ms",
+    )
+    .action(
+      async (
+        opts: {
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          selector?: string;
+          top?: string;
+          left?: string;
+          behavior?: string;
+          block?: string;
+          inline?: string;
+          timeout?: string;
+          pollMs?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action scroll-to", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const selector = `${opts.selector ?? ""}`.trim();
+          const top =
+            opts.top == null || `${opts.top}`.trim() === ""
+              ? undefined
+              : parseRequiredNumber(opts.top, "top");
+          const left =
+            opts.left == null || `${opts.left}`.trim() === ""
+              ? undefined
+              : parseRequiredNumber(opts.left, "left");
+          if (!selector && top == null && left == null) {
+            throw new Error("pass --selector or at least one of --top/--left");
+          }
+          const behavior = parseScrollBehavior(opts.behavior);
+          const block = parseScrollAlign(opts.block, "block");
+          const inline = parseScrollAlign(opts.inline, "inline");
+          const timeoutMs = parseOptionalDurationMs(opts.timeout, ctx.timeoutMs);
+          const pollMs = Math.max(20, durationToMs(`${opts.pollMs ?? "100ms"}`, 100));
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "scroll_to",
+              ...(selector ? { selector } : {}),
+              ...(top != null ? { top } : {}),
+              ...(left != null ? { left } : {}),
+              behavior,
+              block,
+              inline,
+              ...(timeoutMs != null ? { timeout_ms: timeoutMs } : {}),
+              poll_ms: pollMs,
+            },
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id,
+            posture,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project_id),
+          };
+        });
+      },
+    );
+
+  action
+    .command("batch")
+    .description(
+      "execute multiple typed actions in one call using a JSON file (array or {actions, continue_on_error})",
+    )
+    .requiredOption("--file <path>", "JSON file describing action batch")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--project-id <id>",
+      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+    )
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option(
+      "--posture <dev|prod>",
+      "browser automation posture; default is dev on loopback targets, prod otherwise",
+    )
+    .option("--policy-file <path>", "JSON file with browser exec policy")
+    .option(
+      "--continue-on-error",
+      "continue remaining steps after a step fails",
+    )
+    .option(
+      "--timeout <duration>",
+      "rpc timeout for batch execution",
+    )
+    .action(
+      async (
+        opts: {
+          file?: string;
+          workspace?: string;
+          projectId?: string;
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          posture?: string;
+          policyFile?: string;
+          continueOnError?: boolean;
+          timeout?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser action batch", async (ctx) => {
+          const file = `${opts.file ?? ""}`.trim();
+          if (!file) {
+            throw new Error("--file is required");
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(await readFile(file, "utf8"));
+          } catch (err) {
+            throw new Error(`invalid batch json file '${file}': ${err}`);
+          }
+          const parsedObject =
+            parsed && typeof parsed === "object" && !Array.isArray(parsed)
+              ? (parsed as Record<string, unknown>)
+              : undefined;
+          const actions = Array.isArray(parsed)
+            ? parsed
+            : Array.isArray(parsedObject?.actions)
+              ? parsedObject?.actions
+              : undefined;
+          if (!Array.isArray(actions) || actions.length === 0) {
+            throw new Error("batch file must contain an action array or { actions: [...] }");
+          }
+          const continueOnErrorFromFile =
+            parsedObject?.continue_on_error == null
+              ? undefined
+              : !!parsedObject.continue_on_error;
+          const continueOnError =
+            opts.continueOnError || continueOnErrorFromFile === true;
+
+          const profileSelection = loadProfileSelection(deps, command);
+          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const browserHint = browserHintFromOption(opts.browser) ?? "";
+          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint,
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const project_id = await resolveTargetProjectId({
+            deps,
+            ctx,
+            workspace: workspaceHint,
+            projectId: projectIdHint,
+            sessionInfo,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const response = await browserClient.action({
+            project_id,
+            posture,
+            policy,
+            action: {
+              name: "batch",
+              actions: actions as any,
+              continue_on_error: continueOnError,
             },
           });
           return {

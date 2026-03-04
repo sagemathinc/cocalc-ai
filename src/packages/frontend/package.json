@@ -204,6 +204,8 @@
     "url": "https://github.com/sagemathinc/cocalc/issues"
   },
   "dependencies": {
-    "immer": "^11.1.0"
+    "@jitl/quickjs-wasmfile-release-asyncify": "0.32.0",
+    "immer": "^11.1.0",
+    "quickjs-emscripten-core": "0.32.0"
   }
 }
