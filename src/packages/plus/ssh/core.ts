@@ -106,15 +106,24 @@ export function parseTarget(raw: string) {
   return { host: m[1], port: m[2] ? parseInt(m[2], 10) : null };
 }
 
+function localPlusRootDir(): string {
+  const explicitHome = `${process.env.COCALC_PLUS_HOME ?? ""}`.trim();
+  if (explicitHome) return explicitHome;
+  const explicitData = `${process.env.COCALC_DATA_DIR ?? ""}`.trim();
+  if (explicitData) return path.dirname(explicitData);
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "cocalc-plus");
+  }
+  return path.join(os.homedir(), ".local", "share", "cocalc-plus");
+}
+
+function localSshBaseDir(): string {
+  return path.join(localPlusRootDir(), "ssh");
+}
+
 export function infoPathFor(target: string) {
   const hash = crypto.createHash("sha1").update(target).digest("hex");
-  const baseDir = path.join(
-    os.homedir(),
-    ".local",
-    "share",
-    "cocalc-plus",
-    "ssh",
-  );
+  const baseDir = localSshBaseDir();
   return {
     hash,
     baseDir,
@@ -124,25 +133,11 @@ export function infoPathFor(target: string) {
 }
 
 export function registryPath() {
-  return path.join(
-    os.homedir(),
-    ".local",
-    "share",
-    "cocalc-plus",
-    "ssh",
-    "registry.json",
-  );
+  return path.join(localSshBaseDir(), "registry.json");
 }
 
 function pruneStatePath() {
-  return path.join(
-    os.homedir(),
-    ".local",
-    "share",
-    "cocalc-plus",
-    "ssh",
-    "prune-state.json",
-  );
+  return path.join(localSshBaseDir(), "prune-state.json");
 }
 
 export function loadRegistry(): Record<string, RegistryEntry> {

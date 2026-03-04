@@ -128,11 +128,23 @@ function resolveDataDir() {
     return process.env.DATA;
   }
   const home = process.env.HOME ?? process.cwd();
-  const legacy = join(home, ".local", "share", "cocalc-launchpad");
-  if (existsSync(legacy)) {
-    return legacy;
+  const preferred =
+    process.platform === "darwin"
+      ? join(home, "Library", "Application Support", "cocalc-launchpad")
+      : join(home, ".local", "share", "cocalc-launchpad");
+  const legacy = [
+    join(home, ".local", "share", "cocalc-launchpad"),
+    join(home, ".local", "share", "cocalc", "launchpad"),
+  ];
+  if (existsSync(preferred)) {
+    return preferred;
   }
-  return join(home, ".local", "share", "cocalc", "launchpad");
+  for (const candidate of legacy) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return preferred;
 }
 
 function findArgValue(flag) {
