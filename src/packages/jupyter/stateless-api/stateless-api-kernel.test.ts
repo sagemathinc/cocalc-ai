@@ -42,7 +42,10 @@ describe("create a jupyter stateless-api kernel and test basic functionality", (
     const output = await kernel.execute(
       "import os; os.path.abspath(os.curdir)",
     );
-    expect(output).toEqual([{ data: { "text/plain": "'/tmp'" } }]);
+    expect(output.length).toBe(1);
+    expect(["'/tmp'", "'/private/tmp'"]).toContain(
+      output[0].data["text/plain"],
+    );
   });
 
   it("cleans up", () => {

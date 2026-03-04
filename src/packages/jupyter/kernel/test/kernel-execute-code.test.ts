@@ -57,7 +57,9 @@ describe("test execute_code_now and chdir", () => {
       code: "os.path.abspath(os.curdir)",
     });
     const v2 = out2.filter((x) => x.content?.data);
-    expect(v2[0].content.data["text/plain"]).toBe("'/tmp'");
+    expect(["'/tmp'", "'/private/tmp'"]).toContain(
+      v2[0].content.data["text/plain"],
+    );
   });
 
   it("cleans up", () => {

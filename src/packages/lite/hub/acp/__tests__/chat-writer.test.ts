@@ -826,13 +826,17 @@ describe("ChatStreamWriter", () => {
       await flush(writer);
 
       const final = sets[sets.length - 1] as any;
+      const expectedWorkspaceRoot = await fs.realpath(workspaceRoot);
+      const expectedExistsPath = await fs.realpath(
+        path.join(workspaceRoot, "src", "exists.ts"),
+      );
       expect(Array.isArray(final.inline_code_links)).toBe(true);
       expect(final.inline_code_links).toHaveLength(1);
       expect(final.inline_code_links[0]).toMatchObject({
         code: "src/exists.ts:12",
-        abs_path: path.join(workspaceRoot, "src", "exists.ts"),
+        abs_path: expectedExistsPath,
         display_path_at_turn: "src/exists.ts",
-        workspace_root_at_turn: workspaceRoot,
+        workspace_root_at_turn: expectedWorkspaceRoot,
         line: 12,
       });
       writer.dispose?.(true);
@@ -880,13 +884,15 @@ describe("ChatStreamWriter", () => {
       await flush(writer);
 
       const final = sets[sets.length - 1] as any;
+      const expectedWorkspaceRoot = await fs.realpath(workspaceRoot);
+      const expectedInsidePath = await fs.realpath(insidePath);
       expect(Array.isArray(final.inline_code_links)).toBe(true);
       expect(final.inline_code_links).toHaveLength(1);
       expect(final.inline_code_links[0]).toMatchObject({
         code: `${insidePath}:7`,
-        abs_path: insidePath,
+        abs_path: expectedInsidePath,
         display_path_at_turn: insidePath.split(path.sep).join("/"),
-        workspace_root_at_turn: workspaceRoot,
+        workspace_root_at_turn: expectedWorkspaceRoot,
         line: 7,
       });
       writer.dispose?.(true);

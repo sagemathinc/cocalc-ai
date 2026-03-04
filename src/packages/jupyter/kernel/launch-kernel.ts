@@ -237,7 +237,7 @@ export function closeAll() {
         process.kill(-child.pid, "SIGKILL");
       } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code;
-        if (code !== "ESRCH") {
+        if (code !== "ESRCH" && code !== "EPERM" && code !== "EINVAL") {
           throw err;
         }
       }
@@ -245,7 +245,7 @@ export function closeAll() {
         child.kill("SIGKILL");
       } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code;
-        if (code !== "ESRCH") {
+        if (code !== "ESRCH" && code !== "EPERM") {
           throw err;
         }
       }

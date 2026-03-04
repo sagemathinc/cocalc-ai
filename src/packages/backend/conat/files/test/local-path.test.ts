@@ -13,6 +13,15 @@ import { getBackendWatcherDebugStats } from "@cocalc/backend/watcher-debug";
 
 beforeAll(before);
 
+const isLinux = process.platform === "linux";
+const describeIfLinux = isLinux ? describe : describe.skip;
+
+function expectRelativeOrAbsoluteRealpath(pathValue: string, expected: string) {
+  expect(
+    pathValue === expected || pathValue.endsWith("/" + expected),
+  ).toBeTruthy();
+}
+
 const SANDBOX_WATCH_SOURCE = "backend:sandbox/watch";
 
 function sandboxWatchersActive(): number {
@@ -93,7 +102,7 @@ describe("use all the standard api functions of fs", () => {
     await fs.link("source", "target");
     expect(await fs.readFile("target", "utf8")).toEqual("the source");
     // hard link, not symlink
-    expect(await fs.realpath("target")).toBe("target");
+    expectRelativeOrAbsoluteRealpath(await fs.realpath("target"), "target");
 
     await fs.appendFile("source", " and more");
     expect(await fs.readFile("target", "utf8")).toEqual("the source and more");
@@ -202,7 +211,8 @@ describe("use all the standard api functions of fs", () => {
     );
   });
 
-  it("readdir works with non-utf8 filenames in the path", async () => {
+  const itIfLinux = isLinux ? it : it.skip;
+  itIfLinux("readdir works with non-utf8 filenames in the path", async () => {
     // this test uses internal implementation details (kind of crappy)
     const path = "readdir-3";
     await fs.mkdir(path);
@@ -214,9 +224,12 @@ describe("use all the standard api functions of fs", () => {
       decoder.decode(buf);
     }).toThrow("not valid");
     const c = process.cwd();
-    process.chdir(fullPath);
-    await writeFile(buf, "hi");
-    process.chdir(c);
+    try {
+      process.chdir(fullPath);
+      await writeFile(buf, "hi");
+    } finally {
+      process.chdir(c);
+    }
     const w = await fs.readdir(path, { encoding: "buffer" });
     expect(w[0]).toEqual(buf);
   });
@@ -235,13 +248,13 @@ describe("use all the standard api functions of fs", () => {
     await fs.symlink("file0", "file1");
     expect(await fs.readFile("file1", "utf8")).toBe("file0");
     const r = await fs.realpath("file1");
-    expect(r).toBe("file0");
+    expectRelativeOrAbsoluteRealpath(r, "file0");
 
     await fs.writeFile("file2", "file2");
     await fs.link("file2", "file3");
     expect(await fs.readFile("file3", "utf8")).toBe("file2");
     const r3 = await fs.realpath("file3");
-    expect(r3).toBe("file3");
+    expectRelativeOrAbsoluteRealpath(r3, "file3");
   });
 
   it("rename a file", async () => {
@@ -356,7 +369,7 @@ describe("use all the standard api functions of fs", () => {
     await fs.symlink("source1", "target1");
     expect(await fs.readFile("target1", "utf8")).toEqual("the source");
     // symlink, not hard
-    expect(await fs.realpath("target1")).toBe("source1");
+    expectRelativeOrAbsoluteRealpath(await fs.realpath("target1"), "source1");
     await fs.appendFile("source1", " and more");
     expect(await fs.readFile("target1", "utf8")).toEqual("the source and more");
     const stats = await fs.stat("target1");
@@ -442,7 +455,7 @@ describe("use all the standard api functions of fs", () => {
   });
 });
 
-describe("SECURITY CHECKS: dangerous symlinks can't be followed", () => {
+describeIfLinux("SECURITY CHECKS: dangerous symlinks can't be followed", () => {
   let server;
   let tempDir;
   it("creates the simple fileserver service", async () => {

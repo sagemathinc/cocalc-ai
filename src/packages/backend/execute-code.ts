@@ -39,6 +39,7 @@ import {
   type ExecuteCodeOptionsWithCallback,
   type ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
+import type { Processes } from "@cocalc/util/types/project-info/types";
 import { envForSpawn } from "./misc";
 import { trackProcessRoot } from "./process-tracker";
 import { ProcessStats, sumChildren } from "./process-stats";
@@ -274,6 +275,7 @@ async function executeCodeNoAggregate(
         start,
         job_id,
         status: "running",
+        stats: [],
       };
       asyncCache.set(job_id, job_config);
 
@@ -407,7 +409,16 @@ function doSpawn(
 
     while (true) {
       if (callback_done) return;
-      const { procs } = await monitor.processes(Date.now());
+      let procs: Processes;
+      try {
+        ({ procs } = await monitor.processes(Date.now()));
+      } catch (err) {
+        // Process monitoring is best effort and platform dependent.
+        // If gathering stats fails (e.g. missing /proc), stop monitoring
+        // without failing command execution.
+        log.debug("process monitoring unavailable", { err: `${err}` });
+        return;
+      }
       // reconstruct process tree
       const children: { [pid: number]: number[] } = {};
       for (const p of Object.values(procs)) {

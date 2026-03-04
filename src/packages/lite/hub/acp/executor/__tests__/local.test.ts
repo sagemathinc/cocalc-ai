@@ -47,7 +47,7 @@ describe("LocalExecutor", () => {
     });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe(subdir);
+    expect(await fs.realpath(stdout.trim())).toBe(await fs.realpath(subdir));
   });
 
   it("runs shell features (env vars, pipes, escaping)", async () => {

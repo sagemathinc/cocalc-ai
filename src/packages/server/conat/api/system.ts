@@ -31,10 +31,14 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import {
+  type BrowserSessionLiveInfo,
   listBrowserSessionsForAccount,
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
+import { conat } from "@cocalc/backend/conat";
+import { sysApiMany } from "@cocalc/conat/core/sys";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -768,11 +772,45 @@ export async function listBrowserSessions({
   if (!account_id) {
     throw Error("must be signed in");
   }
+  const live_by_browser_id = await getLiveBrowserSessionInfo(account_id);
   return listBrowserSessionsForAccount({
     account_id,
     max_age_ms,
     include_stale,
+    live_by_browser_id,
   });
+}
+
+async function getLiveBrowserSessionInfo(
+  account_id: string,
+): Promise<Map<string, BrowserSessionLiveInfo>> {
+  const out = new Map<string, BrowserSessionLiveInfo>();
+  try {
+    const client = conat();
+    await client.waitUntilSignedIn({ timeout: 3_000 });
+    const statsByNode = await sysApiMany(client, { timeout: 2_000 }).stats();
+    for (const node of statsByNode ?? []) {
+      for (const sockets of Object.values(node ?? {})) {
+        for (const stat of Object.values(sockets ?? {})) {
+          const s = stat as ConnectionStats | undefined;
+          if (!s?.user || s.user.account_id !== account_id) continue;
+          const browser_id = `${s.browser_id ?? ""}`.trim();
+          if (!browser_id) continue;
+          const prev = out.get(browser_id);
+          const nextCount = (prev?.connection_count ?? 0) + 1;
+          const nextActive = Math.max(prev?.updated_at_ms ?? 0, s.active ?? s.connected ?? 0);
+          out.set(browser_id, {
+            connected: true,
+            connection_count: nextCount,
+            ...(nextActive > 0 ? { updated_at_ms: nextActive } : {}),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    logger.debug("listBrowserSessions: failed to read live conat stats", `${err}`);
+  }
+  return out;
 }
 
 export async function removeBrowserSession({

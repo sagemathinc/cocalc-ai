@@ -1,6 +1,11 @@
 require("@testing-library/jest-dom");
 process.env.COCALC_TEST_MODE = true;
 
+// openat2 is Linux-only. Force test-mode fallback on macOS/other platforms.
+if (process.platform !== "linux") {
+  process.env.COCALC_SANDBOX_OPENAT2 = "off";
+}
+
 global.TextEncoder = require("util").TextEncoder;
 global.TextDecoder = require("util").TextDecoder;
 

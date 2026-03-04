@@ -3,6 +3,8 @@ Test the ouch compression api.
 */
 
 import ouch from "./ouch";
+import { ouch as ouchBin } from "./install";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +19,10 @@ afterAll(async () => {
   await rm(tempDir, { force: true, recursive: true });
 });
 
-describe("ouch works on a little file", () => {
+const describeOuch =
+  process.platform === "linux" && existsSync(ouchBin) ? describe : describe.skip;
+
+describeOuch("ouch works on a little file", () => {
   for (const ext of [
     "zip",
     "7z",

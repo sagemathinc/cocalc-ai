@@ -44,8 +44,13 @@ export type BrowserActionName =
   | "drag"
   | "type"
   | "press"
+  | "reload"
+  | "navigate"
+  | "scroll_by"
+  | "scroll_to"
   | "wait_for_selector"
-  | "wait_for_url";
+  | "wait_for_url"
+  | "batch";
 
 export type BrowserCoordinateSpace =
   | "viewport"
@@ -76,6 +81,14 @@ export type BrowserScreenshotMetadata = {
 };
 
 export type BrowserActionRequest =
+  | BrowserAtomicActionRequest
+  | {
+      name: "batch";
+      actions: BrowserAtomicActionRequest[];
+      continue_on_error?: boolean;
+    };
+
+export type BrowserAtomicActionRequest =
   | {
       name: "click";
       selector: string;
@@ -132,6 +145,34 @@ export type BrowserActionRequest =
       timeout_ms?: number;
     }
   | {
+      name: "reload";
+      // Best-effort hard reload request. Browser behavior may vary.
+      hard?: boolean;
+    }
+  | {
+      name: "navigate";
+      url: string;
+      wait_for_url_ms?: number;
+      replace?: boolean;
+    }
+  | {
+      name: "scroll_by";
+      dx?: number;
+      dy?: number;
+      behavior?: "auto" | "smooth";
+    }
+  | {
+      name: "scroll_to";
+      selector?: string;
+      top?: number;
+      left?: number;
+      behavior?: "auto" | "smooth";
+      block?: "start" | "center" | "end" | "nearest";
+      inline?: "start" | "center" | "end" | "nearest";
+      timeout_ms?: number;
+      poll_ms?: number;
+    }
+  | {
       name: "wait_for_selector";
       selector: string;
       state?: "attached" | "visible" | "hidden" | "detached";
@@ -155,9 +196,81 @@ export type BrowserActionResult = {
   [key: string]: unknown;
 };
 
+export type BrowserRuntimeEventKind =
+  | "console"
+  | "uncaught_error"
+  | "unhandled_rejection";
+
+export type BrowserRuntimeEventLevel =
+  | "trace"
+  | "debug"
+  | "log"
+  | "info"
+  | "warn"
+  | "error";
+
+export type BrowserRuntimeEvent = {
+  seq: number;
+  ts: string;
+  kind: BrowserRuntimeEventKind;
+  level: BrowserRuntimeEventLevel;
+  message: string;
+  source?: string;
+  line?: number;
+  column?: number;
+  stack?: string;
+  url?: string;
+};
+
+export type BrowserNetworkTraceProtocol = "conat" | "http" | "ws";
+
+export type BrowserNetworkTraceDirection = "send" | "recv";
+
+export type BrowserNetworkTracePhase =
+  | "publish_chunk"
+  | "recv_chunk"
+  | "recv_message"
+  | "drop_chunk_seq"
+  | "drop_chunk_timeout"
+  | "http_request"
+  | "http_response"
+  | "http_error"
+  | "ws_open"
+  | "ws_send"
+  | "ws_message"
+  | "ws_close"
+  | "ws_error";
+
+export type BrowserNetworkTraceEvent = {
+  seq: number;
+  ts: string;
+  protocol: BrowserNetworkTraceProtocol;
+  direction: BrowserNetworkTraceDirection;
+  phase: BrowserNetworkTracePhase;
+  client_id?: string;
+  address?: string;
+  subject?: string;
+  chunk_id?: string;
+  chunk_seq?: number;
+  chunk_done?: boolean;
+  chunk_bytes?: number;
+  raw_bytes?: number;
+  encoding?: number;
+  headers?: Record<string, unknown>;
+  decoded_preview?: string;
+  decode_error?: string;
+  message?: string;
+  target_url?: string;
+  method?: string;
+  status?: number;
+  duration_ms?: number;
+  url?: string;
+};
+
 export type BrowserExecPolicyV1 = {
   version: 1;
-  // Explicitly allow raw JS execution in prod posture.
+  // In prod posture, raw JS execution is disabled by default and exec runs in
+  // a constrained sandbox mode. Set this to true to permit raw JS evaluation.
   allow_raw_exec?: boolean;
   // Optional hard scope for project/workspace ids.
   allowed_project_ids?: string[];
@@ -175,6 +288,56 @@ export interface BrowserSessionServiceApi {
     url?: string;
     active_project_id?: string;
     open_projects: BrowserOpenProjectState[];
+  }>;
+  configureNetworkTrace: (opts?: {
+    enabled?: boolean;
+    include_decoded?: boolean;
+    include_internal?: boolean;
+    protocols?: BrowserNetworkTraceProtocol[];
+    max_events?: number;
+    max_preview_chars?: number;
+    subject_prefixes?: string[];
+    addresses?: string[];
+  }) => Promise<{
+    enabled: boolean;
+    include_decoded: boolean;
+    include_internal: boolean;
+    protocols: BrowserNetworkTraceProtocol[];
+    max_events: number;
+    max_preview_chars: number;
+    subject_prefixes: string[];
+    addresses: string[];
+    buffered: number;
+    dropped: number;
+    next_seq: number;
+  }>;
+  listNetworkTrace: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    protocol?: BrowserNetworkTraceProtocol;
+    protocols?: BrowserNetworkTraceProtocol[];
+    direction?: BrowserNetworkTraceDirection;
+    phases?: BrowserNetworkTracePhase[];
+    subject_prefix?: string;
+    address?: string;
+    include_decoded?: boolean;
+  }) => Promise<{
+    events: BrowserNetworkTraceEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
+  }>;
+  clearNetworkTrace: () => Promise<{ ok: true; cleared: number; next_seq: number }>;
+  listRuntimeEvents: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    kinds?: BrowserRuntimeEventKind[];
+    levels?: BrowserRuntimeEventLevel[];
+  }) => Promise<{
+    events: BrowserRuntimeEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
   }>;
   listOpenFiles: () => Promise<BrowserOpenFileInfo[]>;
   openFile: (opts: {
