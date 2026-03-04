@@ -35,6 +35,7 @@ import { registerBrowserObservabilityCommands } from "./browser/register-observa
 import { registerBrowserSessionCommands } from "./browser/register-session-commands";
 import type {
   BrowserActionRegisterUtils,
+  BrowserCommandContext,
   BrowserCommandDeps,
   BrowserExecOperation,
   BrowserExecStatus,
@@ -103,7 +104,7 @@ function spawnStateFile(spawnId: string): string {
   return join(SPAWN_STATE_DIR, `${clean}.json`);
 }
 
-function readJsonFile(path: string): any {
+function readJsonFile(path: string): unknown {
   const raw = readFileSync(path, "utf8");
   return JSON.parse(raw);
 }
@@ -306,7 +307,7 @@ async function waitForSpawnedSession({
   marker,
   timeoutMs,
 }: {
-  ctx: any;
+  ctx: BrowserCommandContext;
   marker: string;
   timeoutMs: number;
 }): Promise<BrowserSessionInfo> {
@@ -849,7 +850,7 @@ function sessionMatchesProject(
 }
 
 function sessionTargetContext(
-  ctx: any,
+  ctx: Pick<BrowserCommandContext, "apiBaseUrl">,
   sessionInfo: BrowserSessionInfo,
   project_id?: string,
 ): Record<string, unknown> {
@@ -926,7 +927,7 @@ function loadProfileSelection(
   command: Command,
 ): {
   path: string;
-  config: any;
+  config: ReturnType<BrowserCommandDeps["loadAuthConfig"]>;
   profile: string;
   browser_id?: string;
 } {
@@ -976,7 +977,7 @@ async function chooseBrowserSession({
   sessionProjectId,
   activeOnly = false,
 }: {
-  ctx: any;
+  ctx: BrowserCommandContext;
   browserHint?: string;
   fallbackBrowserId?: string;
   requireDiscovery?: boolean;
@@ -1695,7 +1696,7 @@ export function registerBrowserCommand(
           account_id: ctx.accountId,
           browser_id: sessionInfo.browser_id,
           client: ctx.remote.client,
-        }) as BrowserSessionClient;
+        });
         return await browserClient.getExecApiDeclaration();
       });
     });
@@ -1730,7 +1731,7 @@ export function registerBrowserCommand(
           account_id: ctx.accountId,
           browser_id: sessionInfo.browser_id,
           client: ctx.remote.client,
-        }) as BrowserSessionClient;
+        });
         const files = await browserClient.listOpenFiles();
         return files.map((row) => ({
           browser_id: sessionInfo.browser_id,
@@ -1801,7 +1802,7 @@ export function registerBrowserCommand(
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
-          }) as BrowserSessionClient;
+          });
           const cleanPaths = (paths ?? []).map((p) => `${p ?? ""}`.trim()).filter((p) => p.length > 0);
           if (!cleanPaths.length) {
             throw new Error("at least one path must be specified");
@@ -1881,7 +1882,7 @@ export function registerBrowserCommand(
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
-          }) as BrowserSessionClient;
+          });
           const cleanPaths = (paths ?? []).map((p) => `${p ?? ""}`.trim()).filter((p) => p.length > 0);
           if (!cleanPaths.length) {
             throw new Error("at least one path must be specified");
@@ -2050,7 +2051,7 @@ export function registerBrowserCommand(
           const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
           const metaOutPath = `${opts.metaOut ?? ""}`.trim();
           let rendererUsed: ScreenshotRenderer = requestedRenderer;
-          let result: any;
+          let result: Record<string, unknown> | undefined;
           let spawnedUsed:
             | {
                 file: string;
@@ -2090,7 +2091,7 @@ export function registerBrowserCommand(
               browser_id: sessionInfo.browser_id,
               client: ctx.remote.client,
               timeout: timeoutMs,
-            }) as BrowserSessionClient;
+            });
             const modeForExec: ScreenshotRenderer =
               requestedRenderer === "media"
                 ? "media"
@@ -2124,7 +2125,11 @@ export function registerBrowserCommand(
             if (op.status === "canceled") {
               throw new Error(`browser exec ${op.exec_id} was canceled`);
             }
-            result = (op?.result ?? {}) as any;
+            const opResult = op?.result;
+            result =
+              opResult && typeof opResult === "object"
+                ? (opResult as Record<string, unknown>)
+                : {};
             rendererUsed = modeForExec;
           }
 
@@ -2284,7 +2289,7 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: timeoutMs,
-          }) as BrowserSessionClient;
+          });
           const inlineScript = (code ?? []).join(" ").trim();
           const filePath = `${opts.file ?? ""}`.trim();
           const readFromStdin = !!opts.stdin || filePath === "-";
@@ -2449,7 +2454,7 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const op = await browserClient.getExec({ exec_id });
           return {
             browser_id: sessionInfo.browser_id,
@@ -2509,7 +2514,7 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: timeoutMs,
-          }) as BrowserSessionClient;
+          });
           const op = await waitForExecOperation({
             browserClient,
             exec_id,
@@ -2572,7 +2577,7 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
-          }) as BrowserSessionClient;
+          });
           const canceled = await browserClient.cancelExec({ exec_id });
           return {
             browser_id: sessionInfo.browser_id,
