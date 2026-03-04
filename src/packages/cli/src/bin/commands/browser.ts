@@ -39,6 +39,7 @@ type BrowserSessionClient = {
     enabled?: boolean;
     include_decoded?: boolean;
     include_internal?: boolean;
+    protocols?: BrowserNetworkTraceProtocol[];
     max_events?: number;
     max_preview_chars?: number;
     subject_prefixes?: string[];
@@ -47,6 +48,7 @@ type BrowserSessionClient = {
     enabled: boolean;
     include_decoded: boolean;
     include_internal: boolean;
+    protocols: BrowserNetworkTraceProtocol[];
     max_events: number;
     max_preview_chars: number;
     subject_prefixes: string[];
@@ -59,6 +61,7 @@ type BrowserSessionClient = {
     after_seq?: number;
     limit?: number;
     protocol?: BrowserNetworkTraceProtocol;
+    protocols?: BrowserNetworkTraceProtocol[];
     direction?: BrowserNetworkTraceDirection;
     phases?: BrowserNetworkTracePhase[];
     subject_prefix?: string;
@@ -170,7 +173,7 @@ type BrowserRuntimeEvent = {
   url?: string;
 };
 
-type BrowserNetworkTraceProtocol = "conat";
+type BrowserNetworkTraceProtocol = "conat" | "http" | "ws";
 
 type BrowserNetworkTraceDirection = "send" | "recv";
 
@@ -179,7 +182,15 @@ type BrowserNetworkTracePhase =
   | "recv_chunk"
   | "recv_message"
   | "drop_chunk_seq"
-  | "drop_chunk_timeout";
+  | "drop_chunk_timeout"
+  | "http_request"
+  | "http_response"
+  | "http_error"
+  | "ws_open"
+  | "ws_send"
+  | "ws_message"
+  | "ws_close"
+  | "ws_error";
 
 type BrowserNetworkTraceEvent = {
   seq: number;
@@ -200,6 +211,10 @@ type BrowserNetworkTraceEvent = {
   decoded_preview?: string;
   decode_error?: string;
   message?: string;
+  target_url?: string;
+  method?: string;
+  status?: number;
+  duration_ms?: number;
   url?: string;
 };
 
@@ -780,6 +795,23 @@ function parseNetworkDirection(
   throw new Error(`invalid --direction '${value}'; expected send|recv`);
 }
 
+function parseNetworkProtocols(
+  value: unknown,
+): BrowserNetworkTraceProtocol[] | undefined {
+  const parts = parseCsvStrings(value);
+  if (!parts || parts.length === 0) return undefined;
+  const allowed = new Set<BrowserNetworkTraceProtocol>(["conat", "http", "ws"]);
+  const out: BrowserNetworkTraceProtocol[] = [];
+  for (const part of parts) {
+    const clean = `${part}`.trim().toLowerCase();
+    if (!allowed.has(clean as BrowserNetworkTraceProtocol)) {
+      throw new Error(`invalid --protocol '${part}'; expected conat,http,ws`);
+    }
+    out.push(clean as BrowserNetworkTraceProtocol);
+  }
+  return out.length > 0 ? [...new Set(out)] : undefined;
+}
+
 function parseNetworkPhases(
   value: unknown,
 ): BrowserNetworkTracePhase[] | undefined {
@@ -791,15 +823,24 @@ function parseNetworkPhases(
     "recv_message",
     "drop_chunk_seq",
     "drop_chunk_timeout",
+    "http_request",
+    "http_response",
+    "http_error",
+    "ws_open",
+    "ws_send",
+    "ws_message",
+    "ws_close",
+    "ws_error",
   ]);
   const out: BrowserNetworkTracePhase[] = [];
   for (const part of parts) {
-    if (!allowed.has(part as BrowserNetworkTracePhase)) {
+    const clean = `${part}`.trim().toLowerCase();
+    if (!allowed.has(clean as BrowserNetworkTracePhase)) {
       throw new Error(
-        `invalid --phase '${part}'; expected publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout`,
+        `invalid --phase '${part}'; expected publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout,http_request,http_response,http_error,ws_open,ws_send,ws_message,ws_close,ws_error`,
       );
     }
-    out.push(part as BrowserNetworkTracePhase);
+    out.push(clean as BrowserNetworkTracePhase);
   }
   return out.length > 0 ? out : undefined;
 }
@@ -824,23 +865,37 @@ function formatRuntimeEventLine(event: BrowserRuntimeEvent): string {
 
 function formatNetworkTraceLine(event: BrowserNetworkTraceEvent): string {
   const ts = `${event.ts ?? ""}`.trim() || nowIso();
+  const protocol = `${event.protocol ?? "conat"}`.toUpperCase();
   const direction = `${event.direction ?? "recv"}`.toUpperCase();
   const phase = `${event.phase ?? ""}`.trim() || "unknown";
   const address = `${event.address ?? ""}`.trim();
   const subject = `${event.subject ?? ""}`.trim();
+  const targetUrl = `${event.target_url ?? ""}`.trim();
+  const method = `${event.method ?? ""}`.trim();
+  const status = Number.isFinite(Number(event.status))
+    ? `${Number(event.status)}`
+    : "";
+  const durationMs = Number.isFinite(Number(event.duration_ms))
+    ? `${Math.max(0, Math.floor(Number(event.duration_ms)))}ms`
+    : "";
   const chunk =
     event.chunk_id || event.chunk_seq != null
       ? ` chunk=${event.chunk_id ?? "?"}:${event.chunk_seq ?? "?"}${event.chunk_done ? ":done" : ""}`
       : "";
-  const sizes = ` bytes=${event.chunk_bytes ?? 0}${
-    event.raw_bytes != null ? ` raw=${event.raw_bytes}` : ""
-  }`;
+  const bytes =
+    event.chunk_bytes != null || event.raw_bytes != null
+      ? ` bytes=${event.chunk_bytes ?? 0}${event.raw_bytes != null ? ` raw=${event.raw_bytes}` : ""}`
+      : "";
   const addrTxt = address ? ` addr=${address}` : "";
   const subjTxt = subject ? ` subj=${subject}` : "";
+  const urlTxt = targetUrl ? ` url=${targetUrl}` : "";
+  const methodTxt = method ? ` method=${method}` : "";
+  const statusTxt = status ? ` status=${status}` : "";
+  const durationTxt = durationMs ? ` dur=${durationMs}` : "";
   const msg = `${event.message ?? ""}`.trim();
   const preview = `${event.decoded_preview ?? ""}`.trim();
   const details = msg || preview ? ` ${msg || preview}` : "";
-  return `${ts} [${direction}] [${phase}]${addrTxt}${subjTxt}${chunk}${sizes}${details}`;
+  return `${ts} [${protocol}] [${direction}] [${phase}]${addrTxt}${subjTxt}${urlTxt}${methodTxt}${statusTxt}${durationTxt}${chunk}${bytes}${details}`;
 }
 
 async function readScreenshotMeta(
@@ -2362,7 +2417,9 @@ export function registerBrowserCommand(
 
   network
     .command("trace")
-    .description("capture and tail browser network trace events (currently conat)")
+    .description(
+      "capture and tail browser network trace events (conat + optional http/ws timing)",
+    )
     .option(
       "--browser <id>",
       "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
@@ -2378,12 +2435,16 @@ export function registerBrowserCommand(
     .option("--poll-ms <duration>", "poll interval for --follow", "1s")
     .option("--timeout <duration>", "max follow time before returning")
     .option(
+      "--protocol <csv>",
+      "protocol filter and capture scope: conat,http,ws (comma-separated; default all)",
+    )
+    .option(
       "--direction <send|recv>",
       "optional direction filter while reading events",
     )
     .option(
       "--phase <csv>",
-      "optional phase filter: publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout",
+      "optional phase filter: publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout,http_request,http_response,http_error,ws_open,ws_send,ws_message,ws_close,ws_error",
     )
     .option("--subject-prefix <prefix>", "optional subject-prefix filter while reading")
     .option("--address <address>", "optional address filter while reading")
@@ -2413,6 +2474,7 @@ export function registerBrowserCommand(
           follow?: boolean;
           pollMs?: string;
           timeout?: string;
+          protocol?: string;
           direction?: string;
           phase?: string;
           subjectPrefix?: string;
@@ -2456,6 +2518,7 @@ export function registerBrowserCommand(
             ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
             : undefined;
           const startedAt = Date.now();
+          const protocols = parseNetworkProtocols(opts.protocol);
           const direction = parseNetworkDirection(opts.direction);
           const phases = parseNetworkPhases(opts.phase);
           const subjectPrefix = `${opts.subjectPrefix ?? ""}`.trim() || undefined;
@@ -2475,6 +2538,7 @@ export function registerBrowserCommand(
             enabled: !opts.disable,
             include_decoded: !!opts.decoded,
             include_internal: !!opts.includeInternal,
+            ...(protocols ? { protocols } : {}),
             ...(captureSubjectPrefixes ? { subject_prefixes: captureSubjectPrefixes } : {}),
             ...(captureAddresses ? { addresses: captureAddresses } : {}),
           });
@@ -2508,7 +2572,7 @@ export function registerBrowserCommand(
             const result = await browserClient.listNetworkTrace({
               ...(afterSeq != null ? { after_seq: afterSeq } : {}),
               limit: Math.min(50_000, Math.max(1, Math.floor(lines))),
-              protocol: "conat",
+              ...(protocols ? { protocols } : {}),
               ...(direction ? { direction } : {}),
               ...(phases ? { phases } : {}),
               ...(subjectPrefix ? { subject_prefix: subjectPrefix } : {}),

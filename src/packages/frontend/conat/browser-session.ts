@@ -70,6 +70,11 @@ const MAX_NETWORK_TRACE_EVENTS = 50_000;
 const MAX_NETWORK_TRACE_PREVIEW_CHARS = 4_000;
 const MAX_NETWORK_TRACE_INTERNAL_SUBJECTS = 2_000;
 const NETWORK_TRACE_INTERNAL_SUBJECT_TTL_MS = 10 * 60 * 1000;
+const ALL_NETWORK_TRACE_PROTOCOLS: BrowserNetworkTraceProtocol[] = [
+  "conat",
+  "http",
+  "ws",
+];
 const MAX_SANDBOX_ACTIONS = 512;
 const MAX_SANDBOX_ACTION_JSON_LENGTH = 100_000;
 const BROWSER_EXEC_POLICY_VERSION = 1;
@@ -1484,6 +1489,7 @@ export function createBrowserSessionAutomation({
     enabled: boolean;
     include_decoded: boolean;
     include_internal: boolean;
+    protocols: BrowserNetworkTraceProtocol[];
     max_events: number;
     max_preview_chars: number;
     subject_prefixes: string[];
@@ -1492,6 +1498,7 @@ export function createBrowserSessionAutomation({
     enabled: false,
     include_decoded: false,
     include_internal: false,
+    protocols: [...ALL_NETWORK_TRACE_PROTOCOLS],
     max_events: 5_000,
     max_preview_chars: MAX_NETWORK_TRACE_PREVIEW_CHARS,
     subject_prefixes: [],
@@ -1735,12 +1742,58 @@ export function createBrowserSessionAutomation({
     }
   };
 
-  const appendNetworkTraceEvent = (event: ConatTraceEvent): void => {
+  const isProtocolEnabled = (protocol: BrowserNetworkTraceProtocol): boolean =>
+    networkTraceConfig.protocols.includes(protocol);
+
+  const toUrlOrigin = (value: unknown): string => {
+    const text = `${value ?? ""}`.trim();
+    if (!text) return "";
+    try {
+      return new URL(text, globalThis?.location?.href).origin;
+    } catch {
+      return "";
+    }
+  };
+
+  const toByteLength = (value: unknown): number | undefined => {
+    if (value == null) return undefined;
+    if (typeof value === "string") {
+      return value.length;
+    }
+    if (value instanceof ArrayBuffer) {
+      return value.byteLength;
+    }
+    if (ArrayBuffer.isView(value)) {
+      return value.byteLength;
+    }
+    if (typeof Blob !== "undefined" && value instanceof Blob) {
+      return value.size;
+    }
+    return undefined;
+  };
+
+  const safeDecodedPreview = (value: unknown): string | undefined => {
+    const text = safeStringifyForRuntimeLog(value).trim();
+    if (!text) return undefined;
+    return truncateRuntimeMessage(text).slice(
+      0,
+      Math.max(1, networkTraceConfig.max_preview_chars),
+    );
+  };
+
+  type PendingNetworkTraceEvent = Omit<BrowserNetworkTraceEvent, "seq" | "ts" | "url">;
+
+  const appendBufferedNetworkTraceEvent = (
+    event: PendingNetworkTraceEvent,
+  ): void => {
     if (!networkTraceConfig.enabled) {
       return;
     }
+    if (!isProtocolEnabled(event.protocol)) {
+      return;
+    }
     const subject = `${event.subject ?? ""}`.trim();
-    if (!networkTraceConfig.include_internal) {
+    if (event.protocol === "conat" && !networkTraceConfig.include_internal) {
       if (isInternalTraceReplySubject(subject)) {
         return;
       }
@@ -1749,10 +1802,7 @@ export function createBrowserSessionAutomation({
         subject.includes(".browser-session")
       ) {
         const methodName = extractInternalTraceMethodName(event.decoded_preview);
-        if (
-          methodName != null &&
-          INTERNAL_TRACE_METHODS.has(methodName)
-        ) {
+        if (methodName != null && INTERNAL_TRACE_METHODS.has(methodName)) {
           const replySubject = getReplySubjectFromHeaders(event.headers);
           if (replySubject) {
             rememberInternalTraceReplySubject(replySubject);
@@ -1774,44 +1824,23 @@ export function createBrowserSessionAutomation({
       }
     }
     const address = `${event.address ?? ""}`.trim();
-    if (networkTraceConfig.addresses.length > 0) {
-      if (!networkTraceConfig.addresses.includes(address)) {
-        return;
-      }
+    if (
+      networkTraceConfig.addresses.length > 0 &&
+      !networkTraceConfig.addresses.includes(address)
+    ) {
+      return;
     }
-    const decodedPreviewRaw =
-      networkTraceConfig.include_decoded && `${event.decoded_preview ?? ""}`.trim()
-        ? `${event.decoded_preview}`.trim()
-        : "";
-    const decoded_preview = decodedPreviewRaw
-      ? truncateRuntimeMessage(decodedPreviewRaw).slice(
-          0,
-          Math.max(1, networkTraceConfig.max_preview_chars),
-        )
-      : undefined;
+    const decodedPreviewRaw = `${event.decoded_preview ?? ""}`.trim();
+    const decoded_preview =
+      networkTraceConfig.include_decoded && decodedPreviewRaw
+        ? decodedPreviewRaw
+        : undefined;
     networkTraceSeq += 1;
-    const protocol: BrowserNetworkTraceProtocol = "conat";
-    const direction = `${event.direction ?? ""}`.trim() as BrowserNetworkTraceDirection;
-    const phase = `${event.phase ?? ""}`.trim() as BrowserNetworkTracePhase;
     networkTraceEvents.push({
+      ...event,
+      ...(decoded_preview ? { decoded_preview } : { decoded_preview: undefined }),
       seq: networkTraceSeq,
-      ts: `${event.ts ?? new Date().toISOString()}`,
-      protocol,
-      direction,
-      phase,
-      ...(event.client_id ? { client_id: `${event.client_id}` } : {}),
-      ...(address ? { address } : {}),
-      ...(subject ? { subject } : {}),
-      ...(event.chunk_id ? { chunk_id: `${event.chunk_id}` } : {}),
-      ...(event.chunk_seq != null ? { chunk_seq: Number(event.chunk_seq) } : {}),
-      ...(event.chunk_done != null ? { chunk_done: !!event.chunk_done } : {}),
-      ...(event.chunk_bytes != null ? { chunk_bytes: Number(event.chunk_bytes) } : {}),
-      ...(event.raw_bytes != null ? { raw_bytes: Number(event.raw_bytes) } : {}),
-      ...(event.encoding != null ? { encoding: Number(event.encoding) } : {}),
-      ...(event.headers ? { headers: event.headers as Record<string, unknown> } : {}),
-      ...(decoded_preview ? { decoded_preview } : {}),
-      ...(event.decode_error ? { decode_error: `${event.decode_error}` } : {}),
-      ...(event.message ? { message: `${event.message}` } : {}),
+      ts: new Date().toISOString(),
       ...(typeof location !== "undefined" && location.href
         ? { url: `${location.href}` }
         : {}),
@@ -1823,8 +1852,31 @@ export function createBrowserSessionAutomation({
     }
   };
 
+  const appendConatNetworkTraceEvent = (event: ConatTraceEvent): void => {
+    const direction = `${event.direction ?? ""}`.trim() as BrowserNetworkTraceDirection;
+    const phase = `${event.phase ?? ""}`.trim() as BrowserNetworkTracePhase;
+    appendBufferedNetworkTraceEvent({
+      protocol: "conat",
+      direction,
+      phase,
+      ...(event.client_id ? { client_id: `${event.client_id}` } : {}),
+      ...(event.address ? { address: `${event.address}` } : {}),
+      ...(event.subject ? { subject: `${event.subject}` } : {}),
+      ...(event.chunk_id ? { chunk_id: `${event.chunk_id}` } : {}),
+      ...(event.chunk_seq != null ? { chunk_seq: Number(event.chunk_seq) } : {}),
+      ...(event.chunk_done != null ? { chunk_done: !!event.chunk_done } : {}),
+      ...(event.chunk_bytes != null ? { chunk_bytes: Number(event.chunk_bytes) } : {}),
+      ...(event.raw_bytes != null ? { raw_bytes: Number(event.raw_bytes) } : {}),
+      ...(event.encoding != null ? { encoding: Number(event.encoding) } : {}),
+      ...(event.headers ? { headers: event.headers as Record<string, unknown> } : {}),
+      ...(event.decoded_preview ? { decoded_preview: `${event.decoded_preview}` } : {}),
+      ...(event.decode_error ? { decode_error: `${event.decode_error}` } : {}),
+      ...(event.message ? { message: `${event.message}` } : {}),
+    });
+  };
+
   const ensureConatTraceListener = (): void => {
-    if (!networkTraceConfig.enabled) {
+    if (!networkTraceConfig.enabled || !isProtocolEnabled("conat")) {
       if (stopConatTraceListener) {
         stopConatTraceListener();
         stopConatTraceListener = undefined;
@@ -1836,12 +1888,236 @@ export function createBrowserSessionAutomation({
     }
     stopConatTraceListener = onConatTrace((event) => {
       try {
-        appendNetworkTraceEvent(event);
+        appendConatNetworkTraceEvent(event);
       } catch {
         // ignore trace buffering errors
       }
     });
   };
+
+  const installNetworkTransportCapture = (): void => {
+    const g = globalThis as any;
+    if (g.__cocalc_browser_network_capture_installed) {
+      return;
+    }
+    g.__cocalc_browser_network_capture_installed = true;
+
+    const emitHttp = (event: PendingNetworkTraceEvent): void => {
+      try {
+        appendBufferedNetworkTraceEvent(event);
+      } catch {
+        // ignore capture failures
+      }
+    };
+    const emitWs = (event: PendingNetworkTraceEvent): void => {
+      try {
+        appendBufferedNetworkTraceEvent(event);
+      } catch {
+        // ignore capture failures
+      }
+    };
+
+    const originalFetch = typeof g.fetch === "function" ? g.fetch.bind(g) : undefined;
+    if (originalFetch) {
+      g.fetch = async (...args: any[]) => {
+        const input = args[0];
+        const init = args[1];
+        const method = `${init?.method ?? input?.method ?? "GET"}`.toUpperCase();
+        const target_url = `${input?.url ?? input ?? ""}`.trim();
+        const started = Date.now();
+        emitHttp({
+          protocol: "http",
+          direction: "send",
+          phase: "http_request",
+          address: toUrlOrigin(target_url),
+          target_url,
+          method,
+          chunk_bytes: toByteLength(init?.body),
+          ...(networkTraceConfig.include_decoded
+            ? { decoded_preview: safeDecodedPreview(init?.body) }
+            : {}),
+        });
+        try {
+          const resp = await originalFetch(...args);
+          const duration_ms = Date.now() - started;
+          const contentLength = Number(resp?.headers?.get?.("content-length"));
+          emitHttp({
+            protocol: "http",
+            direction: "recv",
+            phase: "http_response",
+            address: toUrlOrigin(resp?.url ?? target_url),
+            target_url: `${resp?.url ?? target_url}`,
+            method,
+            status: Number(resp?.status),
+            duration_ms,
+            raw_bytes: Number.isFinite(contentLength) ? contentLength : undefined,
+            message: `${resp?.status ?? ""} ${resp?.statusText ?? ""}`.trim(),
+          });
+          return resp;
+        } catch (err) {
+          emitHttp({
+            protocol: "http",
+            direction: "recv",
+            phase: "http_error",
+            address: toUrlOrigin(target_url),
+            target_url,
+            method,
+            duration_ms: Date.now() - started,
+            message: `${err}`,
+          });
+          throw err;
+        }
+      };
+    }
+
+    const OriginalXHR = g.XMLHttpRequest;
+    if (typeof OriginalXHR === "function") {
+      const open0 = OriginalXHR.prototype.open;
+      const send0 = OriginalXHR.prototype.send;
+      const setRequestHeader0 = OriginalXHR.prototype.setRequestHeader;
+      OriginalXHR.prototype.open = function (...args: any[]) {
+        (this as any).__cocalc_trace_method = `${args[0] ?? "GET"}`.toUpperCase();
+        (this as any).__cocalc_trace_target_url = `${args[1] ?? ""}`.trim();
+        (this as any).__cocalc_trace_headers = {};
+        (this as any).__cocalc_trace_finished = false;
+        return open0.apply(this, args);
+      };
+      OriginalXHR.prototype.setRequestHeader = function (name: string, value: string) {
+        try {
+          const h = ((this as any).__cocalc_trace_headers ??= {});
+          h[`${name ?? ""}`] = `${value ?? ""}`;
+        } catch {}
+        return setRequestHeader0.apply(this, [name, value]);
+      };
+      OriginalXHR.prototype.send = function (...args: any[]) {
+        const method = `${(this as any).__cocalc_trace_method ?? "GET"}`;
+        const target_url = `${(this as any).__cocalc_trace_target_url ?? ""}`.trim();
+        const started = Date.now();
+        emitHttp({
+          protocol: "http",
+          direction: "send",
+          phase: "http_request",
+          address: toUrlOrigin(target_url),
+          target_url,
+          method,
+          chunk_bytes: toByteLength(args[0]),
+          headers: (this as any).__cocalc_trace_headers,
+          ...(networkTraceConfig.include_decoded
+            ? { decoded_preview: safeDecodedPreview(args[0]) }
+            : {}),
+        });
+        const emitDone = (phase: BrowserNetworkTracePhase, message?: string) => {
+          if ((this as any).__cocalc_trace_finished) {
+            return;
+          }
+          (this as any).__cocalc_trace_finished = true;
+          const contentLength = Number(this.getResponseHeader?.("content-length"));
+          emitHttp({
+            protocol: "http",
+            direction: "recv",
+            phase,
+            address: toUrlOrigin(this.responseURL || target_url),
+            target_url: `${this.responseURL || target_url}`,
+            method,
+            status: Number(this.status),
+            duration_ms: Date.now() - started,
+            raw_bytes: Number.isFinite(contentLength) ? contentLength : undefined,
+            message,
+          });
+        };
+        this.addEventListener(
+          "loadend",
+          () => emitDone("http_response", `${this.status ?? ""}`.trim()),
+          { once: true },
+        );
+        this.addEventListener("error", () => emitDone("http_error", "xhr error"), {
+          once: true,
+        });
+        this.addEventListener("timeout", () => emitDone("http_error", "xhr timeout"), {
+          once: true,
+        });
+        this.addEventListener("abort", () => emitDone("http_error", "xhr abort"), {
+          once: true,
+        });
+        return send0.apply(this, args);
+      };
+    }
+
+    const OriginalWebSocket = g.WebSocket;
+    if (typeof OriginalWebSocket === "function") {
+      const PatchedWebSocket = function (this: any, url: any, protocols?: any) {
+        const ws =
+          protocols === undefined
+            ? new OriginalWebSocket(url)
+            : new OriginalWebSocket(url, protocols);
+        const target_url = `${url ?? ""}`.trim();
+        const address = toUrlOrigin(target_url);
+        ws.addEventListener("open", () => {
+          emitWs({
+            protocol: "ws",
+            direction: "recv",
+            phase: "ws_open",
+            address,
+            target_url,
+          });
+        });
+        ws.addEventListener("message", (ev: MessageEvent) => {
+          emitWs({
+            protocol: "ws",
+            direction: "recv",
+            phase: "ws_message",
+            address,
+            target_url,
+            chunk_bytes: toByteLength(ev.data),
+            ...(networkTraceConfig.include_decoded
+              ? { decoded_preview: safeDecodedPreview(ev.data) }
+              : {}),
+          });
+        });
+        ws.addEventListener("close", (ev: CloseEvent) => {
+          emitWs({
+            protocol: "ws",
+            direction: "recv",
+            phase: "ws_close",
+            address,
+            target_url,
+            status: Number(ev.code),
+            message: `${ev.reason ?? ""}`.trim() || `ws close code=${ev.code}`,
+          });
+        });
+        ws.addEventListener("error", () => {
+          emitWs({
+            protocol: "ws",
+            direction: "recv",
+            phase: "ws_error",
+            address,
+            target_url,
+            message: "ws error",
+          });
+        });
+        const send0 = ws.send.bind(ws);
+        ws.send = (data: any) => {
+          emitWs({
+            protocol: "ws",
+            direction: "send",
+            phase: "ws_send",
+            address,
+            target_url,
+            chunk_bytes: toByteLength(data),
+            ...(networkTraceConfig.include_decoded
+              ? { decoded_preview: safeDecodedPreview(data) }
+              : {}),
+          });
+          return send0(data);
+        };
+        return ws;
+      } as any;
+      PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+      Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
+      g.WebSocket = PatchedWebSocket;
+    }
+  };
+  installNetworkTransportCapture();
 
   const closeManagedSyncDoc = async (key: string): Promise<void> => {
     const entry = managedSyncDocs.get(key);
@@ -4665,6 +4941,16 @@ export function createBrowserSessionAutomation({
         if (opts.include_internal != null) {
           networkTraceConfig.include_internal = !!opts.include_internal;
         }
+        if (Array.isArray(opts.protocols)) {
+          const next = opts.protocols
+            .map((x) => `${x ?? ""}`.trim().toLowerCase())
+            .filter(
+              (x): x is BrowserNetworkTraceProtocol =>
+                x === "conat" || x === "http" || x === "ws",
+            );
+          networkTraceConfig.protocols =
+            next.length > 0 ? [...new Set(next)] : [...ALL_NETWORK_TRACE_PROTOCOLS];
+        }
         if (opts.max_events != null && Number.isFinite(Number(opts.max_events))) {
           networkTraceConfig.max_events = Math.max(
             100,
@@ -4701,6 +4987,7 @@ export function createBrowserSessionAutomation({
         enabled: networkTraceConfig.enabled,
         include_decoded: networkTraceConfig.include_decoded,
         include_internal: networkTraceConfig.include_internal,
+        protocols: [...networkTraceConfig.protocols],
         max_events: networkTraceConfig.max_events,
         max_preview_chars: networkTraceConfig.max_preview_chars,
         subject_prefixes: [...networkTraceConfig.subject_prefixes],
@@ -4716,7 +5003,16 @@ export function createBrowserSessionAutomation({
       const limit = Number.isFinite(limitRaw)
         ? Math.max(1, Math.min(MAX_NETWORK_TRACE_EVENTS, Math.floor(limitRaw)))
         : 200;
-      const protocol = `${opts?.protocol ?? "conat"}`.trim().toLowerCase();
+      const protocols =
+        Array.isArray(opts?.protocols) && opts?.protocols.length > 0
+          ? new Set(
+              opts.protocols
+                .map((x) => `${x ?? ""}`.trim().toLowerCase())
+                .filter((x) => x.length > 0),
+            )
+          : opts?.protocol
+            ? new Set([`${opts.protocol ?? ""}`.trim().toLowerCase()])
+            : undefined;
       const direction = `${opts?.direction ?? ""}`.trim().toLowerCase();
       const phases =
         Array.isArray(opts?.phases) && opts?.phases.length > 0
@@ -4732,7 +5028,7 @@ export function createBrowserSessionAutomation({
         if (Number.isFinite(after_seq) && event.seq <= after_seq) {
           return false;
         }
-        if (protocol && event.protocol !== protocol) {
+        if (protocols && !protocols.has(`${event.protocol ?? ""}`)) {
           return false;
         }
         if (direction && event.direction !== direction) {
