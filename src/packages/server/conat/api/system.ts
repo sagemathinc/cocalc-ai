@@ -11,6 +11,7 @@ import createAccount from "@cocalc/server/accounts/create-account";
 export { getNames } from "@cocalc/server/accounts/get-name";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
+import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
   getExternalCredential,
@@ -790,6 +791,28 @@ export async function removeBrowserSession({
       browser_id,
     }),
   };
+}
+
+export async function getPublicSiteUrl({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<{ url: string }> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const { dns } = await getServerSettings();
+  let url = `${dns ?? ""}`.trim();
+  if (!url) {
+    throw Error("public site URL is not configured");
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+  if (basePath?.length) {
+    url = `${url.replace(/\/+$/, "")}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
+  }
+  return { url: url.replace(/\/+$/, "") };
 }
 
 function clean(v?: string): string | undefined {

@@ -179,7 +179,18 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
             password: opts.password,
           });
 
-          const base = normalizeUrl(ctx.apiBaseUrl).replace(/\/+$/, "");
+          // Prefer the configured public DNS/site URL when available so generated
+          // impersonation links work from other machines/browsers.
+          let base = normalizeUrl(ctx.apiBaseUrl).replace(/\/+$/, "");
+          try {
+            const site = await ctx.hub.system.getPublicSiteUrl({});
+            const publicUrl = `${site?.url ?? ""}`.trim();
+            if (publicUrl) {
+              base = normalizeUrl(publicUrl).replace(/\/+$/, "");
+            }
+          } catch {
+            // Keep fallback to current apiBaseUrl for older hubs / local-only setups.
+          }
           const signInUrl = new URL(`${base}/auth/impersonate`);
           signInUrl.searchParams.set("auth_token", token);
           if (opts.lang?.trim()) {
