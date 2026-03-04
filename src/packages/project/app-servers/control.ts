@@ -492,6 +492,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
     state: "running",
     kind: spec.kind,
     title: spec.title,
+    exposure: status.exposure,
     port: running.port,
     url: running.url,
     ready: running.ready,
