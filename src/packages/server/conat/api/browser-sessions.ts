@@ -29,6 +29,12 @@ type BrowserSessionRecord = {
 
 const registry = new Map<string, BrowserSessionRecord>();
 
+export type BrowserSessionLiveInfo = {
+  connected: boolean;
+  connection_count: number;
+  updated_at_ms?: number;
+};
+
 function key(account_id: string, browser_id: string): string {
   return `${account_id}:${browser_id}`;
 }
@@ -135,25 +141,37 @@ export function listBrowserSessionsForAccount({
   account_id,
   max_age_ms,
   include_stale,
+  live_by_browser_id,
 }: {
   account_id: string;
   max_age_ms?: unknown;
   include_stale?: unknown;
+  live_by_browser_id?: Map<string, BrowserSessionLiveInfo> | Record<string, BrowserSessionLiveInfo>;
 }): BrowserSessionInfo[] {
   const now = Date.now();
   pruneStaleRecords(now);
   const maxAgeMs = normalizeMaxAgeMs(max_age_ms);
   const includeStale = include_stale === true;
+  const live =
+    live_by_browser_id instanceof Map
+      ? live_by_browser_id
+      : new Map<string, BrowserSessionLiveInfo>(
+          Object.entries(live_by_browser_id ?? {}),
+        );
   const out: BrowserSessionInfo[] = [];
+  const seen = new Set<string>();
   for (const record of registry.values()) {
     if (record.account_id !== account_id) {
       continue;
     }
     const age = now - record.updated_at_ms;
-    const stale = age > maxAgeMs;
+    const liveInfo = live.get(record.browser_id);
+    const connected = !!liveInfo?.connected;
+    const stale = connected ? false : age > maxAgeMs;
     if (!includeStale && stale) {
       continue;
     }
+    seen.add(record.browser_id);
     out.push({
       browser_id: record.browser_id,
       ...(record.session_name ? { session_name: record.session_name } : {}),
@@ -165,6 +183,25 @@ export function listBrowserSessionsForAccount({
       created_at: toIso(record.created_at_ms),
       updated_at: toIso(record.updated_at_ms),
       stale,
+      ...(connected ? { connected: true } : {}),
+      ...(liveInfo?.connection_count != null
+        ? { connection_count: liveInfo.connection_count }
+        : {}),
+    });
+  }
+  for (const [browser_id, info] of live.entries()) {
+    if (!info?.connected || seen.has(browser_id)) {
+      continue;
+    }
+    const ts = Number.isFinite(info.updated_at_ms) ? info.updated_at_ms! : now;
+    out.push({
+      browser_id,
+      open_projects: [],
+      created_at: toIso(ts),
+      updated_at: toIso(ts),
+      stale: false,
+      connected: true,
+      connection_count: Math.max(1, Math.floor(info.connection_count || 1)),
     });
   }
   out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
@@ -184,4 +221,3 @@ export function removeBrowserSessionRecord({
   }
   return registry.delete(key(account_id, cleanedBrowserId));
 }
-

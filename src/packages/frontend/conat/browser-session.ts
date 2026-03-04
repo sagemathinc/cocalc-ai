@@ -9,6 +9,7 @@ specific live browser session.
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { WebappClient } from "@cocalc/frontend/client/client";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
 import {
@@ -729,6 +730,28 @@ function asFiniteNonNegative(value: unknown): number | undefined {
   const num = typeof value === "number" ? value : Number(`${value}`);
   if (!Number.isFinite(num) || num < 0) return undefined;
   return num;
+}
+
+function appBasePrefix(): string {
+  const clean = `${appBasePath ?? ""}`.trim();
+  if (!clean || clean === "/") return "/";
+  return clean.endsWith("/") ? clean.slice(0, -1) : clean;
+}
+
+function isSpaNavigableUrl(url: URL): boolean {
+  if (url.origin !== location.origin) return false;
+  const base = appBasePrefix();
+  if (base === "/") return true;
+  return url.pathname === base || url.pathname.startsWith(`${base}/`);
+}
+
+function toSpaTarget(url: URL): string {
+  const base = appBasePrefix();
+  const path = base === "/" ? url.pathname : url.pathname.slice(base.length);
+  const trimmed = path.startsWith("/") ? path.slice(1) : path;
+  const decoded = decodeURIComponent(trimmed);
+  const hash = `${url.hash ?? ""}`.trim();
+  return hash ? `${decoded}${hash}` : decoded;
 }
 
 function requireAbsolutePath(path: unknown, label = "path"): string {
@@ -4261,10 +4284,17 @@ export function createBrowserSessionAutomation({
       }
       const wait_for_url_ms = asFiniteNonNegative(action.wait_for_url_ms) ?? 0;
       const before = `${location.href ?? ""}`;
-      if (action.replace) {
-        location.replace(resolvedUrl);
+      const targetUrl = new URL(resolvedUrl, location.href);
+      if (isSpaNavigableUrl(targetUrl)) {
+        const target = toSpaTarget(targetUrl);
+        const { load_target } = await import("@cocalc/frontend/history");
+        load_target(target, false, true);
       } else {
-        location.assign(resolvedUrl);
+        if (action.replace) {
+          location.replace(resolvedUrl);
+        } else {
+          location.assign(resolvedUrl);
+        }
       }
       if (wait_for_url_ms > 0) {
         const deadline = Date.now() + wait_for_url_ms;
