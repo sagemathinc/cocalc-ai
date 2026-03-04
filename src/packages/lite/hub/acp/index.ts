@@ -2364,6 +2364,7 @@ export async function evaluate({
   try {
     stream({ type: "status", state: "running" });
     logger.debug("evaluate: running", { reqId });
+    let terminalFallbackError: string | undefined;
     try {
       await currentAgent.evaluate({
         ...request,
@@ -2375,13 +2376,38 @@ export async function evaluate({
       logger.debug("evaluate: done", { reqId });
     } catch (err) {
       logger.warn("evaluate: agent failed", { reqId, err });
+      terminalFallbackError = `codex agent failed: ${(err as Error)?.message ?? err}`;
       try {
         await wrappedStream({
           type: "error",
-          error: `codex agent failed: ${(err as Error)?.message ?? err}`,
+          error: terminalFallbackError,
         });
       } catch (streamErr) {
         logger.warn("evaluate: failed to stream error", streamErr);
+      }
+    }
+    if (chatWriter != null) {
+      const snapshot = chatWriter.watchdogSnapshot();
+      if (!snapshot.finished) {
+        logger.warn("evaluate: forcing terminal ACP payload", {
+          reqId,
+          messageDate: snapshot.messageDate,
+          path: snapshot.path,
+          events: snapshot.events,
+          fallback: terminalFallbackError ? "error" : "summary",
+        });
+        try {
+          await chatWriter.handle(
+            terminalFallbackError
+              ? { type: "error", error: terminalFallbackError }
+              : { type: "summary", finalResponse: "" },
+          );
+        } catch (err) {
+          logger.warn("evaluate: failed forced terminal payload", {
+            reqId,
+            err,
+          });
+        }
       }
     }
   } finally {

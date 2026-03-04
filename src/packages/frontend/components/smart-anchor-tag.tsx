@@ -103,6 +103,19 @@ export default function SmartAnchorTag({
 }
 
 const INTERNAL_FILE_LINK_PREFIX = "cocalc-file://";
+const WEB_ROUTE_PREFIXES = [
+  "/projects",
+  "/settings",
+  "/account",
+  "/admin",
+  "/software",
+  "/help",
+  "/blobs",
+  "/auth",
+  "/register",
+  "/about",
+  "/billing",
+];
 
 function isInternalFileHref(href?: string): boolean {
   return typeof href === "string" && href.startsWith(INTERNAL_FILE_LINK_PREFIX);
@@ -126,6 +139,16 @@ function parseInternalFileHref(href: string): {
   } catch {
     return {};
   }
+}
+
+function isLikelyAbsoluteFilePathHref(href: string): boolean {
+  if (!href.startsWith("/")) return false;
+  if (href.startsWith("//")) return false;
+  if (/^\/[A-Za-z]:\//.test(href)) return true;
+  for (const prefix of WEB_ROUTE_PREFIXES) {
+    if (href === prefix || href.startsWith(`${prefix}/`)) return false;
+  }
+  return true;
 }
 
 // href starts with cocalc URL or is absolute,
@@ -429,6 +452,32 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
         e.stopPropagation();
 
         if (href.startsWith("/")) {
+          if (project_id && isLikelyAbsoluteFilePathHref(href)) {
+            const actions = redux.getProjectActions(project_id);
+            void (async () => {
+              try {
+                let isDir = actions.isDirViaCache?.(href);
+                if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
+                  isDir = await actions.isDir(href);
+                }
+                if (isDir === true) {
+                  actions.open_directory?.(href);
+                  return;
+                }
+                await actions.open_file({
+                  path: href,
+                  foreground: true,
+                  explicit: true,
+                });
+              } catch (err) {
+                alert_message({
+                  type: "error",
+                  message: `Cannot open linked file: ${href} (${err})`,
+                });
+              }
+            })();
+            return;
+          }
           const openInSameTab = !((e as any).which === 2 || e.ctrlKey || e.metaKey);
           if (openInSameTab) {
             window.location.assign(href);

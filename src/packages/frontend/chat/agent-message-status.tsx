@@ -58,6 +58,8 @@ interface AgentMessageStatusProps {
   activityContext: ActivityLogContext;
   inlineCodeLinks?: InlineCodeLink[];
   openDrawerToken?: number;
+  onOpenGitBrowser?: () => void;
+  onDrawerOpenChange?: (open: boolean) => void;
 }
 
 export function AgentMessageStatus({
@@ -73,6 +75,8 @@ export function AgentMessageStatus({
   activityContext,
   inlineCodeLinks,
   openDrawerToken,
+  onOpenGitBrowser,
+  onDrawerOpenChange,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -202,6 +206,10 @@ export function AgentMessageStatus({
     setShowDrawer(true);
   }, [show, openDrawerToken]);
 
+  useEffect(() => {
+    onDrawerOpenChange?.(showDrawer);
+  }, [onDrawerOpenChange, showDrawer]);
+
   if (!show) return null;
 
   return (
@@ -227,7 +235,29 @@ export function AgentMessageStatus({
       </div>
 
       <Drawer
-        title="Codex activity"
+        title={
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <span>Codex activity</span>
+            {onOpenGitBrowser ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  handleDrawerClose();
+                  onOpenGitBrowser();
+                }}
+              >
+                Open git browser
+              </Button>
+            ) : null}
+          </div>
+        }
         placement="right"
         open={showDrawer}
         onClose={handleDrawerClose}
@@ -247,6 +277,7 @@ export function AgentMessageStatus({
             fontSize={fontSize}
             persistKey={persistKey}
             basePath={activityBasePath}
+            chatPath={path}
             logStore={fallbackLogRefs.store}
             logKey={fallbackLogRefs.key}
             logSubject={fallbackLogRefs.subject}

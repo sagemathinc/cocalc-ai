@@ -33,6 +33,7 @@ import type {
   Mode,
   NumChildren,
 } from "./types";
+import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageAtDate,
@@ -76,6 +77,8 @@ interface Props {
   searchJumpToken?: number;
   searchQuery?: string;
   onAtTopStateChange?: (atTop: boolean) => void;
+  activityJumpDate?: string;
+  activityJumpToken?: number;
 }
 
 export function ChatLog({
@@ -100,6 +103,8 @@ export function ChatLog({
   searchJumpToken,
   searchQuery,
   onAtTopStateChange,
+  activityJumpDate,
+  activityJumpToken,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -114,6 +119,12 @@ export function ChatLog({
   }, [showThreadHeaders, threadIndex]);
   const user_map = useTypedRedux("users", "user_map");
   const account_id = useTypedRedux("account", "account_id");
+  const anyOverlayOpen = useAnyChatOverlayOpen();
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
+  const isForegroundChatTab =
+    activeTopTab === project_id && activeProjectTab === `editor-${path}`;
+  const canAutoScroll = !anyOverlayOpen && isForegroundChatTab;
   const handleSelectThread = useCallback(
     (threadKey: string) => {
       actions.clearAllFilters?.();
@@ -161,10 +172,14 @@ export function ChatLog({
   ]);
 
   useEffect(() => {
+    if (!canAutoScroll) return;
     scrollToBottomRef?.current?.(true);
-  }, []);
+  }, [canAutoScroll]);
 
   useEffect(() => {
+    if (!canAutoScroll) {
+      return;
+    }
     if (scrollToIndex == null) {
       return;
     }
@@ -174,9 +189,12 @@ export function ChatLog({
       virtuosoRef.current?.scrollToIndex({ index: scrollToIndex });
     }
     actions.clearScrollRequest();
-  }, [scrollToIndex]);
+  }, [scrollToIndex, canAutoScroll]);
 
   useEffect(() => {
+    if (!canAutoScroll) {
+      return;
+    }
     if (scrollToDate == null) {
       return;
     }
@@ -217,9 +235,10 @@ export function ChatLog({
     }
     virtuosoRef.current?.scrollToIndex({ index });
     actions.clearScrollRequest();
-  }, [scrollToDate]);
+  }, [scrollToDate, canAutoScroll]);
 
   useEffect(() => {
+    if (!canAutoScroll) return;
     if (searchJumpDate == null || searchJumpDate === "") return;
     const index = sortedDates.indexOf(searchJumpDate);
     if (index < 0) return;
@@ -228,7 +247,10 @@ export function ChatLog({
     } else if (scrollToBottomRef?.current) {
       scrollToBottomRef.current(true);
     }
-  }, [searchJumpDate, searchJumpToken, sortedDates]);
+    // Intentionally do not depend on sortedDates: otherwise unrelated message
+    // list updates can repeatedly re-center an old match long after the user
+    // initiated the search jump.
+  }, [searchJumpDate, searchJumpToken, canAutoScroll]);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const manualScrollRef = useRef<boolean>(false);
@@ -262,15 +284,17 @@ export function ChatLog({
   }, [messages, sortedDates, acpState]);
 
   useEffect(() => {
+    if (!canAutoScroll) return;
     if (!generating) return;
     manualScrollRef.current = false;
     setManualScroll(false);
     scrollToBottomRef?.current?.(true);
-  }, [generating, scrollToBottomRef]);
+  }, [generating, scrollToBottomRef, canAutoScroll]);
 
   useEffect(() => {
     if (scrollToBottomRef == null) return;
     scrollToBottomRef.current = (force?: boolean) => {
+      if (!canAutoScroll) return;
       if (manualScrollRef.current && !force) return;
       manualScrollRef.current = false;
       setManualScroll(false);
@@ -283,7 +307,7 @@ export function ChatLog({
       // for side chat when there is little vertical space.
       setTimeout(doScroll, 1);
     };
-  }, [scrollToBottomRef != null]);
+  }, [scrollToBottomRef != null, canAutoScroll]);
 
   return (
     <>
@@ -314,6 +338,9 @@ export function ChatLog({
           composerFocused,
           searchQuery,
           onAtTopStateChange,
+          activityJumpDate,
+          activityJumpToken,
+          anyOverlayOpen,
         }}
       />
       <Composing
@@ -529,6 +556,9 @@ export function MessageList({
   onSelectThread,
   searchQuery,
   onAtTopStateChange,
+  activityJumpDate,
+  activityJumpToken,
+  anyOverlayOpen = false,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -555,6 +585,9 @@ export function MessageList({
   onSelectThread?: (threadKey: string) => void;
   searchQuery?: string;
   onAtTopStateChange?: (atTop: boolean) => void;
+  activityJumpDate?: string;
+  activityJumpToken?: number;
+  anyOverlayOpen?: boolean;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const [atBottom, setAtBottom] = useState(true);
@@ -708,6 +741,9 @@ export function MessageList({
             }
             dim={shouldDim}
             searchHighlight={searchQuery}
+            openActivityToken={
+              activityJumpDate === date ? activityJumpToken : undefined
+            }
           />
         </DivTempHeight>
       </div>
@@ -774,7 +810,7 @@ export function MessageList({
           : undefined
       }
       atTopStateChange={onAtTopStateChange}
-      followOutput={!manualScroll && atBottom ? "smooth" : false}
+      followOutput={!manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false}
     />
   );
 }

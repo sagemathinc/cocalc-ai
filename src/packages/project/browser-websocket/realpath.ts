@@ -15,8 +15,15 @@ const HOME: string =
   process.env.SMC_LOCAL_HUB_HOME ?? process.env.HOME ?? "/home/user";
 
 export async function realpath(path: string): Promise<string> {
-  const fullpath = HOME + "/" + path;
+  const isAbsolute = path.startsWith("/");
+  const fullpath = isAbsolute ? path : HOME + "/" + path;
   const rpath = await fs_realpath(fullpath);
+  if (isAbsolute) {
+    if (rpath == fullpath || !rpath.startsWith(HOME + "/")) {
+      return path;
+    }
+    return rpath;
+  }
   if (rpath == fullpath || !rpath.startsWith(HOME + "/")) {
     return path;
   }

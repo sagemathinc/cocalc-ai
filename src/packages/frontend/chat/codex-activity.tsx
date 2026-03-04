@@ -17,9 +17,14 @@ import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
-import { plural } from "@cocalc/util/misc";
+import { containingPath, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  buildPrismLineMetasFromPlain,
+  highlightPrismLines,
+  languageHintFromPath,
+} from "./diff-prism";
 
 const VIRTUALIZE_THRESHOLD = 20;
 
@@ -98,6 +103,7 @@ export interface CodexActivityProps {
   persistKey?: string;
   projectId?: string;
   basePath?: string;
+  chatPath?: string;
   inlineCodeLinks?: InlineCodeLink[];
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
@@ -119,6 +125,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   persistKey,
   projectId,
   basePath,
+  chatPath,
   inlineCodeLinks,
   onDeleteEvents,
   onDeleteAllEvents,
@@ -130,8 +137,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
   const resolvedBasePath = useMemo(
-    () => detectBasePath(basePath, entries),
-    [basePath, entries],
+    () => detectBasePath(basePath, entries, chatPath),
+    [basePath, entries, chatPath],
   );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
@@ -429,7 +436,11 @@ function ActivityRow({
               />
             </span>
           </TimestampTooltip>
-          <DiffPreview diff={entry.diff} fontSize={fontSize} />
+          <DiffPreview
+            diff={entry.diff}
+            fontSize={fontSize}
+            languageHint={languageHintFromPath(entry.path)}
+          />
         </div>
       );
     case "terminal":
@@ -831,9 +842,11 @@ function PathLink({
 function DiffPreview({
   diff,
   fontSize,
+  languageHint,
 }: {
   diff: LineDiffResult;
   fontSize: number;
+  languageHint: string;
 }) {
   if (!diff?.lines?.length) {
     // ?'s for old input
@@ -845,8 +858,17 @@ function DiffPreview({
   }
   const codeFontSize = Math.max(11, fontSize - 1);
   const chunkEnds = new Set(diff.chunkBoundaries ?? []);
+  const lineMetas = useMemo(
+    () => buildPrismLineMetasFromPlain(diff.lines),
+    [diff.lines],
+  );
+  const highlightedByLine = useMemo(
+    () => highlightPrismLines(lineMetas, languageHint),
+    [lineMetas, languageHint],
+  );
   return (
     <div
+      className="cocalc-slate-code-block"
       style={{
         marginTop: 6,
         fontFamily: "monospace",
@@ -856,7 +878,7 @@ function DiffPreview({
         overflow: "hidden",
       }}
     >
-      {diff.lines.map((line, i) => {
+      {diff.lines.map((_line, i) => {
         const op = diff.types[i] ?? 0;
         const gutter = diff.gutters[i] ?? "";
         const background =
@@ -865,6 +887,7 @@ function DiffPreview({
         const borderTop = chunkEnds.has(i)
           ? `1px solid ${COLORS.GRAY_L}`
           : "none";
+        const html = highlightedByLine[i] ?? "";
         return (
           <div
             key={i}
@@ -880,7 +903,11 @@ function DiffPreview({
             }}
           >
             <span style={{ color: COLORS.GRAY_D }}>{gutter}</span>
-            <span>{line.length ? line : " "}</span>
+            <span
+              dangerouslySetInnerHTML={{
+                __html: html.length > 0 ? html : "&nbsp;",
+              }}
+            />
           </div>
         );
       })}
@@ -947,15 +974,22 @@ function normalizeAbsoluteMaybe(path?: string): string | undefined {
 function detectBasePath(
   configuredBasePath: string | undefined,
   entries: ActivityEntry[],
+  chatPath?: string,
 ): string | undefined {
-  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
-  if (explicit) return explicit;
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
-    if (entry.kind !== "terminal") continue;
-    const cwd = normalizeAbsoluteMaybe(entry.cwd);
+    const cwd =
+      entry.kind === "terminal" || entry.kind === "file"
+        ? normalizeAbsoluteMaybe(entry.cwd)
+        : undefined;
     if (cwd) return cwd;
   }
+  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
+  if (explicit) return explicit;
+  const chatDir = chatPath
+    ? normalizeAbsoluteMaybe(containingPath(chatPath))
+    : undefined;
+  if (chatDir) return chatDir;
   return undefined;
 }
 

@@ -69,6 +69,7 @@ import { AgentMessageStatus } from "./agent-message-status";
 import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
+import { setChatOverlayOpen } from "./drawer-overlay-state";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -243,6 +244,8 @@ interface Props {
   acpState?: string;
   dim?: boolean;
   searchHighlight?: string;
+  openActivityToken?: number;
+  onOverlayOpenChange?: (open: boolean) => void;
 }
 
 export function resolveEditedMessageForSave(
@@ -301,6 +304,8 @@ export default function Message({
   acpState,
   dim,
   searchHighlight,
+  openActivityToken,
+  onOverlayOpenChange,
 }: Props) {
   const intl = useIntl();
 
@@ -390,6 +395,7 @@ export default function Message({
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] =
     useState<number | undefined>(undefined);
+  const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
   );
@@ -415,13 +421,15 @@ export default function Message({
   );
   const effectiveGenerating = useMemo(() => {
     if (!isCodexThread) return generating === true;
-    // `generating` is persisted on the chat row and survives reconnect/refresh;
-    // treat it as authoritative for whether the assistant is still running.
-    if (generating === true) return true;
-    // ACP queue/sending/running in store can still make state visible even
-    // before backend row transitions to generating=true.
-    return acpStateActive;
-  }, [generating, isCodexThread, acpStateActive]);
+    if (is_viewers_message) {
+      // Viewer rows represent queued/sending state before assistant output rows exist.
+      return acpStateActive;
+    }
+    // Assistant rows: rely on persisted chat-row generating flag only.
+    // This avoids stale thread-state "running" entries keeping completed turns
+    // visually live after reconnect/refresh.
+    return generating === true;
+  }, [generating, isCodexThread, is_viewers_message, acpStateActive]);
 
   useEffect(() => {
     if (isEditing) return;
@@ -456,6 +464,18 @@ export default function Message({
     }
     return `${minutes}:${pad(seconds)}`;
   }, [elapsedMs]);
+
+  const anyOverlayOpen = isActivityDrawerOpen || openCommitHash != null;
+  const overlayKey = `${project_id ?? "no-project"}:${path ?? "no-path"}:${date}`;
+
+  useEffect(() => {
+    setChatOverlayOpen(overlayKey, anyOverlayOpen);
+    onOverlayOpenChange?.(anyOverlayOpen);
+    return () => {
+      setChatOverlayOpen(overlayKey, false);
+      onOverlayOpenChange?.(false);
+    };
+  }, [anyOverlayOpen, onOverlayOpenChange, overlayKey]);
 
   const msgWrittenByLLM = useMemo(() => {
     const author_id = firstHistoryEntry?.author_id;
@@ -571,6 +591,12 @@ export default function Message({
     // other kinds of LLM messages.
     return Boolean(field<string>(message, "acp_account_id"));
   }, [message]);
+
+  useEffect(() => {
+    if (!showCodexActivity) return;
+    if (typeof openActivityToken !== "number" || openActivityToken <= 0) return;
+    setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+  }, [showCodexActivity, openActivityToken]);
 
   const rowMessageValue = useMemo(() => newest_content(message), [message]);
   const logStore = useMemo(
@@ -946,6 +972,11 @@ export default function Message({
     );
   }
 
+  function openGitBrowserFromMessage() {
+    const hash = extractFirstCommitMention(renderedMessageValue);
+    setOpenCommitHash(hash ?? HEAD_REF);
+  }
+
   function renderHeaderActions() {
     const showActions = isActive;
     if (!showActions && !IS_TOUCH) {
@@ -1087,10 +1118,7 @@ export default function Message({
             size="small"
             type="text"
             style={{ color: COLORS.GRAY_M }}
-            onClick={() => {
-              const hash = extractFirstCommitMention(renderedMessageValue);
-              setOpenCommitHash(hash ?? HEAD_REF);
-            }}
+            onClick={openGitBrowserFromMessage}
             icon={<Icon name="git" />}
           />
         </Tooltip>,
@@ -1231,6 +1259,12 @@ export default function Message({
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
           openDrawerToken={openActivityDrawerToken}
+          onOpenGitBrowser={
+            isCodexThread && !is_viewers_message
+              ? openGitBrowserFromMessage
+              : undefined
+          }
+          onDrawerOpenChange={setIsActivityDrawerOpen}
         />
         <div
           onClickCapture={openCommitFromMessage}
@@ -1647,6 +1681,11 @@ export default function Message({
     setOpenCommitHash(undefined);
   }
 
+  function openActivityFromGitBrowser() {
+    setOpenCommitHash(undefined);
+    setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+  }
+
   function renderComposeReply() {
     if (!replying) return;
 
@@ -1897,6 +1936,7 @@ export default function Message({
         onRequestAgentTurn={sendGitBrowserAgentPrompt}
         onDirectCommitLogged={logGitBrowserDirectCommit}
         onFindInChat={findCommitInCurrentChat}
+        onOpenActivityLog={openActivityFromGitBrowser}
       />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>

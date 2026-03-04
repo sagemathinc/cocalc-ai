@@ -1,4 +1,5 @@
 import { CodexExecAgent } from "../codex-exec";
+import fs from "node:fs/promises";
 
 describe("CodexExecAgent event path formatting", () => {
   const agent = new CodexExecAgent();
@@ -26,6 +27,12 @@ describe("CodexExecAgent pre-content path heuristics", () => {
     (agent as any).extractPathCandidates(text);
   const parseReadOnly = (command: string, cwd: string) =>
     (agent as any).parseReadOnlyCommand(command, cwd);
+  const statRegularFile = (pathAbs: string) =>
+    (agent as any).statRegularFile(pathAbs);
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   it("does not emit nested suffix paths from a relative path", () => {
     const paths = extract(
@@ -54,5 +61,54 @@ describe("CodexExecAgent pre-content path heuristics", () => {
       "/home/wstein/build/cocalc-lite3/src",
     );
     expect(read).toBeNull();
+  });
+
+  it("does not emit read events when stat says path is not a file", async () => {
+    jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => false,
+      size: 0,
+    } as any);
+    await expect(
+      statRegularFile("/home/wstein/build/cocalc-lite3/src/packages"),
+    ).resolves.toBeNull();
+  });
+
+  it("does not emit read events when stat fails with ENOENT", async () => {
+    jest.spyOn(fs, "stat").mockRejectedValue({ code: "ENOENT" });
+    await expect(
+      statRegularFile("/home/wstein/build/cocalc-lite3/src/missing.tex"),
+    ).resolves.toBeNull();
+  });
+
+  it("maps /root and /scratch paths to host mounts in project-host mode", async () => {
+    const statSpy = jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => true,
+      size: 123,
+    } as any);
+    await expect(
+      (agent as any).statRegularFile("/root/work/foo.tex", {
+        containerPathMap: {
+          rootHostPath: "/host/home",
+          scratchHostPath: "/host/scratch",
+        },
+      }),
+    ).resolves.toEqual({ size: 123 });
+    expect(statSpy).toHaveBeenCalledWith("/host/home/work/foo.tex");
+  });
+
+  it("rejects non-/root and non-/scratch paths in project-host mode", async () => {
+    const statSpy = jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => true,
+      size: 123,
+    } as any);
+    await expect(
+      (agent as any).statRegularFile("/etc/passwd", {
+        containerPathMap: {
+          rootHostPath: "/host/home",
+          scratchHostPath: "/host/scratch",
+        },
+      }),
+    ).resolves.toBeNull();
+    expect(statSpy).not.toHaveBeenCalled();
   });
 });
