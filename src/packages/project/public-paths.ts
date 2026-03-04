@@ -13,9 +13,15 @@ const UPDATE_INTERVAL_S: number = 20;
 import { callback, delay } from "awaiting";
 import { execFile } from "node:child_process";
 import { lstat } from "node:fs";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 
 import type { Client } from "@cocalc/project/client";
 import { getClient } from "@cocalc/project/client";
+
+const execFileAsync = promisify(execFile);
 
 let monitor: MonitorPublicPaths | undefined = undefined;
 export default function init() {
@@ -131,29 +137,31 @@ class MonitorPublicPaths {
       // Is a directory, and directory mtime hasn't changed; still possible
       // that there is a file in some subdir has changed, so have to do
       // a full scan.
-      const days = (Date.now() - last_edited) / (1000 * 60 * 60 * 24);
-      // This input to find will give return code 1 if and only if it finds a FILE
-      // modified since last_edited (since we know the path exists).
-      const args = [
-        process.env.HOME + "/" + path,
-        "-type",
-        "f",
-        "-mtime",
-        `-${days}`,
-        "-exec",
-        "false",
-        "{}",
-        "+",
-      ];
+      // We use a reference file with an explicit mtime and `find -newer`
+      // instead of `-mtime -<float>`, since BSD/macOS find rejects fractional
+      // values.
+      const markerDir = await mkdtemp(join(tmpdir(), "cocalc-public-paths-"));
+      const markerPath = join(markerDir, "last-edited");
+      const searchRoot =
+        process.env.HOME != null ? `${process.env.HOME}/${path}` : path;
       try {
-        await callback(execFile, "find", args);
+        await writeFile(markerPath, "");
+        const stampSeconds = Math.max(0, last_edited) / 1000;
+        await utimes(markerPath, stampSeconds, stampSeconds);
+        const { stdout } = await execFileAsync("find", [
+          searchRoot,
+          "-type",
+          "f",
+          "-newer",
+          markerPath,
+          "-print",
+          "-quit",
+        ]);
+        changed = `${stdout}`.trim().length > 0;
       } catch (err) {
-        if ((err as any).code) {
-          d("some files changed");
-          changed = true;
-        } else {
-          d("nothing changed");
-        }
+        d("error scanning for changed files", err);
+      } finally {
+        await rm(markerDir, { recursive: true, force: true });
       }
     }
     if (changed) {
