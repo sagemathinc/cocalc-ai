@@ -23,6 +23,7 @@ import type {
   ProjectCollabInviteRow,
 } from "@cocalc/conat/hub/api/projects";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
+import { projectApiClient, type ProjectApi } from "@cocalc/conat/project/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
@@ -1353,6 +1354,24 @@ async function resolveWorkspaceFilesystem(
   return { workspace, fs };
 }
 
+async function resolveWorkspaceProjectApi(
+  ctx: CommandContext,
+  workspaceIdentifier?: string,
+  cwd = process.cwd(),
+): Promise<{ workspace: WorkspaceRow; api: ProjectApi }> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  if (!routed.client) {
+    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+  }
+  const api = projectApiClient({
+    project_id: workspace.project_id,
+    client: routed.client,
+    timeout: Math.max(1_000, Math.min(ctx.timeoutMs, ctx.rpcTimeoutMs)),
+  });
+  return { workspace, api };
+}
+
 const {
   workspaceFileListData,
   workspaceFileCatData,
@@ -1862,6 +1881,7 @@ const workspaceCommandDeps = {
   runWorkspaceFileCheck,
   closeCommandContext,
   resolveProxyUrl,
+  resolveWorkspaceProjectApi,
   parsePositiveInteger,
   isRedirect,
   extractCookie,
