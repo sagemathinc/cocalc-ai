@@ -138,9 +138,13 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - Added harness layer:
   - `cocalc browser harness run --plan <plan.json>`
   - runs multi-step action/exec/sleep plans with per-step retries
+  - supports `assert` steps for explicit pass/fail checks
+  - supports `before_all` and `after_all` fixture step lists
   - optional automatic recovery (`reload` / `hard-reload`) between retries
   - strict target pinning by default (`--pin-target`, disable with `--no-pin-target`)
+  - optional fail-fast threshold (`--max-failures <n>` / `plan.max_failures`)
   - structured artifact/report output in `report_dir/report.json`
+  - aggregates failure signatures for fast triage in long runs
   - failure capture support (`screenshot`, `runtime events`, `network trace`)
 
 Example harness plan:
@@ -148,13 +152,20 @@ Example harness plan:
 ```json
 {
   "name": "explorer smoke",
+  "max_failures": 3,
   "default_retries": 1,
   "default_recovery": "reload",
+  "before_all": [
+    { "name": "open workspace root", "action": { "name": "navigate", "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/" } }
+  ],
   "steps": [
-    { "name": "open explorer", "action": { "name": "navigate", "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/" } },
     { "name": "wait list", "action": { "name": "wait_for_selector", "selector": ".smc-vfill", "state": "visible", "timeout_ms": 20000 } },
+    { "name": "assert title", "assert": { "code": "return document.title", "expect": "Home - CoCalc" } },
     { "name": "scroll", "action": { "name": "scroll_by", "dy": 800 } },
     { "name": "probe title", "exec": "return document.title" }
+  ],
+  "after_all": [
+    { "name": "final title check", "assert": "return document.title && document.title.length > 0" }
   ]
 }
 ```

@@ -7,6 +7,7 @@ reporting so long-running browser QA workflows are reproducible.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
+import { inspect, isDeepStrictEqual } from "node:util";
 import { Command } from "commander";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
@@ -44,8 +45,11 @@ type HarnessPlan = {
   default_timeout_ms?: number;
   default_recovery?: HarnessRecoveryMode;
   default_pause_ms?: number;
+  max_failures?: number;
   capture?: Partial<HarnessCapturePolicy>;
+  before_all?: unknown[];
   steps: unknown[];
+  after_all?: unknown[];
 };
 
 type HarnessPlanStepBase = {
@@ -66,6 +70,7 @@ type HarnessExecStep = HarnessPlanStepBase & {
 type NormalizedStepBase = {
   id?: string;
   name: string;
+  phase: "before_all" | "main" | "after_all";
   retries: number;
   timeout_ms?: number;
   recovery: HarnessRecoveryMode;
@@ -84,12 +89,24 @@ type NormalizedExecStep = NormalizedStepBase & {
   code: string;
 };
 
+type NormalizedAssertStep = NormalizedStepBase & {
+  kind: "assert";
+  code: string;
+  expect_set: boolean;
+  expect_value?: unknown;
+  truthy: boolean;
+};
+
 type NormalizedSleepStep = NormalizedStepBase & {
   kind: "sleep";
   sleep_ms: number;
 };
 
-type NormalizedStep = NormalizedActionStep | NormalizedExecStep | NormalizedSleepStep;
+type NormalizedStep =
+  | NormalizedActionStep
+  | NormalizedExecStep
+  | NormalizedAssertStep
+  | NormalizedSleepStep;
 
 type StepAttemptReport = {
   attempt: number;
@@ -116,11 +133,21 @@ type StepReport = {
   index: number;
   id?: string;
   name: string;
+  phase: "before_all" | "main" | "after_all";
   kind: NormalizedStep["kind"];
   ok: boolean;
   attempts: number;
   final_error?: string;
+  failure_signature?: string;
   attempt_reports: StepAttemptReport[];
+};
+
+type FailureSignatureRow = {
+  signature: string;
+  count: number;
+  phases: string[];
+  step_names: string[];
+  errors: string[];
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -219,12 +246,32 @@ async function resolveExecCode(step: HarnessExecStep): Promise<string> {
   return await readFile(file, "utf8");
 }
 
+function hasOwn(obj: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function normalizeFailureSignature({
+  step,
+  error,
+}: {
+  step: NormalizedStep;
+  error: string;
+}): string {
+  const firstLine = `${error ?? ""}`.split("\n")[0]?.trim() || "unknown-error";
+  const collapsed = firstLine
+    .replace(/[0-9a-f]{8,}/gi, "<id>")
+    .replace(/\b\d+\b/g, "<n>")
+    .slice(0, 220);
+  return `${step.kind}:${collapsed}`;
+}
+
 async function normalizePlan({
   plan,
   defaultRetries,
   defaultTimeoutMs,
   defaultRecovery,
   defaultPauseMs,
+  maxFailuresOverride,
   continueOnError,
   captureDefaults,
 }: {
@@ -233,12 +280,16 @@ async function normalizePlan({
   defaultTimeoutMs?: number;
   defaultRecovery: HarnessRecoveryMode;
   defaultPauseMs: number;
+  maxFailuresOverride?: number;
   continueOnError: boolean;
   captureDefaults: HarnessCapturePolicy;
 }): Promise<{
   name: string;
   continue_on_error: boolean;
+  max_failures?: number;
+  before_steps: NormalizedStep[];
   steps: NormalizedStep[];
+  after_steps: NormalizedStep[];
 }> {
   const resolvedContinue =
     plan.continue_on_error == null ? continueOnError : !!plan.continue_on_error;
@@ -261,75 +312,159 @@ async function normalizePlan({
     defaultRecovery,
   );
   const resolvedCaptureDefaults = parseCapturePolicy(plan.capture, captureDefaults);
+  const planMaxFailures =
+    plan.max_failures == null
+      ? undefined
+      : clampNonNegativeInt(plan.max_failures, 0, "max_failures");
+  const resolvedMaxFailures = maxFailuresOverride ?? planMaxFailures;
 
-  const steps: NormalizedStep[] = [];
-  for (let i = 0; i < plan.steps.length; i += 1) {
-    const raw = plan.steps[i];
-    if (!isObject(raw)) {
-      throw new Error(`step ${i + 1} must be an object`);
-    }
-    const base: NormalizedStepBase = {
-      ...(raw.id ? { id: `${raw.id}` } : {}),
-      name: `${raw.name ?? raw.id ?? `step-${i + 1}`}`,
-      retries: clampNonNegativeInt(raw.retries, resolvedDefaultRetries, `step ${i + 1}.retries`),
-      timeout_ms:
-        raw.timeout_ms == null
-          ? resolvedDefaultTimeout
-          : clampNonNegativeInt(raw.timeout_ms, resolvedDefaultTimeout ?? 0, `step ${i + 1}.timeout_ms`),
-      recovery: parseRecoveryMode(raw.recovery, resolvedDefaultRecovery),
-      pause_ms: clampNonNegativeInt(raw.pause_ms, resolvedDefaultPause, `step ${i + 1}.pause_ms`),
-      continue_on_error:
-        raw.continue_on_error == null
-          ? resolvedContinue
-          : !!raw.continue_on_error,
-      capture: parseCapturePolicy(raw.capture, resolvedCaptureDefaults),
-    };
-
-    if (raw.sleep_ms != null) {
-      steps.push({
-        ...base,
-        kind: "sleep",
-        sleep_ms: clampNonNegativeInt(raw.sleep_ms, 0, `step ${i + 1}.sleep_ms`),
-      });
-      continue;
-    }
-
-    if (raw.action != null) {
-      if (!isObject(raw.action)) {
-        throw new Error(`step ${i + 1}.action must be an object`);
+  const normalizeStepList = async ({
+    list,
+    phase,
+  }: {
+    list: unknown[];
+    phase: "before_all" | "main" | "after_all";
+  }): Promise<NormalizedStep[]> => {
+    const out: NormalizedStep[] = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const raw = list[i];
+      const label = `${phase} step ${i + 1}`;
+      if (!isObject(raw)) {
+        throw new Error(`${label} must be an object`);
       }
-      const actionName = `${(raw.action as Record<string, unknown>).name ?? ""}`.trim();
-      if (!actionName) {
-        throw new Error(`step ${i + 1}.action.name is required`);
+      const base: NormalizedStepBase = {
+        ...(raw.id ? { id: `${raw.id}` } : {}),
+        name: `${raw.name ?? raw.id ?? `${phase}-step-${i + 1}`}`,
+        phase,
+        retries: clampNonNegativeInt(
+          raw.retries,
+          resolvedDefaultRetries,
+          `${label}.retries`,
+        ),
+        timeout_ms:
+          raw.timeout_ms == null
+            ? resolvedDefaultTimeout
+            : clampNonNegativeInt(
+                raw.timeout_ms,
+                resolvedDefaultTimeout ?? 0,
+                `${label}.timeout_ms`,
+              ),
+        recovery: parseRecoveryMode(raw.recovery, resolvedDefaultRecovery),
+        pause_ms: clampNonNegativeInt(
+          raw.pause_ms,
+          resolvedDefaultPause,
+          `${label}.pause_ms`,
+        ),
+        continue_on_error:
+          raw.continue_on_error == null
+            ? resolvedContinue
+            : !!raw.continue_on_error,
+        capture: parseCapturePolicy(raw.capture, resolvedCaptureDefaults),
+      };
+
+      if (raw.sleep_ms != null) {
+        out.push({
+          ...base,
+          kind: "sleep",
+          sleep_ms: clampNonNegativeInt(raw.sleep_ms, 0, `${label}.sleep_ms`),
+        });
+        continue;
       }
-      steps.push({
-        ...base,
-        kind: "action",
-        action: raw.action as BrowserActionRequest,
-      });
-      continue;
-    }
 
-    if (raw.exec != null) {
-      const execStep = { exec: raw.exec } as HarnessExecStep;
-      const code = await resolveExecCode(execStep);
-      steps.push({
-        ...base,
-        kind: "exec",
-        code,
-      });
-      continue;
-    }
+      if (raw.action != null) {
+        if (!isObject(raw.action)) {
+          throw new Error(`${label}.action must be an object`);
+        }
+        const actionName = `${(raw.action as Record<string, unknown>).name ?? ""}`.trim();
+        if (!actionName) {
+          throw new Error(`${label}.action.name is required`);
+        }
+        out.push({
+          ...base,
+          kind: "action",
+          action: raw.action as BrowserActionRequest,
+        });
+        continue;
+      }
 
-    throw new Error(
-      `step ${i + 1} must include one of: sleep_ms, action, exec`,
-    );
-  }
+      if (raw.exec != null) {
+        const execStep = { exec: raw.exec } as HarnessExecStep;
+        const code = await resolveExecCode(execStep);
+        out.push({
+          ...base,
+          kind: "exec",
+          code,
+        });
+        continue;
+      }
+
+      if (raw.assert != null) {
+        let code = "";
+        let expectSet = false;
+        let expectValue: unknown;
+        let truthy = true;
+        if (typeof raw.assert === "string") {
+          code = raw.assert;
+        } else if (isObject(raw.assert)) {
+          const assertObj = raw.assert as Record<string, unknown>;
+          const assertCode = `${assertObj.code ?? ""}`;
+          const assertFile = `${assertObj.file ?? ""}`.trim();
+          const hasCode = assertCode.trim().length > 0;
+          const hasFile = assertFile.length > 0;
+          if ((hasCode ? 1 : 0) + (hasFile ? 1 : 0) !== 1) {
+            throw new Error(
+              `${label}.assert requires exactly one of assert.code or assert.file`,
+            );
+          }
+          code = hasCode
+            ? assertCode
+            : await resolveExecCode({
+                exec: { file: assertFile },
+              });
+          if (hasOwn(assertObj, "expect")) {
+            expectSet = true;
+            expectValue = assertObj.expect;
+          } else if (hasOwn(assertObj, "truthy")) {
+            truthy = !!assertObj.truthy;
+          }
+        } else {
+          throw new Error(`${label}.assert must be string or object`);
+        }
+        if (!code.trim()) {
+          throw new Error(`${label}.assert code must not be empty`);
+        }
+        out.push({
+          ...base,
+          kind: "assert",
+          code,
+          expect_set: expectSet,
+          ...(expectSet ? { expect_value: expectValue } : {}),
+          truthy,
+        });
+        continue;
+      }
+
+      throw new Error(
+        `${label} must include one of: sleep_ms, action, exec, assert`,
+      );
+    }
+    return out;
+  };
+
+  const beforeRaw = Array.isArray(plan.before_all) ? plan.before_all : [];
+  const mainRaw = Array.isArray(plan.steps) ? plan.steps : [];
+  const afterRaw = Array.isArray(plan.after_all) ? plan.after_all : [];
+  const beforeSteps = await normalizeStepList({ list: beforeRaw, phase: "before_all" });
+  const steps = await normalizeStepList({ list: mainRaw, phase: "main" });
+  const afterSteps = await normalizeStepList({ list: afterRaw, phase: "after_all" });
 
   return {
     name: `${plan.name ?? "browser-harness"}`,
     continue_on_error: resolvedContinue,
+    ...(resolvedMaxFailures != null ? { max_failures: resolvedMaxFailures } : {}),
+    before_steps: beforeSteps,
     steps,
+    after_steps: afterSteps,
   };
 }
 
@@ -519,6 +654,10 @@ export function registerBrowserHarnessCommands({
     .option("--continue-on-error", "override plan to continue after failing steps")
     .option("--default-retries <n>", "default retries for steps missing retries", "1")
     .option(
+      "--max-failures <n>",
+      "halt run after this many failed steps (0 means unlimited; overrides plan.max_failures)",
+    )
+    .option(
       "--default-timeout <duration>",
       "default step timeout for steps missing timeout_ms (e.g. 30s, 2m)",
     )
@@ -564,6 +703,7 @@ export function registerBrowserHarnessCommands({
           reportDir?: string;
           continueOnError?: boolean;
           defaultRetries?: string;
+          maxFailures?: string;
           defaultTimeout?: string;
           defaultRecovery?: string;
           recoveryWait?: string;
@@ -639,6 +779,10 @@ export function registerBrowserHarnessCommands({
             1,
             "--default-retries",
           );
+          const maxFailuresOverride =
+            `${opts.maxFailures ?? ""}`.trim().length > 0
+              ? clampNonNegativeInt(opts.maxFailures, 0, "--max-failures")
+              : undefined;
           const defaultTimeoutMs = `${opts.defaultTimeout ?? ""}`.trim()
             ? Math.max(1_000, durationToMs(opts.defaultTimeout, ctx.timeoutMs))
             : undefined;
@@ -662,6 +806,7 @@ export function registerBrowserHarnessCommands({
             defaultTimeoutMs,
             defaultRecovery,
             defaultPauseMs: 0,
+            maxFailuresOverride,
             continueOnError,
             captureDefaults,
           });
@@ -690,126 +835,219 @@ export function registerBrowserHarnessCommands({
 
           const startedAtMs = Date.now();
           const stepReports: StepReport[] = [];
+          const signatureMap = new Map<string, FailureSignatureRow>();
           let halted = false;
+          let failedSteps = 0;
+          let reportIndex = 0;
+          const maxFailures =
+            normalized.max_failures == null || normalized.max_failures <= 0
+              ? Number.POSITIVE_INFINITY
+              : normalized.max_failures;
 
-          for (let index = 0; index < normalized.steps.length; index += 1) {
-            const step = normalized.steps[index];
-            const maxAttempts = step.retries + 1;
-            const attemptReports: StepAttemptReport[] = [];
-            let stepOk = false;
-            let finalError = "";
+          const runStepList = async ({
+            list,
+            forceContinue,
+          }: {
+            list: NormalizedStep[];
+            forceContinue: boolean;
+          }): Promise<void> => {
+            for (let i = 0; i < list.length; i += 1) {
+              const step = list[i];
+              const maxAttempts = step.retries + 1;
+              const attemptReports: StepAttemptReport[] = [];
+              let stepOk = false;
+              let finalError = "";
 
-            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-              if (pinTarget) {
-                await assertPinnedSessionActive();
-              }
-              const stepTimeout = Math.max(1_000, step.timeout_ms ?? ctx.timeoutMs);
-              const browserClient = deps.createBrowserSessionClient({
-                account_id: ctx.accountId,
-                browser_id: targetBrowserId,
-                client: ctx.remote.client,
-                timeout: stepTimeout,
-              });
-              const attemptStarted = new Date().toISOString();
-              const t0 = Date.now();
-              const row: StepAttemptReport = {
-                attempt,
-                started_at: attemptStarted,
-                finished_at: attemptStarted,
-                duration_ms: 0,
-                ok: false,
-              };
-              try {
-                let result: unknown;
-                if (step.kind === "action") {
-                  const response = await browserClient.action({
+              for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                if (pinTarget) {
+                  await assertPinnedSessionActive();
+                }
+                const stepTimeout = Math.max(1_000, step.timeout_ms ?? ctx.timeoutMs);
+                const browserClient = deps.createBrowserSessionClient({
+                  account_id: ctx.accountId,
+                  browser_id: targetBrowserId,
+                  client: ctx.remote.client,
+                  timeout: stepTimeout,
+                });
+                const attemptStarted = new Date().toISOString();
+                const t0 = Date.now();
+                const row: StepAttemptReport = {
+                  attempt,
+                  started_at: attemptStarted,
+                  finished_at: attemptStarted,
+                  duration_ms: 0,
+                  ok: false,
+                };
+                try {
+                  let result: unknown;
+                  if (step.kind === "action") {
+                    const response = await browserClient.action({
+                      project_id,
+                      posture,
+                      policy,
+                      action: step.action,
+                    });
+                    result = response?.result ?? null;
+                  } else if (step.kind === "exec") {
+                    let response;
+                    try {
+                      response = await browserClient.exec({
+                        project_id,
+                        code: step.code,
+                        posture,
+                        policy,
+                      });
+                    } catch (err) {
+                      throw withBrowserExecStaleSessionHint({
+                        err,
+                        posture,
+                        policy,
+                        browserId: targetBrowserId,
+                      });
+                    }
+                    result = response?.result ?? null;
+                  } else if (step.kind === "assert") {
+                    let response;
+                    try {
+                      response = await browserClient.exec({
+                        project_id,
+                        code: step.code,
+                        posture,
+                        policy,
+                      });
+                    } catch (err) {
+                      throw withBrowserExecStaleSessionHint({
+                        err,
+                        posture,
+                        policy,
+                        browserId: targetBrowserId,
+                      });
+                    }
+                    const got = response?.result;
+                    if (step.expect_set) {
+                      if (!isDeepStrictEqual(got, step.expect_value)) {
+                        throw new Error(
+                          `assert failed: expected ${inspect(step.expect_value, { depth: 4 })} but got ${inspect(got, { depth: 4 })}`,
+                        );
+                      }
+                    } else {
+                      const pass = step.truthy ? !!got : !got;
+                      if (!pass) {
+                        throw new Error(
+                          `assert failed: expected ${step.truthy ? "truthy" : "falsy"} result, got ${inspect(got, { depth: 4 })}`,
+                        );
+                      }
+                    }
+                    result = { assertion_ok: true, value: got };
+                  } else {
+                    await new Promise((resolve) => setTimeout(resolve, step.sleep_ms));
+                    result = { slept_ms: step.sleep_ms };
+                  }
+                  row.ok = true;
+                  row.result = result;
+                  stepOk = true;
+                } catch (err) {
+                  finalError = `${err}`;
+                  row.error = finalError;
+                  row.artifacts = await captureFailureArtifacts({
+                    browserClient,
+                    step,
+                    reportDir,
+                    stepIndex: reportIndex,
+                    attempt,
                     project_id,
                     posture,
                     policy,
-                    action: step.action,
                   });
-                  result = response?.result ?? null;
-                } else if (step.kind === "exec") {
-                  let response;
-                  try {
-                    response = await browserClient.exec({
+                  if (attempt < maxAttempts) {
+                    row.recovery = await applyRecovery({
+                      browserClient,
+                      mode: step.recovery,
                       project_id,
-                      code: step.code,
                       posture,
                       policy,
-                    });
-                  } catch (err) {
-                    throw withBrowserExecStaleSessionHint({
-                      err,
-                      posture,
-                      policy,
-                      browserId: targetBrowserId,
+                      recoveryWaitMs,
                     });
                   }
-                  result = response?.result ?? null;
-                } else {
-                  await new Promise((resolve) => setTimeout(resolve, step.sleep_ms));
-                  result = { slept_ms: step.sleep_ms };
                 }
-                row.ok = true;
-                row.result = result;
-                stepOk = true;
-              } catch (err) {
-                finalError = `${err}`;
-                row.error = finalError;
-                row.artifacts = await captureFailureArtifacts({
-                  browserClient,
-                  step,
-                  reportDir,
-                  stepIndex: index,
-                  attempt,
-                  project_id,
-                  posture,
-                  policy,
-                });
-                if (attempt < maxAttempts) {
-                  row.recovery = await applyRecovery({
-                    browserClient,
-                    mode: step.recovery,
-                    project_id,
-                    posture,
-                    policy,
-                    recoveryWaitMs,
+                row.finished_at = new Date().toISOString();
+                row.duration_ms = Date.now() - t0;
+                attemptReports.push(row);
+                if (stepOk) break;
+              }
+
+              const failureSignature =
+                stepOk || !finalError
+                  ? undefined
+                  : normalizeFailureSignature({ step, error: finalError });
+              if (failureSignature) {
+                const prev = signatureMap.get(failureSignature);
+                if (prev) {
+                  prev.count += 1;
+                  if (!prev.phases.includes(step.phase)) prev.phases.push(step.phase);
+                  if (!prev.step_names.includes(step.name)) prev.step_names.push(step.name);
+                  if (!prev.errors.includes(finalError)) prev.errors.push(finalError);
+                } else {
+                  signatureMap.set(failureSignature, {
+                    signature: failureSignature,
+                    count: 1,
+                    phases: [step.phase],
+                    step_names: [step.name],
+                    errors: [finalError],
                   });
                 }
               }
-              row.finished_at = new Date().toISOString();
-              row.duration_ms = Date.now() - t0;
-              attemptReports.push(row);
-              if (stepOk) {
-                break;
+
+              stepReports.push({
+                index: reportIndex,
+                ...(step.id ? { id: step.id } : {}),
+                name: step.name,
+                phase: step.phase,
+                kind: step.kind,
+                ok: stepOk,
+                attempts: attemptReports.length,
+                ...(stepOk ? {} : { final_error: finalError || "step failed" }),
+                ...(failureSignature ? { failure_signature: failureSignature } : {}),
+                attempt_reports: attemptReports,
+              });
+              reportIndex += 1;
+
+              if (!stepOk) {
+                failedSteps += 1;
+                if (failedSteps >= maxFailures) {
+                  halted = true;
+                  return;
+                }
+                if (!forceContinue && !step.continue_on_error) {
+                  halted = true;
+                  return;
+                }
+              }
+              if (step.pause_ms > 0) {
+                await new Promise((resolve) => setTimeout(resolve, step.pause_ms));
               }
             }
+          };
 
-            stepReports.push({
-              index,
-              ...(step.id ? { id: step.id } : {}),
-              name: step.name,
-              kind: step.kind,
-              ok: stepOk,
-              attempts: attemptReports.length,
-              ...(stepOk ? {} : { final_error: finalError || "step failed" }),
-              attempt_reports: attemptReports,
-            });
-
-            if (!stepOk && !step.continue_on_error) {
-              halted = true;
-              break;
-            }
-            if (step.pause_ms > 0) {
-              await new Promise((resolve) => setTimeout(resolve, step.pause_ms));
-            }
+          await runStepList({ list: normalized.before_steps, forceContinue: false });
+          if (!halted) {
+            await runStepList({ list: normalized.steps, forceContinue: false });
           }
+          await runStepList({ list: normalized.after_steps, forceContinue: true });
 
           const finishedAtMs = Date.now();
           const passed = stepReports.filter((x) => x.ok).length;
           const failed = stepReports.length - passed;
           const ok = failed === 0 && !halted;
+          const failureSignatures = Array.from(signatureMap.values())
+            .sort((a, b) => b.count - a.count || a.signature.localeCompare(b.signature))
+            .map((x) => ({
+              signature: x.signature,
+              count: x.count,
+              phases: x.phases,
+              step_names: x.step_names,
+              errors: x.errors,
+            }));
 
           const report = {
             ok,
@@ -819,16 +1057,24 @@ export function registerBrowserHarnessCommands({
             started_at: new Date(startedAtMs).toISOString(),
             finished_at: new Date(finishedAtMs).toISOString(),
             duration_ms: finishedAtMs - startedAtMs,
-            steps_total: normalized.steps.length,
+            steps_total:
+              normalized.before_steps.length +
+              normalized.steps.length +
+              normalized.after_steps.length,
+            steps_before_all_total: normalized.before_steps.length,
+            steps_main_total: normalized.steps.length,
+            steps_after_all_total: normalized.after_steps.length,
             steps_run: stepReports.length,
             steps_passed: passed,
             steps_failed: failed,
             halted_early: halted,
+            max_failures: Number.isFinite(maxFailures) ? maxFailures : null,
             posture,
             policy_allow_raw_exec: !!policy?.allow_raw_exec,
             browser_id: targetBrowserId,
             project_id,
             pin_target: pinTarget,
+            failure_signatures: failureSignatures,
             steps: stepReports,
             ...sessionTargetContext(ctx, sessionInfo, project_id),
           };
