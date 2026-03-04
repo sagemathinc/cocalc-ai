@@ -30,10 +30,18 @@ import {
   type BrowserRuntimeEvent,
   type BrowserRuntimeEventKind,
   type BrowserRuntimeEventLevel,
+  type BrowserNetworkTraceDirection,
+  type BrowserNetworkTraceEvent,
+  type BrowserNetworkTracePhase,
+  type BrowserNetworkTraceProtocol,
   type BrowserScreenshotMetadata,
   type BrowserSessionServiceApi,
 } from "@cocalc/conat/service/browser-session";
-import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import {
+  onConatTrace,
+  type Client as ConatClient,
+  type ConatTraceEvent,
+} from "@cocalc/conat/core/client";
 import {
   terminalClient,
   type TerminalClient as ProjectTerminalClient,
@@ -58,6 +66,8 @@ const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_RUNTIME_EVENTS = 5_000;
 const MAX_RUNTIME_MESSAGE_LENGTH = 2_000;
+const MAX_NETWORK_TRACE_EVENTS = 50_000;
+const MAX_NETWORK_TRACE_PREVIEW_CHARS = 4_000;
 const MAX_SANDBOX_ACTIONS = 512;
 const MAX_SANDBOX_ACTION_JSON_LENGTH = 100_000;
 const BROWSER_EXEC_POLICY_VERSION = 1;
@@ -1458,6 +1468,25 @@ export function createBrowserSessionAutomation({
   const runtimeEvents: BrowserRuntimeEvent[] = [];
   let runtimeEventSeq = 0;
   let runtimeEventsDropped = 0;
+  const networkTraceEvents: BrowserNetworkTraceEvent[] = [];
+  let networkTraceSeq = 0;
+  let networkTraceDropped = 0;
+  let stopConatTraceListener: (() => void) | undefined;
+  const networkTraceConfig: {
+    enabled: boolean;
+    include_decoded: boolean;
+    max_events: number;
+    max_preview_chars: number;
+    subject_prefixes: string[];
+    addresses: string[];
+  } = {
+    enabled: false,
+    include_decoded: false,
+    max_events: 5_000,
+    max_preview_chars: MAX_NETWORK_TRACE_PREVIEW_CHARS,
+    subject_prefixes: [],
+    addresses: [],
+  };
   const managedSyncDocs = new Map<
     string,
     {
@@ -1607,6 +1636,89 @@ export function createBrowserSessionAutomation({
     );
   };
   installRuntimeCapture();
+
+  const appendNetworkTraceEvent = (event: ConatTraceEvent): void => {
+    if (!networkTraceConfig.enabled) {
+      return;
+    }
+    const subject = `${event.subject ?? ""}`.trim();
+    if (networkTraceConfig.subject_prefixes.length > 0) {
+      const ok = networkTraceConfig.subject_prefixes.some((prefix) =>
+        subject.startsWith(prefix),
+      );
+      if (!ok) {
+        return;
+      }
+    }
+    const address = `${event.address ?? ""}`.trim();
+    if (networkTraceConfig.addresses.length > 0) {
+      if (!networkTraceConfig.addresses.includes(address)) {
+        return;
+      }
+    }
+    const decodedPreviewRaw =
+      networkTraceConfig.include_decoded && `${event.decoded_preview ?? ""}`.trim()
+        ? `${event.decoded_preview}`.trim()
+        : "";
+    const decoded_preview = decodedPreviewRaw
+      ? truncateRuntimeMessage(decodedPreviewRaw).slice(
+          0,
+          Math.max(1, networkTraceConfig.max_preview_chars),
+        )
+      : undefined;
+    networkTraceSeq += 1;
+    const protocol: BrowserNetworkTraceProtocol = "conat";
+    const direction = `${event.direction ?? ""}`.trim() as BrowserNetworkTraceDirection;
+    const phase = `${event.phase ?? ""}`.trim() as BrowserNetworkTracePhase;
+    networkTraceEvents.push({
+      seq: networkTraceSeq,
+      ts: `${event.ts ?? new Date().toISOString()}`,
+      protocol,
+      direction,
+      phase,
+      ...(event.client_id ? { client_id: `${event.client_id}` } : {}),
+      ...(address ? { address } : {}),
+      ...(subject ? { subject } : {}),
+      ...(event.chunk_id ? { chunk_id: `${event.chunk_id}` } : {}),
+      ...(event.chunk_seq != null ? { chunk_seq: Number(event.chunk_seq) } : {}),
+      ...(event.chunk_done != null ? { chunk_done: !!event.chunk_done } : {}),
+      ...(event.chunk_bytes != null ? { chunk_bytes: Number(event.chunk_bytes) } : {}),
+      ...(event.raw_bytes != null ? { raw_bytes: Number(event.raw_bytes) } : {}),
+      ...(event.encoding != null ? { encoding: Number(event.encoding) } : {}),
+      ...(event.headers ? { headers: event.headers as Record<string, unknown> } : {}),
+      ...(decoded_preview ? { decoded_preview } : {}),
+      ...(event.decode_error ? { decode_error: `${event.decode_error}` } : {}),
+      ...(event.message ? { message: `${event.message}` } : {}),
+      ...(typeof location !== "undefined" && location.href
+        ? { url: `${location.href}` }
+        : {}),
+    });
+    if (networkTraceEvents.length > networkTraceConfig.max_events) {
+      const drop = networkTraceEvents.length - networkTraceConfig.max_events;
+      networkTraceEvents.splice(0, drop);
+      networkTraceDropped += drop;
+    }
+  };
+
+  const ensureConatTraceListener = (): void => {
+    if (!networkTraceConfig.enabled) {
+      if (stopConatTraceListener) {
+        stopConatTraceListener();
+        stopConatTraceListener = undefined;
+      }
+      return;
+    }
+    if (stopConatTraceListener) {
+      return;
+    }
+    stopConatTraceListener = onConatTrace((event) => {
+      try {
+        appendNetworkTraceEvent(event);
+      } catch {
+        // ignore trace buffering errors
+      }
+    });
+  };
 
   const closeManagedSyncDoc = async (key: string): Promise<void> => {
     const entry = managedSyncDocs.get(key);
@@ -4419,6 +4531,120 @@ export function createBrowserSessionAutomation({
   const impl: BrowserSessionServiceApi = {
     getExecApiDeclaration: async () => BROWSER_EXEC_API_DECLARATION,
     getSessionInfo: async () => buildSessionSnapshot(client),
+    configureNetworkTrace: async (opts) => {
+      if (opts != null && typeof opts === "object") {
+        if (opts.enabled != null) {
+          networkTraceConfig.enabled = !!opts.enabled;
+        }
+        if (opts.include_decoded != null) {
+          networkTraceConfig.include_decoded = !!opts.include_decoded;
+        }
+        if (opts.max_events != null && Number.isFinite(Number(opts.max_events))) {
+          networkTraceConfig.max_events = Math.max(
+            100,
+            Math.min(MAX_NETWORK_TRACE_EVENTS, Math.floor(Number(opts.max_events))),
+          );
+          if (networkTraceEvents.length > networkTraceConfig.max_events) {
+            const drop = networkTraceEvents.length - networkTraceConfig.max_events;
+            networkTraceEvents.splice(0, drop);
+            networkTraceDropped += drop;
+          }
+        }
+        if (
+          opts.max_preview_chars != null &&
+          Number.isFinite(Number(opts.max_preview_chars))
+        ) {
+          networkTraceConfig.max_preview_chars = Math.max(
+            32,
+            Math.min(20_000, Math.floor(Number(opts.max_preview_chars))),
+          );
+        }
+        if (Array.isArray(opts.subject_prefixes)) {
+          networkTraceConfig.subject_prefixes = opts.subject_prefixes
+            .map((x) => `${x ?? ""}`.trim())
+            .filter((x) => x.length > 0);
+        }
+        if (Array.isArray(opts.addresses)) {
+          networkTraceConfig.addresses = opts.addresses
+            .map((x) => `${x ?? ""}`.trim())
+            .filter((x) => x.length > 0);
+        }
+      }
+      ensureConatTraceListener();
+      return {
+        enabled: networkTraceConfig.enabled,
+        include_decoded: networkTraceConfig.include_decoded,
+        max_events: networkTraceConfig.max_events,
+        max_preview_chars: networkTraceConfig.max_preview_chars,
+        subject_prefixes: [...networkTraceConfig.subject_prefixes],
+        addresses: [...networkTraceConfig.addresses],
+        buffered: networkTraceEvents.length,
+        dropped: networkTraceDropped,
+        next_seq: networkTraceSeq,
+      };
+    },
+    listNetworkTrace: async (opts) => {
+      const after_seq = Number(opts?.after_seq ?? 0);
+      const limitRaw = Number(opts?.limit ?? 200);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.max(1, Math.min(MAX_NETWORK_TRACE_EVENTS, Math.floor(limitRaw)))
+        : 200;
+      const protocol = `${opts?.protocol ?? "conat"}`.trim().toLowerCase();
+      const direction = `${opts?.direction ?? ""}`.trim().toLowerCase();
+      const phases =
+        Array.isArray(opts?.phases) && opts?.phases.length > 0
+          ? new Set(opts.phases.map((x) => `${x ?? ""}`.trim()))
+          : undefined;
+      const subjectPrefix = `${opts?.subject_prefix ?? ""}`.trim();
+      const address = `${opts?.address ?? ""}`.trim();
+      const includeDecoded =
+        opts?.include_decoded == null
+          ? networkTraceConfig.include_decoded
+          : !!opts.include_decoded;
+      const filtered = networkTraceEvents.filter((event) => {
+        if (Number.isFinite(after_seq) && event.seq <= after_seq) {
+          return false;
+        }
+        if (protocol && event.protocol !== protocol) {
+          return false;
+        }
+        if (direction && event.direction !== direction) {
+          return false;
+        }
+        if (phases && !phases.has(`${event.phase ?? ""}`)) {
+          return false;
+        }
+        if (subjectPrefix && !`${event.subject ?? ""}`.startsWith(subjectPrefix)) {
+          return false;
+        }
+        if (address && `${event.address ?? ""}` !== address) {
+          return false;
+        }
+        return true;
+      });
+      const events = filtered
+        .slice(Math.max(0, filtered.length - limit))
+        .map((event) =>
+          includeDecoded
+            ? event
+            : ({
+                ...event,
+                decoded_preview: undefined,
+              }),
+        );
+      return {
+        events,
+        next_seq: networkTraceSeq,
+        dropped: networkTraceDropped,
+        total_buffered: networkTraceEvents.length,
+      };
+    },
+    clearNetworkTrace: async () => {
+      const cleared = networkTraceEvents.length;
+      networkTraceEvents.length = 0;
+      networkTraceDropped = 0;
+      return { ok: true, cleared, next_seq: networkTraceSeq };
+    },
     listRuntimeEvents: async (opts) => {
       const after_seq = Number(opts?.after_seq ?? 0);
       const limitRaw = Number(opts?.limit ?? 200);
@@ -4596,6 +4822,10 @@ export function createBrowserSessionAutomation({
       runtimeEvents.length = 0;
       runtimeEventSeq = 0;
       runtimeEventsDropped = 0;
+      networkTraceEvents.length = 0;
+      networkTraceSeq = 0;
+      networkTraceDropped = 0;
+      ensureConatTraceListener();
       closed = false;
       accountId = cleanAccountId;
       service = createBrowserSessionService({
@@ -4619,6 +4849,13 @@ export function createBrowserSessionAutomation({
       runtimeEvents.length = 0;
       runtimeEventSeq = 0;
       runtimeEventsDropped = 0;
+      networkTraceEvents.length = 0;
+      networkTraceSeq = 0;
+      networkTraceDropped = 0;
+      if (stopConatTraceListener) {
+        stopConatTraceListener();
+        stopConatTraceListener = undefined;
+      }
       await closeAllManagedSyncDocs();
       extensionsRuntime.clear();
       if (service) {

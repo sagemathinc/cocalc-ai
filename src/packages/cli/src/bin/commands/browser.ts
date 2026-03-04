@@ -35,6 +35,40 @@ import { durationToMs } from "../../core/utils";
 
 type BrowserSessionClient = {
   getExecApiDeclaration: () => Promise<string>;
+  configureNetworkTrace: (opts?: {
+    enabled?: boolean;
+    include_decoded?: boolean;
+    max_events?: number;
+    max_preview_chars?: number;
+    subject_prefixes?: string[];
+    addresses?: string[];
+  }) => Promise<{
+    enabled: boolean;
+    include_decoded: boolean;
+    max_events: number;
+    max_preview_chars: number;
+    subject_prefixes: string[];
+    addresses: string[];
+    buffered: number;
+    dropped: number;
+    next_seq: number;
+  }>;
+  listNetworkTrace: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    protocol?: BrowserNetworkTraceProtocol;
+    direction?: BrowserNetworkTraceDirection;
+    phases?: BrowserNetworkTracePhase[];
+    subject_prefix?: string;
+    address?: string;
+    include_decoded?: boolean;
+  }) => Promise<{
+    events: BrowserNetworkTraceEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
+  }>;
+  clearNetworkTrace: () => Promise<{ ok: true; cleared: number; next_seq: number }>;
   listRuntimeEvents: (opts?: {
     after_seq?: number;
     limit?: number;
@@ -131,6 +165,39 @@ type BrowserRuntimeEvent = {
   line?: number;
   column?: number;
   stack?: string;
+  url?: string;
+};
+
+type BrowserNetworkTraceProtocol = "conat";
+
+type BrowserNetworkTraceDirection = "send" | "recv";
+
+type BrowserNetworkTracePhase =
+  | "publish_chunk"
+  | "recv_chunk"
+  | "recv_message"
+  | "drop_chunk_seq"
+  | "drop_chunk_timeout";
+
+type BrowserNetworkTraceEvent = {
+  seq: number;
+  ts: string;
+  protocol: BrowserNetworkTraceProtocol;
+  direction: BrowserNetworkTraceDirection;
+  phase: BrowserNetworkTracePhase;
+  client_id?: string;
+  address?: string;
+  subject?: string;
+  chunk_id?: string;
+  chunk_seq?: number;
+  chunk_done?: boolean;
+  chunk_bytes?: number;
+  raw_bytes?: number;
+  encoding?: number;
+  headers?: Record<string, unknown>;
+  decoded_preview?: string;
+  decode_error?: string;
+  message?: string;
   url?: string;
 };
 
@@ -690,6 +757,51 @@ function parseRuntimeEventLevels(
   return out.length > 0 ? out : undefined;
 }
 
+function parseCsvStrings(value: unknown): string[] | undefined {
+  const clean = `${value ?? ""}`.trim();
+  if (!clean) return undefined;
+  const out = clean
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
+  return out.length > 0 ? out : undefined;
+}
+
+function parseNetworkDirection(
+  value: unknown,
+): BrowserNetworkTraceDirection | undefined {
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean) return undefined;
+  if (clean === "send" || clean === "recv") {
+    return clean;
+  }
+  throw new Error(`invalid --direction '${value}'; expected send|recv`);
+}
+
+function parseNetworkPhases(
+  value: unknown,
+): BrowserNetworkTracePhase[] | undefined {
+  const parts = parseCsvStrings(value);
+  if (!parts || parts.length === 0) return undefined;
+  const allowed = new Set<BrowserNetworkTracePhase>([
+    "publish_chunk",
+    "recv_chunk",
+    "recv_message",
+    "drop_chunk_seq",
+    "drop_chunk_timeout",
+  ]);
+  const out: BrowserNetworkTracePhase[] = [];
+  for (const part of parts) {
+    if (!allowed.has(part as BrowserNetworkTracePhase)) {
+      throw new Error(
+        `invalid --phase '${part}'; expected publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout`,
+      );
+    }
+    out.push(part as BrowserNetworkTracePhase);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function formatRuntimeEventLine(event: BrowserRuntimeEvent): string {
   const ts = `${event.ts ?? ""}`.trim() || nowIso();
   const level = `${event.level ?? "log"}`.toUpperCase();
@@ -706,6 +818,27 @@ function formatRuntimeEventLine(event: BrowserRuntimeEvent): string {
   }
   const source = sourceBits.length > 0 ? ` (${sourceBits.join(" ")})` : "";
   return `${ts} [${level}] [${kind}] ${event.message}${source}`;
+}
+
+function formatNetworkTraceLine(event: BrowserNetworkTraceEvent): string {
+  const ts = `${event.ts ?? ""}`.trim() || nowIso();
+  const direction = `${event.direction ?? "recv"}`.toUpperCase();
+  const phase = `${event.phase ?? ""}`.trim() || "unknown";
+  const address = `${event.address ?? ""}`.trim();
+  const subject = `${event.subject ?? ""}`.trim();
+  const chunk =
+    event.chunk_id || event.chunk_seq != null
+      ? ` chunk=${event.chunk_id ?? "?"}:${event.chunk_seq ?? "?"}${event.chunk_done ? ":done" : ""}`
+      : "";
+  const sizes = ` bytes=${event.chunk_bytes ?? 0}${
+    event.raw_bytes != null ? ` raw=${event.raw_bytes}` : ""
+  }`;
+  const addrTxt = address ? ` addr=${address}` : "";
+  const subjTxt = subject ? ` subj=${subject}` : "";
+  const msg = `${event.message ?? ""}`.trim();
+  const preview = `${event.decoded_preview ?? ""}`.trim();
+  const details = msg || preview ? ` ${msg || preview}` : "";
+  return `${ts} [${direction}] [${phase}]${addrTxt}${subjTxt}${chunk}${sizes}${details}`;
 }
 
 async function readScreenshotMeta(
@@ -2219,6 +2352,233 @@ export function registerBrowserCommand(
             return null;
           }
           return base;
+        });
+      },
+    );
+
+  const network = browser.command("network").description("network trace capture");
+
+  network
+    .command("trace")
+    .description("capture and tail browser network trace events (currently conat)")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option("--lines <n>", "number of events per fetch", "200")
+    .option("--since-seq <n>", "fetch events after this sequence number")
+    .option("--follow", "follow stream by polling for new events")
+    .option("--poll-ms <duration>", "poll interval for --follow", "1s")
+    .option("--timeout <duration>", "max follow time before returning")
+    .option(
+      "--direction <send|recv>",
+      "optional direction filter while reading events",
+    )
+    .option(
+      "--phase <csv>",
+      "optional phase filter: publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout",
+    )
+    .option("--subject-prefix <prefix>", "optional subject-prefix filter while reading")
+    .option("--address <address>", "optional address filter while reading")
+    .option(
+      "--subject-prefixes <csv>",
+      "configure capture-time subject prefix filters (comma-separated)",
+    )
+    .option(
+      "--addresses <csv>",
+      "configure capture-time address filters (comma-separated exact values)",
+    )
+    .option("--decoded", "include decoded payload preview")
+    .option("--disable", "disable network trace capture for this session")
+    .option("--clear", "clear buffered network trace events before reading")
+    .action(
+      async (
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          lines?: string;
+          sinceSeq?: string;
+          follow?: boolean;
+          pollMs?: string;
+          timeout?: string;
+          direction?: string;
+          phase?: string;
+          subjectPrefix?: string;
+          address?: string;
+          subjectPrefixes?: string;
+          addresses?: string;
+          decoded?: boolean;
+          disable?: boolean;
+          clear?: boolean;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser network trace", async (ctx) => {
+          const globals = deps.globalsFrom(command);
+          const wantsJson = !!globals.json || globals.output === "json";
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const lines = Number(opts.lines ?? "200");
+          if (!Number.isFinite(lines) || lines <= 0) {
+            throw new Error("--lines must be a positive integer");
+          }
+          const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
+          let afterSeq: number | undefined;
+          if (sinceSeqRaw) {
+            const parsed = Number(sinceSeqRaw);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+              throw new Error("--since-seq must be a non-negative integer");
+            }
+            afterSeq = Math.floor(parsed);
+          }
+          const follow = !!opts.follow;
+          const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
+          const timeoutMs = `${opts.timeout ?? ""}`.trim()
+            ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
+            : undefined;
+          const startedAt = Date.now();
+          const direction = parseNetworkDirection(opts.direction);
+          const phases = parseNetworkPhases(opts.phase);
+          const subjectPrefix = `${opts.subjectPrefix ?? ""}`.trim() || undefined;
+          const addressFilter = `${opts.address ?? ""}`.trim() || undefined;
+          const captureSubjectPrefixes = parseCsvStrings(opts.subjectPrefixes);
+          const captureAddresses = parseCsvStrings(opts.addresses);
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
+          }) as BrowserSessionClient;
+          if (opts.clear) {
+            await browserClient.clearNetworkTrace();
+          }
+          const config = await browserClient.configureNetworkTrace({
+            enabled: !opts.disable,
+            include_decoded: !!opts.decoded,
+            ...(captureSubjectPrefixes ? { subject_prefixes: captureSubjectPrefixes } : {}),
+            ...(captureAddresses ? { addresses: captureAddresses } : {}),
+          });
+          if (opts.disable) {
+            return {
+              browser_id: sessionInfo.browser_id,
+              action: "disabled",
+              config,
+              ...sessionTargetContext(ctx, sessionInfo),
+            };
+          }
+          let printed = 0;
+          let latestDropped = 0;
+          let latestBuffered = 0;
+          let allEvents: BrowserNetworkTraceEvent[] = [];
+          const emitEvents = (events: BrowserNetworkTraceEvent[]) => {
+            if (events.length === 0) return;
+            if (wantsJson && follow) {
+              for (const event of events) {
+                process.stdout.write(`${JSON.stringify(event)}\n`);
+              }
+              return;
+            }
+            if (!wantsJson) {
+              for (const event of events) {
+                process.stdout.write(`${formatNetworkTraceLine(event)}\n`);
+              }
+            }
+          };
+          for (;;) {
+            const result = await browserClient.listNetworkTrace({
+              ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+              limit: Math.min(50_000, Math.max(1, Math.floor(lines))),
+              protocol: "conat",
+              ...(direction ? { direction } : {}),
+              ...(phases ? { phases } : {}),
+              ...(subjectPrefix ? { subject_prefix: subjectPrefix } : {}),
+              ...(addressFilter ? { address: addressFilter } : {}),
+              include_decoded: !!opts.decoded,
+            });
+            const events = Array.isArray(result?.events) ? result.events : [];
+            latestDropped = Number(result?.dropped ?? latestDropped);
+            latestBuffered = Number(result?.total_buffered ?? latestBuffered);
+            emitEvents(events);
+            printed += events.length;
+            allEvents = allEvents.concat(events);
+            afterSeq = Number(result?.next_seq ?? afterSeq ?? 0);
+            if (!follow) {
+              break;
+            }
+            if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
+              break;
+            }
+            await sleep(pollMs);
+          }
+          const base = {
+            browser_id: sessionInfo.browser_id,
+            printed,
+            next_seq: afterSeq ?? 0,
+            dropped: latestDropped,
+            total_buffered: latestBuffered,
+            config,
+            ...sessionTargetContext(ctx, sessionInfo),
+          };
+          if (wantsJson && !follow) {
+            return { ...base, events: allEvents };
+          }
+          if (wantsJson && follow) {
+            return null;
+          }
+          return base;
+        });
+      },
+    );
+
+  network
+    .command("clear")
+    .description("clear buffered browser network trace events")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open workspace/project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .action(
+      async (
+        opts: { browser?: string; sessionProjectId?: string; activeOnly?: boolean },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser network clear", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          }) as BrowserSessionClient;
+          const cleared = await browserClient.clearNetworkTrace();
+          return {
+            browser_id: sessionInfo.browser_id,
+            ...cleared,
+            ...sessionTargetContext(ctx, sessionInfo),
+          };
         });
       },
     );
