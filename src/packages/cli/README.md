@@ -184,6 +184,8 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `host issue-http-token`
 - `admin user create`
 - `admin user issue-auth-token`
+- `org token create`
+- `org token expire`
 - `workspace proxy url`
 - `workspace proxy curl`
 - `op list`

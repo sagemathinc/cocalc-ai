@@ -116,6 +116,7 @@ import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
 import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon";
 import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
 import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
+import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1896,6 +1897,12 @@ const accountCommandDeps = {
 } satisfies AccountCommandDeps;
 
 registerAccountCommand(program, accountCommandDeps);
+
+const orgCommandDeps = {
+  withContext,
+} satisfies OrgCommandDeps;
+
+registerOrgCommand(program, orgCommandDeps);
 
 const browserCommandDeps = {
   withContext,
