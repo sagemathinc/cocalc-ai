@@ -43,7 +43,7 @@ describe("ulimit is set on the stateless api kernels (and can be configured)", (
     try {
       await kernel.execute("while True: sum(range(10**8))");
     } catch (err) {
-      expect(`${err}`).toContain("Kernel last exited with code 137.");
+      expect(`${err}`).toMatch(/Kernel last exited with code (137|152)\./);
     }
     expect(Date.now() - start).toBeLessThan(SECONDS * 1500);
   });

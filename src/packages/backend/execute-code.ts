@@ -39,6 +39,7 @@ import {
   type ExecuteCodeOptionsWithCallback,
   type ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
+import type { Processes } from "@cocalc/util/types/project-info/types";
 import { envForSpawn } from "./misc";
 import { trackProcessRoot } from "./process-tracker";
 import { ProcessStats, sumChildren } from "./process-stats";
@@ -408,7 +409,7 @@ function doSpawn(
 
     while (true) {
       if (callback_done) return;
-      let procs;
+      let procs: Processes;
       try {
         ({ procs } = await monitor.processes(Date.now()));
       } catch (err) {
