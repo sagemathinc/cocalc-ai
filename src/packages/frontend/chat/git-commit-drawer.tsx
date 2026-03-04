@@ -529,6 +529,15 @@ function DiffBlock({
   const commentFontFamily =
     'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
   const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
+  const lineNumberWidth = useMemo(() => {
+    const maxLine = lineMetas.reduce((max, meta) => {
+      const oldVal = typeof meta.oldLineNumber === "number" ? meta.oldLineNumber : 0;
+      const newVal = typeof meta.newLineNumber === "number" ? meta.newLineNumber : 0;
+      return Math.max(max, oldVal, newVal);
+    }, 0);
+    const digits = Math.max(1, `${Math.floor(maxLine)}`.length);
+    return Math.max(36, digits * 8 + 12);
+  }, [lineMetas]);
   const highlightedByLine = useMemo(
     () => highlightPrismLines(lineMetas, languageHint),
     [lineMetas, languageHint],
@@ -674,9 +683,13 @@ function DiffBlock({
               <div
                 style={{
                   color: COLORS.GRAY_D,
-                  minWidth: 32,
+                  width: lineNumberWidth,
+                  minWidth: lineNumberWidth,
+                  maxWidth: lineNumberWidth,
                   textAlign: "right",
                   userSelect: "none",
+                  fontFamily: "monospace",
+                  fontVariantNumeric: "tabular-nums",
                 }}
               >
                 {meta.oldLineNumber ?? ""}
@@ -684,9 +697,13 @@ function DiffBlock({
               <div
                 style={{
                   color: COLORS.GRAY_D,
-                  minWidth: 32,
+                  width: lineNumberWidth,
+                  minWidth: lineNumberWidth,
+                  maxWidth: lineNumberWidth,
                   textAlign: "right",
                   userSelect: "none",
+                  fontFamily: "monospace",
+                  fontVariantNumeric: "tabular-nums",
                 }}
               >
                 {meta.newLineNumber ?? ""}
