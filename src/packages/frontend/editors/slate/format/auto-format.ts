@@ -1046,6 +1046,18 @@ function markdownAutoformatAt(
   text = text.slice(start + 1).trim();
   if (text.length == 0) return false;
 
+  // If a potential block marker is immediately followed by text (e.g. "#bar",
+  // "-x"), do not autoformat. Let the typed space be inserted normally so we
+  // preserve the user's exact input and avoid split-node duplication/loss.
+  if (
+    path.length >= 2 &&
+    pos === 0 &&
+    start <= 0 &&
+    /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)\S/.test(text)
+  ) {
+    return false;
+  }
+
   let allowBlockAutoformatFromSplitMarker = false;
 
   // If we're at the start of a paragraph and doing a block-level autoformat
@@ -1063,17 +1075,18 @@ function markdownAutoformatAt(
         const [, paragraphPath] = paragraphEntry;
         return Editor.string(editor, paragraphPath).trimRight();
       })();
-    const markerOnlyHere = /^([-*+]|\d+[.)])\s*$/.test(text);
-    const paragraphStartsWithMarker = /^([-*+]|\d+[.)])/.test(paragraphText);
-    const useFullParagraph =
-      pos === 0 || (markerOnlyHere && paragraphStartsWithMarker);
+    const markerOnlyHere = /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)\s*$/.test(text);
+    const paragraphStartsWithMarker = /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)/.test(
+      paragraphText,
+    );
+    const useFullParagraph = markerOnlyHere && paragraphStartsWithMarker;
     if (useFullParagraph && paragraphText.length > 0) {
       text = paragraphText;
       allowBlockAutoformatFromSplitMarker = pos > 0 && markerOnlyHere;
       // If a list marker was typed without a space (e.g., "-foo") and
       // the autoformat is triggered by the space key, insert the missing
-      // space so markdown parsing recognizes the list.
-      const markerMatch = text.match(/^([-*+]|\d+[.)])(?=\S)/);
+      // space so markdown parsing recognizes the block marker.
+      const markerMatch = text.match(/^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)(?=\S)/);
       if (markerMatch) {
         const marker = markerMatch[1];
         text = marker + " " + text.slice(marker.length);
