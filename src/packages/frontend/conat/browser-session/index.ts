@@ -58,6 +58,7 @@ import {
 } from "./project-open-helpers";
 import { createManagedSyncDocLeases } from "./syncdoc-leases";
 import { createBrowserExecOperations } from "./exec-operations";
+import { createBrowserSessionHeartbeat } from "./session-heartbeat";
 import {
   type BrowserExecApi,
   type BrowserExecOutput,
@@ -126,13 +127,16 @@ export function createBrowserSessionAutomation({
   conat: () => ConatClient;
 }): BrowserSessionAutomation {
   let service: ConatService | undefined;
-  let accountId: string | undefined;
-  let timer: NodeJS.Timeout | undefined;
-  let closed = false;
-  let inFlight: Promise<void> | undefined;
   const runtimeObservability = createBrowserRuntimeObservability();
   const syncDocLeases = createManagedSyncDocLeases({ conat });
   const extensionsRuntime = new BrowserExtensionsRuntime();
+  const heartbeatController = createBrowserSessionHeartbeat({
+    hub,
+    getSnapshot: () => buildSessionSnapshot(client),
+    intervalMs: HEARTBEAT_INTERVAL_MS,
+    retryMs: HEARTBEAT_RETRY_MS,
+    onWarn: (message) => console.warn(message),
+  });
 
   const assertExecNotCanceled = (isCanceled?: () => boolean) => {
     if (isCanceled?.()) {
@@ -1478,48 +1482,6 @@ export function createBrowserSessionAutomation({
     return await executeBrowserScriptRaw({ project_id, code, isCanceled });
   };
 
-  const clearTimer = () => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
-
-  const heartbeat = async () => {
-    if (closed || !accountId) return;
-    if (inFlight) {
-      await inFlight;
-      return;
-    }
-    inFlight = (async () => {
-      const snapshot = buildSessionSnapshot(client);
-      await hub.system.upsertBrowserSession({
-        browser_id: snapshot.browser_id,
-        session_name: snapshot.session_name,
-        url: snapshot.url,
-        active_project_id: snapshot.active_project_id,
-        open_projects: snapshot.open_projects,
-      });
-    })().finally(() => {
-      inFlight = undefined;
-    });
-    await inFlight;
-  };
-
-  const scheduleHeartbeat = (delayMs = HEARTBEAT_INTERVAL_MS) => {
-    if (closed || !accountId) return;
-    clearTimer();
-    timer = setTimeout(async () => {
-      try {
-        await heartbeat();
-        scheduleHeartbeat(HEARTBEAT_INTERVAL_MS);
-      } catch (err) {
-        console.warn(`browser-session heartbeat failed: ${err}`);
-        scheduleHeartbeat(HEARTBEAT_RETRY_MS);
-      }
-    }, delayMs);
-  };
-
   const execOperations = createBrowserExecOperations({
     maxExecOps: MAX_EXEC_OPS,
     execOpTtlMs: EXEC_OP_TTL_MS,
@@ -1610,8 +1572,8 @@ export function createBrowserSessionAutomation({
     start: async (nextAccountId: string) => {
       const cleanAccountId = `${nextAccountId ?? ""}`.trim();
       if (!cleanAccountId) return;
-      if (accountId === cleanAccountId && service) {
-        scheduleHeartbeat(0);
+      if (heartbeatController.getAccountId() === cleanAccountId && service) {
+        heartbeatController.schedule(0);
         return;
       }
       await Promise.resolve().then(async () => {
@@ -1624,8 +1586,7 @@ export function createBrowserSessionAutomation({
       });
       runtimeObservability.reset();
       runtimeObservability.onStart();
-      closed = false;
-      accountId = cleanAccountId;
+      heartbeatController.activate(cleanAccountId);
       service = createBrowserSessionService({
         account_id: cleanAccountId,
         browser_id: client.browser_id,
@@ -1633,16 +1594,15 @@ export function createBrowserSessionAutomation({
         impl,
       });
       try {
-        await heartbeat();
+        await heartbeatController.heartbeat();
       } catch (err) {
         console.warn(`browser-session initial heartbeat failed: ${err}`);
       }
-      scheduleHeartbeat(HEARTBEAT_INTERVAL_MS);
+      heartbeatController.schedule(HEARTBEAT_INTERVAL_MS);
     },
 
     stop: async () => {
-      closed = true;
-      clearTimer();
+      const currentAccountId = heartbeatController.deactivate();
       execOperations.clearExecs();
       runtimeObservability.reset();
       runtimeObservability.stop();
@@ -1652,8 +1612,6 @@ export function createBrowserSessionAutomation({
         service.close();
         service = undefined;
       }
-      const currentAccountId = accountId;
-      accountId = undefined;
       if (!currentAccountId) return;
       try {
         await hub.system.removeBrowserSession({
