@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readFileSync, unlinkSync } from "node:fs";
+import { chmod, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -41,8 +42,9 @@ type CloudflaredState = {
   tunnel: CloudflareTunnel;
   configPath: string;
   credentialsPath: string;
-  child: ChildProcessWithoutNullStreams;
   origin: string;
+  pid: number;
+  pidFile: string;
   error?: string;
 };
 let cloudflaredState: CloudflaredState | null = null;
@@ -702,6 +704,78 @@ async function resolveCloudflaredBinary(): Promise<string | null> {
   return await which("cloudflared");
 }
 
+function cloudflaredStateDir(): string {
+  const configured = clean(process.env.COCALC_LAUNCHPAD_CLOUDFLARED_STATE_DIR);
+  return configured ?? join(secrets, "launchpad-cloudflare");
+}
+
+function cloudflaredPidFilePath(): string {
+  const configured = clean(process.env.COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE);
+  return configured ?? join(cloudflaredStateDir(), "cloudflared.pid");
+}
+
+function parsePid(raw: string): number | undefined {
+  const text = `${raw ?? ""}`.trim();
+  if (!/^\d+$/.test(text)) {
+    return undefined;
+  }
+  const pid = Number(text);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+function isPidRunning(pid?: number): boolean {
+  if (!(pid && Number.isInteger(pid) && pid > 0)) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readPidFile(path: string): Promise<number | undefined> {
+  if (!(await fileExists(path))) {
+    return undefined;
+  }
+  try {
+    return parsePid(await readFile(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function readPidFileSync(path: string): number | undefined {
+  try {
+    return parsePid(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+async function writePidFile(path: string, pid: number): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${pid}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
+}
+
+async function clearPidFile(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch {
+    // ignore
+  }
+}
+
+function clearPidFileSync(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // ignore
+  }
+}
+
 function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   const config = getLaunchpadLocalConfig("local");
   const httpPort = config.http_port;
@@ -823,10 +897,15 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     return null;
   }
   if (cloudflaredState) {
-    logger.info("cloudflare tunnel already running", {
-      hostname: cloudflaredState.tunnel.hostname,
-    });
-    return cloudflaredState;
+    if (!isPidRunning(cloudflaredState.pid)) {
+      cloudflaredState = null;
+    } else {
+      logger.info("cloudflare tunnel already running", {
+        hostname: cloudflaredState.tunnel.hostname,
+        pid: cloudflaredState.pid,
+      });
+      return cloudflaredState;
+    }
   }
   const cloudflaredBin = await resolveCloudflaredBinary();
   if (!cloudflaredBin) {
@@ -837,11 +916,12 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     return null;
   }
 
-  const cfDir = join(secrets, "launchpad-cloudflare");
+  const cfDir = cloudflaredStateDir();
   await mkdir(cfDir, { recursive: true });
   const tunnelPath = join(cfDir, "tunnel.json");
   const credentialsPath = join(cfDir, "credentials.json");
   const configPath = join(cfDir, "config.yml");
+  const pidPath = cloudflaredPidFilePath();
 
   let tunnel: CloudflareTunnel | undefined;
   try {
@@ -873,28 +953,51 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     noTLSVerify,
   });
 
+  const persistedPid = await readPidFile(pidPath);
+  if (isPidRunning(persistedPid)) {
+    logger.info("cloudflare tunnel already running", {
+      hostname: tunnel.hostname,
+      pid: persistedPid,
+    });
+    cloudflaredState = {
+      tunnel,
+      configPath,
+      credentialsPath,
+      origin,
+      pid: persistedPid as number,
+      pidFile: pidPath,
+    };
+    return cloudflaredState;
+  }
+  if (persistedPid) {
+    await clearPidFile(pidPath);
+  }
   const args = ["tunnel", "--no-autoupdate", "--config", configPath, "run"];
   logger.info("starting cloudflared", { hostname: tunnel.hostname, origin });
-  const child = spawn(cloudflaredBin, args, { env: process.env });
-  child.stderr.on("data", (chunk) => {
-    logger.debug(chunk.toString());
+  const child = spawn(cloudflaredBin, args, {
+    env: process.env,
+    detached: true,
+    stdio: "ignore",
   });
-  child.stdout.on("data", (chunk) => {
-    logger.debug(chunk.toString());
-  });
-  child.on("exit", (code, signal) => {
-    cloudflaredLastError = `cloudflared exited (code=${code}, signal=${signal})`;
-    logger.error("cloudflared exited", { code, signal });
-    cloudflaredState = null;
-  });
+  if (!(child.pid && Number.isInteger(child.pid) && child.pid > 0)) {
+    cloudflaredLastError = "failed to start cloudflared (missing child pid)";
+    logger.error(cloudflaredLastError);
+    return null;
+  }
+  child.unref();
+  await writePidFile(pidPath, child.pid);
   cloudflaredState = {
     tunnel,
     configPath,
     credentialsPath,
-    child,
     origin,
+    pid: child.pid,
+    pidFile: pidPath,
   };
-  logger.info("cloudflare tunnel started", { hostname: tunnel.hostname });
+  logger.info("cloudflare tunnel started", {
+    hostname: tunnel.hostname,
+    pid: child.pid,
+  });
   console.log(
     `Cloudflare tunnel is live: https://${tunnel.hostname} (public access enabled)`,
   );
@@ -909,9 +1012,20 @@ export async function getLaunchpadCloudflaredStatus(): Promise<{
 }> {
   const settings = await getServerSettings();
   const enabled = cloudflareSelfMode(settings);
-  const running =
-    cloudflaredState?.child?.exitCode == null && cloudflaredState != null;
-  const hostname = cloudflaredState?.tunnel?.hostname;
+  const pidPath = cloudflaredPidFilePath();
+  const pid = cloudflaredState?.pid ?? (await readPidFile(pidPath));
+  const running = isPidRunning(pid);
+  if (cloudflaredState && !running) {
+    cloudflaredState = null;
+    await clearPidFile(pidPath);
+  }
+  let hostname = cloudflaredState?.tunnel?.hostname;
+  if (!hostname) {
+    const tunnel = await loadCloudflaredStateFile(
+      join(cloudflaredStateDir(), "tunnel.json"),
+    );
+    hostname = tunnel?.hostname;
+  }
   const error =
     cloudflaredLastError ?? (enabled && !running
       ? "Cloudflare tunnel is not running."
@@ -939,11 +1053,6 @@ export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
 }
 
 export function stopLaunchpadOnPremServices(): void {
-  if (!sshdState) {
-    if (!restServerState) {
-      return;
-    }
-  }
   if (sshdState) {
     const { child, refreshTimer } = sshdState;
     if (refreshTimer) {
@@ -961,9 +1070,26 @@ export function stopLaunchpadOnPremServices(): void {
     restServerState = null;
   }
   if (cloudflaredState) {
-    if (cloudflaredState.child.exitCode == null) {
-      cloudflaredState.child.kill("SIGTERM");
+    if (isPidRunning(cloudflaredState.pid)) {
+      try {
+        process.kill(cloudflaredState.pid, "SIGTERM");
+      } catch {
+        // ignore
+      }
     }
+    clearPidFileSync(cloudflaredState.pidFile);
     cloudflaredState = null;
+    return;
   }
+
+  const pidPath = cloudflaredPidFilePath();
+  const pid = readPidFileSync(pidPath);
+  if (isPidRunning(pid)) {
+    try {
+      process.kill(pid as number, "SIGTERM");
+    } catch {
+      // ignore
+    }
+  }
+  clearPidFileSync(pidPath);
 }
