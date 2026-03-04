@@ -251,6 +251,14 @@ function needsBackup(row: HostProjectRow): BackupCandidate | undefined {
   return undefined;
 }
 
+function isMissingProjectVolumeError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    text.includes("project volume does not exist") ||
+    text.includes("no such btrfs subvolume")
+  );
+}
+
 async function createProjectBackupOp({
   project_id,
   account_id,
@@ -355,14 +363,16 @@ async function ensureHostBackups({
   const total = candidates.length;
   let completed = 0;
   let failed = 0;
+  let skippedMissingVolume = 0;
 
   const updateProgress = async () => {
-    const done = completed + failed;
+    const done = completed + failed + skippedMissingVolume;
     const progress = total
       ? Math.round((done / total) * BACKUP_PROGRESS_MAX)
       : 0;
-    const skippedNote = skippedUnprovisioned
-      ? ` (skipped ${skippedUnprovisioned})`
+    const skippedTotal = skippedUnprovisioned + skippedMissingVolume;
+    const skippedNote = skippedTotal
+      ? ` (skipped ${skippedTotal})`
       : "";
     await progressStep(
       "backups",
@@ -375,6 +385,7 @@ async function ensureHostBackups({
         total,
         completed,
         failed,
+        skipped_missing_volume: skippedMissingVolume,
         skipped_unprovisioned: skippedUnprovisioned,
       },
       progress,
@@ -412,6 +423,15 @@ async function ensureHostBackups({
         }
         completed += 1;
       } catch (err) {
+        if (isMissingProjectVolumeError(err)) {
+          skippedMissingVolume += 1;
+          logger.warn("skipping backup due to missing project volume", {
+            host_id,
+            project_id: next.project_id,
+            err: `${err}`,
+          });
+          continue;
+        }
         failed += 1;
         abortError = err as Error;
         throw err;
