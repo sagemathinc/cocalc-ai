@@ -167,7 +167,7 @@ export const SPEC = {
   },
   rustic: {
     // See https://github.com/rustic-rs/rustic/releases
-    VERSION: "v0.10.3",
+    VERSION: "v0.11.0",
     getVersion: "rustic --version",
     BASE: "https://github.com/rustic-rs/rustic/releases/download",
     binary: "rustic",
