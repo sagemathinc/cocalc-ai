@@ -18,7 +18,7 @@ import {
   getAppSpec,
   listAppSpecs,
   type AppSpecRecord,
-  upsertAppSpec,
+  upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
 
 const logger = getLogger("app-servers:control");
@@ -38,6 +38,12 @@ interface RunningApp {
 }
 
 const children: Record<string, RunningApp> = Object.create(null);
+let routeCache:
+  | {
+      at: number;
+      specs: AppServiceSpec[];
+    }
+  | undefined;
 
 export interface AppStatus {
   id: string;
@@ -59,6 +65,10 @@ export interface AppStatus {
 
 function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
+}
+
+function invalidateRouteCache(): void {
+  routeCache = undefined;
 }
 
 function assertServiceSpec(spec: AppSpec): AppServiceSpec {
@@ -332,7 +342,17 @@ export async function listAppStatuses(): Promise<AppStatus[]> {
   return out;
 }
 
-export { getAppSpec, listAppSpecs, upsertAppSpec };
+export { getAppSpec, listAppSpecs };
+
+export async function upsertAppSpec(spec: unknown): Promise<{
+  id: string;
+  path: string;
+  spec: AppSpec;
+}> {
+  const saved = await upsertAppSpecRaw(spec);
+  invalidateRouteCache();
+  return saved;
+}
 
 export async function deleteApp(id: string): Promise<{ id: string; deleted: boolean; path: string }> {
   try {
@@ -341,7 +361,71 @@ export async function deleteApp(id: string): Promise<{ id: string; deleted: bool
     // keep delete behavior robust
   }
   clearChild(id);
-  return await deleteAppSpec(id);
+  const result = await deleteAppSpec(id);
+  invalidateRouteCache();
+  return result;
+}
+
+function normalizePrefix(value: string): string {
+  const withLeading = value.startsWith("/") ? value : `/${value}`;
+  return withLeading.replace(/\/+$/, "") || "/";
+}
+
+async function serviceSpecsForRouting(): Promise<AppServiceSpec[]> {
+  const now = Date.now();
+  if (routeCache && now - routeCache.at < 1000) {
+    return routeCache.specs;
+  }
+  const rows = await listAppSpecs();
+  const specs = rows
+    .map((row) => row.spec)
+    .filter((spec): spec is AppServiceSpec => !!spec && spec.kind === "service");
+  routeCache = { at: now, specs };
+  return specs;
+}
+
+export async function resolveAppProxyTarget({
+  base,
+  url,
+}: {
+  base: string;
+  url: string;
+}): Promise<
+  | {
+      app_id: string;
+      port: number;
+      rewritePath?: string;
+    }
+  | undefined
+> {
+  const specs = await serviceSpecsForRouting();
+  const basePrefix = normalizePrefix(base);
+  for (const spec of specs) {
+    const localPrefix = normalizePrefix(spec.proxy.base_path);
+    const fullPrefix = normalizePrefix(`${basePrefix}${localPrefix}`);
+    if (!(url === fullPrefix || url.startsWith(`${fullPrefix}/`))) {
+      continue;
+    }
+    const startupTimeout = Math.max(
+      1_000,
+      (spec.wake.startup_timeout_s || 120) * 1000,
+    );
+    const status = spec.wake.enabled
+      ? await ensureRunning(spec.id, { timeout: startupTimeout, interval: 500 })
+      : await statusApp(spec.id);
+    if (status.state !== "running" || !status.port) {
+      throw new Error(`app '${spec.id}' is not running`);
+    }
+    const suffix =
+      url.length > fullPrefix.length ? url.slice(fullPrefix.length) : "";
+    const rewritePath = spec.proxy.strip_prefix ? suffix || "/" : undefined;
+    return {
+      app_id: spec.id,
+      port: status.port,
+      rewritePath,
+    };
+  }
+  return undefined;
 }
 
 function closeAll() {
