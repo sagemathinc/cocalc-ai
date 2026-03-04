@@ -65,6 +65,9 @@ type DaemonRequest = {
   selector?: string;
   wait_for_idle_ms?: number;
   timeout_ms?: number;
+  full_page?: boolean;
+  viewport_width?: number;
+  viewport_height?: number;
 };
 
 type DaemonResponse =
@@ -351,9 +354,31 @@ async function main(): Promise<void> {
         Number.isFinite(waitForIdleRaw) && waitForIdleRaw > 0
           ? Math.floor(waitForIdleRaw)
           : 0;
+      const fullPage = request.full_page === true;
+      const viewportWidthRaw = Number(request.viewport_width ?? 0);
+      const viewportHeightRaw = Number(request.viewport_height ?? 0);
+      const viewportWidth =
+        Number.isFinite(viewportWidthRaw) && viewportWidthRaw > 0
+          ? Math.floor(viewportWidthRaw)
+          : undefined;
+      const viewportHeight =
+        Number.isFinite(viewportHeightRaw) && viewportHeightRaw > 0
+          ? Math.floor(viewportHeightRaw)
+          : undefined;
+      if ((viewportWidth == null) !== (viewportHeight == null)) {
+        throw new Error("viewport_width and viewport_height must be provided together");
+      }
+      if (viewportWidth != null && viewportHeight != null) {
+        await page.setViewportSize({
+          width: viewportWidth,
+          height: viewportHeight,
+        });
+      }
       const waitForIdleTimedOut = await waitForDomIdle(page, waitForIdleMs);
       const locator = page.locator(selector).first();
-      await locator.waitFor({ state: "visible", timeout: timeoutMs });
+      if (!fullPage) {
+        await locator.waitFor({ state: "visible", timeout: timeoutMs });
+      }
       const captureMeta = (await page.evaluate((sel) => {
         const root = document.querySelector(sel);
         if (!root) {
@@ -386,16 +411,23 @@ async function main(): Promise<void> {
         scroll_x: number;
         scroll_y: number;
       };
-      const pngBuffer = (await locator.screenshot({
-        type: "png",
-        timeout: timeoutMs,
-      })) as Buffer;
+      const pngBuffer = (await (fullPage
+        ? page.screenshot({
+            type: "png",
+            timeout: timeoutMs,
+            fullPage: true,
+          })
+        : locator.screenshot({
+            type: "png",
+            timeout: timeoutMs,
+          }))) as Buffer;
       const dims = parsePngDimensions(pngBuffer);
       const captured_at = nowIso();
       const captureScale = Number(captureMeta.device_pixel_ratio || 1);
       const result = {
         ok: true,
         selector,
+        full_page: fullPage,
         width: Number(dims?.width ?? 0),
         height: Number(dims?.height ?? 0),
         page_url: captureMeta.page_url,
