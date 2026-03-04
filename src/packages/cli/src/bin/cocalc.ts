@@ -1883,6 +1883,9 @@ registerOpCommand(program, opCommandDeps);
 
 const adminCommandDeps = {
   withContext,
+  resolveAccountByIdentifier,
+  normalizeUrl,
+  isValidUUID,
 } satisfies AdminCommandDeps;
 
 registerAdminCommand(program, adminCommandDeps);
