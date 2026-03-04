@@ -179,13 +179,26 @@ export class Session {
     if (this.pty == null) {
       return;
     }
+    if (process.platform !== "linux") {
+      return;
+    }
     // we reply with the current working directory of the underlying terminal process,
     // which is why we use readlink and proc below.
     const pid = this.pty.pid;
     // [hsy/dev] wrapping in realpath, because I had the odd case, where the project's
     // home included a symlink, hence the "startsWith" below didn't remove the home dir.
-    const home = await realpath(this.getHome());
-    const cwd = await readlink(`/proc/${pid}/cwd`);
+    let home = this.getHome();
+    try {
+      home = await realpath(home);
+    } catch {
+      // keep original HOME if realpath fails
+    }
+    let cwd: string;
+    try {
+      cwd = await readlink(`/proc/${pid}/cwd`);
+    } catch {
+      return;
+    }
     // try to send back a relative path, because the webapp does not
     // understand absolute paths
     const path = cwd.startsWith(home) ? cwd.slice(home.length + 1) : cwd;
