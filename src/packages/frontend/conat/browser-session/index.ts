@@ -57,6 +57,7 @@ import {
   openFileInProject,
 } from "./project-open-helpers";
 import { createManagedSyncDocLeases } from "./syncdoc-leases";
+import { createBrowserExecOperations } from "./exec-operations";
 import {
   type BrowserExecApi,
   type BrowserExecOutput,
@@ -78,9 +79,7 @@ import {
   type BrowserAtomicActionRequest,
   type BrowserActionName,
   type BrowserActionResult,
-  type BrowserAutomationPosture,
   type BrowserExecPolicyV1,
-  type BrowserExecOperation,
   type BrowserOpenFileInfo,
   type BrowserSessionServiceApi,
 } from "@cocalc/conat/service/browser-session";
@@ -117,13 +116,6 @@ export type BrowserSessionAutomation = {
 };
 
 
-type BrowserExecPendingOperation = BrowserExecOperation & {
-  code: string;
-  posture: BrowserAutomationPosture;
-  mode: BrowserExecMode;
-  policy?: BrowserExecPolicyV1;
-};
-
 export function createBrowserSessionAutomation({
   client,
   hub,
@@ -138,46 +130,9 @@ export function createBrowserSessionAutomation({
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
   let inFlight: Promise<void> | undefined;
-  const execOps = new Map<
-    string,
-    BrowserExecPendingOperation
-  >();
   const runtimeObservability = createBrowserRuntimeObservability();
   const syncDocLeases = createManagedSyncDocLeases({ conat });
   const extensionsRuntime = new BrowserExtensionsRuntime();
-
-  const pruneExecOps = () => {
-    const now = Date.now();
-    for (const [exec_id, op] of execOps.entries()) {
-      if (
-        op.finished_at != null &&
-        now - new Date(op.finished_at).getTime() > EXEC_OP_TTL_MS
-      ) {
-        execOps.delete(exec_id);
-      }
-    }
-    if (execOps.size <= MAX_EXEC_OPS) return;
-    const ordered = [...execOps.values()].sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-    );
-    for (const op of ordered) {
-      if (execOps.size <= MAX_EXEC_OPS) break;
-      execOps.delete(op.exec_id);
-    }
-  };
-
-  const getExecOp = (exec_id: string): BrowserExecPendingOperation => {
-    const clean = `${exec_id ?? ""}`.trim();
-    if (!clean) {
-      throw Error("exec_id must be specified");
-    }
-    const op = execOps.get(clean);
-    if (!op) {
-      throw Error(`exec operation '${clean}' not found`);
-    }
-    return op;
-  };
 
   const assertExecNotCanceled = (isCanceled?: () => boolean) => {
     if (isCanceled?.()) {
@@ -1565,66 +1520,14 @@ export function createBrowserSessionAutomation({
     }, delayMs);
   };
 
-  const toPublicExecOp = (op: BrowserExecPendingOperation): BrowserExecOperation => {
-    const {
-      exec_id,
-      project_id,
-      status,
-      created_at,
-      started_at,
-      finished_at,
-      cancel_requested,
-      error,
-      result,
-    } = op;
-    return {
-      exec_id,
-      project_id,
-      status,
-      created_at,
-      ...(started_at ? { started_at } : {}),
-      ...(finished_at ? { finished_at } : {}),
-      ...(cancel_requested ? { cancel_requested } : {}),
-      ...(error ? { error } : {}),
-      ...(result !== undefined ? { result } : {}),
-    };
-  };
-
-  const runExecOperation = async (op: BrowserExecPendingOperation) => {
-    if (op.status !== "pending") return;
-    op.status = "running";
-    op.started_at = new Date().toISOString();
-    try {
-      const result = await executeBrowserScript({
-        project_id: op.project_id,
-        code: op.code,
-        mode: op.mode,
-        policy: op.policy,
-        isCanceled: () => !!op.cancel_requested,
-      });
-      if (op.cancel_requested) {
-        op.status = "canceled";
-        delete op.result;
-      } else {
-        op.status = "succeeded";
-        op.result = result;
-      }
-      delete op.error;
-    } catch (err) {
-      if (op.cancel_requested) {
-        op.status = "canceled";
-        delete op.result;
-        delete op.error;
-      } else {
-        op.status = "failed";
-        op.error = `${err}`;
-        delete op.result;
-      }
-    } finally {
-      op.finished_at = new Date().toISOString();
-      pruneExecOps();
-    }
-  };
+  const execOperations = createBrowserExecOperations({
+    maxExecOps: MAX_EXEC_OPS,
+    execOpTtlMs: EXEC_OP_TTL_MS,
+    maxExecCodeLength: MAX_EXEC_CODE_LENGTH,
+    createExecId,
+    resolveExecMode,
+    executeBrowserScript,
+  });
 
   const impl: BrowserSessionServiceApi = {
     getExecApiDeclaration: async () => BROWSER_EXEC_API_DECLARATION,
@@ -1696,51 +1599,11 @@ export function createBrowserSessionAutomation({
         result: await executeBrowserAction({ project_id, action }),
       };
     },
-    startExec: async ({ project_id, code, posture, policy }) => {
-      const script = `${code ?? ""}`;
-      if (!script.trim()) {
-        throw Error("code must be specified");
-      }
-      if (script.length > MAX_EXEC_CODE_LENGTH) {
-        throw Error(
-          `code is too long (${script.length} chars); max ${MAX_EXEC_CODE_LENGTH}`,
-        );
-      }
-      if (!isValidUUID(project_id)) {
-        throw Error("project_id must be a UUID");
-      }
-      const enforced = resolveExecMode({ project_id, posture, policy });
-      const exec_id = createExecId();
-      const op: BrowserExecPendingOperation = {
-        exec_id,
-        project_id,
-        status: "pending",
-        created_at: new Date().toISOString(),
-        code: script,
-        posture: enforced.posture,
-        mode: enforced.mode,
-        ...(enforced.policy ? { policy: enforced.policy } : {}),
-      };
-      execOps.set(exec_id, op);
-      pruneExecOps();
-      void runExecOperation(op);
-      return { exec_id, status: op.status };
-    },
-    getExec: async ({ exec_id }) => {
-      pruneExecOps();
-      return toPublicExecOp(getExecOp(exec_id));
-    },
-    cancelExec: async ({ exec_id }) => {
-      const op = getExecOp(exec_id);
-      op.cancel_requested = true;
-      if (op.status === "pending") {
-        op.status = "canceled";
-        op.finished_at = new Date().toISOString();
-        delete op.result;
-        delete op.error;
-      }
-      return { ok: true, exec_id: op.exec_id, status: op.status };
-    },
+    startExec: async ({ project_id, code, posture, policy }) =>
+      execOperations.startExec({ project_id, code, posture, policy }),
+    getExec: async ({ exec_id }) => execOperations.getExec({ exec_id }),
+    cancelExec: async ({ exec_id }) =>
+      execOperations.cancelExec({ exec_id }),
   };
 
   return {
@@ -1780,7 +1643,7 @@ export function createBrowserSessionAutomation({
     stop: async () => {
       closed = true;
       clearTimer();
-      execOps.clear();
+      execOperations.clearExecs();
       runtimeObservability.reset();
       runtimeObservability.stop();
       await syncDocLeases.closeAllManagedSyncDocs();
