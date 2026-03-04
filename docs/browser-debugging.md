@@ -120,9 +120,16 @@ These are improvements that would speed up real debugging and reduce mistakes.
 
 ### Better runtime inspection helpers
 
-- Built-in helper to return the active Slate editor(s) with identifiers
-- Built-in helper to return mounted React roots/components by predicate
-- Built-in helper to dump Redux slices/state safely
+- Implemented via `cocalc browser inspect ...`:
+  - `cocalc browser inspect slate`:
+    returns mounted Slate editors, active/focused index, and selection summary.
+  - `cocalc browser inspect react-roots`:
+    summarizes mounted React roots and sampled component names.
+  - `cocalc browser inspect redux [slice.path]`:
+    safe Redux dump with depth/entry/string limits.
+- Remaining:
+  - richer React component predicate filtering
+  - optional redaction presets for known-sensitive Redux slices
 
 ### Event/telemetry capture
 

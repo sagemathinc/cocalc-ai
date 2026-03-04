@@ -78,12 +78,14 @@ import {
 } from "./browser/targeting";
 import { registerBrowserActionCommands } from "./browser/register-action-commands";
 import { registerBrowserHarnessCommands } from "./browser/register-harness-commands";
+import { registerBrowserInspectCommands } from "./browser/register-inspect-commands";
 import { registerBrowserObservabilityCommands } from "./browser/register-observability-commands";
 import { registerBrowserSessionCommands } from "./browser/register-session-commands";
 import type {
   BrowserActionRegisterUtils,
   BrowserCommandDeps,
   BrowserHarnessRegisterUtils,
+  BrowserInspectRegisterUtils,
   BrowserObservabilityRegisterUtils,
   BrowserSessionRegisterUtils,
   ScreenshotRenderer,
@@ -1068,6 +1070,17 @@ export function registerBrowserCommand(
     durationToMs,
   };
   registerBrowserHarnessCommands({ browser, deps, utils: harnessUtils });
+
+  const inspectUtils: BrowserInspectRegisterUtils = {
+    loadProfileSelection,
+    browserHintFromOption,
+    chooseBrowserSession,
+    resolveTargetProjectId,
+    resolveBrowserPolicyAndPosture,
+    sessionTargetContext,
+    durationToMs,
+  };
+  registerBrowserInspectCommands({ browser, deps, utils: inspectUtils });
 
   browser
     .command("exec-get <exec_id>")
