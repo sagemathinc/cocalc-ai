@@ -1,4 +1,6 @@
 import dust from "./dust";
+import { dust as dustBin } from "./install";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +13,10 @@ afterAll(async () => {
   await rm(tempDir, { force: true, recursive: true });
 });
 
-describe("dust works", () => {
+const describeDust =
+  process.platform === "linux" && existsSync(dustBin) ? describe : describe.skip;
+
+describeDust("dust works", () => {
   it("directory starts empty - no results", async () => {
     const { stdout, truncated } = await dust(tempDir, { options: ["-j"] });
     const s = JSON.parse(Buffer.from(stdout).toString());

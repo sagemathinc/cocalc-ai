@@ -170,7 +170,27 @@ export class ProcessStats {
 
     const procs: Processes = {};
     let n = 0;
-    for (const pid of await readdir("/proc")) {
+    let pids: string[];
+    try {
+      pids = await readdir("/proc");
+    } catch (err: any) {
+      // /proc is Linux-specific. On macOS and other platforms, return an
+      // empty snapshot rather than failing callers that use this best-effort
+      // monitoring data.
+      if (
+        err?.code === "ENOENT" ||
+        err?.code === "ENOTDIR" ||
+        err?.code === "EACCES"
+      ) {
+        if (this.testing) {
+          dbg(`/proc unavailable on this platform: ${err?.code}`);
+        }
+        this.last = { timestamp, processes: procs };
+        return { procs, uptime, boottime };
+      }
+      throw err;
+    }
+    for (const pid of pids) {
       if (!pid.match(/^[0-9]+$/)) continue;
       try {
         const proc = await this.process({ pid, uptime, timestamp });

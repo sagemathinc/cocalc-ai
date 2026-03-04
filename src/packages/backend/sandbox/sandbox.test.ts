@@ -30,7 +30,9 @@ async function expectRejectsWithError(promise: Promise<unknown>): Promise<Error>
   throw new Error("Expected promise to reject with Error");
 }
 
-describe("test using the filesystem sandbox to do a few standard things", () => {
+const describeIfLinux = process.platform === "linux" ? describe : describe.skip;
+
+describeIfLinux("test using the filesystem sandbox to do a few standard things", () => {
   let fs;
   it("creates and reads file", async () => {
     await mkdir(join(tempDir, "test-1"));
@@ -49,7 +51,7 @@ describe("test using the filesystem sandbox to do a few standard things", () => 
   });
 });
 
-describe("baseline mutator parity behavior", () => {
+describeIfLinux("baseline mutator parity behavior", () => {
   let fs;
   it("creates sandbox", async () => {
     await mkdir(join(tempDir, "test-mutators"));
@@ -118,7 +120,7 @@ describe("baseline mutator parity behavior", () => {
   });
 });
 
-describe("make various attempts to break out of the sandbox", () => {
+describeIfLinux("make various attempts to break out of the sandbox", () => {
   let fs;
   it("creates sandbox", async () => {
     await mkdir(join(tempDir, "test-2"));
@@ -146,7 +148,7 @@ describe("make various attempts to break out of the sandbox", () => {
   });
 });
 
-describe("test watching a file and a folder in the sandbox", () => {
+describeIfLinux("test watching a file and a folder in the sandbox", () => {
   let fs;
   it("creates sandbox", async () => {
     await mkdir(join(tempDir, "test-watch"));
@@ -324,7 +326,7 @@ describe("test watching a file and a folder in the sandbox", () => {
   });
 });
 
-describe("patch write support", () => {
+describeIfLinux("patch write support", () => {
   let fs;
   const filename = "patched.txt";
 
@@ -359,7 +361,7 @@ describe("patch write support", () => {
   });
 });
 
-describe("unsafe mode sandbox", () => {
+describeIfLinux("unsafe mode sandbox", () => {
   let fs;
   it("creates and reads file", async () => {
     await mkdir(join(tempDir, "test-unsafe"));
@@ -387,7 +389,7 @@ describe("unsafe mode sandbox", () => {
   });
 });
 
-describe("safe mode sandbox", () => {
+describeIfLinux("safe mode sandbox", () => {
   let fs;
   it("creates and reads file", async () => {
     await mkdir(join(tempDir, "test-safe"));
@@ -428,7 +430,7 @@ describe("safe mode sandbox", () => {
   });
 });
 
-describe("safe mode link policy overrides", () => {
+describeIfLinux("safe mode link policy overrides", () => {
   let fs;
   it("allows link and symlink creation when explicitly enabled", async () => {
     await mkdir(join(tempDir, "test-safe-link-policy"));
@@ -445,7 +447,7 @@ describe("safe mode link policy overrides", () => {
   });
 });
 
-describe("safe mode mutator escape checks", () => {
+describeIfLinux("safe mode mutator escape checks", () => {
   let fs;
   const outsideFile = () => join(tempDir, "mutator-outside-secret.txt");
   const outsideDir = () => join(tempDir, "mutator-outside-dir");
@@ -530,7 +532,7 @@ describe("safe mode mutator escape checks", () => {
   });
 });
 
-describe("safe mode race-condition regressions", () => {
+describeIfLinux("safe mode race-condition regressions", () => {
   let fs;
   const sandboxPath = () => join(tempDir, "test-safe-race-regressions");
   const outsideFile = () => join(tempDir, "race-outside-secret.txt");
@@ -563,7 +565,7 @@ describe("safe mode race-condition regressions", () => {
   });
 });
 
-describe("openat2 motivation regressions", () => {
+describeIfLinux("openat2 motivation regressions", () => {
   it("mkdir should not mutate outside sandbox when an intermediate component is swapped to a symlink", async () => {
     const sandboxRoot = join(tempDir, "test-openat2-mkdir-race");
     const outsideRoot = join(tempDir, "test-openat2-mkdir-race-outside");
@@ -922,7 +924,7 @@ describe("openat2 motivation regressions", () => {
   });
 });
 
-describe("read only sandbox", () => {
+describeIfLinux("read only sandbox", () => {
   let fs;
   it("creates and reads file", async () => {
     await mkdir(join(tempDir, "test-ro"));
@@ -941,7 +943,7 @@ describe("read only sandbox", () => {
   });
 });
 
-describe("rootfs option sandbox", () => {
+describeIfLinux("rootfs option sandbox", () => {
   let fs;
   let home: string;
   let rootfs: string;
