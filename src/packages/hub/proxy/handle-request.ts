@@ -61,26 +61,10 @@ export default function init({
     const url = stripBasePath(req.url);
     const parsed = parseReq(url, remember_me, api_key);
     // TODO: parseReq is called again in getTarget so need to refactor...
-    const { type, project_id } = parsed;
+    const { type, project_id, route } = parsed;
     if (type == "files") {
-      if (
-        !(await hasAccess({
-          project_id,
-          remember_me,
-          api_key,
-          type: "read",
-          isPersonal,
-        }))
-      ) {
-        throw Error(`user does not have read access to project`);
-      }
-      await handleFileDownload({ req, res, url });
-      return;
-    }
-
-    const projectProxyHandlers = await projectProxyHandlersPromise;
-    if (projectProxyHandlers == null) {
-      throw Error("no project proxy request handler is configured");
+      // keep the explicit branch for file-download handling, while access mode
+      // policy remains centralized in the route definition.
     }
 
     if (
@@ -88,11 +72,21 @@ export default function init({
         project_id,
         remember_me,
         api_key,
-        type: "write",
+        type: route.access,
         isPersonal,
       }))
     ) {
-      throw Error(`user does not have write access to project`);
+      throw Error(`user does not have ${route.access} access to project`);
+    }
+
+    if (type == "files") {
+      await handleFileDownload({ req, res, url });
+      return;
+    }
+
+    const projectProxyHandlers = await projectProxyHandlersPromise;
+    if (projectProxyHandlers == null) {
+      throw Error("no project proxy request handler is configured");
     }
 
     projectProxyHandlers.handleRequest(req, res);
