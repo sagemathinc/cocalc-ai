@@ -121,6 +121,21 @@ function normalizeOsArch() {
   return { os: osName, arch };
 }
 
+function defaultPlusRootDir() {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "cocalc-plus");
+  }
+  return path.join(os.homedir(), ".local", "share", "cocalc-plus");
+}
+
+function defaultPlusDataDir() {
+  return path.join(defaultPlusRootDir(), "data");
+}
+
+function defaultReflectHome() {
+  return path.join(defaultPlusRootDir(), "reflect-sync");
+}
+
 function getPackageVersion() {
   if (process.env.COCALC_PLUS_VERSION) {
     return process.env.COCALC_PLUS_VERSION;
@@ -185,14 +200,19 @@ function getPackageVersion() {
   const found = findVersionUp(process.cwd());
   if (found) return found;
   try {
-    const baseDir =
-      process.env.COCALC_PLUS_HOME ??
-      process.env.COCALC_DATA_DIR ??
-      path.join(os.homedir(), ".local", "share", "cocalc-plus");
-    const versionPath = path.join(baseDir, "version.json");
-    const raw = JSON.parse(fs.readFileSync(versionPath, "utf8"));
-    if (raw?.version) {
-      return raw.version;
+    const candidates = [
+      process.env.COCALC_PLUS_HOME,
+      process.env.COCALC_DATA_DIR,
+      defaultPlusRootDir(),
+      defaultPlusDataDir(),
+    ].filter((x): x is string => !!x);
+    for (const baseDir of candidates) {
+      const versionPath = path.join(baseDir, "version.json");
+      if (!fs.existsSync(versionPath)) continue;
+      const raw = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+      if (raw?.version) {
+        return raw.version;
+      }
     }
   } catch {
     // ignore
@@ -237,9 +257,7 @@ function runCliCommand(args: string[]): Promise<void> {
 }
 
 function writeVersionInfo() {
-  const dataDir =
-    process.env.COCALC_DATA_DIR ||
-    path.join(os.homedir(), ".local", "share", "cocalc-plus", "data");
+  const dataDir = process.env.COCALC_DATA_DIR || defaultPlusDataDir();
   const outPath =
     process.env.COCALC_WRITE_VERSION_INFO ||
     path.join(dataDir, "version.json");
@@ -262,13 +280,7 @@ function writeVersionInfo() {
 async function runCli() {
   if (process.argv.includes("--run-reflect-scheduler")) {
     if (!process.env.REFLECT_HOME) {
-      process.env.REFLECT_HOME = path.join(
-        os.homedir(),
-        ".local",
-        "share",
-        "cocalc-plus",
-        "reflect-sync",
-      );
+      process.env.REFLECT_HOME = defaultReflectHome();
     }
     const opts = JSON.parse(process.env.REFLECT_OPTS ?? "{}");
     const entry = process.env.REFLECT_SYNC_ENTRY;
@@ -429,13 +441,7 @@ async function runCli() {
   }
 
   if (!process.env.COCALC_DATA_DIR) {
-    process.env.COCALC_DATA_DIR = path.join(
-      os.homedir(),
-      ".local",
-      "share",
-      "cocalc-plus",
-      "data",
-    );
+    process.env.COCALC_DATA_DIR = defaultPlusDataDir();
   }
 
   writeVersionInfo();
