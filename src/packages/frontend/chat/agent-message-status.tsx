@@ -59,6 +59,7 @@ interface AgentMessageStatusProps {
   inlineCodeLinks?: InlineCodeLink[];
   openDrawerToken?: number;
   onOpenGitBrowser?: () => void;
+  onDrawerOpenChange?: (open: boolean) => void;
 }
 
 export function AgentMessageStatus({
@@ -75,6 +76,7 @@ export function AgentMessageStatus({
   inlineCodeLinks,
   openDrawerToken,
   onOpenGitBrowser,
+  onDrawerOpenChange,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -203,6 +205,10 @@ export function AgentMessageStatus({
     if (typeof openDrawerToken !== "number" || openDrawerToken <= 0) return;
     setShowDrawer(true);
   }, [show, openDrawerToken]);
+
+  useEffect(() => {
+    onDrawerOpenChange?.(showDrawer);
+  }, [onDrawerOpenChange, showDrawer]);
 
   if (!show) return null;
 

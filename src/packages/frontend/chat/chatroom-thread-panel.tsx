@@ -47,6 +47,7 @@ import type {
 import { ChatIconPicker } from "./chat-icon-picker";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -202,6 +203,7 @@ export function ChatRoomThreadPanel({
   );
   const [maintenanceDeleteDays, setMaintenanceDeleteDays] = useState("30");
   const [threadNearTop, setThreadNearTop] = useState(false);
+  const anyOverlayOpen = useAnyChatOverlayOpen();
   const searchInputRef = useRef<any>(null);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
@@ -581,6 +583,7 @@ export function ChatRoomThreadPanel({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (anyOverlayOpen) return;
       if (!(event.ctrlKey || event.metaKey)) return;
       if (event.key.toLowerCase() !== "f") return;
       event.preventDefault();
@@ -591,7 +594,7 @@ export function ChatRoomThreadPanel({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [anyOverlayOpen]);
 
   const onSearchInputChange = (value: string) => {
     setThreadSearchInput(value);
