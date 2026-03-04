@@ -30,6 +30,16 @@ function directBrowserSessionInfo(browser_id: string): BrowserSessionInfo {
   };
 }
 
+function normalizeApiScope(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 export function browserHintFromOption(value: unknown): string | undefined {
   return (
     normalizeBrowserId(value) ?? normalizeBrowserId(process.env.COCALC_BROWSER_ID)
@@ -147,14 +157,38 @@ export function loadProfileSelection(
   const path = deps.authConfigPath(process.env);
   const config = deps.loadAuthConfig(path);
   const profile = deps.selectedProfileName(globals, config, process.env);
-  const browser_id = normalizeBrowserId(config?.profiles?.[profile]?.browser_id);
-  return { path, config, profile, browser_id };
+  const profileData = config?.profiles?.[profile];
+  const apiScope =
+    normalizeApiScope(globals.api) ??
+    normalizeApiScope(process.env.COCALC_API_URL) ??
+    normalizeApiScope(profileData?.api);
+  const browserIdsByApi =
+    profileData?.browser_ids_by_api &&
+    typeof profileData.browser_ids_by_api === "object" &&
+    !Array.isArray(profileData.browser_ids_by_api)
+      ? profileData.browser_ids_by_api
+      : undefined;
+  const browserIdScoped = apiScope
+    ? normalizeBrowserId(browserIdsByApi?.[apiScope])
+    : undefined;
+  const browserIdGlobal = normalizeBrowserId(profileData?.browser_id);
+  const browser_id = browserIdScoped ?? browserIdGlobal;
+  return {
+    path,
+    config,
+    profile,
+    browser_id,
+    browser_id_scoped: browserIdScoped,
+    browser_id_global: browserIdGlobal,
+    api_scope: apiScope,
+  };
 }
 
 export function saveProfileBrowserId({
   deps,
   command,
   browser_id,
+  apiBaseUrl,
 }: {
   deps: Pick<
     BrowserCommandDeps,
@@ -166,14 +200,39 @@ export function saveProfileBrowserId({
   >;
   command: Command;
   browser_id?: string;
+  apiBaseUrl?: string;
 }): { profile: string; browser_id?: string } {
   const { path, config, profile } = loadProfileSelection(deps, command);
   const profileData = { ...(config.profiles?.[profile] ?? {}) };
+  const apiScope =
+    normalizeApiScope(apiBaseUrl) ??
+    normalizeApiScope(process.env.COCALC_API_URL) ??
+    normalizeApiScope(profileData.api);
+
   if (browser_id) {
     profileData.browser_id = browser_id;
   } else {
     delete profileData.browser_id;
   }
+  const currentScoped =
+    profileData.browser_ids_by_api &&
+    typeof profileData.browser_ids_by_api === "object" &&
+    !Array.isArray(profileData.browser_ids_by_api)
+      ? { ...profileData.browser_ids_by_api }
+      : {};
+  if (apiScope) {
+    if (browser_id) {
+      currentScoped[apiScope] = browser_id;
+    } else {
+      delete currentScoped[apiScope];
+    }
+  }
+  if (Object.keys(currentScoped).length > 0) {
+    profileData.browser_ids_by_api = currentScoped;
+  } else {
+    delete profileData.browser_ids_by_api;
+  }
+
   config.current_profile = profile;
   config.profiles = config.profiles ?? {};
   config.profiles[profile] = profileData;

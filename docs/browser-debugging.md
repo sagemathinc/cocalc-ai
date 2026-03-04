@@ -110,8 +110,11 @@ These are improvements that would speed up real debugging and reduce mistakes.
 - Implemented:
   - `cocalc browser session list --project-id <id> --active-only`
   - `--session-project-id <id>` and `--active-only` on browser automation commands
+  - API-scoped browser default persistence via:
+    - `cocalc browser session use <browser_id> [--api-url <url>]`
+    - `cocalc browser session clear [--api-url <url>]`
 - Remaining:
-  - `cocalc browser use --api <url> <browser_id>` scoped by API URL
+  - top-level alias `cocalc browser use --api <url> <browser_id>`
   - Better default-session resolution when multiple servers are active
 
 ### Better runtime inspection helpers
@@ -135,6 +138,7 @@ These are improvements that would speed up real debugging and reduce mistakes.
   - `cocalc browser harness run --plan <plan.json>`
   - runs multi-step action/exec/sleep plans with per-step retries
   - optional automatic recovery (`reload` / `hard-reload`) between retries
+  - strict target pinning by default (`--pin-target`, disable with `--no-pin-target`)
   - structured artifact/report output in `report_dir/report.json`
   - failure capture support (`screenshot`, `runtime events`, `network trace`)
 

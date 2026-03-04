@@ -115,39 +115,59 @@ export function registerBrowserSessionCommands({
 
   session
     .command("use <browser>")
-    .description("set default browser session id for the current auth profile")
-    .action(async (browserHint: string, command: Command) => {
+    .description(
+      "set default browser session id for the current auth profile (scoped by API origin)",
+    )
+    .option(
+      "--api-url <url>",
+      "explicit API URL scope for saved default (defaults to active context API URL)",
+    )
+    .action(async (browserHint: string, opts: { apiUrl?: string }, command: Command) => {
       await deps.withContext(command, "browser session use", async (ctx) => {
         const sessions = (await ctx.hub.system.listBrowserSessions({
           include_stale: true,
         })) as BrowserSessionInfo[];
         const selected = resolveBrowserSession(sessions, browserHint);
+        const scopedApiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
         const saved = saveProfileBrowserId({
           deps,
           command,
           browser_id: selected.browser_id,
+          apiBaseUrl: scopedApiUrl,
         });
         return {
           profile: saved.profile,
           browser_id: selected.browser_id,
           stale: !!selected.stale,
+          api_scope: scopedApiUrl ?? null,
         };
       });
     });
 
   session
     .command("clear")
-    .description("clear default browser session id for current auth profile")
-    .action(async (_opts: unknown, command: Command) => {
-      const saved = saveProfileBrowserId({
-        deps,
-        command,
-        browser_id: undefined,
+    .description(
+      "clear default browser session id for current auth profile (scoped by API origin)",
+    )
+    .option(
+      "--api-url <url>",
+      "explicit API URL scope to clear (defaults to active context API URL)",
+    )
+    .action(async (opts: { apiUrl?: string }, command: Command) => {
+      await deps.withContext(command, "browser session clear", async (ctx) => {
+        const scopedApiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+        const saved = saveProfileBrowserId({
+          deps,
+          command,
+          browser_id: undefined,
+          apiBaseUrl: scopedApiUrl,
+        });
+        return {
+          profile: saved.profile,
+          browser_id: null,
+          api_scope: scopedApiUrl ?? null,
+        };
       });
-      await deps.withContext(command, "browser session clear", async () => ({
-        profile: saved.profile,
-        browser_id: null,
-      }));
     });
 
   session
@@ -338,6 +358,7 @@ export function registerBrowserSessionCommands({
                 deps,
                 command,
                 browser_id: sessionInfo.browser_id,
+                apiBaseUrl: ctx.apiBaseUrl,
               });
             }
             return {

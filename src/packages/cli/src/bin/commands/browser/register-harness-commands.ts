@@ -8,6 +8,7 @@ reporting so long-running browser QA workflows are reproducible.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Command } from "commander";
+import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BrowserActionRequest,
   BrowserAutomationPosture,
@@ -540,6 +541,14 @@ export function registerBrowserHarnessCommands({
       "include decoded previews in network failure captures",
     )
     .option("--dry-run", "parse/normalize plan and return it without executing")
+    .option(
+      "--pin-target",
+      "verify chosen browser session remains active during the run",
+    )
+    .option(
+      "--no-pin-target",
+      "disable active-session pin checks during the run",
+    )
     .action(
       async (
         opts: {
@@ -563,6 +572,7 @@ export function registerBrowserHarnessCommands({
           networkOnFail?: string;
           networkIncludeDecoded?: boolean;
           dryRun?: boolean;
+          pinTarget?: boolean;
         },
         command: Command,
       ) => {
@@ -575,13 +585,40 @@ export function registerBrowserHarnessCommands({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: true,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
               undefined,
             activeOnly: !!opts.activeOnly,
           });
+          const targetBrowserId = `${sessionInfo.browser_id ?? ""}`.trim();
+          const pinTarget = opts.pinTarget !== false;
+
+          const assertPinnedSessionActive = async (): Promise<BrowserSessionInfo> => {
+            const sessions = await ctx.hub.system.listBrowserSessions({
+              include_stale: true,
+            });
+            const row = (sessions ?? []).find(
+              (x) => `${x?.browser_id ?? ""}`.trim() === targetBrowserId,
+            );
+            if (!row) {
+              throw new Error(
+                `pinned browser session '${targetBrowserId}' is no longer present`,
+              );
+            }
+            if (row.stale) {
+              throw new Error(
+                `pinned browser session '${targetBrowserId}' is stale/inactive`,
+              );
+            }
+            return row;
+          };
+
+          if (pinTarget) {
+            await assertPinnedSessionActive();
+          }
+
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
@@ -663,10 +700,13 @@ export function registerBrowserHarnessCommands({
             let finalError = "";
 
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+              if (pinTarget) {
+                await assertPinnedSessionActive();
+              }
               const stepTimeout = Math.max(1_000, step.timeout_ms ?? ctx.timeoutMs);
               const browserClient = deps.createBrowserSessionClient({
                 account_id: ctx.accountId,
-                browser_id: sessionInfo.browser_id,
+                browser_id: targetBrowserId,
                 client: ctx.remote.client,
                 timeout: stepTimeout,
               });
@@ -703,7 +743,7 @@ export function registerBrowserHarnessCommands({
                       err,
                       posture,
                       policy,
-                      browserId: sessionInfo.browser_id,
+                      browserId: targetBrowserId,
                     });
                   }
                   result = response?.result ?? null;
@@ -786,8 +826,9 @@ export function registerBrowserHarnessCommands({
             halted_early: halted,
             posture,
             policy_allow_raw_exec: !!policy?.allow_raw_exec,
-            browser_id: sessionInfo.browser_id,
+            browser_id: targetBrowserId,
             project_id,
+            pin_target: pinTarget,
             steps: stepReports,
             ...sessionTargetContext(ctx, sessionInfo, project_id),
           };

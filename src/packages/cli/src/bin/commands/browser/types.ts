@@ -326,6 +326,9 @@ export type BrowserProfileSelection = {
   config: AuthConfig;
   profile: string;
   browser_id?: string;
+  browser_id_scoped?: string;
+  browser_id_global?: string;
+  api_scope?: string;
 };
 
 export type BrowserSessionRegisterUtils = {
@@ -334,6 +337,7 @@ export type BrowserSessionRegisterUtils = {
     deps: BrowserCommandDeps;
     command: Command;
     browser_id?: string;
+    apiBaseUrl?: string;
   }) => { profile: string; browser_id?: string };
   resolveBrowserSession: (
     sessions: BrowserSessionInfo[],

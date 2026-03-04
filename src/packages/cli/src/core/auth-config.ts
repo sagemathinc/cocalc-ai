@@ -10,6 +10,8 @@ export type AuthProfile = {
   bearer?: string;
   hub_password?: string;
   browser_id?: string;
+  // Optional per-API browser defaults keyed by normalized API origin.
+  browser_ids_by_api?: Record<string, string>;
 };
 
 export type AuthConfig = {
