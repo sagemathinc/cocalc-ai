@@ -836,7 +836,7 @@ export default function Message({
       >
         <CopyButton
           markdown
-          value={message_to_markdown(message)}
+          value={message_to_markdown(message, { includeHeader: false })}
           size="small"
           noText={true}
           style={{
@@ -1990,9 +1990,10 @@ function formatTurnDuration({
 // Used for exporting chat to markdown file
 export function message_to_markdown(
   message,
-  options?: { includeLog?: boolean },
+  options?: { includeLog?: boolean; includeHeader?: boolean },
 ): string {
   const includeLog = options?.includeLog ?? false;
+  const includeHeader = options?.includeHeader ?? true;
   let value = newest_content(message);
   const user_map = redux.getStore("users").get("user_map");
   const sender = getUserName(
@@ -2007,6 +2008,7 @@ export function message_to_markdown(
       value = `${value}\n\n**Log**\n\n${logMarkdown}`;
     }
   }
+  if (!includeHeader) return value;
   return `*From:* ${sender}  \n*Date:* ${date}  \n\n${value}`;
 }
 
