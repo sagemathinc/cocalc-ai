@@ -1046,16 +1046,36 @@ function markdownAutoformatAt(
   text = text.slice(start + 1).trim();
   if (text.length == 0) return false;
 
+  const paragraphTextAtStart =
+    path.length >= 2 && start <= 0
+      ? paragraphTextOverride ??
+        (() => {
+          const paragraphEntry = Editor.above(editor, {
+            at: path,
+            match: (node) => Element.isElement(node) && node.type === "paragraph",
+          });
+          if (!paragraphEntry) return "";
+          const [, paragraphPath] = paragraphEntry;
+          return Editor.string(editor, paragraphPath).trimRight();
+        })()
+      : undefined;
+
   // If a potential block marker is immediately followed by text (e.g. "#bar",
-  // "-x"), do not autoformat. Let the typed space be inserted normally so we
-  // preserve the user's exact input and avoid split-node duplication/loss.
+  // "-x"), we only suppress autoformat when it is being inserted as a prefix
+  // in front of existing paragraph content. That avoids split-node
+  // duplication/loss while still allowing normal hashtag autoformat in empty
+  // paragraphs (e.g. "#foo ").
   if (
     path.length >= 2 &&
     pos === 0 &&
     start <= 0 &&
     /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)\S/.test(text)
   ) {
-    return false;
+    const hasTrailingParagraphContent =
+      (paragraphTextAtStart ?? "").length > text.length;
+    if (hasTrailingParagraphContent) {
+      return false;
+    }
   }
 
   let allowBlockAutoformatFromSplitMarker = false;
@@ -1064,17 +1084,7 @@ function markdownAutoformatAt(
   // (e.g., list), include the rest of the paragraph text so it doesn't get
   // dropped when we replace the paragraph with a block element.
   if (path.length >= 2 && start <= 0) {
-    const paragraphText =
-      paragraphTextOverride ??
-      (() => {
-        const paragraphEntry = Editor.above(editor, {
-          at: path,
-          match: (node) => Element.isElement(node) && node.type === "paragraph",
-        });
-        if (!paragraphEntry) return "";
-        const [, paragraphPath] = paragraphEntry;
-        return Editor.string(editor, paragraphPath).trimRight();
-      })();
+    const paragraphText = paragraphTextAtStart ?? "";
     const markerOnlyHere = /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)\s*$/.test(text);
     const paragraphStartsWithMarker = /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)/.test(
       paragraphText,
@@ -1148,7 +1158,9 @@ function markdownAutoformatAt(
   const isInline =
     doc.length == 1 &&
     doc[0].type == "paragraph" &&
-    Text.isText(doc[0].children[0]);
+    doc[0].children.every(
+      (child) => Text.isText(child) || (Element.isElement(child) && Editor.isInline(editor, child)),
+    );
 
   if (!isInline) {
     if (start > 0 || (pos > 0 && !allowBlockAutoformatFromSplitMarker)) {

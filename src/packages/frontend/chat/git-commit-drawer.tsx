@@ -2034,6 +2034,10 @@ export function GitCommitDrawer({
   };
   const canFindInChat = typeof onFindInChat === "function";
   const findInChatEnabled = canFindInChat && Boolean(commit) && !isHeadSelected;
+  const currentReviewCommit = useMemo(
+    () => normalizeCommitSha(commit),
+    [commit],
+  );
   const hasTrackedHeadChanges = useMemo(
     () => headStatusEntries.some((entry) => entry.tracked),
     [headStatusEntries],
@@ -2415,14 +2419,23 @@ export function GitCommitDrawer({
             </div>
           </div>
           <MarkdownInput
-            cacheId={`git-review-note:${sourcePath ?? ""}:${commit ?? ""}`}
+            key={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
+            cacheId={`git-review-note:${sourcePath ?? ""}:${reviewStateCommit ?? currentReviewCommit ?? ""}`}
             value={reviewNote}
             onChange={(value) => {
-              if (reviewLoading || !commit || isHeadSelected) return;
+              if (reviewLoading || isHeadSelected || !currentReviewCommit) return;
+              if (activeReviewCommitRef.current !== currentReviewCommit) return;
               setReviewNote(value);
               setReviewDirty(true);
+              saveReviewDraft(currentReviewCommit, {
+                reviewed: Boolean(reviewed),
+                note: `${value ?? ""}`,
+                comments: reviewRecord?.comments ?? {},
+              });
             }}
             onBlur={() => {
+              if (!currentReviewCommit) return;
+              if (activeReviewCommitRef.current !== currentReviewCommit) return;
               if (reviewDirty) {
                 void saveReview({ note: reviewNote });
               }
@@ -2459,7 +2472,13 @@ export function GitCommitDrawer({
             </div>
             <Button
               size="small"
-              disabled={!reviewDirty || reviewSaving || !commit || isHeadSelected}
+              disabled={
+                !reviewDirty ||
+                reviewSaving ||
+                !currentReviewCommit ||
+                isHeadSelected ||
+                reviewStateCommit !== currentReviewCommit
+              }
               onClick={() => void saveReview({ note: reviewNote, reviewed })}
             >
               Save note

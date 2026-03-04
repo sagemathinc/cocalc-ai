@@ -65,3 +65,30 @@ test("autoformat inline math moves selection after math", () => {
 
   focusSpy.mockRestore();
 });
+
+test("autoformat inline math preserves trailing text in the same paragraph", () => {
+  const editor = withAutoFormat(
+    withIsInline(withIsVoid(withReact(createEditor()))),
+  );
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "$x$y" }] },
+  ];
+  editor.children = value;
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0], offset: "$x$".length });
+  editor.insertText(" ", true);
+
+  const paragraph = editor.children[0] as any;
+  const mathIndex = paragraph?.children?.findIndex(
+    (child) => child?.["type"] === "math_inline",
+  );
+  expect(mathIndex).toBeGreaterThanOrEqual(0);
+  expect(paragraph?.children?.some((child) => child?.text?.includes("y"))).toBe(true);
+
+  focusSpy.mockRestore();
+});
