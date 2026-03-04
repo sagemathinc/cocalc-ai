@@ -56,6 +56,7 @@ const DEFAULT_CONTEXT_LINES = 3;
 const GIT_LOG_FETCH_COUNT = 600;
 const GIT_LOG_WINDOW_SIZE = 100;
 const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
+const DRAWER_SCROLL_STORAGE_PREFIX = "cocalc:chat:gitCommitDrawerScroll:";
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
 const MAX_DRAWER_SIZE = 1800;
@@ -344,6 +345,29 @@ function readDrawerSize(): number {
 function persistDrawerSize(size: number): void {
   try {
     localStorage.setItem(DRAWER_SIZE_STORAGE_KEY, String(clampDrawerSize(size)));
+  } catch {
+    // ignore
+  }
+}
+
+function readDrawerScrollPosition(storageKey: string): number | undefined {
+  if (!storageKey) return undefined;
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return undefined;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistDrawerScrollPosition(storageKey: string, top: number): void {
+  if (!storageKey) return;
+  if (!Number.isFinite(top) || top < 0) return;
+  try {
+    localStorage.setItem(storageKey, String(Math.round(top)));
   } catch {
     // ignore
   }
@@ -1002,17 +1026,56 @@ export function GitCommitDrawer({
   const [reviewSubmitBusy, setReviewSubmitBusy] = useState(false);
   const [showResolvedComments, setShowResolvedComments] = useState(false);
   const reviewLoadTokenRef = useRef(0);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const restoringScrollRef = useRef(false);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
     if (override) return override;
     return containingPath(sourcePath ?? ".") || ".";
   }, [sourcePath, cwdOverride]);
+  const scrollStorageKey = useMemo(() => {
+    const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
+    const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
+    return `${DRAWER_SCROLL_STORAGE_PREFIX}${hashString(raw)}`;
+  }, [projectId, sourcePath, cwd, commit]);
 
   useEffect(() => {
     if (!open) return;
     setSelectedCommit(incomingCommit);
   }, [incomingCommit, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    pendingScrollRestoreRef.current =
+      readDrawerScrollPosition(scrollStorageKey) ?? null;
+  }, [open, scrollStorageKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    const target = pendingScrollRestoreRef.current;
+    if (target == null) return;
+    const node = scrollRef.current;
+    if (!node) return;
+    let frame: number | undefined;
+    const restore = () => {
+      const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
+      restoringScrollRef.current = true;
+      node.scrollTop = Math.min(target, maxTop);
+      restoringScrollRef.current = false;
+      pendingScrollRestoreRef.current = null;
+      persistDrawerScrollPosition(scrollStorageKey, node.scrollTop);
+    };
+    if (typeof requestAnimationFrame === "function") {
+      frame = requestAnimationFrame(restore);
+      return () => {
+        if (frame != null) cancelAnimationFrame(frame);
+      };
+    }
+    restore();
+    return;
+  }, [open, loading, error, data, nonRepoError, scrollStorageKey]);
 
   useEffect(() => {
     if (!open || !projectId) return;
@@ -1792,6 +1855,21 @@ export function GitCommitDrawer({
     }
   };
 
+  const handleDrawerScroll = () => {
+    const node = scrollRef.current;
+    if (!node) return;
+    if (restoringScrollRef.current) return;
+    persistDrawerScrollPosition(scrollStorageKey, node.scrollTop);
+  };
+
+  const handleDrawerClose = () => {
+    const node = scrollRef.current;
+    if (node) {
+      persistDrawerScrollPosition(scrollStorageKey, node.scrollTop);
+    }
+    onClose();
+  };
+
   const canGoNewer = !isHeadSelected && commitIndex > 0;
   const canGoOlder = isHeadSelected
     ? gitLog.length > 0
@@ -2049,10 +2127,20 @@ export function GitCommitDrawer({
         },
       }}
       open={open}
-      onClose={onClose}
+      onClose={handleDrawerClose}
       destroyOnHidden
+      styles={{ body: { padding: 0, overflow: "hidden" } }}
     >
-      {gitLogError ? (
+      <div
+        ref={scrollRef}
+        onScroll={handleDrawerScroll}
+        style={{
+          height: "100%",
+          overflowY: "auto",
+          padding: "16px 16px 20px 16px",
+        }}
+      >
+        {gitLogError ? (
         <Alert type="warning" message={gitLogError} showIcon style={{ marginBottom: 10 }} />
       ) : null}
       {nonRepoError ? (
@@ -2569,6 +2657,7 @@ export function GitCommitDrawer({
           ) : null}
         </div>
       ) : null}
+      </div>
     </Drawer>
   );
 }
