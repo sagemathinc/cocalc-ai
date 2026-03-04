@@ -10,7 +10,6 @@ import {
   Drawer,
   Empty,
   Input,
-  Segmented,
   Select,
   Space,
   Spin,
@@ -63,11 +62,6 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
 }));
-const REVIEW_FILTER_OPTIONS = [
-  { label: "All", value: "all" },
-  { label: "Reviewed", value: "reviewed" },
-  { label: "Unreviewed", value: "unreviewed" },
-];
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
 
@@ -100,8 +94,6 @@ type GitLogEntry = {
   hash: string;
   subject: string;
 };
-
-type ReviewFilter = "all" | "reviewed" | "unreviewed";
 
 interface GitCommitDrawerProps {
   projectId?: string;
@@ -498,6 +490,12 @@ function isNotGitRepoError(message: string): boolean {
   );
 }
 
+function parseDateSafe(value?: string): Date | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  return Number.isFinite(d.valueOf()) ? d : undefined;
+}
+
 function DiffBlock({
   filePath,
   lines,
@@ -571,9 +569,9 @@ function DiffBlock({
     setDraftText("");
   };
 
-  const saveDraft = async () => {
+  const saveDraft = async (rawValue?: string) => {
     if (!draftAnchor) return;
-    const trimmed = draftText.trim();
+    const trimmed = `${rawValue ?? draftText}`.trim();
     if (!trimmed) return;
     const key = `create:${commentAnchorKey(draftAnchor)}`;
     setPendingKey(key);
@@ -585,9 +583,9 @@ function DiffBlock({
     }
   };
 
-  const saveEdit = async () => {
+  const saveEdit = async (rawValue?: string) => {
     if (!editingId) return;
-    const trimmed = editingText.trim();
+    const trimmed = `${rawValue ?? editingText}`.trim();
     if (!trimmed) return;
     const key = `edit:${editingId}`;
     setPendingKey(key);
@@ -770,7 +768,7 @@ function DiffBlock({
                           cacheId={`git-inline-edit:${filePath}:${comment.id}`}
                           value={editingText}
                           onChange={setEditingText}
-                          onShiftEnter={() => void saveEdit()}
+                          onShiftEnter={(value) => void saveEdit(value)}
                           placeholder="Edit inline review comment..."
                           fontSize={commentFontSize}
                           autoGrow
@@ -813,7 +811,7 @@ function DiffBlock({
                               <Button
                                 size="small"
                                 type="primary"
-                                onClick={() => void saveEdit()}
+                                onClick={() => void saveEdit(editingText)}
                                 disabled={!editingText.trim()}
                                 loading={pendingKey === `edit:${comment.id}`}
                               >
@@ -887,7 +885,7 @@ function DiffBlock({
                   cacheId={`git-inline-draft:${filePath}:${anchorId}`}
                   value={draftText}
                   onChange={setDraftText}
-                  onShiftEnter={() => void saveDraft()}
+                  onShiftEnter={(value) => void saveDraft(value)}
                   placeholder="Add inline review comment..."
                   fontSize={commentFontSize}
                   autoGrow
@@ -912,7 +910,7 @@ function DiffBlock({
                   <Button
                     size="small"
                     type="primary"
-                    onClick={() => void saveDraft()}
+                    onClick={() => void saveDraft(draftText)}
                     disabled={!draftText.trim()}
                     loading={pendingKey === `create:${anchorId}`}
                   >
@@ -961,7 +959,6 @@ export function GitCommitDrawer({
   const [headCommitBusy, setHeadCommitBusy] = useState(false);
   const [headCommitMessage, setHeadCommitMessage] = useState("");
   const [headCommitError, setHeadCommitError] = useState("");
-  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [reviewedByCommit, setReviewedByCommit] = useState<Record<string, boolean>>(
     {},
   );
@@ -1129,14 +1126,6 @@ export function GitCommitDrawer({
     return gitLog.slice(start, end);
   }, [gitLog, commitIndex]);
 
-  const filteredLogEntries = useMemo(() => {
-    if (reviewFilter === "all") return visibleLogEntries;
-    return visibleLogEntries.filter((entry) => {
-      const isReviewed = Boolean(reviewedByCommit[entry.hash]);
-      return reviewFilter === "reviewed" ? isReviewed : !isReviewed;
-    });
-  }, [visibleLogEntries, reviewFilter, reviewedByCommit]);
-
   const logOptions = useMemo(() => {
     const makeOptionLabel = (entry: GitLogEntry, fallback = false) => (
       <div
@@ -1186,7 +1175,7 @@ export function GitCommitDrawer({
         }),
         search: "HEAD uncommitted changes git diff",
       },
-      ...filteredLogEntries.map((entry) => ({
+      ...visibleLogEntries.map((entry) => ({
         value: entry.hash,
         label: makeOptionLabel(entry),
         search: `${entry.hash} ${entry.subject}`.trim(),
@@ -1201,7 +1190,7 @@ export function GitCommitDrawer({
       });
     }
     return options;
-  }, [filteredLogEntries, commit, reviewedByCommit]);
+  }, [visibleLogEntries, commit, reviewedByCommit]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -1965,18 +1954,6 @@ export function GitCommitDrawer({
                 style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
                 optionFilterProp="search"
               />
-              <div style={{ display: "inline-flex", alignItems: "center" }}>
-                <Segmented
-                  size="small"
-                  value={reviewFilter}
-                  options={REVIEW_FILTER_OPTIONS}
-                  onChange={(value) => setReviewFilter(value as ReviewFilter)}
-                  style={{
-                    margin: 0,
-                    verticalAlign: "middle",
-                  }}
-                />
-              </div>
               <Space.Compact size="small">
                 <Tooltip title="Newer commit (shortcut: k)">
                   <span style={{ display: "inline-flex" }}>
@@ -2386,15 +2363,21 @@ export function GitCommitDrawer({
           {data.summaryLines.length ? (
             (() => {
               const summary = data.summary;
-              const rows: Array<{ label: string; value?: string }> = [
+              const rows: Array<{
+                label: string;
+                value?: string;
+                asDate?: boolean;
+                monospace?: boolean;
+              }> = [
                 {
                   label: "Commit",
                   value: summary.commit ?? (isHeadSelected ? HEAD_REF : commit ?? ""),
+                  monospace: true,
                 },
                 { label: "Author", value: summary.author },
-                { label: "Author Date", value: summary.authorDate },
+                { label: "Author Date", value: summary.authorDate, asDate: true },
                 { label: "Committer", value: summary.committer },
-                { label: "Commit Date", value: summary.commitDate },
+                { label: "Commit Date", value: summary.commitDate, asDate: true },
               ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
               return (
                 <div
@@ -2433,11 +2416,22 @@ export function GitCommitDrawer({
                           <Typography.Text
                             style={{
                               fontSize: 12,
-                              fontFamily: row.label === "Commit" ? "monospace" : undefined,
+                              fontFamily: row.monospace ? "monospace" : undefined,
                               overflowWrap: "anywhere",
                             }}
                           >
-                            {row.value}
+                            {row.asDate ? (
+                              (() => {
+                                const parsed = parseDateSafe(row.value);
+                                return parsed ? (
+                                  <TimeAgo date={parsed} />
+                                ) : (
+                                  row.value
+                                );
+                              })()
+                            ) : (
+                              row.value
+                            )}
                           </Typography.Text>
                         </div>
                       ))}
