@@ -78,6 +78,8 @@ a = require('../../dist/cloud/smoke-runner/project-host'); await a.runProjectHos
 */
 import { execFile as execFileCb } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { promisify } from "node:util";
 import getLogger from "@cocalc/backend/logger";
@@ -251,7 +253,7 @@ type CliContext = {
   pollMs: number;
 };
 
-type ProjectHostSmokeScenario = "persistence" | "drain" | "move";
+type ProjectHostSmokeScenario = "persistence" | "drain" | "move" | "apps";
 
 type CliEnvelope<T = any> = {
   ok?: boolean;
@@ -523,6 +525,20 @@ type CliWorkspaceRow = {
   last_edited?: string | null;
 };
 
+type CliAppStatusRow = {
+  id?: string;
+  state?: "running" | "stopped";
+  ready?: boolean;
+  pid?: number;
+  port?: number;
+  exposure?: {
+    mode?: "private" | "public";
+    auth_front?: "none" | "token";
+    token?: string;
+    public_url?: string;
+  };
+};
+
 async function findHostByNameViaCli(
   cli: CliContext,
   name: string,
@@ -658,6 +674,61 @@ async function listHostIdsByNameViaCli(
     if (id) ids.add(id);
   }
   return [...ids];
+}
+
+async function writeSmokeAppSpecFile({
+  app_id,
+}: {
+  app_id: string;
+}): Promise<{ dir: string; path: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-smoke-app-spec-"));
+  const path = join(dir, `${app_id}.json`);
+  const pythonScript = [
+    "import os",
+    "from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler",
+    "class Handler(BaseHTTPRequestHandler):",
+    "    def do_GET(self):",
+    "        body = b'smoke-app-ok\\n'",
+    "        self.send_response(200)",
+    "        self.send_header('content-type', 'text/plain; charset=utf-8')",
+    "        self.send_header('content-length', str(len(body)))",
+    "        self.end_headers()",
+    "        self.wfile.write(body)",
+    "    def log_message(self, _fmt, *_args):",
+    "        return",
+    "host = os.environ.get('HOST', '127.0.0.1')",
+    "port = int(os.environ.get('PORT', '0'))",
+    "server = ThreadingHTTPServer((host, port), Handler)",
+    "server.serve_forever()",
+  ].join("\n");
+
+  const spec = {
+    version: 1,
+    id: app_id,
+    title: "Smoke app server",
+    kind: "service",
+    command: {
+      exec: "python3",
+      args: ["-c", pythonScript],
+    },
+    network: {
+      listen_host: "127.0.0.1",
+      protocol: "http",
+    },
+    proxy: {
+      base_path: `/apps/${app_id}`,
+      strip_prefix: true,
+      websocket: false,
+      readiness_timeout_s: 45,
+    },
+    wake: {
+      enabled: true,
+      keep_warm_s: 300,
+      startup_timeout_s: 120,
+    },
+  };
+  await writeFile(path, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
+  return { dir, path };
 }
 
 async function ensureSecondarySmokeAccountViaCli({
@@ -2895,6 +2966,579 @@ async function runSmokeStepsViaCli({
   }
 }
 
+async function runAppSmokeScenarioViaCli({
+  account_id,
+  provider,
+  run_tag,
+  createSpec,
+  wait,
+  cleanup_on_success,
+  verify_provider_status,
+  print_debug_hints,
+  log,
+}: {
+  account_id: string;
+  provider?: ProviderId;
+  run_tag?: string;
+  createSpec: Parameters<typeof createHost>[0];
+  wait?: ProjectHostSmokeOptions["wait"];
+  cleanup_on_success?: ProjectHostSmokeOptions["cleanup_on_success"];
+  verify_provider_status?: boolean;
+  print_debug_hints?: boolean;
+  log?: ProjectHostSmokeOptions["log"];
+}): Promise<ProjectHostSmokeResult> {
+  const steps: ProjectHostSmokeResult["steps"] = [];
+  const waitHostRunning = resolveWait(wait?.host_running, DEFAULT_HOST_RUNNING);
+  const waitProjectReady = resolveWait(wait?.project_ready, DEFAULT_PROJECT_READY);
+  const verifyProviderStatus = verify_provider_status ?? false;
+  const strictProviderStatus =
+    process.env.COCALC_SMOKE_STRICT_PROVIDER_STATUS === "yes";
+  const emit =
+    log ??
+    ((event) => {
+      logger.info("smoke-runner", event);
+    });
+
+  const cli: CliContext = {
+    nodePath: process.execPath,
+    cliPath: resolveCliPath(),
+    apiUrl: resolveApiUrl(),
+    hubPassword: resolveHubPassword(),
+    accountId: account_id,
+    timeoutMs: Math.max(waitHostRunning.intervalMs * waitHostRunning.attempts, 600_000),
+    pollMs: 1000,
+  };
+
+  const cleanupHostIds = new Set<string>();
+  const cleanupWorkspaces = new Set<string>();
+  let host_id: string | undefined;
+  let workspaceId: string | undefined;
+  let workspaceTitle: string | undefined;
+  let app_id: string | undefined;
+  let appPidBeforeKill: number | undefined;
+  let debugHints: HostConnectionHints | undefined;
+  let exposedUrl: string | undefined;
+  let specDir: string | undefined;
+
+  const runStep = async (name: string, fn: () => Promise<void>) => {
+    const startedAt = new Date();
+    emit({ step: name, status: "start" });
+    try {
+      await fn();
+      const finishedAt = new Date();
+      steps.push({
+        name,
+        status: "ok",
+        started_at: startedAt.toISOString(),
+        finished_at: finishedAt.toISOString(),
+      });
+      emit({ step: name, status: "ok" });
+      if (host_id && verifyProviderStatus) {
+        try {
+          await checkProviderStatus({ host_id, providerHint: provider });
+        } catch (err) {
+          if (strictProviderStatus) {
+            throw err;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          logger.warn("smoke-runner provider status check skipped", {
+            host_id,
+            provider,
+            step: name,
+            err: message,
+          });
+          emit({
+            step: `${name}:provider_status`,
+            status: "ok",
+            message: `skipped provider status check: ${message}`,
+          });
+        }
+      }
+    } catch (err) {
+      const finishedAt = new Date();
+      const message = err instanceof Error ? err.message : String(err);
+      steps.push({
+        name,
+        status: "failed",
+        started_at: startedAt.toISOString(),
+        finished_at: finishedAt.toISOString(),
+        error: message,
+      });
+      emit({ step: name, status: "failed", message });
+      throw err;
+    }
+  };
+
+  try {
+    const normalizedProvider = provider ?? normalizeProviderId(createSpec.machine?.cloud);
+    if (!normalizedProvider) {
+      throw new Error("unable to determine provider for app smoke host create");
+    }
+
+    const hostName =
+      `${createSpec?.name ?? "smoke-apps"}`.trim() || `smoke-apps-${Date.now()}`;
+    const hostSpec = { ...createSpec, name: hostName };
+    const tag = sanitizeRunTag(run_tag) ?? `${Date.now()}`;
+    workspaceTitle = `Smoke apps ${tag}`;
+    app_id = `smoke-app-${tag}`.slice(0, 63);
+
+    await runStep("create_host", async () => {
+      const host = await runCli<{ host_id?: string }>(
+        cli,
+        buildHostCreateCliArgs({ provider: normalizedProvider, create: hostSpec }),
+      );
+      host_id = `${host.host_id ?? ""}`.trim();
+      if (!host_id) {
+        throw new Error("host create did not return host_id");
+      }
+      cleanupHostIds.add(host_id);
+    });
+
+    await runStep("wait_host_running", async () => {
+      if (!host_id) throw new Error("missing host id");
+      await waitForHostStatusViaCli({
+        cli,
+        host_id,
+        allowed: ["running", "active"],
+        wait: waitHostRunning,
+      });
+      debugHints = await loadHostConnectionHints(host_id);
+      if (print_debug_hints !== false) {
+        const parts = [
+          debugHints.host_url ? `url=${debugHints.host_url}` : undefined,
+          debugHints.ssh_target ? `ssh=${debugHints.ssh_target}` : undefined,
+          debugHints.ssh_tail_log ? `tail='${debugHints.ssh_tail_log}'` : undefined,
+          debugHints.scp_log ? `scp='${debugHints.scp_log}'` : undefined,
+        ].filter(Boolean);
+        emit({
+          step: "debug_hints",
+          status: "ok",
+          message: parts.join(" "),
+        });
+      }
+    });
+
+    await runStep("create_workspace", async () => {
+      if (!host_id) throw new Error("missing host id");
+      if (!workspaceTitle) throw new Error("missing workspace title");
+      workspaceId = await createWorkspaceViaCliWithRetry({
+        cli,
+        host_id,
+        title: workspaceTitle,
+        wait: waitProjectReady,
+      });
+      cleanupWorkspaces.add(workspaceId);
+    });
+
+    await runStep("start_workspace", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      await runCli(cli, [
+        "workspace",
+        "start",
+        "--workspace",
+        workspaceId,
+        "--wait",
+      ]);
+    });
+
+    await runStep("upsert_app_spec", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const saved = await writeSmokeAppSpecFile({ app_id });
+      specDir = saved.dir;
+      await runCli(
+        cli,
+        [
+          "workspace",
+          "app",
+          "upsert",
+          "--workspace",
+          workspaceId,
+          "--file",
+          saved.path,
+        ],
+        { timeoutSeconds: 60, commandTimeoutMs: 120_000 },
+      );
+    });
+
+    await runStep("app_ensure_running", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const status = await runCli<CliAppStatusRow>(
+        cli,
+        [
+          "workspace",
+          "app",
+          "ensure-running",
+          app_id,
+          "--workspace",
+          workspaceId,
+          "--timeout",
+          "120s",
+        ],
+        { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
+      );
+      if (status.state !== "running" || status.ready !== true) {
+        throw new Error(
+          `app not running after ensure-running (state=${status.state}, ready=${status.ready})`,
+        );
+      }
+      appPidBeforeKill = Number(status.pid ?? 0) || undefined;
+    });
+
+    await runStep("app_detect_managed_port", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const detect = await runCli<{
+        items?: Array<{ managed?: boolean; managed_app_ids?: string[] }>;
+      }>(cli, [
+        "workspace",
+        "app",
+        "detect",
+        "--workspace",
+        workspaceId,
+        "--include-managed",
+        "--limit",
+        "400",
+      ]);
+      const items = detect.items ?? [];
+      const matched = items.find((row) =>
+        Array.isArray(row?.managed_app_ids) && row.managed_app_ids.includes(app_id as string),
+      );
+      if (!matched || !matched.managed) {
+        throw new Error("app detect did not report managed listener for smoke app");
+      }
+    });
+
+    await runStep("app_audit", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const audit = await runCli<{
+        app_id?: string;
+        checks?: unknown[];
+        agent_prompt?: string;
+      }>(cli, [
+        "workspace",
+        "app",
+        "audit",
+        app_id,
+        "--workspace",
+        workspaceId,
+        "--public-readiness",
+      ]);
+      if (`${audit.app_id ?? ""}` !== app_id) {
+        throw new Error("app audit returned unexpected app_id");
+      }
+      if (!Array.isArray(audit.checks) || audit.checks.length === 0) {
+        throw new Error("app audit returned no checks");
+      }
+      if (!`${audit.agent_prompt ?? ""}`.includes(app_id)) {
+        throw new Error("app audit prompt does not reference app id");
+      }
+    });
+
+    await runStep("app_expose", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const exposed = await runCli<{
+        url_public?: string;
+        exposure?: { mode?: "private" | "public"; token?: string };
+      }>(cli, [
+        "workspace",
+        "app",
+        "expose",
+        app_id,
+        "--workspace",
+        workspaceId,
+        "--ttl",
+        "10m",
+        "--front-auth",
+        "token",
+      ]);
+      if (exposed.exposure?.mode !== "public") {
+        throw new Error(`app expose did not set public mode (mode=${exposed.exposure?.mode})`);
+      }
+      exposedUrl = `${exposed.url_public ?? ""}`.trim();
+      if (!exposedUrl) {
+        throw new Error("app expose did not return url_public");
+      }
+    });
+
+    await runStep("app_probe_public_url", async () => {
+      if (!exposedUrl) throw new Error("missing exposed URL");
+      await waitForCondition(async () => {
+        const response = await fetchWithTimeout(exposedUrl!, {
+          redirect: "follow",
+          timeoutMs: 12_000,
+        });
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`unexpected app response status ${response.status}`);
+        }
+        const body = await response.text();
+        if (!body.includes("smoke-app-ok")) {
+          throw new Error("app response did not include smoke marker");
+        }
+      }, waitProjectReady);
+    });
+
+    await runStep("app_kill_process", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!appPidBeforeKill) {
+        const status = await runCli<CliAppStatusRow>(
+          cli,
+          ["workspace", "app", "status", app_id as string, "--workspace", workspaceId],
+          { timeoutSeconds: 45, commandTimeoutMs: 90_000 },
+        );
+        appPidBeforeKill = Number(status.pid ?? 0) || undefined;
+      }
+      if (!appPidBeforeKill) {
+        throw new Error("missing app pid before kill");
+      }
+      await runCli(
+        cli,
+        [
+          "workspace",
+          "exec",
+          "--workspace",
+          workspaceId,
+          "--timeout",
+          "30",
+          "--bash",
+          `kill -9 ${Math.floor(appPidBeforeKill)} || true`,
+        ],
+        { timeoutSeconds: 60, commandTimeoutMs: 120_000 },
+      );
+    });
+
+    await runStep("app_wait_stopped", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      await runCli(
+        cli,
+        [
+          "workspace",
+          "app",
+          "wait",
+          app_id,
+          "--workspace",
+          workspaceId,
+          "--state",
+          "stopped",
+          "--timeout",
+          "90s",
+          "--interval-ms",
+          "500",
+        ],
+        { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
+      );
+    });
+
+    await runStep("app_recover", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const recovered = await runCli<CliAppStatusRow>(
+        cli,
+        [
+          "workspace",
+          "app",
+          "ensure-running",
+          app_id,
+          "--workspace",
+          workspaceId,
+          "--timeout",
+          "120s",
+        ],
+        { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
+      );
+      if (recovered.state !== "running" || recovered.ready !== true) {
+        throw new Error(
+          `app recovery failed (state=${recovered.state}, ready=${recovered.ready})`,
+        );
+      }
+      const recoveredPid = Number(recovered.pid ?? 0) || undefined;
+      if (appPidBeforeKill && recoveredPid && appPidBeforeKill === recoveredPid) {
+        throw new Error("app pid did not change after kill/recovery");
+      }
+    });
+
+    await runStep("app_logs", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      await runCli(
+        cli,
+        [
+          "workspace",
+          "app",
+          "logs",
+          app_id,
+          "--workspace",
+          workspaceId,
+          "--tail",
+          "40",
+        ],
+        { timeoutSeconds: 45, commandTimeoutMs: 90_000 },
+      );
+    });
+
+    await runStep("app_unexpose", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const unexposed = await runCli<{
+        exposure?: unknown;
+        state?: string;
+      }>(cli, ["workspace", "app", "unexpose", app_id, "--workspace", workspaceId]);
+      if (unexposed.exposure != null) {
+        throw new Error("app unexpose returned non-empty exposure");
+      }
+      if (`${unexposed.state ?? ""}` !== "running") {
+        throw new Error(`app unexpose returned unexpected state '${unexposed.state}'`);
+      }
+    });
+
+    await runStep("app_stop", async () => {
+      if (!workspaceId) throw new Error("missing workspace id");
+      if (!app_id) throw new Error("missing app id");
+      const stopped = await runCli<CliAppStatusRow>(
+        cli,
+        ["workspace", "app", "stop", app_id, "--workspace", workspaceId],
+      );
+      if (stopped.state !== "stopped") {
+        throw new Error(`app stop returned unexpected state '${stopped.state}'`);
+      }
+    });
+
+    if (cleanup_on_success) {
+      await runStep("cleanup", async () => {
+        if (workspaceId && app_id) {
+          try {
+            await runCli(cli, ["workspace", "app", "delete", app_id, "--workspace", workspaceId]);
+          } catch (err) {
+            logger.warn("cloud smoke app cleanup delete failed", {
+              app_id,
+              workspace_id: workspaceId,
+              err: getErrorMessage(err),
+            });
+          }
+        }
+        if (workspaceId) {
+          try {
+            await runCli(cli, [
+              "workspace",
+              "delete",
+              "--workspace",
+              workspaceId,
+              "--hard",
+              "--purge-backups-now",
+              "--yes",
+              "--wait",
+            ]);
+          } catch (hardErr) {
+            logger.warn("cloud smoke app cleanup hard delete failed; using soft delete", {
+              workspace_id: workspaceId,
+              err: getErrorMessage(hardErr),
+            });
+            await runCli(cli, [
+              "workspace",
+              "delete",
+              "--workspace",
+              workspaceId,
+            ]);
+          }
+        }
+        for (const cleanupHostId of cleanupHostIds) {
+          await runCli(cli, ["host", "delete", cleanupHostId, "--skip-backups", "--wait"]);
+        }
+      });
+    }
+
+    return {
+      ok: true,
+      host_id,
+      project_id: workspaceId,
+      host_ids: host_id ? [host_id] : [],
+      project_ids: workspaceId ? [workspaceId] : [],
+      cleanup: {
+        host_ids: [...cleanupHostIds],
+        workspaces: [...cleanupWorkspaces].map((workspace_id) => ({
+          workspace_id,
+          account_id,
+        })),
+      },
+      debug: debugHints
+        ? {
+            run_tag: run_tag ?? undefined,
+            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            workspace_title: workspaceTitle,
+            ssh_target: debugHints.ssh_target,
+            ssh_tail_log: debugHints.ssh_tail_log,
+            scp_log: debugHints.scp_log,
+            host_log_path: debugHints.host_log_path,
+            bootstrap_log_path: debugHints.bootstrap_log_path,
+            host_url: debugHints.host_url,
+          }
+        : {
+            run_tag: run_tag ?? undefined,
+            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            workspace_title: workspaceTitle,
+            host_log_path: "/mnt/cocalc/data/log",
+            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+          },
+      steps,
+    };
+  } catch (err) {
+    emit({
+      step: "run",
+      status: "failed",
+      message: `${err}`,
+    });
+    return {
+      ok: false,
+      host_id,
+      project_id: workspaceId,
+      host_ids: host_id ? [host_id] : [],
+      project_ids: workspaceId ? [workspaceId] : [],
+      cleanup: {
+        host_ids: [...cleanupHostIds],
+        workspaces: [...cleanupWorkspaces].map((workspace_id) => ({
+          workspace_id,
+          account_id,
+        })),
+      },
+      debug: debugHints
+        ? {
+            run_tag: run_tag ?? undefined,
+            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            workspace_title: workspaceTitle,
+            ssh_target: debugHints.ssh_target,
+            ssh_tail_log: debugHints.ssh_tail_log,
+            scp_log: debugHints.scp_log,
+            host_log_path: debugHints.host_log_path,
+            bootstrap_log_path: debugHints.bootstrap_log_path,
+            host_url: debugHints.host_url,
+          }
+        : {
+            run_tag: run_tag ?? undefined,
+            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            workspace_title: workspaceTitle,
+            host_log_path: "/mnt/cocalc/data/log",
+            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+          },
+      steps,
+    };
+  } finally {
+    if (specDir) {
+      try {
+        await rm(specDir, { recursive: true, force: true });
+      } catch (err) {
+        logger.debug("cloud smoke app temp spec cleanup warning", {
+          dir: specDir,
+          err: getErrorMessage(err),
+        });
+      }
+    }
+  }
+}
+
 async function runMoveSmokeScenarioViaCli({
   account_id,
   provider,
@@ -4226,6 +4870,23 @@ export async function runProjectHostPersistenceSmokePreset({
       verify_provider_status: smokeInput.verify_provider_status,
       print_debug_hints: smokeInput.print_debug_hints,
       proxy_port: smokeInput.proxy_port,
+      log: smokeInput.log,
+    });
+  }
+
+  if (scenario === "apps") {
+    if (execution_mode !== "cli") {
+      throw new Error("apps smoke scenario currently supports execution_mode='cli' only");
+    }
+    return await runAppSmokeScenarioViaCli({
+      account_id: smokeInput.account_id,
+      provider: smokeInput.provider,
+      run_tag: smokeInput.run_tag,
+      createSpec: smokeInput.createSpec,
+      wait: smokeInput.wait,
+      cleanup_on_success: smokeInput.cleanup_on_success,
+      verify_provider_status: smokeInput.verify_provider_status,
+      print_debug_hints: smokeInput.print_debug_hints,
       log: smokeInput.log,
     });
   }
