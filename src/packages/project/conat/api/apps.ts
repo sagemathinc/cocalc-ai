@@ -20,4 +20,6 @@ export {
   exposeApp,
   unexposeApp,
   appLogs,
+  detectApps,
+  auditAppPublicReadiness,
 } from "@cocalc/project/app-servers/control";

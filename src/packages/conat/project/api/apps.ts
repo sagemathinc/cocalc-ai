@@ -16,6 +16,8 @@ export const apps = {
   exposeApp: true,
   unexposeApp: true,
   appLogs: true,
+  detectApps: true,
+  auditAppPublicReadiness: true,
 };
 
 export interface NamedServerStatus {
@@ -76,6 +78,38 @@ export interface ManagedAppStatus {
   warnings?: string[];
 }
 
+export interface DetectedAppPort {
+  port: number;
+  hosts: string[];
+  managed: boolean;
+  managed_app_ids: string[];
+  proxy_url: string;
+  source: "ss" | "procfs";
+}
+
+export interface AppAuditCheck {
+  id: string;
+  level: "info" | "warning" | "error";
+  status: "pass" | "warn" | "fail";
+  message: string;
+  suggestion?: string;
+}
+
+export interface AppPublicReadinessAudit {
+  app_id: string;
+  title?: string;
+  kind: "service" | "static";
+  status: ManagedAppStatus;
+  summary: {
+    pass: number;
+    warn: number;
+    fail: number;
+  };
+  checks: AppAuditCheck[];
+  suggested_actions: string[];
+  agent_prompt: string;
+}
+
 export interface Apps {
   start: (name: string) => Promise<NamedServerStatus>;
 
@@ -123,4 +157,11 @@ export interface Apps {
     stdout: string;
     stderr: string;
   }>;
+
+  detectApps: (opts?: {
+    include_managed?: boolean;
+    limit?: number;
+  }) => Promise<DetectedAppPort[]>;
+
+  auditAppPublicReadiness: (id: string) => Promise<AppPublicReadinessAudit>;
 }

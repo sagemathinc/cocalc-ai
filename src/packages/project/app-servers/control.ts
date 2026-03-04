@@ -6,6 +6,7 @@
 import getPort from "get-port";
 import { spawn } from "node:child_process";
 import net from "node:net";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
@@ -77,6 +78,38 @@ export interface AppStatus {
   error?: string;
 }
 
+export interface DetectedAppPort {
+  port: number;
+  hosts: string[];
+  managed: boolean;
+  managed_app_ids: string[];
+  proxy_url: string;
+  source: "ss" | "procfs";
+}
+
+export interface AppAuditCheck {
+  id: string;
+  level: "info" | "warning" | "error";
+  status: "pass" | "warn" | "fail";
+  message: string;
+  suggestion?: string;
+}
+
+export interface AppPublicReadinessAudit {
+  app_id: string;
+  title?: string;
+  kind: "service" | "static";
+  status: AppStatus;
+  summary: {
+    pass: number;
+    warn: number;
+    fail: number;
+  };
+  checks: AppAuditCheck[];
+  suggested_actions: string[];
+  agent_prompt: string;
+}
+
 export type AppProxyTarget =
   | {
       app_id: string;
@@ -95,6 +128,139 @@ export type AppProxyTarget =
 
 function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
+}
+
+function parseSsOutput(raw: string): Array<{ host: string; port: number }> {
+  const out: Array<{ host: string; port: number }> = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const text = line.trim();
+    if (!text) continue;
+    const cols = text.split(/\s+/);
+    if (cols.length < 4) continue;
+    const local = cols[3];
+    const m = local.match(/^(.*):(\d+)$/);
+    if (!m) continue;
+    let host = m[1] ?? "";
+    if (host.startsWith("[") && host.endsWith("]")) {
+      host = host.slice(1, -1);
+    }
+    const port = Number(m[2]);
+    if (!Number.isInteger(port) || port <= 0) continue;
+    out.push({ host: host || "0.0.0.0", port });
+  }
+  return out;
+}
+
+function decodeIpv4Hex(hex: string): string {
+  if (hex.length !== 8) return "0.0.0.0";
+  const bytes: number[] = [];
+  for (let i = 0; i < 8; i += 2) {
+    bytes.push(Number.parseInt(hex.slice(i, i + 2), 16));
+  }
+  bytes.reverse();
+  return bytes.join(".");
+}
+
+function decodeIpv6Hex(hex: string): string {
+  if (hex.length !== 32) return "::";
+  const groups: string[] = [];
+  for (let i = 0; i < 32; i += 4) {
+    groups.push(hex.slice(i, i + 4));
+  }
+  return groups.join(":").replace(/(^|:)0{1,3}/g, "$1");
+}
+
+async function parseProcTcp(path: string, family: "tcp" | "tcp6"): Promise<Array<{ host: string; port: number }>> {
+  let raw = "";
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return [];
+  }
+  const out: Array<{ host: string; port: number }> = [];
+  const lines = raw.split(/\r?\n/).slice(1);
+  for (const line of lines) {
+    const text = line.trim();
+    if (!text) continue;
+    const cols = text.split(/\s+/);
+    if (cols.length < 4) continue;
+    const local = cols[1] ?? "";
+    const state = cols[3] ?? "";
+    if (state !== "0A") continue; // LISTEN
+    const m = local.match(/^([0-9A-Fa-f]+):([0-9A-Fa-f]+)$/);
+    if (!m) continue;
+    const ipHex = m[1];
+    const portHex = m[2];
+    const port = Number.parseInt(portHex, 16);
+    if (!Number.isInteger(port) || port <= 0) continue;
+    const host = family === "tcp" ? decodeIpv4Hex(ipHex) : decodeIpv6Hex(ipHex);
+    out.push({ host, port });
+  }
+  return out;
+}
+
+async function detectListeningPorts(): Promise<DetectedAppPort[]> {
+  const fromSs = await new Promise<Array<{ host: string; port: number }> | undefined>((resolve) => {
+    const child = spawn("ss", ["-ltnH"], { stdio: ["ignore", "pipe", "ignore"] });
+    const chunks: Buffer[] = [];
+    child.stdout?.on("data", (c: Buffer) => chunks.push(c));
+    child.once("error", () => resolve(undefined));
+    child.once("close", (code) => {
+      if (code !== 0) return resolve(undefined);
+      resolve(parseSsOutput(Buffer.concat(chunks).toString("utf8")));
+    });
+  });
+  const source: "ss" | "procfs" = fromSs ? "ss" : "procfs";
+  const sockets =
+    fromSs ??
+    [
+      ...(await parseProcTcp("/proc/net/tcp", "tcp")),
+      ...(await parseProcTcp("/proc/net/tcp6", "tcp6")),
+    ];
+  const byPort = new Map<number, Set<string>>();
+  for (const { host, port } of sockets) {
+    if (!byPort.has(port)) byPort.set(port, new Set());
+    byPort.get(port)!.add(host);
+  }
+  const managedByPort = new Map<number, string[]>();
+  const statuses = await listAppStatuses();
+  for (const row of statuses) {
+    if (row.kind !== "service" || row.state !== "running" || !row.port) continue;
+    if (!managedByPort.has(row.port)) managedByPort.set(row.port, []);
+    managedByPort.get(row.port)!.push(row.id);
+  }
+  const ignoredPorts = new Set<number>();
+  const proxyPort = Number(process.env.COCALC_PROXY_PORT ?? 0);
+  if (Number.isInteger(proxyPort) && proxyPort > 0) ignoredPorts.add(proxyPort);
+  const hubPort = Number(process.env.HUB_PORT ?? 0);
+  if (Number.isInteger(hubPort) && hubPort > 0) ignoredPorts.add(hubPort);
+  const entries: DetectedAppPort[] = [];
+  for (const [port, hostSet] of byPort.entries()) {
+    if (ignoredPorts.has(port)) continue;
+    const managed_app_ids = managedByPort.get(port) ?? [];
+    entries.push({
+      port,
+      hosts: [...hostSet].sort(),
+      managed: managed_app_ids.length > 0,
+      managed_app_ids,
+      proxy_url: getProxyUrl(port),
+      source,
+    });
+  }
+  entries.sort((a, b) => a.port - b.port);
+  return entries;
+}
+
+function auditSummary(checks: AppAuditCheck[]) {
+  let pass = 0;
+  let warn = 0;
+  let fail = 0;
+  for (const c of checks) {
+    if (c.status === "pass") pass += 1;
+    else if (c.status === "warn") warn += 1;
+    else fail += 1;
+  }
+  return { pass, warn, fail };
 }
 
 function invalidateRouteCache(): void {
@@ -627,6 +793,212 @@ export async function appLogs(id: string): Promise<{
     state: status.state,
     stdout,
     stderr,
+  };
+}
+
+export async function detectApps(opts?: {
+  include_managed?: boolean;
+  limit?: number;
+}): Promise<DetectedAppPort[]> {
+  const includeManaged = !!opts?.include_managed;
+  const limit = Math.max(1, Math.floor(Number(opts?.limit ?? 200)));
+  const detected = await detectListeningPorts();
+  const filtered = includeManaged ? detected : detected.filter((d) => !d.managed);
+  return filtered.slice(0, limit);
+}
+
+export async function auditAppPublicReadiness(
+  id: string,
+): Promise<AppPublicReadinessAudit> {
+  const spec = await getAppSpec(id);
+  const status = await statusApp(id);
+  const checks: AppAuditCheck[] = [];
+  const add = (check: AppAuditCheck) => checks.push(check);
+
+  add({
+    id: "app.exists",
+    level: "info",
+    status: "pass",
+    message: `App '${id}' is defined with kind='${spec.kind}'.`,
+  });
+
+  if (!spec.proxy?.base_path?.startsWith("/")) {
+    add({
+      id: "proxy.base_path",
+      level: "error",
+      status: "fail",
+      message: "proxy.base_path is not absolute.",
+      suggestion: "Set proxy.base_path to an absolute path like /apps/my-app.",
+    });
+  } else {
+    add({
+      id: "proxy.base_path",
+      level: "info",
+      status: "pass",
+      message: `proxy.base_path='${spec.proxy.base_path}'.`,
+    });
+  }
+
+  if (spec.kind === "service") {
+    const host = `${spec.network.listen_host ?? ""}`.trim();
+    if (host === "127.0.0.1" || host === "localhost" || host === "::1") {
+      add({
+        id: "service.listen_host",
+        level: "info",
+        status: "pass",
+        message: `Service binds to loopback host '${host}'.`,
+      });
+    } else {
+      add({
+        id: "service.listen_host",
+        level: "warning",
+        status: "warn",
+        message: `Service listen_host='${host || "unset"}' is not strict loopback.`,
+        suggestion: "Use 127.0.0.1 unless you explicitly need broader binding.",
+      });
+    }
+    if (status.state === "running" && status.ready === true) {
+      add({
+        id: "service.running",
+        level: "info",
+        status: "pass",
+        message: `Service is running and ready on port ${status.port}.`,
+      });
+    } else if (status.state === "running") {
+      add({
+        id: "service.running",
+        level: "warning",
+        status: "warn",
+        message: "Service process is running but readiness is not confirmed yet.",
+        suggestion: "Inspect logs and health endpoint, then retry readiness check.",
+      });
+    } else {
+      add({
+        id: "service.running",
+        level: "warning",
+        status: "warn",
+        message: "Service is stopped.",
+        suggestion: `Run 'cocalc workspace app start ${id} --wait'.`,
+      });
+    }
+  } else {
+    const cacheControl = `${spec.static.cache_control ?? ""}`.trim();
+    if (cacheControl) {
+      add({
+        id: "static.cache_control",
+        level: "info",
+        status: "pass",
+        message: `Static cache_control is configured: '${cacheControl}'.`,
+      });
+    } else {
+      add({
+        id: "static.cache_control",
+        level: "warning",
+        status: "warn",
+        message: "Static app has no explicit cache_control.",
+        suggestion: "Set cache_control for better CDN behavior and egress control.",
+      });
+    }
+  }
+
+  const exposure = status.exposure;
+  if (!exposure || exposure.mode !== "public") {
+    add({
+      id: "exposure.public",
+      level: "warning",
+      status: "warn",
+      message: "App is not currently publicly exposed.",
+      suggestion: `Use 'cocalc workspace app expose ${id} --ttl 10m'.`,
+    });
+  } else {
+    add({
+      id: "exposure.public",
+      level: "info",
+      status: "pass",
+      message: `Public exposure active${exposure.public_url ? ` at ${exposure.public_url}` : ""}.`,
+    });
+    if (exposure.auth_front === "token") {
+      add({
+        id: "exposure.front_auth",
+        level: "info",
+        status: "pass",
+        message: "Front auth token is enabled for public access.",
+      });
+    } else {
+      add({
+        id: "exposure.front_auth",
+        level: "warning",
+        status: "warn",
+        message: "Front auth is disabled (publicly unauthenticated).",
+        suggestion: "Use front auth token unless your app intentionally supports anonymous access.",
+      });
+    }
+  }
+
+  const launchpad =
+    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad";
+  const suggested_actions: string[] = [];
+  if (launchpad) {
+    try {
+      const policy = await hubApi(conat()).system.getProjectAppPublicPolicy();
+      for (const warning of policy.warnings ?? []) {
+        add({
+          id: `policy.${warning.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`,
+          level: "warning",
+          status: "warn",
+          message: warning,
+        });
+      }
+      if (policy.metered_egress) {
+        suggested_actions.push(
+          "Enable aggressive Cloudflare caching and keep public TTL short on metered-egress hosts.",
+        );
+      }
+    } catch (err) {
+      add({
+        id: "policy.lookup",
+        level: "warning",
+        status: "warn",
+        message: `Could not read launchpad public app policy: ${err}`,
+      });
+    }
+  }
+
+  suggested_actions.push(`cocalc workspace app logs ${id} --tail 200`);
+  if (status.state !== "running") {
+    suggested_actions.push(`cocalc workspace app start ${id} --wait`);
+  }
+  if (!exposure || exposure.mode !== "public") {
+    suggested_actions.push(`cocalc workspace app expose ${id} --ttl 10m`);
+  }
+
+  const summary = auditSummary(checks);
+  const agent_prompt = [
+    `Audit and improve public readiness for app '${id}'.`,
+    `- Kind: ${spec.kind}`,
+    `- Base path: ${spec.proxy.base_path}`,
+    `- Current state: ${status.state}${status.ready === true ? " (ready)" : ""}`,
+    `- Exposure mode: ${exposure?.mode ?? "private"}`,
+    "",
+    "Steps:",
+    "1. Review app logs and runtime status.",
+    "2. Fix readiness/start issues if needed.",
+    "3. Verify loopback binding and proxy/base-path behavior.",
+    "4. Apply safer public settings (token auth, TTL) when appropriate.",
+    "5. Re-run readiness checks and summarize remaining risks.",
+    "",
+    `Quick commands: ${suggested_actions.join(" ; ")}`,
+  ].join("\n");
+
+  return {
+    app_id: id,
+    title: spec.title,
+    kind: spec.kind,
+    status,
+    summary,
+    checks,
+    suggested_actions: [...new Set(suggested_actions)],
+    agent_prompt,
   };
 }
 

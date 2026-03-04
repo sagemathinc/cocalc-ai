@@ -286,6 +286,76 @@ export function registerWorkspaceAppCommands(
     );
 
   app
+    .command("detect")
+    .description("detect listening ports that could be proxied as app servers")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--include-managed", "include already managed app ports")
+    .option("--limit <n>", "maximum rows to return", "200")
+    .action(
+      async (
+        opts: {
+          workspace?: string;
+          includeManaged?: boolean;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app detect", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const limit = parsePositiveIntOrThrow(opts.limit, "--limit") ?? 200;
+          const items = await api.apps.detectApps({
+            include_managed: !!opts.includeManaged,
+            limit,
+          });
+          return {
+            workspace_id: ws.project_id,
+            count: items.length,
+            items,
+          };
+        });
+      },
+    );
+
+  app
+    .command("audit <appId>")
+    .description("audit app public-readiness for agent and operator workflows")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option(
+      "--public-readiness",
+      "run public-readiness audit mode (currently the default and only mode)",
+      true,
+    )
+    .action(
+      async (
+        appId: string,
+        opts: {
+          workspace?: string;
+          publicReadiness?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app audit", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          if (opts.publicReadiness === false) {
+            throw new Error("only --public-readiness mode is supported");
+          }
+          const audit = await api.apps.auditAppPublicReadiness(appId);
+          return {
+            workspace_id: ws.project_id,
+            mode: "public-readiness",
+            ...audit,
+          };
+        });
+      },
+    );
+
+  app
     .command("expose <appId>")
     .description("enable public app access with required TTL")
     .option("-w, --workspace <workspace>", "workspace id or name")
