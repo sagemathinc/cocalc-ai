@@ -41,7 +41,7 @@ function parseNonNegativeInt(value: unknown, label: string, fallback: number): n
 }
 
 function buildSlateInspectScript({ previewChars }: { previewChars: number }): string {
-  return `(() => {
+  return `return (() => {
   const selection = window.getSelection ? window.getSelection() : null;
   const nodes = Array.from(document.querySelectorAll('[data-slate-editor="true"]'));
   const normalizeText = (s) => (s || "").replace(/\\s+/g, " ").trim();
@@ -100,9 +100,10 @@ function buildReactRootsInspectScript({
   maxDomNodes: number;
   maxFibers: number;
 }): string {
-  return `(() => {
+  return `return (() => {
   const roots = [];
   const seenRootKeys = new Set();
+  const seenRootObjects = new WeakSet();
   const result = {
     url: location.href,
     title: document.title,
@@ -143,6 +144,25 @@ function buildReactRootsInspectScript({
     return { visited, component_samples: names.slice(0, 60) };
   };
 
+  const pushRoot = ({ rootFiber, hostNode, sourceType, sourceKey }) => {
+    if (!rootFiber || typeof rootFiber !== "object") return;
+    const rootObj = rootFiber.stateNode || rootFiber;
+    if (rootObj && typeof rootObj === "object") {
+      if (seenRootObjects.has(rootObj)) return;
+      seenRootObjects.add(rootObj);
+    }
+    const summary = summarizeFiberTree(rootFiber);
+    roots.push({
+      source_type: sourceType || null,
+      source_key: sourceKey || null,
+      host_tag: hostNode && hostNode.tagName ? hostNode.tagName : null,
+      host_id: hostNode && hostNode.id ? hostNode.id : null,
+      host_class:
+        hostNode && hostNode.className ? (hostNode.className || "").toString() : null,
+      ...summary,
+    });
+  };
+
   const walk = document.createTreeWalker(document.documentElement || document.body, NodeFilter.SHOW_ELEMENT);
   let node = walk.currentNode;
   while (node && result.scanned_dom_nodes < ${maxDomNodes}) {
@@ -158,19 +178,43 @@ function buildReactRootsInspectScript({
       else if (value && value.stateNode && value.stateNode.current) rootFiber = value.stateNode.current;
       else if (value && typeof value === "object") rootFiber = value;
       if (!rootFiber) continue;
-      const summary = summarizeFiberTree(rootFiber);
-      roots.push({
-        container_key: key,
-        host_tag: node.tagName || null,
-        host_id: node.id || null,
-        host_class: (node.className || "").toString() || null,
-        ...summary,
+      pushRoot({
+        rootFiber,
+        hostNode: node,
+        sourceType: "container",
+        sourceKey: key,
+      });
+    }
+
+    // Fallback path: modern React often only exposes __reactFiber$ markers.
+    for (const key of keys) {
+      if (!key.startsWith("__reactFiber$")) continue;
+      const value = node[key];
+      if (!value || typeof value !== "object") continue;
+      let cursor = value;
+      let guard = 0;
+      while (cursor && cursor.return && guard < 2000) {
+        cursor = cursor.return;
+        guard += 1;
+      }
+      if (!cursor) continue;
+      const rootFiber =
+        cursor && cursor.stateNode && cursor.stateNode.current
+          ? cursor.stateNode.current
+          : cursor;
+      pushRoot({
+        rootFiber,
+        hostNode: node,
+        sourceType: "fiber",
+        sourceKey: key,
       });
     }
     node = walk.nextNode();
   }
 
+  roots.sort((a, b) => (b.visited || 0) - (a.visited || 0));
   result.total_roots = roots.length;
+  result.primary_root_index = roots.length > 0 ? 0 : null;
   return result;
 })();`;
 }
@@ -187,7 +231,7 @@ function buildReduxInspectScript({
   maxString: number;
 }): string {
   const pathLiteral = JSON.stringify(`${slicePath ?? ""}`.trim());
-  return `(() => {
+  return `return (() => {
   const path = ${pathLiteral};
   const splitPath = path ? path.split('.').filter(Boolean) : [];
 
@@ -228,6 +272,38 @@ function buildReduxInspectScript({
     }
   }
 
+  // Fallback path: inspect React fibers and look for provider props with a store.
+  if (!store) {
+    const nodes = document.querySelectorAll('*');
+    let scanned = 0;
+    outer: for (const node of nodes) {
+      scanned += 1;
+      if (scanned > 12000) break;
+      const keys = Object.getOwnPropertyNames(node);
+      for (const key of keys) {
+        if (!key.startsWith('__reactFiber$')) continue;
+        let fiber = node[key];
+        let guard = 0;
+        while (fiber && guard < 2000) {
+          const memo = fiber.memoizedProps;
+          const pending = fiber.pendingProps;
+          const candidate =
+            (memo && memo.store) ||
+            (pending && pending.store) ||
+            (memo && memo.value && memo.value.store) ||
+            (pending && pending.value && pending.value.store);
+          if (isStore(candidate)) {
+            store = candidate;
+            storeHint = key + ':fiber';
+            break outer;
+          }
+          fiber = fiber.return;
+          guard += 1;
+        }
+      }
+    }
+  }
+
   if (!store) {
     return {
       found: false,
@@ -249,8 +325,34 @@ function buildReduxInspectScript({
   }
 
   let target = state;
+  const hasByKey = (obj, key) => {
+    if (!obj || typeof obj !== 'object') return false;
+    if (typeof obj.has === 'function') {
+      try {
+        return !!obj.has(key);
+      } catch {}
+    }
+    try {
+      return key in obj;
+    } catch {
+      return false;
+    }
+  };
+  const getByKey = (obj, key) => {
+    if (!obj || typeof obj !== 'object') return undefined;
+    if (typeof obj.get === 'function') {
+      try {
+        return obj.get(key);
+      } catch {}
+    }
+    try {
+      return obj[key];
+    } catch {
+      return undefined;
+    }
+  };
   for (const part of splitPath) {
-    if (target == null || typeof target !== 'object' || !(part in target)) {
+    if (!hasByKey(target, part)) {
       return {
         found: true,
         store_hint: storeHint,
@@ -259,13 +361,51 @@ function buildReduxInspectScript({
         error: 'slice path not found',
       };
     }
-    target = target[part];
+    target = getByKey(target, part);
   }
+
+  const listTopKeys = (obj) => {
+    if (!obj || typeof obj !== 'object') return [];
+    if (Array.isArray(obj)) {
+      return Array.from({ length: Math.min(obj.length, ${maxEntries}) }, (_, i) => i);
+    }
+    if (typeof obj.keySeq === 'function' && typeof obj.get === 'function') {
+      try {
+        const keys = obj.keySeq().toArray();
+        return keys.slice(0, ${maxEntries});
+      } catch {}
+    }
+    try {
+      return Object.keys(obj).slice(0, ${maxEntries});
+    } catch {
+      return [];
+    }
+  };
 
   const seen = new WeakSet();
   const limitString = (s) => {
     const t = String(s);
     return t.length <= ${maxString} ? t : t.slice(0, ${maxString}) + '...';
+  };
+  const summarizeShallow = (value) => {
+    if (value == null) return value;
+    const type = typeof value;
+    if (type === 'string') return limitString(value);
+    if (type === 'number' || type === 'boolean') return value;
+    if (type === 'bigint') return value.toString();
+    if (type === 'function') return '[Function ' + (value.name || 'anonymous') + ']';
+    if (Array.isArray(value)) return '[Array(' + value.length + ')]';
+    if (type !== 'object') return String(value);
+    if (value && typeof value.keySeq === 'function' && typeof value.get === 'function') {
+      const size = typeof value.size === 'number' ? value.size : '?';
+      return '[ImmutableMap size=' + size + ']';
+    }
+    try {
+      const count = Object.keys(value).length;
+      return '[Object keys=' + count + ']';
+    } catch {
+      return '[Object]';
+    }
   };
 
   const summarize = (value, depth) => {
@@ -281,6 +421,9 @@ function buildReduxInspectScript({
 
     if (depth >= ${maxDepth}) {
       if (Array.isArray(value)) return '[Array(' + value.length + ')]';
+      if (value && typeof value.keySeq === 'function' && typeof value.get === 'function') {
+        return '[ImmutableMap]';
+      }
       return '[Object]';
     }
 
@@ -288,6 +431,22 @@ function buildReduxInspectScript({
       const out = value.slice(0, ${maxEntries}).map((x) => summarize(x, depth + 1));
       if (value.length > ${maxEntries}) {
         out.push('[+' + (value.length - ${maxEntries}) + ' more]');
+      }
+      return out;
+    }
+
+    if (value && typeof value.keySeq === 'function' && typeof value.get === 'function') {
+      const keys = listTopKeys(value);
+      const out = { __immutable_map__: true };
+      for (const key of keys) {
+        try {
+          out[String(key)] = summarize(value.get(key), depth + 1);
+        } catch {
+          out[String(key)] = '[Error reading key]';
+        }
+      }
+      if (typeof value.size === 'number' && value.size > keys.length) {
+        out.__truncated__ = value.size - keys.length;
       }
       return out;
     }
@@ -303,14 +462,41 @@ function buildReduxInspectScript({
     return out;
   };
 
+  let dumpMode = 'slice_dump';
+  let dumpedValue;
+  if (splitPath.length === 0) {
+    dumpMode = 'state_summary';
+    if (state && typeof state === 'object') {
+      const keys = listTopKeys(state);
+      const summary = {};
+      for (const key of keys) {
+        summary[String(key)] = summarizeShallow(getByKey(state, key));
+      }
+      if (typeof state.size === 'number' && state.size > keys.length) {
+        summary.__truncated__ = state.size - keys.length;
+      } else {
+        try {
+          const count = Object.keys(state).length;
+          if (count > keys.length) summary.__truncated__ = count - keys.length;
+        } catch {}
+      }
+      dumpedValue = summary;
+    } else {
+      dumpedValue = summarizeShallow(state);
+    }
+  } else {
+    dumpedValue = summarize(target, 0);
+  }
+
   return {
     found: true,
     url: location.href,
     title: document.title,
     store_hint: storeHint,
-    top_level_keys: state && typeof state === 'object' ? Object.keys(state).sort() : [],
+    top_level_keys: listTopKeys(state),
     slice_path: path || null,
-    value: summarize(target, 0),
+    dump_mode: dumpMode,
+    value: dumpedValue,
   };
 })();`;
 }
