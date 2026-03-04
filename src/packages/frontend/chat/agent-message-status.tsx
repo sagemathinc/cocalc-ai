@@ -58,6 +58,7 @@ interface AgentMessageStatusProps {
   activityContext: ActivityLogContext;
   inlineCodeLinks?: InlineCodeLink[];
   openDrawerToken?: number;
+  onOpenGitBrowser?: () => void;
 }
 
 export function AgentMessageStatus({
@@ -73,6 +74,7 @@ export function AgentMessageStatus({
   activityContext,
   inlineCodeLinks,
   openDrawerToken,
+  onOpenGitBrowser,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
@@ -227,7 +229,29 @@ export function AgentMessageStatus({
       </div>
 
       <Drawer
-        title="Codex activity"
+        title={
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <span>Codex activity</span>
+            {onOpenGitBrowser ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  handleDrawerClose();
+                  onOpenGitBrowser();
+                }}
+              >
+                Open git browser
+              </Button>
+            ) : null}
+          </div>
+        }
         placement="right"
         open={showDrawer}
         onClose={handleDrawerClose}

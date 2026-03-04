@@ -287,6 +287,10 @@ export function ChatPanel({
   const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
+  const [activityJumpDate, setActivityJumpDate] = useState<string | undefined>(
+    undefined,
+  );
+  const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -889,6 +893,37 @@ export function ChatPanel({
     [actions, path, project_id],
   );
 
+  const openActivityFromGitBrowser = useCallback(() => {
+    const targetThreadKey =
+      gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
+    const thread_id = normalizeThreadKey(targetThreadKey);
+    if (!thread_id) return;
+    const threadMessages = actions.getMessagesInThread(thread_id) ?? [];
+    let newestCodexDate: number | undefined;
+    for (let i = threadMessages.length - 1; i >= 0; i--) {
+      const msg = threadMessages[i];
+      if (!field<string>(msg, "acp_account_id")) continue;
+      const d = dateValue(msg);
+      if (!d) continue;
+      newestCodexDate = d.valueOf();
+      break;
+    }
+    if (!Number.isFinite(newestCodexDate)) return;
+    if (targetThreadKey && targetThreadKey !== selectedThreadKey) {
+      setSelectedThreadKey(targetThreadKey);
+    }
+    setGitBrowserOpen(false);
+    setGitBrowserThreadKey(undefined);
+    setActivityJumpDate(`${newestCodexDate}`);
+    setActivityJumpToken((n) => n + 1);
+  }, [
+    actions,
+    gitBrowserThreadKey,
+    selectedThreadKey,
+    composerTargetKey,
+    setSelectedThreadKey,
+  ]);
+
   const renderChatContent = () => (
     <div className="smc-vfill" style={GRID_STYLE}>
       <ChatRoomThreadPanel
@@ -920,6 +955,8 @@ export function ChatPanel({
         onNewThreadSetupChange={setNewThreadSetup}
         showThreadImagePreview={showThreadImagePreview}
         hideChatTypeSelector={hideChatTypeSelector}
+        activityJumpDate={activityJumpDate}
+        activityJumpToken={activityJumpToken}
       />
       <ChatRoomComposer
         actions={actions}
@@ -1031,6 +1068,7 @@ export function ChatPanel({
         onRequestAgentTurn={sendGitBrowserAgentPrompt}
         onDirectCommitLogged={logGitBrowserDirectCommit}
         onFindInChat={findCommitInCurrentChat}
+        onOpenActivityLog={openActivityFromGitBrowser}
       />
     </div>
   );
