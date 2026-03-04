@@ -6,11 +6,10 @@ browser session metadata to hub.system so CLI tools can discover and target a
 specific live browser session.
 */
 
-import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
+import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { WebappClient } from "@cocalc/frontend/client/client";
 import type { HubApi } from "@cocalc/conat/hub/api";
-import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
 import {
   BrowserExtensionsRuntime,
   type BrowserExtensionSummary,
@@ -31,12 +30,15 @@ import {
   sanitizePathList,
   splitAbsolutePath,
   terminalCommandSuffix,
-  toAbsolutePath,
   toNotifyMessage,
   toSerializableValue,
   truncateRuntimeMessage,
 } from "./common-utils";
 import { BROWSER_EXEC_API_DECLARATION } from "./exec-api-declaration";
+import {
+  buildSessionSnapshot,
+  flattenOpenFiles,
+} from "./snapshot";
 import {
   createBrowserSessionService,
   type BrowserAtomicActionRequest,
@@ -77,8 +79,6 @@ import {
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
-const MAX_OPEN_PROJECTS = 64;
-const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -103,54 +103,6 @@ const getQuickJSAsyncifyModule = memoizePromiseFactory(async () => {
   return await newQuickJSAsyncWASMModuleFromVariant(quickjsAsyncifyVariant);
 });
 
-
-function getActiveProjectIdFallback(openProjectIds: string[]): string | undefined {
-  const activeTopTab = `${redux.getStore("page")?.get("active_top_tab") ?? ""}`;
-  if (isValidUUID(activeTopTab)) {
-    return activeTopTab;
-  }
-  return openProjectIds[0];
-}
-
-function collectOpenProjects(): BrowserOpenProjectState[] {
-  const projectsStore = redux.getStore("projects");
-  const openProjectIds = asStringArray(projectsStore?.get("open_projects")).slice(
-    0,
-    MAX_OPEN_PROJECTS,
-  );
-  const out: BrowserOpenProjectState[] = [];
-  for (const project_id of openProjectIds) {
-    if (!isValidUUID(project_id)) continue;
-    const projectStore = redux.getStore(project_redux_name(project_id));
-    if (!projectStore) continue;
-    const files = asStringArray(projectStore.get("open_files_order"))
-      .map(toAbsolutePath)
-      .slice(0, MAX_OPEN_FILES_PER_PROJECT);
-    const title = `${projectsStore?.getIn(["project_map", project_id, "title"]) ?? ""}`.trim();
-    out.push({
-      project_id,
-      ...(title ? { title } : {}),
-      open_files: files,
-    });
-  }
-  return out;
-}
-
-function flattenOpenFiles(open_projects: BrowserOpenProjectState[]): BrowserOpenFileInfo[] {
-  const files: BrowserOpenFileInfo[] = [];
-  for (const project of open_projects) {
-    for (const path of project.open_files ?? []) {
-      const absolute_path = toAbsolutePath(path);
-      files.push({
-        project_id: project.project_id,
-        ...(project.title ? { title: project.title } : {}),
-        // path is now absolute across frontend/backend/cli.
-        path: absolute_path,
-      });
-    }
-  }
-  return files;
-}
 
 function normalizePosture(value: unknown): BrowserAutomationPosture {
   const v = `${value ?? ""}`.trim().toLowerCase();
@@ -441,29 +393,6 @@ function sanitizeNotifyOptions(
     ...(title ? { title } : {}),
     ...(timeout != null ? { timeout } : {}),
     ...(block != null ? { block } : {}),
-  };
-}
-
-function buildSessionSnapshot(client: WebappClient): {
-  browser_id: string;
-  session_name?: string;
-  url?: string;
-  active_project_id?: string;
-  open_projects: BrowserOpenProjectState[];
-} {
-  const open_projects = collectOpenProjects();
-  const active_project_id = getActiveProjectIdFallback(
-    open_projects.map((x) => x.project_id),
-  );
-  const session_name =
-    typeof document !== "undefined" ? document.title?.trim() || undefined : undefined;
-  const url = typeof location !== "undefined" ? location.href : undefined;
-  return {
-    browser_id: client.browser_id,
-    ...(session_name ? { session_name } : {}),
-    ...(url ? { url } : {}),
-    ...(active_project_id ? { active_project_id } : {}),
-    open_projects,
   };
 }
 
