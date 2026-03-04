@@ -176,11 +176,33 @@ function clearChild(id: string): void {
   delete children[id];
 }
 
+function isChildRunning(child: ReturnType<typeof spawn>): boolean {
+  return child.exitCode == null && child.signalCode == null;
+}
+
+async function waitForChildExit(
+  child: ReturnType<typeof spawn>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (!isChildRunning(child)) return true;
+  return await new Promise<boolean>((resolve) => {
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (exited: boolean) => {
+      if (timer) clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    child.once("exit", onExit);
+    timer = setTimeout(() => finish(!isChildRunning(child)), timeoutMs);
+  });
+}
+
 export async function startApp(id: string): Promise<AppStatus> {
   const spec = assertServiceSpec(await getAppSpec(id));
   const existing = children[spec.id];
   if (existing) {
-    const running = existing.child.exitCode == null;
+    const running = isChildRunning(existing.child);
     if (running) {
       return await statusApp(spec.id);
     }
@@ -224,13 +246,15 @@ export async function startApp(id: string): Promise<AppStatus> {
 export async function stopApp(id: string): Promise<void> {
   const spec = await getAppSpec(id);
   const running = children[spec.id];
-  if (!running || running.child.exitCode != null) {
+  if (!running || !isChildRunning(running.child)) {
     return;
   }
   running.child.kill("SIGTERM");
-  await delay(1000);
-  if (running.child.exitCode == null) {
+  const exitedGracefully = await waitForChildExit(running.child, 1000);
+  if (exitedGracefully) return;
+  if (isChildRunning(running.child)) {
     running.child.kill("SIGKILL");
+    await waitForChildExit(running.child, 2000);
   }
 }
 
@@ -248,7 +272,7 @@ export async function statusApp(id: string): Promise<AppStatus> {
   }
 
   const running = children[spec.id];
-  if (!running || running.child.exitCode != null) {
+  if (!running || !isChildRunning(running.child)) {
     return status;
   }
 
