@@ -8,6 +8,31 @@ export function supportsTerminalCwdLookup(): boolean {
   return process.platform === "linux" || process.platform === "darwin";
 }
 
+export function toHomeRelativePath(
+  absolutePath: string,
+  homePath: string,
+): string {
+  return absolutePath.startsWith(homePath)
+    ? absolutePath.slice(homePath.length + 1)
+    : absolutePath;
+}
+
+export function parseDarwinCwdFromLsofOutput(
+  stdout: string,
+): string | undefined {
+  let expectPathForCwd = false;
+  for (const line of `${stdout ?? ""}`.split(/\r?\n/)) {
+    if (line.startsWith("f")) {
+      expectPathForCwd = line === "fcwd";
+      continue;
+    }
+    if (!expectPathForCwd || !line.startsWith("n")) continue;
+    const value = line.slice(1);
+    return value.length > 0 ? value : undefined;
+  }
+  return;
+}
+
 async function linuxCwd(pid: number): Promise<string | undefined> {
   try {
     return await readlink(`/proc/${pid}/cwd`);
@@ -26,15 +51,10 @@ async function darwinCwd(pid: number): Promise<string | undefined> {
         maxBuffer: 256 * 1024,
       },
     );
-    for (const line of `${stdout ?? ""}`.split(/\r?\n/)) {
-      if (!line.startsWith("n")) continue;
-      const value = line.slice(1).trim();
-      if (value.length > 0) return value;
-    }
+    return parseDarwinCwdFromLsofOutput(stdout);
   } catch {
     return;
   }
-  return;
 }
 
 export async function terminalCwdForPid(
@@ -58,6 +78,5 @@ export async function terminalCwdForPid(
         ? await darwinCwd(pid)
         : undefined;
   if (!absolute) return;
-  return absolute.startsWith(home) ? absolute.slice(home.length + 1) : absolute;
+  return toHomeRelativePath(absolute, home);
 }
-
