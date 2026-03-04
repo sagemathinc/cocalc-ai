@@ -36,6 +36,11 @@ import {
   removeBrowserSessionRecord,
   upsertBrowserSessionRecord,
 } from "./browser-sessions";
+import {
+  getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
+  releaseProjectAppPublicSubdomain as releaseProjectAppPublicSubdomainRaw,
+  reserveProjectAppPublicSubdomain as reserveProjectAppPublicSubdomainRaw,
+} from "@cocalc/server/app-public-subdomains";
 import { conat } from "@cocalc/backend/conat";
 import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
@@ -829,6 +834,75 @@ export async function removeBrowserSession({
       browser_id,
     }),
   };
+}
+
+async function resolveProjectContext(opts: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<string> {
+  const project_id = `${opts.project_id ?? ""}`.trim();
+  if (!project_id) {
+    throw Error("project_id is required");
+  }
+  if (opts.account_id) {
+    await assertProjectCollaborator(opts.account_id, project_id);
+  }
+  return project_id;
+}
+
+export async function getProjectAppPublicPolicy({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
+  return await getProjectAppPublicPolicyRaw(resolvedProjectId);
+}
+
+export async function reserveProjectAppPublicSubdomain({
+  account_id,
+  project_id,
+  app_id,
+  base_path,
+  ttl_s,
+  preferred_label,
+  random_subdomain,
+}: {
+  account_id?: string;
+  project_id?: string;
+  app_id: string;
+  base_path: string;
+  ttl_s: number;
+  preferred_label?: string;
+  random_subdomain?: boolean;
+}) {
+  const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
+  return await reserveProjectAppPublicSubdomainRaw({
+    project_id: resolvedProjectId,
+    app_id,
+    base_path,
+    ttl_s,
+    preferred_label,
+    random_subdomain,
+  });
+}
+
+export async function releaseProjectAppPublicSubdomain({
+  account_id,
+  project_id,
+  app_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+  app_id: string;
+}) {
+  const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
+  return await releaseProjectAppPublicSubdomainRaw({
+    project_id: resolvedProjectId,
+    app_id,
+  });
 }
 
 export async function getPublicSiteUrl({

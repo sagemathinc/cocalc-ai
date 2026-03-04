@@ -9,7 +9,9 @@ import net from "node:net";
 import { join } from "node:path";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
+import { conat } from "@cocalc/conat/client";
 import { project_id } from "@cocalc/project/data";
+import { hubApi } from "@cocalc/project/conat/hub";
 import { getLogger } from "@cocalc/project/logger";
 import {
   type AppStaticSpec,
@@ -71,6 +73,7 @@ export interface AppStatus {
   spawnError?: unknown;
   exit?: { code: number | null; signal: NodeJS.Signals | null };
   exposure?: AppExposureState;
+  warnings?: string[];
   error?: string;
 }
 
@@ -430,8 +433,12 @@ export async function deleteApp(id: string): Promise<{ id: string; deleted: bool
     // keep delete behavior robust
   }
   clearChild(id);
+  try {
+    await unexposeApp(id);
+  } catch {
+    await unexposeAppState(id);
+  }
   const result = await deleteAppSpec(id);
-  await unexposeAppState(id);
   invalidateRouteCache();
   return result;
 }
@@ -513,19 +520,93 @@ export async function exposeApp({
   ttl_s,
   auth_front = "token",
   random_subdomain = true,
+  subdomain_label,
 }: {
   id: string;
   ttl_s: number;
   auth_front?: AppExposureFrontAuth;
   random_subdomain?: boolean;
+  subdomain_label?: string;
 }): Promise<AppStatus> {
-  await getAppSpec(id);
-  await exposeAppState({ app_id: id, ttl_s, auth_front, random_subdomain });
-  return await statusApp(id);
+  const spec = await getAppSpec(id);
+  const warnings: string[] = [];
+  const isLaunchpad =
+    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad";
+  let reserved:
+    | {
+        hostname: string;
+        label: string;
+        url_public: string;
+      }
+    | undefined;
+  if (isLaunchpad) {
+    try {
+      const hub = hubApi(conat());
+      const policy = await hub.system.getProjectAppPublicPolicy();
+      warnings.push(...(policy?.warnings ?? []));
+      if (policy?.enabled) {
+        const value = await hub.system.reserveProjectAppPublicSubdomain({
+          app_id: id,
+          base_path: spec.proxy?.base_path ?? `/apps/${id}`,
+          ttl_s,
+          preferred_label: `${subdomain_label ?? ""}`.trim() || undefined,
+          random_subdomain,
+        });
+        reserved = value;
+        warnings.push(...(value?.warnings ?? []));
+      }
+    } catch (err) {
+      logger.warn("failed to reserve app public subdomain", {
+        app_id: id,
+        err: `${err}`,
+      });
+      warnings.push(`App subdomain allocation failed: ${err}`);
+    }
+  }
+
+  try {
+    await exposeAppState({
+      app_id: id,
+      ttl_s,
+      auth_front,
+      random_subdomain,
+      subdomain_label: reserved?.label ?? subdomain_label,
+      public_hostname: reserved?.hostname,
+      public_url: reserved?.url_public,
+    });
+  } catch (err) {
+    if (isLaunchpad && reserved) {
+      try {
+        const hub = hubApi(conat());
+        await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
+      } catch {
+        // ignore cleanup errors after a failed local state write
+      }
+    }
+    throw err;
+  }
+  const status = await statusApp(id);
+  if (warnings.length > 0) {
+    status.warnings = [...new Set(warnings)];
+  }
+  return status;
 }
 
 export async function unexposeApp(id: string): Promise<AppStatus> {
   await getAppSpec(id);
+  const isLaunchpad =
+    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad";
+  if (isLaunchpad) {
+    try {
+      const hub = hubApi(conat());
+      await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
+    } catch (err) {
+      logger.warn("failed to release app public subdomain", {
+        app_id: id,
+        err: `${err}`,
+      });
+    }
+  }
   await unexposeAppState(id);
   return await statusApp(id);
 }

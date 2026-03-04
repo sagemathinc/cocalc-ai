@@ -9,6 +9,10 @@ import basePath from "@cocalc/backend/base-path";
 import { parseReq } from "./parse";
 import hasAccess from "./check-for-access-to-project";
 import { stripBasePath } from "./util";
+import {
+  isPublicAppSubdomainRequest,
+  maybeRewritePublicAppSubdomainRequest,
+} from "./public-app-subdomain";
 
 const LISTENERS_HACK = true;
 
@@ -29,6 +33,8 @@ export default function initUpgrade(
   let socketioUpgrade: undefined | Function = undefined;
 
   async function handleProxyUpgradeRequest(req, socket, head): Promise<void> {
+    await maybeRewritePublicAppSubdomainRequest(req);
+    const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
     let remember_me: string | undefined = undefined;
     let api_key: string | undefined = undefined;
     let removedSocketioThisCall = false;
@@ -136,16 +142,18 @@ export default function initUpgrade(
 
     const parsed = parseReq(stripBasePath(req.url), remember_me, api_key);
     const accessType = parsed.type === "files" ? "read" : "write";
-    if (
-      !(await hasAccess({
-        project_id: parsed.project_id,
-        remember_me,
-        api_key,
-        type: accessType,
-        isPersonal,
-      }))
-    ) {
-      throw Error(`user does not have ${accessType} access to project`);
+    if (!allowPublicSubdomainBypass) {
+      if (
+        !(await hasAccess({
+          project_id: parsed.project_id,
+          remember_me,
+          api_key,
+          type: accessType,
+          isPersonal,
+        }))
+      ) {
+        throw Error(`user does not have ${accessType} access to project`);
+      }
     }
     projectProxyHandlers.handleUpgrade(req, socket, head);
   }

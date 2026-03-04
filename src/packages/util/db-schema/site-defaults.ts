@@ -118,6 +118,7 @@ export type SiteSettingsKeys =
   | "project_hosts_nebius_enabled"
   | "cloudflare_mode"
   | "project_hosts_dns"
+  | "project_hosts_app_public_subdomain_suffix"
   | "launcher_default_quick_create"
   | "launcher_default_apps"
   | "launcher_remove_quick_create"
@@ -1014,6 +1015,17 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Domain",
     show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
     required_when: [{ key: "cloudflare_mode", equals: "self" }],
+  },
+  project_hosts_app_public_subdomain_suffix: {
+    name: "Project Hosts: App Public Subdomain Suffix",
+    desc: "Suffix inserted after user-selected app labels for public app hostnames. Example: suffix 'app' yields demo-app.cocalc.ai.",
+    default: "app",
+    valid: valid_dns_name_or_empty,
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
+    group: "Compute / Project Hosts",
+    subgroup: "Domain",
+    show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
   },
   launcher_default_quick_create: {
     name: "Launcher: Default Quick Create",

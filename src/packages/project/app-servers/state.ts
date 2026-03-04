@@ -18,6 +18,8 @@ export interface AppExposureState {
   expires_at_ms?: number;
   ttl_s?: number;
   random_subdomain?: string;
+  public_hostname?: string;
+  public_url?: string;
 }
 
 interface RuntimeStateV1 {
@@ -63,6 +65,14 @@ function normalizeExposureState(input: unknown): AppExposureState {
     typeof obj.random_subdomain === "string" && obj.random_subdomain.trim().length > 0
       ? obj.random_subdomain.trim()
       : undefined;
+  const public_hostname =
+    typeof obj.public_hostname === "string" && obj.public_hostname.trim().length > 0
+      ? obj.public_hostname.trim()
+      : undefined;
+  const public_url =
+    typeof obj.public_url === "string" && obj.public_url.trim().length > 0
+      ? obj.public_url.trim()
+      : undefined;
   return {
     mode,
     auth_front,
@@ -71,6 +81,8 @@ function normalizeExposureState(input: unknown): AppExposureState {
     expires_at_ms: Number.isFinite(expires_at_ms) ? expires_at_ms : undefined,
     ttl_s: Number.isFinite(ttl_s) ? ttl_s : undefined,
     random_subdomain,
+    public_hostname,
+    public_url,
   };
 }
 
@@ -175,11 +187,17 @@ export async function exposeApp({
   ttl_s,
   auth_front = "token",
   random_subdomain = true,
+  subdomain_label,
+  public_hostname,
+  public_url,
 }: {
   app_id: string;
   ttl_s: number;
   auth_front?: AppExposureFrontAuth;
   random_subdomain?: boolean;
+  subdomain_label?: string;
+  public_hostname?: string;
+  public_url?: string;
 }): Promise<AppExposureState> {
   const now = Date.now();
   const ttl = Math.max(60, Math.floor(Number(ttl_s) || 0));
@@ -190,7 +208,10 @@ export async function exposeApp({
     exposed_at_ms: now,
     expires_at_ms: expires,
     ttl_s: ttl,
-    random_subdomain: random_subdomain ? randomSubdomainLabel() : undefined,
+    random_subdomain:
+      subdomain_label ?? (random_subdomain ? randomSubdomainLabel() : undefined),
+    public_hostname,
+    public_url,
     token: auth_front === "token" ? randomToken() : undefined,
   };
   const state = await readStateRaw();

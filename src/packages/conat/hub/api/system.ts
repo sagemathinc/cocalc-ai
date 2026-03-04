@@ -36,6 +36,9 @@ export const system = {
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
+  getProjectAppPublicPolicy: authFirst,
+  reserveProjectAppPublicSubdomain: authFirst,
+  releaseProjectAppPublicSubdomain: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
@@ -113,6 +116,25 @@ export interface BrowserSessionInfo {
   stale: boolean;
   connected?: boolean;
   connection_count?: number;
+}
+
+export interface ProjectAppPublicPolicy {
+  enabled: boolean;
+  launchpad: boolean;
+  site_hostname?: string;
+  dns_domain?: string;
+  subdomain_suffix: string;
+  provider?: string;
+  metered_egress: boolean;
+  warnings: string[];
+}
+
+export interface ReserveProjectAppPublicSubdomainResult {
+  hostname: string;
+  label: string;
+  base_path: string;
+  url_public: string;
+  warnings: string[];
 }
 
 export interface System {
@@ -333,4 +355,25 @@ export interface System {
     account_id?: string;
     browser_id: string;
   }) => Promise<{ removed: boolean }>;
+
+  getProjectAppPublicPolicy: (opts?: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<ProjectAppPublicPolicy>;
+
+  reserveProjectAppPublicSubdomain: (opts: {
+    account_id?: string;
+    project_id?: string;
+    app_id: string;
+    base_path: string;
+    ttl_s: number;
+    preferred_label?: string;
+    random_subdomain?: boolean;
+  }) => Promise<ReserveProjectAppPublicSubdomainResult>;
+
+  releaseProjectAppPublicSubdomain: (opts: {
+    account_id?: string;
+    project_id?: string;
+    app_id: string;
+  }) => Promise<{ released: boolean }>;
 }

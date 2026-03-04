@@ -300,6 +300,10 @@ export function registerWorkspaceAppCommands(
       "request random subdomain label metadata",
       true,
     )
+    .option(
+      "--subdomain-label <label>",
+      "explicit public subdomain label (used as <label>-suffix.<domain>)",
+    )
     .action(
       async (
         appId: string,
@@ -308,6 +312,7 @@ export function registerWorkspaceAppCommands(
           ttl: string;
           frontAuth?: "token" | "none";
           randomSubdomain?: boolean;
+          subdomainLabel?: string;
         },
         command: Command,
       ) => {
@@ -325,11 +330,14 @@ export function registerWorkspaceAppCommands(
             ttl_s,
             auth_front,
             random_subdomain: opts.randomSubdomain !== false,
+            subdomain_label: `${opts.subdomainLabel ?? ""}`.trim() || undefined,
           });
           const relative = `/${ws.project_id}${normalizePrefix(spec.proxy?.base_path ?? `/apps/${appId}`)}`;
           const base = `${ctx.apiBaseUrl}`.replace(/\/+$/, "");
           const exposure = status.exposure;
-          const url = new URL(`${base}${relative}`);
+          const url = new URL(
+            exposure?.public_url ? exposure.public_url : `${base}${relative}`,
+          );
           if (auth_front === "token" && exposure?.token) {
             url.searchParams.set("cocalc_app_token", exposure.token);
           }
@@ -340,6 +348,7 @@ export function registerWorkspaceAppCommands(
             relative_url: relative,
             url_public: url.toString(),
             exposure,
+            warnings: status.warnings ?? [],
           };
         });
       },

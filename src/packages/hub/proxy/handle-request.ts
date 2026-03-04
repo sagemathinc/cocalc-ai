@@ -8,6 +8,7 @@ import siteUrl from "@cocalc/database/settings/site-url";
 import { parseReq } from "./parse";
 import hasAccess from "./check-for-access-to-project";
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
+import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 
 const logger = getLogger("proxy:handle-request");
 
@@ -48,7 +49,13 @@ export default function init({
       req.headers["cookie"] = cookie;
     }
 
-    if (!isPersonal && !remember_me && !api_key) {
+    const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
+    if (
+      !isPersonal &&
+      !allowPublicSubdomainBypass &&
+      !remember_me &&
+      !api_key
+    ) {
       dbg("no rememember me set, so blocking");
       // Not in personal mode and there is no remember_me or api_key set all, so
       // definitely block access.  4xx since this is a *client* problem.
@@ -67,16 +74,18 @@ export default function init({
       // policy remains centralized in the route definition.
     }
 
-    if (
-      !(await hasAccess({
-        project_id,
-        remember_me,
-        api_key,
-        type: route.access,
-        isPersonal,
-      }))
-    ) {
-      throw Error(`user does not have ${route.access} access to project`);
+    if (!allowPublicSubdomainBypass) {
+      if (
+        !(await hasAccess({
+          project_id,
+          remember_me,
+          api_key,
+          type: route.access,
+          isPersonal,
+        }))
+      ) {
+        throw Error(`user does not have ${route.access} access to project`);
+      }
     }
 
     if (type == "files") {

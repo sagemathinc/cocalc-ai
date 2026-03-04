@@ -70,7 +70,10 @@ export interface ManagedAppStatus {
     expires_at_ms?: number;
     ttl_s?: number;
     random_subdomain?: string;
+    public_hostname?: string;
+    public_url?: string;
   };
+  warnings?: string[];
 }
 
 export interface Apps {
@@ -111,6 +114,7 @@ export interface Apps {
     ttl_s: number;
     auth_front?: "none" | "token";
     random_subdomain?: boolean;
+    subdomain_label?: string;
   }) => Promise<ManagedAppStatus>;
   unexposeApp: (id: string) => Promise<ManagedAppStatus>;
   appLogs: (id: string) => Promise<{

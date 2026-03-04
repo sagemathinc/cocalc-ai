@@ -114,8 +114,9 @@ async function listDnsRecords(
   token: string,
   zoneId: string,
   name: string,
+  type = "A",
 ): Promise<DnsRecord[]> {
-  const qs = new URLSearchParams({ type: "A", name });
+  const qs = new URLSearchParams({ type, name });
   return await cloudflareRequest<DnsRecord[]>(
     token,
     "GET",
@@ -243,6 +244,112 @@ export async function deleteHostDns(opts: { record_id?: string }) {
     if (isNotFoundError(err)) {
       return;
     }
+    throw err;
+  }
+}
+
+export async function ensureAppSubdomainDns(opts: {
+  hostname: string;
+  target_hostname: string;
+  record_id?: string;
+}): Promise<{ record_id: string }> {
+  const hostname = `${opts.hostname ?? ""}`.trim().toLowerCase();
+  const target = `${opts.target_hostname ?? ""}`.trim().toLowerCase();
+  if (!hostname) throw new Error("hostname required for app DNS");
+  if (!target) throw new Error("target_hostname required for app DNS");
+
+  const { token, zoneId } = await getClient();
+  const updateRecord = async (record_id: string) => {
+    const payload = {
+      type: "CNAME",
+      name: hostname,
+      content: target,
+      ttl: TTL,
+      proxied: true,
+    } as const;
+    await cloudflareRequest(
+      token,
+      "PUT",
+      `zones/${zoneId}/dns_records/${record_id}`,
+      payload,
+    );
+  };
+  const createRecord = async (): Promise<string> => {
+    const payload = {
+      type: "CNAME",
+      name: hostname,
+      content: target,
+      ttl: TTL,
+      proxied: true,
+    } as const;
+    const response = await cloudflareRequest<{ id?: string }>(
+      token,
+      "POST",
+      `zones/${zoneId}/dns_records`,
+      payload,
+    );
+    const record_id = response?.id;
+    if (!record_id) {
+      throw new Error("cloudflare did not return app dns record id");
+    }
+    logger.debug("app dns record created", { hostname, target, record_id });
+    return record_id;
+  };
+
+  let records = await listDnsRecords(token, zoneId, hostname, "CNAME");
+  const recordIds = records
+    .map((record) => record.id)
+    .filter((id): id is string => !!id);
+  let record_id = opts.record_id;
+  if (record_id) {
+    try {
+      await updateRecord(record_id);
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        record_id = undefined;
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (!record_id) {
+    if (!recordIds.length) {
+      record_id = await createRecord();
+      records = [];
+    } else {
+      record_id = recordIds[0];
+      await updateRecord(record_id);
+    }
+  }
+  if (records.length > 1) {
+    for (const record of records) {
+      const id = record.id;
+      if (!id || id === record_id) continue;
+      try {
+        await cloudflareRequest(
+          token,
+          "DELETE",
+          `zones/${zoneId}/dns_records/${id}`,
+        );
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+      }
+    }
+  }
+  return { record_id: record_id! };
+}
+
+export async function deleteAppSubdomainDns(opts: { record_id?: string }): Promise<void> {
+  if (!opts.record_id) return;
+  const { token, zoneId } = await getClient();
+  try {
+    await cloudflareRequest(
+      token,
+      "DELETE",
+      `zones/${zoneId}/dns_records/${opts.record_id}`,
+    );
+  } catch (err) {
+    if (isNotFoundError(err)) return;
     throw err;
   }
 }

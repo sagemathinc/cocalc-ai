@@ -3,7 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export type ProxyType = "port" | "raw" | "server" | "files" | "proxy" | "conat";
+export type ProxyType =
+  | "port"
+  | "raw"
+  | "server"
+  | "files"
+  | "proxy"
+  | "conat"
+  | "apps";
 export type ProxyAccessType = "read" | "write";
 
 export interface ProxyRouteDefinition {
@@ -55,6 +62,13 @@ const ROUTES: Record<ProxyType, ProxyRouteDefinition> = {
     allowsInternalUrl: false,
     access: "write",
   },
+  // App-server paths are proxied through project-host to the in-project app proxy.
+  apps: {
+    type: "apps",
+    requiresPortDesc: false,
+    allowsInternalUrl: false,
+    access: "write",
+  },
 };
 
 export const PROXY_TYPE_SEGMENTS = new Set<string>(Object.keys(ROUTES));
@@ -65,4 +79,3 @@ export function getProxyRouteDefinition(type: string): ProxyRouteDefinition | un
   }
   return ROUTES[type as ProxyType];
 }
-
