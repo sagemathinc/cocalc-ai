@@ -127,6 +127,8 @@ interface ChatRoomThreadPanelProps {
   onNewThreadSetupChange: (next: NewThreadSetup) => void;
   showThreadImagePreview?: boolean;
   hideChatTypeSelector?: boolean;
+  activityJumpDate?: string;
+  activityJumpToken?: number;
 }
 
 export function ChatRoomThreadPanel({
@@ -156,6 +158,8 @@ export function ChatRoomThreadPanel({
   onNewThreadSetupChange,
   showThreadImagePreview = true,
   hideChatTypeSelector = false,
+  activityJumpDate,
+  activityJumpToken,
 }: ChatRoomThreadPanelProps) {
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchInput, setThreadSearchInput] = useState("");
@@ -1564,6 +1568,8 @@ export function ChatRoomThreadPanel({
         searchJumpToken={threadSearchJumpToken}
         searchQuery={threadSearchQuery}
         onAtTopStateChange={setThreadNearTop}
+        activityJumpDate={activityJumpDate}
+        activityJumpToken={activityJumpToken}
       />
     </div>
   );

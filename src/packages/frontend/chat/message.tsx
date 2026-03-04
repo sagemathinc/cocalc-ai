@@ -243,6 +243,7 @@ interface Props {
   acpState?: string;
   dim?: boolean;
   searchHighlight?: string;
+  openActivityToken?: number;
 }
 
 export function resolveEditedMessageForSave(
@@ -301,6 +302,7 @@ export default function Message({
   acpState,
   dim,
   searchHighlight,
+  openActivityToken,
 }: Props) {
   const intl = useIntl();
 
@@ -571,6 +573,12 @@ export default function Message({
     // other kinds of LLM messages.
     return Boolean(field<string>(message, "acp_account_id"));
   }, [message]);
+
+  useEffect(() => {
+    if (!showCodexActivity) return;
+    if (typeof openActivityToken !== "number" || openActivityToken <= 0) return;
+    setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+  }, [showCodexActivity, openActivityToken]);
 
   const rowMessageValue = useMemo(() => newest_content(message), [message]);
   const logStore = useMemo(
@@ -946,6 +954,11 @@ export default function Message({
     );
   }
 
+  function openGitBrowserFromMessage() {
+    const hash = extractFirstCommitMention(renderedMessageValue);
+    setOpenCommitHash(hash ?? HEAD_REF);
+  }
+
   function renderHeaderActions() {
     const showActions = isActive;
     if (!showActions && !IS_TOUCH) {
@@ -1087,10 +1100,7 @@ export default function Message({
             size="small"
             type="text"
             style={{ color: COLORS.GRAY_M }}
-            onClick={() => {
-              const hash = extractFirstCommitMention(renderedMessageValue);
-              setOpenCommitHash(hash ?? HEAD_REF);
-            }}
+            onClick={openGitBrowserFromMessage}
             icon={<Icon name="git" />}
           />
         </Tooltip>,
@@ -1231,6 +1241,11 @@ export default function Message({
             Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
           }
           openDrawerToken={openActivityDrawerToken}
+          onOpenGitBrowser={
+            isCodexThread && !is_viewers_message
+              ? openGitBrowserFromMessage
+              : undefined
+          }
         />
         <div
           onClickCapture={openCommitFromMessage}
@@ -1647,6 +1662,11 @@ export default function Message({
     setOpenCommitHash(undefined);
   }
 
+  function openActivityFromGitBrowser() {
+    setOpenCommitHash(undefined);
+    setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
+  }
+
   function renderComposeReply() {
     if (!replying) return;
 
@@ -1897,6 +1917,7 @@ export default function Message({
         onRequestAgentTurn={sendGitBrowserAgentPrompt}
         onDirectCommitLogged={logGitBrowserDirectCommit}
         onFindInChat={findCommitInCurrentChat}
+        onOpenActivityLog={openActivityFromGitBrowser}
       />
       {acpStateToRender ? (
         <div style={{ width: "100%" }}>
