@@ -120,6 +120,11 @@ export function ChatLog({
   const user_map = useTypedRedux("users", "user_map");
   const account_id = useTypedRedux("account", "account_id");
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
+  const isForegroundChatTab =
+    activeTopTab === project_id && activeProjectTab === `editor-${path}`;
+  const canAutoScroll = !anyOverlayOpen && isForegroundChatTab;
   const handleSelectThread = useCallback(
     (threadKey: string) => {
       actions.clearAllFilters?.();
@@ -167,12 +172,12 @@ export function ChatLog({
   ]);
 
   useEffect(() => {
-    if (anyOverlayOpen) return;
+    if (!canAutoScroll) return;
     scrollToBottomRef?.current?.(true);
-  }, [anyOverlayOpen]);
+  }, [canAutoScroll]);
 
   useEffect(() => {
-    if (anyOverlayOpen) {
+    if (!canAutoScroll) {
       return;
     }
     if (scrollToIndex == null) {
@@ -184,10 +189,10 @@ export function ChatLog({
       virtuosoRef.current?.scrollToIndex({ index: scrollToIndex });
     }
     actions.clearScrollRequest();
-  }, [scrollToIndex, anyOverlayOpen]);
+  }, [scrollToIndex, canAutoScroll]);
 
   useEffect(() => {
-    if (anyOverlayOpen) {
+    if (!canAutoScroll) {
       return;
     }
     if (scrollToDate == null) {
@@ -230,10 +235,10 @@ export function ChatLog({
     }
     virtuosoRef.current?.scrollToIndex({ index });
     actions.clearScrollRequest();
-  }, [scrollToDate, anyOverlayOpen]);
+  }, [scrollToDate, canAutoScroll]);
 
   useEffect(() => {
-    if (anyOverlayOpen) return;
+    if (!canAutoScroll) return;
     if (searchJumpDate == null || searchJumpDate === "") return;
     const index = sortedDates.indexOf(searchJumpDate);
     if (index < 0) return;
@@ -245,7 +250,7 @@ export function ChatLog({
     // Intentionally do not depend on sortedDates: otherwise unrelated message
     // list updates can repeatedly re-center an old match long after the user
     // initiated the search jump.
-  }, [searchJumpDate, searchJumpToken, anyOverlayOpen]);
+  }, [searchJumpDate, searchJumpToken, canAutoScroll]);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const manualScrollRef = useRef<boolean>(false);
@@ -279,17 +284,17 @@ export function ChatLog({
   }, [messages, sortedDates, acpState]);
 
   useEffect(() => {
-    if (anyOverlayOpen) return;
+    if (!canAutoScroll) return;
     if (!generating) return;
     manualScrollRef.current = false;
     setManualScroll(false);
     scrollToBottomRef?.current?.(true);
-  }, [generating, scrollToBottomRef, anyOverlayOpen]);
+  }, [generating, scrollToBottomRef, canAutoScroll]);
 
   useEffect(() => {
     if (scrollToBottomRef == null) return;
     scrollToBottomRef.current = (force?: boolean) => {
-      if (anyOverlayOpen) return;
+      if (!canAutoScroll) return;
       if (manualScrollRef.current && !force) return;
       manualScrollRef.current = false;
       setManualScroll(false);
@@ -302,7 +307,7 @@ export function ChatLog({
       // for side chat when there is little vertical space.
       setTimeout(doScroll, 1);
     };
-  }, [scrollToBottomRef != null, anyOverlayOpen]);
+  }, [scrollToBottomRef != null, canAutoScroll]);
 
   return (
     <>
