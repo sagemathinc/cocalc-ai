@@ -421,13 +421,15 @@ export default function Message({
   );
   const effectiveGenerating = useMemo(() => {
     if (!isCodexThread) return generating === true;
-    // `generating` is persisted on the chat row and survives reconnect/refresh;
-    // treat it as authoritative for whether the assistant is still running.
-    if (generating === true) return true;
-    // ACP queue/sending/running in store can still make state visible even
-    // before backend row transitions to generating=true.
-    return acpStateActive;
-  }, [generating, isCodexThread, acpStateActive]);
+    if (is_viewers_message) {
+      // Viewer rows represent queued/sending state before assistant output rows exist.
+      return acpStateActive;
+    }
+    // Assistant rows: rely on persisted chat-row generating flag only.
+    // This avoids stale thread-state "running" entries keeping completed turns
+    // visually live after reconnect/refresh.
+    return generating === true;
+  }, [generating, isCodexThread, is_viewers_message, acpStateActive]);
 
   useEffect(() => {
     if (isEditing) return;
