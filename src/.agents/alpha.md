@@ -113,7 +113,7 @@ These are hard prerequisites for reliable tester onboarding.
 
 These items lock down secure multi-user cloud behavior.
 
-### A1.1 Port impersonate user/auth token to launchpad (+ CLI)
+### A1.1 (done) Port impersonate user/auth token to launchpad (+ CLI)
 
 **Task:** "port impersonate user/auth token to launchpad (not Next.js)"
 
@@ -139,7 +139,7 @@ These items lock down secure multi-user cloud behavior.
 
 ---
 
-### A1.3 Host stop should not fail on missing project volume
+### A1.3 (done) Host stop should not fail on missing project volume
 
 **Task:** "stopping a project host shouldn't fail because some project volume doesn't exist"
 
@@ -152,7 +152,7 @@ These items lock down secure multi-user cloud behavior.
 
 ---
 
-### A1.4 Extensible secure project proxies
+### A1.4 (lite/launchpad) Extensible secure project proxies
 
 **Task:** "make project proxies easily extensible ... token must be in URL"
 
@@ -166,7 +166,7 @@ These items lock down secure multi-user cloud behavior.
 
 ---
 
-### A1.5 Plus/Launchpad startup port conflict handling
+### A1.5 (done) Plus/Launchpad startup port conflict handling
 
 **Task:** "refuse to run with clear error if ports in use or auto-find port"
 
@@ -209,7 +209,7 @@ These are high-visibility issues for tester confidence.
 
 ---
 
-### A2.3 Slate quote backspace data-loss bug
+### A2.3 (done) Slate quote backspace data-loss bug
 
 **Task:** "backspace in quote deletes prior content"
 
@@ -286,7 +286,7 @@ Done when:
 
 ---
 
-### A2.5 Jupyter with no default kernel shows blank notebook
+### A2.5 (done) Jupyter with no default kernel shows blank notebook
 
 **Task:** "if no default kernel, notebook is blank"
 

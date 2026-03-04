@@ -33,7 +33,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Commit messages should be prefixed by area/package, e.g. `frontend/chat: ...`.
 - By default, write commit messages with:
   - a concise first line (subject), and
-  - a detailed explanatory body (one or more paragraphs describing intent, key changes, and rationale).
+  - a detailed markdown body explaining details of the commit, which is more succinct than the agent turn summary, including only information that is valuable longterm.
 - For new source files that use the standard CoCalc file header comment, set the copyright year to the current year.
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `prettier -w <file>` on modified files as needed.
