@@ -35,6 +35,7 @@ import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   loadReviewRecord,
+  loadReviewDraft,
   type GitReviewCommentSide,
   type GitReviewCommentV2,
   normalizeCommitSha,
@@ -1025,7 +1026,11 @@ export function GitCommitDrawer({
   );
   const [reviewSubmitBusy, setReviewSubmitBusy] = useState(false);
   const [showResolvedComments, setShowResolvedComments] = useState(false);
+  const [reviewStateCommit, setReviewStateCommit] = useState<string | undefined>(
+    undefined,
+  );
   const reviewLoadTokenRef = useRef(0);
+  const activeReviewCommitRef = useRef<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
@@ -1275,6 +1280,18 @@ export function GitCommitDrawer({
   }, [visibleLogEntries, commit, reviewedByCommit]);
 
   useEffect(() => {
+    if (!open) {
+      activeReviewCommitRef.current = undefined;
+      return;
+    }
+    if (!commit || isHeadCommit(commit)) {
+      activeReviewCommitRef.current = undefined;
+      return;
+    }
+    activeReviewCommitRef.current = normalizeCommitSha(commit);
+  }, [open, commit]);
+
+  useEffect(() => {
     if (!open || !accountId) return;
     const hashes = Array.from(
       new Set(
@@ -1316,14 +1333,28 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     const token = ++reviewLoadTokenRef.current;
-    const applyReset = () => {
+    const applyReset = (nextCommit?: string) => {
+      const normalizedNext = normalizeCommitSha(nextCommit);
+      const draft = normalizedNext ? loadReviewDraft(normalizedNext) : undefined;
       setReviewLoading(false);
       setReviewError("");
-      setReviewed(false);
-      setReviewNote("");
-      setReviewUpdatedAt(undefined);
+      setReviewed(Boolean(draft?.reviewed));
+      setReviewNote(`${draft?.note ?? ""}`);
+      setReviewUpdatedAt(
+        typeof draft?.updated_at === "number" ? draft.updated_at : undefined,
+      );
       setReviewDirty(false);
       setReviewRecord(undefined);
+      setReviewStateCommit(normalizedNext);
+      if (normalizedNext) {
+        setReviewedByCommit((prev) => ({
+          ...prev,
+          [normalizedNext]:
+            typeof draft?.reviewed === "boolean"
+              ? draft.reviewed
+              : Boolean(prev[normalizedNext]),
+        }));
+      }
     };
     if (!open || !accountId || !commit) {
       applyReset();
@@ -1334,7 +1365,7 @@ export function GitCommitDrawer({
       applyReset();
       return;
     }
-    applyReset();
+    applyReset(normalizedCommit);
     setReviewLoading(true);
     void (async () => {
       try {
@@ -1388,8 +1419,11 @@ export function GitCommitDrawer({
     const nextReviewed = next.reviewed ?? reviewed;
     const nextNote = next.note ?? reviewNote;
     const nextComments = next.comments ?? reviewRecord?.comments ?? {};
-    setReviewSaving(true);
-    setReviewError("");
+    const isActiveCommit = activeReviewCommitRef.current === normalizedCommit;
+    if (isActiveCommit) {
+      setReviewSaving(true);
+      setReviewError("");
+    }
     try {
       const base =
         reviewRecord ??
@@ -1420,18 +1454,24 @@ export function GitCommitDrawer({
             ? next.last_submission_turn_id
             : base.last_submission_turn_id,
       });
-      setReviewRecord(payload);
-      setReviewUpdatedAt(payload.updated_at);
       setReviewedByCommit((prev) => ({
         ...prev,
         [normalizedCommit]: payload.reviewed,
       }));
-      setReviewDirty(false);
-      setReviewError("");
+      if (activeReviewCommitRef.current === normalizedCommit) {
+        setReviewRecord(payload);
+        setReviewUpdatedAt(payload.updated_at);
+        setReviewDirty(false);
+        setReviewError("");
+      }
     } catch (err) {
-      setReviewError(`${err ?? "Unable to save review state."}`);
+      if (activeReviewCommitRef.current === normalizedCommit) {
+        setReviewError(`${err ?? "Unable to save review state."}`);
+      }
     } finally {
-      setReviewSaving(false);
+      if (activeReviewCommitRef.current === normalizedCommit) {
+        setReviewSaving(false);
+      }
     }
   };
 
@@ -1618,6 +1658,7 @@ export function GitCommitDrawer({
     if (!open || !commit || isHeadCommit(commit)) return;
     const normalizedCommit = normalizeCommitSha(commit);
     if (!normalizedCommit) return;
+    if (reviewStateCommit !== normalizedCommit) return;
     if (reviewLoading || reviewSaving) return;
     if (!reviewDirty) return;
     saveReviewDraft(normalizedCommit, {
@@ -1631,6 +1672,7 @@ export function GitCommitDrawer({
     reviewLoading,
     reviewSaving,
     reviewDirty,
+    reviewStateCommit,
     reviewed,
     reviewNote,
     reviewRecord?.comments,
