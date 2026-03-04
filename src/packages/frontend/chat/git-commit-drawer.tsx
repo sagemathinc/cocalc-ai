@@ -58,9 +58,6 @@ const GIT_LOG_FETCH_COUNT = 600;
 const GIT_LOG_WINDOW_SIZE = 100;
 const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
 const DRAWER_SCROLL_STORAGE_KEY = "cocalc:chat:gitCommitDrawerScroll:v1";
-const LEGACY_DRAWER_SCROLL_STORAGE_PREFIX = "cocalc:chat:gitCommitDrawerScroll:";
-const DRAWER_SCROLL_MIGRATION_DONE_KEY =
-  "cocalc:chat:gitCommitDrawerScroll:migrated:v1";
 const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
@@ -392,31 +389,12 @@ function normalizeDrawerScrollState(raw: unknown): DrawerScrollState {
 }
 
 function readDrawerScrollState(): DrawerScrollState {
-  maybeMigrateLegacyDrawerScrollEntries();
   try {
     const raw = localStorage.getItem(DRAWER_SCROLL_STORAGE_KEY);
     if (!raw) return { entries: {}, order: [] };
     return normalizeDrawerScrollState(JSON.parse(raw));
   } catch {
     return { entries: {}, order: [] };
-  }
-}
-
-function maybeMigrateLegacyDrawerScrollEntries(): void {
-  try {
-    if (localStorage.getItem(DRAWER_SCROLL_MIGRATION_DONE_KEY) === "1") return;
-    const toRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      if (!key.startsWith(LEGACY_DRAWER_SCROLL_STORAGE_PREFIX)) continue;
-      if (key === DRAWER_SCROLL_STORAGE_KEY) continue;
-      toRemove.push(key);
-    }
-    for (const key of toRemove) localStorage.removeItem(key);
-    localStorage.setItem(DRAWER_SCROLL_MIGRATION_DONE_KEY, "1");
-  } catch {
-    // ignore
   }
 }
 
