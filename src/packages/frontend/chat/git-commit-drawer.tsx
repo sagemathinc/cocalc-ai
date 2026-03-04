@@ -1017,6 +1017,8 @@ export function GitCommitDrawer({
   const [reviewError, setReviewError] = useState("");
   const [reviewed, setReviewed] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
+  const [reviewNoteDraft, setReviewNoteDraft] = useState("");
+  const [reviewNoteEditing, setReviewNoteEditing] = useState(false);
   const [reviewUpdatedAt, setReviewUpdatedAt] = useState<number | undefined>(
     undefined,
   );
@@ -1029,6 +1031,7 @@ export function GitCommitDrawer({
   const [reviewStateCommit, setReviewStateCommit] = useState<string | undefined>(
     undefined,
   );
+  const noteDirty = reviewNoteDraft !== reviewNote;
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1339,7 +1342,10 @@ export function GitCommitDrawer({
       setReviewLoading(false);
       setReviewError("");
       setReviewed(Boolean(draft?.reviewed));
-      setReviewNote(`${draft?.note ?? ""}`);
+      const note = `${draft?.note ?? ""}`;
+      setReviewNote(note);
+      setReviewNoteDraft(note);
+      setReviewNoteEditing(false);
       setReviewUpdatedAt(
         typeof draft?.updated_at === "number" ? draft.updated_at : undefined,
       );
@@ -1380,7 +1386,10 @@ export function GitCommitDrawer({
           ...prev,
           [normalizedCommit]: Boolean(rec?.reviewed),
         }));
-        setReviewNote(typeof rec?.note === "string" ? rec.note : "");
+        const note = typeof rec?.note === "string" ? rec.note : "";
+        setReviewNote(note);
+        setReviewNoteDraft(note);
+        setReviewNoteEditing(false);
         setReviewUpdatedAt(
           typeof rec?.updated_at === "number" ? rec.updated_at : undefined,
         );
@@ -1391,6 +1400,8 @@ export function GitCommitDrawer({
         setReviewError(`${err ?? "Unable to load review state."}`);
         setReviewed(false);
         setReviewNote("");
+        setReviewNoteDraft("");
+        setReviewNoteEditing(false);
         setReviewUpdatedAt(undefined);
         setReviewDirty(false);
         setReviewRecord(undefined);
@@ -1660,10 +1671,10 @@ export function GitCommitDrawer({
     if (!normalizedCommit) return;
     if (reviewStateCommit !== normalizedCommit) return;
     if (reviewLoading || reviewSaving) return;
-    if (!reviewDirty) return;
+    if (!reviewDirty && !noteDirty) return;
     saveReviewDraft(normalizedCommit, {
       reviewed: Boolean(reviewed),
-      note: `${reviewNote ?? ""}`,
+      note: `${reviewNoteDraft ?? ""}`,
       comments: reviewRecord?.comments ?? {},
     });
   }, [
@@ -1672,9 +1683,10 @@ export function GitCommitDrawer({
     reviewLoading,
     reviewSaving,
     reviewDirty,
+    noteDirty,
     reviewStateCommit,
     reviewed,
-    reviewNote,
+    reviewNoteDraft,
     reviewRecord?.comments,
   ]);
 
@@ -2418,38 +2430,50 @@ export function GitCommitDrawer({
               </Space>
             </div>
           </div>
-          <MarkdownInput
-            key={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
-            cacheId={`git-review-note:${sourcePath ?? ""}:${reviewStateCommit ?? currentReviewCommit ?? ""}`}
-            value={reviewNote}
-            onChange={(value) => {
-              if (reviewLoading || isHeadSelected || !currentReviewCommit) return;
-              if (activeReviewCommitRef.current !== currentReviewCommit) return;
-              setReviewNote(value);
-              setReviewDirty(true);
-              saveReviewDraft(currentReviewCommit, {
-                reviewed: Boolean(reviewed),
-                note: `${value ?? ""}`,
-                comments: reviewRecord?.comments ?? {},
-              });
-            }}
-            onBlur={() => {
-              if (!currentReviewCommit) return;
-              if (activeReviewCommitRef.current !== currentReviewCommit) return;
-              if (reviewDirty) {
-                void saveReview({ note: reviewNote });
-              }
-            }}
-            placeholder="Private review note (not sent to agent)"
-            fontSize={Math.max(13, fontSize)}
-            autoGrow
-            autoGrowMaxHeight={220}
-            hideHelp
-            minimal
-            compact
-            enableMentions={false}
-            enableUpload={true}
-          />
+          {reviewNoteEditing ? (
+            <MarkdownInput
+              key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
+              value={reviewNoteDraft}
+              onChange={(value) => {
+                if (reviewLoading || isHeadSelected || !currentReviewCommit) return;
+                if (activeReviewCommitRef.current !== currentReviewCommit) return;
+                setReviewNoteDraft(value);
+                setReviewDirty(true);
+                saveReviewDraft(currentReviewCommit, {
+                  reviewed: Boolean(reviewed),
+                  note: `${value ?? ""}`,
+                  comments: reviewRecord?.comments ?? {},
+                });
+              }}
+              placeholder="Private review note (not sent to agent)"
+              fontSize={Math.max(13, fontSize)}
+              autoGrow
+              autoGrowMaxHeight={220}
+              hideHelp
+              minimal
+              compact
+              enableMentions={false}
+              enableUpload={true}
+            />
+          ) : (
+            <div
+              style={{
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: 6,
+                padding: "8px 10px",
+                background: "#fff",
+                minHeight: 40,
+              }}
+            >
+              {reviewNote?.trim() ? (
+                <StaticMarkdown value={reviewNote} style={{ fontSize: Math.max(13, fontSize) }} />
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  No private review note yet.
+                </Typography.Text>
+              )}
+            </div>
+          )}
           <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 6 }}>
             This note and the Reviewed checkbox are private state only. They are not sent to
             the agent.
@@ -2473,15 +2497,38 @@ export function GitCommitDrawer({
             <Button
               size="small"
               disabled={
-                !reviewDirty ||
+                !reviewNoteEditing ||
+                !noteDirty ||
                 reviewSaving ||
                 !currentReviewCommit ||
                 isHeadSelected ||
                 reviewStateCommit !== currentReviewCommit
               }
-              onClick={() => void saveReview({ note: reviewNote, reviewed })}
+              onClick={() => {
+                if (!currentReviewCommit) return;
+                const nextNote = reviewNoteDraft;
+                setReviewNote(nextNote);
+                setReviewDirty(true);
+                setReviewNoteEditing(false);
+                void saveReview({ note: nextNote, reviewed });
+              }}
             >
               Save note
+            </Button>
+            <Button
+              size="small"
+              disabled={reviewSaving || !currentReviewCommit || isHeadSelected}
+              onClick={() => {
+                if (!reviewNoteEditing) {
+                  setReviewNoteDraft(reviewNote);
+                  setReviewNoteEditing(true);
+                  return;
+                }
+                setReviewNoteDraft(reviewNote);
+                setReviewNoteEditing(false);
+              }}
+            >
+              {reviewNoteEditing ? "Cancel" : "Edit"}
             </Button>
           </div>
           <div

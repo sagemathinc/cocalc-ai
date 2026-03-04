@@ -1060,16 +1060,16 @@ function markdownAutoformatAt(
         })()
       : undefined;
 
-  // If a potential block marker is immediately followed by text (e.g. "#bar",
-  // "-x"), we only suppress autoformat when it is being inserted as a prefix
-  // in front of existing paragraph content. That avoids split-node
-  // duplication/loss while still allowing normal hashtag autoformat in empty
-  // paragraphs (e.g. "#foo ").
+  // If a potential *block* marker is immediately followed by text (e.g. "-x"),
+  // we only suppress autoformat when it is being inserted as a prefix in front
+  // of existing paragraph content. This avoids split-node duplication/loss.
+  // NOTE: deliberately exclude '#...' here so hashtag autoformat still works in
+  // middle-of-line contexts (e.g. "#tag foo").
   if (
     path.length >= 2 &&
     pos === 0 &&
     start <= 0 &&
-    /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)\S/.test(text)
+    /^([-*+]|\d+[.)]|>|```|\$\$)\S/.test(text)
   ) {
     const hasTrailingParagraphContent =
       (paragraphTextAtStart ?? "").length > text.length;

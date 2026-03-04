@@ -22,3 +22,18 @@ test("autoformat hashtag at paragraph start still works after heading-prefix gua
   expect(md).toMatch(/^#foo/);
   expect(md).not.toMatch(/^\\#foo/);
 });
+
+test("autoformat hashtag before existing trailing words in same line", () => {
+  const editor = withAutoFormat(
+    withNormalize(withIsInline(withIsVoid(withReact(createEditor())))),
+  );
+  editor.children = [{ type: "paragraph", children: [{ text: "#x foo bar" }] }] as Descendant[];
+  editor.selection = null;
+
+  Transforms.select(editor, { path: [0, 0], offset: "#x".length });
+  editor.insertText(" ", true);
+
+  const md = slate_to_markdown(editor.children, { preserveBlankLines: false });
+  expect(md).toContain("#x");
+  expect(md).toContain("foo bar");
+});

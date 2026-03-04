@@ -34,6 +34,14 @@ import { ReactEditor } from "../slate-react";
 import { markdownAutoformat } from "./auto-format";
 import { ensureRange, pointAtPath, slateDebug } from "../slate-util";
 
+function continueTypingOffset(text: string): number {
+  if (!text) return 0;
+  const match = text.match(/^\s*/);
+  const leading = match?.[0]?.length ?? 0;
+  if (leading >= text.length) return text.length;
+  return leading;
+}
+
 function moveSelectionAfterInlineMath(editor, selection): Range | null {
   if (!selection) return selection;
   try {
@@ -54,7 +62,7 @@ function moveSelectionAfterInlineMath(editor, selection): Range | null {
         [nextNode] = Editor.node(editor, nextPath);
       }
       if (Text.isText(nextNode)) {
-        const point = { path: nextPath, offset: nextNode.text.length };
+        const point = { path: nextPath, offset: continueTypingOffset(nextNode.text) };
         return { anchor: point, focus: point };
       }
     }
@@ -87,7 +95,7 @@ function ensureTrailingTextAfterInlineMath(
     ) {
       const point = {
         path: selectionBlockPath.concat(lastIndex),
-        offset: lastChild.text.length,
+        offset: continueTypingOffset(lastChild.text),
       };
       return { anchor: point, focus: point };
     }

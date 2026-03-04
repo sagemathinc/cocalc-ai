@@ -1,6 +1,6 @@
 import "../elements/types";
 
-import { createEditor, Descendant, Transforms } from "slate";
+import { createEditor, Descendant, Editor, Text, Transforms } from "slate";
 
 import { withReact, ReactEditor } from "../slate-react";
 import { withIsInline, withIsVoid } from "../plugins";
@@ -89,6 +89,39 @@ test("autoformat inline math preserves trailing text in the same paragraph", () 
   );
   expect(mathIndex).toBeGreaterThanOrEqual(0);
   expect(paragraph?.children?.some((child) => child?.text?.includes("y"))).toBe(true);
+
+  focusSpy.mockRestore();
+});
+
+test("autoformat inline math keeps caret before existing trailing words", () => {
+  const editor = withAutoFormat(
+    withIsInline(withIsVoid(withReact(createEditor()))),
+  );
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "$x$ foo bar" }] },
+  ];
+  editor.children = value;
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [0, 0], offset: "$x$".length });
+  editor.insertText(" ", true);
+
+  expect(editor.selection).not.toBeNull();
+  if (editor.selection) {
+    const focus = editor.selection.focus;
+    const [focusNode] = Editor.node(editor, focus.path);
+    expect(Text.isText(focusNode)).toBe(true);
+    if (Text.isText(focusNode)) {
+      const text = focusNode.text;
+      const fooIndex = text.indexOf("foo");
+      expect(fooIndex).toBeGreaterThanOrEqual(0);
+      expect(focus.offset).toBeLessThanOrEqual(fooIndex);
+    }
+  }
 
   focusSpy.mockRestore();
 });
