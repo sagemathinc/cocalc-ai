@@ -1,5 +1,25 @@
 # CoCalc Git Review State Schema (Codex Git Browser)
 
+## Still Not Done / Partial (Post-Alpha)
+
+These are intentionally deferred until after first public alpha.
+
+1. Import/export for account review data
+   - Export all review records to JSON.
+   - Import with merge preview, validation, and backup snapshot.
+2. Formal AKV flush scheduler semantics
+   - Current behavior is mostly immediate save paths + draft sync.
+   - Add explicit periodic flush policy and close/unload guarantees.
+3. Regression tests for git review subsystem
+   - Merge/migration behavior.
+   - Commit-vs-HEAD mode behavior.
+   - Submit-delta behavior for inline comments.
+4. Dev telemetry / rollout confidence signals
+   - Structured load/save/submit counters and timing.
+5. Optional non-repo bootstrap “maximal” AI setup
+   - Minimal mode is implemented.
+   - Rich AI-assisted initialization remains optional future work.
+
 ## Purpose
 
 Define concrete state, storage keys, and sync semantics for:
@@ -419,46 +439,48 @@ Design intent:
 
 ## Implementation Checklist (First Pass)
 
-1. Add `GitReviewRecordV2` types + key helpers:
+1. [done] Add `GitReviewRecordV2` types + key helpers:
    - canonical AKV key helper for `commit:<sha>`,
    - localStorage helper for commit review drafts.
-2. Build storage adapter module:
+2. [done] Build storage adapter module:
    - `loadRecord`, `saveRecord`, `loadLocalDraft`, `saveLocalDraft`,
    - merge function (AKV + local) with timestamp/revision policy.
-3. Wire drawer state to adapter (read path):
+3. [done] Wire drawer state to adapter (read path):
    - load on open/commit change,
    - migrate from `cocalc-commit-review-v1` when needed.
-4. Wire drawer state to adapter (write path):
+4. [partial] Wire drawer state to adapter (write path):
    - local save on each edit (debounced),
    - AKV flush timer (15s) + on close + explicit save.
-5. Enforce commit-only review mode:
+   Note: immediate save paths are implemented; explicit periodic flush scheduler is deferred.
+5. [done] Enforce commit-only review mode:
    - hide/disable inline comment affordances and review form on `HEAD`.
-6. Implement HEAD commit panel:
+6. [done] Implement HEAD commit panel:
    - commit message input,
    - `Commit` and `Commit with AI Summary` actions.
-7. Implement HEAD status helpers:
+7. [done] Implement HEAD status helpers:
    - file/status list from `git status --porcelain`,
    - clear tracked vs untracked labeling,
    - untracked-only `Add` / `Ignore` controls,
    - one-click commit path remains tracked-only (`git commit -a`).
-8. Implement submit flow (commit mode only):
+8. [done] Implement submit flow (commit mode only):
    - collect actionable draft comments,
    - emit structured payload to agent turn,
    - mark submitted comments with `submitted_at`/`submission_turn_id`.
-9. Add regression tests:
+9. [pending] Add regression tests:
    - merge rules,
    - migration,
    - submit delta behavior,
    - HEAD mode excludes review comments.
-10. Add dev-only telemetry/logs:
+10. [pending] Add dev-only telemetry/logs:
 
    - load/flush events and submit counts for rollout confidence.
 
-11. Implement import/export:
+11. [pending] Implement import/export:
 
    - account-wide JSON export,
    - merge import with dry-run summary and backup snapshot.
-12. Add non-repo bootstrap UX:
+12. [partial] Add non-repo bootstrap UX:
 
    - minimal init flow (Mode A),
    - optional AI-assisted smart setup flow (Mode B).
+   Note: minimal mode is implemented; maximal AI-assisted setup remains deferred.
