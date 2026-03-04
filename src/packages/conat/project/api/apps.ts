@@ -13,6 +13,9 @@ export const apps = {
   waitForAppState: true,
   ensureRunning: true,
   listAppStatuses: true,
+  exposeApp: true,
+  unexposeApp: true,
+  appLogs: true,
 };
 
 export interface NamedServerStatus {
@@ -59,6 +62,15 @@ export interface ManagedAppStatus {
   spawnError?: unknown;
   exit?: { code: number | null; signal: NodeJS.Signals | null };
   error?: string;
+  exposure?: {
+    mode: "private" | "public";
+    auth_front: "none" | "token";
+    token?: string;
+    exposed_at_ms?: number;
+    expires_at_ms?: number;
+    ttl_s?: number;
+    random_subdomain?: string;
+  };
 }
 
 export interface Apps {
@@ -94,4 +106,17 @@ export interface Apps {
     opts?: { timeout?: number; interval?: number },
   ) => Promise<ManagedAppStatus>;
   listAppStatuses: () => Promise<ManagedAppStatus[]>;
+  exposeApp: (opts: {
+    id: string;
+    ttl_s: number;
+    auth_front?: "none" | "token";
+    random_subdomain?: boolean;
+  }) => Promise<ManagedAppStatus>;
+  unexposeApp: (id: string) => Promise<ManagedAppStatus>;
+  appLogs: (id: string) => Promise<{
+    id: string;
+    state: "running" | "stopped";
+    stdout: string;
+    stderr: string;
+  }>;
 }

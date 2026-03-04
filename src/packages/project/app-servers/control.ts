@@ -12,6 +12,7 @@ import basePath from "@cocalc/backend/base-path";
 import { project_id } from "@cocalc/project/data";
 import { getLogger } from "@cocalc/project/logger";
 import {
+  type AppStaticSpec,
   type AppServiceSpec,
   type AppSpec,
   deleteAppSpec,
@@ -20,8 +21,17 @@ import {
   type AppSpecRecord,
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
+import {
+  type AppExposureFrontAuth,
+  type AppExposureState,
+  exposeApp as exposeAppState,
+  getAppExposureState,
+  listAppExposureStates,
+  unexposeApp as unexposeAppState,
+} from "./state";
 
 const logger = getLogger("app-servers:control");
+export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
 
 interface RunningApp {
   id: string;
@@ -41,7 +51,7 @@ const children: Record<string, RunningApp> = Object.create(null);
 let routeCache:
   | {
       at: number;
-      specs: AppServiceSpec[];
+      specs: AppSpec[];
     }
   | undefined;
 
@@ -60,8 +70,25 @@ export interface AppStatus {
   stderr?: Buffer;
   spawnError?: unknown;
   exit?: { code: number | null; signal: NodeJS.Signals | null };
+  exposure?: AppExposureState;
   error?: string;
 }
+
+export type AppProxyTarget =
+  | {
+      app_id: string;
+      kind: "service";
+      port: number;
+      rewritePath?: string;
+    }
+  | {
+      app_id: string;
+      kind: "static";
+      root: string;
+      index?: string;
+      cache_control?: string;
+      rewritePath: string;
+    };
 
 function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
@@ -76,6 +103,13 @@ function assertServiceSpec(spec: AppSpec): AppServiceSpec {
     throw new Error(
       `app '${spec.id}' has kind='${spec.kind}', but service runtime is not implemented for this kind yet`,
     );
+  }
+  return spec;
+}
+
+function assertStaticSpec(spec: AppSpec): AppStaticSpec {
+  if (spec.kind !== "static") {
+    throw new Error(`app '${spec.id}' has kind='${spec.kind}', expected 'static'`);
   }
   return spec;
 }
@@ -265,9 +299,13 @@ export async function statusApp(id: string): Promise<AppStatus> {
     state: "stopped",
     kind: spec.kind,
     title: spec.title,
+    exposure: await getAppExposureState(spec.id),
   };
-  if (spec.kind !== "service") {
-    status.error = "runtime not implemented for static apps yet";
+  if (spec.kind === "static") {
+    const staticSpec = assertStaticSpec(spec);
+    status.state = "running";
+    status.ready = true;
+    status.url = normalizePrefix(staticSpec.proxy.base_path);
     return status;
   }
 
@@ -324,6 +362,10 @@ export async function ensureRunning(
   id: string,
   opts?: { timeout?: number; interval?: number },
 ): Promise<AppStatus> {
+  const spec = await getAppSpec(id);
+  if (spec.kind === "static") {
+    return await statusApp(id);
+  }
   await startApp(id);
   const ok = await waitForAppState(id, "running", opts);
   const status = await statusApp(id);
@@ -340,6 +382,7 @@ export async function ensureRunning(
 
 export async function listAppStatuses(): Promise<AppStatus[]> {
   const specs = await listAppSpecs();
+  const exposures = await listAppExposureStates();
   const out: AppStatus[] = [];
   for (const record of specs) {
     if (record.error || !record.spec) {
@@ -350,6 +393,7 @@ export async function listAppStatuses(): Promise<AppStatus[]> {
       const status = await statusApp(record.spec.id);
       status.path = record.path;
       status.mtime = record.mtime;
+      status.exposure = exposures[record.spec.id];
       out.push(status);
     } catch (err) {
       out.push({
@@ -359,6 +403,7 @@ export async function listAppStatuses(): Promise<AppStatus[]> {
         title: record.spec.title,
         path: record.path,
         mtime: record.mtime,
+        exposure: exposures[record.spec.id],
         error: `${err}`,
       });
     }
@@ -386,6 +431,7 @@ export async function deleteApp(id: string): Promise<{ id: string; deleted: bool
   }
   clearChild(id);
   const result = await deleteAppSpec(id);
+  await unexposeAppState(id);
   invalidateRouteCache();
   return result;
 }
@@ -395,15 +441,13 @@ function normalizePrefix(value: string): string {
   return withLeading.replace(/\/+$/, "") || "/";
 }
 
-async function serviceSpecsForRouting(): Promise<AppServiceSpec[]> {
+async function specsForRouting(): Promise<AppSpec[]> {
   const now = Date.now();
   if (routeCache && now - routeCache.at < 1000) {
     return routeCache.specs;
   }
   const rows = await listAppSpecs();
-  const specs = rows
-    .map((row) => row.spec)
-    .filter((spec): spec is AppServiceSpec => !!spec && spec.kind === "service");
+  const specs = rows.map((row) => row.spec).filter((spec): spec is AppSpec => !!spec);
   routeCache = { at: now, specs };
   return specs;
 }
@@ -414,47 +458,100 @@ export async function resolveAppProxyTarget({
 }: {
   base: string;
   url: string;
-}): Promise<
-  | {
-      app_id: string;
-      port: number;
-      rewritePath?: string;
-    }
-  | undefined
-> {
-  const specs = await serviceSpecsForRouting();
+}): Promise<AppProxyTarget | undefined> {
+  const specs = await specsForRouting();
+  const parsed = new URL(url, "http://project.local");
+  const pathname = parsed.pathname;
   const basePrefix = normalizePrefix(base);
   for (const spec of specs) {
     const localPrefix = normalizePrefix(spec.proxy.base_path);
     const fullPrefix = normalizePrefix(`${basePrefix}${localPrefix}`);
-    if (!(url === fullPrefix || url.startsWith(`${fullPrefix}/`))) {
+    if (!(pathname === fullPrefix || pathname.startsWith(`${fullPrefix}/`))) {
       continue;
     }
+    const suffix =
+      pathname.length > fullPrefix.length ? pathname.slice(fullPrefix.length) : "";
+    const stripPrefixPath = `${suffix || "/"}${parsed.search ?? ""}`;
+    const finalPath = spec.proxy.strip_prefix
+      ? stripPrefixPath
+      : `${pathname}${parsed.search ?? ""}`;
+    if (spec.kind === "static") {
+      const staticSpec = assertStaticSpec(spec);
+      return {
+        app_id: spec.id,
+        kind: "static",
+        root: staticSpec.static.root,
+        index: staticSpec.static.index,
+        cache_control: staticSpec.static.cache_control,
+        rewritePath: finalPath,
+      };
+    }
+
+    const serviceSpec = assertServiceSpec(spec);
     const startupTimeout = Math.max(
       1_000,
-      (spec.wake.startup_timeout_s || 120) * 1000,
+      (serviceSpec.wake.startup_timeout_s || 120) * 1000,
     );
-    const status = spec.wake.enabled
-      ? await ensureRunning(spec.id, { timeout: startupTimeout, interval: 500 })
-      : await statusApp(spec.id);
+    const status = serviceSpec.wake.enabled
+      ? await ensureRunning(serviceSpec.id, { timeout: startupTimeout, interval: 500 })
+      : await statusApp(serviceSpec.id);
     if (status.state !== "running" || !status.port) {
-      throw new Error(`app '${spec.id}' is not running`);
+      throw new Error(`app '${serviceSpec.id}' is not running`);
     }
-    const suffix =
-      url.length > fullPrefix.length ? url.slice(fullPrefix.length) : "";
-    const rewritePath = spec.proxy.strip_prefix ? suffix || "/" : undefined;
     return {
-      app_id: spec.id,
+      app_id: serviceSpec.id,
+      kind: "service",
       port: status.port,
-      rewritePath,
+      rewritePath: finalPath,
     };
   }
   return undefined;
 }
 
+export async function exposeApp({
+  id,
+  ttl_s,
+  auth_front = "token",
+  random_subdomain = true,
+}: {
+  id: string;
+  ttl_s: number;
+  auth_front?: AppExposureFrontAuth;
+  random_subdomain?: boolean;
+}): Promise<AppStatus> {
+  await getAppSpec(id);
+  await exposeAppState({ app_id: id, ttl_s, auth_front, random_subdomain });
+  return await statusApp(id);
+}
+
+export async function unexposeApp(id: string): Promise<AppStatus> {
+  await getAppSpec(id);
+  await unexposeAppState(id);
+  return await statusApp(id);
+}
+
+export async function appLogs(id: string): Promise<{
+  id: string;
+  state: "running" | "stopped";
+  stdout: string;
+  stderr: string;
+}> {
+  const status = await statusApp(id);
+  const stdout =
+    status.stdout?.toString("utf8").replace(/\u0000+$/g, "") ?? "";
+  const stderr =
+    status.stderr?.toString("utf8").replace(/\u0000+$/g, "") ?? "";
+  return {
+    id: status.id,
+    state: status.state,
+    stdout,
+    stderr,
+  };
+}
+
 function closeAll() {
   for (const app of Object.values(children)) {
-    if (app.child.exitCode == null) {
+    if (isChildRunning(app.child)) {
       app.child.kill("SIGKILL");
     }
   }

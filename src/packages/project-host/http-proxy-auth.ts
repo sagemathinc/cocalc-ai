@@ -16,6 +16,7 @@ import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { conatPassword } from "@cocalc/backend/data";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
+import { authorizePublicAppPath } from "./app-public-access";
 
 const collaboratorCache = new TTL<string, boolean>({
   max: 50_000,
@@ -402,6 +403,17 @@ export function createProjectHostHttpProxyAuth({
     }
     const { token, fromQuery } = readBearerToken(req);
     if (!token) {
+      const allowedPublic = await authorizePublicAppPath({
+        project_id,
+        url: req.url,
+      });
+      if (allowedPublic) {
+        setAuthContext(req, {
+          account_id: project_id,
+          issued_at_s: Math.floor(Date.now() / 1000),
+        });
+        return;
+      }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
@@ -449,6 +461,18 @@ export function createProjectHostHttpProxyAuth({
     }
     const { token } = readBearerToken(req);
     if (!token) {
+      const allowedPublic = await authorizePublicAppPath({
+        project_id,
+        url: req.url,
+      });
+      if (allowedPublic) {
+        const context = {
+          account_id: project_id,
+          issued_at_s: Math.floor(Date.now() / 1000),
+        };
+        setAuthContext(req, context);
+        return context;
+      }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);

@@ -16,6 +16,11 @@ function parsePositiveIntOrThrow(value: string | undefined, context: string): nu
   return n;
 }
 
+function normalizePrefix(value: string): string {
+  const withLeading = value.startsWith("/") ? value : `/${value}`;
+  return withLeading.replace(/\/+$/, "") || "/";
+}
+
 export function registerWorkspaceAppCommands(
   workspace: Command,
   deps: WorkspaceCommandDeps,
@@ -192,6 +197,36 @@ export function registerWorkspaceAppCommands(
     );
 
   app
+    .command("restart <appId>")
+    .description("restart app process")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--wait", "wait for running+ready state")
+    .option("--timeout <duration>", "wait timeout (e.g. 30s, 2m)")
+    .action(
+      async (
+        appId: string,
+        opts: { workspace?: string; wait?: boolean; timeout?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app restart", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          await api.apps.stopApp(appId);
+          const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
+          const status = opts.wait
+            ? await api.apps.ensureRunning(appId, { timeout, interval: 500 })
+            : await api.apps.startApp(appId);
+          return {
+            workspace_id: ws.project_id,
+            ...status,
+          };
+        });
+      },
+    );
+
+  app
     .command("status <appId>")
     .description("get app runtime status")
     .option("-w, --workspace <workspace>", "workspace id or name")
@@ -210,6 +245,127 @@ export function registerWorkspaceAppCommands(
           return {
             workspace_id: ws.project_id,
             ...status,
+          };
+        });
+      },
+    );
+
+  app
+    .command("logs <appId>")
+    .description("show captured app stdout/stderr")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--tail <lines>", "tail lines per stream", "200")
+    .action(
+      async (
+        appId: string,
+        opts: { workspace?: string; tail?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app logs", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const data = await api.apps.appLogs(appId);
+          const tail = parsePositiveIntOrThrow(opts.tail, "--tail") ?? 200;
+          const takeTail = (text: string) =>
+            text
+              .split(/\r?\n/)
+              .slice(-tail)
+              .join("\n")
+              .trim();
+          return {
+            workspace_id: ws.project_id,
+            app_id: appId,
+            state: data.state,
+            stdout: takeTail(data.stdout ?? ""),
+            stderr: takeTail(data.stderr ?? ""),
+          };
+        });
+      },
+    );
+
+  app
+    .command("expose <appId>")
+    .description("enable public app access with required TTL")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .requiredOption("--ttl <duration>", "public exposure TTL (e.g. 10m, 2h)")
+    .option(
+      "--front-auth <mode>",
+      "front auth mode: token|none (default: token)",
+      "token",
+    )
+    .option(
+      "--random-subdomain",
+      "request random subdomain label metadata",
+      true,
+    )
+    .action(
+      async (
+        appId: string,
+        opts: {
+          workspace?: string;
+          ttl: string;
+          frontAuth?: "token" | "none";
+          randomSubdomain?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app expose", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const spec = await api.apps.getAppSpec(appId);
+          const ttlMs = deps.durationToMs(opts.ttl);
+          const ttl_s = Math.max(60, Math.floor(ttlMs / 1000));
+          const auth_front = opts.frontAuth === "none" ? "none" : "token";
+          const status = await api.apps.exposeApp({
+            id: appId,
+            ttl_s,
+            auth_front,
+            random_subdomain: opts.randomSubdomain !== false,
+          });
+          const relative = `/${ws.project_id}${normalizePrefix(spec.proxy?.base_path ?? `/apps/${appId}`)}`;
+          const base = `${ctx.apiBaseUrl}`.replace(/\/+$/, "");
+          const exposure = status.exposure;
+          const url = new URL(`${base}${relative}`);
+          if (auth_front === "token" && exposure?.token) {
+            url.searchParams.set("cocalc_app_token", exposure.token);
+          }
+          return {
+            workspace_id: ws.project_id,
+            app_id: appId,
+            ttl_s,
+            relative_url: relative,
+            url_public: url.toString(),
+            exposure,
+          };
+        });
+      },
+    );
+
+  app
+    .command("unexpose <appId>")
+    .description("disable public app access")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .action(
+      async (
+        appId: string,
+        opts: { workspace?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app unexpose", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const status = await api.apps.unexposeApp(appId);
+          return {
+            workspace_id: ws.project_id,
+            app_id: appId,
+            exposure: status.exposure,
+            state: status.state,
           };
         });
       },

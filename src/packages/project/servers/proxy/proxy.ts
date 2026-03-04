@@ -27,6 +27,9 @@ This proxy gets typically exposed externally via the proxy in
 
 import * as http from "node:http";
 import type express from "express";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import * as path from "node:path";
 import { userInfo } from "node:os";
 import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
@@ -40,6 +43,31 @@ import {
 import listen from "@cocalc/backend/misc/async-server-listen";
 
 const logger = getLogger("project:servers:proxy");
+const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".pdf": "application/pdf",
+  ".wasm": "application/wasm",
+};
+
+type StaticResolvedFile = {
+  absolutePath: string;
+  stat: { size: number; mtimeMs: number };
+};
 
 interface StartOptions {
   base_url?: string;
@@ -71,7 +99,10 @@ export async function startProxyServer({
   const proxyServer = http.createServer((req, res) => {
     (async () => {
       try {
-        const target = await getTarget(req);
+        const target = await getTarget(req, res);
+        if (!target) {
+          return;
+        }
         if (!hasValidInternalProxySecret(req)) {
           res.writeHead(403, { "Content-Type": "text/plain" });
           res.end("Forbidden\n");
@@ -90,6 +121,9 @@ export async function startProxyServer({
     (async () => {
       try {
         const target = await getTarget(req);
+        if (!target) {
+          throw Error("not matched");
+        }
         if (!hasValidInternalProxySecret(req)) {
           socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
           socket.destroy();
@@ -135,7 +169,10 @@ export function attachProxyServer({
   if (app) {
     app.use(async (req, res, next) => {
       try {
-        const target = await getTarget(req);
+        const target = await getTarget(req, res);
+        if (!target) {
+          return;
+        }
         if (!hasValidInternalProxySecret(req)) {
           res.writeHead(403, { "Content-Type": "text/plain" });
           res.end("Forbidden\n");
@@ -153,6 +190,9 @@ export function attachProxyServer({
       (async () => {
         try {
           const target = await getTarget(req);
+          if (!target) {
+            return;
+          }
           if (!hasValidInternalProxySecret(req)) {
             socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
             socket.destroy();
@@ -205,7 +245,139 @@ function createProxyResolver({
   const proxyPattern = buildPattern(base, "proxy");
   const portPattern = buildPattern(base, "port");
 
-  async function getTarget(req: http.IncomingMessage) {
+  const resolveStaticFile = async ({
+    root,
+    index,
+    requestPath,
+  }: {
+    root: string;
+    index?: string;
+    requestPath: string;
+  }): Promise<StaticResolvedFile | undefined> => {
+    const rootAbs = path.resolve(root);
+    const parsed = new URL(requestPath, "http://project.local");
+    let relative = decodeURIComponent(parsed.pathname || "/");
+    if (!relative.startsWith("/")) {
+      relative = `/${relative}`;
+    }
+    const wanted = relative === "/" ? "" : relative.slice(1);
+    let candidate = path.resolve(rootAbs, wanted);
+    if (!(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))) {
+      return;
+    }
+
+    let info;
+    try {
+      info = await stat(candidate);
+    } catch {
+      info = undefined;
+    }
+
+    if (info?.isDirectory()) {
+      const indexName = (index || "index.html").replace(/^\/+/, "");
+      candidate = path.resolve(candidate, indexName);
+      if (!(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))) {
+        return;
+      }
+      try {
+        info = await stat(candidate);
+      } catch {
+        info = undefined;
+      }
+    }
+
+    if (!info?.isFile()) {
+      return;
+    }
+
+    return {
+      absolutePath: candidate,
+      stat: {
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+      },
+    };
+  };
+
+  const writeStaticResponse = async ({
+    req,
+    res,
+    root,
+    index,
+    cache_control,
+    requestPath,
+  }: {
+    req: http.IncomingMessage;
+    res: http.ServerResponse;
+    root: string;
+    index?: string;
+    cache_control?: string;
+    requestPath: string;
+  }) => {
+    const resolved = await resolveStaticFile({ root, index, requestPath });
+    if (!resolved) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found\n");
+      return;
+    }
+    const { absolutePath, stat: info } = resolved;
+    const ext = path.extname(absolutePath).toLowerCase();
+    const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
+    const cacheControl = cache_control || STATIC_CACHE_CONTROL_DEFAULT;
+    const rangeHeader = req.headers.range;
+    let start = 0;
+    let end = info.size - 1;
+    let partial = false;
+    if (typeof rangeHeader === "string") {
+      const m = rangeHeader.match(/^bytes=(\d*)-(\d*)$/i);
+      if (m) {
+        const from = m[1] ? Number(m[1]) : undefined;
+        const to = m[2] ? Number(m[2]) : undefined;
+        if (from != null && Number.isFinite(from)) start = Math.max(0, from);
+        if (to != null && Number.isFinite(to)) end = Math.min(info.size - 1, to);
+        if (m[1] === "" && to != null && Number.isFinite(to)) {
+          start = Math.max(0, info.size - to);
+          end = info.size - 1;
+        }
+        if (start <= end && start < info.size) {
+          partial = true;
+        } else {
+          res.writeHead(416, {
+            "Content-Range": `bytes */${info.size}`,
+          });
+          res.end();
+          return;
+        }
+      }
+    }
+
+    const contentLength = end - start + 1;
+    const headers: Record<string, string | number> = {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl,
+      "Accept-Ranges": "bytes",
+      "Last-Modified": new Date(info.mtimeMs).toUTCString(),
+      "Content-Length": contentLength,
+    };
+    if (partial) {
+      headers["Content-Range"] = `bytes ${start}-${end}/${info.size}`;
+    }
+    res.writeHead(partial ? 206 : 200, headers);
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    const stream = createReadStream(absolutePath, { start, end });
+    stream.on("error", (err) => {
+      logger.warn("static file stream error", { err: `${err}`, absolutePath });
+      if (!res.writableEnded) {
+        res.end();
+      }
+    });
+    stream.pipe(res);
+  };
+
+  async function getTarget(req: http.IncomingMessage, res?: http.ServerResponse) {
     const url = req.url ?? "";
     const mPort = portPattern.exec(url);
     if (mPort) {
@@ -223,9 +395,21 @@ function createProxyResolver({
 
     const appTarget = await resolveAppProxyTarget({ base, url });
     if (appTarget) {
-      if (appTarget.rewritePath != null) {
-        req.url = appTarget.rewritePath;
+      if (appTarget.kind === "static") {
+        if (!res) {
+          throw Error("static apps do not support websocket upgrades");
+        }
+        await writeStaticResponse({
+          req,
+          res,
+          root: appTarget.root,
+          index: appTarget.index,
+          cache_control: appTarget.cache_control,
+          requestPath: appTarget.rewritePath,
+        });
+        return undefined;
       }
+      req.url = appTarget.rewritePath;
       return { port: appTarget.port, host };
     }
 
