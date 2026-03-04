@@ -1478,20 +1478,22 @@ export class Client extends EventEmitter {
       if (done && headers) {
         v.push(headers);
       }
-      emitConatTrace({
-        direction: "send",
-        phase: "publish_chunk",
-        client_id: this.id,
-        address: this.options.address,
-        subject,
-        chunk_id: id,
-        chunk_seq: seq,
-        chunk_done: !!done,
-        chunk_bytes: chunk.length,
-        encoding,
-        ...(done ? { raw_bytes: raw.length } : {}),
-        ...(done && headers ? { headers } : {}),
-      });
+      if (conatTraceListeners.size > 0) {
+        emitConatTrace({
+          direction: "send",
+          phase: "publish_chunk",
+          client_id: this.id,
+          address: this.options.address,
+          subject,
+          chunk_id: id,
+          chunk_seq: seq,
+          chunk_done: !!done,
+          chunk_bytes: chunk.length,
+          encoding,
+          ...(done ? { raw_bytes: raw.length } : {}),
+          ...(done && headers ? { headers } : {}),
+        });
+      }
       if (confirm) {
         const f = async () => {
           if (timeout) {
@@ -1967,6 +1969,7 @@ class SubscriptionEmitter extends EventEmitter {
     if (this.client == null) {
       return;
     }
+    const traceEnabled = conatTraceListeners.size > 0;
     const [id, seq, done, encoding, buffer, headers] = data;
     // console.log({ id, seq, done, encoding, buffer, headers });
     const chunk = { seq, done, encoding, buffer, headers };
@@ -1980,19 +1983,21 @@ class SubscriptionEmitter extends EventEmitter {
           `WARNING: drop packet from ${this.subject} -- first message has wrong seq`,
           { seq },
         );
-        emitConatTrace({
-          direction: "recv",
-          phase: "drop_chunk_seq",
-          client_id: this.client.id,
-          address: this.client.options.address,
-          subject: this.subject,
-          chunk_id: id,
-          chunk_seq: seq,
-          chunk_done: !!done,
-          chunk_bytes: buffer?.length ?? buffer?.byteLength ?? 0,
-          encoding,
-          message: "first chunk has non-zero sequence",
-        });
+        if (traceEnabled) {
+          emitConatTrace({
+            direction: "recv",
+            phase: "drop_chunk_seq",
+            client_id: this.client.id,
+            address: this.client.options.address,
+            subject: this.subject,
+            chunk_id: id,
+            chunk_seq: seq,
+            chunk_done: !!done,
+            chunk_bytes: buffer?.length ?? buffer?.byteLength ?? 0,
+            encoding,
+            message: "first chunk has non-zero sequence",
+          });
+        }
         return;
       }
       incoming[id] = [];
@@ -2003,37 +2008,41 @@ class SubscriptionEmitter extends EventEmitter {
           `WARNING: drop packet from ${this.subject} -- seq number wrong`,
           { prev, seq },
         );
-        emitConatTrace({
-          direction: "recv",
-          phase: "drop_chunk_seq",
-          client_id: this.client.id,
-          address: this.client.options.address,
-          subject: this.subject,
-          chunk_id: id,
-          chunk_seq: seq,
-          chunk_done: !!done,
-          chunk_bytes: buffer?.length ?? buffer?.byteLength ?? 0,
-          encoding,
-          message: `unexpected seq (prev=${prev}, seq=${seq})`,
-        });
+        if (traceEnabled) {
+          emitConatTrace({
+            direction: "recv",
+            phase: "drop_chunk_seq",
+            client_id: this.client.id,
+            address: this.client.options.address,
+            subject: this.subject,
+            chunk_id: id,
+            chunk_seq: seq,
+            chunk_done: !!done,
+            chunk_bytes: buffer?.length ?? buffer?.byteLength ?? 0,
+            encoding,
+            message: `unexpected seq (prev=${prev}, seq=${seq})`,
+          });
+        }
         // part of message was dropped -- discard everything
         delete incoming[id];
         return;
       }
     }
-    emitConatTrace({
-      direction: "recv",
-      phase: "recv_chunk",
-      client_id: this.client.id,
-      address: this.client.options.address,
-      subject: this.subject,
-      chunk_id: id,
-      chunk_seq: seq,
-      chunk_done: !!done,
-      chunk_bytes: buffer?.length ?? buffer?.byteLength ?? 0,
-      encoding,
-      ...(done && headers ? { headers } : {}),
-    });
+    if (traceEnabled) {
+      emitConatTrace({
+        direction: "recv",
+        phase: "recv_chunk",
+        client_id: this.client.id,
+        address: this.client.options.address,
+        subject: this.subject,
+        chunk_id: id,
+        chunk_seq: seq,
+        chunk_done: !!done,
+        chunk_bytes: buffer?.length ?? buffer?.byteLength ?? 0,
+        encoding,
+        ...(done && headers ? { headers } : {}),
+      });
+    }
     incoming[id].push({ ...chunk, time: Date.now() });
     if (chunk.done) {
       // console.log("assembling ", incoming[id].length, "chunks");
@@ -2047,30 +2056,32 @@ class SubscriptionEmitter extends EventEmitter {
       //         }
       //       }
       const raw = concatArrayBuffers(chunks);
-      let decoded_preview: string | undefined = undefined;
-      let decode_error: string | undefined = undefined;
-      try {
-        decoded_preview = safeStringifyPreview(
-          decode({ encoding, data: raw }),
-          4000,
-        );
-      } catch (err) {
-        decode_error = `${err}`;
+      if (traceEnabled) {
+        let decoded_preview: string | undefined = undefined;
+        let decode_error: string | undefined = undefined;
+        try {
+          decoded_preview = safeStringifyPreview(
+            decode({ encoding, data: raw }),
+            4000,
+          );
+        } catch (err) {
+          decode_error = `${err}`;
+        }
+        emitConatTrace({
+          direction: "recv",
+          phase: "recv_message",
+          client_id: this.client.id,
+          address: this.client.options.address,
+          subject: this.subject,
+          chunk_id: id,
+          chunk_done: true,
+          raw_bytes: raw.byteLength ?? raw.length ?? 0,
+          encoding,
+          ...(headers ? { headers } : {}),
+          ...(decoded_preview ? { decoded_preview } : {}),
+          ...(decode_error ? { decode_error } : {}),
+        });
       }
-      emitConatTrace({
-        direction: "recv",
-        phase: "recv_message",
-        client_id: this.client.id,
-        address: this.client.options.address,
-        subject: this.subject,
-        chunk_id: id,
-        chunk_done: true,
-        raw_bytes: raw.byteLength ?? raw.length ?? 0,
-        encoding,
-        ...(headers ? { headers } : {}),
-        ...(decoded_preview ? { decoded_preview } : {}),
-        ...(decode_error ? { decode_error } : {}),
-      });
 
       // TESTING ONLY!!
       //       try {
@@ -2102,20 +2113,22 @@ class SubscriptionEmitter extends EventEmitter {
             `WARNING: drop partial message from ${this.subject} due to timeout`,
           );
           const first = chunks[0];
-          emitConatTrace({
-            direction: "recv",
-            phase: "drop_chunk_timeout",
-            client_id: this.client.id,
-            address: this.client.options.address,
-            subject: this.subject,
-            chunk_id: id,
-            chunk_seq: first?.seq,
-            chunk_done: !!first?.done,
-            chunk_bytes:
-              first?.buffer?.length ?? first?.buffer?.byteLength ?? undefined,
-            encoding: first?.encoding,
-            message: `partial message timed out with ${chunks.length} chunk(s)`,
-          });
+          if (conatTraceListeners.size > 0) {
+            emitConatTrace({
+              direction: "recv",
+              phase: "drop_chunk_timeout",
+              client_id: this.client.id,
+              address: this.client.options.address,
+              subject: this.subject,
+              chunk_id: id,
+              chunk_seq: first?.seq,
+              chunk_done: !!first?.done,
+              chunk_bytes:
+                first?.buffer?.length ?? first?.buffer?.byteLength ?? undefined,
+              encoding: first?.encoding,
+              message: `partial message timed out with ${chunks.length} chunk(s)`,
+            });
+          }
           delete this.incoming[id];
         }
       }
