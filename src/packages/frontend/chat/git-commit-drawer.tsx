@@ -22,6 +22,7 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -983,6 +984,7 @@ export function GitCommitDrawer({
   );
   const [reviewSubmitBusy, setReviewSubmitBusy] = useState(false);
   const [showResolvedComments, setShowResolvedComments] = useState(false);
+  const reviewLoadTokenRef = useRef(0);
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -1232,10 +1234,9 @@ export function GitCommitDrawer({
     };
   }, [open, accountId, visibleLogEntries, commit]);
 
-  const loadReview = async () => {
-    if (!open || !accountId || !commit) return;
-    const normalizedCommit = normalizeCommitSha(commit);
-    if (isHeadCommit(commit) || !normalizedCommit) {
+  useEffect(() => {
+    const token = ++reviewLoadTokenRef.current;
+    const applyReset = () => {
       setReviewLoading(false);
       setReviewError("");
       setReviewed(false);
@@ -1243,42 +1244,50 @@ export function GitCommitDrawer({
       setReviewUpdatedAt(undefined);
       setReviewDirty(false);
       setReviewRecord(undefined);
+    };
+    if (!open || !accountId || !commit) {
+      applyReset();
       return;
     }
-    setReviewLoading(true);
-    setReviewError("");
-    try {
-      const rec = await loadReviewRecord({
-        accountId,
-        commitSha: normalizedCommit,
-      });
-      setReviewRecord(rec);
-      setReviewed(Boolean(rec?.reviewed));
-      setReviewedByCommit((prev) => ({
-        ...prev,
-        [normalizedCommit]: Boolean(rec?.reviewed),
-      }));
-      setReviewNote(typeof rec?.note === "string" ? rec.note : "");
-      setReviewUpdatedAt(
-        typeof rec?.updated_at === "number" ? rec.updated_at : undefined,
-      );
-      setReviewDirty(false);
-      setReviewError("");
-    } catch (err) {
-      setReviewError(`${err ?? "Unable to load review state."}`);
-      setReviewed(false);
-      setReviewNote("");
-      setReviewUpdatedAt(undefined);
-      setReviewDirty(false);
-      setReviewRecord(undefined);
-    } finally {
-      setReviewLoading(false);
+    const normalizedCommit = normalizeCommitSha(commit);
+    if (isHeadCommit(commit) || !normalizedCommit) {
+      applyReset();
+      return;
     }
-  };
-
-  useEffect(() => {
-    void loadReview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    applyReset();
+    setReviewLoading(true);
+    void (async () => {
+      try {
+        const rec = await loadReviewRecord({
+          accountId,
+          commitSha: normalizedCommit,
+        });
+        if (reviewLoadTokenRef.current !== token) return;
+        setReviewRecord(rec);
+        setReviewed(Boolean(rec?.reviewed));
+        setReviewedByCommit((prev) => ({
+          ...prev,
+          [normalizedCommit]: Boolean(rec?.reviewed),
+        }));
+        setReviewNote(typeof rec?.note === "string" ? rec.note : "");
+        setReviewUpdatedAt(
+          typeof rec?.updated_at === "number" ? rec.updated_at : undefined,
+        );
+        setReviewDirty(false);
+        setReviewError("");
+      } catch (err) {
+        if (reviewLoadTokenRef.current !== token) return;
+        setReviewError(`${err ?? "Unable to load review state."}`);
+        setReviewed(false);
+        setReviewNote("");
+        setReviewUpdatedAt(undefined);
+        setReviewDirty(false);
+        setReviewRecord(undefined);
+      } finally {
+        if (reviewLoadTokenRef.current !== token) return;
+        setReviewLoading(false);
+      }
+    })();
   }, [open, accountId, commit]);
 
   const saveReview = async (
