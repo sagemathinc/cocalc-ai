@@ -372,8 +372,13 @@ export function AppServerPanel({
           // fall back to status.url below
         }
       }
-      const preferredLocal =
-        `${spec?.proxy?.base_path ?? ""}`.trim() || status.url;
+      const declaredBasePath = `${spec?.proxy?.base_path ?? ""}`.trim();
+      const preferredLocal = declaredBasePath
+        ? declaredBasePath.startsWith(`/${project_id}/`) ||
+          declaredBasePath === `/${project_id}`
+          ? declaredBasePath
+          : `/${project_id}${declaredBasePath.startsWith("/") ? declaredBasePath : `/${declaredBasePath}`}`
+        : status.url;
       if (!preferredLocal) return;
       const local =
         withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
