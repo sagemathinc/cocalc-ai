@@ -9,6 +9,13 @@ import type { Command } from "commander";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import { isValidUUID } from "@cocalc/util/misc";
 import { normalizeBrowserId } from "./parse-format";
+import {
+  nowIso,
+  resolveSpawnStateByBrowserId,
+  sessionMatchesSpawnMarker,
+  spawnMarkerFromUrl,
+  writeSpawnState,
+} from "./spawn-state";
 import type {
   BrowserCommandContext,
   BrowserCommandDeps,
@@ -266,33 +273,92 @@ export async function chooseBrowserSession({
     return sessions;
   };
 
+  const remapSpawnedSessionByHint = async (
+    hint: string,
+  ): Promise<BrowserSessionInfo | undefined> => {
+    const spawned = resolveSpawnStateByBrowserId(hint);
+    if (!spawned) return undefined;
+    const marker =
+      spawnMarkerFromUrl(spawned.state.target_url) ??
+      spawnMarkerFromUrl(spawned.state.session_url);
+    if (!marker) return undefined;
+    const match = (await getSessions()).find(
+      (s) => !s.stale && sessionMatchesSpawnMarker(s, marker),
+    );
+    if (!match) return undefined;
+    if (`${spawned.state.browser_id ?? ""}`.trim() !== `${match.browser_id ?? ""}`.trim()) {
+      writeSpawnState(spawned.file, {
+        ...spawned.state,
+        browser_id: match.browser_id,
+        session_url: `${match.url ?? ""}`.trim() || undefined,
+        updated_at: nowIso(),
+      });
+    }
+    return match;
+  };
+
+  const remapSessionByMarker = async (
+    marker: string | undefined,
+  ): Promise<BrowserSessionInfo | undefined> => {
+    const clean = `${marker ?? ""}`.trim();
+    if (!clean) return undefined;
+    return (await getSessions()).find(
+      (s) => !s.stale && sessionMatchesSpawnMarker(s, clean),
+    );
+  };
+
   const explicitHint = normalizeBrowserId(browserHint);
   if (
     explicitHint &&
     !requireDiscovery &&
     isLikelyExactBrowserId(explicitHint) &&
     !activeOnly &&
-    !`${sessionProjectId ?? ""}`.trim()
+    !`${sessionProjectId ?? ""}`.trim() &&
+    !resolveSpawnStateByBrowserId(explicitHint)
   ) {
     return directBrowserSessionInfo(explicitHint);
   }
   if (explicitHint) {
-    return resolveBrowserSession(await getSessions(), explicitHint);
+    try {
+      const resolved = resolveBrowserSession(await getSessions(), explicitHint);
+      if (!resolved.stale) return resolved;
+      const remappedByRowMarker = await remapSessionByMarker(
+        spawnMarkerFromUrl(`${resolved.url ?? ""}`),
+      );
+      if (remappedByRowMarker) return remappedByRowMarker;
+      const remapped = await remapSpawnedSessionByHint(explicitHint);
+      if (remapped) return remapped;
+      throw new Error(`browser session '${explicitHint}' is stale/inactive`);
+    } catch (err) {
+      const remapped = await remapSpawnedSessionByHint(explicitHint);
+      if (remapped) return remapped;
+      const msg = `${(err as { message?: string } | undefined)?.message ?? ""}`.trim();
+      if (msg) {
+        throw err;
+      }
+      throw new Error(`browser session '${explicitHint}' not found`);
+    }
   }
   const savedHint = normalizeBrowserId(fallbackBrowserId);
   if (
     savedHint &&
     !requireDiscovery &&
     !activeOnly &&
-    !`${sessionProjectId ?? ""}`.trim()
+    !`${sessionProjectId ?? ""}`.trim() &&
+    !resolveSpawnStateByBrowserId(savedHint)
   ) {
     return directBrowserSessionInfo(savedHint);
   }
   const resolvedSessions = await getSessions();
   if (savedHint) {
-    const saved = resolveBrowserSession(resolvedSessions, savedHint);
-    if (!saved.stale) {
-      return saved;
+    try {
+      const saved = resolveBrowserSession(resolvedSessions, savedHint);
+      if (!saved.stale) {
+        return saved;
+      }
+    } catch {
+      const remapped = await remapSpawnedSessionByHint(savedHint);
+      if (remapped) return remapped;
     }
   }
   const active = resolvedSessions.filter((s) => !s.stale);

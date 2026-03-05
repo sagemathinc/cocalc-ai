@@ -17,6 +17,7 @@ import type {
 } from "@cocalc/conat/service/browser-session";
 import { browserScreenshotDomScript } from "./screenshot-helpers";
 import { readExecScriptFromStdin, withBrowserExecStaleSessionHint } from "./exec-helpers";
+import { sessionMatchesSpawnMarker, spawnMarkerFromUrl } from "./spawn-state";
 import type {
   BrowserCommandDeps,
   BrowserHarnessRegisterUtils,
@@ -732,7 +733,8 @@ export function registerBrowserHarnessCommands({
               undefined,
             activeOnly: !!opts.activeOnly,
           });
-          const targetBrowserId = `${sessionInfo.browser_id ?? ""}`.trim();
+          let targetBrowserId = `${sessionInfo.browser_id ?? ""}`.trim();
+          const pinnedSpawnMarker = spawnMarkerFromUrl(`${sessionInfo.url ?? ""}`) ?? "";
           const pinTarget = opts.pinTarget !== false;
 
           const assertPinnedSessionActive = async (): Promise<BrowserSessionInfo> => {
@@ -743,11 +745,27 @@ export function registerBrowserHarnessCommands({
               (x) => `${x?.browser_id ?? ""}`.trim() === targetBrowserId,
             );
             if (!row) {
-              throw new Error(
-                `pinned browser session '${targetBrowserId}' is no longer present`,
-              );
+              if (pinnedSpawnMarker) {
+                const remapped = (sessions ?? []).find(
+                  (x) => !x?.stale && sessionMatchesSpawnMarker(x, pinnedSpawnMarker),
+                );
+                if (remapped) {
+                  targetBrowserId = `${remapped.browser_id ?? ""}`.trim();
+                  return remapped;
+                }
+              }
+              throw new Error(`pinned browser session '${targetBrowserId}' is no longer present`);
             }
             if (row.stale) {
+              if (pinnedSpawnMarker) {
+                const remapped = (sessions ?? []).find(
+                  (x) => !x?.stale && sessionMatchesSpawnMarker(x, pinnedSpawnMarker),
+                );
+                if (remapped) {
+                  targetBrowserId = `${remapped.browser_id ?? ""}`.trim();
+                  return remapped;
+                }
+              }
               throw new Error(
                 `pinned browser session '${targetBrowserId}' is stale/inactive`,
               );
