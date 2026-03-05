@@ -688,6 +688,16 @@ export function registerBrowserHarnessCommands({
       "wait duration after recovery action before retry",
       "1s",
     )
+    .option(
+      "--rpc-timeout-threshold <n>",
+      "consecutive browser-session RPC timeouts that trigger auto-recovery",
+      "3",
+    )
+    .option(
+      "--rpc-timeout-recovery-timeout <duration>",
+      "max time to wait while auto-recovering after timeout bursts",
+      "30s",
+    )
     .option("--screenshot-on-fail", "capture screenshot on failed attempts")
     .option("--no-screenshot-on-fail", "disable screenshot capture on failed attempts")
     .option("--logs-on-fail <n>", "capture latest runtime events on failed attempts", "120")
@@ -724,6 +734,8 @@ export function registerBrowserHarnessCommands({
           defaultTimeout?: string;
           defaultRecovery?: string;
           recoveryWait?: string;
+          rpcTimeoutThreshold?: string;
+          rpcTimeoutRecoveryTimeout?: string;
           screenshotOnFail?: boolean;
           logsOnFail?: string;
           networkOnFail?: string;
@@ -821,6 +833,18 @@ export function registerBrowserHarnessCommands({
             ? Math.max(1_000, durationToMs(opts.defaultTimeout, ctx.timeoutMs))
             : undefined;
           const recoveryWaitMs = Math.max(0, durationToMs(opts.recoveryWait, 1_000));
+          const rpcTimeoutBurstThreshold = Math.max(
+            1,
+            clampNonNegativeInt(
+              opts.rpcTimeoutThreshold,
+              3,
+              "--rpc-timeout-threshold",
+            ),
+          );
+          const rpcTimeoutRecoveryTimeoutMs = Math.max(
+            1_000,
+            durationToMs(opts.rpcTimeoutRecoveryTimeout, 30_000),
+          );
           const defaultRecovery = parseRecoveryMode(opts.defaultRecovery, "reload");
           const continueOnError = !!opts.continueOnError;
           const captureDefaults: HarnessCapturePolicy = {
@@ -860,6 +884,10 @@ export function registerBrowserHarnessCommands({
               report_dir: reportDir,
               posture,
               policy_allow_raw_exec: !!policy?.allow_raw_exec,
+              rpc_timeout_recovery: {
+                threshold: rpcTimeoutBurstThreshold,
+                timeout_ms: rpcTimeoutRecoveryTimeoutMs,
+              },
               normalized,
               ...sessionTargetContext(ctx, sessionInfo, project_id),
             };
@@ -874,7 +902,6 @@ export function registerBrowserHarnessCommands({
           let failedSteps = 0;
           let reportIndex = 0;
           let consecutiveRpcTimeouts = 0;
-          const rpcTimeoutBurstThreshold = 3;
           const maxFailures =
             normalized.max_failures == null || normalized.max_failures <= 0
               ? Number.POSITIVE_INFINITY
@@ -888,7 +915,7 @@ export function registerBrowserHarnessCommands({
             error?: string;
           }> => {
             const started = Date.now();
-            const waitBudgetMs = Math.max(10_000, recoveryWaitMs * 6, 30_000);
+            const waitBudgetMs = rpcTimeoutRecoveryTimeoutMs;
             let lastErr = "";
             while (Date.now() - started <= waitBudgetMs) {
               try {
@@ -1170,6 +1197,10 @@ export function registerBrowserHarnessCommands({
             max_failures: Number.isFinite(maxFailures) ? maxFailures : null,
             posture,
             policy_allow_raw_exec: !!policy?.allow_raw_exec,
+            rpc_timeout_recovery: {
+              threshold: rpcTimeoutBurstThreshold,
+              timeout_ms: rpcTimeoutRecoveryTimeoutMs,
+            },
             browser_id: targetBrowserId,
             project_id,
             pin_target: pinTarget,
