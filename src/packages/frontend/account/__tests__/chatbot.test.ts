@@ -6,6 +6,7 @@ describe("codex chatbot identity", () => {
   it("treats codex model ids as chatbots", () => {
     expect(isChatBot("gpt-5.1-codex-mini")).toBe(true);
     expect(isChatBot("gpt-5.3-codex")).toBe(true);
+    expect(isChatBot("gpt-5.4")).toBe(true);
     expect(isChatBot("gpt-5.3-codex-spark")).toBe(true);
   });
 
@@ -14,6 +15,7 @@ describe("codex chatbot identity", () => {
       "Codex Agent (gpt-5.1-codex-mini)",
     );
     expect(chatBotName("gpt-5.3-codex")).toBe("Codex Agent (gpt-5.3-codex)");
+    expect(chatBotName("gpt-5.4")).toBe("Codex Agent (gpt-5.4)");
     expect(chatBotName("gpt-5.3-codex-spark")).toBe(
       "Codex Agent (gpt-5.3-codex-spark)",
     );

@@ -21,6 +21,7 @@ import {
 } from "@cocalc/util/db-schema/llm-utils";
 import { uuid } from "@cocalc/util/misc";
 import { addToHistory } from "@cocalc/chat";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import type { ChatMessage, MessageHistory } from "../types";
 import { getReplyToRoot } from "../utils";
 import type { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
@@ -106,7 +107,7 @@ export async function processLLM({
   let input = stripMentions(inputRaw);
 
   // ACP agent branch
-  if (typeof model === "string" && model.includes("codex")) {
+  if (typeof model === "string" && isCodexModelName(model)) {
     const acpInput =
       effectiveAcpSendMode === "immediate"
         ? `${ACP_IMMEDIATE_MODE_PREFIX}\n\n${input}`

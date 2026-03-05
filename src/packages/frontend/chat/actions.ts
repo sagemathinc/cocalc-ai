@@ -51,6 +51,7 @@ import {
 } from "@cocalc/chat";
 import {
   resolveCodexSessionMode,
+  isCodexModelName,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import {
@@ -114,7 +115,7 @@ function identityFromModel(model: string): {
   agent_kind: Exclude<ThreadAgentKind, "none">;
   agent_mode: ThreadAgentMode;
 } {
-  if (model.includes("codex")) {
+  if (isCodexModelName(model)) {
     return { agent_kind: "acp", agent_mode: "interactive" };
   }
   return { agent_kind: "llm", agent_mode: "single_turn" };
@@ -1465,7 +1466,7 @@ export class ChatActions extends Actions<ChatState> {
 
   isCodexThread = (date?: Date): boolean => {
     const model = this.isLanguageModelThread(date);
-    return model ? model.includes("codex") : false;
+    return isCodexModelName(typeof model === "string" ? model : undefined);
   };
 
   private processLLM = async ({

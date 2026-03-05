@@ -23,12 +23,10 @@ import {
   isOllamaLLM,
   isUserDefinedModel,
 } from "@cocalc/util/db-schema/llm-utils";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 
 function isCodexModelId(account_id: string): boolean {
-  if (account_id === "codex-agent" || account_id === "openai-codex-agent") {
-    return true;
-  }
-  return account_id.includes("codex");
+  return isCodexModelName(account_id);
 }
 
 // we either check if the prefix is one of the known ones (used in some circumstances)

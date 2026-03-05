@@ -18,6 +18,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
 import {
   DEFAULT_CODEX_MODELS,
+  isCodexModelName,
   resolveCodexSessionMode,
   type CodexReasoningLevel,
   type CodexReasoningId,
@@ -873,7 +874,7 @@ export function ChatRoomThreadPanel({
     selectedThreadId &&
       (selectedThreadMeta?.agent_kind === "acp" ||
         selectedThreadMeta?.acp_config != null ||
-        `${selectedThreadMeta?.agent_model ?? ""}`.includes("codex") ||
+        isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
         actions?.getCodexConfig?.(selectedThreadId) != null),
   );
   const selectedThreadForLog = selectedThreadKey ?? undefined;
@@ -1633,11 +1634,6 @@ function normalizeSessionMode(
     return mode;
   }
   return undefined;
-}
-
-function isCodexModelName(value?: string): boolean {
-  if (!value) return false;
-  return DEFAULT_CODEX_MODELS.some((model) => model.name === value);
 }
 
 function renderOptionWithDescription({

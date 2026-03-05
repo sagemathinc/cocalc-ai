@@ -19,6 +19,7 @@ import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { DEFAULT_COLOR } from "@cocalc/frontend/users/store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { service2model } from "@cocalc/util/db-schema/llm-utils";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { ensure_bound, startswith, trunc_middle } from "@cocalc/util/misc";
 import { avatar_fontcolor } from "./font-color";
 
@@ -54,7 +55,7 @@ interface Props {
 export function Avatar(props) {
   if (isChatBot(props.account_id)) {
     const model =
-      typeof props.account_id === "string" && props.account_id.includes("codex")
+      typeof props.account_id === "string" && isCodexModelName(props.account_id)
         ? "codex-agent"
         : service2model(props.account_id);
     return (

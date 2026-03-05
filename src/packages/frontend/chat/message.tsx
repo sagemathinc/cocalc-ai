@@ -27,6 +27,7 @@ import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
 import { plural, unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
@@ -410,7 +411,7 @@ export default function Message({
   );
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread =
-    typeof isLLMThread === "string" && isLLMThread.includes("codex");
+    typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
   const acpStateActive = useMemo(
     () =>
       acpState === "running" ||

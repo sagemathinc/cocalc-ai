@@ -21,6 +21,7 @@ import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { Resizable } from "re-resizable";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
 import { ThreadBadge } from "./thread-badge";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
@@ -333,7 +334,7 @@ export function ChatRoomSidebarContent({
     const isCodexThread =
       isAI &&
       typeof model === "string" &&
-      model.toLowerCase().includes("codex");
+      isCodexModelName(model);
     const isRecentlyActive =
       thread.lastActivityAt != null &&
       activityNow - thread.lastActivityAt < ACTIVITY_RECENT_MS;

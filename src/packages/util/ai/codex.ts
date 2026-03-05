@@ -226,3 +226,22 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     ],
   },
 ];
+
+const CODEX_MODEL_NAME_SET = new Set(
+  DEFAULT_CODEX_MODELS.map((model) => model.name.toLowerCase()),
+);
+
+const CODEX_MODEL_ALIASES = new Set([
+  "codex-agent",
+  "openai-codex-agent",
+]);
+
+export function isCodexModelName(model?: string): boolean {
+  if (typeof model !== "string") return false;
+  const normalized = model.trim().toLowerCase();
+  if (!normalized) return false;
+  if (CODEX_MODEL_ALIASES.has(normalized)) return true;
+  if (CODEX_MODEL_NAME_SET.has(normalized)) return true;
+  // Backward-compatible fallback for custom codex-style slugs.
+  return normalized.includes("codex");
+}

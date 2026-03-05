@@ -316,6 +316,25 @@ describe("processLLM model resolution and Codex dispatch", () => {
     );
   });
 
+  it("routes gpt-5.4 through processAcpLLM", async () => {
+    const { actions } = makeActions();
+    const message = makeMessage();
+    message.history[0].content = "please continue";
+    const { processAcpLLM } = require("../acp-api");
+    const reply_to = new Date("2025-02-02T01:00:00.000Z");
+    await processLLM({
+      actions,
+      message,
+      reply_to,
+      threadModel: "gpt-5.4",
+    });
+    expect(processAcpLLM).toHaveBeenCalled();
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
+      "thread-test-1",
+      "gpt-5.4",
+    );
+  });
+
   it("adds immediate-send guidance for Codex turns", async () => {
     const { actions } = makeActions();
     const message = makeMessage();
