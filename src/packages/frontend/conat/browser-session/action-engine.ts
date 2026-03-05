@@ -937,7 +937,9 @@ export async function executeBrowserAction({
     const clear = !!action.clear;
     const { element } = await waitForSelectorState({
       selector,
-      state: "visible",
+      // Some valid typing targets (notably xterm helper textarea) are hidden by
+      // design. "attached" keeps terminal automation working.
+      state: "attached",
       timeout_ms,
       poll_ms: 50,
     });
