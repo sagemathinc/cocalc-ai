@@ -76,6 +76,13 @@ function tailLines(text: string, maxLines = 30, maxChars = 4000): string {
   return `...${tail.slice(tail.length - maxChars)}`;
 }
 
+function isPositiveIntegerText(value: string): boolean {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return false;
+  const n = Number(text);
+  return Number.isInteger(n) && n > 0;
+}
+
 function appServerPresets(homeDirectory: string): AppServerPreset[] {
   return [
     {
@@ -206,6 +213,7 @@ export function AppServerPanel({
     useState<boolean>(true);
   const [exposeSubdomainLabel, setExposeSubdomainLabel] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submittingToAgent, setSubmittingToAgent] = useState<boolean>(false);
   const [actionAppId, setActionAppId] = useState<string>("");
@@ -240,6 +248,38 @@ export function AppServerPanel({
     () => presets.find((preset) => preset.key === presetKey),
     [presets, presetKey],
   );
+
+  const canSaveForm = useMemo(() => {
+    const id = `${appId ?? ""}`.trim();
+    if (!id) return false;
+    if (!/^[a-z0-9](?:[a-z0-9._-]{0,63})$/i.test(id)) return false;
+    if (kind === "service") {
+      const cmd = `${command ?? ""}`.trim();
+      if (!cmd) return false;
+      const portText = `${port ?? ""}`.trim();
+      if (portText && !isPositiveIntegerText(portText)) return false;
+      return true;
+    }
+    const root = `${staticRoot ?? ""}`.trim();
+    if (!root) return false;
+    const refreshCmd = `${staticRefreshCommand ?? ""}`.trim();
+    if (refreshCmd) {
+      const staleText = `${staticRefreshStaleAfter ?? ""}`.trim();
+      const timeoutText = `${staticRefreshTimeout ?? ""}`.trim();
+      if (staleText && !isPositiveIntegerText(staleText)) return false;
+      if (timeoutText && !isPositiveIntegerText(timeoutText)) return false;
+    }
+    return true;
+  }, [
+    appId,
+    command,
+    kind,
+    port,
+    staticRefreshCommand,
+    staticRefreshStaleAfter,
+    staticRefreshTimeout,
+    staticRoot,
+  ]);
 
   const refresh = useCallback(async () => {
     try {
@@ -420,7 +460,7 @@ export function AppServerPanel({
     let createdId: string | undefined;
     const creatingService = kind === "service" && startNow;
     try {
-      setSubmitting(true);
+      setFormSubmitting(true);
       setError(undefined);
       setStartupFailure(undefined);
       const spec = buildSpec();
@@ -445,7 +485,7 @@ export function AppServerPanel({
         setError(normalizeError(err));
       }
     } finally {
-      setSubmitting(false);
+      setFormSubmitting(false);
     }
   }
 
@@ -915,7 +955,12 @@ export function AppServerPanel({
           >
             Open when ready
           </Checkbox>
-          <Button type="primary" loading={submitting} onClick={() => void onCreate()}>
+          <Button
+            type="primary"
+            loading={formSubmitting}
+            disabled={!canSaveForm}
+            onClick={() => void onCreate()}
+          >
             Save app
           </Button>
           <Button onClick={() => void refresh()} disabled={loading}>
