@@ -97,7 +97,15 @@ detect_host_ip() {
       }'
     return 0
   fi
-  hostname -I 2>/dev/null | awk '{print $1}'
+  local from_hostname
+  from_hostname="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  if [ -n "$from_hostname" ]; then
+    echo "$from_hostname"
+    return 0
+  fi
+  if command -v ifconfig >/dev/null 2>&1; then
+    ifconfig 2>/dev/null | awk '/inet / && $2 !~ /^127\./ {print $2; exit}'
+  fi
 }
 
 load_config() {
