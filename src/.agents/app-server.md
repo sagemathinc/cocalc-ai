@@ -387,6 +387,59 @@ Platform scope for first pass:
 2. macOS and Windows should be explicitly documented as requiring additional local prerequisites and may initially be unsupported or best-effort only.
 3. Generated commands should be OS-aware and fail early with a clear prerequisite message if the local machine is missing required pieces.
 
+### 13.3.2 Daemon-Assisted Local Launch and Forwarding
+
+Longer term, the local `cocalc-cli` daemon should become the preferred control plane for SSH port forwarding and native app launch.
+
+Why this is attractive:
+
+1. the daemon already exists to maintain persistent websocket connectivity to project-hosts,
+2. it can own local process lifecycle for forwarded ports and launched apps,
+3. it avoids fragile copy/paste commands and shell-quoting problems,
+4. it provides a natural place for local approval prompts, retries, cleanup, and status reporting.
+
+Preferred flow:
+
+1. user installs `cocalc-cli` and authenticates at an appropriate control level,
+2. CoCalc detects that a paired local daemon is available,
+3. when the user clicks `Port Forward (SSH)` or `Launch on my computer`, CoCalc sends a typed request to the daemon,
+4. the daemon shows a native popup approval dialog describing exactly what local action will happen,
+5. upon approval, the daemon performs the SSH setup and either:
+   - starts the local port forward, or
+   - launches the requested native application.
+
+Approval dialog should include:
+
+1. workspace/project identity,
+2. remote target details,
+3. local port or local application being launched,
+4. expected duration/persistence,
+5. whether the action is one-shot or remembered for the current session/project.
+
+Security model:
+
+1. daemon requests must be narrowly typed capabilities, not arbitrary shell commands,
+2. examples:
+   - "forward remote port 8787 to local 127.0.0.1:8877",
+   - "launch `xclock` over approved SSH/X11 session",
+3. every action should be attributable to a signed-in user and a specific project/workspace,
+4. there should be a local audit trail and one-click stop/revoke path,
+5. copy/paste bootstrap remains the low-trust fallback when daemon pairing is unavailable.
+
+Product tiers of trust:
+
+1. low trust:
+   - copy/paste only,
+   - no daemon control.
+2. medium trust:
+   - daemon available,
+   - explicit approval for every action.
+3. higher trust:
+   - daemon may remember approval for a given project/session for a short period,
+   - still no unrestricted arbitrary local execution.
+
+This makes the system feel dramatically smoother while keeping the right security boundary: the daemon is a typed local agent, not a general remote shell.
+
 CLI shape (proposed):
 
 1. `cocalc workspace app ssh-forward <app-id> --local-port 8888 [--remote-port auto] --json`
