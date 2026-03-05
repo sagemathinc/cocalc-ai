@@ -435,6 +435,8 @@ export class ChatMessageCache extends EventEmitter {
                 if (row0?.event != null) where.event = row0.event;
                 if (row0?.sender_id != null) where.sender_id = row0.sender_id;
                 if (row0?.date != null) where.date = row0.date;
+                if (row0?.message_id != null) where.message_id = row0.message_id;
+                if (row0?.thread_id != null) where.thread_id = row0.thread_id;
                 const rec = this.syncdb.get_one(where);
                 const key = this.getDateKey(rec ?? row0);
                 if (!key) continue;

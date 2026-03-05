@@ -16,6 +16,9 @@ import { path_split } from "@cocalc/util/misc";
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT =
   "cocalc:navigator:submit-prompt";
+const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
+const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
+let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
 
 export interface NavigatorSubmitPromptDetail {
   id: string;
@@ -73,6 +76,23 @@ function chooseThreadKeyFromIndex(opts: {
   return bestKey || fallback;
 }
 
+function resolveThreadIdFromIndex(
+  actions: any,
+  threadKey?: string,
+): string | undefined {
+  const key = `${threadKey ?? ""}`.trim();
+  if (!key) return;
+  const indexEntry = actions?.messageCache?.getThreadIndex?.()?.get?.(key);
+  const fromIndexRoot = `${indexEntry?.rootMessage?.thread_id ?? ""}`.trim();
+  if (fromIndexRoot) return fromIndexRoot;
+  if (/^\d+$/.test(key)) {
+    const root = actions?.getMessageByDate?.(Number(key));
+    const fromRoot = `${getField(root, "thread_id") ?? ""}`.trim();
+    if (fromRoot) return fromRoot;
+  }
+  return;
+}
+
 function hasThreadRootIdentity(actions: any, threadKey?: string): boolean {
   const key = `${threadKey ?? ""}`.trim();
   if (!key || !/^\d+$/.test(key)) return false;
@@ -93,7 +113,7 @@ async function waitForThreadReady(opts: {
   threadKey?: string;
   timeoutMs?: number;
 }): Promise<boolean> {
-  const timeoutMs = Math.max(500, opts.timeoutMs ?? 6000);
+  const timeoutMs = Math.max(500, opts.timeoutMs ?? NAVIGATOR_SYNC_READY_TIMEOUT_MS);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     const state = opts.actions?.syncdb?.get_state?.();
@@ -171,19 +191,22 @@ async function ensureNavigatorChatDirectory(
 function readQueue(): NavigatorSubmitPromptDetail[] {
   try {
     const raw = localStorage.getItem(NAVIGATOR_INTENT_QUEUE_KEY);
-    if (!raw) return [];
+    if (!raw) return navigatorIntentQueueMemory.slice();
     const value = JSON.parse(raw);
-    if (!Array.isArray(value)) return [];
-    return value.filter(
+    if (!Array.isArray(value)) return navigatorIntentQueueMemory.slice();
+    const queue = value.filter(
       (item) =>
         typeof item?.id === "string" && typeof item?.prompt === "string",
     );
+    navigatorIntentQueueMemory = queue.slice();
+    return queue;
   } catch {
-    return [];
+    return navigatorIntentQueueMemory.slice();
   }
 }
 
 function writeQueue(queue: NavigatorSubmitPromptDetail[]): void {
+  navigatorIntentQueueMemory = queue.slice();
   try {
     if (queue.length === 0) {
       localStorage.removeItem(NAVIGATOR_INTENT_QUEUE_KEY);
@@ -252,6 +275,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
     if (!project_id || !basePrompt) return false;
+    const input = basePrompt;
 
     const preferredThreadKey = loadNavigatorSelectedThreadKey(project_id);
     const sessions = await listAgentSessionsForProject({ project_id });
@@ -259,41 +283,54 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       records: sessions,
       preferredThreadKey,
     });
-    const fallbackSession: AgentSessionRecord | undefined =
-      indexedSession == null
-        ? {
-            session_id: `navigator-${project_id}`,
-            project_id,
-            account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
-            chat_path: resolveNavigatorChatPath(project_id),
-            thread_key: `${preferredThreadKey ?? ""}`.trim(),
-            title: "Navigator",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            status: "active",
-            entrypoint: "global",
-          }
-        : undefined;
+    const fallbackSession: AgentSessionRecord = {
+      session_id: `navigator-${project_id}`,
+      project_id,
+      account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
+      chat_path: resolveNavigatorChatPath(project_id),
+      thread_key: `${preferredThreadKey ?? ""}`.trim(),
+      title: "Navigator",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      status: "active",
+      entrypoint: "global",
+    };
     const session = indexedSession ?? fallbackSession;
-    if (!session?.chat_path) return false;
+    const queueFallbackIntent = (): boolean => {
+      dispatchNavigatorPromptIntent({
+        prompt: input,
+        tag: opts.tag ?? "intent:navigator",
+        forceCodex: opts.forceCodex ?? true,
+      });
+      if (opts.openFloating !== false) {
+        openFloatingAgentSession(project_id, {
+          ...(indexedSession ?? fallbackSession),
+          thread_key:
+            `${preferredThreadKey ?? session.thread_key ?? ""}`.trim() ||
+            session.thread_key,
+          updated_at: new Date().toISOString(),
+          status: "active",
+        });
+      }
+      return true;
+    };
+    if (!session?.chat_path) return queueFallbackIntent();
 
     await ensureNavigatorChatDirectory(project_id, session.chat_path);
 
     const threadKey = `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
-    const input = basePrompt;
-    if (!input) return false;
 
     const instanceKey = "navigator-intent-dispatch";
     const actions =
       getChatActions(project_id, session.chat_path, { instanceKey }) ??
       initChat(project_id, session.chat_path, { instanceKey });
 
-    if (!actions) return false;
+    if (!actions) return queueFallbackIntent();
     const ready = await waitForThreadReady({
       actions,
-      timeoutMs: 6000,
+      timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
     });
-    if (!ready) return false;
+    if (!ready) return queueFallbackIntent();
     const resolvedThreadKey = chooseThreadKeyFromIndex({
       actions,
       preferredThreadKey,
@@ -301,6 +338,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     });
 
     let replyThreadKey = resolvedThreadKey;
+    let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
     const model =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -309,17 +347,20 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       const rootReady = await waitForThreadReady({
         actions,
         threadKey: replyThreadKey,
-        timeoutMs: 4000,
+        timeoutMs: NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS,
       });
-      if (!rootReady) {
+      replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+      if (!rootReady || !replyThreadId) {
         // Fall back to opening a new thread rather than failing the intent.
         replyThreadKey = "";
+        replyThreadId = undefined;
       }
     }
     const replyTo = toReplyDate(replyThreadKey);
     const timeStamp = actions.sendChat({
       input,
       reply_to: replyTo,
+      reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
       threadAgent:
@@ -337,7 +378,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           : undefined,
     });
     if (!timeStamp) {
-      return false;
+      return queueFallbackIntent();
     }
 
     const nextThreadKey =
@@ -361,6 +402,32 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }, 50);
     return true;
   } catch {
-    return false;
+    try {
+      const project_id = `${opts.project_id ?? ""}`.trim();
+      const input = `${opts.prompt ?? ""}`.trim();
+      if (!project_id || !input) return false;
+      dispatchNavigatorPromptIntent({
+        prompt: input,
+        tag: opts.tag ?? "intent:navigator",
+        forceCodex: opts.forceCodex ?? true,
+      });
+      if (opts.openFloating !== false) {
+        openFloatingAgentSession(project_id, {
+          session_id: `navigator-${project_id}`,
+          project_id,
+          account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
+          chat_path: resolveNavigatorChatPath(project_id),
+          thread_key: `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
+          title: "Navigator",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: "active",
+          entrypoint: "global",
+        });
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

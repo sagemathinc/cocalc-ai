@@ -1,5 +1,7 @@
 import { CodexExecAgent } from "../codex-exec";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 describe("CodexExecAgent event path formatting", () => {
   const agent = new CodexExecAgent();
@@ -110,5 +112,107 @@ describe("CodexExecAgent pre-content path heuristics", () => {
       }),
     ).resolves.toBeNull();
     expect(statSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not emit write events for failed write-like commands", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "codex-write-"));
+    const streamEvents: any[] = [];
+    const stream = async (msg: any) => {
+      streamEvents.push(msg);
+    };
+    const cache = (agent as any).createPreContentCache();
+    await (agent as any).handleItem(
+      {
+        type: "command_execution",
+        id: "cmd-failed-write",
+        command: "cp missing-src.txt maybe-dest.txt",
+        aggregated_output: "cp: cannot stat 'missing-src.txt': No such file",
+        exit_code: 1,
+      },
+      stream,
+      cwd,
+      cache,
+      () => {},
+    );
+    const fileWriteEvents = streamEvents.filter(
+      (msg) => msg?.type === "event" && msg?.event?.type === "file",
+    );
+    expect(fileWriteEvents).toHaveLength(0);
+    const terminalExit = streamEvents.find(
+      (msg) =>
+        msg?.type === "event" &&
+        msg?.event?.type === "terminal" &&
+        msg?.event?.phase === "exit",
+    );
+    expect(terminalExit).toBeDefined();
+  });
+
+  it("emits write events only for existing file targets", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "codex-write-"));
+    await fs.writeFile(path.join(cwd, "dest.txt"), "updated");
+    const streamEvents: any[] = [];
+    const stream = async (msg: any) => {
+      streamEvents.push(msg);
+    };
+    const cache = (agent as any).createPreContentCache();
+    await (agent as any).handleItem(
+      {
+        type: "command_execution",
+        id: "cmd-write",
+        command: "cp source.txt dest.txt",
+        aggregated_output: "",
+        exit_code: 0,
+      },
+      stream,
+      cwd,
+      cache,
+      () => {},
+    );
+    const fileWriteEvents = streamEvents.filter(
+      (msg) =>
+        msg?.type === "event" &&
+        msg?.event?.type === "file" &&
+        msg?.event?.operation === "write",
+    );
+    expect(fileWriteEvents).toHaveLength(1);
+    expect(fileWriteEvents[0].event.path).toBe("dest.txt");
+    expect(typeof fileWriteEvents[0].event.bytes).toBe("number");
+  });
+
+  it("does not report file-size bytes for command-heuristic read events", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "codex-read-"));
+    await fs.writeFile(
+      path.join(cwd, "sample.txt"),
+      Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n"),
+    );
+    const streamEvents: any[] = [];
+    const stream = async (msg: any) => {
+      streamEvents.push(msg);
+    };
+    const cache = (agent as any).createPreContentCache();
+    await (agent as any).handleItem(
+      {
+        type: "command_execution",
+        id: "cmd-read",
+        command: "sed -n '1,20p' sample.txt",
+        aggregated_output: "",
+        exit_code: 0,
+      },
+      stream,
+      cwd,
+      cache,
+      () => {},
+    );
+    const fileReadEvents = streamEvents.filter(
+      (msg) =>
+        msg?.type === "event" &&
+        msg?.event?.type === "file" &&
+        msg?.event?.operation === "read",
+    );
+    expect(fileReadEvents).toHaveLength(1);
+    expect(fileReadEvents[0].event.path).toBe("sample.txt");
+    expect(fileReadEvents[0].event.bytes).toBeUndefined();
+    expect(fileReadEvents[0].event.line).toBe(1);
+    expect(fileReadEvents[0].event.limit).toBe(20);
   });
 });

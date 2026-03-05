@@ -87,6 +87,49 @@ describe("ChatMessageCache message_id index", () => {
     cache.dispose();
   });
 
+  it("uses full chat primary key fields for incremental get_one lookup", async () => {
+    const row = {
+      event: "chat",
+      sender_id: "user-1",
+      date: "2026-01-01T00:00:00.000Z",
+      message_id: "msg-fullpk-1",
+      thread_id: "thread-fullpk-1",
+      history: [],
+    };
+    const syncdb = new MockSyncdb([row]);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Simulate a stricter SyncDoc lookup that requires full primary-key tuple.
+    const strictGetOne = jest.fn((where: Record<string, unknown>) => {
+      if (
+        where?.event === row.event &&
+        where?.sender_id === row.sender_id &&
+        where?.date === row.date &&
+        where?.message_id === row.message_id &&
+        where?.thread_id === row.thread_id
+      ) {
+        return row;
+      }
+      return undefined;
+    });
+    (syncdb as any).get_one = strictGetOne;
+
+    syncdb.emit("change", new Set([row]));
+
+    expect(strictGetOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: row.event,
+        sender_id: row.sender_id,
+        date: row.date,
+        message_id: row.message_id,
+        thread_id: row.thread_id,
+      }),
+    );
+    expect(cache.getByMessageId("msg-fullpk-1")?.thread_id).toBe("thread-fullpk-1");
+    cache.dispose();
+  });
+
   it("maintains thread index counts when replies are added/removed", async () => {
     const rootDate = "2026-01-01T00:00:00.000Z";
     const replyDate = "2026-01-01T00:00:01.000Z";

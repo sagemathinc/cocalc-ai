@@ -89,6 +89,7 @@ type ActivityEntry =
       command?: string;
       args?: string[];
       bytes?: number;
+      bytesKnown?: boolean;
       truncated?: boolean;
       line?: number;
       limit?: number;
@@ -671,6 +672,7 @@ function createEventEntry({
       command: event.command,
       args: event.args,
       bytes: event.bytes,
+      bytesKnown: event.bytes_known,
       truncated: event.truncated,
       line: event.line,
       limit: event.limit,
@@ -775,7 +777,11 @@ function PathLink({
 }) {
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
-  const resolvedPath = resolvePath(path, basePath, projectId);
+  const parsedTarget = React.useMemo(
+    () => parsePathLineTarget(path, line),
+    [path, line],
+  );
+  const resolvedPath = resolvePath(parsedTarget.path, basePath, projectId);
   const onClick = React.useCallback(
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
@@ -795,7 +801,7 @@ function PathLink({
           }
           await actions.open_file({
             path: resolvedPath,
-            line,
+            line: parsedTarget.line,
             foreground: true,
             explicit: true,
           });
@@ -808,7 +814,7 @@ function PathLink({
         }
       })();
     },
-    [actions, resolvedPath, line],
+    [actions, resolvedPath, parsedTarget.line],
   );
   const node = (
     <code
@@ -837,6 +843,51 @@ function PathLink({
     );
   }
   return node;
+}
+
+export function parsePathLineTarget(
+  path?: string,
+  explicitLine?: number,
+): { path?: string; line?: number } {
+  const normalized = normalizeSlashPath(path);
+  if (!normalized) return { path: normalized, line: explicitLine };
+  const hashIndex = normalized.indexOf("#");
+  const pathPart = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
+  const hashPart = hashIndex >= 0 ? normalized.slice(hashIndex) : undefined;
+  const lineFromHash = parseLineFromHashFragment(hashPart);
+  const match = pathPart.match(/^(.*):(\d+)(?::\d+)?(?:[)\].,;!?'"`]+)?$/);
+  if (!match) {
+    return {
+      path: pathPart,
+      line: explicitLine ?? lineFromHash,
+    };
+  }
+  const candidatePath = (match[1] ?? "").trim();
+  const parsedLine = Number(match[2]);
+  if (
+    !candidatePath ||
+    candidatePath.endsWith("/") ||
+    !Number.isFinite(parsedLine) ||
+    parsedLine <= 0
+  ) {
+    return {
+      path: pathPart,
+      line: explicitLine ?? lineFromHash,
+    };
+  }
+  return {
+    path: candidatePath,
+    line: explicitLine ?? parsedLine ?? lineFromHash,
+  };
+}
+
+function parseLineFromHashFragment(hash?: string): number | undefined {
+  if (!hash) return undefined;
+  const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
+  const match = cleaned.match(/^L(\d+)(?:C\d+)?(?:-L?\d+)?$/i);
+  if (!match) return undefined;
+  const line = Number(match[1]);
+  return Number.isFinite(line) && line > 0 ? line : undefined;
 }
 
 function DiffPreview({
@@ -1015,11 +1066,16 @@ function TerminalRow({
     lines.push("[output truncated]");
   }
   const markdown = toFencedCodeBlock(lines.join("\n"), "sh");
+  const emptyOutputLabel =
+    !outputText && !entry.truncated
+      ? entry.completed
+        ? "No output."
+        : "Waiting for output…"
+      : undefined;
 
   return (
     <div>
-      <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 4 }} />
-      <Space size={8} wrap align="center" style={{ marginTop: 6 }}>
+      <Space size={8} wrap align="center" style={{ marginBottom: 4 }}>
         {status ? (
           <TimestampTooltip timestamp={timestamp}>
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -1027,9 +1083,9 @@ function TerminalRow({
             </Text>
           </TimestampTooltip>
         ) : null}
-        {!outputText && !entry.truncated ? (
+        {emptyOutputLabel ? (
           <Text type="secondary" style={{ fontSize: secondarySize }}>
-            {entry.completed ? "No output." : "Waiting for output…"}
+            {emptyOutputLabel}
           </Text>
         ) : null}
         {entry.truncated ? (
@@ -1038,6 +1094,7 @@ function TerminalRow({
           </Tag>
         ) : null}
       </Space>
+      <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 0 }} />
     </div>
   );
 }
@@ -1079,7 +1136,9 @@ function FileRow({
   const commandLine = formatCommand(entry.command, entry.args);
   const scope = formatReadScope(entry);
   const sizeLabel =
-    typeof entry.bytes === "number" && entry.bytes > 0
+    shouldShowByteSize(entry) &&
+    typeof entry.bytes === "number" &&
+    entry.bytes > 0
       ? formatByteCount(entry.bytes)
       : undefined;
   const pathNode = (
@@ -1320,6 +1379,13 @@ function formatReadScope(entry: {
   return lineInfo ?? limitInfo;
 }
 
+function shouldShowByteSize(
+  entry: Extract<ActivityEntry, { kind: "file" }>,
+): boolean {
+  // Byte sizes are shown only when backend marks them as exact.
+  return entry.bytesKnown === true;
+}
+
 // Convert Codex activity events into markdown for exports.
 export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
   const entries = normalizeEvents(events ?? []);
@@ -1377,7 +1443,11 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
               ? "Created"
               : "Wrote";
         const parts = [`- File: ${action} ${path}`];
-        if (typeof entry.bytes === "number" && entry.bytes > 0) {
+        if (
+          shouldShowByteSize(entry) &&
+          typeof entry.bytes === "number" &&
+          entry.bytes > 0
+        ) {
           parts.push(`(${formatByteCount(entry.bytes)})`);
         }
         const scope = formatReadScope(entry);

@@ -184,6 +184,12 @@ interface LLMInputProps {
   isQuerying: boolean;
 }
 
+export function stopKeyboardPropagation(
+  e: React.KeyboardEvent<HTMLElement>,
+): void {
+  e.stopPropagation();
+}
+
 function LLMInput({
   label,
   placeholder,
@@ -216,6 +222,8 @@ function LLMInput({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
+      onKeyDownCapture={stopKeyboardPropagation}
+      onKeyUpCapture={stopKeyboardPropagation}
       rows={3}
       style={{ width: "100%" }}
     />
@@ -226,6 +234,8 @@ function LLMInput({
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
+      onKeyDownCapture={stopKeyboardPropagation}
+      onKeyUpCapture={stopKeyboardPropagation}
       style={{ width: "100%" }}
     />
   );
@@ -1359,7 +1369,8 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
     );
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
+function handleKeyDown(e: React.KeyboardEvent) {
+    e.stopPropagation();
     // Only handle key events from input elements, not from other components like Slider
     const target = e.target as HTMLElement;
     if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA") {
