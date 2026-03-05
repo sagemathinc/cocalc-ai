@@ -148,8 +148,9 @@ describe("create persist server that also saves data to an archive folder and a 
       key: "my-key-4",
       messageData: messageData("four"),
     });
-    fs.unlink(backup);
+    await fs.rm(backup, { force: true });
     s1.close();
+    await waitUntilClosed();
     await wait({
       until: async () => await pathExists(backup),
     });
