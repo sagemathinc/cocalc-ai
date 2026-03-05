@@ -1,6 +1,6 @@
 # App Server and Extensible Secure Project Proxies (A1.4)
 
-Status: draft design spec for alpha/post-alpha implementation planning.
+Status: active implementation spec; partially completed as of March 5, 2026.
 
 ## 1. Purpose
 
@@ -14,6 +14,30 @@ Define a single, extensible app/proxy system for CoCalc Lite and Launchpad that 
 - first-class CLI and agent control.
 
 This should replace ad hoc per-app special cases over time.
+
+## 1.1 Current Implementation Status (March 5, 2026)
+
+### Done
+
+1. App spec schema + validation and runtime state machinery are implemented.
+2. Service app lifecycle API is implemented (`upsert/start/stop/status/restart/ensure-running/logs`).
+3. Wake-on-demand for service apps is implemented.
+4. Public expose/unexpose plumbing is implemented with TTL, random subdomain support, and optional front token auth.
+5. Metered-egress warnings/policy hints (notably GCP) are implemented.
+6. CLI surface for `workspace app` lifecycle is implemented and agent-usable in JSON mode.
+7. Public-readiness audit command/prompt path is implemented (backend + CLI).
+8. Live Launchpad GCP smoke for service app flow passes end-to-end (create/start/expose/public probe/recover/unexpose/cleanup).
+
+### Partial
+
+1. Static app mode backend exists, but dedicated static-heavy e2e/smoke coverage is still pending.
+2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
+3. Pre-expose Codex audit exists at backend/CLI level; UI button flow is not yet implemented.
+
+### Not Done
+
+1. Dedicated app UI workflows and polish (`+New` app wizard, app management panel polish, autodetection UX, embed polish).
+2. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
 
 ## 2. Product Goals
 
@@ -349,7 +373,7 @@ Existing components to reuse where possible:
 
 ## 16. Rollout Plan (Backend/CLI First)
 
-### Phase 0: Foundations
+### Phase 0: Foundations (Status: done)
 
 1. spec schema + validation
 2. private proxy registration
@@ -357,7 +381,7 @@ Existing components to reuse where possible:
 4. CLI `list/get/upsert/start/stop/status/ensure-running`
 5. wake-on-demand implementation for private routes
 
-### Phase 1: Public Alpha-Safe Slice
+### Phase 1: Public Alpha-Safe Slice (Status: mostly done)
 
 1. public exposure with required TTL + revoke
 2. random subdomain default
@@ -366,13 +390,13 @@ Existing components to reuse where possible:
 5. static site mode + cache presets
 6. optional pre-expose Codex audit action
 
-### Phase 2: Agent and CLI Deepening
+### Phase 2: Agent and CLI Deepening (Status: partial)
 
 1. complete CLI surface (`detect`, `audit`, `expose`, `unexpose`, `logs`)
 2. agent-ready workflows and prompts for app lifecycle
 3. end-to-end tests for agent-driven startup/exposure/recovery
 
-### Phase 3: UI Expansion (after backend confidence)
+### Phase 3: UI Expansion (after backend confidence) (Status: not started)
 
 1. `+New` app server wizard polish
 2. app management panel polish
@@ -403,17 +427,23 @@ Existing components to reuse where possible:
 
 ## 19. Implementation Checklist (Initial)
 
-1. Finalize spec path and schema (including static mode fields).
-2. Add backend validator + runtime store model in project-host sqlite.
-3. Implement private proxy registration and lifecycle API.
-4. Implement wake-on-demand start path with readiness checks.
-5. Add CLI lifecycle commands with stable JSON output (agent-first).
-6. Add public exposure controls (TTL/revoke/random subdomain + optional front token).
-7. Add host-aware cost guardrails (especially metered-egress behavior).   (NOTE: egress is pretty much the only cost to us special to this.)
-8. Add static file serving mode with cache presets.
-9. Add Codex app audit prompt/action path for public expose.
-10. Add end-to-end tests in lite and launchpad for service and static cases.
-11. Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
+1. `[done]` Finalize spec path and schema (including static mode fields).
+2. `[done]` Add backend validator + runtime store model in project-host sqlite.
+3. `[done]` Implement private proxy registration and lifecycle API.
+4. `[done]` Implement wake-on-demand start path with readiness checks.
+5. `[done]` Add CLI lifecycle commands with stable JSON output (agent-first).
+6. `[done]` Add public exposure controls (TTL/revoke/random subdomain + optional front token).
+7. `[partial]` Add host-aware cost guardrails (especially metered-egress behavior). (NOTE: egress is the primary special-cost driver here.)
+8. `[partial]` Add static file serving mode with cache presets.
+9. `[partial]` Add Codex app audit prompt/action path for public expose (backend+CLI done; UI action pending).
+10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; static smoke pending).
+11. `[todo]` Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
+
+## 19.1 Next Execution Order
+
+1. Build and validate static-mode smoke/e2e coverage next (launchpad first, then lite parity).
+2. Add minimal UI wrappers after static smoke is green.
+3. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
 
 ## 20. Alpha-Safe Public Model (Minimum to Ship)
 
