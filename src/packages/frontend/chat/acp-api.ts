@@ -298,7 +298,12 @@ export async function processAcpLLM({
     "acp_loop_state",
   );
   const loopConfig = loopConfigFromMessage ?? threadMeta?.loop_config;
-  const loopState = loopStateFromMessage ?? threadMeta?.loop_state;
+  const loopState =
+    loopStateFromMessage ??
+    (typeof threadMeta?.loop_state?.loop_id === "string" &&
+    threadMeta.loop_state.loop_id.trim()
+      ? (threadMeta.loop_state as AcpLoopState)
+      : undefined);
   const threadRootDate = (() => {
     const byMessage =
       typeof message.reply_to === "string" ? new Date(message.reply_to) : undefined;
