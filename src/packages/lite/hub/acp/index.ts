@@ -230,38 +230,74 @@ function normalizeLoopDecision(
   };
 }
 
+function parseLoopDecisionPayload(
+  input: string,
+): AcpLoopContractDecision | undefined {
+  try {
+    const parsed = JSON.parse(input);
+    if (parsed && typeof parsed === "object" && "loop" in (parsed as any)) {
+      return normalizeLoopDecision((parsed as any).loop);
+    }
+    return normalizeLoopDecision(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseLoopContractDecision(
   summaryText?: string,
 ): AcpLoopContractDecision | undefined {
   if (!summaryText || typeof summaryText !== "string") return undefined;
-  const tryParse = (input: string): AcpLoopContractDecision | undefined => {
-    try {
-      const parsed = JSON.parse(input);
-      if (parsed && typeof parsed === "object" && "loop" in (parsed as any)) {
-        return normalizeLoopDecision((parsed as any).loop);
-      }
-      return normalizeLoopDecision(parsed);
-    } catch {
-      return undefined;
-    }
-  };
-  const whole = tryParse(summaryText.trim());
+  const whole = parseLoopDecisionPayload(summaryText.trim());
   if (whole) return whole;
 
   const fenced = /```json\s*([\s\S]*?)```/gi;
   let match: RegExpExecArray | null = null;
   while ((match = fenced.exec(summaryText)) != null) {
-    const decision = tryParse(match[1].trim());
+    const decision = parseLoopDecisionPayload(match[1].trim());
     if (decision) return decision;
   }
 
   const lines = summaryText.split("\n").map((x) => x.trim());
   for (const line of lines) {
     if (!line.startsWith("{") || !line.endsWith("}")) continue;
-    const decision = tryParse(line);
+    const decision = parseLoopDecisionPayload(line);
     if (decision) return decision;
   }
   return undefined;
+}
+
+function stripLoopContractForDisplay(
+  text: string,
+  loopEnabled: boolean,
+): string {
+  if (!loopEnabled) return text;
+  const trimmedRight = text.replace(/\s+$/, "");
+
+  // Remove a trailing fenced json block only when it parses as a valid loop contract.
+  const fencedTrailing = /(?:\r?\n){1,2}```json\s*([\s\S]*?)\s*```$/i.exec(
+    trimmedRight,
+  );
+  if (fencedTrailing) {
+    const decision = parseLoopDecisionPayload(fencedTrailing[1].trim());
+    if (decision) {
+      return trimmedRight.slice(0, fencedTrailing.index).replace(/\s+$/, "");
+    }
+  }
+
+  // Also handle trailing single-line JSON payloads.
+  const lines = trimmedRight.split(/\r?\n/);
+  if (lines.length > 0) {
+    const last = lines[lines.length - 1].trim();
+    if (last.startsWith("{") && last.endsWith("}")) {
+      const decision = parseLoopDecisionPayload(last);
+      if (decision) {
+        lines.pop();
+        return lines.join("\n").replace(/\s+$/, "");
+      }
+    }
+  }
+  return text;
 }
 
 async function maybeAutoRotateChatStore({
@@ -1211,7 +1247,10 @@ export class ChatStreamWriter {
             candidate.trim().length > 0 &&
             !looksLikeErrorEcho(candidate, this.lastErrorText));
         if (candidate != null && shouldApplySummary) {
-          this.content = candidate;
+          this.content = stripLoopContractForDisplay(
+            candidate,
+            this.metadata.loop_config?.enabled === true,
+          );
           this.finishedBy = "summary";
         }
       }
