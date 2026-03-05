@@ -50,6 +50,20 @@ import { COMBINED_FEED_KEY } from "./threads";
 const USE_VIRTUOSO = true;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
+const CHAT_LOG_CONTAINER_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  flex: "1 1 0",
+  minHeight: 0,
+} as const;
+
+const MESSAGE_LIST_CONTAINER_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  flex: "1 1 0",
+  minHeight: 0,
+} as const;
+
 function stripHtml(value: string): string {
   if (!value) return "";
   return value.replace(/<[^>]*>/g, "");
@@ -311,7 +325,7 @@ export function ChatLog({
   }, [scrollToBottomRef != null, canAutoScroll]);
 
   return (
-    <>
+    <div style={CHAT_LOG_CONTAINER_STYLE}>
       <MessageList
         {...{
           virtuosoRef,
@@ -351,7 +365,7 @@ export function ChatLog({
         accountId={account_id}
         userMap={user_map}
       />
-    </>
+    </div>
   );
 }
 
@@ -789,6 +803,7 @@ export function MessageList({
   if (!USE_VIRTUOSO) {
     return (
       <div
+        style={MESSAGE_LIST_CONTAINER_STYLE}
         onWheelCapture={maybeBlockScrollEvent}
         onTouchMoveCapture={maybeBlockScrollEvent}
         onKeyDownCapture={maybeBlockScrollKeys}
@@ -801,11 +816,13 @@ export function MessageList({
 
   return (
     <div
+      style={MESSAGE_LIST_CONTAINER_STYLE}
       onWheelCapture={maybeBlockScrollEvent}
       onTouchMoveCapture={maybeBlockScrollEvent}
       onKeyDownCapture={maybeBlockScrollKeys}
     >
       <StatefulVirtuoso
+        style={{ flex: "1 1 0", minHeight: 0 }}
         ref={virtuosoRef}
         totalCount={sortedDates.length + 1}
         cacheId={cacheId}
