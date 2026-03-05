@@ -1331,9 +1331,10 @@ function formatReadScope(entry: {
 function shouldShowByteSize(
   entry: Extract<ActivityEntry, { kind: "file" }>,
 ): boolean {
-  // Command-derived read events are heuristic and may carry stale/legacy byte
-  // counts. Prefer scope/path context instead of showing misleading sizes.
-  if (entry.operation === "read" && !!entry.command) return false;
+  // Command-derived file events are heuristic and byte counts are commonly
+  // misleading (reads are sampled, writes report post-command file size).
+  // Prefer path/scope context over synthetic sizes.
+  if (!!entry.command) return false;
   return true;
 }
 

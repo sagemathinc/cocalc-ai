@@ -58,4 +58,40 @@ describe("codexEventsToMarkdown", () => {
     ]);
     expect(markdown).toContain("- File: Read `README.md` (2.0 KB)");
   });
+
+  it("hides byte-size for command-derived write events", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "file",
+          path: "src/workspaces.py",
+          operation: "write",
+          bytes: 8192,
+          command: "cat > src/workspaces.py <<'EOF' ...",
+        },
+      } as any,
+    ]);
+    expect(markdown).toContain("- File: Wrote `src/workspaces.py`");
+    expect(markdown).not.toContain("8.0 KB");
+    expect(markdown).not.toContain("KB");
+    expect(markdown).not.toContain("byte");
+  });
+
+  it("keeps byte-size for explicit write events without command context", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "file",
+          path: "README.md",
+          operation: "write",
+          bytes: 2048,
+        },
+      } as any,
+    ]);
+    expect(markdown).toContain("- File: Wrote `README.md` (2.0 KB)");
+  });
 });
