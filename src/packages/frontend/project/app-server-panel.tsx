@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Checkbox, Divider, Input, Popconfirm, Select, Space, Spin, Tag } from "antd";
+import { Alert, Button, Checkbox, Divider, Input, Modal, Popconfirm, Select, Space, Spin, Tag } from "antd";
 import type {
   AppPublicReadinessAudit,
   DetectedAppPort,
@@ -70,6 +70,14 @@ export function AppServerPanel({
   );
   const [detected, setDetected] = useState<DetectedAppPort[]>([]);
   const [detecting, setDetecting] = useState<boolean>(false);
+  const [logsOpen, setLogsOpen] = useState<boolean>(false);
+  const [logsLoading, setLogsLoading] = useState<boolean>(false);
+  const [logsData, setLogsData] = useState<{
+    id: string;
+    state: "running" | "stopped";
+    stdout: string;
+    stderr: string;
+  } | null>(null);
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
 
   const refresh = useCallback(async () => {
@@ -343,6 +351,21 @@ export function AppServerPanel({
     );
   }
 
+  async function onLogs(id: string) {
+    try {
+      setLogsOpen(true);
+      setLogsLoading(true);
+      setLogsData(null);
+      setError(undefined);
+      const data = await api.apps.appLogs(id);
+      setLogsData(data);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setLogsLoading(false);
+    }
+  }
+
   return (
     <div>
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
@@ -607,6 +630,12 @@ export function AppServerPanel({
                   >
                     Audit
                   </Button>
+                  <Button
+                    size="small"
+                    onClick={() => void onLogs(row.id)}
+                  >
+                    Logs
+                  </Button>
                 </Space>
               </div>
               {row.exposure?.public_url ? (
@@ -683,6 +712,76 @@ export function AppServerPanel({
           </Space>
         </div>
       ) : null}
+      <Modal
+        open={logsOpen}
+        onCancel={() => setLogsOpen(false)}
+        footer={[
+          <Button
+            key="refresh"
+            onClick={() => {
+              if (logsData?.id) {
+                void onLogs(logsData.id);
+              }
+            }}
+            disabled={!logsData?.id}
+          >
+            Refresh
+          </Button>,
+          <Button key="close" onClick={() => setLogsOpen(false)}>
+            Close
+          </Button>,
+        ]}
+        width={980}
+        title={logsData ? `App logs: ${logsData.id}` : "App logs"}
+      >
+        {logsLoading ? <Spin /> : null}
+        {!logsLoading && logsData ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "10px",
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
+                stdout
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  maxHeight: "55vh",
+                  overflow: "auto",
+                  border: "1px solid #eee",
+                  borderRadius: "6px",
+                  padding: "8px",
+                  background: "#fafafa",
+                }}
+              >
+                {logsData.stdout || "(empty)"}
+              </pre>
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
+                stderr
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  maxHeight: "55vh",
+                  overflow: "auto",
+                  border: "1px solid #eee",
+                  borderRadius: "6px",
+                  padding: "8px",
+                  background: "#fafafa",
+                }}
+              >
+                {logsData.stderr || "(empty)"}
+              </pre>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
