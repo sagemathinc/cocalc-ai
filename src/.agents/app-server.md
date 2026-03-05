@@ -749,6 +749,55 @@ Existing components to reuse where possible:
 6. Add filter/search/bulk-actions and row-local error handling.
 7. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
 
+## 19.2 Strict Remaining Queue
+
+### Alpha-blocking
+
+These are the remaining items that matter most to calling A1.4 effectively finished as a coherent product feature.
+
+1. finish static-mode validation:
+   - harden launchpad `apps-static`,
+   - add lite parity,
+   - cover broader static/cache cases.
+2. rename `Servers` to `Apps` and use `Managed Applications` consistently in the main UI.
+3. make the Apps page the single surface for app management:
+   - remove duplicated app-launch UI from `+New`,
+   - remove duplicated app-launch UI from the flyout,
+   - remove legacy top-row launcher buttons,
+   - map built-ins such as JupyterLab/code-server/etc. to managed-app presets.
+4. split detection into:
+   - running HTTP discovery,
+   - installed-template discovery.
+5. make the Apps page usable for real work:
+   - filter/search,
+   - bulk `start all` / `stop all`,
+   - row-local startup errors and logs.
+6. add the actual pre-expose `Audit with Codex` UI flow.
+
+### Post-alpha
+
+These improve the product substantially, but do not need to block first public release.
+
+1. broader template catalog and better preset organization.
+2. `Install with agent` from presets and app rows.
+3. deeper host-aware egress guardrails beyond warnings/policy hints.
+4. richer static refresh policy options and sandbox-ephemeral execution.
+5. iframe/embed polish and better "open in full tab" fallback behavior.
+
+### Longer-term platform work
+
+These are real extensions of the Apps platform, but are clearly beyond the first finish line.
+
+1. SSH port-forward fallback UI/CLI completion.
+2. native/X11 app support.
+3. daemon-assisted local launch and forwarding via `cocalc-cli`.
+4. app integration layer:
+   - file-type handlers,
+   - future `Open with...` actions in the file explorer,
+   - quickjs/extensions-backed frontend integration.
+5. tighter policy/membership integration for app/public-expose limits.
+6. possible convergence of apps plus CoCalc-integrated extension bundles into a broader Apps platform.
+
 ## 20. Alpha-Safe Public Model (Minimum to Ship)
 
 This is the strict minimum public model to launch confidently without over-building:
