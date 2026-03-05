@@ -10,6 +10,7 @@ const SPEC_EXT = ".json";
 const APP_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i;
 
 export type AppSpecKind = "service" | "static";
+export type AppServiceOpenMode = "proxy" | "port";
 
 export interface AppCommandSpec {
   exec: string;
@@ -33,6 +34,7 @@ export interface AppServiceSpec {
     base_path: string;
     strip_prefix: boolean;
     websocket: boolean;
+    open_mode: AppServiceOpenMode;
     health_path?: string;
     readiness_timeout_s: number;
   };
@@ -183,10 +185,14 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
   };
 
   const proxyIn = asObject(input.proxy ?? {}, "spec.proxy");
+  const openModeRaw = asOptionalString(proxyIn.open_mode) ?? "proxy";
+  const open_mode: AppServiceOpenMode =
+    openModeRaw === "port" ? "port" : "proxy";
   const proxy = {
     base_path: asOptionalString(proxyIn.base_path) ?? `/apps/${id}`,
     strip_prefix: asOptionalBoolean(proxyIn.strip_prefix, true),
     websocket: asOptionalBoolean(proxyIn.websocket, true),
+    open_mode,
     health_path: asOptionalString(proxyIn.health_path),
     readiness_timeout_s:
       asOptionalPositiveInt(proxyIn.readiness_timeout_s, "spec.proxy.readiness_timeout_s") ??

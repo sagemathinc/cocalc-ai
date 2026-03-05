@@ -24,6 +24,7 @@ import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
 type PresetKind = "service" | "static";
+type AppServiceOpenMode = "proxy" | "port";
 
 interface AppServerPreset {
   key: string;
@@ -32,6 +33,7 @@ interface AppServerPreset {
   id: string;
   title: string;
   command?: string;
+  serviceOpenMode?: AppServiceOpenMode;
   preferredPort?: string;
   healthPath?: string;
   staticRoot?: string;
@@ -115,6 +117,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "jupyterlab",
       title: "JupyterLab",
       preferredPort: "6002",
+      serviceOpenMode: "port",
       healthPath: "/lab",
       command:
         "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
@@ -126,6 +129,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "code-server",
       title: "code-server",
       preferredPort: "6004",
+      serviceOpenMode: "proxy",
       command:
         "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
     },
@@ -136,6 +140,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "pluto",
       title: "Pluto",
       preferredPort: "6005",
+      serviceOpenMode: "proxy",
       command:
         "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
     },
@@ -146,6 +151,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "rserver",
       title: "RStudio Server",
       preferredPort: "6006",
+      serviceOpenMode: "proxy",
       command:
         "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
     },
@@ -156,6 +162,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "python-hello",
       title: "Python Hello World",
       preferredPort: "8080",
+      serviceOpenMode: "proxy",
       healthPath: "/",
       command:
         "python3 -c \"import os, pathlib, http.server; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); root=pathlib.Path('/tmp/cocalc-python-hello'); root.mkdir(parents=True, exist_ok=True); (root/'index.html').write_text('<h1>Hello from Python</h1>\\\\n', encoding='utf-8'); os.chdir(root); server=http.server.ThreadingHTTPServer((host,port), http.server.SimpleHTTPRequestHandler); print(f'listening on http://{host}:{port}', flush=True); server.serve_forever()\"",
@@ -167,6 +174,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "node-hello",
       title: "Node.js Hello World",
       preferredPort: "8080",
+      serviceOpenMode: "proxy",
       command:
         "node -e \"const http=require('http');const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body='hello from node\\\\n';res.writeHead(200,{'content-type':'text/plain; charset=utf-8','content-length':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log('listening on http://'+host+':'+port));\"",
     },
@@ -215,6 +223,8 @@ export function AppServerPanel({
   const [command, setCommand] = useState<string>("");
   const [port, setPort] = useState<string>("");
   const [healthPath, setHealthPath] = useState<string>("");
+  const [serviceOpenMode, setServiceOpenMode] =
+    useState<AppServiceOpenMode>("proxy");
   const [staticRoot, setStaticRoot] = useState<string>("");
   const [staticIndex, setStaticIndex] = useState<string>("index.html");
   const [staticCacheControl, setStaticCacheControl] = useState<string>(
@@ -343,6 +353,7 @@ export function AppServerPanel({
       setCommand(preset.command ?? "");
       setPort(preset.preferredPort ?? "");
       setHealthPath(preset.healthPath ?? "");
+      setServiceOpenMode(preset.serviceOpenMode ?? "proxy");
       setStartNow(true);
       setOpenWhenReady(true);
     } else {
@@ -355,12 +366,24 @@ export function AppServerPanel({
       setStaticRefreshStaleAfter(preset.staticRefreshStaleAfter ?? "3600");
       setStaticRefreshTimeout(preset.staticRefreshTimeout ?? "120");
       setStaticRefreshOnHit(preset.staticRefreshOnHit ?? true);
+      setServiceOpenMode("proxy");
       setStartNow(false);
       setOpenWhenReady(false);
     }
   }
 
   async function openStatus(status: ManagedAppStatus) {
+    const translateServiceOpenUrl = (
+      localUrl: string | undefined,
+      mode: AppServiceOpenMode,
+    ): string | undefined => {
+      if (!localUrl || mode !== "port") return localUrl;
+      if (localUrl.includes("/proxy/")) {
+        return localUrl.replace("/proxy/", "/port/");
+      }
+      return localUrl;
+    };
+
     let url = status.exposure?.public_url;
     if (!url) {
       let spec = specById[status.id];
@@ -379,26 +402,11 @@ export function AppServerPanel({
           ? declaredBasePath
           : `/${project_id}${declaredBasePath.startsWith("/") ? declaredBasePath : `/${declaredBasePath}`}`
         : undefined;
-      const commandText =
-        Array.isArray((spec as any)?.command?.args) &&
-        (spec as any).command.args.length > 1
-          ? `${(spec as any).command.args[1] ?? ""}`
-          : "";
-      const isJupyter =
-        /\bjupyter\s+(?:lab|notebook)\b/i.test(commandText) ||
-        status.id === "jupyterlab" ||
-        status.id === "jupyter";
-      let serviceLocal = status.url;
-      if (
-        isJupyter &&
-        serviceLocal &&
-        serviceLocal.includes(`/${project_id}/proxy/`)
-      ) {
-        serviceLocal = serviceLocal.replace(
-          `/${project_id}/proxy/`,
-          `/${project_id}/port/`,
-        );
-      }
+      const serviceOpenMode: AppServiceOpenMode =
+        spec?.kind === "service" && spec?.proxy?.open_mode === "port"
+          ? "port"
+          : "proxy";
+      const serviceLocal = translateServiceOpenUrl(status.url, serviceOpenMode);
       const preferredLocal =
         spec?.kind === "static"
           ? basePathLocal || serviceLocal
@@ -449,6 +457,7 @@ export function AppServerPanel({
           base_path: proxyPath,
           strip_prefix: true,
           websocket: true,
+          open_mode: serviceOpenMode,
           health_path: `${healthPath ?? ""}`.trim() || undefined,
           readiness_timeout_s: 45,
         },
@@ -785,6 +794,7 @@ export function AppServerPanel({
       if (cmd) out.push(`command=${cmd}`);
       const configuredPort = spec?.network?.port;
       if (configuredPort) out.push(`port=${configuredPort}`);
+      out.push(`open=${spec?.proxy?.open_mode === "port" ? "port" : "proxy"}`);
       const healthPathValue = `${spec?.proxy?.health_path ?? ""}`.trim();
       if (healthPathValue) out.push(`health=${healthPathValue}`);
     } else if (spec.kind === "static") {
@@ -963,6 +973,15 @@ export function AppServerPanel({
                 value={healthPath}
                 placeholder="Health path (optional, e.g. /health)"
                 onChange={(e) => setHealthPath(e.target.value)}
+              />
+              <Select<AppServiceOpenMode>
+                value={serviceOpenMode}
+                style={{ width: "170px" }}
+                options={[
+                  { label: "Open: /proxy", value: "proxy" },
+                  { label: "Open: /port", value: "port" },
+                ]}
+                onChange={(value) => setServiceOpenMode(value)}
               />
             </Space.Compact>
           </>
