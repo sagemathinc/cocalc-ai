@@ -60,6 +60,10 @@ export async function createProjectHostProxyHandlers() {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
     ws: true,
+    // Required for TLS targets (e.g. host-*.dev.cocalc.ai via Cloudflare):
+    // without this, SNI/Host stays on the incoming hub host and upstream TLS
+    // can fail with EPROTO handshake alerts.
+    changeOrigin: true,
   });
 
   proxy.on("error", (err, req) => {

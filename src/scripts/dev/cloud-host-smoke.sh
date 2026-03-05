@@ -24,6 +24,13 @@ fi
 # shellcheck source=/dev/null
 source "$CONFIG_FILE"
 
+# Isolate smoke auth from any interactive agent/browser environment.
+SMOKE_CLI_CONFIG="${SMOKE_CLI_CONFIG:-$SRC_DIR/.local/smoke-cloud/cli-config.json}"
+mkdir -p "$(dirname "$SMOKE_CLI_CONFIG")"
+printf '%s\n' '{"profiles":{},"current_profile":"default"}' > "$SMOKE_CLI_CONFIG"
+export COCALC_CLI_CONFIG="$SMOKE_CLI_CONFIG"
+unset COCALC_BEARER_TOKEN COCALC_AGENT_TOKEN COCALC_BROWSER_ID COCALC_PROJECT_ID COCALC_PROJECT_INFO_SCOPE
+
 SMOKE_BUILD_BUNDLES="${SMOKE_BUILD_BUNDLES:-1}"
 SMOKE_BUILD_SERVER="${SMOKE_BUILD_SERVER:-1}"
 SMOKE_BUILD_HUB="${SMOKE_BUILD_HUB:-1}"
@@ -119,8 +126,13 @@ else
   exit 1
 fi
 
-if [ -z "${COCALC_HUB_PASSWORD:-}" ] && [ -n "${SECRETS:-}" ] && [ -f "$SECRETS/conat-password" ]; then
-  export COCALC_HUB_PASSWORD="$SECRETS/conat-password"
+if [ -z "${COCALC_HUB_PASSWORD:-}" ]; then
+  if [ -n "${SECRETS:-}" ] && [ -f "$SECRETS/conat-password" ]; then
+    export COCALC_HUB_PASSWORD="$SECRETS/conat-password"
+  elif [ -f "$SRC_DIR/data/app/postgres/secrets/conat-password" ]; then
+    # Match self-host smoke behavior when SECRETS is not exported in daemon env.
+    export COCALC_HUB_PASSWORD="$SRC_DIR/data/app/postgres/secrets/conat-password"
+  fi
 fi
 
 if [ -n "${COCALC_HUB_PASSWORD:-}" ]; then
@@ -173,6 +185,11 @@ run_provider_smoke() {
   echo "cloud smoke: running provider=${provider} run_tag=${run_tag}"
   # Keep smoke-runner/CLI transport on the same hub endpoint used by this script.
   SMOKE_PROVIDER="$provider" \
+  COCALC_CLI_CONFIG="$COCALC_CLI_CONFIG" \
+  COCALC_BEARER_TOKEN="" \
+  COCALC_AGENT_TOKEN="" \
+  COCALC_BROWSER_ID="" \
+  COCALC_PROJECT_ID="" \
   SMOKE_API_URL="$hub_base_url" \
   COCALC_API_URL="$hub_base_url" \
   BASE_URL="$hub_base_url" \
@@ -332,13 +349,29 @@ async function runCliCleanup(label, args, runOptions = {}) {
   }
 }
 
-async function collectWorkspaceTargetsForCleanup(result) {
+function resolveCleanupAccountId(result, workspaceTargets = []) {
+  const candidates = [
+    result?.account_id,
+    result?.cleanup?.account_id,
+    workspaceTargets[0]?.account_id,
+    opts.account_id,
+  ];
+  for (const candidate of candidates) {
+    const value = `${candidate ?? ""}`.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+async function collectWorkspaceTargetsForCleanup(result, cleanupAccountId = null) {
   const targets = new Map();
   const addTarget = (workspace_id, account_id) => {
     const id = `${workspace_id ?? ""}`.trim();
     if (!id) return;
     const current = targets.get(id) || { workspace_id: id, account_id: null };
-    const nextAccount = `${account_id ?? current.account_id ?? opts.account_id ?? ""}`.trim() || null;
+    const nextAccount =
+      `${account_id ?? current.account_id ?? cleanupAccountId ?? opts.account_id ?? ""}`.trim() ||
+      null;
     targets.set(id, { workspace_id: id, account_id: nextAccount });
   };
 
@@ -356,6 +389,16 @@ async function collectWorkspaceTargetsForCleanup(result) {
   }
   addTarget(result?.project_id, null);
 
+  const discoveryAccountId = (() => {
+    const explicit = `${cleanupAccountId ?? ""}`.trim();
+    if (explicit) return explicit;
+    for (const target of targets.values()) {
+      const accountId = `${target?.account_id ?? ""}`.trim();
+      if (accountId) return accountId;
+    }
+    return null;
+  })();
+
   const title = `${result?.debug?.workspace_title ?? ""}`.trim();
   if (!title) return [...targets.values()];
   try {
@@ -363,7 +406,12 @@ async function collectWorkspaceTargetsForCleanup(result) {
     if (result?.host_id) {
       args.push("--host", String(result.host_id));
     }
-    const rows = await runCliJson("workspace-list-cleanup", args);
+    const listAccountId =
+      `${discoveryAccountId ?? opts.account_id ?? result?.cleanup?.workspaces?.[0]?.account_id ?? result?.account_id ?? ""}`.trim() ||
+      null;
+    const rows = await runCliJson("workspace-list-cleanup", args, {
+      account_id: listAccountId,
+    });
     for (const row of Array.isArray(rows) ? rows : []) {
       if (`${row?.title ?? ""}`.trim() !== title) continue;
       addTarget(row?.workspace_id, null);
@@ -374,7 +422,7 @@ async function collectWorkspaceTargetsForCleanup(result) {
   return [...targets.values()];
 }
 
-async function collectHostIdsForCleanup(result) {
+async function collectHostIdsForCleanup(result, cleanupAccountId = null) {
   const ids = new Set();
   if (Array.isArray(result?.cleanup?.host_ids)) {
     for (const hostId of result.cleanup.host_ids) {
@@ -393,8 +441,13 @@ async function collectHostIdsForCleanup(result) {
   }
   const hostName = `${result?.debug?.host_name ?? ""}`.trim();
   const runTagForMatch = `${result?.debug?.run_tag ?? ""}`.trim().toLowerCase();
+  const discoveryAccountId =
+    `${cleanupAccountId ?? opts.account_id ?? result?.cleanup?.workspaces?.[0]?.account_id ?? result?.account_id ?? ""}`.trim() ||
+    null;
   try {
-    const rows = await runCliJson("host-list-cleanup", ["host", "list", "--limit", "5000"]);
+    const rows = await runCliJson("host-list-cleanup", ["host", "list", "--limit", "5000"], {
+      account_id: discoveryAccountId,
+    });
     for (const row of Array.isArray(rows) ? rows : []) {
       const name = `${row?.name ?? ""}`.trim();
       if (!name) continue;
@@ -415,8 +468,14 @@ async function collectHostIdsForCleanup(result) {
 }
 
 async function cleanupFromResult(result) {
-  const workspaceTargets = await collectWorkspaceTargetsForCleanup(result);
+  let cleanupAccountId = resolveCleanupAccountId(result);
+  const workspaceTargets = await collectWorkspaceTargetsForCleanup(
+    result,
+    cleanupAccountId,
+  );
+  cleanupAccountId = resolveCleanupAccountId(result, workspaceTargets);
   for (const target of workspaceTargets) {
+    const targetAccountId = `${target.account_id ?? cleanupAccountId ?? ""}`.trim() || null;
     const hardDeleted = await runCliCleanup("workspace-delete-hard", [
       "workspace",
       "delete",
@@ -426,7 +485,7 @@ async function cleanupFromResult(result) {
       "--yes",
       "--wait",
     ], {
-      account_id: target.account_id,
+      account_id: targetAccountId,
     });
     if (!hardDeleted) {
       await runCliCleanup("workspace-delete-soft-fallback", [
@@ -435,11 +494,11 @@ async function cleanupFromResult(result) {
         "--workspace",
         target.workspace_id,
       ], {
-        account_id: target.account_id,
+        account_id: targetAccountId,
       });
     }
   }
-  const hostIds = await collectHostIdsForCleanup(result);
+  const hostIds = await collectHostIdsForCleanup(result, cleanupAccountId);
   for (const hostId of hostIds) {
     await runCliCleanup("host-delete", [
       "host",
@@ -447,7 +506,9 @@ async function cleanupFromResult(result) {
       hostId,
       "--skip-backups",
       "--wait",
-    ]);
+    ], {
+      account_id: cleanupAccountId,
+    });
   }
 }
 

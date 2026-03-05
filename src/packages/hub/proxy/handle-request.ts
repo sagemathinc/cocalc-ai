@@ -11,6 +11,9 @@ import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 
 const logger = getLogger("proxy:handle-request");
+const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
+const PROJECT_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface Options {
   isPersonal: boolean;
@@ -21,6 +24,22 @@ export default function init({
   isPersonal,
   projectProxyHandlersPromise,
 }: Options) {
+  function isPublicAppTokenBypassRequest(req): boolean {
+    try {
+      const url = stripBasePath(`${req.url ?? "/"}`);
+      const parsed = new URL(url, "http://proxy.local");
+      const token = `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
+      if (!token) return false;
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      if (segments.length < 3) return false;
+      const [project_id, proxyType] = segments;
+      if (!project_id || !PROJECT_ID_RE.test(project_id)) return false;
+      return proxyType === "apps";
+    } catch {
+      return false;
+    }
+  }
+
   async function handleProxyRequest(req, res): Promise<void> {
     const dbg = (...args) => {
       // for low level debugging -- silly isn't logged by default
@@ -50,9 +69,12 @@ export default function init({
     }
 
     const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
+    const allowPublicTokenBypass = isPublicAppTokenBypassRequest(req);
+    const allowAnonymousProxyBypass =
+      allowPublicSubdomainBypass || allowPublicTokenBypass;
     if (
       !isPersonal &&
-      !allowPublicSubdomainBypass &&
+      !allowAnonymousProxyBypass &&
       !remember_me &&
       !api_key
     ) {
@@ -74,7 +96,7 @@ export default function init({
       // policy remains centralized in the route definition.
     }
 
-    if (!allowPublicSubdomainBypass) {
+    if (!allowAnonymousProxyBypass) {
       if (
         !(await hasAccess({
           project_id,

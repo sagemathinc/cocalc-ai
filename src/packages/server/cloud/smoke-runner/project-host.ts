@@ -216,6 +216,8 @@ type ProjectHostSmokeResult = {
     run_tag?: string;
     host_name?: string;
     workspace_title?: string;
+    app_id?: string;
+    exposed_url?: string;
     ssh_target?: string;
     ssh_tail_log?: string;
     scp_log?: string;
@@ -291,12 +293,13 @@ function isRetryableWorkspaceStartError(message: string): boolean {
 async function runCommand(
   command: string,
   args: string[],
-  opts: { timeoutMs?: number; cwd?: string } = {},
+  opts: { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   try {
     const { stdout, stderr } = await execFile(command, args, {
       timeout: opts.timeoutMs,
       cwd: opts.cwd,
+      env: opts.env,
       maxBuffer: 10 * 1024 * 1024,
     });
     return {
@@ -384,6 +387,24 @@ function commandTimeoutMs(cli: CliContext): number {
   return Math.max(cli.timeoutMs + 30_000, 120_000);
 }
 
+function buildSmokeCliEnv(cli: CliContext): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  // Avoid inheriting agent/browser scoped credentials from this shell.
+  delete env.COCALC_BEARER_TOKEN;
+  delete env.COCALC_AGENT_TOKEN;
+  delete env.COCALC_BROWSER_ID;
+  delete env.COCALC_PROJECT_ID;
+  delete env.COCALC_PROJECT_INFO_SCOPE;
+  // Force deterministic auth/profile selection for smoke runs.
+  env.COCALC_CLI_CONFIG =
+    env.COCALC_CLI_CONFIG || join(tmpdir(), `cocalc-smoke-cli-${process.pid}.json`);
+  // If hub password is not provided, don't let stale env leak in.
+  if (!cli.hubPassword) {
+    delete env.COCALC_HUB_PASSWORD;
+  }
+  return env;
+}
+
 function parseCliEnvelope<T>(
   stdout: string,
   stderr: string,
@@ -453,6 +474,7 @@ async function runCli<T>(
       : commandTimeoutMs(cli));
   const { stdout, stderr } = await runCommand(cli.nodePath, fullArgs, {
     timeoutMs: computedCommandTimeoutMs,
+    env: buildSmokeCliEnv(cli),
   });
   const envelope = parseCliEnvelope<T>(stdout, stderr, cmd);
   const responseAccountId = envelope.meta?.account_id;
@@ -683,23 +705,20 @@ async function writeSmokeAppSpecFile({
 }): Promise<{ dir: string; path: string }> {
   const dir = await mkdtemp(join(tmpdir(), "cocalc-smoke-app-spec-"));
   const path = join(dir, `${app_id}.json`);
-  const pythonScript = [
-    "import os",
-    "from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler",
-    "class Handler(BaseHTTPRequestHandler):",
-    "    def do_GET(self):",
-    "        body = b'smoke-app-ok\\n'",
-    "        self.send_response(200)",
-    "        self.send_header('content-type', 'text/plain; charset=utf-8')",
-    "        self.send_header('content-length', str(len(body)))",
-    "        self.end_headers()",
-    "        self.wfile.write(body)",
-    "    def log_message(self, _fmt, *_args):",
-    "        return",
-    "host = os.environ.get('HOST', '127.0.0.1')",
-    "port = int(os.environ.get('PORT', '0'))",
-    "server = ThreadingHTTPServer((host, port), Handler)",
-    "server.serve_forever()",
+  const nodeScript = [
+    'const http = require("node:http");',
+    'const host = process.env.HOST || "127.0.0.1";',
+    'const port = Number(process.env.PORT || "0");',
+    "if (!Number.isFinite(port) || port <= 0) {",
+    '  process.stderr.write("invalid port\\n");',
+    "  process.exit(1);",
+    "}",
+    'const body = "smoke-app-ok\\n";',
+    "const server = http.createServer((_req, res) => {",
+    '  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });',
+    "  res.end(body);",
+    "});",
+    "server.listen(port, host);",
   ].join("\n");
 
   const spec = {
@@ -708,8 +727,8 @@ async function writeSmokeAppSpecFile({
     title: "Smoke app server",
     kind: "service",
     command: {
-      exec: "python3",
-      args: ["-c", pythonScript],
+      exec: "node",
+      args: ["-e", nodeScript],
     },
     network: {
       listen_host: "127.0.0.1",
@@ -3271,12 +3290,20 @@ async function runAppSmokeScenarioViaCli({
           redirect: "follow",
           timeoutMs: 12_000,
         });
-        if (response.status < 200 || response.status >= 300) {
-          throw new Error(`unexpected app response status ${response.status}`);
-        }
         const body = await response.text();
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(
+            `unexpected app response status ${response.status} at ${exposedUrl} body=${JSON.stringify(
+              body.slice(0, 280),
+            )}`,
+          );
+        }
         if (!body.includes("smoke-app-ok")) {
-          throw new Error("app response did not include smoke marker");
+          throw new Error(
+            `app response did not include smoke marker at ${exposedUrl}; body=${JSON.stringify(
+              body.slice(0, 280),
+            )}`,
+          );
         }
       }, waitProjectReady);
     });
@@ -3469,6 +3496,8 @@ async function runAppSmokeScenarioViaCli({
             run_tag: run_tag ?? undefined,
             host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
             workspace_title: workspaceTitle,
+            app_id: app_id ?? undefined,
+            exposed_url: exposedUrl ?? undefined,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -3480,6 +3509,8 @@ async function runAppSmokeScenarioViaCli({
             run_tag: run_tag ?? undefined,
             host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
             workspace_title: workspaceTitle,
+            app_id: app_id ?? undefined,
+            exposed_url: exposedUrl ?? undefined,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
@@ -3509,6 +3540,8 @@ async function runAppSmokeScenarioViaCli({
             run_tag: run_tag ?? undefined,
             host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
             workspace_title: workspaceTitle,
+            app_id: app_id ?? undefined,
+            exposed_url: exposedUrl ?? undefined,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -3520,6 +3553,8 @@ async function runAppSmokeScenarioViaCli({
             run_tag: run_tag ?? undefined,
             host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
             workspace_title: workspaceTitle,
+            app_id: app_id ?? undefined,
+            exposed_url: exposedUrl ?? undefined,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
