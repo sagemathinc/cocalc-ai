@@ -1015,11 +1015,16 @@ function TerminalRow({
     lines.push("[output truncated]");
   }
   const markdown = toFencedCodeBlock(lines.join("\n"), "sh");
+  const emptyOutputLabel =
+    !outputText && !entry.truncated
+      ? entry.completed
+        ? "No output."
+        : "Waiting for output…"
+      : undefined;
 
   return (
     <div>
-      <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 4 }} />
-      <Space size={8} wrap align="center" style={{ marginTop: 6 }}>
+      <Space size={8} wrap align="center" style={{ marginBottom: 4 }}>
         {status ? (
           <TimestampTooltip timestamp={timestamp}>
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -1027,9 +1032,9 @@ function TerminalRow({
             </Text>
           </TimestampTooltip>
         ) : null}
-        {!outputText && !entry.truncated ? (
+        {emptyOutputLabel ? (
           <Text type="secondary" style={{ fontSize: secondarySize }}>
-            {entry.completed ? "No output." : "Waiting for output…"}
+            {emptyOutputLabel}
           </Text>
         ) : null}
         {entry.truncated ? (
@@ -1038,6 +1043,7 @@ function TerminalRow({
           </Tag>
         ) : null}
       </Space>
+      <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 0 }} />
     </div>
   );
 }
