@@ -37,7 +37,7 @@ This should replace ad hoc per-app special cases over time.
 
 ### Not Done
 
-1. Dedicated app UI workflows and polish (`+New` app wizard, app management panel polish, autodetection UX, embed polish).
+1. Dedicated app UI workflows and polish (Apps page unification, app management panel polish, autodetection UX, embed polish).
 2. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
 3. "Install with agent" flow from app presets/management UI.
 
@@ -151,6 +151,54 @@ Notes:
 2. `kind=static` serves files directly from a configured path via project-host.
 3. `BASE_URL` is computed by proxy layer and injected.
 
+## 6.1 App Integration Layer
+
+An app should not be modeled only as a runtime. In many cases we also want CoCalc-native integration on top of that runtime.
+
+Model:
+
+1. App Runtime:
+   - how the backend service or native program is started and reached,
+   - examples: proxied web app, static app, SSH/X11 native app.
+2. App Integration:
+   - how CoCalc files, UI actions, and project context are routed into that runtime,
+   - examples: file-type handlers, lightweight sandboxed frontend bundle, deep links, identity/RTC glue.
+
+This is a better long-term model than treating "extensions" as a fully separate product concept. In many cases the quickjs sandbox / extensions API should be the way an app integrates more deeply into CoCalc, not a competing parallel system.
+
+Examples:
+
+1. JupyterLab:
+   - runtime: managed web app,
+   - integration: clicking an `.ipynb` ensures JupyterLab is running and opens the correct file in a new tab or iframe with the needed user/session/RTC context.
+2. code-server:
+   - runtime: managed web app,
+   - integration: future "Open with..." actions in the file explorer can route a file or directory into code-server.
+3. PostgreSQL + web UI:
+   - runtime: managed database plus a management UI,
+   - integration: CoCalc can surface project-aware actions that jump directly into the database UI.
+4. Chromium:
+   - runtime: native/X11 app inside the workspace,
+   - integration: CoCalc launches it in a safer sandboxed remote environment rather than on the user's own machine.
+
+Possible future integration block in app specs:
+
+```yaml
+integration:
+  file_types: [".ipynb"]
+  open_with_label: "JupyterLab"
+  mode: iframe # iframe | new-tab | native-launch
+  sandbox_bundle: /path/to/bundle.js
+  open_url_template: "${BASE_URL}/lab/tree/${FILE_PATH}"
+```
+
+Design implications:
+
+1. the Apps page can eventually organize both runtime behavior and integration behavior,
+2. app templates may include both a runtime preset and an integration preset,
+3. file explorer "Open with..." is a natural later surface for these integrations,
+4. the quickjs sandbox / extensions API should be viewed as an integration mechanism for apps, not just a separate plugin system.
+
 ## 7. Security Model
 
 ### 7.1 Default Private Access
@@ -244,40 +292,96 @@ Product/UX requirements:
 
 ## 10. UI Plan
 
-### 10.1 Create Flow
+### 10.1 Entry Point Decision
 
-Add `App Server` in `+New`:
+App management should be separate from file creation.
 
-1. choose app template or custom,
-2. set command/port/base path/iframe/public mode,
-3. save spec and optionally start now.
+Decision:
+
+1. the left-nav button should be renamed from `Servers` to `Apps`,
+2. the Apps page should become the single primary UI for managed apps,
+3. remove app-launch UI from `+New`,
+4. remove app-launch UI from the `+New` flyout panel,
+5. keep customization for file creation and app management separate,
+6. if needed, allow a lightweight shortcut into Apps, but not a second full app-creation workflow.
 
 Alpha priority note:
 
 1. Keep initial UI minimal and thin over CLI/API.
 2. Main investment goes to backend lifecycle + CLI + agent integration first.
 
-### 10.2 App Management
+Rationale:
+
+1. creating files and managing long-lived apps are different jobs,
+2. duplicating app-launch UI across Apps, `+New`, and flyout creates drift in code and behavior,
+3. one managed-app surface is easier for users, agents, and future policy controls.
+
+Terminology:
+
+1. left nav label: `Apps`
+2. main page heading: `Managed Applications`
+3. avoid `Servers` in user-facing copy where possible, since it is ambiguous and overly infrastructure-flavored.
+
+### 10.2 Apps Page Structure
 
 Project app panel with:
 
-1. status (running/starting/stopped/error),
-2. private URL and optional public URL,
-3. quick actions (start/stop/restart/expose/revoke/logs/edit),
-4. last error snippet and health status.
+1. top toolbar:
+   - template picker / new app,
+   - search/filter,
+   - bulk actions (`start all`, `stop all`, later selection-based actions),
+2. managed app list:
+   - status (running/starting/stopped/error),
+   - private URL and optional public URL,
+   - quick actions (start/stop/restart/expose/revoke/logs/edit),
+   - last error snippet and health status inline on the same row/card,
+3. no legacy top-row server launch buttons,
+4. JupyterLab/code-server/Pluto/etc. should appear as first-party managed-app presets instead of a separate server system.
 
-### 10.3 Port Autodetection
+### 10.3 Detection Modes
 
-Detect new local HTTP listeners and prompt:
+Detection must be split into two distinct workflows:
 
-1. "We detected service on :XXXX. Create app proxy?"
-2. one-click creates spec from discovered port.
+1. detect running HTTP apps:
+   - show candidate user applications that appear to be serving HTTP,
+   - exclude infrastructure/system ports such as SSH and the project proxy itself,
+   - ideally verify HTTP response before surfacing,
+   - prompt: "We detected a running HTTP service on :XXXX. Create managed app?"
+2. detect installed template apps:
+   - check whether known templates are installed and runnable,
+   - examples: JupyterLab, code-server, Pluto, RStudio, Streamlit, Gradio, TensorBoard,
+   - use this to drive which presets are shown as ready-to-use vs install-needed.
 
 ### 10.4 Embedding
 
 1. `iframe=auto` tries embedded view first.
 2. if blocked by headers/policies, auto-fallback to external tab.
 3. "Open in full tab" button always present.
+
+### 10.5 Template Scope
+
+Template catalog should be broader, but structured:
+
+1. core built-ins:
+   - JupyterLab
+   - code-server
+   - Pluto
+   - RStudio
+   - Static site
+   - Python hello world
+   - Node hello world
+2. app/dev templates:
+   - Streamlit
+   - Gradio
+   - Dash
+   - Bokeh
+   - TensorBoard
+   - Dask dashboard
+3. advanced:
+   - custom command
+   - native/X11 app
+   - SSH-forwarded app
+4. templates that are not installed should offer `Install with agent`.
 
 ## 11. CLI Plan (Agent-First)
 
@@ -584,10 +688,12 @@ Existing components to reuse where possible:
 
 ### Phase 3: UI Expansion (after backend confidence) (Status: not started)
 
-1. `+New` app server wizard polish
-2. app management panel polish
-3. autodetection suggestions UX
-4. iframe auto-fallback polish
+1. Apps page becomes the single managed-app surface
+2. remove duplicated app-launch UI from `+New` and flyout
+3. app management panel polish
+4. split autodetection into running-HTTP vs installed-template UX
+5. iframe auto-fallback polish
+6. expand template catalog and `Install with agent`
 
 ## 17. Acceptance Criteria (A1.4)
 
@@ -624,15 +730,24 @@ Existing components to reuse where possible:
 9. `[partial]` Add Codex app audit prompt/action path for public expose (backend+CLI done; UI action pending).
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; static smoke pending).
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
-11. `[todo]` Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
-12. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
-13. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
+11. `[todo]` Rename the left-nav button from `Servers` to `Apps` and use `Managed Applications` as the main page heading.
+12. `[todo]` Make Apps page the single managed-app surface and remove duplicated app-launch UI from `+New` and flyout.
+13. `[todo]` Remove legacy top-row server launcher UI and map JupyterLab/code-server/etc. to managed-app presets.
+14. `[todo]` Split detection into running-HTTP discovery vs installed-template discovery.
+15. `[todo]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
+16. `[todo]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
+17. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
+18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 
 ## 19.1 Next Execution Order
 
 1. Run and harden launchpad `apps-static` smoke in live cloud loop, then add lite static parity and broader static matrix.
-2. Add minimal UI wrappers after static smoke is green.
-3. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
+2. Rename `Servers` to `Apps` and use `Managed Applications` as the primary page language.
+3. Collapse Apps / `+New` / flyout app entry points into one Apps-first surface.
+4. Remove legacy top-row server launcher UI and map built-ins to managed-app presets.
+5. Split detection into running-HTTP discovery vs installed-template discovery.
+6. Add filter/search/bulk-actions and row-local error handling.
+7. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
 
 ## 20. Alpha-Safe Public Model (Minimum to Ship)
 
