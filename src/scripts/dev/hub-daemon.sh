@@ -78,6 +78,22 @@ detect_hub_public_hostname() {
   sed -n "s/.*hostname: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
 }
 
+detect_hub_bootstrap_signup_url() {
+  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+    return 0
+  fi
+  grep -Eo 'https?://[^[:space:]]+/auth/sign-up\?registrationToken=[^[:space:]]*bootstrap=1[^[:space:]]*' "$HUB_STDOUT_LOG" | tail -n 1
+}
+
+print_bootstrap_signup_url() {
+  local signup_url
+  signup_url="$(detect_hub_bootstrap_signup_url || true)"
+  if [ -n "$signup_url" ]; then
+    echo "bootstrap sign-up url:"
+    echo "  $signup_url"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <init|start|stop|restart|status|logs|env>
@@ -97,7 +113,15 @@ detect_host_ip() {
       }'
     return 0
   fi
-  hostname -I 2>/dev/null | awk '{print $1}'
+  local from_hostname
+  from_hostname="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  if [ -n "$from_hostname" ]; then
+    echo "$from_hostname"
+    return 0
+  fi
+  if command -v ifconfig >/dev/null 2>&1; then
+    ifconfig 2>/dev/null | awk '/inet / && $2 !~ /^127\./ {print $2; exit}'
+  fi
 }
 
 load_config() {
@@ -345,6 +369,7 @@ start_daemon() {
     if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
       echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
     fi
+    print_bootstrap_signup_url
     return 0
   fi
 
@@ -416,6 +441,7 @@ show_status() {
   if [ -n "$public_hostname" ]; then
     echo "public url: https://$public_hostname"
   fi
+  print_bootstrap_signup_url
   local pg_host pg_data
   pg_host="$(detect_hub_postgres_socket_dir || true)"
   pg_data="$(detect_hub_postgres_data_dir || true)"

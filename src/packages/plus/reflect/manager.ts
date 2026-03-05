@@ -20,9 +20,32 @@ import type {
 const requireCjs = createRequire(__filename);
 type ReflectSync = typeof import("reflect-sync");
 
+function defaultReflectHome(): string {
+  if (process.platform === "darwin") {
+    return path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "cocalc-plus",
+      "reflect-sync",
+    );
+  }
+  return path.join(os.homedir(), ".local", "share", "cocalc-plus", "reflect-sync");
+}
+
+function defaultRemoteReflectCommand(): string {
+  return [
+    'PATH="$PATH:$HOME/.local/bin:$HOME/Library/Application Support/cocalc-plus/bin"',
+    "cocalc-plus reflect-sync",
+  ].join(" ");
+}
+
 const DEFAULT_REFLECT_HOME =
   process.env.COCALC_REFLECT_HOME ??
-  path.join(os.homedir(), ".local", "share", "cocalc-plus", "reflect-sync");
+  defaultReflectHome();
+
+const DEFAULT_REMOTE_REFLECT_COMMAND =
+  process.env.COCALC_REFLECT_REMOTE_COMMAND ?? defaultRemoteReflectCommand();
 
 let reflectSyncPromise: Promise<ReflectSync> | null = null;
 let sessionDbPath: string | null = null;
@@ -480,9 +503,7 @@ function buildSchedulerOptions(
     const trimmed = row.remote_scan_cmd.trim();
     remoteCommand = trimmed.replace(/\s+scan\s*$/i, "");
   } else if (row.alpha_host || row.beta_host) {
-    remoteCommand =
-      process.env.COCALC_REFLECT_REMOTE_COMMAND ??
-      "$HOME/.local/bin/cocalc-plus reflect-sync";
+    remoteCommand = DEFAULT_REMOTE_REFLECT_COMMAND;
   }
   return {
     alphaRoot: row.alpha_root,
@@ -986,9 +1007,7 @@ export async function createSessionUI(opts: {
       logger: undefined,
     });
     if (opts.target) {
-      const remoteBase =
-        process.env.COCALC_REFLECT_REMOTE_COMMAND ??
-        "$HOME/.local/bin/cocalc-plus reflect-sync";
+      const remoteBase = DEFAULT_REMOTE_REFLECT_COMMAND;
       mod.updateSession(sessionDb, id, {
         remote_scan_cmd: `${remoteBase} scan`,
         remote_watch_cmd: `${remoteBase} watch`,

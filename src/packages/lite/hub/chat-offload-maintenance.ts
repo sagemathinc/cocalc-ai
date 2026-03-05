@@ -64,6 +64,16 @@ function resolveDbPath(): string {
   const configured = `${process.env.COCALC_CHAT_OFFLOAD_DB ?? ""}`.trim();
   if (configured) return path.resolve(configured);
   const home = `${process.env.HOME ?? ""}`.trim() || process.cwd();
+  if (process.platform === "darwin") {
+    return path.join(
+      home,
+      "Library",
+      "Application Support",
+      "cocalc",
+      "chats",
+      "offload-v1.sqlite3",
+    );
+  }
   return path.join(home, ".local", "share", "cocalc", "chats", "offload-v1.sqlite3");
 }
 

@@ -106,6 +106,22 @@ export function parseTarget(raw: string) {
   return { host: m[1], port: m[2] ? parseInt(m[2], 10) : null };
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+const REMOTE_PLUS_COMMAND_FALLBACK =
+  'PATH="$PATH:$HOME/.local/bin:$HOME/Library/Application Support/cocalc-plus/bin" cocalc-plus';
+
+function remoteBinCommand(pathHint?: string): string {
+  const raw = `${pathHint ?? ""}`.trim();
+  if (!raw) return REMOTE_PLUS_COMMAND_FALLBACK;
+  if (raw.startsWith("$HOME/")) {
+    return `"${raw.replace(/"/g, '\\"')}"`;
+  }
+  return shellQuote(raw);
+}
+
 function localPlusRootDir(): string {
   const explicitHome = `${process.env.COCALC_PLUS_HOME ?? ""}`.trim();
   if (explicitHome) return explicitHome;
@@ -128,7 +144,96 @@ export function infoPathFor(target: string) {
     hash,
     baseDir,
     localDir: path.join(baseDir, hash),
-    remoteDir: `$HOME/.local/share/cocalc-plus/ssh/${hash}`,
+  };
+}
+
+type RemoteLayout = {
+  home: string;
+  platform: "darwin" | "linux" | "unknown";
+};
+
+const remoteLayoutCache = new Map<string, RemoteLayout>();
+
+function remoteLayoutKey(opts: SshOptions): string {
+  return `${opts.host}:${opts.port ?? ""}`;
+}
+
+async function resolveRemoteLayout(
+  opts: SshOptions,
+  extraArgs: string[] = [],
+): Promise<RemoteLayout> {
+  const key = remoteLayoutKey(opts);
+  const cached = remoteLayoutCache.get(key);
+  if (cached) return cached;
+  const probe = await sshRunAsync(
+    opts,
+    'printf "%s\\t%s" "$(uname -s 2>/dev/null || echo unknown)" "$HOME"',
+    { timeoutMs: 5000, extraArgs },
+  );
+  if (probe.error || probe.status === 255 || probe.status !== 0) {
+    throw new Error("unable to resolve remote platform/home");
+  }
+  const raw = (probe.stdout || "").toString().trim();
+  const splitAt = raw.indexOf("\t");
+  const osRaw = splitAt >= 0 ? raw.slice(0, splitAt) : raw;
+  const home = (splitAt >= 0 ? raw.slice(splitAt + 1) : "").trim();
+  if (!home) {
+    throw new Error("remote HOME is empty");
+  }
+  const osLower = osRaw.toLowerCase();
+  const platform = osLower.includes("darwin")
+    ? "darwin"
+    : osLower.includes("linux")
+      ? "linux"
+      : "unknown";
+  const layout: RemoteLayout = { home, platform };
+  remoteLayoutCache.set(key, layout);
+  return layout;
+}
+
+function remoteDataDirFor(layout: RemoteLayout): string {
+  if (layout.platform === "darwin") {
+    return path.posix.join(
+      layout.home,
+      "Library",
+      "Application Support",
+      "cocalc-plus",
+      "data",
+    );
+  }
+  return path.posix.join(layout.home, ".local", "share", "cocalc-plus", "data");
+}
+
+async function resolveRemotePaths(
+  opts: SshOptions,
+  target: string,
+  extraArgs: string[] = [],
+): Promise<{
+  remoteDir: string;
+  remoteInfoPath: string;
+  remotePidPath: string;
+  remoteLogPath: string;
+  remoteVersionPath: string;
+}> {
+  const { hash } = infoPathFor(target);
+  const layout = await resolveRemoteLayout(opts, extraArgs);
+  const base =
+    layout.platform === "darwin"
+      ? path.posix.join(
+          layout.home,
+          "Library",
+          "Application Support",
+          "cocalc-plus",
+          "ssh",
+        )
+      : path.posix.join(layout.home, ".local", "share", "cocalc-plus", "ssh");
+  const remoteDir = path.posix.join(base, hash);
+  return {
+    remoteDir,
+    remoteInfoPath: path.posix.join(remoteDir, "connection.json"),
+    remotePidPath: path.posix.join(remoteDir, "daemon.pid"),
+    remoteLogPath: path.posix.join(remoteDir, "daemon.log"),
+    remoteVersionPath: path.posix.join(remoteDir, "version.json"),
   };
 }
 
@@ -593,7 +698,7 @@ function getLocalVersion(): string {
     const baseDir =
       process.env.COCALC_PLUS_HOME ??
       process.env.COCALC_DATA_DIR ??
-      path.join(os.homedir(), ".local", "share", "cocalc-plus");
+      localPlusRootDir();
     const candidates = [
       path.join(baseDir, "version.json"),
       path.join(baseDir, "data", "version.json"),
@@ -717,10 +822,9 @@ async function readRemoteVersionInfo(
   opts: SshOptions,
   target: string,
 ): Promise<VersionInfo | null> {
-  const { remoteDir } = infoPathFor(target);
-  const remoteVersionPath = `${remoteDir}/version.json`;
   try {
-    const content = await sshExecAsync(opts, `cat ${remoteVersionPath}`);
+    const { remoteVersionPath } = await resolveRemotePaths(opts, target);
+    const content = await sshExecAsync(opts, `cat ${shellQuote(remoteVersionPath)}`);
     const parsed = JSON.parse(content);
     if (parsed?.version && parsed?.os && parsed?.arch) {
       return {
@@ -920,7 +1024,7 @@ export async function waitRemoteFile(
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const content = await sshExecAsync(opts, `cat ${remotePath}`);
+      const content = await sshExecAsync(opts, `cat ${shellQuote(remotePath)}`);
       if (content) return content;
     } catch {
       // ignore and retry
@@ -932,8 +1036,10 @@ export async function waitRemoteFile(
 
 export async function resolveRemoteBin(opts: SshOptions): Promise<string> {
   const probe = await probeRemoteBinAsync(opts);
-  if (probe.status === "found" && probe.path) return probe.path;
-  return "$HOME/.local/bin/cocalc-plus";
+  if (probe.status === "found" && probe.path) {
+    return remoteBinCommand(probe.path);
+  }
+  return REMOTE_PLUS_COMMAND_FALLBACK;
 }
 
 async function probeRemoteBinAsync(
@@ -948,20 +1054,26 @@ async function probeRemoteBinAsync(
     return { status: "unreachable", path: "" };
   }
   if (which.status === 0) {
-    const path = (which.stdout || "").toString().trim();
-    return { status: "found", path };
+    const binPath = (which.stdout || "").toString().trim();
+    return { status: "found", path: binPath };
   }
-  const test = await sshRunAsync(opts, 'test -x "$HOME/.local/bin/cocalc-plus"', {
-    timeoutMs: 5000,
-    extraArgs,
-  });
-  if (test.error || test.status === 255) {
-    return { status: "unreachable", path: "" };
+  const candidates = [
+    "$HOME/.local/bin/cocalc-plus",
+    "$HOME/Library/Application Support/cocalc-plus/bin/cocalc-plus",
+  ];
+  for (const candidate of candidates) {
+    const test = await sshRunAsync(opts, `test -x "${candidate}"`, {
+      timeoutMs: 5000,
+      extraArgs,
+    });
+    if (test.error || test.status === 255) {
+      return { status: "unreachable", path: "" };
+    }
+    if (test.status === 0) {
+      return { status: "found", path: candidate };
+    }
   }
-  if (test.status === 0) {
-    return { status: "found", path: "$HOME/.local/bin/cocalc-plus" };
-  }
-  return { status: "missing", path: "$HOME/.local/bin/cocalc-plus" };
+  return { status: "missing", path: candidates[0] };
 }
 
 export async function getRemoteStatus(
@@ -981,8 +1093,6 @@ export async function getRemoteStatus(
     proxyJump: entry.proxyJump,
     sshArgs: entry.sshArgs || [],
   };
-  const { remoteDir } = infoPathFor(target);
-  const remotePidPath = `${remoteDir}/daemon.pid`;
   const extraArgs = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
   const probe = await probeRemoteBinAsync(sshOpts, extraArgs);
   if (probe.status === "unreachable") {
@@ -993,10 +1103,18 @@ export async function getRemoteStatus(
     setCachedRemoteStatus(target, "missing");
     return "missing";
   }
-  const remoteBin = probe.path || "$HOME/.local/bin/cocalc-plus";
+  let remotePidPath: string;
+  try {
+    remotePidPath = (await resolveRemotePaths(sshOpts, target, extraArgs))
+      .remotePidPath;
+  } catch {
+    setCachedRemoteStatus(target, "unreachable");
+    return "unreachable";
+  }
+  const remoteBin = remoteBinCommand(probe.path);
   const res = await sshRunAsync(
     sshOpts,
-    `${remoteBin} --daemon-status --pidfile ${remotePidPath}`,
+    `${remoteBin} --daemon-status --pidfile ${shellQuote(remotePidPath)}`,
     { timeoutMs: 5000, extraArgs },
   );
   let status = "error";
@@ -1032,11 +1150,10 @@ async function stopRemoteDaemonBestEffort(
   opts: SshOptions,
   target: string,
 ): Promise<void> {
-  const { remoteDir } = infoPathFor(target);
-  const remotePidPath = `${remoteDir}/daemon.pid`;
-  const remoteBin = await resolveRemoteBin(opts);
-  const cmd = `if [ -f ${remotePidPath} ]; then ${remoteBin} --daemon-stop --pidfile ${remotePidPath} >/dev/null 2>&1 || true; fi`;
   try {
+    const { remotePidPath } = await resolveRemotePaths(opts, target);
+    const remoteBin = await resolveRemoteBin(opts);
+    const cmd = `if [ -f ${shellQuote(remotePidPath)} ]; then ${remoteBin} --daemon-stop --pidfile ${shellQuote(remotePidPath)} >/dev/null 2>&1 || true; fi`;
     await sshExecAsync(opts, cmd, true);
   } catch {
     // ignore best-effort stop failures
@@ -1056,16 +1173,14 @@ export async function upgradeRemote(
     proxyJump: entry.proxyJump,
     sshArgs: entry.sshArgs || [],
   };
-  const { remoteDir } = infoPathFor(target);
-  const remoteInfoPath = `${remoteDir}/connection.json`;
-  const remotePidPath = `${remoteDir}/daemon.pid`;
-  const remoteLogPath = `${remoteDir}/daemon.log`;
   const wasRunning = await getRemoteStatus(entry, { force: true });
 
   await stopRemoteDaemonBestEffort(sshOpts, target);
   await ensureRemoteReady(sshOpts, true, true);
 
   if (options?.restart !== false && wasRunning === "running") {
+    const { remoteInfoPath, remotePidPath, remoteLogPath } =
+      await resolveRemotePaths(sshOpts, target);
     const authToken = crypto.randomBytes(16).toString("hex");
     const localUrl =
       options?.localUrl ??
@@ -1110,26 +1225,29 @@ export async function startRemote(
   },
 ): Promise<ConnectionInfo> {
   const remoteBin = await resolveRemoteBin(opts);
-  const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  const layout = await resolveRemoteLayout(opts);
+  const remoteDataDir = remoteDataDirFor(layout);
   const safeTarget = shellQuote(target);
   const authToken = options?.authToken;
   const localUrl = options?.localUrl;
-  const { remoteDir } = infoPathFor(target);
-  const remoteVersionPath = `${remoteDir}/version.json`;
+  const remoteVersionPath = path.posix.join(
+    path.posix.dirname(remoteInfoPath),
+    "version.json",
+  );
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
     authToken ? `AUTH_TOKEN=${shellQuote(authToken)}` : "AUTH_TOKEN=short",
     "COCALC_ENABLE_SSH_UI=0",
-    "COCALC_DATA_DIR=$HOME/.local/share/cocalc-plus/data",
+    `COCALC_DATA_DIR=${shellQuote(remoteDataDir)}`,
     `COCALC_REMOTE_SSH_TARGET=${safeTarget}`,
-    `COCALC_WRITE_CONNECTION_INFO=${remoteInfoPath}`,
-    `COCALC_WRITE_VERSION_INFO=${remoteVersionPath}`,
-    `COCALC_DAEMON_PIDFILE=${remotePidPath}`,
-    `COCALC_DAEMON_LOG=${remoteLogPath}`,
+    `COCALC_WRITE_CONNECTION_INFO=${shellQuote(remoteInfoPath)}`,
+    `COCALC_WRITE_VERSION_INFO=${shellQuote(remoteVersionPath)}`,
+    `COCALC_DAEMON_PIDFILE=${shellQuote(remotePidPath)}`,
+    `COCALC_DAEMON_LOG=${shellQuote(remoteLogPath)}`,
     localUrl ? `COCALC_REMOTE_SSH_LOCAL_URL=${shellQuote(localUrl)}` : "",
   ].join(" ");
-  const cmd = `mkdir -p ${path.dirname(remoteInfoPath)} && ${env} ${remoteBin} --daemon --write-connection-info ${remoteInfoPath} --pidfile ${remotePidPath} --log ${remoteLogPath}`;
+  const cmd = `mkdir -p ${shellQuote(path.dirname(remoteInfoPath))} && ${env} ${remoteBin} --daemon --write-connection-info ${shellQuote(remoteInfoPath)} --pidfile ${shellQuote(remotePidPath)} --log ${shellQuote(remoteLogPath)}`;
   await sshExecAsync(opts, cmd, true);
   const info = await waitRemoteFile(opts, remoteInfoPath, 20000);
   return JSON.parse(info) as ConnectionInfo;
@@ -1148,11 +1266,10 @@ export async function statusSession(
     proxyJump: opts.proxyJump,
     sshArgs: opts.sshArg || [],
   };
-  const { remoteDir } = infoPathFor(target);
-  const remotePidPath = `${remoteDir}/daemon.pid`;
   await ensureRemoteReady(sshOpts, false, false);
+  const { remotePidPath } = await resolveRemotePaths(sshOpts, target);
   const remoteBin = await resolveRemoteBin(sshOpts);
-  const cmd = `${remoteBin} --daemon-${mode} --pidfile ${remotePidPath}`;
+  const cmd = `${remoteBin} --daemon-${mode} --pidfile ${shellQuote(remotePidPath)}`;
   await sshExecAsync(sshOpts, cmd, true);
   if (mode === "stop") {
     updateRegistry(target, { lastStopped: new Date().toISOString() });
@@ -1173,13 +1290,9 @@ export async function connectSession(
     sshArgs,
   };
   const label = target;
-  const { localDir, remoteDir } = infoPathFor(label);
+  const { localDir } = infoPathFor(label);
   fs.mkdirSync(localDir, { recursive: true });
   const localPortPath = path.join(localDir, "local-port");
-
-  const remoteInfoPath = `${remoteDir}/connection.json`;
-  const remotePidPath = `${remoteDir}/daemon.pid`;
-  const remoteLogPath = `${remoteDir}/daemon.log`;
   let localPort: number | undefined;
   if (options.localPort && options.localPort !== "auto") {
     localPort = parseInt(options.localPort, 10);
@@ -1194,19 +1307,21 @@ export async function connectSession(
     fs.writeFileSync(localPortPath, String(localPort));
   }
 
+  if (options.upgrade) {
+    await stopRemoteDaemonBestEffort(sshOpts, target);
+  }
+  await ensureRemoteReady(sshOpts, !options.noInstall, !!options.upgrade);
+  const { remoteDir, remoteInfoPath, remotePidPath, remoteLogPath } =
+    await resolveRemotePaths(sshOpts, label);
+
   if (options.logLevel === "debug") {
     console.log("Target:", sshOpts);
     console.log("Remote state:", remoteDir);
   }
 
-  if (options.upgrade) {
-    await stopRemoteDaemonBestEffort(sshOpts, target);
-  }
-  await ensureRemoteReady(sshOpts, !options.noInstall, !!options.upgrade);
-
   let info: ConnectionInfo | null = null;
   if (options.forwardOnly) {
-    const content = await sshExecAsync(sshOpts, `cat ${remoteInfoPath}`);
+    const content = await sshExecAsync(sshOpts, `cat ${shellQuote(remoteInfoPath)}`);
     info = JSON.parse(content) as ConnectionInfo;
   } else {
     let reused = false;
@@ -1219,7 +1334,10 @@ export async function connectSession(
       });
       if (status === "running") {
         try {
-          const content = await sshExecAsync(sshOpts, `cat ${remoteInfoPath}`);
+          const content = await sshExecAsync(
+            sshOpts,
+            `cat ${shellQuote(remoteInfoPath)}`,
+          );
           info = JSON.parse(content) as ConnectionInfo;
           reused = true;
         } catch {

@@ -4,6 +4,7 @@
  */
 
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const SPEC_EXT = ".json";
@@ -247,6 +248,19 @@ export function normalizeAppSpec(input: unknown): AppSpec {
 
 function appsDir(): string {
   const home = process.env.HOME ?? ".";
+  if (process.platform === "darwin") {
+    const preferred = join(
+      home,
+      "Library",
+      "Application Support",
+      "cocalc",
+      "apps",
+    );
+    const legacy = join(home, ".local", "share", "cocalc", "apps");
+    if (existsSync(preferred)) return preferred;
+    if (existsSync(legacy)) return legacy;
+    return preferred;
+  }
   return join(home, ".local", "share", "cocalc", "apps");
 }
 
