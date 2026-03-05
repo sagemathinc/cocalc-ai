@@ -846,7 +846,8 @@ export function AppServerPanel({
   return (
     <div>
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
-        Create a managed app server spec, start it, and open the proxied URL.
+        Create and manage applications for this workspace, including private
+        service apps and static apps.
       </Paragraph>
       <ShowError error={error} setError={() => setError(undefined)} />
       {startupFailure ? (
@@ -1137,7 +1138,7 @@ export function AppServerPanel({
           <Divider style={{ margin: "14px 0" }} />
         </>
       ) : null}
-      <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed app servers</div>
+      <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed Applications</div>
       {loading ? <Spin /> : null}
       {!loading && rows.length === 0 ? (
         <Alert type="info" showIcon message="No managed app servers yet." />

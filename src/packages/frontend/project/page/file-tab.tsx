@@ -132,7 +132,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   servers: {
     label: defineMessage({
       id: "project.page.file-tab.servers.label",
-      defaultMessage: "Servers",
+      defaultMessage: "Apps",
     }),
     icon: "server",
     flyout: ServersFlyout,

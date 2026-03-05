@@ -27,6 +27,7 @@ import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
+import type { NamedServerName } from "@cocalc/util/types/servers";
 import {
   NEW_FILETYPE_ICONS,
   isNewFiletypeIconName,
@@ -48,21 +49,15 @@ import {
   updateUserLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import {
-  APP_CATALOG,
-  APP_MAP,
   QUICK_CREATE_MAP,
 } from "@cocalc/frontend/project/new/launcher-catalog";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
-import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { keys, separate_file_extension, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
-import { NamedServerPanel } from "@cocalc/frontend/project/named-server-panel";
-import { AppServerPanel } from "@cocalc/frontend/project/app-server-panel";
-import type { NamedServerName } from "@cocalc/util/types/servers";
 
 function getFileExtension(filename: string): string | null {
   if (filename.endsWith(".")) {
@@ -115,8 +110,6 @@ export function NewFlyout({
   ]);
   const is_admin = useTypedRedux("account", "is_admin");
   const can_edit_project_defaults = !!is_admin || user_group === "owner";
-  const student_project_functionality =
-    useStudentProjectFunctionality(project_id);
   const rfn = other_settings.get(NEW_FILENAMES);
   const selected = rfn ?? DEFAULT_NEW_FILENAMES;
   const actions = useActions({ project_id });
@@ -139,10 +132,6 @@ export function NewFlyout({
   // if true, creating a file is currently in progress
   const [creating, setCreating] = useState<boolean>(false);
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
-  const [showServerPanel, setShowServerPanel] = useState<"" | NamedServerName>(
-    "",
-  );
-  const [showAppServerPanel, setShowAppServerPanel] = useState<boolean>(false);
 
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
@@ -200,23 +189,6 @@ export function NewFlyout({
     }
   }
 
-  function isAppVisible(id: NamedServerName): boolean {
-    switch (id) {
-      case "jupyterlab":
-        return !student_project_functionality.disableJupyterLabServer;
-      case "jupyter":
-        return !student_project_functionality.disableJupyterClassicServer;
-      case "code":
-        return !student_project_functionality.disableVSCodeServer;
-      case "pluto":
-        return !student_project_functionality.disablePlutoServer;
-      case "rserver":
-        return !student_project_functionality.disableRServer;
-      default:
-        return true;
-    }
-  }
-
   const quickCreateSpecs = mergedLauncher.quickCreate
     .filter((id) => id !== "sage")
     .filter(isQuickCreateAvailable)
@@ -257,18 +229,6 @@ export function NewFlyout({
     }
     return options;
   }, []);
-
-  const visibleAppsSeen = new Set<NamedServerName>();
-  const appSpecs = mergedLauncher.apps
-    .filter((id) => APP_CATALOG.find((app) => app.id === id))
-    .filter((id): id is NamedServerName => APP_MAP[id] != null)
-    .filter(isAppVisible)
-    .filter((id) => {
-      if (visibleAppsSeen.has(id)) return false;
-      visibleAppsSeen.add(id);
-      return true;
-    })
-    .map((id) => APP_MAP[id]);
 
   // generate a new filename on demand, depends on the selected extension, existing files in the current directory, etc.
   function getNewFilename(ext: string): string {
@@ -654,39 +614,6 @@ export function NewFlyout({
             </Flex>
           </div>
         </div>
-        <Flex justify="space-between" align="center" style={{ marginTop: "4px" }}>
-          <Tag color="geekblue">Apps</Tag>
-        </Flex>
-        <Flex gap={6} wrap>
-          {appSpecs.map((app) => (
-            <NewFileButton
-              key={`flyout-app-${app.id}`}
-              name={app.label}
-              icon={app.icon}
-              size="small"
-              mode="secondary"
-              on_click={() => {
-                setShowAppServerPanel(false);
-                setShowServerPanel(app.id);
-              }}
-            />
-          ))}
-          <NewFileButton
-            key="flyout-app-managed-server"
-            name="Managed App Server"
-            icon="server"
-            size="small"
-            mode="secondary"
-            on_click={() => {
-              setShowServerPanel("");
-              setShowAppServerPanel((v) => !v);
-            }}
-          />
-        </Flex>
-        {showServerPanel && (
-          <NamedServerPanel project_id={project_id} name={showServerPanel} />
-        )}
-        {showAppServerPanel && <AppServerPanel project_id={project_id} />}
         <hr />
         <Tag color={COLORS.GRAY_L}>Filename generator</Tag>
         <SelectorInput
