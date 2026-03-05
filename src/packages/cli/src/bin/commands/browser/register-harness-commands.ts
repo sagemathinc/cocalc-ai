@@ -122,6 +122,13 @@ type StepAttemptReport = {
     ok: boolean;
     error?: string;
   };
+  timeout_burst_recovery?: {
+    threshold: number;
+    observed_consecutive: number;
+    ok: boolean;
+    browser_id?: string;
+    error?: string;
+  };
   artifacts?: {
     screenshot_path?: string;
     logs_path?: string;
@@ -264,6 +271,15 @@ function normalizeFailureSignature({
     .replace(/\b\d+\b/g, "<n>")
     .slice(0, 220);
   return `${step.kind}:${collapsed}`;
+}
+
+function isRpcTimeoutError(err: unknown): boolean {
+  const msg = `${err instanceof Error ? err.message : err}`.toLowerCase();
+  return (
+    msg.includes("operation has timed out") ||
+    msg.includes("timed out subject:services.account.") ||
+    (msg.includes("timeout") && msg.includes("browser-session"))
+  );
 }
 
 async function normalizePlan({
@@ -672,6 +688,16 @@ export function registerBrowserHarnessCommands({
       "wait duration after recovery action before retry",
       "1s",
     )
+    .option(
+      "--rpc-timeout-threshold <n>",
+      "consecutive browser-session RPC timeouts that trigger auto-recovery",
+      "3",
+    )
+    .option(
+      "--rpc-timeout-recovery-timeout <duration>",
+      "max time to wait while auto-recovering after timeout bursts",
+      "30s",
+    )
     .option("--screenshot-on-fail", "capture screenshot on failed attempts")
     .option("--no-screenshot-on-fail", "disable screenshot capture on failed attempts")
     .option("--logs-on-fail <n>", "capture latest runtime events on failed attempts", "120")
@@ -708,6 +734,8 @@ export function registerBrowserHarnessCommands({
           defaultTimeout?: string;
           defaultRecovery?: string;
           recoveryWait?: string;
+          rpcTimeoutThreshold?: string;
+          rpcTimeoutRecoveryTimeout?: string;
           screenshotOnFail?: boolean;
           logsOnFail?: string;
           networkOnFail?: string;
@@ -805,6 +833,18 @@ export function registerBrowserHarnessCommands({
             ? Math.max(1_000, durationToMs(opts.defaultTimeout, ctx.timeoutMs))
             : undefined;
           const recoveryWaitMs = Math.max(0, durationToMs(opts.recoveryWait, 1_000));
+          const rpcTimeoutBurstThreshold = Math.max(
+            1,
+            clampNonNegativeInt(
+              opts.rpcTimeoutThreshold,
+              3,
+              "--rpc-timeout-threshold",
+            ),
+          );
+          const rpcTimeoutRecoveryTimeoutMs = Math.max(
+            1_000,
+            durationToMs(opts.rpcTimeoutRecoveryTimeout, 30_000),
+          );
           const defaultRecovery = parseRecoveryMode(opts.defaultRecovery, "reload");
           const continueOnError = !!opts.continueOnError;
           const captureDefaults: HarnessCapturePolicy = {
@@ -844,6 +884,10 @@ export function registerBrowserHarnessCommands({
               report_dir: reportDir,
               posture,
               policy_allow_raw_exec: !!policy?.allow_raw_exec,
+              rpc_timeout_recovery: {
+                threshold: rpcTimeoutBurstThreshold,
+                timeout_ms: rpcTimeoutRecoveryTimeoutMs,
+              },
               normalized,
               ...sessionTargetContext(ctx, sessionInfo, project_id),
             };
@@ -857,10 +901,53 @@ export function registerBrowserHarnessCommands({
           let halted = false;
           let failedSteps = 0;
           let reportIndex = 0;
+          let consecutiveRpcTimeouts = 0;
           const maxFailures =
             normalized.max_failures == null || normalized.max_failures <= 0
               ? Number.POSITIVE_INFINITY
               : normalized.max_failures;
+          const sleep = async (ms: number): Promise<void> => {
+            await new Promise((resolve) => setTimeout(resolve, ms));
+          };
+          const recoverAfterTimeoutBurst = async (): Promise<{
+            ok: boolean;
+            browser_id?: string;
+            error?: string;
+          }> => {
+            const started = Date.now();
+            const waitBudgetMs = rpcTimeoutRecoveryTimeoutMs;
+            let lastErr = "";
+            while (Date.now() - started <= waitBudgetMs) {
+              try {
+                let probeBrowserId = targetBrowserId;
+                if (pinTarget) {
+                  const pinned = await assertPinnedSessionActive();
+                  probeBrowserId = `${pinned.browser_id ?? ""}`.trim() || probeBrowserId;
+                }
+                const probe = deps.createBrowserSessionClient({
+                  account_id: ctx.accountId,
+                  browser_id: probeBrowserId,
+                  client: ctx.remote.client,
+                  timeout: 4_000,
+                });
+                await probe.listRuntimeEvents({ limit: 1 });
+                targetBrowserId = probeBrowserId;
+                return {
+                  ok: true,
+                  browser_id: targetBrowserId,
+                };
+              } catch (err) {
+                lastErr = `${err}`;
+              }
+              await sleep(750);
+            }
+            return {
+              ok: false,
+              error:
+                lastErr ||
+                `timed out waiting for browser session recovery after ${rpcTimeoutBurstThreshold} consecutive RPC timeouts`,
+            };
+          };
 
           const runStepList = async ({
             list,
@@ -964,9 +1051,30 @@ export function registerBrowserHarnessCommands({
                   row.ok = true;
                   row.result = result;
                   stepOk = true;
+                  consecutiveRpcTimeouts = 0;
                 } catch (err) {
                   finalError = `${err}`;
                   row.error = finalError;
+                  if (isRpcTimeoutError(err)) {
+                    consecutiveRpcTimeouts += 1;
+                    if (consecutiveRpcTimeouts >= rpcTimeoutBurstThreshold) {
+                      const burstRecovery = await recoverAfterTimeoutBurst();
+                      row.timeout_burst_recovery = {
+                        threshold: rpcTimeoutBurstThreshold,
+                        observed_consecutive: consecutiveRpcTimeouts,
+                        ok: burstRecovery.ok,
+                        ...(burstRecovery.browser_id
+                          ? { browser_id: burstRecovery.browser_id }
+                          : {}),
+                        ...(burstRecovery.error ? { error: burstRecovery.error } : {}),
+                      };
+                      if (burstRecovery.ok) {
+                        consecutiveRpcTimeouts = 0;
+                      }
+                    }
+                  } else {
+                    consecutiveRpcTimeouts = 0;
+                  }
                   row.artifacts = await captureFailureArtifacts({
                     browserClient,
                     step,
@@ -1089,6 +1197,10 @@ export function registerBrowserHarnessCommands({
             max_failures: Number.isFinite(maxFailures) ? maxFailures : null,
             posture,
             policy_allow_raw_exec: !!policy?.allow_raw_exec,
+            rpc_timeout_recovery: {
+              threshold: rpcTimeoutBurstThreshold,
+              timeout_ms: rpcTimeoutRecoveryTimeoutMs,
+            },
             browser_id: targetBrowserId,
             project_id,
             pin_target: pinTarget,
