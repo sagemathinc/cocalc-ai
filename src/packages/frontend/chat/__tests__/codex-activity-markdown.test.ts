@@ -77,6 +77,41 @@ describe("codexEventsToMarkdown", () => {
     expect(markdown).toContain("- File: Read `README.md` (2.0 KB)");
   });
 
+  it("hides byte-size after coalescing multiple read slices of the same file", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "file",
+          path: "README.md",
+          operation: "read",
+          bytes: 1024,
+          bytes_known: true,
+          line: 1,
+          limit: 20,
+        },
+      } as any,
+      {
+        type: "event",
+        seq: 2,
+        event: {
+          type: "file",
+          path: "README.md",
+          operation: "read",
+          bytes: 2048,
+          bytes_known: true,
+          line: 21,
+          limit: 40,
+        },
+      } as any,
+    ]);
+    expect(markdown).toContain("- File: Read `README.md`");
+    expect(markdown).not.toContain("KB");
+    expect(markdown).not.toContain("byte");
+    expect(markdown).not.toContain("lines");
+  });
+
   it("hides byte-size for command-derived write events", () => {
     const markdown = codexEventsToMarkdown([
       {

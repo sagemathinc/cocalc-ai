@@ -542,13 +542,12 @@ function coalesceFileReads(entries: ActivityEntry[]): ActivityEntry[] {
         last.operation === "read" &&
         last.path === entry.path
       ) {
-        const bytes =
-          typeof last.bytes === "number" || typeof entry.bytes === "number"
-            ? (last.bytes ?? 0) + (entry.bytes ?? 0)
-            : undefined;
         merged[merged.length - 1] = {
           ...last,
-          bytes: typeof bytes === "number" && bytes > 0 ? bytes : undefined,
+          // Multiple read slices are ambiguous: they can overlap or reflect
+          // repeated probes of the same file. Do not claim a merged byte-size.
+          bytes: undefined,
+          bytesKnown: false,
           truncated: last.truncated || entry.truncated,
           // Multiple read slices: clear scope so we don't mislead with a line range.
           line: undefined,
