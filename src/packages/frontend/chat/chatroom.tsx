@@ -725,10 +725,13 @@ export function ChatPanel({
   }): void {
     const threadMessages =
       (lookup ? actions.getMessagesInThread(lookup) : undefined) ?? [];
-    const sessionId =
-      (thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined) ??
-      thread_id ??
-      (reply_to ? `${reply_to.valueOf()}` : undefined);
+    const sessionId = resolveAgentSessionIdForThread({
+      actions,
+      threadId: thread_id,
+      threadKey: thread_id ?? (reply_to ? `${reply_to.valueOf()}` : ""),
+      persistedSessionId:
+        thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined,
+    });
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);

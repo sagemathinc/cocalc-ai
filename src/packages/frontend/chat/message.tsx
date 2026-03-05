@@ -43,6 +43,7 @@ import {
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
+import { resolveAgentSessionIdForThread } from "./thread-session";
 import ChatInput from "./input";
 import { FeedbackLLM } from "./llm-msg-feedback";
 import { RegenerateLLM } from "./llm-msg-regenerate";
@@ -702,13 +703,19 @@ export default function Message({
   }, [actions, threadLookup]);
 
   // Prefer the persisted sessionId on the thread root's acp_config; fall back
-  // to the thread id we get from the ACP payload, then the thread key.
+  // to the latest assistant-row acp_thread_id, then the message payload, then
+  // the thread key.
   const sessionIdForInterrupt = useMemo(
-    () =>
-      threadCodexConfig?.sessionId ??
-      acpThreadId ??
-      threadLookup.threadLookupKey,
-    [threadCodexConfig, acpThreadId, threadLookup],
+    () => {
+      const resolved = resolveAgentSessionIdForThread({
+        actions,
+        threadId: threadLookup.threadId,
+        threadKey: threadLookup.threadLookupKey ?? "",
+        persistedSessionId: threadCodexConfig?.sessionId,
+      });
+      return acpThreadId ?? resolved;
+    },
+    [actions, threadCodexConfig, acpThreadId, threadLookup],
   );
 
   const activityBasePath = useMemo(
