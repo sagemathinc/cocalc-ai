@@ -346,6 +346,46 @@ Why this matters:
 1. It bypasses HTTP path rewriting entirely.
 2. It uses our already-hardened sshpiperd + Cloudflare tunnel path.
 3. It gives users/agents a reliable escape hatch for non-cooperative services.
+4. It naturally extends beyond web apps to native/X11 applications that have no useful browser deployment path.
+
+### 13.3.1 Native/X11 App Extension
+
+This SSH-based fallback should also support native GUI applications, especially:
+
+1. simple X11 test apps such as `xclock`,
+2. legacy scientific visualization tools with no serious web counterpart,
+3. desktop-style editors such as Zed or similar tools that are better launched locally than proxied through a browser.
+4. a full web browser such as chromium -- it can be useful having it run directly inside the workspace
+
+Conceptually, this is a second app-launch mode:
+
+1. managed web app:
+   - start service in workspace,
+   - expose through CoCalc proxy/public URL machinery.
+2. managed native app:
+   - start through SSH/X11 workflow,
+   - no HTTP proxying required,
+   - UI gives the user a generated local bootstrap command instead of a web URL.
+
+User flow:
+
+1. configure a native app spec or choose a native-app preset,
+2. click launch,
+3. CoCalc shows a small generated bootstrap command,
+4. user pastes it into a terminal on their laptop,
+5. the command:
+   - ensures `cocalc-cli` is installed or upgraded,
+   - ensures SSH access is configured,
+   - sets up SSH forwarding/X11 transport,
+   - launches the requested application against the project.
+
+This is especially valuable because it lets CoCalc manage the remote environment while still using native local rendering/input for apps that do not belong in a browser.
+
+Platform scope for first pass:
+
+1. Linux desktop first, since X11 forwarding is straightforward there.
+2. macOS and Windows should be explicitly documented as requiring additional local prerequisites and may initially be unsupported or best-effort only.
+3. Generated commands should be OS-aware and fail early with a clear prerequisite message if the local machine is missing required pieces.
 
 CLI shape (proposed):
 
@@ -357,6 +397,9 @@ CLI shape (proposed):
    - prints a single copy/paste command for local laptop execution.
 3. `cocalc workspace app ssh-forward stop <session-id>`
    - optional if we manage background local helpers from CLI wrappers.
+4. `cocalc workspace app launch-native <app-id> --json`
+   - returns a generated local bootstrap command instead of a URL,
+   - includes platform/prerequisite metadata so UI and agent can explain what will happen.
 
 Agent workflow:
 
@@ -365,12 +408,14 @@ Agent workflow:
 3. If still failing, suggest SSH forwarding with explicit command.
 4. Return a short explanation:
    - "this app is not proxy-compatible; using direct SSH forwarding."
+5. For declared native apps, skip web-proxy steps entirely and return the generated local launch command.
 
 UI behavior:
 
 1. In app details/actions, add "Port Forward (SSH)".
 2. Show one-click copy command and brief trust/scope note.
 3. Keep this private by default and separate from public exposure controls.
+4. For native apps, use language such as "Launch on my computer" instead of "Open".
 
 Security/ops constraints:
 
@@ -378,6 +423,7 @@ Security/ops constraints:
 2. No new public URL is created by default.
 3. Log forwarding sessions in project-host activity state for auditability.
 4. Provide explicit stop/cleanup guidance for long-running forwards.
+5. Native launch helpers must remain thin wrappers around SSH/CLI setup and app launch, not arbitrary local installer scripts.
 
 ## 14. Static Site Mode
 
