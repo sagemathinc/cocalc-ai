@@ -82,6 +82,33 @@ const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
 const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
 const HEAD_REF = "HEAD";
 
+export function resolveThreadMetadataLookup({
+  messageThreadId,
+  threadRootMs,
+}: {
+  messageThreadId?: string;
+  threadRootMs?: number;
+}): {
+  threadLookupKey?: string;
+  threadId?: string;
+} {
+  const normalizedThreadId =
+    typeof messageThreadId === "string" && messageThreadId.trim().length > 0
+      ? messageThreadId.trim()
+      : undefined;
+  if (normalizedThreadId) {
+    return {
+      threadLookupKey: normalizedThreadId,
+      threadId: normalizedThreadId,
+    };
+  }
+  return {
+    threadLookupKey:
+      threadRootMs != null ? `${threadRootMs}` : undefined,
+    threadId: undefined,
+  };
+}
+
 
 const THREAD_STYLE_SINGLE: CSS = {
   marginLeft: "15px",
@@ -651,9 +678,13 @@ export default function Message({
     [is_viewers_message, renderedMessageValue],
   );
 
-  const threadKeyForSession = useMemo(
-    () => (threadRootMs != null ? `${threadRootMs}` : undefined),
-    [threadRootMs],
+  const threadLookup = useMemo(
+    () =>
+      resolveThreadMetadataLookup({
+        messageThreadId,
+        threadRootMs,
+      }),
+    [messageThreadId, threadRootMs],
   );
 
   const acpThreadId = useMemo(
@@ -662,16 +693,22 @@ export default function Message({
   );
 
   const threadCodexConfig = useMemo(() => {
-    if (threadKeyForSession == null) return undefined;
-    return actions?.getThreadMetadata(threadKeyForSession)?.acp_config ?? undefined;
-  }, [actions, threadKeyForSession]);
+    if (threadLookup.threadLookupKey == null) return undefined;
+    return (
+      actions?.getThreadMetadata(threadLookup.threadLookupKey, {
+        threadId: threadLookup.threadId,
+      })?.acp_config ?? undefined
+    );
+  }, [actions, threadLookup]);
 
   // Prefer the persisted sessionId on the thread root's acp_config; fall back
   // to the thread id we get from the ACP payload, then the thread key.
   const sessionIdForInterrupt = useMemo(
     () =>
-      threadCodexConfig?.sessionId ?? acpThreadId ?? threadKeyForSession,
-    [threadCodexConfig, acpThreadId, threadKeyForSession],
+      threadCodexConfig?.sessionId ??
+      acpThreadId ??
+      threadLookup.threadLookupKey,
+    [threadCodexConfig, acpThreadId, threadLookup],
   );
 
   const activityBasePath = useMemo(
