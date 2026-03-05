@@ -1079,7 +1079,9 @@ function FileRow({
   const commandLine = formatCommand(entry.command, entry.args);
   const scope = formatReadScope(entry);
   const sizeLabel =
-    typeof entry.bytes === "number" && entry.bytes > 0
+    shouldShowByteSize(entry) &&
+    typeof entry.bytes === "number" &&
+    entry.bytes > 0
       ? formatByteCount(entry.bytes)
       : undefined;
   const pathNode = (
@@ -1320,6 +1322,15 @@ function formatReadScope(entry: {
   return lineInfo ?? limitInfo;
 }
 
+function shouldShowByteSize(
+  entry: Extract<ActivityEntry, { kind: "file" }>,
+): boolean {
+  // Command-derived read events are heuristic and may carry stale/legacy byte
+  // counts. Prefer scope/path context instead of showing misleading sizes.
+  if (entry.operation === "read" && !!entry.command) return false;
+  return true;
+}
+
 // Convert Codex activity events into markdown for exports.
 export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
   const entries = normalizeEvents(events ?? []);
@@ -1377,7 +1388,11 @@ export function codexEventsToMarkdown(events: AcpLogStreamMessage[]): string {
               ? "Created"
               : "Wrote";
         const parts = [`- File: ${action} ${path}`];
-        if (typeof entry.bytes === "number" && entry.bytes > 0) {
+        if (
+          shouldShowByteSize(entry) &&
+          typeof entry.bytes === "number" &&
+          entry.bytes > 0
+        ) {
           parts.push(`(${formatByteCount(entry.bytes)})`);
         }
         const scope = formatReadScope(entry);
