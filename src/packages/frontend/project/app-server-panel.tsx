@@ -369,7 +369,7 @@ export function AppServerPanel({
   return (
     <div>
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
-        Create a managed app spec, start it, and open the proxied URL.
+        Create a managed app server spec, start it, and open the proxied URL.
       </Paragraph>
       <ErrorDisplay error={error} onClose={() => setError(undefined)} />
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
@@ -544,10 +544,10 @@ export function AppServerPanel({
           <Divider style={{ margin: "14px 0" }} />
         </>
       ) : null}
-      <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed apps</div>
+      <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed app servers</div>
       {loading ? <Spin /> : null}
       {!loading && rows.length === 0 ? (
-        <Alert type="info" showIcon message="No managed apps yet." />
+        <Alert type="info" showIcon message="No managed app servers yet." />
       ) : null}
       <Space direction="vertical" style={{ width: "100%" }}>
         {rows.map((row) => {

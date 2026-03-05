@@ -25,7 +25,8 @@ export function ProjectServers() {
           defaultMessage={`Run various notebook servers inside this project.
             They run in the same environment, have access to the same files,
             and stop when the project stops.
-            You can also <A>run your own servers</A>.`}
+            You can also <A>run your own web servers</A>.
+            For deployable service/static apps, use Managed App Servers below.`}
           values={{
             A: (c) => (
               <A href={"https://doc.cocalc.com/howto/webserver.html"}>{c}</A>

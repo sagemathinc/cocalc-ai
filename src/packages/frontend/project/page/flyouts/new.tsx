@@ -673,7 +673,7 @@ export function NewFlyout({
           ))}
           <NewFileButton
             key="flyout-app-managed-server"
-            name="App Server"
+            name="Managed App Server"
             icon="server"
             size="small"
             mode="secondary"

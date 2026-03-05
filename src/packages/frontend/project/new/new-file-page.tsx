@@ -705,7 +705,7 @@ export default function NewFilePage(props: Props) {
             ))}
             <NewFileButton
               key="app-managed-server"
-              name="App Server"
+              name="Managed App Server"
               icon="server"
               size="small"
               mode="secondary"
@@ -823,7 +823,7 @@ export default function NewFilePage(props: Props) {
         footer={null}
         width={920}
         destroyOnHidden
-        title="App Server"
+        title="Managed App Server"
       >
         <AppServerPanel project_id={project_id} />
       </Modal>

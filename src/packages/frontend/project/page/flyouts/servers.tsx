@@ -29,7 +29,8 @@ export function ServersFlyout({ project_id, wrap }) {
         </Title>
         <Paragraph>
           When launched, these servers run inside this project. They should open
-          up in a new browser tab, and get access all files in this project.
+          up in a new browser tab and get access to all files in this project.
+          For deployable service/static apps, use Managed App Servers below.
         </Paragraph>
         <Space orientation="vertical">
           {servers}

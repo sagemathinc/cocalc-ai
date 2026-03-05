@@ -760,7 +760,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.close_file(path);
   }
 
-  // Expects one of ['files', 'new', 'log', 'search', 'settings']
+  // Expects one of ['files', 'new', 'log', 'search', 'servers', 'settings']
   //            or a file_redux_name
   // Pushes to browser history
   // Updates the URL
@@ -778,10 +778,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   ): void => {
     const store = this.get_store();
     if (store == undefined) return; // project closed
-    if (key === "servers") {
-      // The dedicated Servers page was removed; launch/manage servers via +New.
-      key = "new";
-    }
     const prev_active_project_tab = store.get("active_project_tab");
     if (!opts.change_history && prev_active_project_tab === key) {
       // already active -- nothing further to do
@@ -839,6 +835,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             this.toAuxTabPath("search", store.get("current_path_abs") ?? "/"),
             "",
           );
+        }
+        break;
+
+      case "servers":
+        if (opts.change_history) {
+          this.push_state("servers", "");
         }
         break;
 
