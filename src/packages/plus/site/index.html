@@ -163,19 +163,23 @@
         <ul>
           <li>Downloads the platform-specific SEA binary.</li>
           <li>Downloads the minimal tools bundle (rg, fd, ouch).</li>
-          <li>Installs into <code>~/.local/share/cocalc-plus</code> (XDG aware).</li>
           <li>
-            Creates <code>~/.local/bin/cocalc-plus</code> and adds it to PATH if
-            needed.
+            Installs into <code>~/.local/share/cocalc-plus</code> on Linux, or
+            <code>~/Library/Application Support/cocalc-plus</code> on macOS.
+          </li>
+          <li>
+            Creates launcher at <code>~/.local/bin/cocalc-plus</code> on Linux,
+            or <code>~/Library/Application Support/cocalc-plus/bin/cocalc-plus</code>
+            on macOS, and adds it to PATH if needed.
           </li>
         </ul>
       </section>
 
       <section class="card">
         <h2>Uninstall</h2>
-        <p>Remove the install directory and launcher:</p>
+        <p>Remove the install directory and launcher (command auto-selected):</p>
         <div class="command-box">
-          <code>rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus</code>
+          <code id="uninstall-command"></code>
           <button id="copy-uninstall" type="button">Copy</button>
         </div>
         <p style="margin-top: 12px;">
@@ -209,8 +213,12 @@
         copyText(installCommand);
       });
 
+      const isMac = `${navigator.platform || ""}`.toLowerCase().includes("mac");
       const uninstallCommand =
-        "rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus";
+        isMac
+          ? 'rm -rf "$HOME/Library/Application Support/cocalc-plus"'
+          : "rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus";
+      document.getElementById("uninstall-command").innerText = uninstallCommand;
       document.getElementById("copy-uninstall").addEventListener("click", () => {
         copyText(uninstallCommand);
       });

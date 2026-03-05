@@ -42,11 +42,18 @@ load_config() {
   LITE_PORT="${LITE_PORT:-}"
   LITE_AUTH_TOKEN="${LITE_AUTH_TOKEN:-}"
   LITE_HOME="${LITE_HOME:-$scratch_default}"
+  local app_data_default
+  if [ "$(uname -s)" = "Darwin" ]; then
+    app_data_default="$LITE_HOME/Library/Application Support/cocalc-lite"
+  else
+    app_data_default="$LITE_HOME/.local/share/cocalc-lite"
+  fi
   LITE_CONNECTION_INFO="${LITE_CONNECTION_INFO:-$STATE_DIR/connection-info.json}"
   LITE_DEBUG="${LITE_DEBUG:-}"
   LITE_NODE_BIN="${LITE_NODE_BIN:-}"
   LITE_STDOUT_LOG="${LITE_STDOUT_LOG:-$STATE_DIR/lite.stdout.log}"
-  LITE_DB_PATH="$LITE_HOME/.local/share/cocalc-lite/hub.db"
+  LITE_APP_DATA_DIR="${LITE_APP_DATA_DIR:-$app_data_default}"
+  LITE_DB_PATH="${LITE_DB_PATH:-$LITE_APP_DATA_DIR/hub.db}"
 }
 
 resolve_node_bin() {
@@ -71,10 +78,30 @@ resolve_node_bin() {
 
 pid_looks_like_lite() {
   local pid="${1:-}"
-  if [ -z "$pid" ] || [ ! -r "/proc/$pid/cmdline" ]; then
+  if [ -z "$pid" ]; then
     return 1
   fi
-  tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q "packages/lite/bin/start.js"
+  local cmdline=""
+  if [ -r "/proc/$pid/cmdline" ]; then
+    # Linux
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  elif command -v ps >/dev/null 2>&1; then
+    # macOS/BSD fallback
+    cmdline="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+  fi
+  if [ -z "$cmdline" ]; then
+    return 1
+  fi
+  if printf "%s" "$cmdline" | grep -Fq "packages/lite/bin/start.js"; then
+    return 0
+  fi
+  # Support custom commands while still ensuring this PID is the lite daemon.
+  local lite_cmd_base
+  lite_cmd_base="$(basename "${LITE_CMD:-./packages/lite/bin/start.js}")"
+  if [ -n "$lite_cmd_base" ] && printf "%s" "$cmdline" | grep -Fq "$lite_cmd_base"; then
+    return 0
+  fi
+  return 1
 }
 
 is_running() {
@@ -135,7 +162,7 @@ start_daemon() {
   mkdir -p "$(dirname "$LITE_CONNECTION_INFO")"
   # Keep startup logs easy to reason about by clearing previous run output.
   local lite_debug_log
-  lite_debug_log="$LITE_HOME/.local/share/cocalc-lite/logs/log"
+  lite_debug_log="$LITE_APP_DATA_DIR/logs/log"
   mkdir -p "$(dirname "$lite_debug_log")"
   rm -f "$lite_debug_log"
   rm -f "$LITE_STDOUT_LOG"
@@ -256,6 +283,7 @@ LITE_PORT=$LITE_PORT
 LITE_AUTH_TOKEN=$LITE_AUTH_TOKEN
 LITE_HOME=$LITE_HOME
 LITE_CONNECTION_INFO=$LITE_CONNECTION_INFO
+LITE_APP_DATA_DIR=$LITE_APP_DATA_DIR
 LITE_DB_PATH=$LITE_DB_PATH
 LITE_DEBUG=$LITE_DEBUG
 LITE_NODE_BIN=$LITE_NODE_BIN

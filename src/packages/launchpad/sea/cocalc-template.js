@@ -37,9 +37,16 @@ function installWarningFilter() {
 }
 
 function defaultLaunchpadDataDir() {
-  const dataHome =
-    process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
-  return path.join(dataHome, "cocalc", "launchpad");
+  const home = os.homedir();
+  const xdgDataHome = process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
+  const preferred =
+    process.platform === "darwin" && !process.env.XDG_DATA_HOME
+      ? path.join(home, "Library", "Application Support", "cocalc-launchpad")
+      : path.join(xdgDataHome, "cocalc-launchpad");
+  const legacy = path.join(xdgDataHome, "cocalc", "launchpad");
+  if (fs.existsSync(preferred)) return preferred;
+  if (fs.existsSync(legacy)) return legacy;
+  return preferred;
 }
 
 function extractAssetsSync() {

@@ -1,12 +1,18 @@
 import { join } from "node:path";
 
-const LITE_DATA_DIR_SUFFIX = [".local", "share", "cocalc-lite"];
 const CONNECTION_INFO_FILENAME = "connection-info.json";
+
+function liteDataDirSuffix(): string[] {
+  if (process.platform === "darwin") {
+    return ["Library", "Application Support", "cocalc-lite"];
+  }
+  return [".local", "share", "cocalc-lite"];
+}
 
 function defaultLiteDataDir(): string {
   const home = process.env.HOME?.trim();
   const base = home && home.length > 0 ? home : process.cwd();
-  return join(base, ...LITE_DATA_DIR_SUFFIX);
+  return join(base, ...liteDataDirSuffix());
 }
 
 // Canonical on-disk location for lite startup connection metadata.

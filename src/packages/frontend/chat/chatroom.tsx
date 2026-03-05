@@ -51,6 +51,7 @@ import {
   type AgentSessionRecord,
 } from "./agent-session-index";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
+import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -332,9 +333,39 @@ export function ChatPanel({
   );
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
+  const [composerLoopConfig, setComposerLoopConfig] = useState<
+    AcpLoopConfig | undefined
+  >(undefined);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
+  );
+  const selectedThreadMetadata = useMemo(
+    () =>
+      selectedThreadKey
+        ? actions.getThreadMetadata?.(selectedThreadKey, {
+            threadId: selectedThreadId,
+          })
+        : undefined,
+    [actions, selectedThreadKey, selectedThreadId, docVersion],
+  );
+  const isSelectedThreadCodex =
+    selectedThreadMetadata?.agent_kind === "acp" ||
+    (isSelectedThreadAI &&
+      actions.isCodexThread?.(
+        selectedThreadDate instanceof Date ? selectedThreadDate : undefined,
+      ) === true);
+
+  useEffect(() => {
+    // Loop is intentionally opt-in per send to avoid accidental repeated runs.
+    setComposerLoopConfig(undefined);
+  }, [selectedThreadKey]);
+
+  const handleLoopConfigChange = useCallback(
+    (config?: AcpLoopConfig) => {
+      setComposerLoopConfig(config);
+    },
+    [],
   );
 
   const selectedThreadLookupKey = selectedThreadId;
@@ -753,7 +784,17 @@ export function ChatPanel({
       // Brand new threads should always switch to the newly created thread.
       preserveSelectedThread:
         isCombinedFeedSelected && (reply_to != null || reply_thread_id != null),
+      acp_loop_config:
+        composerLoopConfig?.enabled === true &&
+        (isSelectedThreadCodex ||
+          (!reply_to &&
+            !reply_thread_id &&
+            newThreadSetup.agentMode === "codex"))
+          ? composerLoopConfig
+          : undefined,
     });
+    // Safety: loop should default back to off after each send.
+    setComposerLoopConfig(undefined);
     const threadKey =
       !reply_to && !reply_thread_id && timeStamp
         ? (() => {
@@ -981,6 +1022,9 @@ export function ChatPanel({
         onComposerFocusChange={setComposerFocused}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
+        showLoopControls={isSelectedThreadCodex}
+        loopConfig={composerLoopConfig}
+        onLoopConfigChange={handleLoopConfigChange}
       />
     </div>
   );

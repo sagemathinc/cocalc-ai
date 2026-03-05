@@ -4,7 +4,7 @@ import { path_split } from "@cocalc/util/misc";
 import { console_init_filename, len } from "@cocalc/util/misc";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { getLogger } from "@cocalc/project/logger";
-import { readlink, realpath, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { dstream, type DStream } from "@cocalc/project/conat/sync";
 import {
   createBrowserClient,
@@ -20,6 +20,7 @@ import { SpoolWatcher } from "@cocalc/backend/spool-watcher";
 import { data } from "@cocalc/backend/data";
 import { randomId } from "@cocalc/conat/names";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
+import { terminalCwdForPid } from "./cwd";
 
 const logger = getLogger("project:conat:terminal:session");
 
@@ -179,30 +180,7 @@ export class Session {
     if (this.pty == null) {
       return;
     }
-    if (process.platform !== "linux") {
-      return;
-    }
-    // we reply with the current working directory of the underlying terminal process,
-    // which is why we use readlink and proc below.
-    const pid = this.pty.pid;
-    // [hsy/dev] wrapping in realpath, because I had the odd case, where the project's
-    // home included a symlink, hence the "startsWith" below didn't remove the home dir.
-    let home = this.getHome();
-    try {
-      home = await realpath(home);
-    } catch {
-      // keep original HOME if realpath fails
-    }
-    let cwd: string;
-    try {
-      cwd = await readlink(`/proc/${pid}/cwd`);
-    } catch {
-      return;
-    }
-    // try to send back a relative path, because the webapp does not
-    // understand absolute paths
-    const path = cwd.startsWith(home) ? cwd.slice(home.length + 1) : cwd;
-    return path;
+    return await terminalCwdForPid(this.pty.pid, this.getHome());
   };
 
   createStream = async () => {

@@ -34,6 +34,13 @@ function construct_path(): string {
   // we can safely assume that PATH is defined
   const entries = env.PATH!.split(":");
   const home = env.HOME ?? "/home/user";
+  const xdgBinHome = env.XDG_BIN_HOME?.trim();
+  if (xdgBinHome) {
+    entries.unshift(xdgBinHome);
+  }
+  if (process.platform === "darwin") {
+    entries.unshift(`${home}/Library/Application Support/cocalc-plus/bin`);
+  }
   entries.unshift(`${home}/.local/bin`);
   entries.unshift(`${home}/bin`);
   return entries.join(":");

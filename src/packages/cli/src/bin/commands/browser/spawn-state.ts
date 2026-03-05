@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -57,18 +58,33 @@ function cookieNameFor(apiUrl: string, name: string): string {
   return basePathCookieName({ basePath, name });
 }
 
-function matchesSpawnMarker(session: BrowserSessionInfo, marker: string): boolean {
-  const url = `${session.url ?? ""}`.trim();
-  if (!url) return false;
+export function spawnMarkerFromUrl(url: string | undefined): string | undefined {
+  const clean = `${url ?? ""}`.trim();
+  if (!clean) return undefined;
   try {
-    const parsed = new URL(url);
-    if (parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) === marker) {
-      return true;
-    }
+    const parsed = new URL(clean);
+    const marker = `${parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) ?? ""}`.trim();
+    return marker || undefined;
   } catch {
-    // fall through to substring check
+    const match = clean.match(
+      new RegExp(`[?&]${SPAWN_MARKER_QUERY_PARAM}=([^&#]+)`),
+    );
+    if (!match?.[1]) return undefined;
+    try {
+      return decodeURIComponent(match[1]).trim() || undefined;
+    } catch {
+      return `${match[1]}`.trim() || undefined;
+    }
   }
-  return url.includes(`${SPAWN_MARKER_QUERY_PARAM}=${encodeURIComponent(marker)}`);
+}
+
+export function sessionMatchesSpawnMarker(
+  session: BrowserSessionInfo,
+  marker: string,
+): boolean {
+  const clean = `${marker ?? ""}`.trim();
+  if (!clean) return false;
+  return spawnMarkerFromUrl(`${session.url ?? ""}`) === clean;
 }
 
 export function nowIso(): string {
@@ -287,7 +303,9 @@ export async function waitForSpawnedSession({
     const sessions = (await ctx.hub.system.listBrowserSessions({
       include_stale: true,
     })) as BrowserSessionInfo[];
-    const match = (sessions ?? []).find((s) => matchesSpawnMarker(s, marker) && !s.stale);
+    const match = (sessions ?? []).find(
+      (s) => sessionMatchesSpawnMarker(s, marker) && !s.stale,
+    );
     if (match) return match;
     if (Date.now() - started > timeoutMs) {
       throw new Error("timed out waiting for spawned browser session heartbeat");
@@ -325,6 +343,104 @@ export async function terminateSpawnedProcess({
   }
   await sleep(200);
   return { terminated: !isProcessRunning(pid), killed: true };
+}
+
+export type SpawnStateReapResult = {
+  spawn_id: string;
+  state_file: string;
+  daemon_pid: number;
+  browser_pid: number;
+  daemon_was_running: boolean;
+  browser_was_running: boolean;
+  daemon_terminated: boolean;
+  daemon_force_killed: boolean;
+  browser_terminated: boolean;
+  browser_force_killed: boolean;
+  state_file_removed: boolean;
+};
+
+export async function reapSpawnStates({
+  timeoutMs,
+  stopRunning,
+  removeStateFiles,
+}: {
+  timeoutMs: number;
+  stopRunning: boolean;
+  removeStateFiles: boolean;
+}): Promise<SpawnStateReapResult[]> {
+  const rows: SpawnStateReapResult[] = [];
+  const entries = listSpawnStates();
+  for (const { file, state } of entries) {
+    const daemonPid = Number(state.pid);
+    const browserPid = Number(state.browser_pid ?? 0);
+    const daemonWasRunning = isProcessRunning(daemonPid);
+    const browserWasRunning = isProcessRunning(browserPid);
+    let daemonTerminated = false;
+    let daemonForceKilled = false;
+    let browserTerminated = false;
+    let browserForceKilled = false;
+
+    if (daemonWasRunning && stopRunning) {
+      const daemonStop = await terminateSpawnedProcess({
+        pid: daemonPid,
+        timeoutMs,
+      });
+      daemonTerminated = daemonStop.terminated;
+      daemonForceKilled = daemonStop.killed;
+    }
+    const daemonRunningAfter = isProcessRunning(daemonPid);
+    if (
+      browserPid > 0 &&
+      isProcessRunning(browserPid) &&
+      (stopRunning || !daemonRunningAfter)
+    ) {
+      const browserStop = await terminateSpawnedProcess({
+        pid: browserPid,
+        timeoutMs,
+      });
+      browserTerminated = browserStop.terminated;
+      browserForceKilled = browserStop.killed;
+    }
+
+    const daemonFinalRunning = isProcessRunning(daemonPid);
+    const browserFinalRunning = isProcessRunning(browserPid);
+    const fullyStopped = !daemonFinalRunning && !browserFinalRunning;
+    let stateFileRemoved = false;
+    if (fullyStopped) {
+      const stoppedState: SpawnStateRecord = {
+        ...state,
+        status: "stopped",
+        reason: stopRunning ? "reap-stop-running" : "reap-orphan-cleanup",
+        stopped_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      if (removeStateFiles) {
+        try {
+          unlinkSync(file);
+          stateFileRemoved = true;
+        } catch {
+          writeSpawnState(file, stoppedState);
+        }
+      } else {
+        writeSpawnState(file, stoppedState);
+      }
+    }
+
+    rows.push({
+      spawn_id: state.spawn_id,
+      state_file: file,
+      daemon_pid: daemonPid,
+      browser_pid: browserPid,
+      daemon_was_running: daemonWasRunning,
+      browser_was_running: browserWasRunning,
+      daemon_terminated: daemonTerminated,
+      daemon_force_killed: daemonForceKilled,
+      browser_terminated: browserTerminated,
+      browser_force_killed: browserForceKilled,
+      state_file_removed: stateFileRemoved,
+    });
+  }
+  return rows;
 }
 
 export function listSpawnStates(): Array<{ file: string; state: SpawnStateRecord }> {

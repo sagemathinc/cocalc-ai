@@ -17,7 +17,7 @@
     "app": "pnpm run build && node dist/main.js",
     "daemon:start": "node scripts/daemon-start.js",
     "daemon:stop": "node scripts/daemon-stop.js",
-    "build:bundle": "cd sea && ./build-bundle.sh && cd ../build && OS=$(uname -s | tr '[:upper:]' '[:lower:]') && if [ \"$OS\" != \"linux\" ]; then echo \"bundle build is linux-only\" >&2; exit 1; fi && tar Jcvf bundle-linux.tar.xz bundle",
+    "build:bundle": "cd sea && ./build-bundle.sh && cd ../build && tar Jcvf bundle-linux.tar.xz bundle",
     "run:bundle": "node ./build/bundle/bundle/index.js",
     "publish:bundle": "cd sea && ./publish-bundle.sh",
     "build:tarball": "pnpm run build:bundle",

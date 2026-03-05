@@ -69,8 +69,18 @@ function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
 }
 
+function isMacLikeClient(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const platform = `${navigator.platform ?? ""}`.toLowerCase();
+  return platform.includes("mac");
+}
+
 function navigatorChatPath(accountId?: string): string {
-  if (lite) return ".local/share/cocalc/navigator.chat";
+  if (lite) {
+    return isMacLikeClient()
+      ? "Library/Application Support/cocalc/navigator.chat"
+      : ".local/share/cocalc/navigator.chat";
+  }
   const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
   return `.local/share/cocalc/navigator-${key}.chat`;
 }

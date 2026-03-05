@@ -2,8 +2,17 @@
 // and opens a browser window pointed at the local server.
 const { app, BrowserWindow, Menu } = require("electron");
 const { join } = require("path");
+const os = require("os");
 
 let port; // set after CoCalc Lite starts
+
+function defaultPlusDataDir() {
+  const home = process.env.HOME || os.homedir() || process.cwd();
+  if (process.platform === "darwin") {
+    return join(home, "Library", "Application Support", "cocalc-plus", "data");
+  }
+  return join(home, ".local", "share", "cocalc-plus", "data");
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -92,12 +101,8 @@ function buildMenu() {
 async function main() {
   // Spin up CoCalc Lite and Electron
   process.env.PORT ??= await require("@cocalc/backend/get-port").default();
-  process.env.DATA = join(
-    process.env.HOME ?? process.cwd(),
-    ".local",
-    "share",
-    "cocalc-lite",
-  );
+  process.env.COCALC_DATA_DIR ??= defaultPlusDataDir();
+  process.env.DATA ??= process.env.COCALC_DATA_DIR;
 
   const startCoCalcLite = require("@cocalc/lite/main").main;
 

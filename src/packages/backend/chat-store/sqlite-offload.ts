@@ -3,7 +3,9 @@
  *
  * What this module implements:
  * 1. Persistent backend store for older chat rows in a single SQLite DB
- *    (default: ~/.local/share/cocalc/chats/offload-v1.sqlite3), keyed by
+ *    (default on Linux: ~/.local/share/cocalc/chats/offload-v1.sqlite3,
+ *     default on macOS: ~/Library/Application Support/cocalc/chats/offload-v1.sqlite3),
+ *    keyed by
  *    absolute chat file path (chat_registry.chat_path).
  * 2. Rotation/compaction of large `.chat` JSONL files:
  *    - keeps a bounded "head" in the chat file (recent + generating rows),
@@ -269,6 +271,16 @@ function resolveDbPath(override?: string): string {
   const envPath = `${process.env.COCALC_CHAT_OFFLOAD_DB ?? ""}`.trim();
   if (envPath) return path.resolve(envPath);
   const home = `${process.env.HOME ?? ""}`.trim() || process.cwd();
+  if (process.platform === "darwin") {
+    return path.join(
+      home,
+      "Library",
+      "Application Support",
+      "cocalc",
+      "chats",
+      "offload-v1.sqlite3",
+    );
+  }
   return path.join(home, ".local", "share", "cocalc", "chats", "offload-v1.sqlite3");
 }
 

@@ -44,6 +44,7 @@ type SpawnDaemonConfig = {
 type SpawnDaemonState = {
   spawn_id: string;
   pid: number;
+  browser_pid?: number;
   status: "starting" | "ready" | "stopping" | "stopped" | "failed";
   target_url: string;
   created_at: string;
@@ -308,6 +309,7 @@ async function main(): Promise<void> {
     launchOpts.executablePath = config.executable_path;
   }
   const browser = await playwright.chromium.launch(launchOpts);
+  const browserProcessPid = Number(browser?.process?.()?.pid ?? 0);
   const context = await browser.newContext();
   if (config.cookies?.length) {
     await context.addCookies(config.cookies);
@@ -330,6 +332,7 @@ async function main(): Promise<void> {
     status: "ready",
     ready_at: nowIso(),
     page_url: page.url(),
+    ...(browserProcessPid > 0 ? { browser_pid: browserProcessPid } : {}),
     ipc_dir: ipcDir,
   });
 

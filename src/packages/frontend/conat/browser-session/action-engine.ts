@@ -744,7 +744,9 @@ export async function executeBrowserAction({
     const before = `${location.href ?? ""}`;
     const { element } = await waitForSelectorState({
       selector,
-      state: "visible",
+      // Terminals (e.g. xterm helper textarea) are intentionally hidden but
+      // still type targets. Requiring "visible" makes type actions time out.
+      state: "attached",
       timeout_ms,
       poll_ms: 50,
     });
@@ -935,7 +937,9 @@ export async function executeBrowserAction({
     const clear = !!action.clear;
     const { element } = await waitForSelectorState({
       selector,
-      state: "visible",
+      // Some valid typing targets (notably xterm helper textarea) are hidden by
+      // design. "attached" keeps terminal automation working.
+      state: "attached",
       timeout_ms,
       poll_ms: 50,
     });

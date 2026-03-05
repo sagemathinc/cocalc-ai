@@ -279,6 +279,7 @@ export type PlaywrightDaemonConfig = {
 export type SpawnStateRecord = {
   spawn_id: string;
   pid: number;
+  browser_pid?: number;
   status: "starting" | "ready" | "stopping" | "stopped" | "failed";
   target_url: string;
   created_at: string;
@@ -326,6 +327,9 @@ export type BrowserProfileSelection = {
   config: AuthConfig;
   profile: string;
   browser_id?: string;
+  browser_id_scoped?: string;
+  browser_id_global?: string;
+  api_scope?: string;
 };
 
 export type BrowserSessionRegisterUtils = {
@@ -334,6 +338,7 @@ export type BrowserSessionRegisterUtils = {
     deps: BrowserCommandDeps;
     command: Command;
     browser_id?: string;
+    apiBaseUrl?: string;
   }) => { profile: string; browser_id?: string };
   resolveBrowserSession: (
     sessions: BrowserSessionInfo[],
@@ -372,6 +377,25 @@ export type BrowserSessionRegisterUtils = {
     pid: number;
     timeoutMs: number;
   }) => Promise<{ terminated: boolean; killed: boolean }>;
+  reapSpawnStates: (opts: {
+    timeoutMs: number;
+    stopRunning: boolean;
+    removeStateFiles: boolean;
+  }) => Promise<
+    Array<{
+      spawn_id: string;
+      state_file: string;
+      daemon_pid: number;
+      browser_pid: number;
+      daemon_was_running: boolean;
+      browser_was_running: boolean;
+      daemon_terminated: boolean;
+      daemon_force_killed: boolean;
+      browser_terminated: boolean;
+      browser_force_killed: boolean;
+      state_file_removed: boolean;
+    }>
+  >;
   listSpawnStates: () => Array<{ file: string; state: SpawnStateRecord }>;
   resolveSpawnStateById: (
     id: string,
@@ -476,6 +500,76 @@ export type BrowserActionRegisterUtils = {
     value: unknown,
     label: "block" | "inline",
   ) => "start" | "center" | "end" | "nearest";
+  durationToMs: (value: unknown, fallbackMs: number) => number;
+};
+
+export type BrowserHarnessRegisterUtils = {
+  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  browserHintFromOption: (value: unknown) => string | undefined;
+  chooseBrowserSession: (opts: {
+    ctx: BrowserCommandContext;
+    browserHint?: string;
+    fallbackBrowserId?: string;
+    requireDiscovery?: boolean;
+    sessionProjectId?: string;
+    activeOnly?: boolean;
+  }) => Promise<BrowserSessionInfo>;
+  resolveTargetProjectId: (opts: {
+    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    ctx: BrowserCommandContext;
+    workspace?: string;
+    projectId?: string;
+    sessionInfo: BrowserSessionInfo;
+  }) => Promise<string>;
+  resolveBrowserPolicyAndPosture: (opts: {
+    posture?: string;
+    policyFile?: string;
+    allowRawExec?: boolean;
+    apiBaseUrl?: string;
+  }) => Promise<{
+    posture: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }>;
+  sessionTargetContext: (
+    ctx: BrowserCommandContext,
+    sessionInfo: BrowserSessionInfo,
+    project_id?: string,
+  ) => Record<string, unknown>;
+  durationToMs: (value: unknown, fallbackMs: number) => number;
+};
+
+export type BrowserInspectRegisterUtils = {
+  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  browserHintFromOption: (value: unknown) => string | undefined;
+  chooseBrowserSession: (opts: {
+    ctx: BrowserCommandContext;
+    browserHint?: string;
+    fallbackBrowserId?: string;
+    requireDiscovery?: boolean;
+    sessionProjectId?: string;
+    activeOnly?: boolean;
+  }) => Promise<BrowserSessionInfo>;
+  resolveTargetProjectId: (opts: {
+    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    ctx: BrowserCommandContext;
+    workspace?: string;
+    projectId?: string;
+    sessionInfo: BrowserSessionInfo;
+  }) => Promise<string>;
+  resolveBrowserPolicyAndPosture: (opts: {
+    posture?: string;
+    policyFile?: string;
+    allowRawExec?: boolean;
+    apiBaseUrl?: string;
+  }) => Promise<{
+    posture: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }>;
+  sessionTargetContext: (
+    ctx: BrowserCommandContext,
+    sessionInfo: BrowserSessionInfo,
+    project_id?: string,
+  ) => Record<string, unknown>;
   durationToMs: (value: unknown, fallbackMs: number) => number;
 };
 

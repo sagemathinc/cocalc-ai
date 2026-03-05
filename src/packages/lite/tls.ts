@@ -13,7 +13,14 @@ export function resolveCertDir(): string {
   }
   const home = os.homedir();
   const xdg = process.env.XDG_CONFIG_HOME || join(home, ".config");
-  return join(xdg, "cocalc-lite", "devcert");
+  const preferred =
+    process.platform === "darwin" && !process.env.XDG_CONFIG_HOME
+      ? join(home, "Library", "Application Support", "cocalc-lite", "devcert")
+      : join(xdg, "cocalc-lite", "devcert");
+  const legacy = join(home, ".config", "cocalc-lite", "devcert");
+  if (fs.existsSync(preferred)) return preferred;
+  if (fs.existsSync(legacy)) return legacy;
+  return preferred;
 }
 
 function ensureDir(p: string) {

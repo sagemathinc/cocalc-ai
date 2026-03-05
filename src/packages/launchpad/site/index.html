@@ -158,19 +158,24 @@
         <ul>
           <li>Downloads the platform-specific Launchpad manifest.</li>
           <li>Downloads and verifies the corresponding SEA artifact.</li>
-          <li>Installs into <code>~/.local/share/cocalc-launchpad</code> (XDG aware).</li>
           <li>
-            Creates <code>~/.local/bin/cocalc-launchpad</code> and adds it to PATH if
-            needed.
+            Installs into <code>~/.local/share/cocalc-launchpad</code> on Linux,
+            or <code>~/Library/Application Support/cocalc-launchpad</code> on macOS.
+          </li>
+          <li>
+            Creates launcher at <code>~/.local/bin/cocalc-launchpad</code> on Linux,
+            or
+            <code>~/Library/Application Support/cocalc-launchpad/bin/cocalc-launchpad</code>
+            on macOS, and adds it to PATH if needed.
           </li>
         </ul>
       </section>
 
       <section class="card">
         <h2>Uninstall</h2>
-        <p>Remove the install directory and launcher:</p>
+        <p>Remove the install directory and launcher (command auto-selected):</p>
         <div class="command-box">
-          <code>rm -rf ~/.local/share/cocalc-launchpad ~/.local/bin/cocalc-launchpad</code>
+          <code id="uninstall-command"></code>
           <button id="copy-uninstall" type="button">Copy</button>
         </div>
       </section>
@@ -199,8 +204,12 @@
         copyText(installCommand);
       });
 
+      const isMac = `${navigator.platform || ""}`.toLowerCase().includes("mac");
       const uninstallCommand =
-        "rm -rf ~/.local/share/cocalc-launchpad ~/.local/bin/cocalc-launchpad";
+        isMac
+          ? 'rm -rf "$HOME/Library/Application Support/cocalc-launchpad"'
+          : "rm -rf ~/.local/share/cocalc-launchpad ~/.local/bin/cocalc-launchpad";
+      document.getElementById("uninstall-command").innerText = uninstallCommand;
       document.getElementById("copy-uninstall").addEventListener("click", () => {
         copyText(uninstallCommand);
       });

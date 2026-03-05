@@ -1,5 +1,9 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpChatContext,
+  AcpLoopConfig,
+  AcpLoopState,
+} from "@cocalc/conat/ai/acp/types";
 import {
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
@@ -102,6 +106,34 @@ function maybeDecorateQueuedPrompt({
     )} while another turn was active, and is being sent automatically now.`,
     "",
     prompt,
+  ].join("\n");
+}
+
+function maybeDecorateLoopPrompt({
+  prompt,
+  loopConfig,
+}: {
+  prompt: string;
+  loopConfig?: AcpLoopConfig;
+}): string {
+  if (loopConfig?.enabled !== true) return prompt;
+  const maxTurns = Number(loopConfig.max_turns ?? 8);
+  const maxWallMinutes = Math.max(
+    1,
+    Math.round(Number(loopConfig.max_wall_time_ms ?? 30 * 60_000) / 60_000),
+  );
+  return [
+    prompt,
+    "",
+    "System loop contract (required):",
+    `This run is in autonomous loop mode (max turns: ${maxTurns}, max wall time: ${maxWallMinutes} minutes).`,
+    "At the END of your response, output exactly one JSON object in a ```json fenced block with this schema:",
+    '{"loop":{"rerun":true|false,"needs_human":true|false,"next_prompt":"string","blocker":"string","confidence":0.0-1.0}}',
+    "Rules:",
+    "- If rerun=true and needs_human=false, set next_prompt to the exact next instruction for the next iteration.",
+    "- If done, set rerun=false.",
+    "- If human input is needed, set needs_human=true and explain blocker.",
+    "- Do not omit the JSON contract block.",
   ].join("\n");
 }
 
@@ -285,6 +317,21 @@ export async function processAcpLLM({
   const threadMeta = actions.getThreadMetadata?.(thread_id, {
     threadId: thread_id,
   });
+  const loopConfigFromMessage = field<AcpLoopConfig>(
+    message as any,
+    "acp_loop_config",
+  );
+  const loopStateFromMessage = field<AcpLoopState>(
+    message as any,
+    "acp_loop_state",
+  );
+  const loopConfig = loopConfigFromMessage ?? threadMeta?.loop_config;
+  const loopState =
+    loopStateFromMessage ??
+    (typeof threadMeta?.loop_state?.loop_id === "string" &&
+    threadMeta.loop_state.loop_id.trim()
+      ? (threadMeta.loop_state as AcpLoopState)
+      : undefined);
   const threadRootDate = (() => {
     const byMessage =
       typeof message.reply_to === "string" ? new Date(message.reply_to) : undefined;
@@ -369,6 +416,10 @@ export async function processAcpLLM({
         queuedAtMs: queueItem.queuedAtMs,
         sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
       });
+      const promptForRunWithLoop = maybeDecorateLoopPrompt({
+        prompt: promptForRun,
+        loopConfig,
+      });
       // Generate a stable assistant-reply key for this turn, but do NOT write any
       // corresponding chat row here. The backend is the sole writer of the assistant
       // reply row (avoids frontend/backend sync races on the same row).
@@ -393,6 +444,8 @@ export async function processAcpLLM({
         message_id,
         reply_to_message_id,
         sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
+        loop_config: loopConfig,
+        loop_state: loopState,
       });
       let runtimeEnv: Record<string, string> | undefined;
       try {
@@ -413,7 +466,7 @@ export async function processAcpLLM({
         try {
           const stream = await webapp_client.conat_client.streamAcp({
             project_id,
-            prompt: promptForRun,
+            prompt: promptForRunWithLoop,
             session_id: sessionKey,
             config: buildAcpConfig({
               path,
@@ -648,6 +701,8 @@ function buildChatMetadata({
   message_id,
   reply_to_message_id,
   sendMode,
+  loop_config,
+  loop_state,
 }: {
   project_id?: string;
   path?: string;
@@ -660,6 +715,8 @@ function buildChatMetadata({
   message_id?: string;
   reply_to_message_id?: string;
   sendMode?: "immediate";
+  loop_config?: AcpLoopConfig;
+  loop_state?: AcpLoopState;
 }): AcpChatContext {
   if (!project_id) {
     throw new Error("Codex requires a project context to run");
@@ -682,5 +739,7 @@ function buildChatMetadata({
     message_id,
     reply_to_message_id,
     send_mode: sendMode,
+    loop_config,
+    loop_state,
   };
 }

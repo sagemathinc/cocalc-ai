@@ -9,6 +9,13 @@ import type { Command } from "commander";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import { isValidUUID } from "@cocalc/util/misc";
 import { normalizeBrowserId } from "./parse-format";
+import {
+  nowIso,
+  resolveSpawnStateByBrowserId,
+  sessionMatchesSpawnMarker,
+  spawnMarkerFromUrl,
+  writeSpawnState,
+} from "./spawn-state";
 import type {
   BrowserCommandContext,
   BrowserCommandDeps,
@@ -28,6 +35,16 @@ function directBrowserSessionInfo(browser_id: string): BrowserSessionInfo {
     created_at: now,
     updated_at: now,
   };
+}
+
+function normalizeApiScope(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 export function browserHintFromOption(value: unknown): string | undefined {
@@ -147,14 +164,38 @@ export function loadProfileSelection(
   const path = deps.authConfigPath(process.env);
   const config = deps.loadAuthConfig(path);
   const profile = deps.selectedProfileName(globals, config, process.env);
-  const browser_id = normalizeBrowserId(config?.profiles?.[profile]?.browser_id);
-  return { path, config, profile, browser_id };
+  const profileData = config?.profiles?.[profile];
+  const apiScope =
+    normalizeApiScope(globals.api) ??
+    normalizeApiScope(process.env.COCALC_API_URL) ??
+    normalizeApiScope(profileData?.api);
+  const browserIdsByApi =
+    profileData?.browser_ids_by_api &&
+    typeof profileData.browser_ids_by_api === "object" &&
+    !Array.isArray(profileData.browser_ids_by_api)
+      ? profileData.browser_ids_by_api
+      : undefined;
+  const browserIdScoped = apiScope
+    ? normalizeBrowserId(browserIdsByApi?.[apiScope])
+    : undefined;
+  const browserIdGlobal = normalizeBrowserId(profileData?.browser_id);
+  const browser_id = browserIdScoped ?? browserIdGlobal;
+  return {
+    path,
+    config,
+    profile,
+    browser_id,
+    browser_id_scoped: browserIdScoped,
+    browser_id_global: browserIdGlobal,
+    api_scope: apiScope,
+  };
 }
 
 export function saveProfileBrowserId({
   deps,
   command,
   browser_id,
+  apiBaseUrl,
 }: {
   deps: Pick<
     BrowserCommandDeps,
@@ -166,14 +207,39 @@ export function saveProfileBrowserId({
   >;
   command: Command;
   browser_id?: string;
+  apiBaseUrl?: string;
 }): { profile: string; browser_id?: string } {
   const { path, config, profile } = loadProfileSelection(deps, command);
   const profileData = { ...(config.profiles?.[profile] ?? {}) };
+  const apiScope =
+    normalizeApiScope(apiBaseUrl) ??
+    normalizeApiScope(process.env.COCALC_API_URL) ??
+    normalizeApiScope(profileData.api);
+
   if (browser_id) {
     profileData.browser_id = browser_id;
   } else {
     delete profileData.browser_id;
   }
+  const currentScoped =
+    profileData.browser_ids_by_api &&
+    typeof profileData.browser_ids_by_api === "object" &&
+    !Array.isArray(profileData.browser_ids_by_api)
+      ? { ...profileData.browser_ids_by_api }
+      : {};
+  if (apiScope) {
+    if (browser_id) {
+      currentScoped[apiScope] = browser_id;
+    } else {
+      delete currentScoped[apiScope];
+    }
+  }
+  if (Object.keys(currentScoped).length > 0) {
+    profileData.browser_ids_by_api = currentScoped;
+  } else {
+    delete profileData.browser_ids_by_api;
+  }
+
   config.current_profile = profile;
   config.profiles = config.profiles ?? {};
   config.profiles[profile] = profileData;
@@ -207,33 +273,92 @@ export async function chooseBrowserSession({
     return sessions;
   };
 
+  const remapSpawnedSessionByHint = async (
+    hint: string,
+  ): Promise<BrowserSessionInfo | undefined> => {
+    const spawned = resolveSpawnStateByBrowserId(hint);
+    if (!spawned) return undefined;
+    const marker =
+      spawnMarkerFromUrl(spawned.state.target_url) ??
+      spawnMarkerFromUrl(spawned.state.session_url);
+    if (!marker) return undefined;
+    const match = (await getSessions()).find(
+      (s) => !s.stale && sessionMatchesSpawnMarker(s, marker),
+    );
+    if (!match) return undefined;
+    if (`${spawned.state.browser_id ?? ""}`.trim() !== `${match.browser_id ?? ""}`.trim()) {
+      writeSpawnState(spawned.file, {
+        ...spawned.state,
+        browser_id: match.browser_id,
+        session_url: `${match.url ?? ""}`.trim() || undefined,
+        updated_at: nowIso(),
+      });
+    }
+    return match;
+  };
+
+  const remapSessionByMarker = async (
+    marker: string | undefined,
+  ): Promise<BrowserSessionInfo | undefined> => {
+    const clean = `${marker ?? ""}`.trim();
+    if (!clean) return undefined;
+    return (await getSessions()).find(
+      (s) => !s.stale && sessionMatchesSpawnMarker(s, clean),
+    );
+  };
+
   const explicitHint = normalizeBrowserId(browserHint);
   if (
     explicitHint &&
     !requireDiscovery &&
     isLikelyExactBrowserId(explicitHint) &&
     !activeOnly &&
-    !`${sessionProjectId ?? ""}`.trim()
+    !`${sessionProjectId ?? ""}`.trim() &&
+    !resolveSpawnStateByBrowserId(explicitHint)
   ) {
     return directBrowserSessionInfo(explicitHint);
   }
   if (explicitHint) {
-    return resolveBrowserSession(await getSessions(), explicitHint);
+    try {
+      const resolved = resolveBrowserSession(await getSessions(), explicitHint);
+      if (!resolved.stale) return resolved;
+      const remappedByRowMarker = await remapSessionByMarker(
+        spawnMarkerFromUrl(`${resolved.url ?? ""}`),
+      );
+      if (remappedByRowMarker) return remappedByRowMarker;
+      const remapped = await remapSpawnedSessionByHint(explicitHint);
+      if (remapped) return remapped;
+      throw new Error(`browser session '${explicitHint}' is stale/inactive`);
+    } catch (err) {
+      const remapped = await remapSpawnedSessionByHint(explicitHint);
+      if (remapped) return remapped;
+      const msg = `${(err as { message?: string } | undefined)?.message ?? ""}`.trim();
+      if (msg) {
+        throw err;
+      }
+      throw new Error(`browser session '${explicitHint}' not found`);
+    }
   }
   const savedHint = normalizeBrowserId(fallbackBrowserId);
   if (
     savedHint &&
     !requireDiscovery &&
     !activeOnly &&
-    !`${sessionProjectId ?? ""}`.trim()
+    !`${sessionProjectId ?? ""}`.trim() &&
+    !resolveSpawnStateByBrowserId(savedHint)
   ) {
     return directBrowserSessionInfo(savedHint);
   }
   const resolvedSessions = await getSessions();
   if (savedHint) {
-    const saved = resolveBrowserSession(resolvedSessions, savedHint);
-    if (!saved.stale) {
-      return saved;
+    try {
+      const saved = resolveBrowserSession(resolvedSessions, savedHint);
+      if (!saved.stale) {
+        return saved;
+      }
+    } catch {
+      const remapped = await remapSpawnedSessionByHint(savedHint);
+      if (remapped) return remapped;
     }
   }
   const active = resolvedSessions.filter((s) => !s.stale);

@@ -22,6 +22,10 @@ import type {
   AcpStreamMessage,
   AcpStreamEvent,
   AcpChatContext,
+  AcpLoopConfig,
+  AcpLoopContractDecision,
+  AcpLoopState,
+  AcpLoopStopReason,
   AcpForkSessionRequest,
   AcpInterruptRequest,
 } from "@cocalc/conat/ai/acp/types";
@@ -107,6 +111,11 @@ const THREAD_CONFIG_SENDER = "__thread_config__";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_STATE_SENDER = "__thread_state__";
 const THREAD_STATE_SCHEMA_VERSION = 2;
+const LOOP_DEFAULT_MAX_TURNS = 8;
+const LOOP_DEFAULT_MAX_WALL_TIME_MS = 30 * 60_000;
+const LOOP_DEFAULT_CHECK_IN_EVERY_TURNS = 0;
+const LOOP_DEFAULT_REPEATED_BLOCKER_LIMIT = 2;
+const LOOP_DEFAULT_SLEEP_MS = 0;
 
 type AcpMockRule = {
   name?: string;
@@ -150,6 +159,162 @@ let acpLookupByMessageIdLargeScanWarnings = 0;
 let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
 const chatOffloadRotateAt = new Map<string, number>();
+
+function clampLoopNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function normalizeLoopConfig(
+  config?: AcpLoopConfig,
+): AcpLoopConfig | undefined {
+  if (!config || config.enabled !== true) return undefined;
+  return {
+    enabled: true,
+    max_turns: clampLoopNumber(config.max_turns, LOOP_DEFAULT_MAX_TURNS, 1, 200),
+    max_wall_time_ms: clampLoopNumber(
+      config.max_wall_time_ms,
+      LOOP_DEFAULT_MAX_WALL_TIME_MS,
+      1_000,
+      7 * 24 * 60 * 60_000,
+    ),
+    check_in_every_turns: clampLoopNumber(
+      config.check_in_every_turns,
+      LOOP_DEFAULT_CHECK_IN_EVERY_TURNS,
+      0,
+      200,
+    ),
+    stop_on_repeated_blocker_count: clampLoopNumber(
+      config.stop_on_repeated_blocker_count,
+      LOOP_DEFAULT_REPEATED_BLOCKER_LIMIT,
+      1,
+      50,
+    ),
+    sleep_ms_between_turns: clampLoopNumber(
+      config.sleep_ms_between_turns,
+      LOOP_DEFAULT_SLEEP_MS,
+      0,
+      60_000,
+    ),
+  };
+}
+
+function normalizeLoopDecision(
+  raw: unknown,
+): AcpLoopContractDecision | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const data = raw as any;
+  if (typeof data.rerun !== "boolean" || typeof data.needs_human !== "boolean") {
+    return undefined;
+  }
+  return {
+    rerun: data.rerun,
+    needs_human: data.needs_human,
+    next_prompt:
+      typeof data.next_prompt === "string" ? data.next_prompt : undefined,
+    blocker: typeof data.blocker === "string" ? data.blocker : undefined,
+    confidence:
+      typeof data.confidence === "number" && Number.isFinite(data.confidence)
+        ? data.confidence
+        : undefined,
+    sleep_sec:
+      typeof data.sleep_sec === "number" && Number.isFinite(data.sleep_sec)
+        ? data.sleep_sec
+        : undefined,
+  };
+}
+
+function parseLoopDecisionPayload(
+  input: string,
+): AcpLoopContractDecision | undefined {
+  try {
+    const parsed = JSON.parse(input);
+    if (parsed && typeof parsed === "object" && "loop" in (parsed as any)) {
+      return normalizeLoopDecision((parsed as any).loop);
+    }
+    return normalizeLoopDecision(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseLoopContractDecision(
+  summaryText?: string,
+): AcpLoopContractDecision | undefined {
+  if (!summaryText || typeof summaryText !== "string") return undefined;
+  const whole = parseLoopDecisionPayload(summaryText.trim());
+  if (whole) return whole;
+
+  const fenced = /```json\s*([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null = null;
+  while ((match = fenced.exec(summaryText)) != null) {
+    const decision = parseLoopDecisionPayload(match[1].trim());
+    if (decision) return decision;
+  }
+
+  const lines = summaryText.split("\n").map((x) => x.trim());
+  for (const line of lines) {
+    if (!line.startsWith("{") || !line.endsWith("}")) continue;
+    const decision = parseLoopDecisionPayload(line);
+    if (decision) return decision;
+  }
+  return undefined;
+}
+
+function stripLoopContractForDisplay(
+  text: string,
+  loopEnabled: boolean,
+): string {
+  if (!loopEnabled) return text;
+  let out = text;
+
+  // Remove fenced json loop-contract blocks anywhere in the text.
+  const fenced = /```json\s*([\s\S]*?)\s*```/gi;
+  out = out.replace(fenced, (match, payload) => {
+    const decision = parseLoopDecisionPayload(`${payload ?? ""}`.trim());
+    return decision ? "" : match;
+  });
+
+  // Remove unfenced JSON loop-contract blocks (single-line or multi-line).
+  const lines = out.split(/\r?\n/);
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const first = lines[i].trim();
+    if (!first.startsWith("{")) {
+      kept.push(lines[i]);
+      continue;
+    }
+    let removed = false;
+    const maxJ = Math.min(lines.length - 1, i + 40);
+    for (let j = i; j <= maxJ; j++) {
+      const last = lines[j].trim();
+      if (!last.endsWith("}")) continue;
+      const candidate = lines.slice(i, j + 1).join("\n").trim();
+      const decision = parseLoopDecisionPayload(candidate);
+      if (!decision) continue;
+      i = j;
+      removed = true;
+      break;
+    }
+    if (!removed) {
+      kept.push(lines[i]);
+    }
+  }
+
+  out = kept.join("\n");
+  out = out
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s+/, "")
+    .replace(/\s+$/, "");
+  return out;
+}
 
 async function maybeAutoRotateChatStore({
   chatPath,
@@ -642,6 +807,21 @@ export class ChatStreamWriter {
     return (record as any)[key] as T;
   }
 
+  private toPlainRecord(record: any): Record<string, unknown> {
+    if (record == null) return {};
+    if (typeof record.toJS === "function") {
+      try {
+        return record.toJS();
+      } catch {
+        return {};
+      }
+    }
+    if (typeof record === "object") {
+      return { ...(record as Record<string, unknown>) };
+    }
+    return {};
+  }
+
   private setResolvedChatKey(record: any): void {
     const date = normalizeIsoDateString(syncdbField(record, "date"));
     const sender_id = syncdbField<string>(record, "sender_id");
@@ -659,6 +839,20 @@ export class ChatStreamWriter {
       this.metadata.message_id,
     );
     if (byMessageId != null) {
+      const rowSender = syncdbField<string>(byMessageId, "sender_id");
+      if (
+        typeof rowSender === "string" &&
+        rowSender.trim().length > 0 &&
+        rowSender !== this.metadata.sender_id
+      ) {
+        logger.warn("acp writer row-sender mismatch; refusing to mutate row", {
+          chatKey: this.chatKey,
+          message_id: this.metadata.message_id,
+          expected_sender: this.metadata.sender_id,
+          actual_sender: rowSender,
+        });
+        return undefined;
+      }
       this.setResolvedChatKey(byMessageId);
       return byMessageId;
     }
@@ -1069,7 +1263,10 @@ export class ChatStreamWriter {
             candidate.trim().length > 0 &&
             !looksLikeErrorEcho(candidate, this.lastErrorText));
         if (candidate != null && shouldApplySummary) {
-          this.content = candidate;
+          this.content = stripLoopContractForDisplay(
+            candidate,
+            this.metadata.loop_config?.enabled === true,
+          );
           this.finishedBy = "summary";
         }
       }
@@ -1614,9 +1811,11 @@ export class ChatStreamWriter {
     }
   }
 
-  // Persist the session/thread id into the dedicated thread-config record so
-  // finalize/recovery never mutates chat message rows.
-  private async persistSessionId(sessionId: string): Promise<void> {
+  // Persist fields in the dedicated thread-config record so finalize/recovery
+  // never mutates chat message rows.
+  private async patchThreadConfig(
+    patch: Record<string, unknown>,
+  ): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
     const threadRoot = this.metadata.reply_to ?? this.metadata.message_date;
@@ -1628,7 +1827,7 @@ export class ChatStreamWriter {
     };
     const threadRootIso = normalizeDate(threadRoot);
     if (!threadRootIso) {
-      logger.warn("persistSessionId skipped: invalid thread root date", {
+      logger.warn("patchThreadConfig skipped: invalid thread root date", {
         chatKey: this.chatKey,
         threadRoot,
       });
@@ -1637,7 +1836,7 @@ export class ChatStreamWriter {
     try {
       const threadId = this.resolvedThreadId();
       if (!threadId) {
-        logger.warn("persistSessionId skipped: missing thread_id", {
+        logger.warn("patchThreadConfig skipped: missing thread_id", {
           chatKey: this.chatKey,
           message_id: this.metadata.message_id,
         });
@@ -1648,19 +1847,14 @@ export class ChatStreamWriter {
         sender_id: THREAD_CONFIG_SENDER,
         date: threadRootIso,
       });
-      const threadPrevCfg = this.recordField<any>(threadCfgCurrent, "acp_config");
-      const threadCfg =
-        threadPrevCfg && typeof threadPrevCfg.toJS === "function"
-          ? threadPrevCfg.toJS()
-          : (threadPrevCfg ?? {});
-      if (threadCfg.sessionId === sessionId) return;
-      const nextCfg = { ...threadCfg, sessionId };
+      const base = this.toPlainRecord(threadCfgCurrent);
       this.syncdb.set({
+        ...base,
         event: THREAD_CONFIG_EVENT,
         sender_id: THREAD_CONFIG_SENDER,
         date: threadRootIso,
         thread_id: threadId,
-        acp_config: { ...threadCfg, ...nextCfg },
+        ...patch,
         updated_at: new Date().toISOString(),
         updated_by: this.approverAccountId,
         schema_version: THREAD_STATE_SCHEMA_VERSION,
@@ -1668,7 +1862,79 @@ export class ChatStreamWriter {
       this.syncdb.commit();
       await this.syncdb.save();
     } catch (err) {
-      logger.debug("persistSessionId failed", err);
+      logger.debug("patchThreadConfig failed", err);
+    }
+  }
+
+  private async persistSessionId(sessionId: string): Promise<void> {
+    await this.ready;
+    if (this.closed || !this.syncdb) return;
+    const threadRootIso = this.threadRootIso();
+    const currentRow = this.syncdb.get_one({
+      event: THREAD_CONFIG_EVENT,
+      sender_id: THREAD_CONFIG_SENDER,
+      date: threadRootIso,
+    });
+    const currentConfig = this.recordField<any>(currentRow, "acp_config");
+    const currentConfigObj =
+      currentConfig && typeof currentConfig.toJS === "function"
+        ? currentConfig.toJS()
+        : (currentConfig ?? {});
+    if (currentConfigObj?.sessionId === sessionId) return;
+    await this.patchThreadConfig({
+      acp_config: {
+        ...(currentConfigObj as Record<string, unknown>),
+        sessionId,
+      },
+    });
+  }
+
+  public async persistLoopState({
+    loopConfig,
+    loopState,
+  }: {
+    loopConfig?: AcpLoopConfig;
+    loopState?: AcpLoopState;
+  }): Promise<void> {
+    await this.patchThreadConfig({
+      loop_config: loopConfig ?? null,
+      loop_state: loopState ?? null,
+    });
+  }
+
+  public getLatestSummaryText(): string | undefined {
+    const latest = getLatestSummaryText(this.events);
+    if (typeof latest !== "string") return undefined;
+    const trimmed = latest.trim();
+    return trimmed.length ? trimmed : undefined;
+  }
+
+  public wasInterrupted(): boolean {
+    return this.interruptNotified === true;
+  }
+
+  public beginLoopIteration(): void {
+    this.finished = false;
+    this.finishedBy = undefined;
+    this.lastErrorText = null;
+    this.interruptNotified = false;
+    this.interruptedMessage = undefined;
+    this.setThreadState("running");
+  }
+
+  public getLoopFallbackSummary(): string | undefined {
+    const latest = getLatestMessageText(this.events);
+    if (typeof latest !== "string") return undefined;
+    const trimmed = latest.trim();
+    if (!trimmed) return undefined;
+    return trimmed;
+  }
+
+  public markLoopStopped(reason: AcpLoopStopReason): void {
+    try {
+      this.setThreadState(reason === "user_stopped" ? "interrupted" : "complete");
+    } catch (err) {
+      logger.debug("failed to mark loop stopped", { reason, err });
     }
   }
 }
@@ -1932,6 +2198,47 @@ export async function recoverOrphanedAcpTurns(
               updated_at: new Date().toISOString(),
               schema_version: THREAD_STATE_SCHEMA_VERSION,
             });
+            const cfgRow = syncdb.get_one({
+              event: THREAD_CONFIG_EVENT,
+              sender_id: THREAD_CONFIG_SENDER,
+              date: threadRootIso,
+            });
+            const rawLoopCfg = syncdbField<any>(cfgRow, "loop_config");
+            const loopCfg =
+              rawLoopCfg && typeof rawLoopCfg.toJS === "function"
+                ? rawLoopCfg.toJS()
+                : rawLoopCfg;
+            const rawLoopState = syncdbField<any>(cfgRow, "loop_state");
+            const loopStateCurrent =
+              rawLoopState && typeof rawLoopState.toJS === "function"
+                ? rawLoopState.toJS()
+                : rawLoopState;
+            if (
+              loopCfg?.enabled === true &&
+              loopStateCurrent &&
+              loopStateCurrent.status !== "stopped"
+            ) {
+              const cfgObj =
+                cfgRow && typeof cfgRow.toJS === "function"
+                  ? cfgRow.toJS()
+                  : (cfgRow ?? {});
+              syncdb.set({
+                ...cfgObj,
+                event: THREAD_CONFIG_EVENT,
+                sender_id: THREAD_CONFIG_SENDER,
+                date: threadRootIso,
+                thread_id: threadId,
+                loop_state: {
+                  ...loopStateCurrent,
+                  status: "stopped",
+                  stop_reason: "backend_error",
+                  next_prompt: undefined,
+                  updated_at_ms: Date.now(),
+                },
+                updated_at: new Date().toISOString(),
+                schema_version: THREAD_STATE_SCHEMA_VERSION,
+              });
+            }
           }
           syncdb.commit();
           await syncdb.save();
@@ -2361,54 +2668,246 @@ export async function evaluate({
     wrappedStream = stream;
   }
 
+  const loopConfig = normalizeLoopConfig(request.chat?.loop_config);
+  const loopEnabled = !!(loopConfig && chatWriter && request.chat?.thread_id);
+  let loopState: AcpLoopState | undefined = loopEnabled
+    ? (() => {
+        const existing = request.chat?.loop_state;
+        if (
+          existing &&
+          typeof existing.loop_id === "string" &&
+          existing.loop_id.trim().length > 0 &&
+          existing.status !== "stopped"
+        ) {
+          const iteration = clampLoopNumber(existing.iteration, 1, 1, 10_000);
+          return {
+            ...existing,
+            iteration,
+            updated_at_ms: Date.now(),
+            status: "running",
+            stop_reason: undefined,
+          };
+        }
+        const now = Date.now();
+        return {
+          loop_id: randomUUID(),
+          status: "running",
+          started_at_ms: now,
+          updated_at_ms: now,
+          iteration: 1,
+          max_turns: loopConfig?.max_turns,
+          max_wall_time_ms: loopConfig?.max_wall_time_ms,
+        };
+      })()
+    : undefined;
+  const loopStartedAt = loopState?.started_at_ms ?? Date.now();
+
+  const persistLoopState = async () => {
+    if (!chatWriter || !loopEnabled) return;
+    await chatWriter.persistLoopState({
+      loopConfig,
+      loopState,
+    });
+  };
+
   try {
-    stream({ type: "status", state: "running" });
-    logger.debug("evaluate: running", { reqId });
-    let terminalFallbackError: string | undefined;
-    try {
-      await currentAgent.evaluate({
-        ...request,
-        prompt,
-        runtime_env: runtimeEnv,
-        config: effectiveConfig,
-        stream: wrappedStream,
-      });
-      logger.debug("evaluate: done", { reqId });
-    } catch (err) {
-      logger.warn("evaluate: agent failed", { reqId, err });
-      terminalFallbackError = `codex agent failed: ${(err as Error)?.message ?? err}`;
-      try {
-        await wrappedStream({
-          type: "error",
-          error: terminalFallbackError,
-        });
-      } catch (streamErr) {
-        logger.warn("evaluate: failed to stream error", streamErr);
-      }
+    if (loopEnabled) {
+      await persistLoopState();
     }
-    if (chatWriter != null) {
-      const snapshot = chatWriter.watchdogSnapshot();
-      if (!snapshot.finished) {
-        logger.warn("evaluate: forcing terminal ACP payload", {
-          reqId,
-          messageDate: snapshot.messageDate,
-          path: snapshot.path,
-          events: snapshot.events,
-          fallback: terminalFallbackError ? "error" : "summary",
+    logger.debug("evaluate: running", {
+      reqId,
+      loopEnabled,
+      loopId: loopState?.loop_id,
+      iteration: loopState?.iteration,
+    });
+    let iterationPrompt = prompt;
+    let continueLoop = true;
+    while (continueLoop) {
+      stream({ type: "status", state: "running" });
+      if (loopEnabled && loopState && loopState.iteration > 1 && chatWriter) {
+        chatWriter.beginLoopIteration();
+      }
+      let terminalFallbackError: string | undefined;
+      try {
+        await currentAgent.evaluate({
+          ...request,
+          prompt: iterationPrompt,
+          runtime_env: runtimeEnv,
+          config: effectiveConfig,
+          stream: wrappedStream,
         });
+        logger.debug("evaluate: done", {
+          reqId,
+          iteration: loopState?.iteration,
+        });
+      } catch (err) {
+        logger.warn("evaluate: agent failed", {
+          reqId,
+          iteration: loopState?.iteration,
+          err,
+        });
+        terminalFallbackError = `codex agent failed: ${(err as Error)?.message ?? err}`;
         try {
-          await chatWriter.handle(
-            terminalFallbackError
-              ? { type: "error", error: terminalFallbackError }
-              : { type: "summary", finalResponse: "" },
-          );
-        } catch (err) {
-          logger.warn("evaluate: failed forced terminal payload", {
-            reqId,
-            err,
+          await wrappedStream({
+            type: "error",
+            error: terminalFallbackError,
           });
+        } catch (streamErr) {
+          logger.warn("evaluate: failed to stream error", streamErr);
         }
       }
+      if (chatWriter != null) {
+        const snapshot = chatWriter.watchdogSnapshot();
+        if (!snapshot.finished) {
+          logger.warn("evaluate: forcing terminal ACP payload", {
+            reqId,
+            messageDate: snapshot.messageDate,
+            path: snapshot.path,
+            events: snapshot.events,
+            fallback: terminalFallbackError ? "error" : "summary",
+            iteration: loopState?.iteration,
+          });
+          try {
+            await chatWriter.handle(
+              terminalFallbackError
+                ? { type: "error", error: terminalFallbackError }
+                : { type: "summary", finalResponse: "" },
+            );
+          } catch (err) {
+            logger.warn("evaluate: failed forced terminal payload", {
+              reqId,
+              err,
+            });
+          }
+        }
+      }
+
+      if (!loopEnabled || !loopState || !chatWriter) {
+        break;
+      }
+
+      const now = Date.now();
+      loopState = {
+        ...loopState,
+        status: "waiting_decision",
+        updated_at_ms: now,
+      };
+      await persistLoopState();
+
+      const maxTurns = loopConfig?.max_turns ?? LOOP_DEFAULT_MAX_TURNS;
+      const maxWallTimeMs =
+        loopConfig?.max_wall_time_ms ?? LOOP_DEFAULT_MAX_WALL_TIME_MS;
+      const checkInEveryTurns =
+        loopConfig?.check_in_every_turns ?? LOOP_DEFAULT_CHECK_IN_EVERY_TURNS;
+      const repeatedBlockerLimit =
+        loopConfig?.stop_on_repeated_blocker_count ??
+        LOOP_DEFAULT_REPEATED_BLOCKER_LIMIT;
+
+      const summaryText =
+        chatWriter.getLatestSummaryText() ?? chatWriter.getLoopFallbackSummary();
+      const decision = parseLoopContractDecision(summaryText);
+
+      let stopReason: AcpLoopStopReason | undefined;
+      let nextStatus: AcpLoopState["status"] = "stopped";
+      if (chatWriter.wasInterrupted()) {
+        stopReason = "user_stopped";
+      } else if (Date.now() - loopStartedAt >= maxWallTimeMs) {
+        stopReason = "max_wall_time";
+      } else if (loopState.iteration >= maxTurns) {
+        stopReason = "max_turns";
+      } else if (!decision) {
+        stopReason = terminalFallbackError ? "backend_error" : "missing_contract";
+      } else if (decision.needs_human) {
+        stopReason = "needs_human";
+        nextStatus = "paused";
+      } else if (decision.rerun !== true) {
+        stopReason = "completed";
+      }
+
+      const blockerSignature = `${decision?.blocker ?? ""}`.trim().toLowerCase();
+      if (!stopReason && blockerSignature) {
+        const prevSig = `${loopState.last_blocker_signature ?? ""}`
+          .trim()
+          .toLowerCase();
+        const repeatedCount =
+          prevSig && prevSig === blockerSignature
+            ? (loopState.repeated_blocker_count ?? 0) + 1
+            : 1;
+        loopState = {
+          ...loopState,
+          last_blocker_signature: blockerSignature,
+          repeated_blocker_count: repeatedCount,
+          updated_at_ms: Date.now(),
+        };
+        if (repeatedCount >= repeatedBlockerLimit) {
+          stopReason = "repeated_blocker";
+        }
+      }
+
+      if (
+        !stopReason &&
+        checkInEveryTurns > 0 &&
+        loopState.iteration > 0 &&
+        loopState.iteration % checkInEveryTurns === 0
+      ) {
+        stopReason = "needs_human";
+        nextStatus = "paused";
+      }
+
+      if (stopReason) {
+        loopState = {
+          ...loopState,
+          status: nextStatus,
+          stop_reason: stopReason,
+          next_prompt: undefined,
+          updated_at_ms: Date.now(),
+        };
+        await persistLoopState();
+        chatWriter.markLoopStopped(stopReason);
+        break;
+      }
+
+      const nextPrompt = `${decision?.next_prompt ?? ""}`.trim();
+      if (!nextPrompt) {
+        loopState = {
+          ...loopState,
+          status: "stopped",
+          stop_reason: "invalid_contract",
+          next_prompt: undefined,
+          updated_at_ms: Date.now(),
+        };
+        await persistLoopState();
+        chatWriter.markLoopStopped("invalid_contract");
+        break;
+      }
+
+      loopState = {
+        ...loopState,
+        status: "scheduled",
+        next_prompt: nextPrompt,
+        updated_at_ms: Date.now(),
+      };
+      await persistLoopState();
+
+      let sleepMs = loopConfig?.sleep_ms_between_turns ?? 0;
+      if (typeof decision?.sleep_sec === "number") {
+        sleepMs = clampLoopNumber(decision.sleep_sec * 1000, sleepMs, 0, 60_000);
+      }
+      if (sleepMs > 0) {
+        await sleep(sleepMs);
+      }
+
+      iterationPrompt = nextPrompt;
+      loopState = {
+        ...loopState,
+        status: "running",
+        next_prompt: undefined,
+        iteration: loopState.iteration + 1,
+        updated_at_ms: Date.now(),
+      };
+      await persistLoopState();
+
+      continueLoop = true;
     }
   } finally {
     const elapsedMs = Date.now() - startedAt;

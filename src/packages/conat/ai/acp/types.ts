@@ -1,6 +1,60 @@
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 
+export type AcpLoopStopReason =
+  | "completed"
+  | "max_turns"
+  | "max_wall_time"
+  | "needs_human"
+  | "missing_contract"
+  | "invalid_contract"
+  | "repeated_blocker"
+  | "user_stopped"
+  | "backend_error";
+
+export interface AcpLoopConfig {
+  // Explicit on/off switch for loop behavior.
+  enabled: boolean;
+  // Hard cap on number of ACP iterations in this loop run.
+  max_turns?: number;
+  // Hard cap on total wall time for this loop run.
+  max_wall_time_ms?: number;
+  // Optional pause cadence for human check-in.
+  check_in_every_turns?: number;
+  // Stop after this many repeated blocker signatures.
+  stop_on_repeated_blocker_count?: number;
+  // Optional delay between iterations.
+  sleep_ms_between_turns?: number;
+}
+
+export interface AcpLoopState {
+  loop_id: string;
+  status:
+    | "running"
+    | "waiting_decision"
+    | "scheduled"
+    | "paused"
+    | "stopped";
+  started_at_ms: number;
+  updated_at_ms: number;
+  iteration: number;
+  max_turns?: number;
+  max_wall_time_ms?: number;
+  next_prompt?: string;
+  last_blocker_signature?: string;
+  repeated_blocker_count?: number;
+  stop_reason?: AcpLoopStopReason;
+}
+
+export interface AcpLoopContractDecision {
+  rerun: boolean;
+  needs_human: boolean;
+  next_prompt?: string;
+  blocker?: string;
+  confidence?: number;
+  sleep_sec?: number;
+}
+
 export interface AcpChatContext {
   project_id: string;
   path: string;
@@ -18,6 +72,10 @@ export interface AcpChatContext {
   // Marks that this user message was sent via "Send Immediately" while an ACP
   // turn was active, so the backend can preserve continue semantics.
   send_mode?: "immediate";
+  // Optional loop automation config attached to a turn kickoff request.
+  loop_config?: AcpLoopConfig;
+  // Optional loop runtime snapshot from backend state machine.
+  loop_state?: AcpLoopState;
 }
 
 export type AcpRequest = {
