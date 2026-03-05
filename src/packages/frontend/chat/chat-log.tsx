@@ -69,6 +69,36 @@ function stripHtml(value: string): string {
   return value.replace(/<[^>]*>/g, "");
 }
 
+function isEditableOrOverlayInteractionTarget(
+  target: EventTarget | null,
+): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return Boolean(
+    target.closest(
+      [
+        '[contenteditable="true"]',
+        '[data-slate-editor="true"]',
+        '.slate-editor',
+        '.CodeMirror',
+        '.CodeMirror-code',
+        '.cm-editor',
+        '.cm-content',
+        '[role="textbox"]',
+        '.ant-drawer',
+        '.ant-drawer-mask',
+        '.ant-select-dropdown',
+        '.ant-dropdown',
+        '.ant-modal',
+        '.ant-popover',
+        '.ant-tooltip',
+      ].join(", "),
+    ),
+  );
+}
+
 interface Props {
   project_id: string; // used to render links more effectively
   path: string;
@@ -615,14 +645,22 @@ export function MessageList({
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
     stopPropagation: () => void;
+    target?: EventTarget | null;
   }) => {
     if (!blockScrollInput) return;
+    if (isEditableOrOverlayInteractionTarget(event.target ?? null)) return;
     event.preventDefault();
     event.stopPropagation();
   };
 
   const maybeBlockScrollKeys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!blockScrollInput) return;
+    if (
+      isEditableOrOverlayInteractionTarget(event.target) ||
+      isEditableOrOverlayInteractionTarget(document.activeElement)
+    ) {
+      return;
+    }
     const key = `${event.key ?? ""}`.toLowerCase();
     if (
       key === "arrowup" ||
