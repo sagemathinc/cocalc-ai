@@ -38,6 +38,7 @@ import {
   NewFlyout,
   ProjectInfoFlyout,
   SearchFlyout,
+  ServersFlyout,
   SettingsFlyout,
 } from "./flyouts";
 import { ActiveFlyout } from "./flyouts/active";
@@ -53,6 +54,7 @@ export type FixedTab =
   | "new"
   | "log"
   | "search"
+  | "servers"
   | "settings"
   | "info"
   | "users";
@@ -125,6 +127,15 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     }),
     icon: "search",
     flyout: SearchFlyout,
+    noAnonymous: false,
+  },
+  servers: {
+    label: defineMessage({
+      id: "project.page.file-tab.servers.label",
+      defaultMessage: "Servers",
+    }),
+    icon: "server",
+    flyout: ServersFlyout,
     noAnonymous: false,
   },
   log: {
