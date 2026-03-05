@@ -870,18 +870,29 @@ export class CodexExecAgent implements AcpAgent {
         }
         {
           const writePaths = this.parseWriteCommand(item.command, cwd);
-          for (const pathAbs of writePaths) {
-            const pathForEvent = this.toHomeRelative(pathAbs, cwd);
-            await stream({
-              type: "event",
-              event: {
-                type: "file",
-                path: pathForEvent,
-                operation: "write",
-                cwd,
-                command: item.command,
-              },
-            });
+          const commandSucceeded =
+            item.exit_code == null || item.exit_code === 0;
+          if (commandSucceeded) {
+            for (const pathAbs of writePaths) {
+              // Keep write heuristics conservative: only emit when the command
+              // appears successful and the target resolves to an actual file.
+              const stat = await this.statRegularFile(pathAbs, {
+                containerPathMap,
+              });
+              if (!stat) continue;
+              const pathForEvent = this.toHomeRelative(pathAbs, cwd);
+              await stream({
+                type: "event",
+                event: {
+                  type: "file",
+                  path: pathForEvent,
+                  operation: "write",
+                  cwd,
+                  command: item.command,
+                  bytes: stat.size,
+                },
+              });
+            }
           }
         }
         await stream({
