@@ -34,6 +34,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - By default, write commit messages with:
   - a concise first line (subject), and
   - a detailed markdown body explaining details of the commit, which is more succinct than the agent turn summary, including only information that is valuable longterm.
+  - do not include a dedicated `Tests and validation` section; mention verification only when it adds long-term value.
 - For new source files that use the standard CoCalc file header comment, set the copyright year to the current year.
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `prettier -w <file>` on modified files as needed.
