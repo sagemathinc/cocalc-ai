@@ -861,7 +861,6 @@ export class CodexExecAgent implements AcpAgent {
                   command: item.command,
                   line: readInfo.line,
                   limit: readInfo.limit,
-                  bytes: stat.size,
                 },
               });
               return;
