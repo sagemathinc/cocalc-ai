@@ -117,7 +117,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       preferredPort: "6002",
       healthPath: "/lab",
       command:
-        "jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=$APP_BASE_URL --ip=${HOST:-127.0.0.1} --port=${PORT}",
+        "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
     },
     {
       key: "code-server",
