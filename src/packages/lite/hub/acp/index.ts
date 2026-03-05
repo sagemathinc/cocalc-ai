@@ -272,46 +272,48 @@ function stripLoopContractForDisplay(
   loopEnabled: boolean,
 ): string {
   if (!loopEnabled) return text;
-  const trimmedRight = text.replace(/\s+$/, "");
+  let out = text;
 
-  // Remove a trailing fenced json block only when it parses as a valid loop contract.
-  const fencedTrailing = /(?:\r?\n){1,2}```json\s*([\s\S]*?)\s*```$/i.exec(
-    trimmedRight,
-  );
-  if (fencedTrailing) {
-    const decision = parseLoopDecisionPayload(fencedTrailing[1].trim());
-    if (decision) {
-      return trimmedRight.slice(0, fencedTrailing.index).replace(/\s+$/, "");
+  // Remove fenced json loop-contract blocks anywhere in the text.
+  const fenced = /```json\s*([\s\S]*?)\s*```/gi;
+  out = out.replace(fenced, (match, payload) => {
+    const decision = parseLoopDecisionPayload(`${payload ?? ""}`.trim());
+    return decision ? "" : match;
+  });
+
+  // Remove unfenced JSON loop-contract blocks (single-line or multi-line).
+  const lines = out.split(/\r?\n/);
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const first = lines[i].trim();
+    if (!first.startsWith("{")) {
+      kept.push(lines[i]);
+      continue;
     }
-  }
-
-  // Also handle trailing single-line JSON payloads.
-  const lines = trimmedRight.split(/\r?\n/);
-  if (lines.length > 0) {
-    const last = lines[lines.length - 1].trim();
-    if (last.startsWith("{") && last.endsWith("}")) {
-      const decision = parseLoopDecisionPayload(last);
-      if (decision) {
-        lines.pop();
-        return lines.join("\n").replace(/\s+$/, "");
-      }
-    }
-  }
-
-  // Handle trailing multi-line raw JSON objects (not fenced).
-  // Try suffixes from the end and remove the first suffix that parses as a
-  // valid loop contract payload.
-  if (lines.length > 1) {
-    const start = Math.max(0, lines.length - 40);
-    for (let i = lines.length - 1; i >= start; i--) {
-      const suffix = lines.slice(i).join("\n").trim();
-      if (!suffix.startsWith("{") || !suffix.endsWith("}")) continue;
-      const decision = parseLoopDecisionPayload(suffix);
+    let removed = false;
+    const maxJ = Math.min(lines.length - 1, i + 40);
+    for (let j = i; j <= maxJ; j++) {
+      const last = lines[j].trim();
+      if (!last.endsWith("}")) continue;
+      const candidate = lines.slice(i, j + 1).join("\n").trim();
+      const decision = parseLoopDecisionPayload(candidate);
       if (!decision) continue;
-      return lines.slice(0, i).join("\n").replace(/\s+$/, "");
+      i = j;
+      removed = true;
+      break;
+    }
+    if (!removed) {
+      kept.push(lines[i]);
     }
   }
-  return text;
+
+  out = kept.join("\n");
+  out = out
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s+/, "")
+    .replace(/\s+$/, "");
+  return out;
 }
 
 async function maybeAutoRotateChatStore({
