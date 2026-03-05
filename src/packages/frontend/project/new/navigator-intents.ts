@@ -269,6 +269,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
     if (!project_id || !basePrompt) return false;
+    const input = basePrompt;
 
     const preferredThreadKey = loadNavigatorSelectedThreadKey(project_id);
     const sessions = await listAgentSessionsForProject({ project_id });
@@ -276,41 +277,54 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       records: sessions,
       preferredThreadKey,
     });
-    const fallbackSession: AgentSessionRecord | undefined =
-      indexedSession == null
-        ? {
-            session_id: `navigator-${project_id}`,
-            project_id,
-            account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
-            chat_path: resolveNavigatorChatPath(project_id),
-            thread_key: `${preferredThreadKey ?? ""}`.trim(),
-            title: "Navigator",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            status: "active",
-            entrypoint: "global",
-          }
-        : undefined;
+    const fallbackSession: AgentSessionRecord = {
+      session_id: `navigator-${project_id}`,
+      project_id,
+      account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
+      chat_path: resolveNavigatorChatPath(project_id),
+      thread_key: `${preferredThreadKey ?? ""}`.trim(),
+      title: "Navigator",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      status: "active",
+      entrypoint: "global",
+    };
     const session = indexedSession ?? fallbackSession;
-    if (!session?.chat_path) return false;
+    const queueFallbackIntent = (): boolean => {
+      dispatchNavigatorPromptIntent({
+        prompt: input,
+        tag: opts.tag ?? "intent:navigator",
+        forceCodex: opts.forceCodex ?? true,
+      });
+      if (opts.openFloating !== false) {
+        openFloatingAgentSession(project_id, {
+          ...(indexedSession ?? fallbackSession),
+          thread_key:
+            `${preferredThreadKey ?? session.thread_key ?? ""}`.trim() ||
+            session.thread_key,
+          updated_at: new Date().toISOString(),
+          status: "active",
+        });
+      }
+      return true;
+    };
+    if (!session?.chat_path) return queueFallbackIntent();
 
     await ensureNavigatorChatDirectory(project_id, session.chat_path);
 
     const threadKey = `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
-    const input = basePrompt;
-    if (!input) return false;
 
     const instanceKey = "navigator-intent-dispatch";
     const actions =
       getChatActions(project_id, session.chat_path, { instanceKey }) ??
       initChat(project_id, session.chat_path, { instanceKey });
 
-    if (!actions) return false;
+    if (!actions) return queueFallbackIntent();
     const ready = await waitForThreadReady({
       actions,
       timeoutMs: 6000,
     });
-    if (!ready) return false;
+    if (!ready) return queueFallbackIntent();
     const resolvedThreadKey = chooseThreadKeyFromIndex({
       actions,
       preferredThreadKey,
@@ -358,7 +372,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           : undefined,
     });
     if (!timeStamp) {
-      return false;
+      return queueFallbackIntent();
     }
 
     const nextThreadKey =
@@ -382,6 +396,32 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     }, 50);
     return true;
   } catch {
-    return false;
+    try {
+      const project_id = `${opts.project_id ?? ""}`.trim();
+      const input = `${opts.prompt ?? ""}`.trim();
+      if (!project_id || !input) return false;
+      dispatchNavigatorPromptIntent({
+        prompt: input,
+        tag: opts.tag ?? "intent:navigator",
+        forceCodex: opts.forceCodex ?? true,
+      });
+      if (opts.openFloating !== false) {
+        openFloatingAgentSession(project_id, {
+          session_id: `navigator-${project_id}`,
+          project_id,
+          account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
+          chat_path: resolveNavigatorChatPath(project_id),
+          thread_key: `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
+          title: "Navigator",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          status: "active",
+          entrypoint: "global",
+        });
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
