@@ -371,7 +371,9 @@ export function AppServerPanel({
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
         Create a managed app server spec, start it, and open the proxied URL.
       </Paragraph>
-      <ErrorDisplay error={error} onClose={() => setError(undefined)} />
+      {error ? (
+        <ErrorDisplay error={error} onClose={() => setError(undefined)} />
+      ) : null}
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
         <Space.Compact style={{ width: "100%" }}>
           <Select<AppKind>
