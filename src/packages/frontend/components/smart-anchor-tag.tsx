@@ -173,13 +173,27 @@ function parsePathWithOptionalLineSuffix(path: string): {
   return { path: candidatePath, line };
 }
 
+function decodePathForParsing(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    try {
+      return decodeURI(raw);
+    } catch {
+      return raw;
+    }
+  }
+}
+
 function parseAbsoluteFileHrefTarget(href: string): {
   path: string;
   line?: number;
 } {
   try {
     const url = new URL(href, "http://dummy");
-    const parsed = parsePathWithOptionalLineSuffix(decodeURI(url.pathname));
+    const parsed = parsePathWithOptionalLineSuffix(
+      decodePathForParsing(url.pathname),
+    );
     const line = parsed.line ?? parseLineFromHashFragment(url.hash);
     return { path: parsed.path, line };
   } catch {
@@ -556,7 +570,9 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
         } else {
           // different file in the same project, with link being relative
           // to current path.
-          const parsed = parsePathWithOptionalLineSuffix(decodeURI(hrefPlain));
+          const parsed = parsePathWithOptionalLineSuffix(
+            decodePathForParsing(hrefPlain),
+          );
           if (parsed.line != null && !fragmentId?.line) {
             fragmentId = { ...(fragmentId?.anchor ? {} : fragmentId), line: `${parsed.line}` };
           } else if (lineFromHash != null && !fragmentId?.line) {

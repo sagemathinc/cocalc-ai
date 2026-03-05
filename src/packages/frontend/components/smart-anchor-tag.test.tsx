@@ -5,6 +5,9 @@ import SmartAnchorTag from "./smart-anchor-tag";
 
 const openFile = jest.fn();
 const openDirectory = jest.fn();
+const loadTarget = jest.fn();
+const openProject = jest.fn();
+const setActiveTab = jest.fn();
 const isDir = jest.fn(async () => false);
 const isDirViaCache = jest.fn(() => false);
 
@@ -28,8 +31,17 @@ jest.mock("@cocalc/frontend/app-framework", () => {
         open_directory: openDirectory,
         isDir,
         isDirViaCache,
+        load_target: loadTarget,
       }),
-      getActions: () => ({}),
+      getActions: (name?: string) => {
+        if (name === "projects") {
+          return { open_project: openProject };
+        }
+        if (name === "page") {
+          return { set_active_tab: setActiveTab };
+        }
+        return {};
+      },
     },
   };
 });
@@ -48,6 +60,9 @@ describe("SmartAnchorTag", () => {
   beforeEach(() => {
     openFile.mockReset();
     openDirectory.mockReset();
+    loadTarget.mockReset();
+    openProject.mockReset();
+    setActiveTab.mockReset();
     isDir.mockReset();
     isDirViaCache.mockReset();
     isDir.mockResolvedValue(false);
@@ -89,6 +104,28 @@ describe("SmartAnchorTag", () => {
     );
 
     fireEvent.click(screen.getByRole("link", { name: "workspaces.py:485" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/tmp/x/workspaces.py",
+        line: 485,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
+  it("opens absolute file links with encoded :line suffix as file+line", async () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="room.chat"
+        href="/tmp/x/workspaces.py%3A485"
+      >
+        workspaces.py%3A485
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "workspaces.py%3A485" }));
     await waitFor(() => {
       expect(openFile).toHaveBeenCalledWith({
         path: "/tmp/x/workspaces.py",
@@ -141,5 +178,28 @@ describe("SmartAnchorTag", () => {
       "noopener",
     );
     expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it("opens relative links with encoded :line suffix as file+line", async () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/wstein/project/chat.room"
+        href="src/workspaces.py%3A77"
+      >
+        src/workspaces.py%3A77
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "src/workspaces.py%3A77" }));
+    await waitFor(() => {
+      expect(loadTarget).toHaveBeenCalledWith(
+        "files/home/wstein/project/src/workspaces.py",
+        true,
+        false,
+        true,
+        expect.objectContaining({ line: "77" }),
+      );
+    });
   });
 });
