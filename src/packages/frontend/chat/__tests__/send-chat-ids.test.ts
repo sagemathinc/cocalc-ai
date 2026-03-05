@@ -513,6 +513,105 @@ describe("deleteThread identity targeting", () => {
     ).toBeTruthy();
   });
 
+  it("forkThread writes a dated thread-config row and preserves codex metadata", async () => {
+    const rootDate = new Date("2026-02-21T17:59:00.000Z");
+    const rootIso = rootDate.toISOString();
+    const rootMs = rootDate.valueOf();
+    const messages = new Map<string, any>([
+      [
+        `${rootMs}`,
+        {
+          event: "chat",
+          sender_id: "00000000-1000-4000-8000-000000000001",
+          date: rootDate,
+          message_id: "root-msg-1",
+          thread_id: "thread-source-1",
+          history: [
+            {
+              author_id: "00000000-1000-4000-8000-000000000001",
+              content: "root",
+              date: rootIso,
+            },
+          ],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+    const sourceConfig = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: rootIso,
+      thread_id: "thread-source-1",
+      name: "Original chat",
+      thread_color: "#123456",
+      thread_icon: "rocket",
+      agent_kind: "acp",
+      agent_mode: "interactive",
+      agent_model: "gpt-5.3-codex",
+      acp_config: {
+        model: "gpt-5.3-codex",
+        sessionId: "session-source-1",
+        approvalPolicy: "full-auto",
+      },
+      loop_config: { enabled: true, max_turns: 12 },
+    };
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === "thread-source-1"
+      ) {
+        return sourceConfig;
+      }
+      return undefined;
+    });
+    (webapp_client as any).conat_client = {
+      ...(webapp_client as any).conat_client,
+      forkAcpSession: jest.fn().mockResolvedValue({ sessionId: "session-fork-1" }),
+    };
+
+    const newThreadId = await actions.forkThread({
+      threadKey: "thread-source-1",
+      title: "Forked chat",
+      sourceTitle: "Original chat",
+      isAI: true,
+    });
+
+    expect(newThreadId).toBeTruthy();
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    const chatRow = rows.find(
+      (row: any) => row?.event === "chat" && row?.thread_id === newThreadId,
+    );
+    expect(chatRow).toBeTruthy();
+    const cfgRow = rows.find(
+      (row: any) =>
+        row?.event === "chat-thread-config" && row?.thread_id === newThreadId,
+    );
+    expect(cfgRow).toBeTruthy();
+    expect(cfgRow.date).toBe(chatRow.date);
+    expect(cfgRow.name).toBe("Forked chat");
+    expect(cfgRow.thread_color).toBe("#123456");
+    expect(cfgRow.thread_icon).toBe("rocket");
+    expect(cfgRow.agent_kind).toBe("acp");
+    expect(cfgRow.agent_mode).toBe("interactive");
+    expect(cfgRow.agent_model).toBe("gpt-5.3-codex");
+    expect(cfgRow.acp_config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.3-codex",
+        sessionId: "session-fork-1",
+        approvalPolicy: "full-auto",
+      }),
+    );
+    expect(cfgRow.loop_config).toEqual({ enabled: true, max_turns: 12 });
+    expect(cfgRow.loop_state).toBeNull();
+    expect(actions.setSelectedThread).toHaveBeenCalledWith(newThreadId);
+    expect(
+      (webapp_client as any).conat_client.forkAcpSession,
+    ).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      sessionId: "session-source-1",
+    });
+  });
+
   it("does not delete by timestamp keys anymore", () => {
     const thread = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const root = new Date("2026-02-21T20:00:00.000Z");

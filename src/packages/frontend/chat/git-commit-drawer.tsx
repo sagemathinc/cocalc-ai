@@ -1280,7 +1280,10 @@ export function GitCommitDrawer({
   }, [gitLog, commitIndex]);
 
   const logOptions = useMemo(() => {
-    const makeOptionLabel = (entry: GitLogEntry, fallback = false) => (
+    const makeOptionLabel = (entry: GitLogEntry, fallback = false) => {
+      const reviewed = Boolean(reviewedByCommit[entry.hash]);
+      const highlightNeedsReview = !fallback && !isHeadCommit(entry.hash) && !reviewed;
+      return (
       <div
         style={{
           display: "flex",
@@ -1288,10 +1291,13 @@ export function GitCommitDrawer({
           gap: 8,
           minWidth: 0,
           width: "100%",
+          borderRadius: 6,
+          padding: "2px 6px",
+          background: highlightNeedsReview ? "#fffbe6" : undefined,
         }}
       >
         <Checkbox
-          checked={Boolean(reviewedByCommit[entry.hash])}
+          checked={reviewed}
           disabled
           style={{ pointerEvents: "none", marginInlineEnd: 0 }}
         />
@@ -1318,7 +1324,8 @@ export function GitCommitDrawer({
           {entry.subject || (fallback ? "(selected commit)" : "")}
         </span>
       </div>
-    );
+      );
+    };
     const options = [
       {
         value: HEAD_REF,
