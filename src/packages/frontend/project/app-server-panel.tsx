@@ -11,6 +11,10 @@ import type {
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
 import { ErrorDisplay, Paragraph } from "@cocalc/frontend/components";
+import {
+  dispatchNavigatorPromptIntent,
+  submitNavigatorPromptToCurrentThread,
+} from "@cocalc/frontend/project/new/navigator-intents";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { withProjectHostBase } from "./host-url";
 
@@ -58,6 +62,7 @@ export function AppServerPanel({
   const [exposeSubdomainLabel, setExposeSubdomainLabel] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [submittingToAgent, setSubmittingToAgent] = useState<boolean>(false);
   const [actionAppId, setActionAppId] = useState<string>("");
   const [error, setError] = useState<Error | undefined>(undefined);
   const [audit, setAudit] = useState<AppPublicReadinessAudit | undefined>(
@@ -283,6 +288,30 @@ export function AppServerPanel({
     } finally {
       setSubmitting(false);
       setActionAppId("");
+    }
+  }
+
+  async function sendAuditToAgent(prompt: string) {
+    const text = `${prompt ?? ""}`.trim();
+    if (!text) return;
+    try {
+      setSubmittingToAgent(true);
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
+        prompt: text,
+        tag: "intent:app-server-audit",
+        forceCodex: true,
+        openFloating: true,
+      });
+      if (!sent) {
+        dispatchNavigatorPromptIntent({
+          prompt: text,
+          tag: "intent:app-server-audit",
+          forceCodex: true,
+        });
+      }
+    } finally {
+      setSubmittingToAgent(false);
     }
   }
 
@@ -642,6 +671,14 @@ export function AppServerPanel({
               }
             >
               Copy Agent Prompt
+            </Button>
+            <Button
+              size="small"
+              type="primary"
+              loading={submittingToAgent}
+              onClick={() => void sendAuditToAgent(audit.agent_prompt)}
+            >
+              Send to Agent
             </Button>
           </Space>
         </div>
