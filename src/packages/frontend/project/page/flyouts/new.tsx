@@ -61,6 +61,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
 import { NamedServerPanel } from "@cocalc/frontend/project/named-server-panel";
+import { AppServerPanel } from "@cocalc/frontend/project/app-server-panel";
 import type { NamedServerName } from "@cocalc/util/types/servers";
 
 function getFileExtension(filename: string): string | null {
@@ -141,6 +142,7 @@ export function NewFlyout({
   const [showServerPanel, setShowServerPanel] = useState<"" | NamedServerName>(
     "",
   );
+  const [showAppServerPanel, setShowAppServerPanel] = useState<boolean>(false);
 
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
@@ -663,13 +665,28 @@ export function NewFlyout({
               icon={app.icon}
               size="small"
               mode="secondary"
-              on_click={() => setShowServerPanel(app.id)}
+              on_click={() => {
+                setShowAppServerPanel(false);
+                setShowServerPanel(app.id);
+              }}
             />
           ))}
+          <NewFileButton
+            key="flyout-app-managed-server"
+            name="App Server"
+            icon="server"
+            size="small"
+            mode="secondary"
+            on_click={() => {
+              setShowServerPanel("");
+              setShowAppServerPanel((v) => !v);
+            }}
+          />
         </Flex>
         {showServerPanel && (
           <NamedServerPanel project_id={project_id} name={showServerPanel} />
         )}
+        {showAppServerPanel && <AppServerPanel project_id={project_id} />}
         <hr />
         <Tag color={COLORS.GRAY_L}>Filename generator</Tag>
         <SelectorInput

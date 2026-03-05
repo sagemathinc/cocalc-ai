@@ -59,6 +59,7 @@ import {
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
 import { NamedServerPanel } from "../named-server-panel";
+import { AppServerPanel } from "../app-server-panel";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -147,6 +148,7 @@ export default function NewFilePage(props: Props) {
   const [showServerPanel, setShowServerPanel] = useState<"" | NamedServerName>(
     "",
   );
+  const [showAppServerPanel, setShowAppServerPanel] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -695,9 +697,23 @@ export default function NewFilePage(props: Props) {
                 icon={spec.icon}
                 size="small"
                 mode="secondary"
-                on_click={() => setShowServerPanel(spec.id)}
+                on_click={() => {
+                  setShowAppServerPanel(false);
+                  setShowServerPanel(spec.id);
+                }}
               />
             ))}
+            <NewFileButton
+              key="app-managed-server"
+              name="App Server"
+              icon="server"
+              size="small"
+              mode="secondary"
+              on_click={() => {
+                setShowServerPanel("");
+                setShowAppServerPanel(true);
+              }}
+            />
             {serversDisabled && (
               <Button
                 size="small"
@@ -800,6 +816,16 @@ export default function NewFilePage(props: Props) {
         {showServerPanel && (
           <NamedServerPanel project_id={project_id} name={showServerPanel} />
         )}
+      </Modal>
+      <Modal
+        open={showAppServerPanel}
+        onCancel={() => setShowAppServerPanel(false)}
+        footer={null}
+        width={920}
+        destroyOnHidden
+        title="App Server"
+      >
+        <AppServerPanel project_id={project_id} />
       </Modal>
     </SettingBox>
   );
