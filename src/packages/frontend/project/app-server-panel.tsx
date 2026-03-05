@@ -10,15 +10,33 @@ import type {
   DetectedAppPort,
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
-import { ErrorDisplay, Paragraph } from "@cocalc/frontend/components";
+import { Paragraph } from "@cocalc/frontend/components";
+import ShowError from "@cocalc/frontend/components/error";
 import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
+type PresetKind = "service" | "static";
+
+interface AppServerPreset {
+  key: string;
+  label: string;
+  kind: PresetKind;
+  id: string;
+  title: string;
+  command?: string;
+  preferredPort?: string;
+  healthPath?: string;
+  staticRoot?: string;
+  staticIndex?: string;
+  staticCacheControl?: string;
+  note?: string;
+}
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
@@ -30,15 +48,108 @@ function defaultBasePath(appId: string): string {
   return id ? `/apps/${id}` : "/apps/my-app";
 }
 
+function joinPath(head: string, tail: string): string {
+  const h = `${head ?? ""}`.replace(/\/+$/, "");
+  const t = `${tail ?? ""}`.replace(/^\/+/, "");
+  return `${h}/${t}`;
+}
+
+function appServerPresets(homeDirectory: string): AppServerPreset[] {
+  return [
+    {
+      key: "jupyterlab",
+      label: "JupyterLab",
+      kind: "service",
+      id: "jupyterlab",
+      title: "JupyterLab",
+      preferredPort: "6002",
+      healthPath: "/lab",
+      command:
+        "jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=$APP_BASE_URL --ip=${HOST:-127.0.0.1} --port=${PORT}",
+    },
+    {
+      key: "code-server",
+      label: "code-server",
+      kind: "service",
+      id: "code-server",
+      title: "code-server",
+      preferredPort: "6004",
+      command:
+        "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
+    },
+    {
+      key: "pluto",
+      label: "Pluto",
+      kind: "service",
+      id: "pluto",
+      title: "Pluto",
+      preferredPort: "6005",
+      command:
+        "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
+    },
+    {
+      key: "rstudio",
+      label: "RStudio / rserver",
+      kind: "service",
+      id: "rserver",
+      title: "RStudio Server",
+      preferredPort: "6006",
+      command:
+        "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
+    },
+    {
+      key: "python-hello",
+      label: "Python Hello World",
+      kind: "service",
+      id: "python-hello",
+      title: "Python Hello World",
+      preferredPort: "8080",
+      command:
+        "python3 -c \"import os, http.server, socketserver; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); class H(http.server.BaseHTTPRequestHandler):\\n  def do_GET(self):\\n    body=b'hello from python\\\\n'; self.send_response(200); self.send_header('content-type','text/plain; charset=utf-8'); self.send_header('content-length',str(len(body))); self.end_headers(); self.wfile.write(body)\\n  def log_message(self, *_):\\n    pass\\nsocketserver.TCPServer.allow_reuse_address=True; httpd=socketserver.TCPServer((host,port),H); print(f'listening on http://{host}:{port}', flush=True); httpd.serve_forever()\"",
+    },
+    {
+      key: "node-hello",
+      label: "Node.js Hello World",
+      kind: "service",
+      id: "node-hello",
+      title: "Node.js Hello World",
+      preferredPort: "8080",
+      command:
+        "node -e \"const http=require('http');const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body='hello from node\\\\n';res.writeHead(200,{'content-type':'text/plain; charset=utf-8','content-length':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log('listening on http://'+host+':'+port));\"",
+    },
+    {
+      key: "static-hello",
+      label: "Static Hello World",
+      kind: "static",
+      id: "static-hello",
+      title: "Static Hello World",
+      staticRoot: joinPath(homeDirectory, "static-hello"),
+      staticIndex: "index.html",
+      staticCacheControl: "public,max-age=3600",
+      note:
+        "Create files first, e.g. mkdir -p ~/static-hello && echo '<h1>Hello</h1>' > ~/static-hello/index.html",
+    },
+  ];
+}
+
 export function AppServerPanel({
   project_id,
 }: {
   project_id: string;
 }) {
+  const homeDirectory = useMemo(
+    () => getProjectHomeDirectory(project_id),
+    [project_id],
+  );
+  const presets = useMemo(
+    () => appServerPresets(homeDirectory),
+    [homeDirectory],
+  );
   const api = useMemo(
     () => webapp_client.conat_client.projectApi({ project_id }),
     [project_id],
   );
+  const [presetKey, setPresetKey] = useState<string>("");
   const [kind, setKind] = useState<AppKind>("service");
   const [appId, setAppId] = useState<string>("");
   const [title, setTitle] = useState<string>("");
@@ -80,6 +191,11 @@ export function AppServerPanel({
   } | null>(null);
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
 
+  const activePreset = useMemo(
+    () => presets.find((preset) => preset.key === presetKey),
+    [presets, presetKey],
+  );
+
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
@@ -96,6 +212,31 @@ export function AppServerPanel({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  function applyPreset(nextKey: string) {
+    const preset = presets.find((x) => x.key === nextKey);
+    if (!preset) return;
+    setPresetKey(nextKey);
+    setKind(preset.kind);
+    setAppId(preset.id);
+    setTitle(preset.title);
+    setBasePath(defaultBasePath(preset.id));
+    if (preset.kind === "service") {
+      setCommand(preset.command ?? "");
+      setPort(preset.preferredPort ?? "");
+      setHealthPath(preset.healthPath ?? "");
+      setStartNow(true);
+      setOpenWhenReady(true);
+    } else {
+      setStaticRoot(preset.staticRoot ?? "");
+      setStaticIndex(preset.staticIndex ?? "index.html");
+      setStaticCacheControl(
+        preset.staticCacheControl ?? "public,max-age=3600",
+      );
+      setStartNow(false);
+      setOpenWhenReady(false);
+    }
+  }
 
   async function openStatus(status: ManagedAppStatus) {
     let url = status.exposure?.public_url;
@@ -340,6 +481,7 @@ export function AppServerPanel({
   }
 
   function useDetectedPort(portValue: number) {
+    setPresetKey("");
     const nextId = `${appId ?? ""}`.trim() || `app-${portValue}`;
     setKind("service");
     setAppId(nextId);
@@ -371,10 +513,22 @@ export function AppServerPanel({
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
         Create a managed app server spec, start it, and open the proxied URL.
       </Paragraph>
-      {error ? (
-        <ErrorDisplay error={error} onClose={() => setError(undefined)} />
-      ) : null}
+      <ShowError error={error} setError={() => setError(undefined)} />
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
+        <Select
+          value={presetKey || undefined}
+          placeholder="Preset (optional)"
+          allowClear
+          onClear={() => setPresetKey("")}
+          onChange={(value) => applyPreset(value)}
+          options={presets.map((preset) => ({
+            value: preset.key,
+            label: preset.label,
+          }))}
+        />
+        {activePreset?.note ? (
+          <Alert type="info" showIcon message={activePreset.note} />
+        ) : null}
         <Space.Compact style={{ width: "100%" }}>
           <Select<AppKind>
             value={kind}
