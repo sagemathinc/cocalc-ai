@@ -204,6 +204,67 @@ function parseAbsoluteFileHrefTarget(href: string): {
   }
 }
 
+function inferHomeFromCurrentPath(path?: string): string | undefined {
+  if (!path) return undefined;
+  const normalized = decodePathForParsing(path).replace(/\\/g, "/");
+  const homeMatch = normalized.match(/^\/home\/[^/]+/);
+  if (homeMatch) return homeMatch[0];
+  if (normalized === "/root" || normalized.startsWith("/root/")) return "/root";
+  return undefined;
+}
+
+async function resolveCrossMachineAbsolutePathFallback(opts: {
+  actions: any;
+  absolutePath: string;
+  currentPath?: string;
+}): Promise<string | undefined> {
+  const fs = opts.actions?.fs?.();
+  if (!fs?.exists) return undefined;
+  const raw = decodePathForParsing(opts.absolutePath).replace(/\\/g, "/");
+  if (!raw.startsWith("/")) return undefined;
+  const home = inferHomeFromCurrentPath(opts.currentPath);
+  if (!home) return undefined;
+  const candidates = new Set<string>();
+
+  const buildIdx = raw.indexOf("/build/");
+  if (buildIdx >= 0) {
+    const buildTail = raw.slice(buildIdx + 1);
+    candidates.add(join(home, buildTail));
+  }
+
+  const srcIdx = raw.indexOf("/src/");
+  if (srcIdx >= 0) {
+    const srcTail = raw.slice(srcIdx + "/src/".length);
+    candidates.add(join(home, "src", srcTail));
+    const buildRoot = join(home, "build");
+    try {
+      const entries = await fs.readdir(buildRoot, { withFileTypes: true });
+      for (const entry of entries ?? []) {
+        const name = `${entry?.name ?? ""}`.trim();
+        if (!name) continue;
+        const isDirectory =
+          typeof entry?.isDirectory === "function" ? entry.isDirectory() : true;
+        if (!isDirectory) continue;
+        candidates.add(join(buildRoot, name, "src", srcTail));
+      }
+    } catch {
+      // best effort only
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate || candidate === raw) continue;
+    try {
+      if (await fs.exists(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // continue trying remaining candidates
+    }
+  }
+  return undefined;
+}
+
 function isLikelyAbsoluteFilePathHref(href: string): boolean {
   if (!href.startsWith("/")) return false;
   if (href.startsWith("//")) return false;
@@ -535,6 +596,35 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
                   explicit: true,
                 });
               } catch (err) {
+                const fallback = await resolveCrossMachineAbsolutePathFallback({
+                  actions,
+                  absolutePath: absoluteTarget.path,
+                  currentPath: path,
+                });
+                if (fallback && fallback !== absoluteTarget.path) {
+                  try {
+                    let fallbackIsDir = actions.isDirViaCache?.(fallback);
+                    if (
+                      typeof fallbackIsDir !== "boolean" &&
+                      typeof actions.isDir === "function"
+                    ) {
+                      fallbackIsDir = await actions.isDir(fallback);
+                    }
+                    if (fallbackIsDir === true) {
+                      actions.open_directory?.(fallback);
+                      return;
+                    }
+                    await actions.open_file({
+                      path: fallback,
+                      line: absoluteTarget.line,
+                      foreground: true,
+                      explicit: true,
+                    });
+                    return;
+                  } catch {
+                    // fall through to user-visible error below
+                  }
+                }
                 alert_message({
                   type: "error",
                   message: `Cannot open linked file: ${absoluteTarget.path} (${err})`,

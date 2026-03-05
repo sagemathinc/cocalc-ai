@@ -10,6 +10,8 @@ const openProject = jest.fn();
 const setActiveTab = jest.fn();
 const isDir = jest.fn(async () => false);
 const isDirViaCache = jest.fn(() => false);
+const fsExists = jest.fn(async (_path?: string) => false);
+const fsReaddir = jest.fn(async (_path?: string, _opts?: any) => [] as any[]);
 
 jest.mock("@cocalc/frontend/components", () => ({
   A: ({ href, title, onClick, children }) => (
@@ -31,6 +33,10 @@ jest.mock("@cocalc/frontend/app-framework", () => {
         open_directory: openDirectory,
         isDir,
         isDirViaCache,
+        fs: () => ({
+          exists: fsExists,
+          readdir: fsReaddir,
+        }),
         load_target: loadTarget,
       }),
       getActions: (name?: string) => {
@@ -65,8 +71,12 @@ describe("SmartAnchorTag", () => {
     setActiveTab.mockReset();
     isDir.mockReset();
     isDirViaCache.mockReset();
+    fsExists.mockReset();
+    fsReaddir.mockReset();
     isDir.mockResolvedValue(false);
     isDirViaCache.mockReturnValue(false);
+    fsExists.mockResolvedValue(false);
+    fsReaddir.mockResolvedValue([]);
     openMock.mockReset();
   });
 
@@ -129,6 +139,54 @@ describe("SmartAnchorTag", () => {
     await waitFor(() => {
       expect(openFile).toHaveBeenCalledWith({
         path: "/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts",
+        line: 485,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
+  it("falls back from cross-machine absolute paths when original path is missing", async () => {
+    openFile
+      .mockRejectedValueOnce(
+        new Error(
+          "ENOENT: no such file or directory, stat '/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts'",
+        ),
+      )
+      .mockResolvedValueOnce(undefined);
+    fsReaddir.mockResolvedValue([
+      {
+        name: "cocalc-lite3",
+        isDirectory: () => true,
+      },
+    ] as any);
+    fsExists.mockImplementation(async (...args: any[]) => {
+      const candidate = `${args?.[0] ?? ""}`;
+      return (
+        candidate ===
+        "/home/wstein/build/cocalc-lite3/src/packages/plus/reflect/manager.ts"
+      );
+    });
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="/home/wstein/scratch/cocalc-lite3-lite-daemon/lite.chat"
+        href="/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts:485"
+      >
+        manager.ts:485
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "manager.ts:485" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenNthCalledWith(1, {
+        path: "/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts",
+        line: 485,
+        foreground: true,
+        explicit: true,
+      });
+      expect(openFile).toHaveBeenNthCalledWith(2, {
+        path: "/home/wstein/build/cocalc-lite3/src/packages/plus/reflect/manager.ts",
         line: 485,
         foreground: true,
         explicit: true,
