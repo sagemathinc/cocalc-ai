@@ -40,6 +40,8 @@ jest.mock("@cocalc/frontend/project/home-directory", () => ({
 }));
 
 import {
+  createNavigatorPromptIntent,
+  queueNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
   takeQueuedNavigatorPromptIntents,
 } from "./navigator-intents";
@@ -71,5 +73,37 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(queued[0].tag).toBe("intent:test");
     expect(mockOpenFloating).toHaveBeenCalledTimes(1);
   });
-});
 
+  it("keeps queued intents even when localStorage is unavailable", () => {
+    const getSpy = jest
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const setSpy = jest
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const removeSpy = jest
+      .spyOn(Storage.prototype, "removeItem")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    try {
+      const intent = createNavigatorPromptIntent({
+        prompt: "Help me fix this error",
+        tag: "intent:test",
+      });
+      queueNavigatorPromptIntent(intent);
+      const queued = takeQueuedNavigatorPromptIntents();
+      expect(queued).toHaveLength(1);
+      expect(queued[0].prompt).toBe("Help me fix this error");
+      expect(queued[0].tag).toBe("intent:test");
+    } finally {
+      getSpy.mockRestore();
+      setSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
+});

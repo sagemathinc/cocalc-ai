@@ -16,6 +16,9 @@ import { path_split } from "@cocalc/util/misc";
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT =
   "cocalc:navigator:submit-prompt";
+const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
+const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
+let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
 
 export interface NavigatorSubmitPromptDetail {
   id: string;
@@ -110,7 +113,7 @@ async function waitForThreadReady(opts: {
   threadKey?: string;
   timeoutMs?: number;
 }): Promise<boolean> {
-  const timeoutMs = Math.max(500, opts.timeoutMs ?? 6000);
+  const timeoutMs = Math.max(500, opts.timeoutMs ?? NAVIGATOR_SYNC_READY_TIMEOUT_MS);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     const state = opts.actions?.syncdb?.get_state?.();
@@ -188,19 +191,22 @@ async function ensureNavigatorChatDirectory(
 function readQueue(): NavigatorSubmitPromptDetail[] {
   try {
     const raw = localStorage.getItem(NAVIGATOR_INTENT_QUEUE_KEY);
-    if (!raw) return [];
+    if (!raw) return navigatorIntentQueueMemory.slice();
     const value = JSON.parse(raw);
-    if (!Array.isArray(value)) return [];
-    return value.filter(
+    if (!Array.isArray(value)) return navigatorIntentQueueMemory.slice();
+    const queue = value.filter(
       (item) =>
         typeof item?.id === "string" && typeof item?.prompt === "string",
     );
+    navigatorIntentQueueMemory = queue.slice();
+    return queue;
   } catch {
-    return [];
+    return navigatorIntentQueueMemory.slice();
   }
 }
 
 function writeQueue(queue: NavigatorSubmitPromptDetail[]): void {
+  navigatorIntentQueueMemory = queue.slice();
   try {
     if (queue.length === 0) {
       localStorage.removeItem(NAVIGATOR_INTENT_QUEUE_KEY);
@@ -322,7 +328,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     if (!actions) return queueFallbackIntent();
     const ready = await waitForThreadReady({
       actions,
-      timeoutMs: 6000,
+      timeoutMs: NAVIGATOR_SYNC_READY_TIMEOUT_MS,
     });
     if (!ready) return queueFallbackIntent();
     const resolvedThreadKey = chooseThreadKeyFromIndex({
@@ -341,7 +347,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       const rootReady = await waitForThreadReady({
         actions,
         threadKey: replyThreadKey,
-        timeoutMs: 8000,
+        timeoutMs: NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS,
       });
       replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
       if (!rootReady || !replyThreadId) {
