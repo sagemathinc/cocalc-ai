@@ -777,7 +777,11 @@ function PathLink({
 }) {
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
-  const resolvedPath = resolvePath(path, basePath, projectId);
+  const parsedTarget = React.useMemo(
+    () => parsePathLineTarget(path, line),
+    [path, line],
+  );
+  const resolvedPath = resolvePath(parsedTarget.path, basePath, projectId);
   const onClick = React.useCallback(
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
@@ -797,7 +801,7 @@ function PathLink({
           }
           await actions.open_file({
             path: resolvedPath,
-            line,
+            line: parsedTarget.line,
             foreground: true,
             explicit: true,
           });
@@ -810,7 +814,7 @@ function PathLink({
         }
       })();
     },
-    [actions, resolvedPath, line],
+    [actions, resolvedPath, parsedTarget.line],
   );
   const node = (
     <code
@@ -839,6 +843,51 @@ function PathLink({
     );
   }
   return node;
+}
+
+export function parsePathLineTarget(
+  path?: string,
+  explicitLine?: number,
+): { path?: string; line?: number } {
+  const normalized = normalizeSlashPath(path);
+  if (!normalized) return { path: normalized, line: explicitLine };
+  const hashIndex = normalized.indexOf("#");
+  const pathPart = hashIndex >= 0 ? normalized.slice(0, hashIndex) : normalized;
+  const hashPart = hashIndex >= 0 ? normalized.slice(hashIndex) : undefined;
+  const lineFromHash = parseLineFromHashFragment(hashPart);
+  const match = pathPart.match(/^(.*):(\d+)(?::\d+)?(?:[)\].,;!?'"`]+)?$/);
+  if (!match) {
+    return {
+      path: pathPart,
+      line: explicitLine ?? lineFromHash,
+    };
+  }
+  const candidatePath = (match[1] ?? "").trim();
+  const parsedLine = Number(match[2]);
+  if (
+    !candidatePath ||
+    candidatePath.endsWith("/") ||
+    !Number.isFinite(parsedLine) ||
+    parsedLine <= 0
+  ) {
+    return {
+      path: pathPart,
+      line: explicitLine ?? lineFromHash,
+    };
+  }
+  return {
+    path: candidatePath,
+    line: explicitLine ?? parsedLine ?? lineFromHash,
+  };
+}
+
+function parseLineFromHashFragment(hash?: string): number | undefined {
+  if (!hash) return undefined;
+  const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
+  const match = cleaned.match(/^L(\d+)(?:C\d+)?(?:-L?\d+)?$/i);
+  if (!match) return undefined;
+  const line = Number(match[1]);
+  return Number.isFinite(line) && line > 0 ? line : undefined;
 }
 
 function DiffPreview({

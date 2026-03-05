@@ -1,4 +1,4 @@
-import { codexEventsToMarkdown } from "../codex-activity";
+import { codexEventsToMarkdown, parsePathLineTarget } from "../codex-activity";
 
 describe("codexEventsToMarkdown", () => {
   it("formats file paths as inline code (not markdown links)", () => {
@@ -112,5 +112,32 @@ describe("codexEventsToMarkdown", () => {
       } as any,
     ]);
     expect(markdown).toContain("- File: Wrote `README.md` (2.0 KB)");
+  });
+});
+
+describe("parsePathLineTarget", () => {
+  it("extracts :line suffix from activity file paths", () => {
+    expect(
+      parsePathLineTarget(
+        "/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts:485",
+      ),
+    ).toEqual({
+      path: "/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts",
+      line: 485,
+    });
+  });
+
+  it("extracts #L anchors from activity file paths", () => {
+    expect(parsePathLineTarget("/tmp/workspaces.py#L42")).toEqual({
+      path: "/tmp/workspaces.py",
+      line: 42,
+    });
+  });
+
+  it("prefers explicit line metadata when available", () => {
+    expect(parsePathLineTarget("/tmp/workspaces.py:42", 7)).toEqual({
+      path: "/tmp/workspaces.py",
+      line: 7,
+    });
   });
 });
