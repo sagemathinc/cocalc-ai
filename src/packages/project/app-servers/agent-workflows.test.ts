@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  appLogs,
   auditAppPublicReadiness,
   deleteApp,
   detectApps,
@@ -321,5 +322,30 @@ describe("app server agent workflows", () => {
     });
     expect(readFileSync(counterPath, "utf8").trim()).toBe("2");
     expect(readFileSync(indexPath, "utf8").trim()).toBe("refresh-2");
+  });
+
+  test("failed service startup keeps stderr visible in app logs", async () => {
+    const id = appId("start-fail");
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      title: "Startup Failure Logs Test",
+      command: {
+        exec: process.execPath,
+        args: ["-e", "console.error('boot-fail'); process.exit(2);"],
+      },
+      network: { listen_host: "127.0.0.1", protocol: "http" },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 5 },
+    });
+
+    await expect(
+      ensureRunning(id, { timeout: 1200, interval: 100 }),
+    ).rejects.toThrow(/timed out waiting for app/);
+
+    const logs = await appLogs(id);
+    expect(logs.state).toBe("stopped");
+    expect(logs.stderr).toContain("boot-fail");
   });
 });

@@ -655,8 +655,21 @@ export async function statusApp(id: string): Promise<AppStatus> {
   }
 
   const running = children[spec.id];
-  if (!running || !isChildRunning(running.child)) {
+  if (!running) {
     return status;
+  }
+  if (!isChildRunning(running.child)) {
+    return {
+      ...status,
+      ready: false,
+      port: running.port,
+      url: running.url,
+      pid: running.child.pid,
+      stdout: running.stdout,
+      stderr: running.stderr,
+      spawnError: running.spawnError,
+      exit: running.exit,
+    };
   }
 
   if (running.ready !== true) {
