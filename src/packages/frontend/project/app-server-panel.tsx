@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Checkbox, Divider, Input, Modal, Popconfirm, Select, Space, Spin, Tag } from "antd";
 import type {
+  AppSpec,
   AppPublicReadinessAudit,
   DetectedAppPort,
   ManagedAppStatus,
@@ -222,6 +223,15 @@ export function AppServerPanel({
     stdout: string;
     stderr: string;
   } | null>(null);
+  const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
+    {},
+  );
+  const [editSpecOpen, setEditSpecOpen] = useState<boolean>(false);
+  const [editSpecLoading, setEditSpecLoading] = useState<boolean>(false);
+  const [editSpecSaving, setEditSpecSaving] = useState<boolean>(false);
+  const [editSpecTargetId, setEditSpecTargetId] = useState<string>("");
+  const [editSpecRaw, setEditSpecRaw] = useState<string>("");
+  const [editSpecError, setEditSpecError] = useState<string>("");
   const [startupFailure, setStartupFailure] =
     useState<StartupFailureDetails | undefined>(undefined);
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
@@ -235,8 +245,18 @@ export function AppServerPanel({
     try {
       setLoading(true);
       setError(undefined);
-      const next = await api.apps.listAppStatuses();
+      const [next, specRecords] = await Promise.all([
+        api.apps.listAppStatuses(),
+        api.apps.listAppSpecs(),
+      ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
+      const map: Record<string, AppSpec | undefined> = {};
+      for (const row of specRecords) {
+        if (row.spec?.id) {
+          map[row.spec.id] = row.spec;
+        }
+      }
+      setSpecById(map);
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -598,6 +618,85 @@ export function AppServerPanel({
     }
   }
 
+  async function onEditSpec(id: string) {
+    try {
+      setEditSpecOpen(true);
+      setEditSpecLoading(true);
+      setEditSpecError("");
+      setEditSpecTargetId(id);
+      const spec = await api.apps.getAppSpec(id);
+      setEditSpecRaw(`${JSON.stringify(spec, null, 2)}\n`);
+    } catch (err) {
+      setEditSpecError(`${normalizeError(err).message}`);
+    } finally {
+      setEditSpecLoading(false);
+    }
+  }
+
+  async function onSaveSpecEdit() {
+    try {
+      setEditSpecSaving(true);
+      setEditSpecError("");
+      const parsed = JSON.parse(editSpecRaw);
+      const parsedId = `${parsed?.id ?? ""}`.trim();
+      if (!parsedId) {
+        throw new Error("Spec must include a non-empty id.");
+      }
+      if (editSpecTargetId && parsedId !== editSpecTargetId) {
+        throw new Error(
+          `Editing app '${editSpecTargetId}' only supports keeping the same id. Got '${parsedId}'.`,
+        );
+      }
+      await api.apps.upsertAppSpec(parsed);
+      await refresh();
+      setEditSpecOpen(false);
+      setEditSpecTargetId("");
+      setEditSpecRaw("");
+    } catch (err) {
+      setEditSpecError(`${normalizeError(err).message}`);
+    } finally {
+      setEditSpecSaving(false);
+    }
+  }
+
+  function closeEditSpecModal() {
+    if (editSpecSaving) return;
+    setEditSpecOpen(false);
+    setEditSpecLoading(false);
+    setEditSpecTargetId("");
+    setEditSpecRaw("");
+    setEditSpecError("");
+  }
+
+  function summarizeSpec(spec: AppSpec | undefined): string[] {
+    if (!spec) return [];
+    const out: string[] = [];
+    const basePath = `${spec?.proxy?.base_path ?? ""}`.trim();
+    if (basePath) out.push(`base_path=${basePath}`);
+    if (spec.kind === "service") {
+      const cmd = spec?.command?.exec
+        ? [spec.command.exec, ...(spec.command.args ?? [])].join(" ")
+        : "";
+      if (cmd) out.push(`command=${cmd}`);
+      const configuredPort = spec?.network?.port;
+      if (configuredPort) out.push(`port=${configuredPort}`);
+      const healthPathValue = `${spec?.proxy?.health_path ?? ""}`.trim();
+      if (healthPathValue) out.push(`health=${healthPathValue}`);
+    } else if (spec.kind === "static") {
+      const root = `${spec?.static?.root ?? ""}`.trim();
+      if (root) out.push(`root=${root}`);
+      const index = `${spec?.static?.index ?? ""}`.trim();
+      if (index) out.push(`index=${index}`);
+      const refresh = spec?.static?.refresh;
+      if (refresh) {
+        out.push(
+          `refresh=on-hit stale:${refresh.stale_after_s ?? "?"}s timeout:${refresh.timeout_s ?? "?"}s`,
+        );
+      }
+    }
+    return out;
+  }
+
   async function reportStartupFailure({
     appId,
     action,
@@ -911,6 +1010,8 @@ export function AppServerPanel({
       <Space direction="vertical" style={{ width: "100%" }}>
         {rows.map((row) => {
           const isRunning = row.state === "running";
+          const spec = specById[row.id];
+          const specSummary = summarizeSpec(spec);
           return (
             <div
               key={row.id}
@@ -995,8 +1096,31 @@ export function AppServerPanel({
                   >
                     Logs
                   </Button>
+                  <Button
+                    size="small"
+                    onClick={() => void onEditSpec(row.id)}
+                    disabled={submitting}
+                  >
+                    Edit spec
+                  </Button>
                 </Space>
               </div>
+              {specSummary.length > 0 ? (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    fontSize: "12px",
+                    fontFamily: "monospace",
+                    opacity: 0.82,
+                    display: "grid",
+                    gap: "4px",
+                  }}
+                >
+                  {specSummary.map((item) => (
+                    <div key={`${row.id}-${item}`}>{item}</div>
+                  ))}
+                </div>
+              ) : null}
               {row.exposure?.public_url ? (
                 <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
                   Public URL:{" "}
@@ -1071,6 +1195,44 @@ export function AppServerPanel({
           </Space>
         </div>
       ) : null}
+      <Modal
+        open={editSpecOpen}
+        onCancel={closeEditSpecModal}
+        width={980}
+        title={editSpecTargetId ? `Edit spec: ${editSpecTargetId}` : "Edit app spec"}
+        destroyOnClose={false}
+        footer={[
+          <Button key="close" onClick={closeEditSpecModal} disabled={editSpecSaving}>
+            Cancel
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={editSpecSaving}
+            onClick={() => void onSaveSpecEdit()}
+          >
+            Save spec
+          </Button>,
+        ]}
+      >
+        {editSpecError ? (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: "8px" }}
+            message={editSpecError}
+          />
+        ) : null}
+        {editSpecLoading ? <Spin /> : null}
+        {!editSpecLoading ? (
+          <Input.TextArea
+            value={editSpecRaw}
+            onChange={(e) => setEditSpecRaw(e.target.value)}
+            autoSize={{ minRows: 16, maxRows: 28 }}
+            style={{ fontFamily: "monospace" }}
+          />
+        ) : null}
+      </Modal>
       <Modal
         open={logsOpen}
         onCancel={() => setLogsOpen(false)}
