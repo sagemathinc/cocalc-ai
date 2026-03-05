@@ -17,6 +17,7 @@ export const apps = {
   unexposeApp: true,
   appLogs: true,
   detectApps: true,
+  detectInstalledTemplates: true,
   auditAppPublicReadiness: true,
 };
 
@@ -85,6 +86,13 @@ export interface DetectedAppPort {
   managed_app_ids: string[];
   proxy_url: string;
   source: "ss" | "procfs";
+}
+
+export interface InstalledAppTemplate {
+  key: string;
+  label: string;
+  available: boolean;
+  details?: string;
 }
 
 export interface AppAuditCheck {
@@ -161,7 +169,10 @@ export interface Apps {
   detectApps: (opts?: {
     include_managed?: boolean;
     limit?: number;
+    http_only?: boolean;
   }) => Promise<DetectedAppPort[]>;
+
+  detectInstalledTemplates: () => Promise<InstalledAppTemplate[]>;
 
   auditAppPublicReadiness: (id: string) => Promise<AppPublicReadinessAudit>;
 }

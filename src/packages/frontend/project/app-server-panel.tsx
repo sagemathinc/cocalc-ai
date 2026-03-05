@@ -9,6 +9,7 @@ import type {
   AppSpec,
   AppPublicReadinessAudit,
   DetectedAppPort,
+  InstalledAppTemplate,
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
 import { Paragraph } from "@cocalc/frontend/components";
@@ -257,6 +258,11 @@ export function AppServerPanel({
   );
   const [detected, setDetected] = useState<DetectedAppPort[]>([]);
   const [detecting, setDetecting] = useState<boolean>(false);
+  const [installedTemplates, setInstalledTemplates] = useState<
+    InstalledAppTemplate[]
+  >([]);
+  const [detectingInstalledTemplates, setDetectingInstalledTemplates] =
+    useState<boolean>(false);
   const [logsOpen, setLogsOpen] = useState<boolean>(false);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsData, setLogsData] = useState<{
@@ -738,6 +744,7 @@ export function AppServerPanel({
       setError(undefined);
       const next = await api.apps.detectApps({
         include_managed: true,
+        http_only: true,
         limit: 100,
       });
       setDetected(next);
@@ -745,6 +752,19 @@ export function AppServerPanel({
       setError(normalizeError(err));
     } finally {
       setDetecting(false);
+    }
+  }
+
+  async function onDetectInstalledTemplates() {
+    try {
+      setDetectingInstalledTemplates(true);
+      setError(undefined);
+      const next = await api.apps.detectInstalledTemplates();
+      setInstalledTemplates(next);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setDetectingInstalledTemplates(false);
     }
   }
 
@@ -1085,7 +1105,13 @@ export function AppServerPanel({
             Refresh
           </Button>
           <Button onClick={() => void onDetect()} loading={detecting}>
-            Detect apps
+            Detect running HTTP apps
+          </Button>
+          <Button
+            onClick={() => void onDetectInstalledTemplates()}
+            loading={detectingInstalledTemplates}
+          >
+            Detect installed templates
           </Button>
         </Space>
         <Divider style={{ margin: "8px 0" }} />
@@ -1124,10 +1150,32 @@ export function AppServerPanel({
         </Space>
       </Space>
       <Divider style={{ margin: "14px 0" }} />
+      {installedTemplates.length > 0 ? (
+        <>
+          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
+            Installed templates
+          </div>
+          <Space wrap style={{ width: "100%", marginBottom: "12px" }}>
+            {installedTemplates.map((item) => (
+              <Tag
+                key={item.key}
+                color={item.available ? "green" : "default"}
+                style={{ paddingInline: "10px", marginInlineEnd: 0 }}
+              >
+                {item.label}
+                {item.details ? (
+                  <span style={{ opacity: 0.8 }}> · {item.details}</span>
+                ) : null}
+              </Tag>
+            ))}
+          </Space>
+          <Divider style={{ margin: "14px 0" }} />
+        </>
+      ) : null}
       {detected.length > 0 ? (
         <>
           <div style={{ fontWeight: 600, marginBottom: "8px" }}>
-            Detected listeners
+            Detected running HTTP apps
           </div>
           <Space direction="vertical" style={{ width: "100%", marginBottom: "12px" }}>
             {detected.map((item) => (

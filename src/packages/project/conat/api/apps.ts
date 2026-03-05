@@ -21,5 +21,6 @@ export {
   unexposeApp,
   appLogs,
   detectApps,
+  detectInstalledTemplates,
   auditAppPublicReadiness,
 } from "@cocalc/project/app-servers/control";
