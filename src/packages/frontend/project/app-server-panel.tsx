@@ -373,12 +373,36 @@ export function AppServerPanel({
         }
       }
       const declaredBasePath = `${spec?.proxy?.base_path ?? ""}`.trim();
-      const preferredLocal = declaredBasePath
+      const basePathLocal = declaredBasePath
         ? declaredBasePath.startsWith(`/${project_id}/`) ||
           declaredBasePath === `/${project_id}`
           ? declaredBasePath
           : `/${project_id}${declaredBasePath.startsWith("/") ? declaredBasePath : `/${declaredBasePath}`}`
-        : status.url;
+        : undefined;
+      const commandText =
+        Array.isArray((spec as any)?.command?.args) &&
+        (spec as any).command.args.length > 1
+          ? `${(spec as any).command.args[1] ?? ""}`
+          : "";
+      const isJupyter =
+        /\bjupyter\s+(?:lab|notebook)\b/i.test(commandText) ||
+        status.id === "jupyterlab" ||
+        status.id === "jupyter";
+      let serviceLocal = status.url;
+      if (
+        isJupyter &&
+        serviceLocal &&
+        serviceLocal.includes(`/${project_id}/proxy/`)
+      ) {
+        serviceLocal = serviceLocal.replace(
+          `/${project_id}/proxy/`,
+          `/${project_id}/port/`,
+        );
+      }
+      const preferredLocal =
+        spec?.kind === "static"
+          ? basePathLocal || serviceLocal
+          : serviceLocal || basePathLocal;
       if (!preferredLocal) return;
       const local =
         withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
