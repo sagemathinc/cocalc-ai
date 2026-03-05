@@ -793,7 +793,14 @@ export function ChatPanel({
           ? composerLoopConfig
           : undefined,
     });
-    // Safety: loop should default back to off after each send.
+    if (!timeStamp) {
+      // If send preconditions fail after optimistic clear (e.g. transient
+      // reply-target metadata race), restore the typed input so nothing vanishes.
+      inputRef.current = rawSendingText;
+      setInput(rawSendingText);
+      return;
+    }
+    // Safety: loop should default back to off after each successful send.
     setComposerLoopConfig(undefined);
     const threadKey =
       !reply_to && !reply_thread_id && timeStamp
