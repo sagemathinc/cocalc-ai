@@ -109,6 +109,34 @@ function maybeDecorateQueuedPrompt({
   ].join("\n");
 }
 
+function maybeDecorateLoopPrompt({
+  prompt,
+  loopConfig,
+}: {
+  prompt: string;
+  loopConfig?: AcpLoopConfig;
+}): string {
+  if (loopConfig?.enabled !== true) return prompt;
+  const maxTurns = Number(loopConfig.max_turns ?? 8);
+  const maxWallMinutes = Math.max(
+    1,
+    Math.round(Number(loopConfig.max_wall_time_ms ?? 30 * 60_000) / 60_000),
+  );
+  return [
+    prompt,
+    "",
+    "System loop contract (required):",
+    `This run is in autonomous loop mode (max turns: ${maxTurns}, max wall time: ${maxWallMinutes} minutes).`,
+    "At the END of your response, output exactly one JSON object in a ```json fenced block with this schema:",
+    '{"loop":{"rerun":true|false,"needs_human":true|false,"next_prompt":"string","blocker":"string","confidence":0.0-1.0}}',
+    "Rules:",
+    "- If rerun=true and needs_human=false, set next_prompt to the exact next instruction for the next iteration.",
+    "- If done, set rerun=false.",
+    "- If human input is needed, set needs_human=true and explain blocker.",
+    "- Do not omit the JSON contract block.",
+  ].join("\n");
+}
+
 function interruptActiveThreadTurn({
   actions,
   replyTo,
@@ -388,6 +416,10 @@ export async function processAcpLLM({
         queuedAtMs: queueItem.queuedAtMs,
         sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
       });
+      const promptForRunWithLoop = maybeDecorateLoopPrompt({
+        prompt: promptForRun,
+        loopConfig,
+      });
       // Generate a stable assistant-reply key for this turn, but do NOT write any
       // corresponding chat row here. The backend is the sole writer of the assistant
       // reply row (avoids frontend/backend sync races on the same row).
@@ -434,7 +466,7 @@ export async function processAcpLLM({
         try {
           const stream = await webapp_client.conat_client.streamAcp({
             project_id,
-            prompt: promptForRun,
+            prompt: promptForRunWithLoop,
             session_id: sessionKey,
             config: buildAcpConfig({
               path,

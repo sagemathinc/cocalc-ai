@@ -404,6 +404,20 @@ export function ChatRoomComposer({
     setLoopModalOpen(false);
   }, [loopDraft, onLoopConfigChange]);
 
+  const loopEnabled = loopConfig?.enabled === true;
+
+  const onLoopToggle = useCallback(
+    (checked: boolean) => {
+      if (!checked) {
+        onLoopConfigChange?.(undefined);
+        return;
+      }
+      setLoopDraft(loopConfig ?? LOOP_DEFAULTS);
+      setLoopModalOpen(true);
+    },
+    [loopConfig, onLoopConfigChange],
+  );
+
   return (
     <div ref={zenContainerRef} style={composerStyle}>
       <div
@@ -527,16 +541,34 @@ export function ChatRoomComposer({
         {hasInput && (
           <>
             {showLoopControls ? (
-              <Tooltip title="Configure autonomous loop for this Codex turn">
-                <Button
-                  size="small"
-                  style={{ marginBottom: "5px" }}
-                  type={loopConfig?.enabled ? "primary" : "default"}
-                  onClick={() => setLoopModalOpen(true)}
-                >
-                  Loop
-                </Button>
-              </Tooltip>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: "6px",
+                  marginBottom: "5px",
+                }}
+              >
+                <Tooltip title="Enable autonomous loop for this Codex send">
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "#666" }}>Loop</span>
+                    <Switch
+                      size="small"
+                      checked={loopEnabled}
+                      onChange={onLoopToggle}
+                    />
+                  </span>
+                </Tooltip>
+                <Tooltip title="Configure loop settings">
+                  <Button
+                    size="small"
+                    onClick={() => setLoopModalOpen(true)}
+                    disabled={!loopEnabled}
+                    icon={<Icon name="gear" />}
+                  />
+                </Tooltip>
+              </div>
             ) : null}
             <Tooltip
               title={
