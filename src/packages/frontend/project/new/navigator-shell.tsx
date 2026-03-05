@@ -320,6 +320,7 @@ export function NavigatorShell({
   const [settingsIcon, setSettingsIcon] = useState<string | undefined>(undefined);
   const [settingsImage, setSettingsImage] = useState("");
   const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
+  const [intentRetryTick, setIntentRetryTick] = useState(0);
   const lastIndexedValueRef = useRef<string>("");
   const pendingNewThreadDefaultsRef = useRef<boolean>(false);
   const preferredThreadKeyRef = useRef<string | undefined>(
@@ -713,20 +714,28 @@ export function NavigatorShell({
 
   useEffect(() => {
     if (!actions) return;
+    let retryNeeded = false;
     const queued = takeQueuedNavigatorPromptIntents();
     for (const intent of queued) {
       try {
         const consumed = submitIntent(intent);
         if (!consumed) {
           queueNavigatorPromptIntent(intent);
+          retryNeeded = true;
           break;
         }
       } catch (err) {
         queueNavigatorPromptIntent(intent);
         setError(`${err}`);
+        retryNeeded = true;
       }
     }
-  }, [actions, submitIntent]);
+    if (!retryNeeded) return;
+    const timer = setTimeout(() => {
+      setIntentRetryTick((v) => v + 1);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [actions, submitIntent, intentRetryTick]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -735,9 +744,13 @@ export function NavigatorShell({
       if (!detail?.id) return;
       if (!actions) return;
       try {
-        submitIntent(detail);
+        const consumed = submitIntent(detail);
+        if (!consumed) {
+          setIntentRetryTick((v) => v + 1);
+        }
       } catch (err) {
         setError(`${err}`);
+        setIntentRetryTick((v) => v + 1);
       }
     };
     window.addEventListener(
