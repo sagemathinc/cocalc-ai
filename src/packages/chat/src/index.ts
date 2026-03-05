@@ -2,6 +2,29 @@ import type { CodexThreadConfig } from "./acp";
 
 export const CHAT_SCHEMA_V2 = 2;
 
+export interface ChatThreadLoopConfig {
+  enabled: boolean;
+  max_turns?: number;
+  max_wall_time_ms?: number;
+  check_in_every_turns?: number;
+  stop_on_repeated_blocker_count?: number;
+  sleep_ms_between_turns?: number;
+}
+
+export interface ChatThreadLoopState {
+  loop_id?: string;
+  status?: "running" | "waiting_decision" | "scheduled" | "paused" | "stopped";
+  started_at_ms?: number;
+  updated_at_ms?: number;
+  iteration?: number;
+  max_turns?: number;
+  max_wall_time_ms?: number;
+  next_prompt?: string;
+  last_blocker_signature?: string;
+  repeated_blocker_count?: number;
+  stop_reason?: string;
+}
+
 export interface MessageHistory {
   author_id: string;
   content: string;
@@ -189,6 +212,8 @@ export interface ChatThreadConfigRecord {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
+  loop_config?: ChatThreadLoopConfig;
+  loop_state?: ChatThreadLoopState;
   updated_at: string;
   updated_by: string;
   schema_version: number;
@@ -209,6 +234,8 @@ export interface BuildThreadConfigRecordOptions {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
+  loop_config?: ChatThreadLoopConfig;
+  loop_state?: ChatThreadLoopState;
   schema_version?: number;
 }
 
@@ -231,6 +258,8 @@ export function buildThreadConfigRecord(
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,
     acp_config: options.acp_config,
+    loop_config: options.loop_config,
+    loop_state: options.loop_state,
     updated_at: updatedAt,
     updated_by: options.updated_by,
     schema_version: options.schema_version ?? CHAT_SCHEMA_V2,

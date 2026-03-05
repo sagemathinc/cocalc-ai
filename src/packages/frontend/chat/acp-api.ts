@@ -1,5 +1,9 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpChatContext,
+  AcpLoopConfig,
+  AcpLoopState,
+} from "@cocalc/conat/ai/acp/types";
 import {
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
@@ -285,6 +289,16 @@ export async function processAcpLLM({
   const threadMeta = actions.getThreadMetadata?.(thread_id, {
     threadId: thread_id,
   });
+  const loopConfigFromMessage = field<AcpLoopConfig>(
+    message as any,
+    "acp_loop_config",
+  );
+  const loopStateFromMessage = field<AcpLoopState>(
+    message as any,
+    "acp_loop_state",
+  );
+  const loopConfig = loopConfigFromMessage ?? threadMeta?.loop_config;
+  const loopState = loopStateFromMessage ?? threadMeta?.loop_state;
   const threadRootDate = (() => {
     const byMessage =
       typeof message.reply_to === "string" ? new Date(message.reply_to) : undefined;
@@ -393,6 +407,8 @@ export async function processAcpLLM({
         message_id,
         reply_to_message_id,
         sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
+        loop_config: loopConfig,
+        loop_state: loopState,
       });
       let runtimeEnv: Record<string, string> | undefined;
       try {
@@ -648,6 +664,8 @@ function buildChatMetadata({
   message_id,
   reply_to_message_id,
   sendMode,
+  loop_config,
+  loop_state,
 }: {
   project_id?: string;
   path?: string;
@@ -660,6 +678,8 @@ function buildChatMetadata({
   message_id?: string;
   reply_to_message_id?: string;
   sendMode?: "immediate";
+  loop_config?: AcpLoopConfig;
+  loop_state?: AcpLoopState;
 }): AcpChatContext {
   if (!project_id) {
     throw new Error("Codex requires a project context to run");
@@ -682,5 +702,7 @@ function buildChatMetadata({
     message_id,
     reply_to_message_id,
     send_mode: sendMode,
+    loop_config,
+    loop_state,
   };
 }

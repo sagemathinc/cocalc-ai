@@ -42,7 +42,13 @@ import type {
   Feedback,
   MessageHistory,
 } from "./types";
-import { CHAT_SCHEMA_V2, addToHistory, type CodexThreadConfig } from "@cocalc/chat";
+import {
+  CHAT_SCHEMA_V2,
+  addToHistory,
+  type CodexThreadConfig,
+  type ChatThreadLoopConfig,
+  type ChatThreadLoopState,
+} from "@cocalc/chat";
 import {
   resolveCodexSessionMode,
   type CodexSessionMode,
@@ -52,7 +58,10 @@ import {
   toMsString,
   newest_content,
 } from "./utils";
-import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpChatContext,
+  AcpLoopConfig,
+} from "@cocalc/conat/ai/acp/types";
 import {
   field,
   foldingList,
@@ -87,6 +96,8 @@ export interface ThreadMetadataSnapshot {
   agent_model?: LanguageModel;
   agent_mode?: ThreadAgentMode;
   acp_config?: CodexThreadConfig | null;
+  loop_config?: ChatThreadLoopConfig;
+  loop_state?: ChatThreadLoopState;
 }
 
 function normalizeAgentKind(value: unknown): ThreadAgentKind | undefined {
@@ -462,6 +473,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAppearance,
     preserveSelectedThread,
     skipModelDispatch,
+    acp_loop_config,
   }: {
     input?: string;
     sender_id?: string;
@@ -490,6 +502,8 @@ export class ChatActions extends Actions<ChatState> {
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
     skipModelDispatch?: boolean;
+    // optional ACP loop config attached to this message
+    acp_loop_config?: AcpLoopConfig;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -573,6 +587,9 @@ export class ChatActions extends Actions<ChatState> {
     } as ChatMessage;
     if (send_mode === "immediate") {
       (message as any).acp_send_mode = "immediate";
+    }
+    if (acp_loop_config != null) {
+      (message as any).acp_loop_config = acp_loop_config;
     }
     if (trimmedName && !reply_to && !explicitReplyThreadId) {
       (message as any).name = trimmedName;
@@ -1182,6 +1199,8 @@ export class ChatActions extends Actions<ChatState> {
     let agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
     let agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
+    const loop_config = field<ChatThreadLoopConfig>(cfg, "loop_config");
+    const loop_state = field<ChatThreadLoopState>(cfg, "loop_state");
     const agent_model_raw =
       field<string>(cfg, "agent_model") ??
       (typeof acp_config?.model === "string" ? acp_config.model : undefined);
@@ -1209,7 +1228,41 @@ export class ChatActions extends Actions<ChatState> {
       agent_model,
       agent_mode,
       acp_config,
+      loop_config,
+      loop_state,
     };
+  };
+
+  setThreadLoopConfig = (
+    threadKey: string,
+    loopConfig?: ChatThreadLoopConfig | null,
+  ): boolean => {
+    if (this.syncdb == null) return false;
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        loop_config: loopConfig ?? null,
+      })
+    ) {
+      return false;
+    }
+    this.syncdb.commit();
+    return true;
+  };
+
+  setThreadLoopState = (
+    threadKey: string,
+    loopState?: ChatThreadLoopState | null,
+  ): boolean => {
+    if (this.syncdb == null) return false;
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        loop_state: loopState ?? null,
+      })
+    ) {
+      return false;
+    }
+    this.syncdb.commit();
+    return true;
   };
 
   getThreadReadCount = (threadKey: string, accountId?: string): number => {
