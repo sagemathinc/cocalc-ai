@@ -130,14 +130,60 @@ function parseInternalFileHref(href: string): {
     if (url.protocol !== "cocalc-file:") return {};
     const rawPath = url.searchParams.get("path");
     if (!rawPath) return {};
+    const parsedPath = parsePathWithOptionalLineSuffix(rawPath);
     const lineRaw = url.searchParams.get("line");
-    const line =
+    const lineFromParam =
       lineRaw != null && /^\d+$/.test(lineRaw) && Number(lineRaw) > 0
         ? Number(lineRaw)
         : undefined;
-    return { path: rawPath, line };
+    const line =
+      lineFromParam ??
+      parsedPath.line ??
+      parseLineFromHashFragment(url.hash);
+    return { path: parsedPath.path, line };
   } catch {
     return {};
+  }
+}
+
+function parseLineFromHashFragment(hash?: string): number | undefined {
+  if (!hash) return undefined;
+  const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
+  // Support GitHub-style #L123 and #L123C4 anchors often produced by agents.
+  const match = cleaned.match(/^L(\d+)(?:C\d+)?(?:-L?\d+)?$/i);
+  if (!match) return undefined;
+  const line = Number(match[1]);
+  return Number.isFinite(line) && line > 0 ? line : undefined;
+}
+
+function parsePathWithOptionalLineSuffix(path: string): {
+  path: string;
+  line?: number;
+} {
+  const match = path.match(/^(.*?):(\d+)(?::\d+)?$/);
+  if (!match) return { path };
+  const candidatePath = match[1];
+  if (!candidatePath || candidatePath.endsWith("/")) {
+    return { path };
+  }
+  const line = Number(match[2]);
+  if (!Number.isFinite(line) || line <= 0) {
+    return { path };
+  }
+  return { path: candidatePath, line };
+}
+
+function parseAbsoluteFileHrefTarget(href: string): {
+  path: string;
+  line?: number;
+} {
+  try {
+    const url = new URL(href, "http://dummy");
+    const parsed = parsePathWithOptionalLineSuffix(decodeURI(url.pathname));
+    const line = parsed.line ?? parseLineFromHashFragment(url.hash);
+    return { path: parsed.path, line };
+  } catch {
+    return { path: href };
   }
 }
 
@@ -452,27 +498,29 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
         e.stopPropagation();
 
         if (href.startsWith("/")) {
-          if (project_id && isLikelyAbsoluteFilePathHref(href)) {
+          const absoluteTarget = parseAbsoluteFileHrefTarget(href);
+          if (project_id && isLikelyAbsoluteFilePathHref(absoluteTarget.path)) {
             const actions = redux.getProjectActions(project_id);
             void (async () => {
               try {
-                let isDir = actions.isDirViaCache?.(href);
+                let isDir = actions.isDirViaCache?.(absoluteTarget.path);
                 if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
-                  isDir = await actions.isDir(href);
+                  isDir = await actions.isDir(absoluteTarget.path);
                 }
                 if (isDir === true) {
-                  actions.open_directory?.(href);
+                  actions.open_directory?.(absoluteTarget.path);
                   return;
                 }
                 await actions.open_file({
-                  path: href,
+                  path: absoluteTarget.path,
+                  line: absoluteTarget.line,
                   foreground: true,
                   explicit: true,
                 });
               } catch (err) {
                 alert_message({
                   type: "error",
-                  message: `Cannot open linked file: ${href} (${err})`,
+                  message: `Cannot open linked file: ${absoluteTarget.path} (${err})`,
                 });
               }
             })();
@@ -498,7 +546,8 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
 
         const dir = containingPath(path);
         const url = new URL("http://dummy/" + join(dir, href));
-        const fragmentId = Fragment.decode(url.hash);
+        let fragmentId = Fragment.decode(url.hash);
+        const lineFromHash = parseLineFromHashFragment(url.hash);
         const hrefPlain = url.pathname.slice(1);
         let target;
         if (href.startsWith("#") || !hrefPlain) {
@@ -507,7 +556,13 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
         } else {
           // different file in the same project, with link being relative
           // to current path.
-          target = join("files", decodeURI(hrefPlain));
+          const parsed = parsePathWithOptionalLineSuffix(decodeURI(hrefPlain));
+          if (parsed.line != null && !fragmentId?.line) {
+            fragmentId = { ...(fragmentId?.anchor ? {} : fragmentId), line: `${parsed.line}` };
+          } else if (lineFromHash != null && !fragmentId?.line) {
+            fragmentId = { ...(fragmentId?.anchor ? {} : fragmentId), line: `${lineFromHash}` };
+          }
+          target = join("files", parsed.path);
         }
         loadTarget(
           "projects",

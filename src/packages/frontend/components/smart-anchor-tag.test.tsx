@@ -77,6 +77,50 @@ describe("SmartAnchorTag", () => {
     });
   });
 
+  it("opens absolute file links with :line suffix as file+line", async () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="room.chat"
+        href="/tmp/x/workspaces.py:485"
+      >
+        workspaces.py:485
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "workspaces.py:485" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/tmp/x/workspaces.py",
+        line: 485,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
+  it("opens absolute file links with #L anchors as file+line", async () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="room.chat"
+        href="/tmp/x/workspaces.py#L42"
+      >
+        workspaces.py#L42
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "workspaces.py#L42" }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/tmp/x/workspaces.py",
+        line: 42,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
   it("treats absolute slash links as host-root navigation", () => {
     render(
       <SmartAnchorTag
