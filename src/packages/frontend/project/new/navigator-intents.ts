@@ -73,6 +73,23 @@ function chooseThreadKeyFromIndex(opts: {
   return bestKey || fallback;
 }
 
+function resolveThreadIdFromIndex(
+  actions: any,
+  threadKey?: string,
+): string | undefined {
+  const key = `${threadKey ?? ""}`.trim();
+  if (!key) return;
+  const indexEntry = actions?.messageCache?.getThreadIndex?.()?.get?.(key);
+  const fromIndexRoot = `${indexEntry?.rootMessage?.thread_id ?? ""}`.trim();
+  if (fromIndexRoot) return fromIndexRoot;
+  if (/^\d+$/.test(key)) {
+    const root = actions?.getMessageByDate?.(Number(key));
+    const fromRoot = `${getField(root, "thread_id") ?? ""}`.trim();
+    if (fromRoot) return fromRoot;
+  }
+  return;
+}
+
 function hasThreadRootIdentity(actions: any, threadKey?: string): boolean {
   const key = `${threadKey ?? ""}`.trim();
   if (!key || !/^\d+$/.test(key)) return false;
@@ -301,6 +318,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     });
 
     let replyThreadKey = resolvedThreadKey;
+    let replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
     const model =
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
@@ -309,17 +327,20 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       const rootReady = await waitForThreadReady({
         actions,
         threadKey: replyThreadKey,
-        timeoutMs: 4000,
+        timeoutMs: 8000,
       });
-      if (!rootReady) {
+      replyThreadId = resolveThreadIdFromIndex(actions, replyThreadKey);
+      if (!rootReady || !replyThreadId) {
         // Fall back to opening a new thread rather than failing the intent.
         replyThreadKey = "";
+        replyThreadId = undefined;
       }
     }
     const replyTo = toReplyDate(replyThreadKey);
     const timeStamp = actions.sendChat({
       input,
       reply_to: replyTo,
+      reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
       threadAgent:

@@ -181,6 +181,22 @@ function toReplyDate(threadKey: string | null): Date | undefined {
   return new Date(ms);
 }
 
+function resolveReplyThreadId(
+  actions: ChatActions,
+  threadKey: string | null,
+): string | undefined {
+  if (!threadKey) return;
+  const entry = actions.messageCache?.getThreadIndex()?.get(threadKey);
+  const fromIndex = `${entry?.rootMessage?.thread_id ?? ""}`.trim();
+  if (fromIndex) return fromIndex;
+  if (/^\d+$/.test(threadKey)) {
+    const root = actions.getMessageByDate?.(Number(threadKey));
+    const fromRoot = `${root?.thread_id ?? ""}`.trim();
+    if (fromRoot) return fromRoot;
+  }
+  return;
+}
+
 function buildSessionRecord({
   project_id,
   account_id,
@@ -645,7 +661,13 @@ export function NavigatorShell({
         actions,
         selectedThreadKey ?? storedThreadKey ?? undefined,
       );
-      const replyTo = toReplyDate(resolvedThreadKey);
+      let replyTo = toReplyDate(resolvedThreadKey);
+      let replyThreadId = resolveReplyThreadId(actions, resolvedThreadKey);
+      if (replyTo && !replyThreadId) {
+        // If we cannot confidently resolve thread identity yet, open a new
+        // thread instead of dropping the prompt.
+        replyTo = undefined;
+      }
       const isCodex = intent.forceCodex !== false;
       const model =
         typeof selectedAcpConfig?.model === "string"
@@ -654,6 +676,7 @@ export function NavigatorShell({
       const timeStamp = actions.sendChat({
         input,
         reply_to: replyTo,
+        reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
         threadAgent:
@@ -669,11 +692,14 @@ export function NavigatorShell({
               }
             : undefined,
       });
+      if (!timeStamp) {
+        return false;
+      }
       removeQueuedNavigatorPromptIntent(intent.id);
       if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(resolvedThreadKey);
       }
-      if (!replyTo && timeStamp) {
+      if (!replyTo) {
         const threadTime = new Date(timeStamp).valueOf();
         if (Number.isFinite(threadTime)) {
           setSelectedThreadKey(`${threadTime}`);
