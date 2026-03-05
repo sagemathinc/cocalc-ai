@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Checkbox, Divider, Input, Popconfirm, Select, Space, Spin, Tag } from "antd";
 import type {
   AppPublicReadinessAudit,
+  DetectedAppPort,
   ManagedAppStatus,
 } from "@cocalc/conat/project/api/apps";
 import { ErrorDisplay, Paragraph } from "@cocalc/frontend/components";
@@ -62,6 +63,8 @@ export function AppServerPanel({
   const [audit, setAudit] = useState<AppPublicReadinessAudit | undefined>(
     undefined,
   );
+  const [detected, setDetected] = useState<DetectedAppPort[]>([]);
+  const [detecting, setDetecting] = useState<boolean>(false);
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
 
   const refresh = useCallback(async () => {
@@ -283,6 +286,34 @@ export function AppServerPanel({
     }
   }
 
+  async function onDetect() {
+    try {
+      setDetecting(true);
+      setError(undefined);
+      const next = await api.apps.detectApps({
+        include_managed: true,
+        limit: 100,
+      });
+      setDetected(next);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setDetecting(false);
+    }
+  }
+
+  function useDetectedPort(portValue: number) {
+    const nextId = `${appId ?? ""}`.trim() || `app-${portValue}`;
+    setKind("service");
+    setAppId(nextId);
+    setTitle((prev) => (prev.trim() ? prev : `Port ${portValue}`));
+    setPort(`${portValue}`);
+    setBasePath((prev) => (prev.trim() ? prev : defaultBasePath(nextId)));
+    setCommand((prev) =>
+      prev.trim() ? prev : `python3 -m http.server ${portValue}`,
+    );
+  }
+
   return (
     <div>
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
@@ -380,6 +411,9 @@ export function AppServerPanel({
           <Button onClick={() => void refresh()} disabled={loading}>
             Refresh
           </Button>
+          <Button onClick={() => void onDetect()} loading={detecting}>
+            Detect apps
+          </Button>
         </Space>
         <Divider style={{ margin: "8px 0" }} />
         <div style={{ fontWeight: 600 }}>Public expose defaults</div>
@@ -417,6 +451,47 @@ export function AppServerPanel({
         </Space>
       </Space>
       <Divider style={{ margin: "14px 0" }} />
+      {detected.length > 0 ? (
+        <>
+          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
+            Detected listeners
+          </div>
+          <Space direction="vertical" style={{ width: "100%", marginBottom: "12px" }}>
+            {detected.map((item) => (
+              <div
+                key={`${item.port}-${item.hosts.join(",")}`}
+                style={{
+                  border: "1px solid #e5e5e5",
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  fontSize: "12px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>:{item.port}</div>
+                    <div style={{ opacity: 0.8 }}>hosts: {item.hosts.join(", ")}</div>
+                    <div style={{ opacity: 0.8 }}>
+                      {item.managed
+                        ? `managed by ${item.managed_app_ids.join(", ")}`
+                        : "not managed"}
+                    </div>
+                  </div>
+                  <Space wrap>
+                    <Button
+                      size="small"
+                      onClick={() => useDetectedPort(item.port)}
+                    >
+                      Use in form
+                    </Button>
+                  </Space>
+                </div>
+              </div>
+            ))}
+          </Space>
+          <Divider style={{ margin: "14px 0" }} />
+        </>
+      ) : null}
       <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed apps</div>
       {loading ? <Spin /> : null}
       {!loading && rows.length === 0 ? (
