@@ -1,0 +1,220 @@
+{
+  "name": "real-bug-hunt-v2-strict-from-wstein-tasks",
+  "continue_on_error": true,
+  "max_failures": 40,
+  "default_retries": 0,
+  "default_recovery": "reload",
+  "default_timeout_ms": 30000,
+  "capture": {
+    "screenshot_on_fail": true,
+    "logs_on_fail": 300,
+    "network_on_fail": 300,
+    "network_include_decoded": true
+  },
+  "before_all": [
+    {
+      "name": "bootstrap: open files root",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/"
+      }
+    },
+    {
+      "name": "bootstrap: wait files url",
+      "action": {
+        "name": "wait_for_url",
+        "includes": "/files/home/wstein/scratch/cocalc-lite3-lite-daemon/",
+        "timeout_ms": 30000,
+        "poll_ms": 120
+      }
+    }
+  ],
+  "steps": [
+    {
+      "name": "task:ae963ea3 open extensionless file",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/bin/backup"
+      }
+    },
+    {
+      "name": "task:ae963ea3 prompt/editor shown",
+      "assert": {
+        "code": "const t=document.body.innerText||''; return t.includes('Unknown file extension') || !!document.querySelector('.cm-editor,.CodeMirror,[data-slate-editor=\\\"true\\\"]');",
+        "truthy": true
+      }
+    },
+    {
+      "name": "task:ae963ea3 click open-with-code-editor if present",
+      "exec": "(() => { const btn=[...document.querySelectorAll('button')].find(b => (b.textContent||'').includes('Open *. using Code Editor')); if (btn) { btn.click(); return {clicked:true}; } return {clicked:false}; })();"
+    },
+    {
+      "name": "task:ae963ea3 editor must attach after first confirm",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": ".cm-editor,.CodeMirror,[data-slate-editor=\"true\"]",
+        "state": "attached",
+        "timeout_ms": 12000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "task:ae963ea3 tab remains closeable",
+      "assert": {
+        "code": "return !!document.querySelector('.ant-tabs-tab-active .ant-tabs-tab-remove');",
+        "truthy": true
+      }
+    },
+    {
+      "name": "task:9205fae6 open files root for filter check",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/"
+      }
+    },
+    {
+      "name": "task:9205fae6 wait files filter input",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "input[placeholder*='Filter files']",
+        "state": "attached",
+        "timeout_ms": 15000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "task:9205fae6 type filter",
+      "action": {
+        "name": "type",
+        "selector": "input[placeholder*='Filter files']",
+        "text": "plotly_example.ipynb",
+        "clear": true
+      }
+    },
+    {
+      "name": "task:9205fae6 filtered row visible",
+      "assert": {
+        "code": "const txt=document.body.innerText||''; return txt.includes('plotly_example.ipynb');",
+        "truthy": true
+      }
+    },
+    {
+      "name": "task:9205fae6 clear filter",
+      "action": {
+        "name": "type",
+        "selector": "input[placeholder*='Filter files']",
+        "text": "",
+        "clear": true
+      }
+    },
+    {
+      "name": "task:9205fae6 unfiltered fixtures visible",
+      "assert": {
+        "code": "const txt=document.body.innerText||''; return txt.includes('lite3.chat') && txt.includes('a.term');",
+        "truthy": true
+      }
+    },
+    {
+      "name": "task:9714151e open terminal",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/a.term"
+      }
+    },
+    {
+      "name": "task:9714151e wait terminal helper",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": ".xterm-helper-textarea",
+        "state": "attached",
+        "timeout_ms": 20000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "task:9714151e navigate chat",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/lite3.chat"
+      }
+    },
+    {
+      "name": "task:9714151e navigate notebook",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/plotly_example.ipynb"
+      }
+    },
+    {
+      "name": "task:9714151e navigate terminal again",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/a.term"
+      }
+    },
+    {
+      "name": "task:9714151e terminal still attached after churn",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": ".xterm-helper-textarea",
+        "state": "attached",
+        "timeout_ms": 20000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "task:9da0bf11 reload from notebook context",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/plotly_example.ipynb"
+      }
+    },
+    {
+      "name": "task:9da0bf11 soft reload",
+      "action": {
+        "name": "reload",
+        "hard": false
+      }
+    },
+    {
+      "name": "task:9da0bf11 shell restored after reload",
+      "assert": {
+        "code": "const t=document.body.innerText||''; return !/^\\s*$/.test(t) && !t.includes('Something went wrong') && (t.includes('Jupyter') || t.includes('Chatroom') || !!document.querySelector('.ant-tabs-tab'));",
+        "truthy": true
+      },
+      "timeout_ms": 15000
+    },
+    {
+      "name": "task:439cd914 notebook should not be blank",
+      "action": {
+        "name": "wait_for_url",
+        "includes": "/plotly_example.ipynb",
+        "timeout_ms": 15000,
+        "poll_ms": 120
+      }
+    },
+    {
+      "name": "task:439cd914 notebook surface visible",
+      "assert": {
+        "code": "const t=document.body.innerText||''; return !!document.querySelector('.cell-list-container, .cocalc-jupyter, .jp-Notebook') || t.includes('In [') || t.includes('Run');",
+        "truthy": true
+      }
+    },
+    {
+      "name": "global no fatal pane",
+      "assert": {
+        "code": "const t=document.body.innerText||''; return !t.includes('Something went wrong') && !t.includes('Unable to archive chat') && !t.includes('Cannot read properties') && !t.includes('Unhandled Runtime Error');",
+        "truthy": true
+      }
+    }
+  ],
+  "after_all": [
+    {
+      "name": "teardown return files root",
+      "action": {
+        "name": "navigate",
+        "url": "http://localhost:7003/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/scratch/cocalc-lite3-lite-daemon/"
+      }
+    }
+  ]
+}
