@@ -27,19 +27,22 @@ This should replace ad hoc per-app special cases over time.
 6. CLI surface for `workspace app` lifecycle is implemented and agent-usable in JSON mode.
 7. Public-readiness audit command/prompt path is implemented (backend + CLI).
 8. Live Launchpad GCP smoke for service app flow passes end-to-end (create/start/expose/public probe/recover/unexpose/cleanup).
+9. The main user-facing app surface now uses `Apps` / `Managed Applications`, with duplicate launcher UI removed from `+New`, the `+New` flyout, and the old top-row launcher area.
+10. Detection is split in the main UI between running HTTP-app discovery and installed-template discovery.
+11. The Apps page now has real operational controls: filter/search, bulk start/stop, row-local startup failures, and a direct `Audit with Codex` action.
 
 ### Partial
 
 1. Static app mode backend exists and dedicated launchpad static-heavy smoke scenario (`apps-static`) is implemented; broader matrix (lite parity + larger cache/static variants) is still pending.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
-3. Pre-expose Codex audit exists at backend/CLI level; UI button flow is not yet implemented.
+3. The Apps page is coherent enough for real use now, but still needs visual/product polish, broader template coverage, and better advanced workflow presentation.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
 
 ### Not Done
 
-1. Dedicated app UI workflows and polish (Apps page unification, app management panel polish, autodetection UX, embed polish).
-2. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
-3. "Install with agent" flow from app presets/management UI.
+1. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
+2. "Install with agent" flow from app presets/management UI.
+3. Broader template catalog and stronger embed/open integration polish.
 
 ## 2. Product Goals
 
@@ -759,20 +762,10 @@ These are the remaining items that matter most to calling A1.4 effectively finis
    - harden launchpad `apps-static`,
    - add lite parity,
    - cover broader static/cache cases.
-2. rename `Servers` to `Apps` and use `Managed Applications` consistently in the main UI.
-3. make the Apps page the single surface for app management:
-   - remove duplicated app-launch UI from `+New`,
-   - remove duplicated app-launch UI from the flyout,
-   - remove legacy top-row launcher buttons,
-   - map built-ins such as JupyterLab/code-server/etc. to managed-app presets.
-4. split detection into:
-   - running HTTP discovery,
-   - installed-template discovery.
-5. make the Apps page usable for real work:
-   - filter/search,
-   - bulk `start all` / `stop all`,
-   - row-local startup errors and logs.
-6. add the actual pre-expose `Audit with Codex` UI flow.
+2. finish the last Apps-page polish needed for alpha:
+   - tighten copy/labels,
+   - improve layout density and preset presentation,
+   - smooth remaining rough edges in error/display behavior.
 
 ### Post-alpha
 
