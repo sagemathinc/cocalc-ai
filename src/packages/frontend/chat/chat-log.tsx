@@ -10,6 +10,7 @@ Render all the messages in the chat.
 // cSpell:ignore: timespan
 
 import {
+  KeyboardEvent,
   MutableRefObject,
   useCallback,
   useEffect,
@@ -49,9 +50,53 @@ import { COMBINED_FEED_KEY } from "./threads";
 const USE_VIRTUOSO = true;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
+const CHAT_LOG_CONTAINER_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  flex: "1 1 0",
+  minHeight: 0,
+} as const;
+
+const MESSAGE_LIST_CONTAINER_STYLE: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  flex: "1 1 0",
+  minHeight: 0,
+} as const;
+
 function stripHtml(value: string): string {
   if (!value) return "";
   return value.replace(/<[^>]*>/g, "");
+}
+
+function isEditableOrOverlayInteractionTarget(
+  target: EventTarget | null,
+): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return Boolean(
+    target.closest(
+      [
+        '[contenteditable="true"]',
+        '[data-slate-editor="true"]',
+        '.slate-editor',
+        '.CodeMirror',
+        '.CodeMirror-code',
+        '.cm-editor',
+        '.cm-content',
+        '[role="textbox"]',
+        '.ant-drawer',
+        '.ant-drawer-mask',
+        '.ant-select-dropdown',
+        '.ant-dropdown',
+        '.ant-modal',
+        '.ant-popover',
+        '.ant-tooltip',
+      ].join(", "),
+    ),
+  );
 }
 
 interface Props {
@@ -310,7 +355,7 @@ export function ChatLog({
   }, [scrollToBottomRef != null, canAutoScroll]);
 
   return (
-    <>
+    <div style={CHAT_LOG_CONTAINER_STYLE}>
       <MessageList
         {...{
           virtuosoRef,
@@ -350,7 +395,7 @@ export function ChatLog({
         accountId={account_id}
         userMap={user_map}
       />
-    </>
+    </div>
   );
 }
 
@@ -590,10 +635,47 @@ export function MessageList({
   anyOverlayOpen?: boolean;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
   const endRef = useRef<HTMLDivElement | null>(null);
+  const blockScrollInput = anyOverlayOpen === true;
+
+  const maybeBlockScrollEvent = (event: {
+    preventDefault: () => void;
+    stopPropagation: () => void;
+    target?: EventTarget | null;
+  }) => {
+    if (!blockScrollInput) return;
+    if (isEditableOrOverlayInteractionTarget(event.target ?? null)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const maybeBlockScrollKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!blockScrollInput) return;
+    if (
+      isEditableOrOverlayInteractionTarget(event.target) ||
+      isEditableOrOverlayInteractionTarget(document.activeElement)
+    ) {
+      return;
+    }
+    const key = `${event.key ?? ""}`.toLowerCase();
+    if (
+      key === "arrowup" ||
+      key === "arrowdown" ||
+      key === "pageup" ||
+      key === "pagedown" ||
+      key === "home" ||
+      key === "end" ||
+      key === " " ||
+      key === "spacebar"
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
 
   const forceScrollToBottom = useCallback(() => {
     if (manualScrollRef) {
@@ -757,9 +839,37 @@ export function MessageList({
     };
   }, [scrollToBottomRef]);
 
+  useEffect(() => {
+    if (!USE_VIRTUOSO) return;
+    if (!sortedDates.length) return;
+    const id = setTimeout(() => {
+      const host = listContainerRef.current;
+      if (!host) return;
+      const scroller = host.querySelector<HTMLElement>("[data-virtuoso-scroller]");
+      if (!scroller) return;
+      if (scroller.getBoundingClientRect().height > 0) return;
+      // Defensive self-heal for intermittent layout collapse in some sessions.
+      const parent = scroller.parentElement as HTMLElement | null;
+      if (parent) {
+        parent.style.display = "flex";
+        parent.style.flex = "1 1 0";
+        parent.style.minHeight = "0";
+      }
+      scroller.style.flex = "1 1 0";
+      scroller.style.minHeight = "0";
+      scroller.style.height = "100%";
+    }, 0);
+    return () => clearTimeout(id);
+  }, [sortedDates.length]);
+
   if (!USE_VIRTUOSO) {
     return (
-      <div>
+      <div
+        style={MESSAGE_LIST_CONTAINER_STYLE}
+        onWheelCapture={maybeBlockScrollEvent}
+        onTouchMoveCapture={maybeBlockScrollEvent}
+        onKeyDownCapture={maybeBlockScrollKeys}
+      >
         {sortedDates.map((_, index) => renderMessage(index))}
         <div ref={endRef} style={{ height: "25px" }} />
       </div>
@@ -767,50 +877,59 @@ export function MessageList({
   }
 
   return (
-    <StatefulVirtuoso
-      ref={virtuosoRef}
-      totalCount={sortedDates.length + 1}
-      cacheId={cacheId}
-      initialTopMostItemIndex={initialIndex}
-      atTopThreshold={240}
-      itemSize={(el) => {
-        const h = el.getBoundingClientRect().height;
-        const data = el.getAttribute("data-item-index");
-        if (data != null) {
-          const index = parseInt(data);
-          virtuosoHeightsRef.current[index] = h;
-        }
-        return h;
-      }}
-      itemContent={(index) => {
-        if (sortedDates.length == index) {
-          return <div style={{ height: "25px" }} />;
-        }
-        return renderMessage(index);
-      }}
-      rangeChanged={
-        manualScrollRef
-          ? ({ endIndex }) => {
-              if (endIndex < sortedDates.length - 1) {
-                manualScrollRef.current = true;
-                setManualScroll?.(true);
+    <div
+      ref={listContainerRef}
+      style={MESSAGE_LIST_CONTAINER_STYLE}
+      onWheelCapture={maybeBlockScrollEvent}
+      onTouchMoveCapture={maybeBlockScrollEvent}
+      onKeyDownCapture={maybeBlockScrollKeys}
+    >
+      <StatefulVirtuoso
+        style={{ flex: "1 1 0", minHeight: 0 }}
+        ref={virtuosoRef}
+        totalCount={sortedDates.length + 1}
+        cacheId={cacheId}
+        initialTopMostItemIndex={initialIndex}
+        atTopThreshold={240}
+        itemSize={(el) => {
+          const h = el.getBoundingClientRect().height;
+          const data = el.getAttribute("data-item-index");
+          if (data != null) {
+            const index = parseInt(data);
+            virtuosoHeightsRef.current[index] = h;
+          }
+          return h;
+        }}
+        itemContent={(index) => {
+          if (sortedDates.length == index) {
+            return <div style={{ height: "25px" }} />;
+          }
+          return renderMessage(index);
+        }}
+        rangeChanged={
+          manualScrollRef
+            ? ({ endIndex }) => {
+                if (endIndex < sortedDates.length - 1) {
+                  manualScrollRef.current = true;
+                  setManualScroll?.(true);
+                }
               }
-            }
-          : undefined
-      }
-      atBottomStateChange={
-        manualScrollRef
-          ? (atBottom: boolean) => {
-              if (!atBottom) {
-                manualScrollRef.current = true;
-                setManualScroll?.(true);
+            : undefined
+        }
+        atBottomStateChange={
+          manualScrollRef
+            ? (atBottom: boolean) => {
+                if (!atBottom) {
+                  manualScrollRef.current = true;
+                  setManualScroll?.(true);
+                }
+                setAtBottom(atBottom);
               }
-              setAtBottom(atBottom);
-            }
-          : undefined
-      }
-      atTopStateChange={onAtTopStateChange}
-      followOutput={!manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false}
-    />
+            : undefined
+        }
+        atTopStateChange={onAtTopStateChange}
+        followOutput={!manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false}
+      />
+    </div>
   );
 }

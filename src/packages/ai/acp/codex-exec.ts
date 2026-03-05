@@ -861,7 +861,6 @@ export class CodexExecAgent implements AcpAgent {
                   command: item.command,
                   line: readInfo.line,
                   limit: readInfo.limit,
-                  bytes: stat.size,
                 },
               });
               return;
@@ -870,18 +869,32 @@ export class CodexExecAgent implements AcpAgent {
         }
         {
           const writePaths = this.parseWriteCommand(item.command, cwd);
-          for (const pathAbs of writePaths) {
-            const pathForEvent = this.toHomeRelative(pathAbs, cwd);
-            await stream({
-              type: "event",
-              event: {
-                type: "file",
-                path: pathForEvent,
-                operation: "write",
-                cwd,
-                command: item.command,
-              },
-            });
+          const commandSucceeded =
+            item.exit_code == null || item.exit_code === 0;
+          if (commandSucceeded) {
+            for (const pathAbs of writePaths) {
+              // Keep write heuristics conservative: only emit when the command
+              // appears successful and the target resolves to an actual file.
+              const stat = await this.statRegularFile(pathAbs, {
+                containerPathMap,
+              });
+              if (!stat) continue;
+              const pathForEvent = this.toHomeRelative(pathAbs, cwd);
+              await stream({
+                type: "event",
+                event: {
+                  type: "file",
+                  path: pathForEvent,
+                  operation: "write",
+                  cwd,
+                  command: item.command,
+                  // Heuristic only: this is resulting file size, not bytes
+                  // actually written by the command.
+                  bytes_known: false,
+                  bytes: stat.size,
+                },
+              });
+            }
           }
         }
         await stream({
@@ -1325,6 +1338,7 @@ export class CodexExecAgent implements AcpAgent {
             path: pathForEvent,
             operation: "write",
             cwd,
+            bytes_known: after != null,
             bytes: after != null ? Buffer.byteLength(after) : undefined,
             existed: before != null || ch.kind !== "add",
           },

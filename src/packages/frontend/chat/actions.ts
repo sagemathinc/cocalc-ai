@@ -74,11 +74,36 @@ import {
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processLLM as processLLMExternal } from "./actions/llm";
+import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_CONFIG_SENDER = "__thread_config__";
 const warnedMissingThreadIds = new Set<string>();
+let lastGeneratedChatMessageMs = 0;
+
+function nextChatMessageDate(actions: ChatActions): Date {
+  let candidate = Math.max(
+    webapp_client.server_time().valueOf(),
+    lastGeneratedChatMessageMs + 1,
+  );
+  let collisions = 0;
+  while (
+    actions.getMessageByDate?.(candidate) ??
+    actions.getAllMessages?.().has(`${candidate}`)
+  ) {
+    collisions += 1;
+    candidate += 1;
+  }
+  if (collisions > 0) {
+    console.warn("chat send timestamp collision avoided", {
+      collisions,
+      candidate,
+    });
+  }
+  lastGeneratedChatMessageMs = candidate;
+  return new Date(candidate);
+}
 
 export type ThreadAgentKind = "acp" | "llm" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
@@ -511,7 +536,7 @@ export class ChatActions extends Actions<ChatState> {
       // WARNING: give an error or try again later?
       return "";
     }
-    const time_stamp: Date = webapp_client.server_time();
+    const time_stamp: Date = nextChatMessageDate(this);
     const time_stamp_str = time_stamp.toISOString();
     const message_id = uuid();
     const mentionsInput =
@@ -1320,12 +1345,14 @@ export class ChatActions extends Actions<ChatState> {
 
   scrollToIndex = (index: number = -1) => {
     if (this.syncdb == null) return;
+    if (isAnyChatOverlayOpen()) return;
     // we first clear, then set it, since scroll to needs to
     // work even if it is the same as last time.
     // TODO: alternatively, we could get a reference
     // to virtuoso and directly control things from here.
     this.clearScrollRequest();
     setTimeout(() => {
+      if (isAnyChatOverlayOpen()) return;
       this.frameTreeActions?.set_frame_data({
         id: this.frameId,
         scrollToIndex: index,
@@ -1340,6 +1367,7 @@ export class ChatActions extends Actions<ChatState> {
 
   // this scrolls the message with given date into view and sets it as the selected message.
   scrollToDate = (date) => {
+    if (isAnyChatOverlayOpen()) return;
     this.clearScrollRequest();
     this.frameTreeActions?.set_frame_data({
       id: this.frameId,
@@ -1347,6 +1375,7 @@ export class ChatActions extends Actions<ChatState> {
     });
     this.setFragment(date);
     setTimeout(() => {
+      if (isAnyChatOverlayOpen()) return;
       this.frameTreeActions?.set_frame_data({
         id: this.frameId,
         // string version of ms since epoch, which is the key
@@ -1730,6 +1759,9 @@ export class ChatActions extends Actions<ChatState> {
     if (!rootIso) {
       throw new Error("Invalid thread root date");
     }
+    const sourceMetadata = this.getThreadMetadata(sourceThreadId, {
+      threadId: sourceThreadId,
+    });
     const latestMessage =
       threadMessages.length > 0
         ? threadMessages[threadMessages.length - 1]
@@ -1737,9 +1769,25 @@ export class ChatActions extends Actions<ChatState> {
     const latestDate = latestMessage ? dateValue(latestMessage) : null;
     const latestIso = latestDate ? toISOString(latestDate) : undefined;
 
+    const sourceConfig =
+      sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId);
+    const inferredSourceSessionId = (() => {
+      for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
+        const sessionId = field<string>(threadMessages[i], "acp_thread_id");
+        if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+          return sessionId.trim();
+        }
+      }
+      return undefined;
+    })();
+    const shouldForkAcp =
+      isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
     let nextConfig: CodexThreadConfig | undefined = undefined;
-    if (isAI) {
-      const config = this.getCodexConfig(sourceThreadId);
+    if (shouldForkAcp) {
+      const config =
+        sourceConfig?.sessionId == null && inferredSourceSessionId
+          ? { ...(sourceConfig ?? {}), sessionId: inferredSourceSessionId }
+          : sourceConfig;
       if (config?.sessionId && this.store) {
         const project_id = this.store.get("project_id");
         if (!project_id) {
@@ -1793,20 +1841,31 @@ export class ChatActions extends Actions<ChatState> {
       throw new Error("Failed to create thread id for fork");
     }
     this.setSyncdb(newMessage);
+    const configPatch: Record<string, unknown> = {
+      name: title,
+      thread_color: sourceMetadata.thread_color ?? null,
+      thread_icon: sourceMetadata.thread_icon ?? null,
+      thread_image: sourceMetadata.thread_image ?? null,
+      agent_kind:
+        nextConfig != null
+          ? "acp"
+          : sourceMetadata.agent_kind ?? (isAI ? "acp" : "none"),
+      agent_model:
+        nextConfig?.model ??
+        sourceMetadata.agent_model ??
+        (shouldForkAcp ? "gpt-5.3-codex" : null),
+      agent_mode:
+        nextConfig != null
+          ? "interactive"
+          : sourceMetadata.agent_mode ?? (isAI ? "interactive" : null),
+      acp_config: nextConfig ?? null,
+      loop_config: sourceMetadata.loop_config ?? null,
+      loop_state: null,
+    };
     this.setThreadConfigRecord(
       newThreadId,
-      {
-        name: title,
-        ...(nextConfig
-          ? {
-              acp_config: nextConfig,
-              agent_kind: "acp",
-              agent_model: nextConfig.model ?? "gpt-5.3-codex",
-              agent_mode: "interactive",
-            }
-          : {}),
-      },
-      { threadId: newThreadId },
+      configPatch,
+      { threadId: newThreadId, date: newRootIso },
     );
     this.syncdb.commit();
     void this.saveSyncdb();

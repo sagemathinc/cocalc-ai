@@ -845,13 +845,16 @@ export class ChatStreamWriter {
         rowSender.trim().length > 0 &&
         rowSender !== this.metadata.sender_id
       ) {
-        logger.warn("acp writer row-sender mismatch; refusing to mutate row", {
+        // ACP allocates a distinct assistant message_id for each backend-owned
+        // reply row, so a sender mismatch here is typically stale lease metadata
+        // or a sender migration. Refusing the update would fork the same
+        // assistant turn into a second row instead of finishing the existing one.
+        logger.warn("acp writer row-sender mismatch; using message_id row", {
           chatKey: this.chatKey,
           message_id: this.metadata.message_id,
           expected_sender: this.metadata.sender_id,
           actual_sender: rowSender,
         });
-        return undefined;
       }
       this.setResolvedChatKey(byMessageId);
       return byMessageId;

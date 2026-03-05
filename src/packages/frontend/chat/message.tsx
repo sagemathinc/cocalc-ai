@@ -43,6 +43,7 @@ import {
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
+import { resolveAgentSessionIdForThread } from "./thread-session";
 import ChatInput from "./input";
 import { FeedbackLLM } from "./llm-msg-feedback";
 import { RegenerateLLM } from "./llm-msg-regenerate";
@@ -81,6 +82,33 @@ const BORDER = "2px solid #ccc";
 const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
 const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
 const HEAD_REF = "HEAD";
+
+export function resolveThreadMetadataLookup({
+  messageThreadId,
+  threadRootMs,
+}: {
+  messageThreadId?: string;
+  threadRootMs?: number;
+}): {
+  threadLookupKey?: string;
+  threadId?: string;
+} {
+  const normalizedThreadId =
+    typeof messageThreadId === "string" && messageThreadId.trim().length > 0
+      ? messageThreadId.trim()
+      : undefined;
+  if (normalizedThreadId) {
+    return {
+      threadLookupKey: normalizedThreadId,
+      threadId: normalizedThreadId,
+    };
+  }
+  return {
+    threadLookupKey:
+      threadRootMs != null ? `${threadRootMs}` : undefined,
+    threadId: undefined,
+  };
+}
 
 
 const THREAD_STYLE_SINGLE: CSS = {
@@ -651,9 +679,13 @@ export default function Message({
     [is_viewers_message, renderedMessageValue],
   );
 
-  const threadKeyForSession = useMemo(
-    () => (threadRootMs != null ? `${threadRootMs}` : undefined),
-    [threadRootMs],
+  const threadLookup = useMemo(
+    () =>
+      resolveThreadMetadataLookup({
+        messageThreadId,
+        threadRootMs,
+      }),
+    [messageThreadId, threadRootMs],
   );
 
   const acpThreadId = useMemo(
@@ -662,16 +694,28 @@ export default function Message({
   );
 
   const threadCodexConfig = useMemo(() => {
-    if (threadKeyForSession == null) return undefined;
-    return actions?.getThreadMetadata(threadKeyForSession)?.acp_config ?? undefined;
-  }, [actions, threadKeyForSession]);
+    if (threadLookup.threadLookupKey == null) return undefined;
+    return (
+      actions?.getThreadMetadata(threadLookup.threadLookupKey, {
+        threadId: threadLookup.threadId,
+      })?.acp_config ?? undefined
+    );
+  }, [actions, threadLookup]);
 
   // Prefer the persisted sessionId on the thread root's acp_config; fall back
-  // to the thread id we get from the ACP payload, then the thread key.
+  // to the latest assistant-row acp_thread_id, then the message payload, then
+  // the thread key.
   const sessionIdForInterrupt = useMemo(
-    () =>
-      threadCodexConfig?.sessionId ?? acpThreadId ?? threadKeyForSession,
-    [threadCodexConfig, acpThreadId, threadKeyForSession],
+    () => {
+      const resolved = resolveAgentSessionIdForThread({
+        actions,
+        threadId: threadLookup.threadId,
+        threadKey: threadLookup.threadLookupKey ?? "",
+        persistedSessionId: threadCodexConfig?.sessionId,
+      });
+      return acpThreadId ?? resolved;
+    },
+    [actions, threadCodexConfig, acpThreadId, threadLookup],
   );
 
   const activityBasePath = useMemo(
@@ -1246,7 +1290,11 @@ export default function Message({
           path={path}
           activityBasePath={activityBasePath}
           date={date}
-          fallbackLogRefs={fallbackLogRefs}
+          logRefs={{
+            store: logStore,
+            key: logKey,
+            subject: logSubject,
+          }}
           activityContext={{
             actions,
             message,

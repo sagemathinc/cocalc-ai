@@ -181,6 +181,22 @@ function toReplyDate(threadKey: string | null): Date | undefined {
   return new Date(ms);
 }
 
+function resolveReplyThreadId(
+  actions: ChatActions,
+  threadKey: string | null,
+): string | undefined {
+  if (!threadKey) return;
+  const entry = actions.messageCache?.getThreadIndex()?.get(threadKey);
+  const fromIndex = `${entry?.rootMessage?.thread_id ?? ""}`.trim();
+  if (fromIndex) return fromIndex;
+  if (/^\d+$/.test(threadKey)) {
+    const root = actions.getMessageByDate?.(Number(threadKey));
+    const fromRoot = `${root?.thread_id ?? ""}`.trim();
+    if (fromRoot) return fromRoot;
+  }
+  return;
+}
+
 function buildSessionRecord({
   project_id,
   account_id,
@@ -304,6 +320,7 @@ export function NavigatorShell({
   const [settingsIcon, setSettingsIcon] = useState<string | undefined>(undefined);
   const [settingsImage, setSettingsImage] = useState("");
   const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
+  const [intentRetryTick, setIntentRetryTick] = useState(0);
   const lastIndexedValueRef = useRef<string>("");
   const pendingNewThreadDefaultsRef = useRef<boolean>(false);
   const preferredThreadKeyRef = useRef<string | undefined>(
@@ -645,7 +662,13 @@ export function NavigatorShell({
         actions,
         selectedThreadKey ?? storedThreadKey ?? undefined,
       );
-      const replyTo = toReplyDate(resolvedThreadKey);
+      let replyTo = toReplyDate(resolvedThreadKey);
+      let replyThreadId = resolveReplyThreadId(actions, resolvedThreadKey);
+      if (replyTo && !replyThreadId) {
+        // If we cannot confidently resolve thread identity yet, open a new
+        // thread instead of dropping the prompt.
+        replyTo = undefined;
+      }
       const isCodex = intent.forceCodex !== false;
       const model =
         typeof selectedAcpConfig?.model === "string"
@@ -654,6 +677,7 @@ export function NavigatorShell({
       const timeStamp = actions.sendChat({
         input,
         reply_to: replyTo,
+        reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
         threadAgent:
@@ -669,11 +693,14 @@ export function NavigatorShell({
               }
             : undefined,
       });
+      if (!timeStamp) {
+        return false;
+      }
       removeQueuedNavigatorPromptIntent(intent.id);
       if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(resolvedThreadKey);
       }
-      if (!replyTo && timeStamp) {
+      if (!replyTo) {
         const threadTime = new Date(timeStamp).valueOf();
         if (Number.isFinite(threadTime)) {
           setSelectedThreadKey(`${threadTime}`);
@@ -687,20 +714,28 @@ export function NavigatorShell({
 
   useEffect(() => {
     if (!actions) return;
+    let retryNeeded = false;
     const queued = takeQueuedNavigatorPromptIntents();
     for (const intent of queued) {
       try {
         const consumed = submitIntent(intent);
         if (!consumed) {
           queueNavigatorPromptIntent(intent);
+          retryNeeded = true;
           break;
         }
       } catch (err) {
         queueNavigatorPromptIntent(intent);
         setError(`${err}`);
+        retryNeeded = true;
       }
     }
-  }, [actions, submitIntent]);
+    if (!retryNeeded) return;
+    const timer = setTimeout(() => {
+      setIntentRetryTick((v) => v + 1);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [actions, submitIntent, intentRetryTick]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -709,9 +744,13 @@ export function NavigatorShell({
       if (!detail?.id) return;
       if (!actions) return;
       try {
-        submitIntent(detail);
+        const consumed = submitIntent(detail);
+        if (!consumed) {
+          setIntentRetryTick((v) => v + 1);
+        }
       } catch (err) {
         setError(`${err}`);
+        setIntentRetryTick((v) => v + 1);
       }
     };
     window.addEventListener(
@@ -1075,6 +1114,14 @@ export function NavigatorShell({
           overflow: "hidden",
           background: "white",
           height: "min(70vh, 760px)",
+        }}
+        onKeyDownCapture={(event) => {
+          // Navigator can be rendered over editors (e.g. Jupyter). Keep
+          // keystrokes inside SideChat so underlying frame shortcuts don't fire.
+          event.stopPropagation();
+        }}
+        onKeyUpCapture={(event) => {
+          event.stopPropagation();
         }}
       >
         {actions ? (

@@ -564,7 +564,20 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
   const tag = target.tagName?.toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return true;
-  return Boolean(target.closest('[contenteditable="true"], .slate-editor'));
+  return Boolean(
+    target.closest(
+      [
+        '[contenteditable="true"]',
+        '[data-slate-editor="true"]',
+        '.slate-editor',
+        '.CodeMirror',
+        '.CodeMirror-code',
+        '.cm-editor',
+        '.cm-content',
+        '[role="textbox"]',
+      ].join(", "),
+    ),
+  );
 }
 
 function isNotGitRepoError(message: string): boolean {
@@ -1280,7 +1293,10 @@ export function GitCommitDrawer({
   }, [gitLog, commitIndex]);
 
   const logOptions = useMemo(() => {
-    const makeOptionLabel = (entry: GitLogEntry, fallback = false) => (
+    const makeOptionLabel = (entry: GitLogEntry, fallback = false) => {
+      const reviewed = Boolean(reviewedByCommit[entry.hash]);
+      const highlightNeedsReview = !fallback && !isHeadCommit(entry.hash) && !reviewed;
+      return (
       <div
         style={{
           display: "flex",
@@ -1288,10 +1304,14 @@ export function GitCommitDrawer({
           gap: 8,
           minWidth: 0,
           width: "100%",
+          borderRadius: 6,
+          padding: "2px 6px",
+          background: highlightNeedsReview ? "#fffbe6" : undefined,
+          pointerEvents: "none",
         }}
       >
         <Checkbox
-          checked={Boolean(reviewedByCommit[entry.hash])}
+          checked={reviewed}
           disabled
           style={{ pointerEvents: "none", marginInlineEnd: 0 }}
         />
@@ -1318,7 +1338,8 @@ export function GitCommitDrawer({
           {entry.subject || (fallback ? "(selected commit)" : "")}
         </span>
       </div>
-    );
+      );
+    };
     const options = [
       {
         value: HEAD_REF,
@@ -2122,7 +2143,12 @@ export function GitCommitDrawer({
     if (!open) return;
     const onKeyDown = (evt: KeyboardEvent) => {
       if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
-      if (isEditableEventTarget(evt.target)) return;
+      if (
+        isEditableEventTarget(evt.target) ||
+        isEditableEventTarget(document.activeElement)
+      ) {
+        return;
+      }
       if (evt.key === "j") {
         evt.preventDefault();
         if (canGoOlder) {

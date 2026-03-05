@@ -236,6 +236,14 @@ const INTERNAL_METHODS = new Set([
   "allowSafeModeHardlink",
   "allowSafeModeSymlink",
   "assertWritable",
+  "resolveSandboxPath",
+  "resolveWritableSandboxPath",
+  "resolveWritableSandboxPaths",
+  "resolveReadWriteSandboxPaths",
+  "verifySameInode",
+  "preflightExistingSource",
+  "verifyExistingAncestorInSandbox",
+  "isInsideSandbox",
   "rusticRepo",
   "host",
   "readFileLock",
@@ -247,6 +255,15 @@ const INTERNAL_METHODS = new Set([
   "openAt2ModeLogged",
   "sandboxBasePathCache",
   "resolveSandboxBasePathForComparison",
+  "ensureFdInSandbox",
+  "ensureHandleMatchesPath",
+  "openVerifiedHandle",
+  "cpDirectoryRequiresRecursiveError",
+  "cpUnsupportedTypeError",
+  "cpDestNotDirectoryError",
+  "cpSafeDirectoryRecursive",
+  "cpSafeOne",
+  "resolveOuchOptionPaths",
 ]);
 
 export class SandboxedFilesystem {
@@ -914,6 +931,9 @@ export class SandboxedFilesystem {
     sandboxBasePath: string,
     path: string,
   ): Promise<void> => {
+    if (this.unsafeMode) {
+      return;
+    }
     let fdStat;
     let pathStat;
     try {

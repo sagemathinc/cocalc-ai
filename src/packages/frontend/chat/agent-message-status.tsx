@@ -54,7 +54,7 @@ interface AgentMessageStatusProps {
   path?: string;
   activityBasePath?: string;
   date: number;
-  fallbackLogRefs: LogRefs;
+  logRefs: LogRefs;
   activityContext: ActivityLogContext;
   inlineCodeLinks?: InlineCodeLink[];
   openDrawerToken?: number;
@@ -71,7 +71,7 @@ export function AgentMessageStatus({
   path,
   activityBasePath,
   date,
-  fallbackLogRefs,
+  logRefs,
   activityContext,
   inlineCodeLinks,
   openDrawerToken,
@@ -278,9 +278,9 @@ export function AgentMessageStatus({
             persistKey={persistKey}
             basePath={activityBasePath}
             chatPath={path}
-            logStore={fallbackLogRefs.store}
-            logKey={fallbackLogRefs.key}
-            logSubject={fallbackLogRefs.subject}
+            logStore={logRefs.store}
+            logKey={logRefs.key}
+            logSubject={logRefs.subject}
             logProjectId={project_id}
             logEnabled={showDrawer}
             activityContext={activityContext}

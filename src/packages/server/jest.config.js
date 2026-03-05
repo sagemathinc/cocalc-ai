@@ -13,5 +13,7 @@ module.exports = {
     "^micro-key-producer/(.*)$": "<rootDir>/test/__mocks__/micro-key-producer/$1",
     "^package-directory$": "<rootDir>/test/__mocks__/package-directory.js",
     "^@cocalc/backend/(.*)$": "<rootDir>/../backend/$1",
+    "^@cocalc/server$": "<rootDir>/index.ts",
+    "^@cocalc/server/(.*)$": "<rootDir>/$1",
   },
 };

@@ -621,6 +621,8 @@ export function AIGenerateCodeCell({
                 e.stopPropagation(); // stop event propagation
                 doQuery(contextContent);
               }}
+              onKeyDownCapture={(e) => e.stopPropagation()}
+              onKeyUpCapture={(e) => e.stopPropagation()}
               autoSize={{ minRows: 2, maxRows: 6 }}
               style={{ flex: 1 }}
             />

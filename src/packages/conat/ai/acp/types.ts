@@ -134,6 +134,9 @@ export type AcpStreamEvent =
       command?: string;
       args?: string[];
       bytes?: number;
+      // True only when producer knows this is an exact byte count for the
+      // operation itself (not a heuristic such as resulting file size).
+      bytes_known?: boolean;
       truncated?: boolean;
       line?: number;
       limit?: number;

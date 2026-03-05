@@ -50,6 +50,7 @@ import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
 } from "./agent-session-index";
+import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 
@@ -70,6 +71,22 @@ function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
   if (!key || key === COMBINED_FEED_KEY) return undefined;
   return key;
+}
+
+export function enabledLoopConfig(
+  config?: AcpLoopConfig,
+): AcpLoopConfig | undefined {
+  return config?.enabled === true ? config : undefined;
+}
+
+export function clearThreadLoopRuntime(
+  actions: Pick<ChatActions, "setThreadLoopConfig" | "setThreadLoopState">,
+  threadKey?: string | null,
+): void {
+  const normalizedThreadKey = normalizeThreadKey(threadKey);
+  if (!normalizedThreadKey) return;
+  actions.setThreadLoopConfig?.(normalizedThreadKey, null);
+  actions.setThreadLoopState?.(normalizedThreadKey, null);
 }
 
 function parseDateISOString(value: unknown): string | undefined {
@@ -336,6 +353,7 @@ export function ChatPanel({
   const [composerLoopConfig, setComposerLoopConfig] = useState<
     AcpLoopConfig | undefined
   >(undefined);
+  const [composerLoopConfigDirty, setComposerLoopConfigDirty] = useState(false);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
@@ -356,16 +374,36 @@ export function ChatPanel({
         selectedThreadDate instanceof Date ? selectedThreadDate : undefined,
       ) === true);
 
+  const persistedLoopConfig = useMemo(
+    () => enabledLoopConfig(selectedThreadMetadata?.loop_config),
+    [selectedThreadMetadata?.loop_config],
+  );
+
   useEffect(() => {
-    // Loop is intentionally opt-in per send to avoid accidental repeated runs.
-    setComposerLoopConfig(undefined);
-  }, [selectedThreadKey]);
+    // When switching threads, reflect persisted loop state for that thread.
+    setComposerLoopConfig(persistedLoopConfig);
+    setComposerLoopConfigDirty(false);
+  }, [selectedThreadKey, persistedLoopConfig]);
+
+  useEffect(() => {
+    // Once a local override has been consumed/reset, re-sync the switch from
+    // persisted thread metadata so the UI matches backend loop behavior.
+    if (composerLoopConfigDirty) return;
+    setComposerLoopConfig(persistedLoopConfig);
+  }, [persistedLoopConfig, composerLoopConfigDirty]);
 
   const handleLoopConfigChange = useCallback(
     (config?: AcpLoopConfig) => {
+      if (config?.enabled !== true) {
+        clearThreadLoopRuntime(actions, selectedThreadKey);
+        setComposerLoopConfig(undefined);
+        setComposerLoopConfigDirty(false);
+        return;
+      }
       setComposerLoopConfig(config);
+      setComposerLoopConfigDirty(true);
     },
-    [],
+    [actions, selectedThreadKey],
   );
 
   const selectedThreadLookupKey = selectedThreadId;
@@ -415,10 +453,12 @@ export function ChatPanel({
         threadId,
       });
       const acpConfig = metadata?.acp_config ?? undefined;
-      const sessionIdRaw =
-        typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
-          ? acpConfig.sessionId.trim()
-          : thread.key;
+      const sessionIdRaw = resolveAgentSessionIdForThread({
+        actions,
+        threadId,
+        threadKey: thread.key,
+        persistedSessionId: acpConfig?.sessionId,
+      });
       const threadDateRaw =
         metadata?.thread_date ??
         (thread.newestTime ? new Date(thread.newestTime).toISOString() : undefined);
@@ -685,10 +725,13 @@ export function ChatPanel({
   }): void {
     const threadMessages =
       (lookup ? actions.getMessagesInThread(lookup) : undefined) ?? [];
-    const sessionId =
-      (thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined) ??
-      thread_id ??
-      (reply_to ? `${reply_to.valueOf()}` : undefined);
+    const sessionId = resolveAgentSessionIdForThread({
+      actions,
+      threadId: thread_id,
+      threadKey: thread_id ?? (reply_to ? `${reply_to.valueOf()}` : ""),
+      persistedSessionId:
+        thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined,
+    });
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);
@@ -793,8 +836,17 @@ export function ChatPanel({
           ? composerLoopConfig
           : undefined,
     });
-    // Safety: loop should default back to off after each send.
+    if (!timeStamp) {
+      // If send preconditions fail after optimistic clear (e.g. transient
+      // reply-target metadata race), restore the typed input so nothing vanishes.
+      inputRef.current = rawSendingText;
+      setInput(rawSendingText);
+      return;
+    }
+    // Clear local override; persisted thread metadata (if any) will re-sync
+    // the switch when ACP/backend writes loop state for the thread.
     setComposerLoopConfig(undefined);
+    setComposerLoopConfigDirty(false);
     const threadKey =
       !reply_to && !reply_thread_id && timeStamp
         ? (() => {
