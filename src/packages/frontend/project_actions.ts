@@ -2985,6 +2985,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         this.set_active_tab("agents", { change_history: change_history });
         break;
 
+      case "servers":
+        this.set_active_tab("servers", { change_history: change_history });
+        break;
+
       case "info":
         this.set_active_tab("info", { change_history: change_history });
         break;
