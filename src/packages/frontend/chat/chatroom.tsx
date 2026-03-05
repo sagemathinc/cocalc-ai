@@ -50,6 +50,7 @@ import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
 } from "./agent-session-index";
+import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 
@@ -452,10 +453,12 @@ export function ChatPanel({
         threadId,
       });
       const acpConfig = metadata?.acp_config ?? undefined;
-      const sessionIdRaw =
-        typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
-          ? acpConfig.sessionId.trim()
-          : thread.key;
+      const sessionIdRaw = resolveAgentSessionIdForThread({
+        actions,
+        threadId,
+        threadKey: thread.key,
+        persistedSessionId: acpConfig?.sessionId,
+      });
       const threadDateRaw =
         metadata?.thread_date ??
         (thread.newestTime ? new Date(thread.newestTime).toISOString() : undefined);
