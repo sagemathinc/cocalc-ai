@@ -104,8 +104,9 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       id: "python-hello",
       title: "Python Hello World",
       preferredPort: "8080",
+      healthPath: "/",
       command:
-        "python3 -c \"import os, http.server, socketserver; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); class H(http.server.BaseHTTPRequestHandler):\\n  def do_GET(self):\\n    body=b'hello from python\\\\n'; self.send_response(200); self.send_header('content-type','text/plain; charset=utf-8'); self.send_header('content-length',str(len(body))); self.end_headers(); self.wfile.write(body)\\n  def log_message(self, *_):\\n    pass\\nsocketserver.TCPServer.allow_reuse_address=True; httpd=socketserver.TCPServer((host,port),H); print(f'listening on http://{host}:{port}', flush=True); httpd.serve_forever()\"",
+        "python3 -c \"import os, pathlib, http.server; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); root=pathlib.Path('/tmp/cocalc-python-hello'); root.mkdir(parents=True, exist_ok=True); (root/'index.html').write_text('<h1>Hello from Python</h1>\\\\n', encoding='utf-8'); os.chdir(root); server=http.server.ThreadingHTTPServer((host,port), http.server.SimpleHTTPRequestHandler); print(f'listening on http://{host}:{port}', flush=True); server.serve_forever()\"",
     },
     {
       key: "node-hello",

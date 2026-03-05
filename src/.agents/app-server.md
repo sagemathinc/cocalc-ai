@@ -38,6 +38,7 @@ This should replace ad hoc per-app special cases over time.
 
 1. Dedicated app UI workflows and polish (`+New` app wizard, app management panel polish, autodetection UX, embed polish).
 2. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
+3. "Install with agent" flow from app presets/management UI.
 
 ## 2. Product Goals
 
@@ -395,6 +396,7 @@ Existing components to reuse where possible:
 1. complete CLI surface (`detect`, `audit`, `expose`, `unexpose`, `logs`)
 2. agent-ready workflows and prompts for app lifecycle
 3. end-to-end tests for agent-driven startup/exposure/recovery
+4. add UI handoff actions for "install this server/app with agent" (preset-aware prompts)
 
 ### Phase 3: UI Expansion (after backend confidence) (Status: not started)
 
@@ -439,6 +441,7 @@ Existing components to reuse where possible:
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; static smoke pending).
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
 11. `[todo]` Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
+12. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
 
 ## 19.1 Next Execution Order
 
