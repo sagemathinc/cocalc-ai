@@ -114,6 +114,28 @@ describe("SmartAnchorTag", () => {
     });
   });
 
+  it("opens absolute file links with trailing punctuation as file+line", async () => {
+    render(
+      <SmartAnchorTag
+        project_id="00000000-1000-4000-8000-000000000000"
+        path="room.chat"
+        href="/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts:485)."
+      >
+        manager.ts:485).
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "manager.ts:485)." }));
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith({
+        path: "/Users/williamstein/build/cocalc-lite/src/packages/plus/reflect/manager.ts",
+        line: 485,
+        foreground: true,
+        explicit: true,
+      });
+    });
+  });
+
   it("opens absolute file links with encoded :line suffix as file+line", async () => {
     render(
       <SmartAnchorTag

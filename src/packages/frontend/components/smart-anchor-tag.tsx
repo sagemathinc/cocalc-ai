@@ -160,15 +160,18 @@ function parsePathWithOptionalLineSuffix(path: string): {
   path: string;
   line?: number;
 } {
-  const match = path.match(/^(.*?):(\d+)(?::\d+)?$/);
-  if (!match) return { path };
-  const candidatePath = match[1];
+  const trimmed = path.trim();
+  // Parse from the last :line(:col) suffix and allow common trailing
+  // punctuation that can be attached in prose/code snippets.
+  const match = trimmed.match(/^(.*):(\d+)(?::\d+)?(?:[)\].,;!?'"`]+)?$/);
+  if (!match) return { path: trimmed };
+  const candidatePath = match[1].trim();
   if (!candidatePath || candidatePath.endsWith("/")) {
-    return { path };
+    return { path: trimmed };
   }
   const line = Number(match[2]);
   if (!Number.isFinite(line) || line <= 0) {
-    return { path };
+    return { path: trimmed };
   }
   return { path: candidatePath, line };
 }
