@@ -35,6 +35,21 @@ The backend parses this payload and applies loop guardrails.
 
 ## State Transitions
 
+```mermaid
+stateDiagram-v2
+  [*] --> stopped
+  stopped --> running: user starts loop (enabled=true)
+  running --> waiting_decision: turn reaches terminal payload
+  waiting_decision --> scheduled: rerun=true && needs_human=false && guardrails pass
+  waiting_decision --> paused: needs_human=true || policy check-in threshold
+  waiting_decision --> stopped: rerun=false || hard stop
+  scheduled --> running: backend enqueues next turn
+  paused --> running: user resume
+  running --> stopped: user stop / hard stop
+  paused --> stopped: user stop
+  stopped --> [*]
+```
+
 1. `stopped -> running`
 - Trigger: user starts a looped turn with `loop_config.enabled=true`.
 - Action: create `loop_id`, set `iteration=1`, persist `loop_state`.
