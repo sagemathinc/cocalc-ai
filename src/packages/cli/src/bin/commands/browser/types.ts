@@ -326,6 +326,9 @@ export type BrowserProfileSelection = {
   config: AuthConfig;
   profile: string;
   browser_id?: string;
+  browser_id_scoped?: string;
+  browser_id_global?: string;
+  api_scope?: string;
 };
 
 export type BrowserSessionRegisterUtils = {
@@ -334,6 +337,7 @@ export type BrowserSessionRegisterUtils = {
     deps: BrowserCommandDeps;
     command: Command;
     browser_id?: string;
+    apiBaseUrl?: string;
   }) => { profile: string; browser_id?: string };
   resolveBrowserSession: (
     sessions: BrowserSessionInfo[],
@@ -476,6 +480,76 @@ export type BrowserActionRegisterUtils = {
     value: unknown,
     label: "block" | "inline",
   ) => "start" | "center" | "end" | "nearest";
+  durationToMs: (value: unknown, fallbackMs: number) => number;
+};
+
+export type BrowserHarnessRegisterUtils = {
+  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  browserHintFromOption: (value: unknown) => string | undefined;
+  chooseBrowserSession: (opts: {
+    ctx: BrowserCommandContext;
+    browserHint?: string;
+    fallbackBrowserId?: string;
+    requireDiscovery?: boolean;
+    sessionProjectId?: string;
+    activeOnly?: boolean;
+  }) => Promise<BrowserSessionInfo>;
+  resolveTargetProjectId: (opts: {
+    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    ctx: BrowserCommandContext;
+    workspace?: string;
+    projectId?: string;
+    sessionInfo: BrowserSessionInfo;
+  }) => Promise<string>;
+  resolveBrowserPolicyAndPosture: (opts: {
+    posture?: string;
+    policyFile?: string;
+    allowRawExec?: boolean;
+    apiBaseUrl?: string;
+  }) => Promise<{
+    posture: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }>;
+  sessionTargetContext: (
+    ctx: BrowserCommandContext,
+    sessionInfo: BrowserSessionInfo,
+    project_id?: string,
+  ) => Record<string, unknown>;
+  durationToMs: (value: unknown, fallbackMs: number) => number;
+};
+
+export type BrowserInspectRegisterUtils = {
+  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  browserHintFromOption: (value: unknown) => string | undefined;
+  chooseBrowserSession: (opts: {
+    ctx: BrowserCommandContext;
+    browserHint?: string;
+    fallbackBrowserId?: string;
+    requireDiscovery?: boolean;
+    sessionProjectId?: string;
+    activeOnly?: boolean;
+  }) => Promise<BrowserSessionInfo>;
+  resolveTargetProjectId: (opts: {
+    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    ctx: BrowserCommandContext;
+    workspace?: string;
+    projectId?: string;
+    sessionInfo: BrowserSessionInfo;
+  }) => Promise<string>;
+  resolveBrowserPolicyAndPosture: (opts: {
+    posture?: string;
+    policyFile?: string;
+    allowRawExec?: boolean;
+    apiBaseUrl?: string;
+  }) => Promise<{
+    posture: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }>;
+  sessionTargetContext: (
+    ctx: BrowserCommandContext,
+    sessionInfo: BrowserSessionInfo,
+    project_id?: string,
+  ) => Record<string, unknown>;
   durationToMs: (value: unknown, fallbackMs: number) => number;
 };
 

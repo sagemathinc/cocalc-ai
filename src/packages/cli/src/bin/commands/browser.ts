@@ -77,11 +77,15 @@ import {
   sessionTargetContext,
 } from "./browser/targeting";
 import { registerBrowserActionCommands } from "./browser/register-action-commands";
+import { registerBrowserHarnessCommands } from "./browser/register-harness-commands";
+import { registerBrowserInspectCommands } from "./browser/register-inspect-commands";
 import { registerBrowserObservabilityCommands } from "./browser/register-observability-commands";
 import { registerBrowserSessionCommands } from "./browser/register-session-commands";
 import type {
   BrowserActionRegisterUtils,
   BrowserCommandDeps,
+  BrowserHarnessRegisterUtils,
+  BrowserInspectRegisterUtils,
   BrowserObservabilityRegisterUtils,
   BrowserSessionRegisterUtils,
   ScreenshotRenderer,
@@ -138,6 +142,44 @@ export function registerBrowserCommand(
     isValidUUID,
   };
   registerBrowserSessionCommands({ browser, deps, utils: sessionUtils });
+
+  browser
+    .command("use <browser_id>")
+    .description(
+      "alias for 'browser session use'; set default browser session id for current profile scoped by API origin",
+    )
+    .option(
+      "--api-url <url>",
+      "explicit API URL scope for saved default (defaults to active context API URL)",
+    )
+    .action(
+      async (
+        browserHint: string,
+        opts: { apiUrl?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser use", async (ctx) => {
+          const sessions = await ctx.hub.system.listBrowserSessions({
+            include_stale: true,
+          });
+          const selected = resolveBrowserSession(sessions ?? [], browserHint);
+          const scopedApiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+          const saved = saveProfileBrowserId({
+            deps,
+            command,
+            browser_id: selected.browser_id,
+            apiBaseUrl: scopedApiUrl,
+          });
+          return {
+            profile: saved.profile,
+            browser_id: selected.browser_id,
+            stale: !!selected.stale,
+            api_scope: scopedApiUrl ?? null,
+            alias_of: "browser session use",
+          };
+        });
+      },
+    );
 
   const observabilityUtils: BrowserObservabilityRegisterUtils = {
     loadProfileSelection,
@@ -1017,6 +1059,28 @@ export function registerBrowserCommand(
     durationToMs,
   };
   registerBrowserActionCommands({ browser, deps, utils: actionUtils });
+
+  const harnessUtils: BrowserHarnessRegisterUtils = {
+    loadProfileSelection,
+    browserHintFromOption,
+    chooseBrowserSession,
+    resolveTargetProjectId,
+    resolveBrowserPolicyAndPosture,
+    sessionTargetContext,
+    durationToMs,
+  };
+  registerBrowserHarnessCommands({ browser, deps, utils: harnessUtils });
+
+  const inspectUtils: BrowserInspectRegisterUtils = {
+    loadProfileSelection,
+    browserHintFromOption,
+    chooseBrowserSession,
+    resolveTargetProjectId,
+    resolveBrowserPolicyAndPosture,
+    sessionTargetContext,
+    durationToMs,
+  };
+  registerBrowserInspectCommands({ browser, deps, utils: inspectUtils });
 
   browser
     .command("exec-get <exec_id>")

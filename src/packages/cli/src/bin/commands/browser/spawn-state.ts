@@ -57,18 +57,33 @@ function cookieNameFor(apiUrl: string, name: string): string {
   return basePathCookieName({ basePath, name });
 }
 
-function matchesSpawnMarker(session: BrowserSessionInfo, marker: string): boolean {
-  const url = `${session.url ?? ""}`.trim();
-  if (!url) return false;
+export function spawnMarkerFromUrl(url: string | undefined): string | undefined {
+  const clean = `${url ?? ""}`.trim();
+  if (!clean) return undefined;
   try {
-    const parsed = new URL(url);
-    if (parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) === marker) {
-      return true;
-    }
+    const parsed = new URL(clean);
+    const marker = `${parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) ?? ""}`.trim();
+    return marker || undefined;
   } catch {
-    // fall through to substring check
+    const match = clean.match(
+      new RegExp(`[?&]${SPAWN_MARKER_QUERY_PARAM}=([^&#]+)`),
+    );
+    if (!match?.[1]) return undefined;
+    try {
+      return decodeURIComponent(match[1]).trim() || undefined;
+    } catch {
+      return `${match[1]}`.trim() || undefined;
+    }
   }
-  return url.includes(`${SPAWN_MARKER_QUERY_PARAM}=${encodeURIComponent(marker)}`);
+}
+
+export function sessionMatchesSpawnMarker(
+  session: BrowserSessionInfo,
+  marker: string,
+): boolean {
+  const clean = `${marker ?? ""}`.trim();
+  if (!clean) return false;
+  return spawnMarkerFromUrl(`${session.url ?? ""}`) === clean;
 }
 
 export function nowIso(): string {
@@ -287,7 +302,9 @@ export async function waitForSpawnedSession({
     const sessions = (await ctx.hub.system.listBrowserSessions({
       include_stale: true,
     })) as BrowserSessionInfo[];
-    const match = (sessions ?? []).find((s) => matchesSpawnMarker(s, marker) && !s.stale);
+    const match = (sessions ?? []).find(
+      (s) => sessionMatchesSpawnMarker(s, marker) && !s.stale,
+    );
     if (match) return match;
     if (Date.now() - started > timeoutMs) {
       throw new Error("timed out waiting for spawned browser session heartbeat");
