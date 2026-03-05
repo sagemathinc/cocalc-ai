@@ -297,6 +297,20 @@ function stripLoopContractForDisplay(
       }
     }
   }
+
+  // Handle trailing multi-line raw JSON objects (not fenced).
+  // Try suffixes from the end and remove the first suffix that parses as a
+  // valid loop contract payload.
+  if (lines.length > 1) {
+    const start = Math.max(0, lines.length - 40);
+    for (let i = lines.length - 1; i >= start; i--) {
+      const suffix = lines.slice(i).join("\n").trim();
+      if (!suffix.startsWith("{") || !suffix.endsWith("}")) continue;
+      const decision = parseLoopDecisionPayload(suffix);
+      if (!decision) continue;
+      return lines.slice(0, i).join("\n").replace(/\s+$/, "");
+    }
+  }
   return text;
 }
 
