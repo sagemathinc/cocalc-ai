@@ -357,29 +357,15 @@ export function ChatPanel({
       ) === true);
 
   useEffect(() => {
-    if (!selectedThreadKey) {
-      setComposerLoopConfig(undefined);
-      return;
-    }
-    const meta = actions.getThreadMetadata?.(selectedThreadKey, {
-      threadId: selectedThreadId,
-    });
-    const loopCfg = meta?.loop_config;
-    if (loopCfg?.enabled === true) {
-      setComposerLoopConfig(loopCfg as AcpLoopConfig);
-    } else {
-      setComposerLoopConfig(undefined);
-    }
-  }, [actions, selectedThreadId, selectedThreadKey, docVersion]);
+    // Loop is intentionally opt-in per send to avoid accidental repeated runs.
+    setComposerLoopConfig(undefined);
+  }, [selectedThreadKey]);
 
   const handleLoopConfigChange = useCallback(
     (config?: AcpLoopConfig) => {
       setComposerLoopConfig(config);
-      if (selectedThreadId) {
-        actions.setThreadLoopConfig?.(selectedThreadId, config);
-      }
     },
-    [actions, selectedThreadId],
+    [],
   );
 
   const selectedThreadLookupKey = selectedThreadId;
@@ -807,6 +793,8 @@ export function ChatPanel({
           ? composerLoopConfig
           : undefined,
     });
+    // Safety: loop should default back to off after each send.
+    setComposerLoopConfig(undefined);
     const threadKey =
       !reply_to && !reply_thread_id && timeStamp
         ? (() => {

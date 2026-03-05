@@ -787,6 +787,20 @@ export class ChatStreamWriter {
       this.metadata.message_id,
     );
     if (byMessageId != null) {
+      const rowSender = syncdbField<string>(byMessageId, "sender_id");
+      if (
+        typeof rowSender === "string" &&
+        rowSender.trim().length > 0 &&
+        rowSender !== this.metadata.sender_id
+      ) {
+        logger.warn("acp writer row-sender mismatch; refusing to mutate row", {
+          chatKey: this.chatKey,
+          message_id: this.metadata.message_id,
+          expected_sender: this.metadata.sender_id,
+          actual_sender: rowSender,
+        });
+        return undefined;
+      }
       this.setResolvedChatKey(byMessageId);
       return byMessageId;
     }
