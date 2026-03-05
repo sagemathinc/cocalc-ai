@@ -38,6 +38,14 @@ interface AppServerPreset {
   note?: string;
 }
 
+interface StartupFailureDetails {
+  appId: string;
+  action: "start" | "start-after-save";
+  errorMessage: string;
+  stdoutTail?: string;
+  stderrTail?: string;
+}
+
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
   return new Error(`${err}`);
@@ -52,6 +60,15 @@ function joinPath(head: string, tail: string): string {
   const h = `${head ?? ""}`.replace(/\/+$/, "");
   const t = `${tail ?? ""}`.replace(/^\/+/, "");
   return `${h}/${t}`;
+}
+
+function tailLines(text: string, maxLines = 30, maxChars = 4000): string {
+  const raw = `${text ?? ""}`.trimEnd();
+  if (!raw) return "";
+  const lines = raw.split("\n");
+  const tail = lines.slice(-maxLines).join("\n");
+  if (tail.length <= maxChars) return tail;
+  return `...${tail.slice(tail.length - maxChars)}`;
 }
 
 function appServerPresets(homeDirectory: string): AppServerPreset[] {
@@ -190,6 +207,8 @@ export function AppServerPanel({
     stdout: string;
     stderr: string;
   } | null>(null);
+  const [startupFailure, setStartupFailure] =
+    useState<StartupFailureDetails | undefined>(undefined);
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
 
   const activePreset = useMemo(
@@ -325,11 +344,15 @@ export function AppServerPanel({
   }
 
   async function onCreate() {
+    let createdId: string | undefined;
+    const creatingService = kind === "service" && startNow;
     try {
       setSubmitting(true);
       setError(undefined);
+      setStartupFailure(undefined);
       const spec = buildSpec();
       const { id } = await api.apps.upsertAppSpec(spec);
+      createdId = id;
       let status = await api.apps.statusApp(id);
       if (startNow && spec.kind === "service") {
         status = await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
@@ -339,7 +362,15 @@ export function AppServerPanel({
         await openStatus(status);
       }
     } catch (err) {
-      setError(normalizeError(err));
+      if (creatingService && createdId) {
+        await reportStartupFailure({
+          appId: createdId,
+          action: "start-after-save",
+          err,
+        });
+      } else {
+        setError(normalizeError(err));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -349,10 +380,15 @@ export function AppServerPanel({
     try {
       setSubmitting(true);
       setError(undefined);
+      setStartupFailure(undefined);
       await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
       await refresh();
     } catch (err) {
-      setError(normalizeError(err));
+      await reportStartupFailure({
+        appId: id,
+        action: "start",
+        err,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -509,12 +545,102 @@ export function AppServerPanel({
     }
   }
 
+  async function reportStartupFailure({
+    appId,
+    action,
+    err,
+  }: {
+    appId: string;
+    action: "start" | "start-after-save";
+    err: unknown;
+  }): Promise<void> {
+    const base = normalizeError(err);
+    try {
+      const data = await api.apps.appLogs(appId);
+      setLogsData(data);
+      setLogsOpen(true);
+      setLogsLoading(false);
+      setStartupFailure({
+        appId,
+        action,
+        errorMessage: base.message,
+        stdoutTail: tailLines(data.stdout),
+        stderrTail: tailLines(data.stderr),
+      });
+    } catch {
+      setStartupFailure({
+        appId,
+        action,
+        errorMessage: base.message,
+      });
+    }
+  }
+
   return (
     <div>
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
         Create a managed app server spec, start it, and open the proxied URL.
       </Paragraph>
       <ShowError error={error} setError={() => setError(undefined)} />
+      {startupFailure ? (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setStartupFailure(undefined)}
+          style={{ marginBottom: "10px" }}
+          message={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} app '${startupFailure.appId}'`}
+          description={
+            <div style={{ display: "grid", gap: "8px" }}>
+              <div>{startupFailure.errorMessage}</div>
+              <Space wrap>
+                <Button
+                  size="small"
+                  onClick={() => void onLogs(startupFailure.appId)}
+                >
+                  View full logs
+                </Button>
+              </Space>
+              {startupFailure.stderrTail ? (
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: "4px" }}>stderr (tail)</div>
+                  <pre
+                    style={{
+                      margin: 0,
+                      maxHeight: "180px",
+                      overflow: "auto",
+                      border: "1px solid #eee",
+                      borderRadius: "6px",
+                      padding: "8px",
+                      background: "#fff7f7",
+                    }}
+                  >
+                    {startupFailure.stderrTail}
+                  </pre>
+                </div>
+              ) : null}
+              {startupFailure.stdoutTail ? (
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: "4px" }}>stdout (tail)</div>
+                  <pre
+                    style={{
+                      margin: 0,
+                      maxHeight: "180px",
+                      overflow: "auto",
+                      border: "1px solid #eee",
+                      borderRadius: "6px",
+                      padding: "8px",
+                      background: "#fafafa",
+                    }}
+                  >
+                    {startupFailure.stdoutTail}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          }
+        />
+      ) : null}
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
         <Select
           value={presetKey || undefined}
