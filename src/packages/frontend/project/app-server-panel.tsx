@@ -25,6 +25,7 @@ import { withProjectHostBase } from "./host-url";
 type AppKind = "service" | "static";
 type PresetKind = "service" | "static";
 type AppServiceOpenMode = "proxy" | "port";
+type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 
 interface AppServerPreset {
   key: string;
@@ -273,9 +274,12 @@ export function AppServerPanel({
   const [editSpecTargetId, setEditSpecTargetId] = useState<string>("");
   const [editSpecRaw, setEditSpecRaw] = useState<string>("");
   const [editSpecError, setEditSpecError] = useState<string>("");
-  const [startupFailure, setStartupFailure] =
-    useState<StartupFailureDetails | undefined>(undefined);
+  const [startupFailures, setStartupFailures] = useState<
+    Record<string, StartupFailureDetails | undefined>
+  >({});
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
+  const [rowFilter, setRowFilter] = useState<AppStatusFilter>("all");
+  const [rowSearch, setRowSearch] = useState<string>("");
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -314,10 +318,46 @@ export function AppServerPanel({
     staticRoot,
   ]);
 
+  const filteredRows = useMemo(() => {
+    const needle = rowSearch.trim().toLowerCase();
+    return rows.filter((row) => {
+      const spec = specById[row.id];
+      const rowHasError =
+        !!row.error || !!startupFailures[row.id] || (row.warnings?.length ?? 0) > 0;
+      if (rowFilter === "running" && row.state !== "running") return false;
+      if (rowFilter === "stopped" && row.state !== "stopped") return false;
+      if (rowFilter === "error" && !rowHasError) return false;
+      if (rowFilter === "public" && !row.exposure?.public_url) return false;
+      if (!needle) return true;
+      const haystacks = [
+        row.id,
+        row.title,
+        row.kind,
+        row.state,
+        row.exposure?.public_url,
+        spec?.proxy?.base_path,
+        spec?.static?.root,
+      ];
+      return haystacks.some((value) =>
+        `${value ?? ""}`.toLowerCase().includes(needle),
+      );
+    });
+  }, [rowFilter, rowSearch, rows, specById, startupFailures]);
+
+  const startableRows = useMemo(
+    () => rows.filter((row) => row.kind === "service" && row.state !== "running"),
+    [rows],
+  );
+  const stoppableRows = useMemo(
+    () => rows.filter((row) => row.kind === "service" && row.state === "running"),
+    [rows],
+  );
+
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
       setError(undefined);
+      setStartupFailures({});
       const [next, specRecords] = await Promise.all([
         api.apps.listAppStatuses(),
         api.apps.listAppSpecs(),
@@ -536,7 +576,7 @@ export function AppServerPanel({
     try {
       setFormSubmitting(true);
       setError(undefined);
-      setStartupFailure(undefined);
+      setStartupFailures((prev) => ({ ...prev, [appId]: undefined }));
       const spec = buildSpec();
       const { id } = await api.apps.upsertAppSpec(spec);
       createdId = id;
@@ -555,6 +595,7 @@ export function AppServerPanel({
           action: "start-after-save",
           err,
         });
+        await refresh();
       } else {
         setError(normalizeError(err));
       }
@@ -567,7 +608,7 @@ export function AppServerPanel({
     try {
       setSubmitting(true);
       setError(undefined);
-      setStartupFailure(undefined);
+      setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
       await refresh();
     } catch (err) {
@@ -585,6 +626,7 @@ export function AppServerPanel({
     try {
       setSubmitting(true);
       setError(undefined);
+      setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.stopApp(id);
       await refresh();
     } catch (err) {
@@ -598,6 +640,7 @@ export function AppServerPanel({
     try {
       setSubmitting(true);
       setError(undefined);
+      setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.deleteApp(id);
       await refresh();
     } catch (err) {
@@ -612,6 +655,7 @@ export function AppServerPanel({
       setSubmitting(true);
       setActionAppId(id);
       setError(undefined);
+      setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       const ttl = Math.max(
         60,
         Math.floor((Number(exposeTtlHours) || 24) * 3600),
@@ -701,6 +745,42 @@ export function AppServerPanel({
       setError(normalizeError(err));
     } finally {
       setDetecting(false);
+    }
+  }
+
+  async function onStartMany(ids: string[]) {
+    if (ids.length === 0) return;
+    try {
+      setSubmitting(true);
+      setError(undefined);
+      for (const id of ids) {
+        setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
+        try {
+          await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
+        } catch (err) {
+          await reportStartupFailure({ appId: id, action: "start", err });
+        }
+      }
+      await refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function onStopMany(ids: string[]) {
+    if (ids.length === 0) return;
+    try {
+      setSubmitting(true);
+      setError(undefined);
+      for (const id of ids) {
+        setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
+        await api.apps.stopApp(id);
+      }
+      await refresh();
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -827,19 +907,25 @@ export function AppServerPanel({
       setLogsData(data);
       setLogsOpen(true);
       setLogsLoading(false);
-      setStartupFailure({
-        appId,
-        action,
-        errorMessage: base.message,
-        stdoutTail: tailLines(data.stdout),
-        stderrTail: tailLines(data.stderr),
-      });
+      setStartupFailures((prev) => ({
+        ...prev,
+        [appId]: {
+          appId,
+          action,
+          errorMessage: base.message,
+          stdoutTail: tailLines(data.stdout),
+          stderrTail: tailLines(data.stderr),
+        },
+      }));
     } catch {
-      setStartupFailure({
-        appId,
-        action,
-        errorMessage: base.message,
-      });
+      setStartupFailures((prev) => ({
+        ...prev,
+        [appId]: {
+          appId,
+          action,
+          errorMessage: base.message,
+        },
+      }));
     }
   }
 
@@ -850,65 +936,6 @@ export function AppServerPanel({
         service apps and static apps.
       </Paragraph>
       <ShowError error={error} setError={() => setError(undefined)} />
-      {startupFailure ? (
-        <Alert
-          type="error"
-          showIcon
-          closable
-          onClose={() => setStartupFailure(undefined)}
-          style={{ marginBottom: "10px" }}
-          message={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} app '${startupFailure.appId}'`}
-          description={
-            <div style={{ display: "grid", gap: "8px" }}>
-              <div>{startupFailure.errorMessage}</div>
-              <Space wrap>
-                <Button
-                  size="small"
-                  onClick={() => void onLogs(startupFailure.appId)}
-                >
-                  View full logs
-                </Button>
-              </Space>
-              {startupFailure.stderrTail ? (
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: "4px" }}>stderr (tail)</div>
-                  <pre
-                    style={{
-                      margin: 0,
-                      maxHeight: "180px",
-                      overflow: "auto",
-                      border: "1px solid #eee",
-                      borderRadius: "6px",
-                      padding: "8px",
-                      background: "#fff7f7",
-                    }}
-                  >
-                    {startupFailure.stderrTail}
-                  </pre>
-                </div>
-              ) : null}
-              {startupFailure.stdoutTail ? (
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: "4px" }}>stdout (tail)</div>
-                  <pre
-                    style={{
-                      margin: 0,
-                      maxHeight: "180px",
-                      overflow: "auto",
-                      border: "1px solid #eee",
-                      borderRadius: "6px",
-                      padding: "8px",
-                      background: "#fafafa",
-                    }}
-                  >
-                    {startupFailure.stdoutTail}
-                  </pre>
-                </div>
-              ) : null}
-            </div>
-          }
-        />
-      ) : null}
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
         <Select
           value={presetKey || undefined}
@@ -1143,11 +1170,54 @@ export function AppServerPanel({
       {!loading && rows.length === 0 ? (
         <Alert type="info" showIcon message="No managed app servers yet." />
       ) : null}
+      {!loading && rows.length > 0 ? (
+        <Space
+          wrap
+          style={{ width: "100%", justifyContent: "space-between", marginBottom: "10px" }}
+        >
+          <Space wrap>
+            <Input
+              value={rowSearch}
+              placeholder="Filter apps"
+              onChange={(e) => setRowSearch(e.target.value)}
+              style={{ width: "220px" }}
+              allowClear
+            />
+            <Select<AppStatusFilter>
+              value={rowFilter}
+              style={{ width: "150px" }}
+              onChange={(value) => setRowFilter(value)}
+              options={[
+                { value: "all", label: "All" },
+                { value: "running", label: "Running" },
+                { value: "stopped", label: "Stopped" },
+                { value: "error", label: "Needs attention" },
+                { value: "public", label: "Public" },
+              ]}
+            />
+          </Space>
+          <Space wrap>
+            <Button
+              onClick={() => void onStartMany(startableRows.map((row) => row.id))}
+              disabled={submitting || startableRows.length === 0}
+            >
+              Start all stopped ({startableRows.length})
+            </Button>
+            <Button
+              onClick={() => void onStopMany(stoppableRows.map((row) => row.id))}
+              disabled={submitting || stoppableRows.length === 0}
+            >
+              Stop all running ({stoppableRows.length})
+            </Button>
+          </Space>
+        </Space>
+      ) : null}
       <Space direction="vertical" style={{ width: "100%" }}>
-        {rows.map((row) => {
+        {filteredRows.map((row) => {
           const isRunning = row.state === "running";
           const spec = specById[row.id];
           const specSummary = summarizeSpec(spec);
+          const startupFailure = startupFailures[row.id];
           return (
             <div
               key={row.id}
@@ -1278,6 +1348,71 @@ export function AppServerPanel({
                   type="warning"
                   showIcon
                   message={row.warnings.join(" ")}
+                />
+              ) : null}
+              {startupFailure ? (
+                <Alert
+                  style={{ marginTop: "8px" }}
+                  type="error"
+                  showIcon
+                  closable
+                  onClose={() =>
+                    setStartupFailures((prev) => ({
+                      ...prev,
+                      [row.id]: undefined,
+                    }))
+                  }
+                  message={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} '${row.title || row.id}'`}
+                  description={
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <div>{startupFailure.errorMessage}</div>
+                      <Space wrap>
+                        <Button size="small" onClick={() => void onLogs(row.id)}>
+                          View full logs
+                        </Button>
+                      </Space>
+                      {startupFailure.stderrTail ? (
+                        <div>
+                          <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                            stderr (tail)
+                          </div>
+                          <pre
+                            style={{
+                              margin: 0,
+                              maxHeight: "180px",
+                              overflow: "auto",
+                              border: "1px solid #eee",
+                              borderRadius: "6px",
+                              padding: "8px",
+                              background: "#fff7f7",
+                            }}
+                          >
+                            {startupFailure.stderrTail}
+                          </pre>
+                        </div>
+                      ) : null}
+                      {startupFailure.stdoutTail ? (
+                        <div>
+                          <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                            stdout (tail)
+                          </div>
+                          <pre
+                            style={{
+                              margin: 0,
+                              maxHeight: "180px",
+                              overflow: "auto",
+                              border: "1px solid #eee",
+                              borderRadius: "6px",
+                              padding: "8px",
+                              background: "#fafafa",
+                            }}
+                          >
+                            {startupFailure.stdoutTail}
+                          </pre>
+                        </div>
+                      ) : null}
+                    </div>
+                  }
                 />
               ) : null}
             </div>
