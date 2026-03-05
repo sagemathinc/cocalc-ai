@@ -72,6 +72,22 @@ function normalizeThreadKey(value?: string | null): string | undefined {
   return key;
 }
 
+export function enabledLoopConfig(
+  config?: AcpLoopConfig,
+): AcpLoopConfig | undefined {
+  return config?.enabled === true ? config : undefined;
+}
+
+export function clearThreadLoopRuntime(
+  actions: Pick<ChatActions, "setThreadLoopConfig" | "setThreadLoopState">,
+  threadKey?: string | null,
+): void {
+  const normalizedThreadKey = normalizeThreadKey(threadKey);
+  if (!normalizedThreadKey) return;
+  actions.setThreadLoopConfig?.(normalizedThreadKey, null);
+  actions.setThreadLoopState?.(normalizedThreadKey, null);
+}
+
 function parseDateISOString(value: unknown): string | undefined {
   if (!value) return undefined;
   const d = value instanceof Date ? value : new Date(value as string | number);
@@ -336,6 +352,7 @@ export function ChatPanel({
   const [composerLoopConfig, setComposerLoopConfig] = useState<
     AcpLoopConfig | undefined
   >(undefined);
+  const [composerLoopConfigDirty, setComposerLoopConfigDirty] = useState(false);
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
@@ -356,16 +373,36 @@ export function ChatPanel({
         selectedThreadDate instanceof Date ? selectedThreadDate : undefined,
       ) === true);
 
+  const persistedLoopConfig = useMemo(
+    () => enabledLoopConfig(selectedThreadMetadata?.loop_config),
+    [selectedThreadMetadata?.loop_config],
+  );
+
   useEffect(() => {
-    // Loop is intentionally opt-in per send to avoid accidental repeated runs.
-    setComposerLoopConfig(undefined);
-  }, [selectedThreadKey]);
+    // When switching threads, reflect persisted loop state for that thread.
+    setComposerLoopConfig(persistedLoopConfig);
+    setComposerLoopConfigDirty(false);
+  }, [selectedThreadKey, persistedLoopConfig]);
+
+  useEffect(() => {
+    // Once a local override has been consumed/reset, re-sync the switch from
+    // persisted thread metadata so the UI matches backend loop behavior.
+    if (composerLoopConfigDirty) return;
+    setComposerLoopConfig(persistedLoopConfig);
+  }, [persistedLoopConfig, composerLoopConfigDirty]);
 
   const handleLoopConfigChange = useCallback(
     (config?: AcpLoopConfig) => {
+      if (config?.enabled !== true) {
+        clearThreadLoopRuntime(actions, selectedThreadKey);
+        setComposerLoopConfig(undefined);
+        setComposerLoopConfigDirty(false);
+        return;
+      }
       setComposerLoopConfig(config);
+      setComposerLoopConfigDirty(true);
     },
-    [],
+    [actions, selectedThreadKey],
   );
 
   const selectedThreadLookupKey = selectedThreadId;
@@ -800,8 +837,10 @@ export function ChatPanel({
       setInput(rawSendingText);
       return;
     }
-    // Safety: loop should default back to off after each successful send.
+    // Clear local override; persisted thread metadata (if any) will re-sync
+    // the switch when ACP/backend writes loop state for the thread.
     setComposerLoopConfig(undefined);
+    setComposerLoopConfigDirty(false);
     const threadKey =
       !reply_to && !reply_thread_id && timeStamp
         ? (() => {
