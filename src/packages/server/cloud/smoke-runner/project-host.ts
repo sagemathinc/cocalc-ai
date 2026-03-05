@@ -255,7 +255,12 @@ type CliContext = {
   pollMs: number;
 };
 
-type ProjectHostSmokeScenario = "persistence" | "drain" | "move" | "apps";
+type ProjectHostSmokeScenario =
+  | "persistence"
+  | "drain"
+  | "move"
+  | "apps"
+  | "apps-static";
 
 type CliEnvelope<T = any> = {
   ok?: boolean;
@@ -698,54 +703,193 @@ async function listHostIdsByNameViaCli(
   return [...ids];
 }
 
-async function writeSmokeAppSpecFile({
+type SmokeAppKind = "service" | "static";
+
+type SmokeStaticContentInfo = {
+  root: string;
+  root_marker: string;
+  nested_marker: string;
+  large_file: string;
+  large_size: number;
+  cache_control: string;
+};
+
+function appendPathToUrl(baseUrl: string, pathSuffix: string): string {
+  const trimmed = `${pathSuffix ?? ""}`.replace(/^\/+/, "");
+  if (!trimmed) return baseUrl;
+  const parsed = new URL(baseUrl);
+  parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/${trimmed}`;
+  return parsed.toString();
+}
+
+function parseMaxAgeSeconds(cacheControl: string): number | undefined {
+  const match = `${cacheControl ?? ""}`.match(/max-age\s*=\s*(\d+)/i);
+  if (!match?.[1]) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+async function prepareSmokeStaticContentViaCli({
+  cli,
+  workspace_id,
   app_id,
 }: {
+  cli: CliContext;
+  workspace_id: string;
   app_id: string;
+}): Promise<SmokeStaticContentInfo> {
+  const markerRoot = `smoke-static-root-${Date.now()}`;
+  const markerNested = `smoke-static-nested-${Date.now()}`;
+  const cacheControl = "public, max-age=600";
+  const command = [
+    "set -euo pipefail",
+    `root="$HOME/smoke-static-${app_id}"`,
+    'mkdir -p "$root/sub"',
+    `printf '%s\\n' '${markerRoot}' > "$root/index.html"`,
+    `printf '%s\\n' '${markerNested}' > "$root/sub/index.html"`,
+    'dd if=/dev/zero of="$root/large.bin" bs=1024 count=2048 status=none',
+    'size="$(wc -c < "$root/large.bin" | tr -d \'[:space:]\')"',
+    `printf '{"root":"%s","root_marker":"%s","nested_marker":"%s","large_file":"large.bin","large_size":%s,"cache_control":"%s"}\\n' "$root" "${markerRoot}" "${markerNested}" "$size" "${cacheControl}"`,
+  ].join("\n");
+  const result = await runCli<{
+    stdout?: string;
+    stderr?: string;
+    exit_code?: number;
+  }>(
+    cli,
+    [
+      "workspace",
+      "exec",
+      "--workspace",
+      workspace_id,
+      "--timeout",
+      "60",
+      "--bash",
+      command,
+    ],
+    { timeoutSeconds: 120, commandTimeoutMs: 180_000 },
+  );
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(
+      `static content prep failed (exit_code=${result.exit_code}): ${result.stderr ?? result.stdout ?? ""}`,
+    );
+  }
+  const lines = `${result.stdout ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jsonLine = lines.length > 0 ? lines[lines.length - 1] : "";
+  if (!jsonLine) {
+    throw new Error("static content prep produced no JSON metadata");
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonLine);
+  } catch (err) {
+    throw new Error(`invalid static content prep metadata JSON: ${err}`);
+  }
+  const root = `${parsed?.root ?? ""}`.trim();
+  const root_marker = `${parsed?.root_marker ?? ""}`.trim();
+  const nested_marker = `${parsed?.nested_marker ?? ""}`.trim();
+  const large_file = `${parsed?.large_file ?? ""}`.trim() || "large.bin";
+  const large_size = Number(parsed?.large_size ?? 0);
+  const cache_control = `${parsed?.cache_control ?? cacheControl}`.trim();
+  if (!root || !root_marker || !nested_marker || !Number.isFinite(large_size) || large_size <= 0) {
+    throw new Error(`invalid static content prep metadata: ${JSON.stringify(parsed)}`);
+  }
+  return {
+    root,
+    root_marker,
+    nested_marker,
+    large_file,
+    large_size,
+    cache_control: cache_control || cacheControl,
+  };
+}
+
+async function writeSmokeAppSpecFile({
+  app_id,
+  kind = "service",
+  static_root,
+  static_cache_control,
+}: {
+  app_id: string;
+  kind?: SmokeAppKind;
+  static_root?: string;
+  static_cache_control?: string;
 }): Promise<{ dir: string; path: string }> {
   const dir = await mkdtemp(join(tmpdir(), "cocalc-smoke-app-spec-"));
   const path = join(dir, `${app_id}.json`);
-  const nodeScript = [
-    'const http = require("node:http");',
-    'const host = process.env.HOST || "127.0.0.1";',
-    'const port = Number(process.env.PORT || "0");',
-    "if (!Number.isFinite(port) || port <= 0) {",
-    '  process.stderr.write("invalid port\\n");',
-    "  process.exit(1);",
-    "}",
-    'const body = "smoke-app-ok\\n";',
-    "const server = http.createServer((_req, res) => {",
-    '  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });',
-    "  res.end(body);",
-    "});",
-    "server.listen(port, host);",
-  ].join("\n");
-
-  const spec = {
-    version: 1,
-    id: app_id,
-    title: "Smoke app server",
-    kind: "service",
-    command: {
-      exec: "node",
-      args: ["-e", nodeScript],
-    },
-    network: {
-      listen_host: "127.0.0.1",
-      protocol: "http",
-    },
-    proxy: {
-      base_path: `/apps/${app_id}`,
-      strip_prefix: true,
-      websocket: false,
-      readiness_timeout_s: 45,
-    },
-    wake: {
-      enabled: true,
-      keep_warm_s: 300,
-      startup_timeout_s: 120,
-    },
-  };
+  let spec: Record<string, any>;
+  if (kind === "static") {
+    const root = `${static_root ?? ""}`.trim();
+    if (!root) {
+      throw new Error("static smoke app requires static_root");
+    }
+    spec = {
+      version: 1,
+      id: app_id,
+      title: "Smoke static app",
+      kind: "static",
+      static: {
+        root,
+        index: "index.html",
+        cache_control: `${static_cache_control ?? "public, max-age=600"}`.trim(),
+      },
+      proxy: {
+        base_path: `/apps/${app_id}`,
+        strip_prefix: true,
+        websocket: false,
+        readiness_timeout_s: 45,
+      },
+      wake: {
+        enabled: false,
+        keep_warm_s: 0,
+        startup_timeout_s: 0,
+      },
+    };
+  } else {
+    const nodeScript = [
+      'const http = require("node:http");',
+      'const host = process.env.HOST || "127.0.0.1";',
+      'const port = Number(process.env.PORT || "0");',
+      "if (!Number.isFinite(port) || port <= 0) {",
+      '  process.stderr.write("invalid port\\n");',
+      "  process.exit(1);",
+      "}",
+      'const body = "smoke-app-ok\\n";',
+      "const server = http.createServer((_req, res) => {",
+      '  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });',
+      "  res.end(body);",
+      "});",
+      "server.listen(port, host);",
+    ].join("\n");
+    spec = {
+      version: 1,
+      id: app_id,
+      title: "Smoke app server",
+      kind: "service",
+      command: {
+        exec: "node",
+        args: ["-e", nodeScript],
+      },
+      network: {
+        listen_host: "127.0.0.1",
+        protocol: "http",
+      },
+      proxy: {
+        base_path: `/apps/${app_id}`,
+        strip_prefix: true,
+        websocket: false,
+        readiness_timeout_s: 45,
+      },
+      wake: {
+        enabled: true,
+        keep_warm_s: 300,
+        startup_timeout_s: 120,
+      },
+    };
+  }
   await writeFile(path, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
   return { dir, path };
 }
@@ -2990,6 +3134,7 @@ async function runAppSmokeScenarioViaCli({
   provider,
   run_tag,
   createSpec,
+  app_kind = "service",
   wait,
   cleanup_on_success,
   verify_provider_status,
@@ -3000,6 +3145,7 @@ async function runAppSmokeScenarioViaCli({
   provider?: ProviderId;
   run_tag?: string;
   createSpec: Parameters<typeof createHost>[0];
+  app_kind?: SmokeAppKind;
   wait?: ProjectHostSmokeOptions["wait"];
   cleanup_on_success?: ProjectHostSmokeOptions["cleanup_on_success"];
   verify_provider_status?: boolean;
@@ -3038,6 +3184,8 @@ async function runAppSmokeScenarioViaCli({
   let debugHints: HostConnectionHints | undefined;
   let exposedUrl: string | undefined;
   let specDir: string | undefined;
+  let staticContent: SmokeStaticContentInfo | undefined;
+  let hostName = `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps";
 
   const runStep = async (name: string, fn: () => Promise<void>) => {
     const startedAt = new Date();
@@ -3093,13 +3241,17 @@ async function runAppSmokeScenarioViaCli({
     if (!normalizedProvider) {
       throw new Error("unable to determine provider for app smoke host create");
     }
+    const appKind: SmokeAppKind = app_kind === "static" ? "static" : "service";
+    const baseHostPrefix = appKind === "static" ? "smoke-apps-static" : "smoke-apps";
+    const appIdPrefix = appKind === "static" ? "smoke-static-app" : "smoke-app";
 
-    const hostName =
-      `${createSpec?.name ?? "smoke-apps"}`.trim() || `smoke-apps-${Date.now()}`;
+    hostName =
+      `${createSpec?.name ?? baseHostPrefix}`.trim() || `${baseHostPrefix}-${Date.now()}`;
     const hostSpec = { ...createSpec, name: hostName };
     const tag = sanitizeRunTag(run_tag) ?? `${Date.now()}`;
-    workspaceTitle = `Smoke apps ${tag}`;
-    app_id = `smoke-app-${tag}`.slice(0, 63);
+    workspaceTitle =
+      appKind === "static" ? `Smoke apps static ${tag}` : `Smoke apps ${tag}`;
+    app_id = `${appIdPrefix}-${tag}`.slice(0, 63);
 
     await runStep("create_host", async () => {
       const host = await runCli<{ host_id?: string }>(
@@ -3160,10 +3312,27 @@ async function runAppSmokeScenarioViaCli({
       ]);
     });
 
+    if (appKind === "static") {
+      await runStep("prepare_static_content", async () => {
+        if (!workspaceId) throw new Error("missing workspace id");
+        if (!app_id) throw new Error("missing app id");
+        staticContent = await prepareSmokeStaticContentViaCli({
+          cli,
+          workspace_id: workspaceId,
+          app_id,
+        });
+      });
+    }
+
     await runStep("upsert_app_spec", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
       if (!app_id) throw new Error("missing app id");
-      const saved = await writeSmokeAppSpecFile({ app_id });
+      const saved = await writeSmokeAppSpecFile({
+        app_id,
+        kind: appKind,
+        static_root: staticContent?.root,
+        static_cache_control: staticContent?.cache_control,
+      });
       specDir = saved.dir;
       await runCli(
         cli,
@@ -3202,7 +3371,9 @@ async function runAppSmokeScenarioViaCli({
           `app not running after ensure-running (state=${status.state}, ready=${status.ready})`,
         );
       }
-      appPidBeforeKill = Number(status.pid ?? 0) || undefined;
+      if (appKind === "service") {
+        appPidBeforeKill = Number(status.pid ?? 0) || undefined;
+      }
     });
 
     await runStep("app_detect_managed_port", async () => {
@@ -3224,8 +3395,12 @@ async function runAppSmokeScenarioViaCli({
       const matched = items.find((row) =>
         Array.isArray(row?.managed_app_ids) && row.managed_app_ids.includes(app_id as string),
       );
-      if (!matched || !matched.managed) {
-        throw new Error("app detect did not report managed listener for smoke app");
+      if (appKind === "service") {
+        if (!matched || !matched.managed) {
+          throw new Error("app detect did not report managed listener for smoke app");
+        }
+      } else if (matched) {
+        throw new Error("static smoke app unexpectedly appeared as managed listening port");
       }
     });
 
@@ -3298,9 +3473,13 @@ async function runAppSmokeScenarioViaCli({
             )}`,
           );
         }
-        if (!body.includes("smoke-app-ok")) {
+        const expectedMarker =
+          appKind === "static"
+            ? staticContent?.root_marker ?? ""
+            : "smoke-app-ok";
+        if (!expectedMarker || !body.includes(expectedMarker)) {
           throw new Error(
-            `app response did not include smoke marker at ${exposedUrl}; body=${JSON.stringify(
+            `app response did not include expected marker '${expectedMarker}' at ${exposedUrl}; body=${JSON.stringify(
               body.slice(0, 280),
             )}`,
           );
@@ -3308,104 +3487,189 @@ async function runAppSmokeScenarioViaCli({
       }, waitProjectReady);
     });
 
-    await runStep("app_kill_process", async () => {
-      if (!workspaceId) throw new Error("missing workspace id");
-      if (!appPidBeforeKill) {
-        const status = await runCli<CliAppStatusRow>(
+    if (appKind === "static") {
+      await runStep("app_probe_static_nested", async () => {
+        if (!exposedUrl) throw new Error("missing exposed URL");
+        if (!staticContent) throw new Error("missing static content metadata");
+        const nestedUrl = appendPathToUrl(exposedUrl, "sub/");
+        const response = await fetchWithTimeout(nestedUrl, {
+          redirect: "follow",
+          timeoutMs: 12_000,
+        });
+        const body = await response.text();
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(
+            `unexpected nested static response status ${response.status} at ${nestedUrl} body=${JSON.stringify(
+              body.slice(0, 280),
+            )}`,
+          );
+        }
+        if (!body.includes(staticContent.nested_marker)) {
+          throw new Error(
+            `nested static response missing marker at ${nestedUrl}; body=${JSON.stringify(
+              body.slice(0, 280),
+            )}`,
+          );
+        }
+      });
+
+      await runStep("app_probe_static_range_cache", async () => {
+        if (!exposedUrl) throw new Error("missing exposed URL");
+        if (!staticContent) throw new Error("missing static content metadata");
+        const fileUrl = appendPathToUrl(exposedUrl, staticContent.large_file);
+        const response = await fetchWithTimeout(fileUrl, {
+          headers: {
+            Range: "bytes=0-63",
+          },
+          timeoutMs: 12_000,
+        });
+        const body = Buffer.from(await response.arrayBuffer());
+        if (response.status !== 206) {
+          throw new Error(`expected 206 from static range request; got ${response.status}`);
+        }
+        if (body.length !== 64) {
+          throw new Error(`expected 64-byte static range body; got ${body.length}`);
+        }
+        const contentRange = `${response.headers.get("content-range") ?? ""}`.trim();
+        if (!contentRange.startsWith("bytes 0-63/")) {
+          throw new Error(`unexpected content-range header '${contentRange}'`);
+        }
+        const expectedTotal = `${staticContent.large_size}`;
+        if (!contentRange.endsWith(`/${expectedTotal}`)) {
+          throw new Error(
+            `unexpected content-range total in '${contentRange}' (expected ${expectedTotal})`,
+          );
+        }
+        const cacheControl = `${response.headers.get("cache-control") ?? ""}`.trim();
+        if (!cacheControl) {
+          throw new Error("static range response missing cache-control header");
+        }
+        const actualMaxAge = parseMaxAgeSeconds(cacheControl);
+        const expectedMaxAge = parseMaxAgeSeconds(staticContent.cache_control);
+        if (expectedMaxAge != null && actualMaxAge != null && actualMaxAge < expectedMaxAge) {
+          throw new Error(
+            `static range response max-age ${actualMaxAge} is less than expected ${expectedMaxAge} (header='${cacheControl}')`,
+          );
+        }
+        if (expectedMaxAge != null && actualMaxAge == null) {
+          throw new Error(
+            `static range response missing max-age in cache-control (expected >= ${expectedMaxAge}; got '${cacheControl}')`,
+          );
+        }
+      });
+
+      await runStep("app_probe_static_traversal_blocked", async () => {
+        if (!exposedUrl) throw new Error("missing exposed URL");
+        const blockedUrl = appendPathToUrl(exposedUrl, "%2e%2e/%2e%2e/etc/passwd");
+        const response = await fetchWithTimeout(blockedUrl, {
+          timeoutMs: 12_000,
+        });
+        if (response.status >= 200 && response.status < 300) {
+          throw new Error(
+            `expected non-success for static traversal probe at ${blockedUrl}; got ${response.status}`,
+          );
+        }
+      });
+    } else {
+      await runStep("app_kill_process", async () => {
+        if (!workspaceId) throw new Error("missing workspace id");
+        if (!appPidBeforeKill) {
+          const status = await runCli<CliAppStatusRow>(
+            cli,
+            ["workspace", "app", "status", app_id as string, "--workspace", workspaceId],
+            { timeoutSeconds: 45, commandTimeoutMs: 90_000 },
+          );
+          appPidBeforeKill = Number(status.pid ?? 0) || undefined;
+        }
+        if (!appPidBeforeKill) {
+          throw new Error("missing app pid before kill");
+        }
+        await runCli(
           cli,
-          ["workspace", "app", "status", app_id as string, "--workspace", workspaceId],
+          [
+            "workspace",
+            "exec",
+            "--workspace",
+            workspaceId,
+            "--timeout",
+            "30",
+            "--bash",
+            `kill -9 ${Math.floor(appPidBeforeKill)} || true`,
+          ],
+          { timeoutSeconds: 60, commandTimeoutMs: 120_000 },
+        );
+      });
+
+      await runStep("app_wait_stopped", async () => {
+        if (!workspaceId) throw new Error("missing workspace id");
+        if (!app_id) throw new Error("missing app id");
+        await runCli(
+          cli,
+          [
+            "workspace",
+            "app",
+            "wait",
+            app_id,
+            "--workspace",
+            workspaceId,
+            "--state",
+            "stopped",
+            "--timeout",
+            "90s",
+            "--interval-ms",
+            "500",
+          ],
+          { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
+        );
+      });
+
+      await runStep("app_recover", async () => {
+        if (!workspaceId) throw new Error("missing workspace id");
+        if (!app_id) throw new Error("missing app id");
+        const recovered = await runCli<CliAppStatusRow>(
+          cli,
+          [
+            "workspace",
+            "app",
+            "ensure-running",
+            app_id,
+            "--workspace",
+            workspaceId,
+            "--timeout",
+            "120s",
+          ],
+          { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
+        );
+        if (recovered.state !== "running" || recovered.ready !== true) {
+          throw new Error(
+            `app recovery failed (state=${recovered.state}, ready=${recovered.ready})`,
+          );
+        }
+        const recoveredPid = Number(recovered.pid ?? 0) || undefined;
+        if (appPidBeforeKill && recoveredPid && appPidBeforeKill === recoveredPid) {
+          throw new Error("app pid did not change after kill/recovery");
+        }
+      });
+
+      await runStep("app_logs", async () => {
+        if (!workspaceId) throw new Error("missing workspace id");
+        if (!app_id) throw new Error("missing app id");
+        await runCli(
+          cli,
+          [
+            "workspace",
+            "app",
+            "logs",
+            app_id,
+            "--workspace",
+            workspaceId,
+            "--tail",
+            "40",
+          ],
           { timeoutSeconds: 45, commandTimeoutMs: 90_000 },
         );
-        appPidBeforeKill = Number(status.pid ?? 0) || undefined;
-      }
-      if (!appPidBeforeKill) {
-        throw new Error("missing app pid before kill");
-      }
-      await runCli(
-        cli,
-        [
-          "workspace",
-          "exec",
-          "--workspace",
-          workspaceId,
-          "--timeout",
-          "30",
-          "--bash",
-          `kill -9 ${Math.floor(appPidBeforeKill)} || true`,
-        ],
-        { timeoutSeconds: 60, commandTimeoutMs: 120_000 },
-      );
-    });
-
-    await runStep("app_wait_stopped", async () => {
-      if (!workspaceId) throw new Error("missing workspace id");
-      if (!app_id) throw new Error("missing app id");
-      await runCli(
-        cli,
-        [
-          "workspace",
-          "app",
-          "wait",
-          app_id,
-          "--workspace",
-          workspaceId,
-          "--state",
-          "stopped",
-          "--timeout",
-          "90s",
-          "--interval-ms",
-          "500",
-        ],
-        { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
-      );
-    });
-
-    await runStep("app_recover", async () => {
-      if (!workspaceId) throw new Error("missing workspace id");
-      if (!app_id) throw new Error("missing app id");
-      const recovered = await runCli<CliAppStatusRow>(
-        cli,
-        [
-          "workspace",
-          "app",
-          "ensure-running",
-          app_id,
-          "--workspace",
-          workspaceId,
-          "--timeout",
-          "120s",
-        ],
-        { timeoutSeconds: 180, commandTimeoutMs: 240_000 },
-      );
-      if (recovered.state !== "running" || recovered.ready !== true) {
-        throw new Error(
-          `app recovery failed (state=${recovered.state}, ready=${recovered.ready})`,
-        );
-      }
-      const recoveredPid = Number(recovered.pid ?? 0) || undefined;
-      if (appPidBeforeKill && recoveredPid && appPidBeforeKill === recoveredPid) {
-        throw new Error("app pid did not change after kill/recovery");
-      }
-    });
-
-    await runStep("app_logs", async () => {
-      if (!workspaceId) throw new Error("missing workspace id");
-      if (!app_id) throw new Error("missing app id");
-      await runCli(
-        cli,
-        [
-          "workspace",
-          "app",
-          "logs",
-          app_id,
-          "--workspace",
-          workspaceId,
-          "--tail",
-          "40",
-        ],
-        { timeoutSeconds: 45, commandTimeoutMs: 90_000 },
-      );
-    });
+      });
+    }
 
     await runStep("app_unexpose", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
@@ -3429,7 +3693,8 @@ async function runAppSmokeScenarioViaCli({
         cli,
         ["workspace", "app", "stop", app_id, "--workspace", workspaceId],
       );
-      if (stopped.state !== "stopped") {
+      const expectedState = appKind === "static" ? "running" : "stopped";
+      if (stopped.state !== expectedState) {
         throw new Error(`app stop returned unexpected state '${stopped.state}'`);
       }
     });
@@ -3494,7 +3759,7 @@ async function runAppSmokeScenarioViaCli({
       debug: debugHints
         ? {
             run_tag: run_tag ?? undefined,
-            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
             exposed_url: exposedUrl ?? undefined,
@@ -3507,7 +3772,7 @@ async function runAppSmokeScenarioViaCli({
           }
         : {
             run_tag: run_tag ?? undefined,
-            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
             exposed_url: exposedUrl ?? undefined,
@@ -3538,7 +3803,7 @@ async function runAppSmokeScenarioViaCli({
       debug: debugHints
         ? {
             run_tag: run_tag ?? undefined,
-            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
             exposed_url: exposedUrl ?? undefined,
@@ -3551,7 +3816,7 @@ async function runAppSmokeScenarioViaCli({
           }
         : {
             run_tag: run_tag ?? undefined,
-            host_name: `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps",
+            host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
             exposed_url: exposedUrl ?? undefined,
@@ -4918,6 +5183,24 @@ export async function runProjectHostPersistenceSmokePreset({
       provider: smokeInput.provider,
       run_tag: smokeInput.run_tag,
       createSpec: smokeInput.createSpec,
+      wait: smokeInput.wait,
+      cleanup_on_success: smokeInput.cleanup_on_success,
+      verify_provider_status: smokeInput.verify_provider_status,
+      print_debug_hints: smokeInput.print_debug_hints,
+      log: smokeInput.log,
+    });
+  }
+
+  if (scenario === "apps-static") {
+    if (execution_mode !== "cli") {
+      throw new Error("apps-static smoke scenario currently supports execution_mode='cli' only");
+    }
+    return await runAppSmokeScenarioViaCli({
+      account_id: smokeInput.account_id,
+      provider: smokeInput.provider,
+      run_tag: smokeInput.run_tag,
+      createSpec: smokeInput.createSpec,
+      app_kind: "static",
       wait: smokeInput.wait,
       cleanup_on_success: smokeInput.cleanup_on_success,
       verify_provider_status: smokeInput.verify_provider_status,

@@ -30,7 +30,7 @@ This should replace ad hoc per-app special cases over time.
 
 ### Partial
 
-1. Static app mode backend exists, but dedicated static-heavy e2e/smoke coverage is still pending.
+1. Static app mode backend exists and dedicated launchpad static-heavy smoke scenario (`apps-static`) is implemented; broader matrix (lite parity + larger cache/static variants) is still pending.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
 3. Pre-expose Codex audit exists at backend/CLI level; UI button flow is not yet implemented.
 
@@ -437,11 +437,12 @@ Existing components to reuse where possible:
 8. `[partial]` Add static file serving mode with cache presets.
 9. `[partial]` Add Codex app audit prompt/action path for public expose (backend+CLI done; UI action pending).
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; static smoke pending).
+10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
 11. `[todo]` Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
 
 ## 19.1 Next Execution Order
 
-1. Build and validate static-mode smoke/e2e coverage next (launchpad first, then lite parity).
+1. Run and harden launchpad `apps-static` smoke in live cloud loop, then add lite static parity and broader static matrix.
 2. Add minimal UI wrappers after static smoke is green.
 3. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
 

@@ -112,6 +112,7 @@ when `SMOKE_CLOUD_VERIFY_BACKUP=1`:
 Useful toggles:
 
 - `SMOKE_CLOUD_PROVIDERS`: provider list (`gcp,nebius,hyperstack,lambda`) or `all`.
+- `SMOKE_CLOUD_SCENARIO`: `persistence`, `drain`, `move`, `apps`, or `apps-static`.
 - `SMOKE_CLOUD_CONTINUE_ON_FAILURE=1`: keep running other providers after one fails.
 - `SMOKE_CLOUD_EXECUTION_MODE=cli|direct`: defaults to `cli`.
 - `SMOKE_CLOUD_VERIFY_BACKUP=1`: defaults to `1`.
@@ -127,5 +128,6 @@ Examples:
 
 ```bash
 SMOKE_CLOUD_PROVIDERS=gcp pnpm --dir src smoke:cloud-host
+SMOKE_CLOUD_PROVIDERS=gcp SMOKE_CLOUD_SCENARIO=apps-static pnpm --dir src smoke:cloud-host
 SMOKE_CLOUD_PROVIDERS=all SMOKE_CLOUD_CONTINUE_ON_FAILURE=1 pnpm --dir src smoke:cloud-host
 ```

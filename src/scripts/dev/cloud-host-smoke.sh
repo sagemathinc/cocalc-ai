@@ -246,7 +246,7 @@ const proxyPort = proxyPortRaw == null ? undefined : Number(proxyPortRaw);
 if (proxyPortRaw != null && !Number.isFinite(proxyPort)) {
   throw new Error(`invalid SMOKE_CLOUD_PROXY_PORT='${proxyPortRaw}'`);
 }
-if (!["persistence", "drain", "move", "apps"].includes(scenarioByProvider)) {
+if (!["persistence", "drain", "move", "apps", "apps-static"].includes(scenarioByProvider)) {
   throw new Error(`invalid SMOKE_CLOUD_SCENARIO='${scenarioByProvider}'`);
 }
 const runTag = envOptional("SMOKE_CLOUD_RUN_TAG");

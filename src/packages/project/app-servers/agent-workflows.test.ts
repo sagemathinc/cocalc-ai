@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -204,5 +204,67 @@ describe("app server agent workflows", () => {
       await new Promise<void>((resolve) => unmanagedServer.close(() => resolve()));
       await stopApp(id);
     }
+  });
+
+  test("static app routing and public-readiness audit are agent-usable", async () => {
+    const id = appId("static");
+    const root = mkdtempSync(join(testHome, "static-app-"));
+    mkdirSync(join(root, "sub"), { recursive: true });
+    writeFileSync(join(root, "index.html"), "static-root-ok\n", "utf8");
+    writeFileSync(join(root, "sub", "index.html"), "static-nested-ok\n", "utf8");
+
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "static",
+      title: "Agent Static Test",
+      static: {
+        root,
+        index: "index.html",
+        cache_control: "public, max-age=600",
+      },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: false, keep_warm_s: 0, startup_timeout_s: 0 },
+    });
+
+    const status = await ensureRunning(id, { timeout: 10_000, interval: 100 });
+    expect(status.kind).toBe("static");
+    expect(status.state).toBe("running");
+    expect(status.ready).toBe(true);
+
+    const rootTarget = await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}/`,
+    });
+    expect(rootTarget?.kind).toBe("static");
+    expect((rootTarget as any)?.root).toBe(root);
+    expect((rootTarget as any)?.rewritePath).toBe("/");
+
+    const nestedTarget = await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}/sub/`,
+    });
+    expect(nestedTarget?.kind).toBe("static");
+    expect((nestedTarget as any)?.rewritePath).toBe("/sub/");
+
+    const audit = await auditAppPublicReadiness(id);
+    const cacheCheck = audit.checks.find((c) => c.id === "static.cache_control");
+    expect(cacheCheck?.status).toBe("pass");
+
+    const exposed = await exposeApp({
+      id,
+      ttl_s: 600,
+      auth_front: "token",
+      random_subdomain: true,
+    });
+    expect(exposed.exposure?.mode).toBe("public");
+
+    const hidden = await unexposeApp(id);
+    expect(hidden.exposure).toBeUndefined();
+
+    await stopApp(id);
+    const afterStop = await statusApp(id);
+    expect(afterStop.state).toBe("running");
+    expect(afterStop.kind).toBe("static");
   });
 });
