@@ -10,6 +10,7 @@ Render all the messages in the chat.
 // cSpell:ignore: timespan
 
 import {
+  KeyboardEvent,
   MutableRefObject,
   useCallback,
   useEffect,
@@ -594,6 +595,34 @@ export function MessageList({
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
   const endRef = useRef<HTMLDivElement | null>(null);
+  const blockScrollInput = anyOverlayOpen === true;
+
+  const maybeBlockScrollEvent = (event: {
+    preventDefault: () => void;
+    stopPropagation: () => void;
+  }) => {
+    if (!blockScrollInput) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const maybeBlockScrollKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!blockScrollInput) return;
+    const key = `${event.key ?? ""}`.toLowerCase();
+    if (
+      key === "arrowup" ||
+      key === "arrowdown" ||
+      key === "pageup" ||
+      key === "pagedown" ||
+      key === "home" ||
+      key === "end" ||
+      key === " " ||
+      key === "spacebar"
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
 
   const forceScrollToBottom = useCallback(() => {
     if (manualScrollRef) {
@@ -759,7 +788,11 @@ export function MessageList({
 
   if (!USE_VIRTUOSO) {
     return (
-      <div>
+      <div
+        onWheelCapture={maybeBlockScrollEvent}
+        onTouchMoveCapture={maybeBlockScrollEvent}
+        onKeyDownCapture={maybeBlockScrollKeys}
+      >
         {sortedDates.map((_, index) => renderMessage(index))}
         <div ref={endRef} style={{ height: "25px" }} />
       </div>
@@ -767,50 +800,56 @@ export function MessageList({
   }
 
   return (
-    <StatefulVirtuoso
-      ref={virtuosoRef}
-      totalCount={sortedDates.length + 1}
-      cacheId={cacheId}
-      initialTopMostItemIndex={initialIndex}
-      atTopThreshold={240}
-      itemSize={(el) => {
-        const h = el.getBoundingClientRect().height;
-        const data = el.getAttribute("data-item-index");
-        if (data != null) {
-          const index = parseInt(data);
-          virtuosoHeightsRef.current[index] = h;
-        }
-        return h;
-      }}
-      itemContent={(index) => {
-        if (sortedDates.length == index) {
-          return <div style={{ height: "25px" }} />;
-        }
-        return renderMessage(index);
-      }}
-      rangeChanged={
-        manualScrollRef
-          ? ({ endIndex }) => {
-              if (endIndex < sortedDates.length - 1) {
-                manualScrollRef.current = true;
-                setManualScroll?.(true);
+    <div
+      onWheelCapture={maybeBlockScrollEvent}
+      onTouchMoveCapture={maybeBlockScrollEvent}
+      onKeyDownCapture={maybeBlockScrollKeys}
+    >
+      <StatefulVirtuoso
+        ref={virtuosoRef}
+        totalCount={sortedDates.length + 1}
+        cacheId={cacheId}
+        initialTopMostItemIndex={initialIndex}
+        atTopThreshold={240}
+        itemSize={(el) => {
+          const h = el.getBoundingClientRect().height;
+          const data = el.getAttribute("data-item-index");
+          if (data != null) {
+            const index = parseInt(data);
+            virtuosoHeightsRef.current[index] = h;
+          }
+          return h;
+        }}
+        itemContent={(index) => {
+          if (sortedDates.length == index) {
+            return <div style={{ height: "25px" }} />;
+          }
+          return renderMessage(index);
+        }}
+        rangeChanged={
+          manualScrollRef
+            ? ({ endIndex }) => {
+                if (endIndex < sortedDates.length - 1) {
+                  manualScrollRef.current = true;
+                  setManualScroll?.(true);
+                }
               }
-            }
-          : undefined
-      }
-      atBottomStateChange={
-        manualScrollRef
-          ? (atBottom: boolean) => {
-              if (!atBottom) {
-                manualScrollRef.current = true;
-                setManualScroll?.(true);
+            : undefined
+        }
+        atBottomStateChange={
+          manualScrollRef
+            ? (atBottom: boolean) => {
+                if (!atBottom) {
+                  manualScrollRef.current = true;
+                  setManualScroll?.(true);
+                }
+                setAtBottom(atBottom);
               }
-              setAtBottom(atBottom);
-            }
-          : undefined
-      }
-      atTopStateChange={onAtTopStateChange}
-      followOutput={!manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false}
-    />
+            : undefined
+        }
+        atTopStateChange={onAtTopStateChange}
+        followOutput={!manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false}
+      />
+    </div>
   );
 }
