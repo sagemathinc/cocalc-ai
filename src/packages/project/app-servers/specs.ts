@@ -11,17 +11,19 @@ const APP_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i;
 
 export type AppSpecKind = "service" | "static";
 
+export interface AppCommandSpec {
+  exec: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
 export interface AppServiceSpec {
   version: 1;
   id: string;
   title?: string;
   kind: "service";
-  command: {
-    exec: string;
-    args: string[];
-    cwd?: string;
-    env?: Record<string, string>;
-  };
+  command: AppCommandSpec;
   network: {
     listen_host: string;
     port?: number;
@@ -50,6 +52,12 @@ export interface AppStaticSpec {
     root: string;
     index?: string;
     cache_control?: string;
+    refresh?: {
+      command: AppCommandSpec;
+      timeout_s: number;
+      stale_after_s: number;
+      trigger_on_hit: boolean;
+    };
   };
   proxy: {
     base_path: string;
@@ -144,17 +152,24 @@ function asStringRecord(input: unknown, context: string): Record<string, string>
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeCommandSpec(
+  input: unknown,
+  context: string,
+): AppCommandSpec {
+  const commandIn = asObject(input, context);
+  return {
+    exec: asString(commandIn.exec, `${context}.exec`),
+    args: asStringArray(commandIn.args, `${context}.args`),
+    cwd: asOptionalString(commandIn.cwd),
+    env: asStringRecord(commandIn.env, `${context}.env`),
+  };
+}
+
 function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
   const id = assertAppId(asString(input.id, "spec.id"));
   const title = asOptionalString(input.title);
 
-  const commandIn = asObject(input.command, "spec.command");
-  const command = {
-    exec: asString(commandIn.exec, "spec.command.exec"),
-    args: asStringArray(commandIn.args, "spec.command.args"),
-    cwd: asOptionalString(commandIn.cwd),
-    env: asStringRecord(commandIn.env, "spec.command.env"),
-  };
+  const command = normalizeCommandSpec(input.command, "spec.command");
 
   const networkIn = asObject(input.network ?? {}, "spec.network");
   const protocolRaw = asOptionalString(networkIn.protocol) ?? "http";
@@ -204,6 +219,29 @@ function normalizeStaticSpec(input: Record<string, any>): AppStaticSpec {
   const staticIn = asObject(input.static, "spec.static");
   const proxyIn = asObject(input.proxy ?? {}, "spec.proxy");
 
+  const refreshIn = staticIn.refresh == null
+    ? undefined
+    : asObject(staticIn.refresh, "spec.static.refresh");
+  const refresh = refreshIn == null
+    ? undefined
+    : {
+        command: normalizeCommandSpec(
+          refreshIn.command,
+          "spec.static.refresh.command",
+        ),
+        timeout_s:
+          asOptionalPositiveInt(
+            refreshIn.timeout_s,
+            "spec.static.refresh.timeout_s",
+          ) ?? 120,
+        stale_after_s:
+          asOptionalPositiveInt(
+            refreshIn.stale_after_s,
+            "spec.static.refresh.stale_after_s",
+          ) ?? 3600,
+        trigger_on_hit: asOptionalBoolean(refreshIn.trigger_on_hit, true),
+      };
+
   return {
     version: 1,
     id,
@@ -213,6 +251,7 @@ function normalizeStaticSpec(input: Record<string, any>): AppStaticSpec {
       root: asString(staticIn.root, "spec.static.root"),
       index: asOptionalString(staticIn.index),
       cache_control: asOptionalString(staticIn.cache_control),
+      refresh,
     },
     proxy: {
       base_path: asOptionalString(proxyIn.base_path) ?? `/apps/${id}`,

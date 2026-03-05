@@ -35,6 +35,10 @@ interface AppServerPreset {
   staticRoot?: string;
   staticIndex?: string;
   staticCacheControl?: string;
+  staticRefreshCommand?: string;
+  staticRefreshStaleAfter?: string;
+  staticRefreshTimeout?: string;
+  staticRefreshOnHit?: boolean;
   note?: string;
 }
 
@@ -144,8 +148,13 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       staticRoot: joinPath(homeDirectory, "static-hello"),
       staticIndex: "index.html",
       staticCacheControl: "public,max-age=3600",
+      staticRefreshCommand:
+        "mkdir -p \"$APP_STATIC_ROOT\" && [ -f \"$APP_STATIC_ROOT/index.html\" ] || printf '<h1>Hello from static app</h1>\\n' > \"$APP_STATIC_ROOT/index.html\"",
+      staticRefreshStaleAfter: "3600",
+      staticRefreshTimeout: "120",
+      staticRefreshOnHit: true,
       note:
-        "Create files first, e.g. mkdir -p ~/static-hello && echo '<h1>Hello</h1>' > ~/static-hello/index.html",
+        "Optional refresh job can bootstrap or periodically update generated static content on first/stale hits.",
     },
   ];
 }
@@ -180,6 +189,12 @@ export function AppServerPanel({
   const [staticCacheControl, setStaticCacheControl] = useState<string>(
     "public,max-age=3600",
   );
+  const [staticRefreshCommand, setStaticRefreshCommand] = useState<string>("");
+  const [staticRefreshStaleAfter, setStaticRefreshStaleAfter] =
+    useState<string>("3600");
+  const [staticRefreshTimeout, setStaticRefreshTimeout] =
+    useState<string>("120");
+  const [staticRefreshOnHit, setStaticRefreshOnHit] = useState<boolean>(true);
   const [startNow, setStartNow] = useState<boolean>(true);
   const [openWhenReady, setOpenWhenReady] = useState<boolean>(true);
   const [exposeTtlHours, setExposeTtlHours] = useState<string>("24");
@@ -253,6 +268,10 @@ export function AppServerPanel({
       setStaticCacheControl(
         preset.staticCacheControl ?? "public,max-age=3600",
       );
+      setStaticRefreshCommand(preset.staticRefreshCommand ?? "");
+      setStaticRefreshStaleAfter(preset.staticRefreshStaleAfter ?? "3600");
+      setStaticRefreshTimeout(preset.staticRefreshTimeout ?? "120");
+      setStaticRefreshOnHit(preset.staticRefreshOnHit ?? true);
       setStartNow(false);
       setOpenWhenReady(false);
     }
@@ -319,6 +338,29 @@ export function AppServerPanel({
     if (!root) {
       throw new Error("Static root path is required.");
     }
+    const refreshCommand = `${staticRefreshCommand ?? ""}`.trim();
+    const refreshStaleAfter =
+      `${staticRefreshStaleAfter ?? ""}`.trim().length > 0
+        ? Number(staticRefreshStaleAfter)
+        : undefined;
+    const refreshTimeout =
+      `${staticRefreshTimeout ?? ""}`.trim().length > 0
+        ? Number(staticRefreshTimeout)
+        : undefined;
+    if (refreshCommand) {
+      if (
+        refreshStaleAfter != null &&
+        (!Number.isInteger(refreshStaleAfter) || refreshStaleAfter <= 0)
+      ) {
+        throw new Error("Static refresh stale-after must be a positive integer.");
+      }
+      if (
+        refreshTimeout != null &&
+        (!Number.isInteger(refreshTimeout) || refreshTimeout <= 0)
+      ) {
+        throw new Error("Static refresh timeout must be a positive integer.");
+      }
+    }
     return {
       version: 1 as const,
       id,
@@ -328,6 +370,17 @@ export function AppServerPanel({
         root,
         index: `${staticIndex ?? ""}`.trim() || undefined,
         cache_control: `${staticCacheControl ?? ""}`.trim() || undefined,
+        refresh: refreshCommand
+          ? {
+              command: {
+                exec: "bash",
+                args: ["-lc", refreshCommand],
+              },
+              stale_after_s: refreshStaleAfter ?? 3600,
+              timeout_s: refreshTimeout ?? 120,
+              trigger_on_hit: staticRefreshOnHit,
+            }
+          : undefined,
       },
       proxy: {
         base_path: proxyPath,
@@ -728,6 +781,29 @@ export function AppServerPanel({
                 onChange={(e) => setStaticCacheControl(e.target.value)}
               />
             </Space.Compact>
+            <Input
+              value={staticRefreshCommand}
+              placeholder="Refresh command (optional, runs on first/stale hit)"
+              onChange={(e) => setStaticRefreshCommand(e.target.value)}
+            />
+            <Space.Compact style={{ width: "100%" }}>
+              <Input
+                value={staticRefreshStaleAfter}
+                placeholder="Refresh stale-after seconds (default 3600)"
+                onChange={(e) => setStaticRefreshStaleAfter(e.target.value)}
+              />
+              <Input
+                value={staticRefreshTimeout}
+                placeholder="Refresh timeout seconds (default 120)"
+                onChange={(e) => setStaticRefreshTimeout(e.target.value)}
+              />
+            </Space.Compact>
+            <Checkbox
+              checked={staticRefreshOnHit}
+              onChange={(e) => setStaticRefreshOnHit(e.target.checked)}
+            >
+              Trigger refresh on hit when stale
+            </Checkbox>
           </>
         )}
         <Space wrap>

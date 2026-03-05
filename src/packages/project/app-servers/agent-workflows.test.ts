@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -266,5 +266,60 @@ describe("app server agent workflows", () => {
     const afterStop = await statusApp(id);
     expect(afterStop.state).toBe("running");
     expect(afterStop.kind).toBe("static");
+  });
+
+  test("static refresh command runs on first hit and stale hits only", async () => {
+    const id = appId("static-refresh");
+    const root = mkdtempSync(join(testHome, "static-refresh-"));
+    const counterPath = join(root, "counter.txt");
+    const indexPath = join(root, "index.html");
+
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "static",
+      title: "Static Refresh Test",
+      static: {
+        root,
+        index: "index.html",
+        cache_control: "public, max-age=60",
+        refresh: {
+          command: {
+            exec: "bash",
+            args: [
+              "-lc",
+              `n=0; [ -f '${counterPath}' ] && n=$(cat '${counterPath}'); n=$((n+1)); echo \"$n\" > '${counterPath}'; echo \"refresh-$n\" > '${indexPath}'`,
+            ],
+          },
+          timeout_s: 10,
+          stale_after_s: 1,
+          trigger_on_hit: true,
+        },
+      },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: false, keep_warm_s: 0, startup_timeout_s: 0 },
+    });
+
+    await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}/`,
+    });
+    expect(readFileSync(counterPath, "utf8").trim()).toBe("1");
+    expect(readFileSync(indexPath, "utf8").trim()).toBe("refresh-1");
+
+    await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}/`,
+    });
+    expect(readFileSync(counterPath, "utf8").trim()).toBe("1");
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+
+    await resolveAppProxyTarget({
+      base: "/project-test",
+      url: `http://project.local/project-test/apps/${id}/`,
+    });
+    expect(readFileSync(counterPath, "utf8").trim()).toBe("2");
+    expect(readFileSync(indexPath, "utf8").trim()).toBe("refresh-2");
   });
 });

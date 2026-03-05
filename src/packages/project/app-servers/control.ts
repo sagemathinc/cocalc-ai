@@ -50,7 +50,20 @@ interface RunningApp {
   exit?: { code: number | null; signal: NodeJS.Signals | null };
 }
 
+interface StaticRefreshState {
+  running?: Promise<void>;
+  last_hit_ms?: number;
+  last_started_ms?: number;
+  last_finished_ms?: number;
+  last_success_ms?: number;
+  last_error?: string;
+  last_reason?: "first-hit" | "stale-hit";
+  stdout: Buffer;
+  stderr: Buffer;
+}
+
 const children: Record<string, RunningApp> = Object.create(null);
+const staticRefresh: Record<string, StaticRefreshState> = Object.create(null);
 let routeCache:
   | {
       at: number;
@@ -126,8 +139,21 @@ export type AppProxyTarget =
       rewritePath: string;
     };
 
+const MAX_APP_LOG_BYTES = 1 * 1024 * 1024;
+
 function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
+}
+
+function appendLimited(prev: Buffer, chunk: Buffer, maxBytes = MAX_APP_LOG_BYTES): Buffer {
+  if (prev.length + chunk.length <= maxBytes) {
+    return Buffer.concat([prev, chunk], prev.length + chunk.length);
+  }
+  if (chunk.length >= maxBytes) {
+    return chunk.subarray(chunk.length - maxBytes);
+  }
+  const keep = prev.subarray(prev.length - (maxBytes - chunk.length));
+  return Buffer.concat([keep, chunk], maxBytes);
 }
 
 function parseSsOutput(raw: string): Array<{ host: string; port: number }> {
@@ -319,24 +345,12 @@ function watchOutput(server: RunningApp): void {
     throw new Error("spawn requires stdout/stderr pipes");
   }
 
-  const MAX = 1 * 1024 * 1024;
-  const append = (prev: Buffer, chunk: Buffer) => {
-    if (prev.length + chunk.length <= MAX) {
-      return Buffer.concat([prev, chunk], prev.length + chunk.length);
-    }
-    if (chunk.length >= MAX) {
-      return chunk.subarray(chunk.length - MAX);
-    }
-    const keep = prev.subarray(prev.length - (MAX - chunk.length));
-    return Buffer.concat([keep, chunk], MAX);
-  };
-
   child.stdout.on("data", (chunk: Buffer) => {
-    server.stdout = append(server.stdout, chunk);
+    server.stdout = appendLimited(server.stdout, chunk);
   });
 
   child.stderr.on("data", (chunk: Buffer) => {
-    server.stderr = append(server.stderr, chunk);
+    server.stderr = appendLimited(server.stderr, chunk);
   });
 
   child.on("error", (err) => {
@@ -379,6 +393,20 @@ function clearChild(id: string): void {
   delete children[id];
 }
 
+function getStaticRefreshState(id: string): StaticRefreshState {
+  if (!staticRefresh[id]) {
+    staticRefresh[id] = {
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    };
+  }
+  return staticRefresh[id];
+}
+
+function clearStaticRefreshState(id: string): void {
+  delete staticRefresh[id];
+}
+
 function isChildRunning(child: ReturnType<typeof spawn>): boolean {
   return child.exitCode == null && child.signalCode == null;
 }
@@ -399,6 +427,149 @@ async function waitForChildExit(
     child.once("exit", onExit);
     timer = setTimeout(() => finish(!isChildRunning(child)), timeoutMs);
   });
+}
+
+async function runStaticRefresh(
+  spec: AppStaticSpec,
+  reason: "first-hit" | "stale-hit",
+): Promise<void> {
+  const refreshSpec = spec.static.refresh;
+  if (!refreshSpec) return;
+  const state = getStaticRefreshState(spec.id);
+  if (state.running) {
+    await state.running;
+    return;
+  }
+  const timeoutMs = Math.max(1, refreshSpec.timeout_s || 120) * 1000;
+  const cmd = refreshSpec.command.exec;
+  const args = refreshSpec.command.args ?? [];
+  const cwd = refreshSpec.command.cwd ?? spec.static.root ?? process.env.HOME;
+  const env = {
+    ...process.env,
+    ...(refreshSpec.command.env ?? {}),
+    APP_ID: spec.id,
+    APP_STATIC_ROOT: spec.static.root,
+    APP_BASE_PATH: spec.proxy.base_path,
+  };
+  const run = (async () => {
+    state.last_reason = reason;
+    state.last_started_ms = Date.now();
+    state.last_error = undefined;
+    state.stdout = Buffer.alloc(0);
+    state.stderr = Buffer.alloc(0);
+    logger.debug("start static refresh", {
+      id: spec.id,
+      reason,
+      cmd,
+      args,
+      cwd,
+      timeoutMs,
+    });
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      state.stdout = appendLimited(state.stdout, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      state.stderr = appendLimited(state.stderr, chunk);
+    });
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        setTimeout(() => {
+          if (child.exitCode == null && child.signalCode == null) {
+            child.kill("SIGKILL");
+          }
+        }, 1000);
+      }, timeoutMs);
+    }
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child.once("close", (code, signal) => resolve({ code, signal }));
+        child.once("error", () => resolve({ code: 1, signal: null }));
+      },
+    );
+    if (timer) clearTimeout(timer);
+    state.last_finished_ms = Date.now();
+    if (timedOut) {
+      state.last_error = `timed out after ${refreshSpec.timeout_s}s`;
+      logger.warn("static refresh timed out", {
+        id: spec.id,
+        reason,
+      });
+      return;
+    }
+    if (result.code === 0) {
+      state.last_success_ms = Date.now();
+      state.last_error = undefined;
+      return;
+    }
+    state.last_error = `exit code ${result.code ?? "unknown"}${result.signal ? ` (signal ${result.signal})` : ""}`;
+    logger.warn("static refresh failed", {
+      id: spec.id,
+      reason,
+      code: result.code,
+      signal: result.signal,
+      stderr: state.stderr.toString("utf8").slice(-1000),
+    });
+  })();
+  state.running = run;
+  try {
+    await run;
+  } finally {
+    state.running = undefined;
+  }
+}
+
+async function maybeRefreshStaticOnHit(spec: AppStaticSpec): Promise<void> {
+  const refreshSpec = spec.static.refresh;
+  if (!refreshSpec?.trigger_on_hit) return;
+  const state = getStaticRefreshState(spec.id);
+  const now = Date.now();
+  state.last_hit_ms = now;
+  if (state.running) {
+    await state.running;
+    return;
+  }
+  const staleAfterMs = Math.max(1, refreshSpec.stale_after_s || 3600) * 1000;
+  const lastSuccess = state.last_success_ms;
+  const reason: "first-hit" | "stale-hit" | undefined =
+    lastSuccess == null
+      ? "first-hit"
+      : now - lastSuccess >= staleAfterMs
+        ? "stale-hit"
+        : undefined;
+  if (!reason) return;
+  try {
+    await runStaticRefresh(spec, reason);
+  } catch (err) {
+    state.last_error = `${err}`;
+    logger.warn("static refresh on-hit failed", {
+      id: spec.id,
+      err: `${err}`,
+    });
+  }
+}
+
+function staticRefreshWarnings(spec: AppStaticSpec): string[] {
+  const refreshSpec = spec.static.refresh;
+  if (!refreshSpec) return [];
+  const state = staticRefresh[spec.id];
+  if (!state) return [];
+  const warnings: string[] = [];
+  if (state.running) {
+    warnings.push("Static refresh is running.");
+  }
+  if (state.last_error) {
+    warnings.push(`Last static refresh failed: ${state.last_error}.`);
+  }
+  return warnings;
 }
 
 export async function startApp(id: string): Promise<AppStatus> {
@@ -472,9 +643,14 @@ export async function statusApp(id: string): Promise<AppStatus> {
   };
   if (spec.kind === "static") {
     const staticSpec = assertStaticSpec(spec);
+    const refreshState = staticRefresh[spec.id];
+    const warnings = staticRefreshWarnings(staticSpec);
     status.state = "running";
     status.ready = true;
     status.url = normalizePrefix(staticSpec.proxy.base_path);
+    if (refreshState?.stdout?.length) status.stdout = refreshState.stdout;
+    if (refreshState?.stderr?.length) status.stderr = refreshState.stderr;
+    if (warnings.length > 0) status.warnings = warnings;
     return status;
   }
 
@@ -589,6 +765,7 @@ export async function upsertAppSpec(spec: unknown): Promise<{
   spec: AppSpec;
 }> {
   const saved = await upsertAppSpecRaw(spec);
+  clearStaticRefreshState(saved.id);
   invalidateRouteCache();
   return saved;
 }
@@ -600,6 +777,7 @@ export async function deleteApp(id: string): Promise<{ id: string; deleted: bool
     // keep delete behavior robust
   }
   clearChild(id);
+  clearStaticRefreshState(id);
   try {
     await unexposeApp(id);
   } catch {
@@ -651,6 +829,7 @@ export async function resolveAppProxyTarget({
       : `${pathname}${parsed.search ?? ""}`;
     if (spec.kind === "static") {
       const staticSpec = assertStaticSpec(spec);
+      await maybeRefreshStaticOnHit(staticSpec);
       return {
         app_id: spec.id,
         kind: "static",
@@ -898,6 +1077,31 @@ export async function auditAppPublicReadiness(
         status: "warn",
         message: "Static app has no explicit cache_control.",
         suggestion: "Set cache_control for better CDN behavior and egress control.",
+      });
+    }
+    const refresh = spec.static.refresh;
+    if (!refresh) {
+      add({
+        id: "static.refresh",
+        level: "info",
+        status: "pass",
+        message: "Static app has no refresh job configured.",
+      });
+    } else if (!refresh.trigger_on_hit) {
+      add({
+        id: "static.refresh",
+        level: "warning",
+        status: "warn",
+        message: "Static refresh job is configured but trigger_on_hit=false.",
+        suggestion:
+          "Enable trigger_on_hit or run refresh manually to keep generated content current.",
+      });
+    } else {
+      add({
+        id: "static.refresh",
+        level: "info",
+        status: "pass",
+        message: `Static refresh job is configured (stale_after=${refresh.stale_after_s}s, timeout=${refresh.timeout_s}s).`,
       });
     }
   }

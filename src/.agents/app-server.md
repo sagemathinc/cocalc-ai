@@ -33,6 +33,7 @@ This should replace ad hoc per-app special cases over time.
 1. Static app mode backend exists and dedicated launchpad static-heavy smoke scenario (`apps-static`) is implemented; broader matrix (lite parity + larger cache/static variants) is still pending.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
 3. Pre-expose Codex audit exists at backend/CLI level; UI button flow is not yet implemented.
+4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
 
 ### Not Done
 
@@ -332,7 +333,32 @@ Requirements:
 5. optional public mode with CDN edge caching.
 6. support "static-only app" without process launch (directory served directly by project-host).
 
-## 14.1 Cost and Policy Guardrails
+## 14.1 Activity-Driven Static Refresh Jobs
+
+Support optional static refresh commands so generated/static artifacts can be kept fresh without wasting compute.
+
+Implemented (first slice):
+
+1. Optional `static.refresh` block in app spec:
+   - `command` (`exec/args/cwd/env`)
+   - `timeout_s`
+   - `stale_after_s`
+   - `trigger_on_hit`
+2. Refresh command runs:
+   - on first hit (no prior successful run), and
+   - on later hits only when stale (`now - last_success >= stale_after_s`).
+3. No background cron loop in first slice:
+   - avoids idle cost explosions when nobody visits,
+   - naturally scales refresh cadence with real traffic.
+4. Last refresh stdout/stderr is exposed through app logs/status for debugging.
+5. UI fields in Managed App Server panel allow configuring refresh command + stale/timeout + on-hit toggle.
+
+Not yet implemented:
+
+1. Running refresh in a dedicated sandbox-ephemeral container mode (current implementation runs in the project runtime).
+2. Advanced policies (e.g., periodic windows with traffic thresholds, queued warm/cold precompute strategies).
+
+## 14.2 Cost and Policy Guardrails
 
 Guardrails should be host-aware and practical, not generic.
 
