@@ -40,6 +40,7 @@ export function registerBrowserSessionCommands({
     waitForSpawnedSession,
     nowIso,
     terminateSpawnedProcess,
+    reapSpawnStates,
     listSpawnStates,
     resolveSpawnStateById,
     isSeaMode,
@@ -252,6 +253,11 @@ export function registerBrowserSessionCommands({
           } catch {
             throw new Error(`invalid --api-url '${apiUrl}'`);
           }
+          await reapSpawnStates({
+            timeoutMs: 1_500,
+            stopRunning: false,
+            removeStateFiles: true,
+          });
           const projectHint = `${opts.projectId ?? opts.workspace ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const project_id = !projectHint
             ? undefined
@@ -401,7 +407,9 @@ export function registerBrowserSessionCommands({
         return listSpawnStates().map(({ file, state }) => ({
           spawn_id: state.spawn_id,
           pid: state.pid,
+          browser_pid: Number(state.browser_pid ?? 0) || undefined,
           running: isProcessRunning(Number(state.pid)),
+          browser_running: isProcessRunning(Number(state.browser_pid ?? 0)),
           status: state.status,
           browser_id: `${state.browser_id ?? ""}`.trim(),
           session_url: `${state.session_url ?? state.page_url ?? ""}`.trim(),
@@ -445,6 +453,17 @@ export function registerBrowserSessionCommands({
               DEFAULT_DESTROY_TIMEOUT_MS,
             ),
           });
+          const browserPid = Number(state.browser_pid ?? 0);
+          const browserShutdown =
+            browserPid > 0 && isProcessRunning(browserPid)
+              ? await terminateSpawnedProcess({
+                  pid: browserPid,
+                  timeoutMs: parseDiscoveryTimeout(
+                    opts.timeout,
+                    DEFAULT_DESTROY_TIMEOUT_MS,
+                  ),
+                })
+              : { terminated: true, killed: false };
           let removedRemoteSession = false;
           const browserId = `${state.browser_id ?? ""}`.trim();
           if (browserId) {
@@ -478,12 +497,59 @@ export function registerBrowserSessionCommands({
           return {
             spawn_id: state.spawn_id,
             pid,
+            browser_pid: browserPid || undefined,
             browser_id: state.browser_id ?? "",
             terminated: shutdown.terminated,
             force_killed: shutdown.killed,
+            browser_terminated: browserShutdown.terminated,
+            browser_force_killed: browserShutdown.killed,
             remote_session_removed: removedRemoteSession,
             state_file: file,
             state_file_removed: stateFileRemoved,
+          };
+        });
+      },
+    );
+
+  session
+    .command("reap")
+    .description(
+      "cleanup spawned-session state and orphan browser processes; optionally stop running spawned daemons",
+    )
+    .option(
+      "--timeout <duration>",
+      "graceful shutdown timeout before SIGKILL (e.g. 3s, 30s)",
+      "5s",
+    )
+    .option(
+      "--stop-running",
+      "also stop currently running spawned daemons (not just orphan cleanup)",
+    )
+    .option(
+      "--keep-state",
+      "preserve state files instead of removing when processes are fully stopped",
+    )
+    .action(
+      async (
+        opts: { timeout?: string; stopRunning?: boolean; keepState?: boolean },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser session reap", async () => {
+          const rows = await reapSpawnStates({
+            timeoutMs: parseDiscoveryTimeout(
+              opts.timeout,
+              DEFAULT_DESTROY_TIMEOUT_MS,
+            ),
+            stopRunning: !!opts.stopRunning,
+            removeStateFiles: !opts.keepState,
+          });
+          return {
+            scanned: rows.length,
+            stop_running: !!opts.stopRunning,
+            removed_state_files: rows.filter((x) => x.state_file_removed).length,
+            daemon_processes_terminated: rows.filter((x) => x.daemon_terminated).length,
+            browser_processes_terminated: rows.filter((x) => x.browser_terminated).length,
+            rows,
           };
         });
       },

@@ -8,8 +8,10 @@ independently from session/discovery/logging commands.
 
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
+import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import type {
   BrowserAtomicActionRequest,
+  BrowserCommandContext,
   BrowserActionRegisterUtils,
   BrowserCommandDeps,
 } from "./types";
@@ -40,6 +42,67 @@ export function registerBrowserActionCommands({
     parseScrollAlign,
     durationToMs,
   } = utils;
+  const sleep = async (ms: number): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  };
+  const shouldRetryReconnectWait = (err: unknown): boolean => {
+    const msg = `${err instanceof Error ? err.message : err}`.toLowerCase();
+    return (
+      msg.includes("operation has timed out") ||
+      msg.includes("timed out subject:services.account.") ||
+      msg.includes("stale/inactive") ||
+      msg.includes("no active browser sessions") ||
+      msg.includes("not found")
+    );
+  };
+  const waitForSessionReconnectAfterReload = async ({
+    ctx,
+    sessionInfo,
+    sessionProjectId,
+    activeOnly,
+    timeoutMs,
+  }: {
+    ctx: BrowserCommandContext;
+    sessionInfo: BrowserSessionInfo;
+    sessionProjectId?: string;
+    activeOnly?: boolean;
+    timeoutMs: number;
+  }): Promise<BrowserSessionInfo> => {
+    const started = Date.now();
+    let current = sessionInfo;
+    let lastErr = "";
+    while (Date.now() - started <= timeoutMs) {
+      try {
+        const refreshed = await chooseBrowserSession({
+          ctx,
+          browserHint: current.browser_id,
+          fallbackBrowserId: undefined,
+          requireDiscovery: true,
+          sessionProjectId,
+          activeOnly: activeOnly !== false,
+        });
+        current = refreshed;
+        const probe = deps.createBrowserSessionClient({
+          account_id: ctx.accountId,
+          browser_id: current.browser_id,
+          client: ctx.remote.client,
+          timeout: Math.max(1_000, Math.min(4_000, timeoutMs)),
+        });
+        await probe.listRuntimeEvents({ limit: 1 });
+        return current;
+      } catch (err) {
+        if (!shouldRetryReconnectWait(err)) {
+          throw err;
+        }
+        lastErr = `${err}`;
+      }
+      await sleep(500);
+    }
+    const suffix = lastErr ? `; last error: ${lastErr}` : "";
+    throw new Error(
+      `timed out waiting for browser session '${current.browser_id}' to reconnect after reload${suffix}`,
+    );
+  };
   const action = browser
     .command("action")
     .description("run typed browser automation actions without raw JS");
@@ -1073,13 +1136,24 @@ export function registerBrowserActionCommands({
               hard: !!opts.hard,
             },
           });
+          let connectedSession = sessionInfo;
+          connectedSession = await waitForSessionReconnectAfterReload({
+            ctx,
+            sessionInfo,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() ||
+              `${projectIdHint ?? ""}`.trim() ||
+              undefined,
+            activeOnly: opts.activeOnly,
+            timeoutMs: Math.max(8_000, Math.min(45_000, ctx.timeoutMs)),
+          });
           return {
-            browser_id: sessionInfo.browser_id,
+            browser_id: connectedSession.browser_id,
             project_id,
             posture,
             ok: !!response?.ok,
             result: response?.result ?? null,
-            ...sessionTargetContext(ctx, sessionInfo, project_id),
+            ...sessionTargetContext(ctx, connectedSession, project_id),
           };
         });
       },

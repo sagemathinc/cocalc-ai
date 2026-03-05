@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -342,6 +343,104 @@ export async function terminateSpawnedProcess({
   }
   await sleep(200);
   return { terminated: !isProcessRunning(pid), killed: true };
+}
+
+export type SpawnStateReapResult = {
+  spawn_id: string;
+  state_file: string;
+  daemon_pid: number;
+  browser_pid: number;
+  daemon_was_running: boolean;
+  browser_was_running: boolean;
+  daemon_terminated: boolean;
+  daemon_force_killed: boolean;
+  browser_terminated: boolean;
+  browser_force_killed: boolean;
+  state_file_removed: boolean;
+};
+
+export async function reapSpawnStates({
+  timeoutMs,
+  stopRunning,
+  removeStateFiles,
+}: {
+  timeoutMs: number;
+  stopRunning: boolean;
+  removeStateFiles: boolean;
+}): Promise<SpawnStateReapResult[]> {
+  const rows: SpawnStateReapResult[] = [];
+  const entries = listSpawnStates();
+  for (const { file, state } of entries) {
+    const daemonPid = Number(state.pid);
+    const browserPid = Number(state.browser_pid ?? 0);
+    const daemonWasRunning = isProcessRunning(daemonPid);
+    const browserWasRunning = isProcessRunning(browserPid);
+    let daemonTerminated = false;
+    let daemonForceKilled = false;
+    let browserTerminated = false;
+    let browserForceKilled = false;
+
+    if (daemonWasRunning && stopRunning) {
+      const daemonStop = await terminateSpawnedProcess({
+        pid: daemonPid,
+        timeoutMs,
+      });
+      daemonTerminated = daemonStop.terminated;
+      daemonForceKilled = daemonStop.killed;
+    }
+    const daemonRunningAfter = isProcessRunning(daemonPid);
+    if (
+      browserPid > 0 &&
+      isProcessRunning(browserPid) &&
+      (stopRunning || !daemonRunningAfter)
+    ) {
+      const browserStop = await terminateSpawnedProcess({
+        pid: browserPid,
+        timeoutMs,
+      });
+      browserTerminated = browserStop.terminated;
+      browserForceKilled = browserStop.killed;
+    }
+
+    const daemonFinalRunning = isProcessRunning(daemonPid);
+    const browserFinalRunning = isProcessRunning(browserPid);
+    const fullyStopped = !daemonFinalRunning && !browserFinalRunning;
+    let stateFileRemoved = false;
+    if (fullyStopped) {
+      const stoppedState: SpawnStateRecord = {
+        ...state,
+        status: "stopped",
+        reason: stopRunning ? "reap-stop-running" : "reap-orphan-cleanup",
+        stopped_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      if (removeStateFiles) {
+        try {
+          unlinkSync(file);
+          stateFileRemoved = true;
+        } catch {
+          writeSpawnState(file, stoppedState);
+        }
+      } else {
+        writeSpawnState(file, stoppedState);
+      }
+    }
+
+    rows.push({
+      spawn_id: state.spawn_id,
+      state_file: file,
+      daemon_pid: daemonPid,
+      browser_pid: browserPid,
+      daemon_was_running: daemonWasRunning,
+      browser_was_running: browserWasRunning,
+      daemon_terminated: daemonTerminated,
+      daemon_force_killed: daemonForceKilled,
+      browser_terminated: browserTerminated,
+      browser_force_killed: browserForceKilled,
+      state_file_removed: stateFileRemoved,
+    });
+  }
+  return rows;
 }
 
 export function listSpawnStates(): Array<{ file: string; state: SpawnStateRecord }> {

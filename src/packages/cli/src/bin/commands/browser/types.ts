@@ -279,6 +279,7 @@ export type PlaywrightDaemonConfig = {
 export type SpawnStateRecord = {
   spawn_id: string;
   pid: number;
+  browser_pid?: number;
   status: "starting" | "ready" | "stopping" | "stopped" | "failed";
   target_url: string;
   created_at: string;
@@ -376,6 +377,25 @@ export type BrowserSessionRegisterUtils = {
     pid: number;
     timeoutMs: number;
   }) => Promise<{ terminated: boolean; killed: boolean }>;
+  reapSpawnStates: (opts: {
+    timeoutMs: number;
+    stopRunning: boolean;
+    removeStateFiles: boolean;
+  }) => Promise<
+    Array<{
+      spawn_id: string;
+      state_file: string;
+      daemon_pid: number;
+      browser_pid: number;
+      daemon_was_running: boolean;
+      browser_was_running: boolean;
+      daemon_terminated: boolean;
+      daemon_force_killed: boolean;
+      browser_terminated: boolean;
+      browser_force_killed: boolean;
+      state_file_removed: boolean;
+    }>
+  >;
   listSpawnStates: () => Array<{ file: string; state: SpawnStateRecord }>;
   resolveSpawnStateById: (
     id: string,

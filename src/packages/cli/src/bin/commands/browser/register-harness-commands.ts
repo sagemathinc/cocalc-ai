@@ -122,6 +122,13 @@ type StepAttemptReport = {
     ok: boolean;
     error?: string;
   };
+  timeout_burst_recovery?: {
+    threshold: number;
+    observed_consecutive: number;
+    ok: boolean;
+    browser_id?: string;
+    error?: string;
+  };
   artifacts?: {
     screenshot_path?: string;
     logs_path?: string;
@@ -264,6 +271,15 @@ function normalizeFailureSignature({
     .replace(/\b\d+\b/g, "<n>")
     .slice(0, 220);
   return `${step.kind}:${collapsed}`;
+}
+
+function isRpcTimeoutError(err: unknown): boolean {
+  const msg = `${err instanceof Error ? err.message : err}`.toLowerCase();
+  return (
+    msg.includes("operation has timed out") ||
+    msg.includes("timed out subject:services.account.") ||
+    (msg.includes("timeout") && msg.includes("browser-session"))
+  );
 }
 
 async function normalizePlan({
@@ -857,10 +873,54 @@ export function registerBrowserHarnessCommands({
           let halted = false;
           let failedSteps = 0;
           let reportIndex = 0;
+          let consecutiveRpcTimeouts = 0;
+          const rpcTimeoutBurstThreshold = 3;
           const maxFailures =
             normalized.max_failures == null || normalized.max_failures <= 0
               ? Number.POSITIVE_INFINITY
               : normalized.max_failures;
+          const sleep = async (ms: number): Promise<void> => {
+            await new Promise((resolve) => setTimeout(resolve, ms));
+          };
+          const recoverAfterTimeoutBurst = async (): Promise<{
+            ok: boolean;
+            browser_id?: string;
+            error?: string;
+          }> => {
+            const started = Date.now();
+            const waitBudgetMs = Math.max(10_000, recoveryWaitMs * 6, 30_000);
+            let lastErr = "";
+            while (Date.now() - started <= waitBudgetMs) {
+              try {
+                let probeBrowserId = targetBrowserId;
+                if (pinTarget) {
+                  const pinned = await assertPinnedSessionActive();
+                  probeBrowserId = `${pinned.browser_id ?? ""}`.trim() || probeBrowserId;
+                }
+                const probe = deps.createBrowserSessionClient({
+                  account_id: ctx.accountId,
+                  browser_id: probeBrowserId,
+                  client: ctx.remote.client,
+                  timeout: 4_000,
+                });
+                await probe.listRuntimeEvents({ limit: 1 });
+                targetBrowserId = probeBrowserId;
+                return {
+                  ok: true,
+                  browser_id: targetBrowserId,
+                };
+              } catch (err) {
+                lastErr = `${err}`;
+              }
+              await sleep(750);
+            }
+            return {
+              ok: false,
+              error:
+                lastErr ||
+                `timed out waiting for browser session recovery after ${rpcTimeoutBurstThreshold} consecutive RPC timeouts`,
+            };
+          };
 
           const runStepList = async ({
             list,
@@ -964,9 +1024,30 @@ export function registerBrowserHarnessCommands({
                   row.ok = true;
                   row.result = result;
                   stepOk = true;
+                  consecutiveRpcTimeouts = 0;
                 } catch (err) {
                   finalError = `${err}`;
                   row.error = finalError;
+                  if (isRpcTimeoutError(err)) {
+                    consecutiveRpcTimeouts += 1;
+                    if (consecutiveRpcTimeouts >= rpcTimeoutBurstThreshold) {
+                      const burstRecovery = await recoverAfterTimeoutBurst();
+                      row.timeout_burst_recovery = {
+                        threshold: rpcTimeoutBurstThreshold,
+                        observed_consecutive: consecutiveRpcTimeouts,
+                        ok: burstRecovery.ok,
+                        ...(burstRecovery.browser_id
+                          ? { browser_id: burstRecovery.browser_id }
+                          : {}),
+                        ...(burstRecovery.error ? { error: burstRecovery.error } : {}),
+                      };
+                      if (burstRecovery.ok) {
+                        consecutiveRpcTimeouts = 0;
+                      }
+                    }
+                  } else {
+                    consecutiveRpcTimeouts = 0;
+                  }
                   row.artifacts = await captureFailureArtifacts({
                     browserClient,
                     step,
