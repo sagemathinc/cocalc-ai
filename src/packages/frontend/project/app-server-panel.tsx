@@ -117,7 +117,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       preferredPort: "6002",
       healthPath: "/lab",
       command:
-        "base_url=\"${APP_BASE_URL}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
+        "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
     },
     {
       key: "code-server",
@@ -362,8 +362,13 @@ export function AppServerPanel({
 
   async function openStatus(status: ManagedAppStatus) {
     let url = status.exposure?.public_url;
-    if (!url && status.url) {
-      const local = withProjectHostBase(project_id, status.url) ?? status.url;
+    if (!url) {
+      const spec = specById[status.id];
+      const preferredLocal =
+        `${spec?.proxy?.base_path ?? ""}`.trim() || status.url;
+      if (!preferredLocal) return;
+      const local =
+        withProjectHostBase(project_id, preferredLocal) ?? preferredLocal;
       url = await webapp_client.conat_client.addProjectHostAuthToUrl({
         project_id,
         url: local,
