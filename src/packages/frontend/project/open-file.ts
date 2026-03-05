@@ -139,7 +139,12 @@ export async function open_file(
 
   const tabIsOpened = () =>
     !!actions.get_store()?.get("open_files")?.has(displayPath);
-  const alreadyOpened = tabIsOpened();
+  const hasComponentBootstrap = () =>
+    actions.get_store()?.getIn(["open_files", displayPath, "component"]) != null;
+  // A row can exist in open_files without component/ext bootstrap (e.g. partial
+  // session restore or failed editor initialization). Treat that as not-open so
+  // this call fully hydrates the tab instead of leaving it on perpetual Loading...
+  const alreadyOpened = tabIsOpened() && hasComponentBootstrap();
 
   if (!alreadyOpened) {
     // Make the visible tab itself appear ASAP (just the tab at the top,

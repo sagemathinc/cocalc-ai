@@ -9,7 +9,7 @@ import { webapp_client } from "../../webapp-client";
 import { Button, Alert, Typography, Row, Col } from "antd";
 const { Text } = Typography;
 import { register_file_editor } from "../../frame-editors/frame-tree/register";
-import { filename_extension_notilde } from "@cocalc/util/misc";
+import { filename_extension_notilde, path_split } from "@cocalc/util/misc";
 import { Loading } from "../../components";
 import { Editor as CodeEditor } from "../../frame-editors/code-editor/editor";
 import { Actions as CodeEditorActions } from "../../frame-editors/code-editor/actions";
@@ -166,11 +166,32 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
     }
   }, [mime]);
 
+  function resolveAssociationExt(rawExt: string): string {
+    const clean = `${rawExt ?? ""}`.trim().toLowerCase();
+    if (clean.length > 0) {
+      return clean;
+    }
+    return `noext-${path_split(path).tail}`.toLowerCase();
+  }
+
   async function register(ext, editor: "code") {
+    const associationExt = resolveAssociationExt(ext);
+    if (actions == null) {
+      console.warn(
+        `Workspace Actions for ${project_id} not available – shouldn't happen.`,
+      );
+      return;
+    }
+    // Close first so teardown uses the current editor mapping.
+    // If we register first (especially for ""), close_file teardown can route
+    // through the new mapping and leave the frame in a stuck loading state.
+    actions.close_file(path);
+    await delay(1);
+
     switch (editor) {
       case "code":
         register_file_editor({
-          ext: [ext],
+          ext: [associationExt],
           component: CodeEditor,
           Actions: CodeEditorActions,
         });
@@ -179,15 +200,7 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
         console.warn(`Unknown editor of type ${editor}, aborting.`);
         return;
     }
-    if (actions == null) {
-      console.warn(
-        `Workspace Actions for ${project_id} not available – shouldn't happen.`,
-      );
-      return;
-    }
-    actions.close_file(path);
-    await delay(1);
-    actions.open_file({ path });
+    actions.open_file({ path, ext: associationExt });
   }
 
   function render_header() {

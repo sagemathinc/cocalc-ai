@@ -1619,8 +1619,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     const open_files = store.get("open_files");
-    const component_data = open_files.getIn([path, "component"]) as any;
-    if (component_data == null) return; // nothing to do since already closed.
+    // Close any tracked open-file row, even if component bootstrap never completed.
+    // Some failure paths leave entries without `component`, and requiring it here
+    // makes those tabs impossible to close/reopen.
+    if (open_files?.get(path) == null) return;
     const sync_path = this.get_sync_path(path);
     this.open_files?.delete(path);
     if (!this.has_display_path_for_sync_path(sync_path, path)) {
