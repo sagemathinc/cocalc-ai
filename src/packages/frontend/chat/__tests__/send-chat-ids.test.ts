@@ -612,6 +612,105 @@ describe("deleteThread identity targeting", () => {
     });
   });
 
+  it("forkThread reuses the latest acp_thread_id when thread-config sessionId is not yet persisted", async () => {
+    const rootDate = new Date("2026-02-21T17:59:00.000Z");
+    const rootIso = rootDate.toISOString();
+    const rootMs = rootDate.valueOf();
+    const messages = new Map<string, any>([
+      [
+        `${rootMs}`,
+        {
+          event: "chat",
+          sender_id: "00000000-1000-4000-8000-000000000001",
+          date: rootDate,
+          message_id: "root-msg-2",
+          thread_id: "thread-source-2",
+          history: [
+            {
+              author_id: "00000000-1000-4000-8000-000000000001",
+              content: "root",
+              date: rootIso,
+            },
+          ],
+        },
+      ],
+      [
+        `${rootMs + 1}`,
+        {
+          event: "chat",
+          sender_id: "openai-codex-agent",
+          date: new Date(rootMs + 1),
+          message_id: "assistant-msg-2",
+          thread_id: "thread-source-2",
+          acp_thread_id: "codex-session-live-2",
+          history: [
+            {
+              author_id: "openai-codex-agent",
+              content: "working",
+              date: new Date(rootMs + 1).toISOString(),
+            },
+          ],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+    const sourceConfig = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: rootIso,
+      thread_id: "thread-source-2",
+      name: "Original chat",
+      agent_kind: "acp",
+      agent_mode: "interactive",
+      agent_model: "gpt-5.3-codex",
+      acp_config: {
+        model: "gpt-5.3-codex",
+        approvalPolicy: "full-auto",
+      },
+    };
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === "thread-source-2"
+      ) {
+        return sourceConfig;
+      }
+      return undefined;
+    });
+    (webapp_client as any).conat_client = {
+      ...(webapp_client as any).conat_client,
+      forkAcpSession: jest.fn().mockResolvedValue({ sessionId: "session-fork-2" }),
+    };
+
+    const newThreadId = await actions.forkThread({
+      threadKey: "thread-source-2",
+      title: "Forked chat",
+      sourceTitle: "Original chat",
+      isAI: true,
+    });
+
+    expect(newThreadId).toBeTruthy();
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    const cfgRow = rows.find(
+      (row: any) =>
+        row?.event === "chat-thread-config" && row?.thread_id === newThreadId,
+    );
+    expect(cfgRow).toBeTruthy();
+    expect(cfgRow.acp_config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.3-codex",
+        sessionId: "session-fork-2",
+        approvalPolicy: "full-auto",
+      }),
+    );
+    expect(
+      (webapp_client as any).conat_client.forkAcpSession,
+    ).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      sessionId: "codex-session-live-2",
+    });
+  });
+
   it("does not delete by timestamp keys anymore", () => {
     const thread = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const root = new Date("2026-02-21T20:00:00.000Z");

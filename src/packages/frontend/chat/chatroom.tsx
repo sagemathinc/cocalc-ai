@@ -50,6 +50,7 @@ import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
 } from "./agent-session-index";
+import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 
@@ -452,10 +453,12 @@ export function ChatPanel({
         threadId,
       });
       const acpConfig = metadata?.acp_config ?? undefined;
-      const sessionIdRaw =
-        typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
-          ? acpConfig.sessionId.trim()
-          : thread.key;
+      const sessionIdRaw = resolveAgentSessionIdForThread({
+        actions,
+        threadId,
+        threadKey: thread.key,
+        persistedSessionId: acpConfig?.sessionId,
+      });
       const threadDateRaw =
         metadata?.thread_date ??
         (thread.newestTime ? new Date(thread.newestTime).toISOString() : undefined);
@@ -722,10 +725,13 @@ export function ChatPanel({
   }): void {
     const threadMessages =
       (lookup ? actions.getMessagesInThread(lookup) : undefined) ?? [];
-    const sessionId =
-      (thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined) ??
-      thread_id ??
-      (reply_to ? `${reply_to.valueOf()}` : undefined);
+    const sessionId = resolveAgentSessionIdForThread({
+      actions,
+      threadId: thread_id,
+      threadKey: thread_id ?? (reply_to ? `${reply_to.valueOf()}` : ""),
+      persistedSessionId:
+        thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined,
+    });
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);

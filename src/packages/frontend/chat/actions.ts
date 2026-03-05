@@ -1771,11 +1771,23 @@ export class ChatActions extends Actions<ChatState> {
 
     const sourceConfig =
       sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId);
+    const inferredSourceSessionId = (() => {
+      for (let i = threadMessages.length - 1; i >= 0; i -= 1) {
+        const sessionId = field<string>(threadMessages[i], "acp_thread_id");
+        if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+          return sessionId.trim();
+        }
+      }
+      return undefined;
+    })();
     const shouldForkAcp =
       isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
     let nextConfig: CodexThreadConfig | undefined = undefined;
     if (shouldForkAcp) {
-      const config = sourceConfig;
+      const config =
+        sourceConfig?.sessionId == null && inferredSourceSessionId
+          ? { ...(sourceConfig ?? {}), sessionId: inferredSourceSessionId }
+          : sourceConfig;
       if (config?.sessionId && this.store) {
         const project_id = this.store.get("project_id");
         if (!project_id) {
