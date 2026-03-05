@@ -888,6 +888,9 @@ export class CodexExecAgent implements AcpAgent {
                   operation: "write",
                   cwd,
                   command: item.command,
+                  // Heuristic only: this is resulting file size, not bytes
+                  // actually written by the command.
+                  bytes_known: false,
                   bytes: stat.size,
                 },
               });
@@ -1335,6 +1338,7 @@ export class CodexExecAgent implements AcpAgent {
             path: pathForEvent,
             operation: "write",
             cwd,
+            bytes_known: after != null,
             bytes: after != null ? Buffer.byteLength(after) : undefined,
             existed: before != null || ch.kind !== "add",
           },

@@ -89,6 +89,7 @@ type ActivityEntry =
       command?: string;
       args?: string[];
       bytes?: number;
+      bytesKnown?: boolean;
       truncated?: boolean;
       line?: number;
       limit?: number;
@@ -671,6 +672,7 @@ function createEventEntry({
       command: event.command,
       args: event.args,
       bytes: event.bytes,
+      bytesKnown: event.bytes_known,
       truncated: event.truncated,
       line: event.line,
       limit: event.limit,
@@ -1331,11 +1333,8 @@ function formatReadScope(entry: {
 function shouldShowByteSize(
   entry: Extract<ActivityEntry, { kind: "file" }>,
 ): boolean {
-  // Command-derived file events are heuristic and byte counts are commonly
-  // misleading (reads are sampled, writes report post-command file size).
-  // Prefer path/scope context over synthetic sizes.
-  if (!!entry.command) return false;
-  return true;
+  // Byte sizes are shown only when backend marks them as exact.
+  return entry.bytesKnown === true;
 }
 
 // Convert Codex activity events into markdown for exports.

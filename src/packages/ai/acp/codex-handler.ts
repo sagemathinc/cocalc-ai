@@ -516,6 +516,7 @@ export class CodexClientHandler implements TerminalClient {
     await this.emitFileEvent(absolute, {
       operation: "read",
       bytes: content.length,
+      bytes_known: true,
       truncated,
       line: line ?? undefined,
       limit: limit ?? undefined,
@@ -540,6 +541,7 @@ export class CodexClientHandler implements TerminalClient {
       await this.emitFileEvent(absolute, {
         operation: "write",
         bytes: content.length,
+        bytes_known: true,
         existed: previous != null,
         truncated: false,
       });

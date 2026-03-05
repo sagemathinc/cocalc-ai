@@ -43,7 +43,7 @@ describe("codexEventsToMarkdown", () => {
     expect(markdown).not.toContain("byte");
   });
 
-  it("keeps byte-size for explicit read events without command context", () => {
+  it("hides byte-size unless backend marks bytes as exact", () => {
     const markdown = codexEventsToMarkdown([
       {
         type: "event",
@@ -53,6 +53,24 @@ describe("codexEventsToMarkdown", () => {
           path: "README.md",
           operation: "read",
           bytes: 2048,
+        },
+      } as any,
+    ]);
+    expect(markdown).toContain("- File: Read `README.md`");
+    expect(markdown).not.toContain("2.0 KB");
+  });
+
+  it("keeps byte-size for explicit read events with exact marker", () => {
+    const markdown = codexEventsToMarkdown([
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "file",
+          path: "README.md",
+          operation: "read",
+          bytes: 2048,
+          bytes_known: true,
         },
       } as any,
     ]);
@@ -79,7 +97,7 @@ describe("codexEventsToMarkdown", () => {
     expect(markdown).not.toContain("byte");
   });
 
-  it("keeps byte-size for explicit write events without command context", () => {
+  it("keeps byte-size for explicit write events with exact marker", () => {
     const markdown = codexEventsToMarkdown([
       {
         type: "event",
@@ -89,6 +107,7 @@ describe("codexEventsToMarkdown", () => {
           path: "README.md",
           operation: "write",
           bytes: 2048,
+          bytes_known: true,
         },
       } as any,
     ]);
