@@ -699,13 +699,14 @@ export function AppServerPanel({
     }
   }
 
-  async function onAudit(id: string) {
+  async function onAuditWithAgent(id: string) {
     try {
       setSubmitting(true);
       setActionAppId(id);
       setError(undefined);
       const next = await api.apps.auditAppPublicReadiness(id);
       setAudit(next);
+      await sendAuditToAgent(next.agent_prompt);
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1339,10 +1340,10 @@ export function AppServerPanel({
                   )}
                   <Button
                     size="small"
-                    onClick={() => void onAudit(row.id)}
+                    onClick={() => void onAuditWithAgent(row.id)}
                     loading={submitting && actionAppId === row.id}
                   >
-                    Audit
+                    Audit with Codex
                   </Button>
                   <Button
                     size="small"
@@ -1509,7 +1510,7 @@ export function AppServerPanel({
               loading={submittingToAgent}
               onClick={() => void sendAuditToAgent(audit.agent_prompt)}
             >
-              Send to Agent
+              Send to Codex
             </Button>
           </Space>
         </div>
