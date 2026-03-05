@@ -5,7 +5,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Checkbox, Divider, Input, Popconfirm, Select, Space, Spin, Tag } from "antd";
-import type { ManagedAppStatus } from "@cocalc/conat/project/api/apps";
+import type {
+  AppPublicReadinessAudit,
+  ManagedAppStatus,
+} from "@cocalc/conat/project/api/apps";
 import { ErrorDisplay, Paragraph } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { withProjectHostBase } from "./host-url";
@@ -45,9 +48,20 @@ export function AppServerPanel({
   );
   const [startNow, setStartNow] = useState<boolean>(true);
   const [openWhenReady, setOpenWhenReady] = useState<boolean>(true);
+  const [exposeTtlHours, setExposeTtlHours] = useState<string>("24");
+  const [exposeAuthFront, setExposeAuthFront] = useState<"none" | "token">(
+    "none",
+  );
+  const [exposeRandomSubdomain, setExposeRandomSubdomain] =
+    useState<boolean>(true);
+  const [exposeSubdomainLabel, setExposeSubdomainLabel] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [actionAppId, setActionAppId] = useState<string>("");
   const [error, setError] = useState<Error | undefined>(undefined);
+  const [audit, setAudit] = useState<AppPublicReadinessAudit | undefined>(
+    undefined,
+  );
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
 
   const refresh = useCallback(async () => {
@@ -212,6 +226,63 @@ export function AppServerPanel({
     }
   }
 
+  async function onExpose(id: string) {
+    try {
+      setSubmitting(true);
+      setActionAppId(id);
+      setError(undefined);
+      const ttl = Math.max(
+        60,
+        Math.floor((Number(exposeTtlHours) || 24) * 3600),
+      );
+      await api.apps.exposeApp({
+        id,
+        ttl_s: ttl,
+        auth_front: exposeAuthFront,
+        random_subdomain: exposeRandomSubdomain,
+        subdomain_label: exposeRandomSubdomain
+          ? undefined
+          : `${exposeSubdomainLabel ?? ""}`.trim() || undefined,
+      });
+      await refresh();
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setSubmitting(false);
+      setActionAppId("");
+    }
+  }
+
+  async function onUnexpose(id: string) {
+    try {
+      setSubmitting(true);
+      setActionAppId(id);
+      setError(undefined);
+      await api.apps.unexposeApp(id);
+      await refresh();
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setSubmitting(false);
+      setActionAppId("");
+    }
+  }
+
+  async function onAudit(id: string) {
+    try {
+      setSubmitting(true);
+      setActionAppId(id);
+      setError(undefined);
+      const next = await api.apps.auditAppPublicReadiness(id);
+      setAudit(next);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setSubmitting(false);
+      setActionAppId("");
+    }
+  }
+
   return (
     <div>
       <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
@@ -310,6 +381,40 @@ export function AppServerPanel({
             Refresh
           </Button>
         </Space>
+        <Divider style={{ margin: "8px 0" }} />
+        <div style={{ fontWeight: 600 }}>Public expose defaults</div>
+        <Space.Compact style={{ width: "100%" }}>
+          <Input
+            value={exposeTtlHours}
+            onChange={(e) => setExposeTtlHours(e.target.value)}
+            placeholder="TTL hours (e.g. 24)"
+          />
+          <Select<"none" | "token">
+            value={exposeAuthFront}
+            style={{ width: "140px" }}
+            options={[
+              { label: "No front auth", value: "none" },
+              { label: "Token gate", value: "token" },
+            ]}
+            onChange={(value) => setExposeAuthFront(value)}
+          />
+        </Space.Compact>
+        <Space wrap>
+          <Checkbox
+            checked={exposeRandomSubdomain}
+            onChange={(e) => setExposeRandomSubdomain(e.target.checked)}
+          >
+            Random subdomain
+          </Checkbox>
+          {!exposeRandomSubdomain ? (
+            <Input
+              value={exposeSubdomainLabel}
+              onChange={(e) => setExposeSubdomainLabel(e.target.value)}
+              placeholder="subdomain label (optional)"
+              style={{ width: "220px" }}
+            />
+          ) : null}
+        </Space>
       </Space>
       <Divider style={{ margin: "14px 0" }} />
       <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed apps</div>
@@ -374,12 +479,98 @@ export function AppServerPanel({
                       Delete
                     </Button>
                   </Popconfirm>
+                  {row.exposure?.public_url ? (
+                    <Button
+                      size="small"
+                      onClick={() => void onUnexpose(row.id)}
+                      loading={submitting && actionAppId === row.id}
+                    >
+                      Unexpose
+                    </Button>
+                  ) : (
+                    <Button
+                      size="small"
+                      onClick={() => void onExpose(row.id)}
+                      loading={submitting && actionAppId === row.id}
+                    >
+                      Expose
+                    </Button>
+                  )}
+                  <Button
+                    size="small"
+                    onClick={() => void onAudit(row.id)}
+                    loading={submitting && actionAppId === row.id}
+                  >
+                    Audit
+                  </Button>
                 </Space>
               </div>
+              {row.exposure?.public_url ? (
+                <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
+                  Public URL:{" "}
+                  <a href={row.exposure.public_url} target="_blank" rel="noreferrer">
+                    {row.exposure.public_url}
+                  </a>
+                  {row.exposure?.expires_at_ms ? (
+                    <span>
+                      {" "}
+                      (expires{" "}
+                      {new Date(row.exposure.expires_at_ms).toLocaleString()})
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {row.warnings?.length ? (
+                <Alert
+                  style={{ marginTop: "8px" }}
+                  type="warning"
+                  showIcon
+                  message={row.warnings.join(" ")}
+                />
+              ) : null}
             </div>
           );
         })}
       </Space>
+      {audit ? (
+        <div
+          style={{
+            marginTop: "12px",
+            border: "1px solid #e5e5e5",
+            borderRadius: "8px",
+            padding: "10px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+            <div style={{ fontWeight: 600 }}>
+              Audit: {audit.title || audit.app_id}
+            </div>
+            <Button size="small" onClick={() => setAudit(undefined)}>
+              Close
+            </Button>
+          </div>
+          <div style={{ marginTop: "6px", fontSize: "12px", opacity: 0.85 }}>
+            pass={audit.summary.pass}, warn={audit.summary.warn}, fail={audit.summary.fail}
+          </div>
+          <ul style={{ marginTop: "8px", marginBottom: "8px", paddingInlineStart: "18px" }}>
+            {audit.checks.map((check) => (
+              <li key={`${check.id}-${check.status}`}>
+                {check.status.toUpperCase()}: {check.message}
+              </li>
+            ))}
+          </ul>
+          <Space wrap>
+            <Button
+              size="small"
+              onClick={() =>
+                navigator.clipboard.writeText(audit.agent_prompt).catch(() => {})
+              }
+            >
+              Copy Agent Prompt
+            </Button>
+          </Space>
+        </div>
+      ) : null}
     </div>
   );
 }
