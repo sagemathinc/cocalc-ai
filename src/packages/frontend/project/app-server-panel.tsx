@@ -984,6 +984,12 @@ export function AppServerPanel({
                 onChange={(value) => setServiceOpenMode(value)}
               />
             </Space.Compact>
+            <Paragraph style={{ color: "#666", margin: 0, fontSize: "12px" }}>
+              Open mode: <code>/proxy</code> strips your app base path before
+              forwarding; <code>/port</code> keeps the raw port-style URL path.
+              Use <code>/port</code> for apps that do not proxy cleanly behind
+              stripped base paths.
+            </Paragraph>
           </>
         ) : (
           <>

@@ -529,6 +529,36 @@ export function registerWorkspaceAppCommands(
     );
 
   app
+    .command("open-mode-help")
+    .description("explain service proxy open modes: proxy vs port")
+    .action(async (_opts: Record<string, never>, command: Command) => {
+      await withContext(command, "workspace app open-mode-help", async () => {
+        return {
+          modes: [
+            {
+              name: "proxy",
+              summary:
+                "Default. Request path is stripped to app-relative path before forwarding.",
+              use_when:
+                "App supports base-path proxying with forwarded prefix/base URL headers.",
+            },
+            {
+              name: "port",
+              summary:
+                "Port-style passthrough URL shape. Use when strict base-path proxying fails.",
+              use_when:
+                "App only works when accessed via explicit port route semantics.",
+            },
+          ],
+          fallback_options: [
+            "Public Cloudflare exposure for the managed app.",
+            "SSH port forwarding for direct non-proxied access.",
+          ],
+        };
+      });
+    });
+
+  app
     .command("bootstrap-example")
     .description("emit example JSON app spec")
     .action(async (_opts: Record<string, never>, command: Command) => {
@@ -554,6 +584,7 @@ export function registerWorkspaceAppCommands(
               base_path: "/apps/my-app",
               strip_prefix: true,
               websocket: true,
+              open_mode: "proxy",
               readiness_timeout_s: 30,
             },
             wake: {
@@ -561,6 +592,10 @@ export function registerWorkspaceAppCommands(
               keep_warm_s: 1800,
               startup_timeout_s: 90,
             },
+          },
+          notes: {
+            open_mode:
+              "proxy strips the app base path before forwarding; port keeps port-route semantics for hard-to-proxy apps.",
           },
         };
       });

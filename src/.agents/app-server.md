@@ -225,6 +225,23 @@ App health:
 1. readiness path can be root or custom.
 2. health failures surface clear diagnostics in UI/CLI.
 
+### 9.1 Service Open Mode (`proxy` vs `port`)
+
+Service specs must explicitly support two URL-open strategies:
+
+1. `proxy` (default):
+   - standard base-path reverse-proxy behavior,
+   - strips proxy mount prefix before upstream forwarding.
+2. `port`:
+   - opens through the port-style route form used by existing CoCalc integrations,
+   - for apps that do not behave correctly under stripped base-path proxying.
+
+Product/UX requirements:
+
+1. UI must explain this choice clearly where app specs are created/edited.
+2. CLI must expose a deterministic explanation command and include `open_mode` in bootstrap examples.
+3. Agent prompts should prefer `proxy`, but automatically suggest `port` when readiness/open checks show base-path incompatibility.
+
 ## 10. UI Plan
 
 ### 10.1 Create Flow
@@ -319,6 +336,48 @@ Add optional controls:
 2. custom hostname mapping,
 3. cache policy presets,
 4. warm policy tuning.
+
+### 13.3 SSH Port-Forward Fallback (No Proxy-Rewrite Mode)
+
+For difficult apps that fail under both `proxy` and `port`, add first-class SSH forwarding workflows.
+
+Why this matters:
+
+1. It bypasses HTTP path rewriting entirely.
+2. It uses our already-hardened sshpiperd + Cloudflare tunnel path.
+3. It gives users/agents a reliable escape hatch for non-cooperative services.
+
+CLI shape (proposed):
+
+1. `cocalc workspace app ssh-forward <app-id> --local-port 8888 [--remote-port auto] --json`
+   - ensures workspace/project runtime is reachable for SSH,
+   - resolves app target port (or accepts explicit),
+   - outputs ready-to-run local command and connection metadata.
+2. `cocalc workspace app ssh-forward-command <app-id> --local-port 8888`
+   - prints a single copy/paste command for local laptop execution.
+3. `cocalc workspace app ssh-forward stop <session-id>`
+   - optional if we manage background local helpers from CLI wrappers.
+
+Agent workflow:
+
+1. Try `proxy` mode first.
+2. If health/open checks fail and logs indicate base-path mismatch, try `port`.
+3. If still failing, suggest SSH forwarding with explicit command.
+4. Return a short explanation:
+   - "this app is not proxy-compatible; using direct SSH forwarding."
+
+UI behavior:
+
+1. In app details/actions, add "Port Forward (SSH)".
+2. Show one-click copy command and brief trust/scope note.
+3. Keep this private by default and separate from public exposure controls.
+
+Security/ops constraints:
+
+1. SSH forwarding remains user-authenticated and project-scoped.
+2. No new public URL is created by default.
+3. Log forwarding sessions in project-host activity state for auditability.
+4. Provide explicit stop/cleanup guidance for long-running forwards.
 
 ## 14. Static Site Mode
 
@@ -468,6 +527,7 @@ Existing components to reuse where possible:
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
 11. `[todo]` Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
 12. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
+13. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 
 ## 19.1 Next Execution Order
 
