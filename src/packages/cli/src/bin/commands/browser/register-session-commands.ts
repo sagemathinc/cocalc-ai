@@ -295,6 +295,7 @@ export function registerBrowserSessionCommands({
           const daemonScript = resolvePath(
             __dirname,
             "..",
+            "..",
             "core",
             "browser-session-playwright-daemon.js",
           );
