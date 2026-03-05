@@ -78,6 +78,30 @@ const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_CONFIG_SENDER = "__thread_config__";
 const warnedMissingThreadIds = new Set<string>();
+let lastGeneratedChatMessageMs = 0;
+
+function nextChatMessageDate(actions: ChatActions): Date {
+  let candidate = Math.max(
+    webapp_client.server_time().valueOf(),
+    lastGeneratedChatMessageMs + 1,
+  );
+  let collisions = 0;
+  while (
+    actions.getMessageByDate?.(candidate) ??
+    actions.getAllMessages?.().has(`${candidate}`)
+  ) {
+    collisions += 1;
+    candidate += 1;
+  }
+  if (collisions > 0) {
+    console.warn("chat send timestamp collision avoided", {
+      collisions,
+      candidate,
+    });
+  }
+  lastGeneratedChatMessageMs = candidate;
+  return new Date(candidate);
+}
 
 export type ThreadAgentKind = "acp" | "llm" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
@@ -510,7 +534,7 @@ export class ChatActions extends Actions<ChatState> {
       // WARNING: give an error or try again later?
       return "";
     }
-    const time_stamp: Date = webapp_client.server_time();
+    const time_stamp: Date = nextChatMessageDate(this);
     const time_stamp_str = time_stamp.toISOString();
     const message_id = uuid();
     const mentionsInput =

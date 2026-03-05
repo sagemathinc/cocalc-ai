@@ -90,6 +90,39 @@ describe("sendChat identity fields", () => {
     expect(cfgSet.thread_id).toBe(chatSet.thread_id);
   });
 
+  it("bumps send timestamp when the proposed millisecond already exists", async () => {
+    const baseDate = new Date("2026-02-21T18:00:00.000Z");
+    const baseMs = baseDate.valueOf();
+    const messages = new Map<string, any>([
+      [
+        `${baseMs}`,
+        {
+          event: "chat",
+          sender_id: "00000000-1000-4000-8000-000000000001",
+          date: baseDate.toISOString(),
+          message_id: "existing-msg",
+          thread_id: "existing-thread",
+          history: [],
+        },
+      ],
+    ]);
+    (webapp_client.server_time as any).mockReturnValue(baseDate);
+    const actions = makeActions(messages);
+
+    actions.sendChat({ input: "collision check" });
+    await Promise.resolve();
+
+    const chatSet = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (row: any) =>
+          row?.event === "chat" && row?.history?.[0]?.content === "collision check",
+      );
+    expect(chatSet).toBeTruthy();
+    const writtenMs = new Date(chatSet.date).valueOf();
+    expect(writtenMs).toBe(baseMs + 1);
+  });
+
   it("writes reply messages with inherited thread_id and reply_to_message_id", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootIso = rootDate.toISOString();
