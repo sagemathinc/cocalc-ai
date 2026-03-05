@@ -605,6 +605,7 @@ export function MessageList({
   anyOverlayOpen?: boolean;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
@@ -800,6 +801,29 @@ export function MessageList({
     };
   }, [scrollToBottomRef]);
 
+  useEffect(() => {
+    if (!USE_VIRTUOSO) return;
+    if (!sortedDates.length) return;
+    const id = setTimeout(() => {
+      const host = listContainerRef.current;
+      if (!host) return;
+      const scroller = host.querySelector<HTMLElement>("[data-virtuoso-scroller]");
+      if (!scroller) return;
+      if (scroller.getBoundingClientRect().height > 0) return;
+      // Defensive self-heal for intermittent layout collapse in some sessions.
+      const parent = scroller.parentElement as HTMLElement | null;
+      if (parent) {
+        parent.style.display = "flex";
+        parent.style.flex = "1 1 0";
+        parent.style.minHeight = "0";
+      }
+      scroller.style.flex = "1 1 0";
+      scroller.style.minHeight = "0";
+      scroller.style.height = "100%";
+    }, 0);
+    return () => clearTimeout(id);
+  }, [sortedDates.length]);
+
   if (!USE_VIRTUOSO) {
     return (
       <div
@@ -816,6 +840,7 @@ export function MessageList({
 
   return (
     <div
+      ref={listContainerRef}
       style={MESSAGE_LIST_CONTAINER_STYLE}
       onWheelCapture={maybeBlockScrollEvent}
       onTouchMoveCapture={maybeBlockScrollEvent}
