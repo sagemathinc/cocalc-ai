@@ -1283,7 +1283,11 @@ export default function Message({
           path={path}
           activityBasePath={activityBasePath}
           date={date}
-          fallbackLogRefs={fallbackLogRefs}
+          logRefs={{
+            store: logStore,
+            key: logKey,
+            subject: logSubject,
+          }}
           activityContext={{
             actions,
             message,
