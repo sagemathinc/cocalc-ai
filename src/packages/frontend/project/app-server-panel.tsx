@@ -363,7 +363,15 @@ export function AppServerPanel({
   async function openStatus(status: ManagedAppStatus) {
     let url = status.exposure?.public_url;
     if (!url) {
-      const spec = specById[status.id];
+      let spec = specById[status.id];
+      if (!spec) {
+        try {
+          spec = await api.apps.getAppSpec(status.id);
+          setSpecById((prev) => ({ ...prev, [status.id]: spec }));
+        } catch {
+          // fall back to status.url below
+        }
+      }
       const preferredLocal =
         `${spec?.proxy?.base_path ?? ""}`.trim() || status.url;
       if (!preferredLocal) return;
