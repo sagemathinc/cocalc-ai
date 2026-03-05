@@ -70,6 +70,12 @@ export async function deleteAllActivityLogs({
         sender_id: (msg as any)?.sender_id,
       });
       if (!project_id || !path) continue;
+      const explicitStore = field<string>(msg, "acp_log_store");
+      const explicitKey = field<string>(msg, "acp_log_key");
+      if (explicitStore && explicitKey) {
+        logRefs.push({ store: explicitStore, key: explicitKey });
+        continue;
+      }
       const refs = deriveAcpLogRefs({
         project_id,
         path,
