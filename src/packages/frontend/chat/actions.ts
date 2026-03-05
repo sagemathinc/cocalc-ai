@@ -73,6 +73,7 @@ import {
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processLLM as processLLMExternal } from "./actions/llm";
+import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
@@ -1343,12 +1344,14 @@ export class ChatActions extends Actions<ChatState> {
 
   scrollToIndex = (index: number = -1) => {
     if (this.syncdb == null) return;
+    if (isAnyChatOverlayOpen()) return;
     // we first clear, then set it, since scroll to needs to
     // work even if it is the same as last time.
     // TODO: alternatively, we could get a reference
     // to virtuoso and directly control things from here.
     this.clearScrollRequest();
     setTimeout(() => {
+      if (isAnyChatOverlayOpen()) return;
       this.frameTreeActions?.set_frame_data({
         id: this.frameId,
         scrollToIndex: index,
@@ -1363,6 +1366,7 @@ export class ChatActions extends Actions<ChatState> {
 
   // this scrolls the message with given date into view and sets it as the selected message.
   scrollToDate = (date) => {
+    if (isAnyChatOverlayOpen()) return;
     this.clearScrollRequest();
     this.frameTreeActions?.set_frame_data({
       id: this.frameId,
@@ -1370,6 +1374,7 @@ export class ChatActions extends Actions<ChatState> {
     });
     this.setFragment(date);
     setTimeout(() => {
+      if (isAnyChatOverlayOpen()) return;
       this.frameTreeActions?.set_frame_data({
         id: this.frameId,
         // string version of ms since epoch, which is the key
