@@ -3,12 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Space } from "antd";
+import { Divider, Space } from "antd";
 
 import { Icon, Paragraph, Title } from "@cocalc/frontend/components";
 import { ServerLink } from "@cocalc/frontend/project/named-server-panel";
 import { NAMED_SERVER_NAMES } from "@cocalc/util/types/servers";
 import { FLYOUT_PADDING } from "./consts";
+import { AppServerPanel } from "@cocalc/frontend/project/app-server-panel";
 
 export function ServersFlyout({ project_id, wrap }) {
   const servers = NAMED_SERVER_NAMES.map((name) => (
@@ -38,6 +39,14 @@ export function ServersFlyout({ project_id, wrap }) {
             </Paragraph>
           )}
         </Space>
+        <Divider />
+        <Title level={5}>
+          <Icon name="server" /> Managed App Servers
+        </Title>
+        <Paragraph>
+          Create and manage service/static app specs for this workspace.
+        </Paragraph>
+        <AppServerPanel project_id={project_id} />
       </div>
     );
   }
