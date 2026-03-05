@@ -13,6 +13,7 @@ import type {
 } from "@cocalc/conat/project/api/apps";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
@@ -74,6 +75,28 @@ function tailLines(text: string, maxLines = 30, maxChars = 4000): string {
   const tail = lines.slice(-maxLines).join("\n");
   if (tail.length <= maxChars) return tail;
   return `...${tail.slice(tail.length - maxChars)}`;
+}
+
+function maxBacktickRun(text: string): number {
+  let run = 0;
+  let max = 0;
+  for (const ch of text) {
+    if (ch === "`") {
+      run += 1;
+      if (run > max) max = run;
+    } else {
+      run = 0;
+    }
+  }
+  return max;
+}
+
+function toFencedCodeBlock(content: string, language = ""): string {
+  const text = `${content ?? ""}`;
+  const fenceLen = Math.max(3, maxBacktickRun(text) + 1);
+  const fence = "`".repeat(fenceLen);
+  const info = language.trim();
+  return `${fence}${info}\n${text}\n${fence}`;
 }
 
 function isPositiveIntegerText(value: string): boolean {
@@ -1305,7 +1328,7 @@ export function AppServerPanel({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
+              gridTemplateColumns: "1fr",
               gap: "10px",
             }}
           >
@@ -1313,10 +1336,9 @@ export function AppServerPanel({
               <div style={{ fontWeight: 600, marginBottom: "6px" }}>
                 stdout
               </div>
-              <pre
+              <div
                 style={{
-                  margin: 0,
-                  maxHeight: "55vh",
+                  maxHeight: "32vh",
                   overflow: "auto",
                   border: "1px solid #eee",
                   borderRadius: "6px",
@@ -1324,17 +1346,16 @@ export function AppServerPanel({
                   background: "#fafafa",
                 }}
               >
-                {logsData.stdout || "(empty)"}
-              </pre>
+                <StaticMarkdown value={toFencedCodeBlock(logsData.stdout || "(empty)", "sh")} />
+              </div>
             </div>
             <div>
               <div style={{ fontWeight: 600, marginBottom: "6px" }}>
                 stderr
               </div>
-              <pre
+              <div
                 style={{
-                  margin: 0,
-                  maxHeight: "55vh",
+                  maxHeight: "32vh",
                   overflow: "auto",
                   border: "1px solid #eee",
                   borderRadius: "6px",
@@ -1342,8 +1363,8 @@ export function AppServerPanel({
                   background: "#fafafa",
                 }}
               >
-                {logsData.stderr || "(empty)"}
-              </pre>
+                <StaticMarkdown value={toFencedCodeBlock(logsData.stderr || "(empty)", "sh")} />
+              </div>
             </div>
           </div>
         ) : null}
