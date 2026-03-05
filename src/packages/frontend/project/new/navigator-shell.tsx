@@ -1102,6 +1102,14 @@ export function NavigatorShell({
           background: "white",
           height: "min(70vh, 760px)",
         }}
+        onKeyDownCapture={(event) => {
+          // Navigator can be rendered over editors (e.g. Jupyter). Keep
+          // keystrokes inside SideChat so underlying frame shortcuts don't fire.
+          event.stopPropagation();
+        }}
+        onKeyUpCapture={(event) => {
+          event.stopPropagation();
+        }}
       >
         {actions ? (
           <FileContext.Provider value={chatFileContext}>
