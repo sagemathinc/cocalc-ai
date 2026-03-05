@@ -1758,6 +1758,9 @@ export class ChatActions extends Actions<ChatState> {
     if (!rootIso) {
       throw new Error("Invalid thread root date");
     }
+    const sourceMetadata = this.getThreadMetadata(sourceThreadId, {
+      threadId: sourceThreadId,
+    });
     const latestMessage =
       threadMessages.length > 0
         ? threadMessages[threadMessages.length - 1]
@@ -1765,9 +1768,13 @@ export class ChatActions extends Actions<ChatState> {
     const latestDate = latestMessage ? dateValue(latestMessage) : null;
     const latestIso = latestDate ? toISOString(latestDate) : undefined;
 
+    const sourceConfig =
+      sourceMetadata.acp_config ?? this.getCodexConfig(sourceThreadId);
+    const shouldForkAcp =
+      isAI || sourceMetadata.agent_kind === "acp" || sourceConfig != null;
     let nextConfig: CodexThreadConfig | undefined = undefined;
-    if (isAI) {
-      const config = this.getCodexConfig(sourceThreadId);
+    if (shouldForkAcp) {
+      const config = sourceConfig;
       if (config?.sessionId && this.store) {
         const project_id = this.store.get("project_id");
         if (!project_id) {
@@ -1821,20 +1828,31 @@ export class ChatActions extends Actions<ChatState> {
       throw new Error("Failed to create thread id for fork");
     }
     this.setSyncdb(newMessage);
+    const configPatch: Record<string, unknown> = {
+      name: title,
+      thread_color: sourceMetadata.thread_color ?? null,
+      thread_icon: sourceMetadata.thread_icon ?? null,
+      thread_image: sourceMetadata.thread_image ?? null,
+      agent_kind:
+        nextConfig != null
+          ? "acp"
+          : sourceMetadata.agent_kind ?? (isAI ? "acp" : "none"),
+      agent_model:
+        nextConfig?.model ??
+        sourceMetadata.agent_model ??
+        (shouldForkAcp ? "gpt-5.3-codex" : null),
+      agent_mode:
+        nextConfig != null
+          ? "interactive"
+          : sourceMetadata.agent_mode ?? (isAI ? "interactive" : null),
+      acp_config: nextConfig ?? null,
+      loop_config: sourceMetadata.loop_config ?? null,
+      loop_state: null,
+    };
     this.setThreadConfigRecord(
       newThreadId,
-      {
-        name: title,
-        ...(nextConfig
-          ? {
-              acp_config: nextConfig,
-              agent_kind: "acp",
-              agent_model: nextConfig.model ?? "gpt-5.3-codex",
-              agent_mode: "interactive",
-            }
-          : {}),
-      },
-      { threadId: newThreadId },
+      configPatch,
+      { threadId: newThreadId, date: newRootIso },
     );
     this.syncdb.commit();
     void this.saveSyncdb();
