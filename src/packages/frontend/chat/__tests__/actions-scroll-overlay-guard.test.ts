@@ -12,13 +12,13 @@ function makeActions() {
   const actions = new ChatActions("chat", redux) as ChatActions & {
     syncdb: any;
     frameId: string;
-    frameTreeActions: { set_frame_data: jest.Mock };
+    frameTreeActions: any;
   };
   actions.syncdb = {};
   actions.frameId = "frame-1";
   actions.frameTreeActions = {
     set_frame_data: jest.fn(),
-  };
+  } as any;
   return actions;
 }
 
