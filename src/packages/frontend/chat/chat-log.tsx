@@ -193,7 +193,6 @@ export function ChatLog({
     const { dates, numChildren } = getSortedDates(
       messages,
       account_id!,
-      singleThreadView,
       visibleKeys,
     );
     // TODO: This is an ugly hack because I'm tired and need to finish this.
@@ -439,7 +438,6 @@ function isThread(message: ChatMessageTyped, numChildren: NumChildren) {
 export function getSortedDates(
   messages: ChatMessages,
   _account_id: string,
-  _disableFolding?: boolean,
   visibleKeys?: Set<string>,
 ): {
   dates: string[];
