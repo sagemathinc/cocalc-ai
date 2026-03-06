@@ -280,6 +280,108 @@ Deliverables:
 3. keyboard focus entry points for tab/frame controls
 4. a small shortcut registry or command table for these actions
 
+Implementation spec:
+
+1. distinguish command identity from keybinding identity:
+   - commands are stable API, e.g. `focusNextFrame`
+   - bindings vary by host/runtime, e.g. browser vs Electron
+2. introduce a small command table with:
+   - `id`
+   - `label`
+   - `scope`: `global-nav` | `shell` | `local`
+   - `isEnabled()`
+   - `run()`
+   - `bindings`: array of host/platform-specific bindings
+3. treat tab/frame navigation as `global-nav`, not ordinary shell shortcuts:
+   - they should be allowed from most focused surfaces
+   - they must use non-text chords, never bare letters
+   - they must not depend on the user first clicking a toolbar
+4. separate direct activation from focus movement:
+   - `activateNextFileTab`
+   - `activatePreviousFileTab`
+   - `focusNextFrame`
+   - `focusPreviousFrame`
+   - `focusFileTabStrip`
+   - `focusCurrentFrameRoot`
+5. prefer standard accessible widget behavior once focus lands:
+   - tab strip behaves as a proper tablist
+   - left/right arrows move between tabs
+   - `Home` / `End` jump to first/last tab
+   - `Enter` / `Space` activate if selection and activation are separated
+6. define "frame" narrowly at first to keep Phase 5 reviewable:
+   - file tab strip
+   - page toolbar / project shell header if present
+   - primary editor/frame
+   - right-side flyout or floating dock if visible
+   - bottom panel if visible
+7. every navigable frame must expose a stable keyboard entry point:
+   - a focusable root or anchor element
+   - visible keyboard focus styling
+   - a deterministic order for `focusNextFrame` / `focusPreviousFrame`
+
+Binding profile spec:
+
+1. browser profile:
+   - prefer chords that do not conflict with major browser tab/window shortcuts
+   - initial default should emphasize pane/frame movement first:
+     - `F6` => `focusNextFrame`
+     - `Shift+F6` => `focusPreviousFrame`
+   - file-tab activation commands should exist immediately, but browser-default
+     bindings may be conservative or omitted until conflict testing is done
+   - browser users can still move across file tabs without the mouse by:
+     - using `F6` to reach the tab strip
+     - then using standard tablist arrow-key behavior
+2. Electron/native-shell profile:
+   - keep the same command ids
+   - add conventional document-navigation aliases even if they would conflict
+     with browser chrome in a normal tab
+   - likely aliases to support:
+     - `Ctrl+Tab` / `Ctrl+Shift+Tab` for next/previous file tab
+     - platform-native tab aliases where appropriate, e.g. macOS document-tab
+       conventions
+   - this profile should be additive, not a forked keyboard architecture
+3. command-palette exposure:
+   - every Phase 5 command should be invokable without its shortcut
+   - shortcut help should show the active binding profile for the current host
+
+Behavior spec:
+
+1. `focusNextFrame` / `focusPreviousFrame` must work from editors, notebooks,
+   chat surfaces, and overlays because they use non-text chords
+2. direct file-tab activation commands should preserve the focused-surface type
+   when reasonable:
+   - if invoked from an editor, land in the newly active tab's main editor/frame
+   - if invoked from the tab strip itself, keep focus in the tab strip
+3. when a frame becomes active by keyboard, the destination must be obvious:
+   - visible focus ring
+   - scroll into view if needed
+   - no silent state change with focus left behind elsewhere
+4. floating vs docked UI should not change the command model:
+   - a visible right-side agent surface is just another frame in the cycle
+   - the same commands should work whether that surface is docked or floating
+5. boundary suppression still applies to ordinary shell shortcuts, but not to
+   `global-nav` commands that use approved non-text chords
+
+Implementation order inside Phase 5:
+
+1. add the command table and host-aware binding registration
+2. add `focusNextFrame` / `focusPreviousFrame` with `F6` / `Shift+F6`
+3. make the file tab strip a real keyboard target with arrow-key navigation
+4. add `focusFileTabStrip` and `focusCurrentFrameRoot`
+5. add direct next/previous file-tab commands
+6. enable conservative browser bindings only after live conflict checks
+7. add Electron-only standard aliases when the desktop runtime is active
+
+Acceptance details:
+
+1. browser users can navigate across visible frames with `F6` / `Shift+F6`
+2. browser users can reach the tab strip and move across file tabs without a mouse
+3. the command table can expose stronger standard aliases in Electron later
+   without any redesign
+4. keyboard navigation does not depend on whether a panel is docked, floated,
+   or rendered in a flyout
+5. keyboard navigation bindings are documented and discoverable in the UI
+
 Acceptance:
 
 1. a user can move between file tabs without the mouse
