@@ -24,6 +24,7 @@ interface Props {
   style?: React.CSSProperties;
   hideSearch?: boolean; // often on SMALL docs, e.g., when embedding in chat, it's pointless to have our own find.
   onHelp?: () => void;
+  overflowVisible?: boolean;
 }
 
 const HEIGHT = "25px";
@@ -39,6 +40,7 @@ export const EditBar: React.FC<Props> = (props: Props) => {
     style,
     hideSearch,
     onHelp,
+    overflowVisible,
   } = props;
 
   function renderContent() {
@@ -78,10 +80,12 @@ export const EditBar: React.FC<Props> = (props: Props) => {
         borderBottom: isCurrent
           ? "1px solid lightgray"
           : "1px solid transparent",
-        height: HEIGHT,
+        height: overflowVisible ? "auto" : HEIGHT,
         display: "flex",
         flexDirection: "row",
-        overflow: "hidden",
+        flexWrap: overflowVisible ? "wrap" : undefined,
+        rowGap: overflowVisible ? 6 : undefined,
+        overflow: overflowVisible ? "visible" : "hidden",
         ...style,
       }}
     >

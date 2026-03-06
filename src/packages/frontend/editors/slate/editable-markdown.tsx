@@ -2261,6 +2261,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         editor={editor}
         style={{ ...editBarStyle, paddingRight: 0 }}
         hideSearch={hideSearch}
+        overflowVisible
         onHelp={() => {
           if (actions0?.setState != null) {
             actions0.setState({ show_slate_help: true });
