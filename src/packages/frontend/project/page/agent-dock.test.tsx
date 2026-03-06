@@ -114,7 +114,7 @@ describe("AgentDock keyboard suppression", () => {
     mockChatActions.scrollToIndex.mockClear();
   });
 
-  it("clears the active page key handler when focus enters the floating dock", async () => {
+  async function openDock() {
     render(<AgentDock project_id="project-1" is_active={true} />);
 
     act(() => {
@@ -136,9 +136,24 @@ describe("AgentDock keyboard suppression", () => {
     await waitFor(() =>
       expect(screen.getByTestId("agent-dock-composer")).toBeTruthy(),
     );
+  }
+
+  it("clears the active page key handler when focus enters the floating dock", async () => {
+    await openDock();
 
     fireEvent.focus(screen.getByTestId("agent-dock-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops dock clicks from bubbling to window listeners", async () => {
+    await openDock();
+    const onWindowClick = jest.fn();
+    window.addEventListener("click", onWindowClick);
+
+    fireEvent.click(screen.getByTestId("agent-dock-composer"));
+
+    expect(onWindowClick).not.toHaveBeenCalled();
+    window.removeEventListener("click", onWindowClick);
   });
 });

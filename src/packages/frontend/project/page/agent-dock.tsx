@@ -306,6 +306,17 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     redux.getActions("page")?.erase_active_key_handler?.();
   }, []);
 
+  const stopDockEventPropagation = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      // Jupyter command mode listens for window clicks and refocuses the notebook
+      // if the click lands inside the notebook's screen rectangle. Since the dock
+      // floats on top of the notebook, clicks inside the dock can otherwise
+      // immediately re-focus the notebook underneath it.
+      event.stopPropagation();
+    },
+    [],
+  );
+
   if (!session || !is_active) return null;
 
   const width = IS_MOBILE ? Math.max(MIN_DOCK_WIDTH, viewport.width - 24) : dockSize.width;
@@ -347,6 +358,8 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
             pointerEvents: "auto",
           }}
           onFocus={clearActiveEditorKeyHandler}
+          onMouseDown={stopDockEventPropagation}
+          onClick={stopDockEventPropagation}
         >
           <div
             className="cc-agent-dock-handle"
