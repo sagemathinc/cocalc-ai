@@ -154,6 +154,16 @@ export function get_leaf_ids(tree: ImmutableFrameTree): SetMap {
   return ids;
 }
 
+export function get_leaf_ids_in_order(tree: ImmutableFrameTree): string[] {
+  const ids: string[] = [];
+  walk(tree, function (node) {
+    if (is_leaf(node)) {
+      ids.push(node.get("id"));
+    }
+  });
+  return ids;
+}
+
 export function getAllIds(tree: ImmutableFrameTree): Set<string> {
   const ids = new Set<string>([]);
   walk(tree, function (node) {

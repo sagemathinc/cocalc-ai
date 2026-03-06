@@ -1059,6 +1059,38 @@ export class BaseEditorActions<
     return tree_ops.get_leaf_ids(this._get_tree());
   }
 
+  public get_frame_ids_in_order(): string[] {
+    return tree_ops.get_leaf_ids_in_order(this._get_tree());
+  }
+
+  public get_active_frame_id(): string | undefined {
+    if (this._state === "closed" || this.store == null) return;
+    return this.store.getIn(["local_view_state", "active_id"]);
+  }
+
+  public focus_next_frame(): boolean {
+    return this.focus_adjacent_frame(1);
+  }
+
+  public focus_previous_frame(): boolean {
+    return this.focus_adjacent_frame(-1);
+  }
+
+  private focus_adjacent_frame(direction: 1 | -1): boolean {
+    const ids = this.get_frame_ids_in_order();
+    if (ids.length <= 1) return false;
+    const activeId = this.get_active_frame_id() ?? ids[0];
+    const currentIndex = ids.indexOf(activeId);
+    const nextIndex =
+      currentIndex === -1
+        ? direction > 0
+          ? 0
+          : ids.length - 1
+        : (currentIndex + direction + ids.length) % ids.length;
+    this.set_active_id(ids[nextIndex], true);
+    return true;
+  }
+
   private get_parent_id(id): string | undefined {
     return tree_ops.get_parent_id(this._get_tree(), id);
   }
