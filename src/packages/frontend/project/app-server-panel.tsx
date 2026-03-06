@@ -103,6 +103,34 @@ function toFencedCodeBlock(content: string, language = ""): string {
   return `${fence}${info}\n${text}\n${fence}`;
 }
 
+function renderLogTailBlock({
+  label,
+  content,
+  background,
+}: {
+  label: string;
+  content: string;
+  background: string;
+}) {
+  return (
+    <div>
+      <div style={{ fontWeight: 600, marginBottom: "4px" }}>{label}</div>
+      <div
+        style={{
+          maxHeight: "180px",
+          overflow: "auto",
+          border: "1px solid #eee",
+          borderRadius: "6px",
+          padding: "8px",
+          background,
+        }}
+      >
+        <StaticMarkdown value={toFencedCodeBlock(content, "sh")} />
+      </div>
+    </div>
+  );
+}
+
 function isPositiveIntegerText(value: string): boolean {
   const text = `${value ?? ""}`.trim();
   if (!text) return false;
@@ -1421,44 +1449,18 @@ export function AppServerPanel({
                         </Button>
                       </Space>
                       {startupFailure.stderrTail ? (
-                        <div>
-                          <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                            stderr (tail)
-                          </div>
-                          <pre
-                            style={{
-                              margin: 0,
-                              maxHeight: "180px",
-                              overflow: "auto",
-                              border: "1px solid #eee",
-                              borderRadius: "6px",
-                              padding: "8px",
-                              background: "#fff7f7",
-                            }}
-                          >
-                            {startupFailure.stderrTail}
-                          </pre>
-                        </div>
+                        renderLogTailBlock({
+                          label: "stderr (tail)",
+                          content: startupFailure.stderrTail,
+                          background: "#fff7f7",
+                        })
                       ) : null}
                       {startupFailure.stdoutTail ? (
-                        <div>
-                          <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                            stdout (tail)
-                          </div>
-                          <pre
-                            style={{
-                              margin: 0,
-                              maxHeight: "180px",
-                              overflow: "auto",
-                              border: "1px solid #eee",
-                              borderRadius: "6px",
-                              padding: "8px",
-                              background: "#fafafa",
-                            }}
-                          >
-                            {startupFailure.stdoutTail}
-                          </pre>
-                        </div>
+                        renderLogTailBlock({
+                          label: "stdout (tail)",
+                          content: startupFailure.stdoutTail,
+                          background: "#fafafa",
+                        })
                       ) : null}
                     </div>
                   }
