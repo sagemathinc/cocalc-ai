@@ -19,7 +19,7 @@ export async function hasDns(): Promise<boolean> {
   return !!token && !!dns;
 }
 
-let zoneId = "";
+const zoneIdCache = new Map<string, string>();
 type ZoneResponse = {
   success?: boolean;
   errors?: Array<{ message?: string }>;
@@ -80,7 +80,8 @@ function isNotFoundError(err: unknown): boolean {
 }
 
 async function getZoneId(token: string, dns: string) {
-  if (zoneId) return zoneId;
+  const cached = zoneIdCache.get(dns);
+  if (cached) return cached;
   const url = new URL("https://api.cloudflare.com/client/v4/zones");
   url.searchParams.set("name", dns);
   const response = await fetch(url.toString(), {
@@ -104,10 +105,25 @@ async function getZoneId(token: string, dns: string) {
   }
   const match = data.result?.find((zone) => zone.name === dns);
   if (match?.id) {
-    zoneId = match.id;
+    zoneIdCache.set(dns, match.id);
     return match.id;
   }
   throw new Error(`cloudflare zone not found for ${dns}`);
+}
+
+async function getZoneIdForHostname(token: string, hostname: string): Promise<string> {
+  const parts = `${hostname ?? ""}`.split(".").filter(Boolean);
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const candidate = parts.slice(i).join(".");
+    try {
+      return await getZoneId(token, candidate);
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
+  throw new Error(`cloudflare zone not found for ${hostname}`);
 }
 
 async function listDnsRecords(
@@ -129,7 +145,7 @@ async function getClient(): Promise<{ token: string; dns: string; zoneId: string
   if (!dns || !token) {
     throw new Error("cloudflare DNS not configured");
   }
-  const zoneId = await getZoneId(token, dns);
+  const zoneId = await getZoneIdForHostname(token, dns);
   return { token, dns, zoneId };
 }
 

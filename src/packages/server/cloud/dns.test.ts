@@ -1,10 +1,11 @@
 let fetchMock: jest.Mock;
+let mockedSettings: {
+  project_hosts_dns: string;
+  project_hosts_cloudflare_tunnel_api_token: string;
+};
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
-  getServerSettings: jest.fn(async () => ({
-    project_hosts_dns: "example.com",
-    project_hosts_cloudflare_tunnel_api_token: "token",
-  })),
+  getServerSettings: jest.fn(async () => mockedSettings),
 }));
 
 const zoneResponse = {
@@ -28,6 +29,10 @@ function responseWith(result: any) {
 describe("cloud dns", () => {
   beforeEach(() => {
     jest.resetModules();
+    mockedSettings = {
+      project_hosts_dns: "example.com",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+    };
     fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/zones?")) {
@@ -48,6 +53,48 @@ describe("cloud dns", () => {
       return responseWith({});
     });
     (global as any).fetch = fetchMock;
+  });
+
+  it("falls back to the parent Cloudflare zone for subdomain-based host dns", async () => {
+    mockedSettings = {
+      project_hosts_dns: "dev.example.com",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+    };
+    fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        if (url.includes("name=dev.example.com")) {
+          return responseWith([]);
+        }
+        if (url.includes("name=example.com")) {
+          return responseWith([{ name: "example.com", id: "zone-parent" }]);
+        }
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return responseWith([]);
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return responseWith({ id: "record-parent" });
+      }
+      return responseWith({});
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensureHostDns } = await import("./dns");
+    const result = await ensureHostDns({
+      host_id: "abc",
+      ipAddress: "203.0.113.8",
+    });
+
+    expect(result.name).toBe("host-abc.dev.example.com");
+    expect(result.record_id).toBe("record-parent");
+    const zoneCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes("/zones?"));
+    expect(zoneCalls.some((url) => url.includes("name=dev.example.com"))).toBe(
+      true,
+    );
+    expect(zoneCalls.some((url) => url.includes("name=example.com"))).toBe(true);
   });
 
   it("creates a proxied A record for the host", async () => {
