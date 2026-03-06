@@ -39,12 +39,31 @@ The Jupyter command-mode regression is a good example:
 3. global handlers should have one shared early-return check
 4. new overlays/flyouts/docks should opt in by adding one wrapper, not custom hacks
 5. future debugging should make it obvious why a global shortcut did or did not run
+6. keyboard-first navigation between file tabs and frames should be possible
+   without the mouse
+7. accessibility work should benefit from the same keyboard model, not compete
+   with it
 
 ## Non-Goals
 
 1. replacing every existing shortcut implementation in one pass
 2. rewriting all editor focus plumbing immediately
 3. removing `set_active_key_handler(...)` before we have a stable replacement
+4. solving every accessibility issue in the frontend in one project
+
+## Scope Decision: Tab/Frame Navigation
+
+This is in scope, but it should be sequenced after the boundary/global-handler
+cleanup starts to land.
+
+Reason:
+
+1. adding more global shortcuts before ownership rules are explicit will make
+   conflicts worse
+2. once boundaries and suppression rules are shared, tab/frame shortcuts become
+   much easier to implement safely
+3. the same work directly helps accessibility because it reduces mouse-only
+   navigation paths
 
 ## Proposed Architecture
 
@@ -126,6 +145,54 @@ For example:
 This does not need to be the first step, but it would make debugging much easier
 and reduce hidden state in `set_active_key_handler(...)`.
 
+## 5. Navigation Commands as First-Class Actions
+
+Tab/frame navigation should not be implemented as ad hoc DOM key handlers in
+each widget. It should be an explicit command layer on top of page/project/frame
+state.
+
+Initial targets:
+
+1. next file tab
+2. previous file tab
+3. next frame in current tab
+4. previous frame in current tab
+5. focus tab strip
+6. focus frame strip / frame switcher
+7. close current tab/frame via keyboard where already supported conceptually
+
+Likely homes:
+
+1. page-level actions for top-level tab navigation
+2. frame-tree actions for per-file frame navigation
+3. a shared shortcut registry so bindings are discoverable and testable
+
+This should be designed so the command is separate from the binding:
+
+1. command: `focusNextFileTab`
+2. default binding: something chosen later
+
+That separation is better for:
+
+1. accessibility
+2. future remapping
+3. command-palette style invocation
+4. testing
+
+## 6. Accessibility Alignment
+
+The keyboard plan should explicitly help mouse-free navigation.
+
+That means:
+
+1. keyboard focus must be visible and stable
+2. tab strips and frame controls need semantic focus targets
+3. roving tabindex or equivalent patterns should be used where arrow-key
+   navigation makes sense
+4. command shortcuts must not be the only path; keyboard focus traversal must
+   also work
+5. browser smoke tests should include mouse-free navigation flows
+
 ## Implementation Plan
 
 ## Phase 1: Add Shared Boundary Utilities
@@ -197,7 +264,43 @@ Acceptance:
 
 1. grep audit shows one recognizable pattern rather than several incompatible ones
 
-## Phase 5: Add Regression Coverage
+## Phase 5: Add Keyboard Navigation Commands
+
+Files likely involved:
+
+1. `src/packages/frontend/app/actions.ts`
+2. page tab state/actions
+3. frame-tree actions/components
+4. tab-strip and frame-strip UI components
+
+Deliverables:
+
+1. explicit commands for next/previous file tab
+2. explicit commands for next/previous frame in the current tab
+3. keyboard focus entry points for tab/frame controls
+4. a small shortcut registry or command table for these actions
+
+Acceptance:
+
+1. a user can move between file tabs without the mouse
+2. a user can move between frames within a tab without the mouse
+3. command bindings do not fire while typing in editors/inputs/overlays
+
+## Phase 6: Add Accessibility-Focused Navigation Hardening
+
+Deliverables:
+
+1. visible focus states for tab/frame navigation targets
+2. tab/frame controls exposed as proper keyboard-focusable UI
+3. roving tabindex or equivalent behavior where arrow-key navigation is desired
+4. audit of obvious mouse-required paths in page/tab/frame navigation
+
+Acceptance:
+
+1. accessibility audits can traverse core tab/frame UI without requiring a mouse
+2. power users can navigate the same UI quickly by keyboard
+
+## Phase 7: Add Regression Coverage
 
 Tests should include:
 
@@ -218,8 +321,9 @@ Existing local tests that proved useful:
 1. dock focus suppression test
 2. dock click propagation suppression test
 3. navigator-shell focus suppression test
+4. future tab/frame navigation keyboard tests
 
-## Phase 6: Add Debugging Ergonomics
+## Phase 8: Add Debugging Ergonomics
 
 Add a lightweight dev-only keyboard debug mode.
 
@@ -243,7 +347,9 @@ This would have made the recent bug much faster to diagnose.
 3. `jupyter: stop notebook refocus on boundary clicks`
 4. `frontend: migrate floating dock and flyout surfaces to keyboard boundary`
 5. `frontend: migrate navigator and side-chat overlays to keyboard boundary`
-6. `frontend: add keyboard boundary browser smoke and debug helpers`
+6. `frontend/navigation: add file-tab and frame navigation commands`
+7. `frontend/navigation: add accessible focus targets for tab/frame UI`
+8. `frontend: add keyboard boundary browser smoke and debug helpers`
 
 ## Immediate Concrete Wins
 
@@ -254,6 +360,8 @@ If only the first three phases land, future fixes get much easier because:
    "which of four keyboard systems is winning?"
 3. Jupyter command-mode behavior becomes locally explainable
 4. new floating surfaces can opt in with one wrapper
+5. tab/frame navigation shortcuts can be added without creating another layer
+   of shortcut conflicts
 
 ## Likely Touched Files
 
@@ -274,6 +382,12 @@ Overlay surfaces:
 3. `src/packages/frontend/project/new/navigator-shell.tsx`
 4. `src/packages/frontend/project/page/content.tsx`
 
+Navigation:
+
+1. page tab strip components/actions
+2. frame-tree title bar / frame switching components
+3. any reducers/actions that track active file tab or active frame
+
 Tests:
 
 1. new `src/packages/frontend/keyboard/__tests__/*`
@@ -290,3 +404,16 @@ If this work is split into one narrow first milestone, it should be:
 
 That is the smallest milestone that would likely prevent a repeat of the bug we
 just debugged.
+
+## Recommended Second Milestone
+
+After the first milestone lands, the next milestone should be:
+
+1. add explicit next/previous file tab commands
+2. add explicit next/previous frame commands
+3. expose focusable tab/frame targets for keyboard-only use
+4. add smoke tests that move across tabs/frames without the mouse
+
+That is the smallest milestone that starts paying down the long-standing
+power-user and accessibility complaints without mixing everything into one
+unreviewable refactor.
