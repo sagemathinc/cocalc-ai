@@ -71,7 +71,7 @@ describe("app expose launchpad reservation", () => {
       kind: "service",
       title: "Launchpad reservation test",
       command: { exec: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] },
-      network: { listen_host: "127.0.0.1", protocol: "http" },
+      network: { listen_host: "127.0.0.1", port: 6123, protocol: "http" },
       proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
       wake: { enabled: false, keep_warm_s: 1, startup_timeout_s: 15 },
     });

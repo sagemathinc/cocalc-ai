@@ -149,6 +149,11 @@ export type AppProxyTarget =
 
 const MAX_APP_LOG_BYTES = 1 * 1024 * 1024;
 
+type StartAppOptions = {
+  preferredPort?: number;
+  publicMode?: boolean;
+};
+
 function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
 }
@@ -678,7 +683,10 @@ function staticRefreshWarnings(spec: AppStaticSpec): string[] {
   return warnings;
 }
 
-export async function startApp(id: string): Promise<AppStatus> {
+export async function startApp(
+  id: string,
+  opts?: StartAppOptions,
+): Promise<AppStatus> {
   const spec = assertServiceSpec(await getAppSpec(id));
   const existing = children[spec.id];
   if (existing) {
@@ -689,13 +697,26 @@ export async function startApp(id: string): Promise<AppStatus> {
     clearChild(spec.id);
   }
 
-  const preferredPort = spec.network.port;
+  const exposure = await getAppExposureState(spec.id);
+  const publicMode =
+    opts?.publicMode ?? (exposure?.mode === "public");
+  const preferredPort = opts?.preferredPort ?? spec.network.port;
   const port = await getPort({ port: preferredPort });
   const host = spec.network.listen_host || "127.0.0.1";
-  const url = getProxyUrl(port);
+  const localUrl = getProxyUrl(port);
+  const appBaseUrl = publicMode ? "/" : localUrl;
   const cmd = spec.command.exec;
   const args = spec.command.args ?? [];
-  logger.debug("start app", { id: spec.id, cmd, args, host, port, url });
+  logger.debug("start app", {
+    id: spec.id,
+    cmd,
+    args,
+    host,
+    port,
+    localUrl,
+    appBaseUrl,
+    publicMode,
+  });
 
   const child = spawn(cmd, args, {
     cwd: spec.command.cwd ?? process.env.HOME,
@@ -704,7 +725,9 @@ export async function startApp(id: string): Promise<AppStatus> {
       ...(spec.command.env ?? {}),
       PORT: `${port}`,
       HOST: host,
-      APP_BASE_URL: url,
+      APP_BASE_URL: appBaseUrl,
+      APP_LOCAL_BASE_URL: localUrl,
+      APP_PUBLIC_EXPOSED: publicMode ? "1" : "0",
     },
   });
 
@@ -714,7 +737,7 @@ export async function startApp(id: string): Promise<AppStatus> {
     child,
     host,
     port,
-    url,
+    url: localUrl,
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
   };
@@ -825,13 +848,16 @@ export async function waitForAppState(
 
 export async function ensureRunning(
   id: string,
-  opts?: { timeout?: number; interval?: number },
+  opts?: { timeout?: number; interval?: number; preferredPort?: number; publicMode?: boolean },
 ): Promise<AppStatus> {
   const spec = await getAppSpec(id);
   if (spec.kind === "static") {
     return await statusApp(id);
   }
-  await startApp(id);
+  await startApp(id, {
+    preferredPort: opts?.preferredPort,
+    publicMode: opts?.publicMode,
+  });
   const ok = await waitForAppState(id, "running", opts);
   const status = await statusApp(id);
   if (!ok) {
@@ -980,6 +1006,28 @@ export async function resolveAppProxyTarget({
   return undefined;
 }
 
+async function restartServiceForExposureMode(
+  spec: AppServiceSpec,
+  {
+    preferredPort,
+    publicMode,
+  }: {
+    preferredPort?: number;
+    publicMode: boolean;
+  },
+): Promise<AppStatus> {
+  const running = children[spec.id];
+  if (running && isChildRunning(running.child)) {
+    await stopApp(spec.id);
+  }
+  return await ensureRunning(spec.id, {
+    timeout: Math.max(1_000, (spec.wake.startup_timeout_s || 120) * 1000),
+    interval: 500,
+    preferredPort,
+    publicMode,
+  });
+}
+
 export async function exposeApp({
   id,
   ttl_s,
@@ -995,6 +1043,9 @@ export async function exposeApp({
 }): Promise<AppStatus> {
   const spec = await getAppSpec(id);
   const warnings: string[] = [];
+  const publicRestart = spec.kind === "service" ? assertServiceSpec(spec) : undefined;
+  let preferredServicePort: number | undefined;
+  let restartIntoPublicMode = false;
   let reserved:
     | {
         hostname: string;
@@ -1002,6 +1053,22 @@ export async function exposeApp({
         url_public: string;
       }
     | undefined;
+  if (publicRestart) {
+    const current = await statusApp(id);
+    restartIntoPublicMode = current.state === "running";
+    preferredServicePort = current.port ?? publicRestart.network.port;
+    if (!preferredServicePort) {
+      const started = await ensureRunning(id, {
+        timeout: Math.max(
+          1_000,
+          (publicRestart.wake.startup_timeout_s || 120) * 1000,
+        ),
+        interval: 500,
+      });
+      restartIntoPublicMode = true;
+      preferredServicePort = started.port ?? publicRestart.network.port;
+    }
+  }
   try {
     const hub = hubApi(conat());
     const policy = await hub.system.getProjectAppPublicPolicy({ project_id });
@@ -1050,7 +1117,12 @@ export async function exposeApp({
     }
     throw err;
   }
-  const status = await statusApp(id);
+  const status = publicRestart && restartIntoPublicMode
+    ? await restartServiceForExposureMode(publicRestart, {
+        preferredPort: preferredServicePort,
+        publicMode: true,
+      })
+    : await statusApp(id);
   if (warnings.length > 0) {
     status.warnings = [...new Set(warnings)];
   }
@@ -1058,7 +1130,10 @@ export async function exposeApp({
 }
 
 export async function unexposeApp(id: string): Promise<AppStatus> {
-  await getAppSpec(id);
+  const spec = await getAppSpec(id);
+  const publicRestart = spec.kind === "service" ? assertServiceSpec(spec) : undefined;
+  const current = publicRestart ? await statusApp(id) : undefined;
+  const preferredServicePort = current?.port ?? publicRestart?.network.port;
   try {
     const hub = hubApi(conat());
     await hub.system.releaseProjectAppPublicSubdomain({ project_id, app_id: id });
@@ -1069,6 +1144,12 @@ export async function unexposeApp(id: string): Promise<AppStatus> {
     });
   }
   await unexposeAppState(id);
+  if (publicRestart && current?.state === "running") {
+    return await restartServiceForExposureMode(publicRestart, {
+      preferredPort: preferredServicePort,
+      publicMode: false,
+    });
+  }
   return await statusApp(id);
 }
 

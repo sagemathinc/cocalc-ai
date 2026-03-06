@@ -29,12 +29,13 @@ import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
   getOrCreateProjectLocalSecretToken,
+  getProject,
   getProjectPorts,
 } from "./sqlite/projects";
 import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
-import { init as initHubApi } from "@cocalc/lite/hub/api";
+import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { wireProjectsApi } from "./hub/projects";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
@@ -68,6 +69,15 @@ import {
 import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 
 const logger = getLogger("project-host:main");
+const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
+const PROJECT_HTTP_PORT_WAIT_MS = Math.max(
+  1000,
+  Number(process.env.COCALC_PROJECT_HTTP_PORT_WAIT_MS ?? 30_000),
+);
+const PROJECT_HTTP_PORT_POLL_MS = Math.max(
+  100,
+  Number(process.env.COCALC_PROJECT_HTTP_PORT_POLL_MS ?? 500),
+);
 
 export interface ProjectHostConfig {
   hostId?: string;
@@ -145,6 +155,26 @@ async function startHttpServer(
   await once(httpServer, "listening");
 
   return { app, httpServer, isHttps: tls.enabled };
+}
+
+async function waitForProjectHttpPort(project_id: string): Promise<number> {
+  const deadline = Date.now() + PROJECT_HTTP_PORT_WAIT_MS;
+  while (true) {
+    const { http_port } = getProjectPorts(project_id);
+    if (
+      typeof http_port === "number" &&
+      Number.isInteger(http_port) &&
+      http_port > 0
+    ) {
+      return http_port;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`no http_port recorded for project ${project_id}`);
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, PROJECT_HTTP_PORT_POLL_MS),
+    );
+  }
 }
 
 export async function main(
@@ -254,12 +284,30 @@ export async function main(
       } else {
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
       }
+      const publicAppHost = `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
+      if (publicAppHost) {
+        req.headers.host = publicAppHost;
+      }
+      delete req.headers[PUBLIC_APP_HOST_HEADER];
+      const projectRow = getProject(project_id);
+      if (
+        projectRow?.state !== "running" ||
+        !Number.isInteger(projectRow?.http_port)
+      ) {
+        if (!hubApi.projects?.start) {
+          throw new Error(`project start unavailable for ${project_id}`);
+        }
+        logger.debug("project proxy resolveTarget starting project", {
+          project_id,
+          state: projectRow?.state,
+          http_port: projectRow?.http_port,
+          url: req.url,
+        });
+        await hubApi.projects.start({ project_id });
+      }
       const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
       req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;
-      const { http_port } = getProjectPorts(project_id);
-      if (!http_port) {
-        throw new Error(`no http_port recorded for project ${project_id}`);
-      }
+      const http_port = await waitForProjectHttpPort(project_id);
       return { handled: true, target: { host: "127.0.0.1", port: http_port } };
     },
   });

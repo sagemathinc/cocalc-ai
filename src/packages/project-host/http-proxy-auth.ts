@@ -27,6 +27,7 @@ const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME = "cocalc_project_host_http_session"
 const PROJECT_HOST_HTTP_AUTH_CONTEXT = Symbol(
   "cocalc-project-host-http-auth-context",
 );
+const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
 function envNumber(name: string, fallback: number): number {
   const n = Number(process.env[name]);
   return Number.isFinite(n) ? n : fallback;
@@ -285,11 +286,23 @@ export function createProjectHostHttpProxyAuth({
     issued_at_s: number;
   }>();
 
-  const verifyClaimsAndGetAccountId = (claims: {
-    sub: string;
-    act?: string;
-  }): string => {
-    if ((claims.act ?? "account") !== "account") {
+  const verifyClaimsAndGetAccountId = (
+    claims: {
+      sub: string;
+      act?: string;
+    },
+    req?: IncomingMessage,
+    project_id?: string,
+  ): string => {
+    const actor = claims.act ?? "account";
+    if (actor === "hub") {
+      const publicAppHost = `${req?.headers?.[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
+      if (!publicAppHost || !project_id) {
+        throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
+      }
+      return project_id;
+    }
+    if (actor !== "account") {
       throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
     }
     if (!isValidUUID(claims.sub)) {
@@ -417,9 +430,11 @@ export function createProjectHostHttpProxyAuth({
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
-    const account_id = verifyClaimsAndGetAccountId(claims);
+    const account_id = verifyClaimsAndGetAccountId(claims, req, project_id);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
-    authorizeAccountForProject({ account_id, project_id });
+    if ((claims.act ?? "account") === "account") {
+      authorizeAccountForProject({ account_id, project_id });
+    }
     setAuthContext(req, {
       account_id,
       issued_at_s: claims.iat,
@@ -476,9 +491,11 @@ export function createProjectHostHttpProxyAuth({
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
-    const account_id = verifyClaimsAndGetAccountId(claims);
+    const account_id = verifyClaimsAndGetAccountId(claims, req, project_id);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
-    authorizeAccountForProject({ account_id, project_id });
+    if ((claims.act ?? "account") === "account") {
+      authorizeAccountForProject({ account_id, project_id });
+    }
     const context = {
       account_id,
       issued_at_s: claims.iat,
