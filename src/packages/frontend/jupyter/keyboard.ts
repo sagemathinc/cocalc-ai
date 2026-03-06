@@ -12,6 +12,10 @@ import json from "json-stable-stringify";
 import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
 import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
 import { shouldSuppressGlobalShortcuts } from "@cocalc/frontend/keyboard/boundary";
+import {
+  handoffProjectNavigationFromLocalOwner,
+  matchProjectNavigationCommand,
+} from "@cocalc/frontend/project/page/keyboard-navigation";
 import { copy_without, merge } from "@cocalc/util/misc";
 import { JupyterActions } from "./browser-actions";
 import { commands, KeyboardCommand } from "./commands";
@@ -149,6 +153,22 @@ export function create_key_handler(
         console.log("jupyter global keyboard skipped Enter inside single-doc slate");
       }
       return;
+    }
+    const navigationCommand = matchProjectNavigationCommand(evt);
+    if (navigationCommand != null) {
+      evt.preventDefault?.();
+      evt.stopPropagation?.();
+      handoffProjectNavigationFromLocalOwner(
+        navigationCommand,
+        editor_actions.project_id,
+        {
+          blurActiveElement: document.activeElement,
+          currentFrameId: frame_actions.frame_id,
+          editorActions: editor_actions as any,
+          projectActions: editor_actions._get_project_actions() as any,
+        },
+      );
+      return false;
     }
     if (jupyter_actions.store.get("complete") != null) {
       return;

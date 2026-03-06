@@ -1069,25 +1069,38 @@ export class BaseEditorActions<
   }
 
   public focus_next_frame(): boolean {
-    return this.focus_adjacent_frame(1);
+    return this.focus_adjacent_frame(1, true);
   }
 
   public focus_previous_frame(): boolean {
-    return this.focus_adjacent_frame(-1);
+    return this.focus_adjacent_frame(-1, true);
   }
 
-  private focus_adjacent_frame(direction: 1 | -1): boolean {
+  public focus_next_frame_without_wrap(): boolean {
+    return this.focus_adjacent_frame(1, false);
+  }
+
+  public focus_previous_frame_without_wrap(): boolean {
+    return this.focus_adjacent_frame(-1, false);
+  }
+
+  private focus_adjacent_frame(direction: 1 | -1, wrap: boolean): boolean {
     const ids = this.get_frame_ids_in_order();
     if (ids.length <= 1) return false;
     const activeId = this.get_active_frame_id() ?? ids[0];
     const currentIndex = ids.indexOf(activeId);
-    const nextIndex =
-      currentIndex === -1
-        ? direction > 0
-          ? 0
-          : ids.length - 1
-        : (currentIndex + direction + ids.length) % ids.length;
-    this.set_active_id(ids[nextIndex], true);
+    if (currentIndex === -1) {
+      if (!wrap) return false;
+      const nextIndex = direction > 0 ? 0 : ids.length - 1;
+      this.set_active_id(ids[nextIndex], true);
+      return true;
+    }
+    const nextIndex = currentIndex + direction;
+    if (!wrap && (nextIndex < 0 || nextIndex >= ids.length)) {
+      return false;
+    }
+    const wrappedIndex = (nextIndex + ids.length) % ids.length;
+    this.set_active_id(ids[wrappedIndex], true);
     return true;
   }
 

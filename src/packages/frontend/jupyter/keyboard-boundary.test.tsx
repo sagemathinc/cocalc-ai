@@ -3,6 +3,8 @@
 import { render, screen } from "@testing-library/react";
 
 const mockRunShortcut = jest.fn();
+const mockHandoffNavigation = jest.fn();
+const mockMatchNavigationCommand = jest.fn();
 
 jest.mock("./commands", () => ({
   commands: () => ({
@@ -13,11 +15,21 @@ jest.mock("./commands", () => ({
   }),
 }));
 
+jest.mock("@cocalc/frontend/project/page/keyboard-navigation", () => ({
+  handoffProjectNavigationFromLocalOwner: (...args: any[]) =>
+    mockHandoffNavigation(...args),
+  matchProjectNavigationCommand: (...args: any[]) =>
+    mockMatchNavigationCommand(...args),
+}));
+
 const { create_key_handler } = require("./keyboard");
 
 describe("Jupyter keyboard boundary suppression", () => {
   beforeEach(() => {
     mockRunShortcut.mockClear();
+    mockHandoffNavigation.mockClear();
+    mockMatchNavigationCommand.mockReset();
+    mockMatchNavigationCommand.mockReturnValue(undefined);
   });
 
   it("does not run command-mode shortcuts inside a keyboard boundary", () => {
@@ -77,5 +89,49 @@ describe("Jupyter keyboard boundary suppression", () => {
     handler(event);
 
     expect(mockRunShortcut).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands reserved navigation keys to project navigation instead of notebook shortcuts", () => {
+    mockMatchNavigationCommand.mockReturnValue("focusNextFrame");
+    const preventDefault = jest.fn();
+    const stopPropagation = jest.fn();
+    const editorActions = {
+      _get_project_actions: () => ({ focus_file_tab_strip: jest.fn() }),
+      project_id: "project-1",
+    };
+
+    const handler = create_key_handler(
+      {
+        store: {
+          get: () => null,
+        },
+      },
+      {
+        frame_id: "frame-a",
+        store: {
+          get: () => "escape",
+        },
+      },
+      editorActions,
+    );
+
+    const result = handler({
+      preventDefault,
+      stopPropagation,
+      target: document.body,
+    });
+
+    expect(result).toBe(false);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(mockRunShortcut).not.toHaveBeenCalled();
+    expect(mockHandoffNavigation).toHaveBeenCalledWith(
+      "focusNextFrame",
+      "project-1",
+      expect.objectContaining({
+        currentFrameId: "frame-a",
+        editorActions,
+      }),
+    );
   });
 });

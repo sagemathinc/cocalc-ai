@@ -66,6 +66,21 @@ describe("Base editor frame navigation", () => {
     expect(actions.focusedIds).toContain("frame-b");
   });
 
+  it("returns false instead of wrapping past the final frame", () => {
+    const actions = new NavigationHarness(splitTree, "frame-b");
+
+    expect(actions.focus_next_frame_without_wrap()).toBe(false);
+    expect(actions.get_active_frame_id()).toBe("frame-b");
+  });
+
+  it("moves to the previous sibling without wrapping when available", () => {
+    const actions = new NavigationHarness(splitTree, "frame-b");
+
+    expect(actions.focus_previous_frame_without_wrap()).toBe(true);
+    expect(actions.get_active_frame_id()).toBe("frame-a");
+    expect(actions.focusedIds).toContain("frame-a");
+  });
+
   it("does not claim success when there is only one frame", () => {
     const actions = new NavigationHarness({ id: "solo", type: "cm" }, "solo");
 

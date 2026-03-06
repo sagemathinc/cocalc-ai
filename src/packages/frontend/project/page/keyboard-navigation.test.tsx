@@ -14,6 +14,7 @@ import {
   FILE_TAB_STRIP_ATTRIBUTE as FILE_TAB_STRIP_ATTR,
   PROJECT_PAGE_ATTRIBUTE,
   focusProjectFileTabStrip,
+  handoffProjectNavigationFromLocalOwner,
   handleProjectNavigationKeydown,
   getAdjacentOpenFilePath,
   matchProjectNavigationCommand,
@@ -250,5 +251,30 @@ describe("project keyboard navigation", () => {
     expect(activateNext).toHaveBeenCalled();
     expect(focusStrip).toHaveBeenCalled();
     expect(mockRedux.getEditorActions).toHaveBeenCalledWith("project-1", "a.ipynb");
+  });
+
+  it("falls through to page navigation when local frame traversal hits the edge", () => {
+    jest.useFakeTimers();
+    const { activeTab, root } = setupProjectRoot();
+    const currentTerminal = document.createElement("textarea");
+    root.appendChild(currentTerminal);
+    currentTerminal.focus();
+    const setActiveId = jest.fn();
+
+    handoffProjectNavigationFromLocalOwner("focusNextFrame", "project-1", {
+      blurActiveElement: currentTerminal,
+      currentFrameId: "frame-b",
+      editorActions: {
+        focus_next_frame_without_wrap: jest.fn().mockReturnValue(false),
+        set_active_id: setActiveId,
+      },
+      projectRoot: root,
+    });
+
+    jest.runAllTimers();
+
+    expect(setActiveId).toHaveBeenCalledWith("frame-b", true);
+    expect(document.activeElement).toBe(activeTab);
+    jest.useRealTimers();
   });
 });

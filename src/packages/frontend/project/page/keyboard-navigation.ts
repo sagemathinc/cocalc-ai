@@ -88,6 +88,8 @@ type EditorNavigationActions = {
   focus?: () => void;
   get_active_frame_id?: () => string | undefined;
   get_frame_ids_in_order?: () => string[];
+  focus_next_frame_without_wrap?: () => boolean;
+  focus_previous_frame_without_wrap?: () => boolean;
   set_active_id?: (id: string, ignore_if_missing?: boolean) => void;
 };
 
@@ -103,6 +105,11 @@ interface ProjectNavigationRuntimeOptions {
   editorActions?: EditorNavigationActions;
   projectActions?: ProjectNavigationActions;
   projectRoot?: ParentNode | null;
+}
+
+interface LocalOwnerNavigationOptions extends ProjectNavigationRuntimeOptions {
+  blurActiveElement?: Element | null;
+  currentFrameId?: string;
 }
 
 interface FocusTarget {
@@ -421,6 +428,37 @@ export function handleProjectNavigationKeydown(
   event.preventDefault();
   event.stopPropagation();
   return true;
+}
+
+export function handoffProjectNavigationFromLocalOwner(
+  command: ProjectNavigationCommandId,
+  projectId: string,
+  opts: LocalOwnerNavigationOptions = {},
+): void {
+  const blurTarget =
+    opts.blurActiveElement instanceof HTMLElement ? opts.blurActiveElement : null;
+  blurTarget?.blur();
+  setTimeout(() => {
+    if (command === "focusNextFrame" || command === "focusPreviousFrame") {
+      const setActiveId = opts.editorActions?.set_active_id;
+      if (typeof setActiveId === "function" && opts.currentFrameId != null) {
+        setActiveId.call(opts.editorActions, opts.currentFrameId, true);
+      }
+      const focusAdjacent =
+        command === "focusNextFrame"
+          ? opts.editorActions?.focus_next_frame_without_wrap
+          : opts.editorActions?.focus_previous_frame_without_wrap;
+      if (typeof focusAdjacent === "function") {
+        if (focusAdjacent.call(opts.editorActions)) {
+          return;
+        }
+      }
+    }
+    runProjectNavigationCommand(
+      command,
+      resolveProjectNavigationRuntime(projectId, opts),
+    );
+  }, 0);
 }
 
 export function getActiveEditorTabPath(activeProjectTab?: string): string | undefined {

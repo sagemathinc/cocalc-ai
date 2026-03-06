@@ -24,9 +24,8 @@ import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { isCoCalcURL } from "@cocalc/frontend/lib/cocalc-urls";
 import {
-  resolveProjectNavigationRuntime,
+  handoffProjectNavigationFromLocalOwner,
   matchProjectNavigationCommand,
-  runProjectNavigationCommand,
 } from "@cocalc/frontend/project/page/keyboard-navigation";
 import { close, filename_extension, replace_all } from "@cocalc/util/misc";
 import {
@@ -768,37 +767,19 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             : undefined;
         const activeElement =
           document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        if (activeElement != null && this.element?.contains(activeElement)) {
-          activeElement.blur();
-        }
-        // Let xterm finish its own keydown bookkeeping before moving focus.
-        setTimeout(() => {
-          if (
-            navigationCommand === "focusNextFrame" ||
-            navigationCommand === "focusPreviousFrame"
-          ) {
-            const setActiveId = editorNavigationActions?.set_active_id;
-            if (typeof setActiveId === "function") {
-              setActiveId.call(editorNavigationActions, this.id, true);
-            }
-            const focusAdjacent =
-              navigationCommand === "focusNextFrame"
-                ? editorNavigationActions?.focus_next_frame
-                : editorNavigationActions?.focus_previous_frame;
-            if (typeof focusAdjacent === "function") {
-              if (focusAdjacent.call(editorNavigationActions)) {
-                return;
-              }
-            }
-          }
-          runProjectNavigationCommand(
-            navigationCommand,
-            resolveProjectNavigationRuntime(this.project_id, {
-              editorActions: editorNavigationActions,
-              projectActions: this.project_actions as any,
-            }),
-          );
-        }, 0);
+        handoffProjectNavigationFromLocalOwner(
+          navigationCommand,
+          this.project_id,
+          {
+            blurActiveElement:
+              activeElement != null && this.element?.contains(activeElement)
+                ? activeElement
+                : null,
+            currentFrameId: this.id,
+            editorActions: editorNavigationActions,
+            projectActions: this.project_actions as any,
+          },
+        );
         return false;
       }
 
