@@ -1839,22 +1839,33 @@ export function GitCommitDrawer({
       await onRequestAgentTurn(prompt);
       const now = Date.now();
       const turnId = `git-review-${now}`;
-      await mutateInlineComments((comments) => {
-        for (const comment of actionable) {
-          const existing = comments[comment.id];
-          if (!existing) continue;
-          comments[comment.id] = {
-            ...existing,
-            status: "submitted",
-            submitted_at: now,
-            submission_turn_id: turnId,
-            updated_at: Math.max(existing.updated_at ?? now, now),
-            local_revision: Math.max(1, existing.local_revision ?? 1),
-          };
+      const nextComments = {
+        ...(reviewRecord?.comments ?? {}),
+      } as Record<string, GitReviewCommentV2>;
+      for (const comment of actionable) {
+        const existing = nextComments[comment.id];
+        if (!existing) continue;
+        nextComments[comment.id] = {
+          ...existing,
+          status: "submitted",
+          submitted_at: now,
+          submission_turn_id: turnId,
+          updated_at: Math.max(existing.updated_at ?? now, now),
+          local_revision: Math.max(1, existing.local_revision ?? 1),
+        };
+      }
+      if (commit) {
+        const normalizedCommit = normalizeCommitSha(commit);
+        if (normalizedCommit) {
+          saveReviewDraft(normalizedCommit, {
+            reviewed: Boolean(reviewed),
+            note: `${reviewNote ?? ""}`,
+            comments: nextComments,
+          });
         }
-        return comments;
-      });
+      }
       await saveReview({
+        comments: nextComments,
         last_submitted_at: now,
         last_submission_turn_id: turnId,
       });
