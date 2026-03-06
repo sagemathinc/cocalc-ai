@@ -103,6 +103,36 @@ describe("migrateChatRows", () => {
     expect(chat?.thread_icon).toBeUndefined();
   });
 
+  it("strips legacy reply_to fields when requested", () => {
+    const rootIso = "2026-02-20T12:00:00.000Z";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootIso,
+        message_id: "root-1",
+        thread_id: "thread-1",
+        history: [{ author_id: "user-1", content: "root", date: rootIso }],
+      },
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2026-02-20T12:00:01.000Z",
+        message_id: "reply-1",
+        thread_id: "thread-1",
+        reply_to: rootIso,
+        history: [{ author_id: "user-1", content: "reply", date: rootIso }],
+      },
+    ];
+    const { rows: out } = migrateChatRows(rows, {
+      keepLegacyThreadFields: false,
+    });
+    const chats = out.filter((x) => x.event === "chat");
+    expect(chats[0].reply_to).toBeUndefined();
+    expect(chats[1].reply_to).toBeUndefined();
+    expect(chats[1].parent_message_id).toBe("root-1");
+  });
+
   it("preserves explicit legacy agent identity fields on thread-config", () => {
     const rootIso = "2026-02-20T12:00:00.000Z";
     const rows = [
@@ -121,5 +151,52 @@ describe("migrateChatRows", () => {
     expect(config?.agent_kind).toBe("llm");
     expect(config?.agent_model).toBe("gpt-4o");
     expect(config?.agent_mode).toBe("single_turn");
+  });
+
+  it("prefers the newest existing thread-config row over stale root fields", () => {
+    const rootIso = "2026-03-01T10:00:00.000Z";
+    const replyIso = "2026-03-01T10:00:01.000Z";
+    const threadId = "thread-1";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootIso,
+        message_id: "root-1",
+        thread_id: threadId,
+        history: [{ author_id: "user-1", content: "hello", date: rootIso }],
+        name: "Old title",
+        agent_kind: "none",
+      },
+      {
+        event: "chat",
+        sender_id: "gpt-5.3-codex",
+        date: replyIso,
+        message_id: "msg-2",
+        thread_id: threadId,
+        reply_to: rootIso,
+        history: [{ author_id: "gpt-5.3-codex", content: "hi", date: replyIso }],
+      },
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: rootIso,
+        thread_id: threadId,
+        name: "New title",
+        agent_kind: "acp",
+        agent_model: "gpt-5.3-codex",
+        agent_mode: "interactive",
+        acp_config: { model: "gpt-5.3-codex", sessionId: "sess-1" },
+        updated_at: "2026-03-01T11:00:00.000Z",
+        updated_by: "user-1",
+      },
+    ];
+    const { rows: out } = migrateChatRows(rows, { keepLegacyThreadFields: false });
+    const config = out.find((x) => x.event === "chat-thread-config");
+    expect(config?.name).toBe("New title");
+    expect(config?.agent_kind).toBe("acp");
+    expect(config?.agent_model).toBe("gpt-5.3-codex");
+    expect(config?.agent_mode).toBe("interactive");
+    expect(config?.acp_config?.sessionId).toBe("sess-1");
   });
 });

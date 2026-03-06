@@ -41,6 +41,11 @@ interface MigratedMessage {
   explicitRoot: boolean;
 }
 
+interface ExistingThreadRecord {
+  row: AnyRow;
+  sortIso: string;
+}
+
 function toIso(value: unknown): string | undefined {
   if (value == null) return undefined;
   const d = value instanceof Date ? value : new Date(value as any);
@@ -94,24 +99,70 @@ function dedupeByPrimaryKey(rows: AnyRow[]): AnyRow[] {
   return order.map((key) => keyToRow.get(key)!);
 }
 
+function newerThreadRecord(
+  current: ExistingThreadRecord | undefined,
+  candidate: ExistingThreadRecord,
+): ExistingThreadRecord {
+  if (!current) return candidate;
+  const currentMs = toMs(current.sortIso);
+  const candidateMs = toMs(candidate.sortIso);
+  if (candidateMs > currentMs) return candidate;
+  if (candidateMs < currentMs) return current;
+  return candidate;
+}
+
 function normalizeRows(
   rows: AnyRow[],
   report: Omit<MigrationReport, "input_rows" | "output_rows" | "integrity_after">,
 ): {
   messages: MigratedMessage[];
   passthroughRows: AnyRow[];
+  existingThreadConfigs: Map<string, ExistingThreadRecord>;
+  existingThreadStates: Map<string, ExistingThreadRecord>;
 } {
   const rootIsoToThreadId = new Map<string, string>();
   const usedMessageIds = new Set<string>();
   const msgCounterByDateSender = new Map<string, number>();
   const messages: MigratedMessage[] = [];
   const passthroughRows: AnyRow[] = [];
+  const existingThreadConfigs = new Map<string, ExistingThreadRecord>();
+  const existingThreadStates = new Map<string, ExistingThreadRecord>();
 
   for (const row of rows) {
     if (!row || typeof row !== "object") continue;
     const event = row.event;
-    if (event === THREAD_EVENT || event === THREAD_CONFIG_EVENT || event === THREAD_STATE_EVENT) {
+    if (event === THREAD_EVENT) {
       // Rebuild these records from canonical migrated messages.
+      continue;
+    }
+    if (event === THREAD_CONFIG_EVENT || event === THREAD_STATE_EVENT) {
+      const threadId =
+        typeof row.thread_id === "string" && row.thread_id.length > 0
+          ? row.thread_id
+          : undefined;
+      if (!threadId) continue;
+      const sortIso = toIso((row as any).updated_at) ?? toIso((row as any).date);
+      if (!sortIso) continue;
+      const normalized = {
+        ...row,
+        event,
+        thread_id: threadId,
+        date: toIso((row as any).date) ?? sortIso,
+        updated_at: event === THREAD_CONFIG_EVENT || event === THREAD_STATE_EVENT ? sortIso : undefined,
+        schema_version: CHAT_SCHEMA_V2,
+      };
+      const record = { row: normalized, sortIso };
+      if (event === THREAD_CONFIG_EVENT) {
+        existingThreadConfigs.set(
+          threadId,
+          newerThreadRecord(existingThreadConfigs.get(threadId), record),
+        );
+      } else {
+        existingThreadStates.set(
+          threadId,
+          newerThreadRecord(existingThreadStates.get(threadId), record),
+        );
+      }
       continue;
     }
     if (event !== "chat") {
@@ -189,7 +240,12 @@ function normalizeRows(
     });
   }
 
-  return { messages, passthroughRows };
+  return {
+    messages,
+    passthroughRows,
+    existingThreadConfigs,
+    existingThreadStates,
+  };
 }
 
 export function migrateChatRows(
@@ -208,7 +264,8 @@ export function migrateChatRows(
     synthetic_roots_created: 0,
     invalid_chat_rows_skipped: 0,
   };
-  const { messages, passthroughRows } = normalizeRows(rows, reportBase);
+  const { messages, passthroughRows, existingThreadConfigs, existingThreadStates } =
+    normalizeRows(rows, reportBase);
   reportBase.chat_rows_migrated = messages.length;
 
   const keepLegacyThreadFields = options.keepLegacyThreadFields !== false;
@@ -246,6 +303,10 @@ export function migrateChatRows(
             ? msg.row.reply_to_message_id.trim()
             : undefined;
       if (msg.messageId === root.messageId) {
+        if (!keepLegacyThreadFields && msg.row.reply_to != null) {
+          delete msg.row.reply_to;
+          reportBase.fixed_parent_message_ids += 1;
+        }
         if (msg.row.parent_message_id != null) {
           delete msg.row.parent_message_id;
           reportBase.fixed_parent_message_ids += 1;
@@ -266,6 +327,10 @@ export function migrateChatRows(
         delete msg.row.reply_to_message_id;
         reportBase.fixed_parent_message_ids += 1;
       }
+      if (!keepLegacyThreadFields && msg.row.reply_to != null) {
+        delete msg.row.reply_to;
+        reportBase.fixed_parent_message_ids += 1;
+      }
     }
 
     threadRows.push({
@@ -281,35 +346,71 @@ export function migrateChatRows(
     reportBase.thread_records_created += 1;
 
     const source = root.row;
-    const pin = normalizePin(source.pin);
+    const existingCfg = existingThreadConfigs.get(threadId)?.row;
+    const pin = normalizePin(existingCfg?.pin ?? source.pin);
     const threadCfg: AnyRow = {
+      ...(existingCfg ? { ...existingCfg } : {}),
       event: THREAD_CONFIG_EVENT,
       sender_id: THREAD_CONFIG_SENDER,
-      date: root.dateIso,
+      date: toIso(existingCfg?.date) ?? root.dateIso,
       thread_id: threadId,
-      updated_at: options.nowIso ?? root.dateIso,
-      updated_by: root.senderId,
+      updated_at:
+        toIso(existingCfg?.updated_at) ?? options.nowIso ?? root.dateIso,
+      updated_by:
+        (typeof existingCfg?.updated_by === "string" && existingCfg.updated_by.trim()) ||
+        root.senderId,
       schema_version: CHAT_SCHEMA_V2,
     };
-    if (typeof source.name === "string" && source.name.trim()) threadCfg.name = source.name.trim();
-    if (typeof source.thread_color === "string" && source.thread_color.trim()) {
+    if (
+      threadCfg.name == null &&
+      typeof source.name === "string" &&
+      source.name.trim()
+    )
+      threadCfg.name = source.name.trim();
+    if (
+      threadCfg.thread_color == null &&
+      typeof source.thread_color === "string" &&
+      source.thread_color.trim()
+    ) {
       threadCfg.thread_color = source.thread_color.trim();
     }
-    if (typeof source.thread_icon === "string" && source.thread_icon.trim()) {
+    if (
+      threadCfg.thread_icon == null &&
+      typeof source.thread_icon === "string" &&
+      source.thread_icon.trim()
+    ) {
       threadCfg.thread_icon = source.thread_icon.trim();
     }
-    if (typeof source.thread_image === "string" && source.thread_image.trim()) {
+    if (
+      threadCfg.thread_image == null &&
+      typeof source.thread_image === "string" &&
+      source.thread_image.trim()
+    ) {
       threadCfg.thread_image = source.thread_image.trim();
     }
-    if (pin != null) threadCfg.pin = pin;
-    if (source.acp_config != null) threadCfg.acp_config = source.acp_config;
-    if (typeof source.agent_kind === "string" && source.agent_kind.trim()) {
+    if (threadCfg.pin == null && pin != null) threadCfg.pin = pin;
+    if (threadCfg.acp_config == null && source.acp_config != null) {
+      threadCfg.acp_config = source.acp_config;
+    }
+    if (
+      threadCfg.agent_kind == null &&
+      typeof source.agent_kind === "string" &&
+      source.agent_kind.trim()
+    ) {
       threadCfg.agent_kind = source.agent_kind.trim();
     }
-    if (typeof source.agent_model === "string" && source.agent_model.trim()) {
+    if (
+      threadCfg.agent_model == null &&
+      typeof source.agent_model === "string" &&
+      source.agent_model.trim()
+    ) {
       threadCfg.agent_model = source.agent_model.trim();
     }
-    if (typeof source.agent_mode === "string" && source.agent_mode.trim()) {
+    if (
+      threadCfg.agent_mode == null &&
+      typeof source.agent_mode === "string" &&
+      source.agent_mode.trim()
+    ) {
       threadCfg.agent_mode = source.agent_mode.trim();
     }
     if (
@@ -326,19 +427,30 @@ export function migrateChatRows(
 
     const latest = threadMessages[threadMessages.length - 1];
     const hasGenerating = threadMessages.some((m) => m.row.generating === true);
-    const state = hasGenerating
+    const derivedState = hasGenerating
       ? "running"
       : latest.row?.acp_interrupted
         ? "interrupted"
         : "complete";
+    const existingState = existingThreadStates.get(threadId)?.row;
     threadStateRows.push({
+      ...(existingState ? { ...existingState } : {}),
       event: THREAD_STATE_EVENT,
       sender_id: THREAD_STATE_SENDER,
-      date: root.dateIso,
+      date: toIso(existingState?.date) ?? root.dateIso,
       thread_id: threadId,
-      state,
-      active_message_id: hasGenerating ? latest.messageId : latest.messageId,
-      updated_at: latest.dateIso,
+      state:
+        hasGenerating || latest.row?.acp_interrupted
+          ? derivedState
+          : existingState?.state ?? derivedState,
+      active_message_id:
+        hasGenerating || latest.row?.acp_interrupted
+          ? latest.messageId
+          : existingState?.active_message_id ?? latest.messageId,
+      updated_at:
+        hasGenerating || latest.row?.acp_interrupted
+          ? latest.dateIso
+          : toIso(existingState?.updated_at) ?? latest.dateIso,
       schema_version: CHAT_SCHEMA_V2,
     });
     reportBase.thread_state_records_created += 1;
