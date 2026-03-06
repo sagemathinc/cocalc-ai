@@ -33,7 +33,7 @@ This should replace ad hoc per-app special cases over time.
 
 ### Partial
 
-1. Static app mode backend exists and dedicated launchpad static-heavy smoke scenario (`apps-static`) is implemented; broader matrix (lite parity + larger cache/static variants) is still pending.
+1. Static app mode backend exists and the dedicated launchpad static-heavy smoke scenario (`apps-static`) now passes on live GCP; broader matrix (lite parity + larger cache/static variants) is still pending.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
 3. The Apps page is coherent enough for real use now, but still needs visual/product polish, broader template coverage, and better advanced workflow presentation.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
@@ -731,7 +731,7 @@ Existing components to reuse where possible:
 7. `[partial]` Add host-aware cost guardrails (especially metered-egress behavior). (NOTE: egress is the primary special-cost driver here.)
 8. `[partial]` Add static file serving mode with cache presets.
 9. `[done]` Add Codex app audit prompt/action path for public expose (backend, CLI, and Apps-page action are implemented).
-10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
+10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; live GCP `apps-static` smoke passes; lite parity + broader static matrix pending).
 11. `[done]` Rename the left-nav button from `Servers` to `Apps` and use `Managed Applications` as the main page heading.
 12. `[done]` Make Apps page the single managed-app surface and remove duplicated app-launch UI from `+New` and flyout.
 13. `[done]` Remove legacy top-row server launcher UI and map JupyterLab/code-server/etc. to managed-app presets.
