@@ -298,6 +298,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     }));
   }, [sessions]);
 
+  const clearActiveEditorKeyHandler = useCallback(() => {
+    // The docked agent chat uses the same DIV-backed composer as SideChat.
+    // In Jupyter command mode, page-level notebook shortcuts stay active
+    // unless we explicitly clear the active page key handler when focus
+    // moves into the dock.
+    redux.getActions("page")?.erase_active_key_handler?.();
+  }, []);
+
   if (!session || !is_active) return null;
 
   const width = IS_MOBILE ? Math.max(MIN_DOCK_WIDTH, viewport.width - 24) : dockSize.width;
@@ -338,6 +346,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
             flexDirection: "column",
             pointerEvents: "auto",
           }}
+          onFocus={clearActiveEditorKeyHandler}
         >
           <div
             className="cc-agent-dock-handle"
