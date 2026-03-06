@@ -773,7 +773,9 @@ export function NavigatorShell({
       "data-newThreadTitleDefault": NAVIGATOR_DEFAULT_THREAD_TITLE,
       "data-newThreadIconDefault": NAVIGATOR_DEFAULT_THREAD_ICON,
       "data-newThreadColorDefault": NAVIGATOR_DEFAULT_THREAD_COLOR,
-      "data-newThreadWorkingDirectoryDefault": homeDirectory,
+      // Navigator-only: new Codex threads should start in the workspace root,
+      // not relative to the navigator chat file path under .local/share/cocalc.
+      "data-navigatorNewThreadWorkingDirectoryDefault": homeDirectory,
     };
     if (selectedThreadKey !== null) {
       data["data-selectedThreadKey"] = selectedThreadKey;
