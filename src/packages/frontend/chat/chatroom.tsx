@@ -151,6 +151,7 @@ export interface ChatPanelProps {
   desc?: NodeDesc;
   variant?: "default" | "compact";
   hideSidebar?: boolean;
+  onFocus?: () => void;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -183,6 +184,7 @@ export function ChatPanel({
   desc,
   variant = "default",
   hideSidebar = false,
+  onFocus,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const activity: undefined | immutable.Map<string, number> =
@@ -1110,6 +1112,7 @@ export function ChatPanel({
     <div
       onMouseMove={mark_as_read}
       onClick={mark_as_read}
+      onFocusCapture={onFocus}
       className="smc-vfill"
       style={{
         display: "flex",
@@ -1197,6 +1200,7 @@ function ChatRoomInner({
   path,
   font_size,
   desc,
+  onFocus,
 }: EditorComponentProps) {
   const { messages, threadIndex, version } = useChatDoc();
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -1213,6 +1217,7 @@ function ChatRoomInner({
       fontSize={font_size}
       desc={desc}
       variant="default"
+      onFocus={onFocus}
     />
   );
 }
