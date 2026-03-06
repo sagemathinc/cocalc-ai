@@ -1930,6 +1930,7 @@ const devCommandDeps = {
   withContext,
   resolveHost,
   resolveWorkspaceFromArgOrContext,
+  resolveWorkspaceProjectApi,
   waitForLro,
 } satisfies DevCommandDeps;
 

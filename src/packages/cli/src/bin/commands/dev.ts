@@ -8,6 +8,7 @@ export type DevCommandDeps = {
   withContext: any;
   resolveHost: any;
   resolveWorkspaceFromArgOrContext: any;
+  resolveWorkspaceProjectApi: any;
   waitForLro: any;
 };
 
@@ -174,6 +175,43 @@ function localRuntimeSummary(): Record<string, unknown> {
   };
 }
 
+function normalizeHost(raw: string): string {
+  return raw.trim().toLowerCase().split(":")[0] ?? "";
+}
+
+function normalizePathPrefix(value: string): string {
+  const withLeading = value.startsWith("/") ? value : `/${value}`;
+  return withLeading.replace(/\/+$/, "") || "/";
+}
+
+function tryParseWorkspaceProxyPath(pathname: string): {
+  project_id: string;
+  mode: "proxy" | "port";
+  port: number;
+} | null {
+  const match = pathname.match(
+    /^\/([0-9a-f-]{36})\/(proxy|port)\/([0-9]{1,5})(?:\/|$)/i,
+  );
+  if (!match?.[1] || !match[2] || !match[3]) return null;
+  return {
+    project_id: match[1],
+    mode: match[2] as "proxy" | "port",
+    port: Number(match[3]),
+  };
+}
+
+function tryParseWorkspaceAppPath(pathname: string): {
+  project_id: string;
+  app_id: string;
+} | null {
+  const match = pathname.match(/^\/([0-9a-f-]{36})\/apps\/([^/]+)(?:\/|$)/i);
+  if (!match?.[1] || !match[2]) return null;
+  return {
+    project_id: match[1],
+    app_id: decodeURIComponent(match[2]),
+  };
+}
+
 function resolveUpgradeTarget(opts: {
   host?: string;
   workspace?: string;
@@ -219,6 +257,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
     withContext,
     resolveHost,
     resolveWorkspaceFromArgOrContext,
+    resolveWorkspaceProjectApi,
     waitForLro,
   } = deps;
 
@@ -598,6 +637,189 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
         });
       },
     );
+
+  dev
+    .command("trace-url <url>")
+    .description("trace how a public/private app URL is routed")
+    .action(async (rawUrl: string, command: Command) => {
+      await withContext(command, "dev trace-url", async (ctx) => {
+        const parsed = new URL(rawUrl);
+        const hostname = normalizeHost(parsed.host);
+        const pathname = parsed.pathname || "/";
+        const result: Record<string, unknown> = {
+          input_url: rawUrl,
+          protocol: parsed.protocol.replace(/:$/, ""),
+          hostname,
+          pathname,
+          search: parsed.search || "",
+        };
+
+        let publicSiteHostname: string | null = null;
+        try {
+          publicSiteHostname = normalizeHost(
+            new URL((await ctx.hub.system.getPublicSiteUrl({})).url).host,
+          );
+        } catch {
+          publicSiteHostname = null;
+        }
+        result.public_site_hostname = publicSiteHostname;
+
+        const publicTrace = await ctx.hub.system.tracePublicAppHostname({
+          hostname,
+        });
+        if ((publicTrace as any)?.matched) {
+          const projectId = `${(publicTrace as any).project_id ?? ""}`.trim();
+          const appId = `${(publicTrace as any).app_id ?? ""}`.trim();
+          const ws = await resolveWorkspaceFromArgOrContext(ctx, projectId);
+          const { api } = await resolveWorkspaceProjectApi(ctx, projectId);
+          const spec = await api.apps.getAppSpec(appId);
+          const status = await api.apps.statusApp(appId);
+          const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
+          const connection =
+            host == null
+              ? null
+              : await ctx.hub.hosts.resolveHostConnection({ host_id: host.id });
+          const appBasePath = normalizePathPrefix(`${(publicTrace as any).base_path ?? "/"}`);
+          const canonicalProjectPath = normalizePathPrefix(`${projectId}${appBasePath}`);
+          return {
+            ...result,
+            kind: "public-app-subdomain",
+            public_app: publicTrace,
+            workspace: {
+              workspace_id: ws.project_id,
+              title: ws.title,
+              host_id: ws.host_id,
+            },
+            host:
+              host == null
+                ? null
+                : {
+                    host_id: host.id,
+                    name: host.name,
+                    status: host.status ?? null,
+                    version: host.version ?? null,
+                    project_bundle_version: host.project_bundle_version ?? null,
+                    tools_version: host.tools_version ?? null,
+                  },
+            host_connection:
+              connection == null
+                ? null
+                : {
+                    connect_url: connection.connect_url ?? null,
+                    local_proxy: !!connection.local_proxy,
+                    ssh_server: connection.ssh_server ?? null,
+                  },
+            app: {
+              app_id: spec.id,
+              kind: spec.spec.kind,
+              title: spec.spec.title,
+              base_path: spec.spec.proxy?.base_path ?? null,
+              open_mode: spec.spec.proxy?.open_mode ?? null,
+              health: spec.spec.proxy?.health ?? null,
+              status,
+            },
+            chain: [
+              {
+                layer: "request",
+                hostname,
+                pathname,
+              },
+              {
+                layer: "public-dns",
+                dns_target: (publicTrace as any).dns_target ?? null,
+              },
+              {
+                layer: "hub-rewrite",
+                canonical_project_path: canonicalProjectPath,
+              },
+              {
+                layer: "project-host",
+                host_id: ws.host_id,
+                local_proxy: connection ? !!connection.local_proxy : null,
+                connect_url: connection?.connect_url ?? null,
+              },
+              {
+                layer: "workspace-app",
+                workspace_id: ws.project_id,
+                app_id: spec.id,
+                port: status.port ?? null,
+                ready: status.ready ?? null,
+              },
+            ],
+          };
+        }
+
+        const appPath = tryParseWorkspaceAppPath(pathname);
+        if (appPath) {
+          const ws = await resolveWorkspaceFromArgOrContext(ctx, appPath.project_id);
+          const { api } = await resolveWorkspaceProjectApi(ctx, appPath.project_id);
+          const spec = await api.apps.getAppSpec(appPath.app_id);
+          const status = await api.apps.statusApp(appPath.app_id);
+          const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
+          return {
+            ...result,
+            kind: "workspace-app-path",
+            workspace: {
+              workspace_id: ws.project_id,
+              title: ws.title,
+              host_id: ws.host_id,
+            },
+            host:
+              host == null
+                ? null
+                : {
+                    host_id: host.id,
+                    name: host.name,
+                    status: host.status ?? null,
+                  },
+            app: {
+              app_id: spec.id,
+              kind: spec.spec.kind,
+              title: spec.spec.title,
+              base_path: spec.spec.proxy?.base_path ?? null,
+              open_mode: spec.spec.proxy?.open_mode ?? null,
+              status,
+            },
+          };
+        }
+
+        const proxyPath = tryParseWorkspaceProxyPath(pathname);
+        if (proxyPath) {
+          const ws = await resolveWorkspaceFromArgOrContext(ctx, proxyPath.project_id);
+          const { api } = await resolveWorkspaceProjectApi(ctx, proxyPath.project_id);
+          const statuses = await api.apps.listAppStatuses();
+          const candidates = statuses.filter((item) => item.port === proxyPath.port);
+          const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
+          return {
+            ...result,
+            kind: "workspace-port-path",
+            workspace: {
+              workspace_id: ws.project_id,
+              title: ws.title,
+              host_id: ws.host_id,
+            },
+            host:
+              host == null
+                ? null
+                : {
+                    host_id: host.id,
+                    name: host.name,
+                    status: host.status ?? null,
+                  },
+            route: proxyPath,
+            matching_apps: candidates,
+          };
+        }
+
+        return {
+          ...result,
+          kind:
+            publicSiteHostname && hostname === publicSiteHostname
+              ? "site-host-unclassified"
+              : "unclassified",
+        };
+      });
+    });
 
   return dev;
 }

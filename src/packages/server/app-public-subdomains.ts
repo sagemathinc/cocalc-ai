@@ -49,7 +49,7 @@ export interface ReserveProjectAppPublicSubdomainResult {
   warnings: string[];
 }
 
-async function resolvePublicAppDnsTarget(site_hostname: string): Promise<string> {
+export async function resolvePublicAppDnsTarget(site_hostname: string): Promise<string> {
   const existingTarget = await getCnameTargetForHostname(site_hostname);
   if (existingTarget?.endsWith(".cfargotunnel.com")) {
     return existingTarget;
