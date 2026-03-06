@@ -16,6 +16,57 @@ The main theme is reducing ambiguity:
 2. Show what code and bundle version is actually running.
 3. Trace a public app URL end-to-end.
 
+## Build Identity Plan
+
+We need three different identities, not one overloaded "version":
+
+1. Release version
+   - user-facing `package.json` version
+   - useful for published releases and compatibility policy
+2. Source identity
+   - git commit
+   - dirty flag
+   - ideally a dirty diff hash in dev mode
+3. Build/runtime identity
+   - generated per artifact/bundle at build time
+   - what should answer "what is actually running?"
+
+### Immediate rollout plan
+
+1. Add a shared `BuildIdentity` type and generator utility.
+2. Generate build identity metadata for:
+   - project-host bundle
+   - project bundle
+   - tools
+   - static/frontend
+3. Surface active build ids in runtime status:
+   - host rows
+   - hub runtime info
+   - workspace/runtime info
+   - frontend/browser session metadata
+4. Switch dev CLI reporting to prefer build ids over package versions wherever possible.
+
+### Proposed build id format
+
+Human-readable string form:
+
+```text
+20260306T220159Z-907b99d54138-dirty-a1b2c3d4
+```
+
+Where:
+
+- timestamp gives rough monotonic ordering
+- short git commit identifies the source base
+- `dirty` distinguishes uncommitted builds
+- optional dirty diff hash distinguishes two different dirty trees on the same commit
+
+### Definition of done for the first useful milestone
+
+- `cocalc dev sync project-host` and `cocalc dev sync project` print the deployed build id.
+- `cocalc dev runtime versions` reports local source identity plus local/live artifact build ids.
+- frontend/browser state exposes the frontend build id being served, so stale static builds are obvious.
+
 ## 1. Targeted Sync and Deploy
 
 ### `cocalc dev sync project-host`
