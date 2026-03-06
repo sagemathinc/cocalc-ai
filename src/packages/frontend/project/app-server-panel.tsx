@@ -147,6 +147,13 @@ function normalizePublicSuffix(raw?: string): string {
   return value || "app";
 }
 
+function currentPublicDnsDomain(): string | undefined {
+  if (typeof window === "undefined") return;
+  const host = `${window.location.hostname ?? ""}`.trim().toLowerCase();
+  if (!host || host === "localhost") return;
+  return host;
+}
+
 function buildPublicHostnameFromExposure(
   status: ManagedAppStatus,
   policy?: PublicAppPolicy,
@@ -154,8 +161,10 @@ function buildPublicHostnameFromExposure(
   const exposure = status.exposure;
   if (exposure?.public_hostname) return exposure.public_hostname;
   const label = `${exposure?.random_subdomain ?? ""}`.trim().toLowerCase();
-  const dnsDomain = `${policy?.dns_domain ?? ""}`.trim().toLowerCase();
-  if (!label || !dnsDomain || policy?.enabled === false) return;
+  const dnsDomain =
+    `${policy?.dns_domain ?? ""}`.trim().toLowerCase() ||
+    currentPublicDnsDomain();
+  if (!label || !dnsDomain) return;
   const suffix = normalizePublicSuffix(policy?.subdomain_suffix);
   return suffix ? `${label}-${suffix}.${dnsDomain}` : `${label}.${dnsDomain}`;
 }
