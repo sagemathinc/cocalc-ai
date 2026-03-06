@@ -39,7 +39,19 @@ export function registerExportCommand(
   program: Command,
   deps: ExportCommandDeps,
 ): Command {
-  const exportCommand = program.command("export").description("export documents");
+  const exportCommand = program
+    .command("export")
+    .description("export structured CoCalc documents as portable archive bundles")
+    .addHelpText(
+      "after",
+      `
+Export is intended to be both user-facing and agent-facing.
+
+- Use it to produce self-contained archives with human-readable transcripts and machine-readable metadata.
+- Prefer it when an agent needs to solve a problem outside the live CoCalc UI, e.g. analysis, conversion, reporting, or handing the document to other tools.
+- Structured exports are better long-term inputs for automation than screen scraping or ad hoc markdown dumps.
+`,
+    );
 
   exportCommand
     .command("chat <chatPath>")
@@ -63,6 +75,27 @@ export function registerExportCommand(
     )
     .option("--out <path>", "output zip path")
     .option("--zip-level <n>", "zip compression level 0-9", "6")
+    .addHelpText(
+      "after",
+      `
+Chat export bundles include:
+
+- human-readable thread transcripts
+- machine-readable thread/message metadata
+- archived/offloaded chat messages for the selected threads
+- optional copied blobs/assets when --include-blobs is used
+
+Codex activity/thinking logs are intentionally excluded.
+
+This command is designed for automation. Agents should prefer it when they need
+to inspect, transform, summarize, migrate, or hand chat data to external tools.
+
+Examples:
+
+  cocalc export chat ./notes.chat --scope current-thread --thread-id <thread-id>
+  cocalc export chat ./notes.chat --scope all-threads --include-blobs --out notes-export.zip
+`,
+    )
     .action(async (chatPath: string, opts: ChatExportCliOptions, command: Command) => {
       const globals = deps.globalsFrom(command);
       const commandName = "export chat";

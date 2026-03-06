@@ -20,6 +20,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { lite } from "@cocalc/frontend/lite";
 import type { IconName } from "@cocalc/frontend/components/icon";
@@ -370,9 +371,38 @@ export function ChatRoomModals({
     <>
       <Modal
         title={
-          exportRequest?.label?.trim()
-            ? `Export "${exportRequest.label.trim()}"`
-            : "Export..."
+          <span>
+            {exportRequest?.label?.trim()
+              ? `Export "${exportRequest.label.trim()}"`
+              : "Export..."}{" "}
+            <HelpIcon
+              title="Chat export"
+              maxWidth="34rem"
+              style={{ marginLeft: 6 }}
+            >
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                <div>
+                  Export creates a self-contained archive bundle for the
+                  selected chat scope. It includes archived/offloaded chat
+                  messages and a human-readable transcript.
+                </div>
+                <div>
+                  The archive also includes machine-readable JSON so agents can
+                  inspect, transform, or re-use chat data outside the live chat
+                  UI.
+                </div>
+                <div>
+                  Use <code>Include blobs/assets</code> when you want embedded
+                  images or uploaded files copied into the export.
+                </div>
+                <div>
+                  The same export path is available from the CLI via{" "}
+                  <code>cocalc export chat ...</code>, which is useful for
+                  automation, testing, and agent workflows.
+                </div>
+              </div>
+            </HelpIcon>
+          </span>
         }
         open={exportRequest != null}
         onCancel={closeExportModal}
