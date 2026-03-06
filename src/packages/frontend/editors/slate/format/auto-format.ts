@@ -650,7 +650,16 @@ export const withAutoFormat = (editor) => {
     editor.insertData = (data) => {
       if ((editor as any).__forcePlainTextPaste) {
         (editor as any).__forcePlainTextPaste = false;
-        insertData(data);
+        const plain = data?.getData?.("text/plain");
+        if (typeof plain === "string" && plain.length > 0) {
+          insertData({
+            getData: (type: string) => (type === "text/plain" ? plain : ""),
+            types: ["text/plain"],
+            items: [],
+          } as any);
+        } else {
+          insertData(data);
+        }
         markdownAutoformat(editor as SlateEditor);
         return;
       }

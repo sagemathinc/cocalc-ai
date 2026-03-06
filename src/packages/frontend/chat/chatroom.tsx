@@ -54,6 +54,7 @@ import {
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
+import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -228,6 +229,7 @@ export function ChatPanel({
     useState<ChatRoomThreadActionHandlers | null>(null);
   const submitMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
   const scrollToBottomRef = useRef<any>(null);
+  const messageLogFocusRef = useRef<(() => void) | null>(null);
   const lastScrollRequestRef = useRef<{
     thread: string;
     reason: "unread" | "allread";
@@ -269,6 +271,24 @@ export function ChatPanel({
     preferLatestThread: preferLatestThreadFromDesc,
   });
 
+  useEffect(() => {
+    if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
+    const persistedSelectedThreadKey =
+      selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
+        ? selectedThreadKey
+        : null;
+    if ((storedThreadFromDesc ?? null) === persistedSelectedThreadKey) return;
+    actions.frameTreeActions.set_frame_data({
+      id: actions.frameId,
+      selectedThreadKey: persistedSelectedThreadKey,
+    });
+  }, [
+    selectedThreadKey,
+    storedThreadFromDesc,
+    actions?.frameTreeActions,
+    actions?.frameId,
+  ]);
+
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
@@ -276,12 +296,21 @@ export function ChatPanel({
     const title = asTrimmedString(getDescValue(desc, "data-newThreadTitleDefault"));
     const icon = asTrimmedString(getDescValue(desc, "data-newThreadIconDefault"));
     const color = asTrimmedString(getDescValue(desc, "data-newThreadColorDefault"));
+    const navigatorWorkingDirectory = asTrimmedString(
+      getDescValue(desc, "data-navigatorNewThreadWorkingDirectoryDefault"),
+    );
     return {
       ...DEFAULT_NEW_THREAD_SETUP,
       title: title ?? DEFAULT_NEW_THREAD_SETUP.title,
       icon: icon ?? DEFAULT_NEW_THREAD_SETUP.icon,
       color: color ?? DEFAULT_NEW_THREAD_SETUP.color,
       agentMode: "codex",
+      codexConfig: {
+        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        workingDirectory:
+          navigatorWorkingDirectory ??
+          DEFAULT_NEW_THREAD_SETUP.codexConfig.workingDirectory,
+      },
     };
   }, [desc]);
   const [newThreadSetup, setNewThreadSetup] =
@@ -300,6 +329,7 @@ export function ChatPanel({
     undefined,
   );
   const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
+  const anyOverlayOpen = useAnyChatOverlayOpen();
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -776,6 +806,18 @@ export function ChatPanel({
     const reply_to = target.reply_to;
     const reply_thread_id = target.thread_id;
     const parent_message_id = target.parent_message_id;
+    const existingThreadMetadata =
+      reply_thread_id != null
+        ? actions.getThreadMetadata?.(reply_thread_id, {
+            threadId: reply_thread_id,
+          })
+        : undefined;
+    const shouldFocusLogAfterSend =
+      existingThreadMetadata?.agent_kind === "acp" ||
+      existingThreadMetadata?.agent_kind === "llm" ||
+      (!reply_to &&
+        !reply_thread_id &&
+        newThreadSetup.agentMode !== "human");
     if (!reply_to && !reply_thread_id) {
       // Creating a new thread should never auto-fallback to Combined while
       // thread metadata is hydrating.
@@ -883,8 +925,15 @@ export function ChatPanel({
       }, 100);
     }
     setTimeout(() => {
+      if (anyOverlayOpen) return;
       scrollToBottomRef.current?.(true);
     }, 100);
+    if (shouldFocusLogAfterSend) {
+      setComposerFocused(false);
+      setTimeout(() => {
+        messageLogFocusRef.current?.();
+      }, 0);
+    }
   }
   function on_send(value?: string): void {
     sendMessage(undefined, value);
@@ -1063,6 +1112,7 @@ export function ChatPanel({
         hideChatTypeSelector={hideChatTypeSelector}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        focusLogRef={messageLogFocusRef}
       />
       <ChatRoomComposer
         actions={actions}

@@ -1224,12 +1224,6 @@ export default function Message({
   function renderMessageBody({ message_class }) {
     const value = renderedMessageMarkdown;
     const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
-    const showInlineActivityShortcut = showCodexActivity && effectiveGenerating;
-    const openActivityFromMessage = (e: any) => {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.("a[href]")) return;
-      setOpenActivityDrawerToken((n) => (n ?? 0) + 1);
-    };
     const openCommitFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -1279,13 +1273,6 @@ export default function Message({
         />
         <div
           onClickCapture={openCommitFromMessage}
-          onClick={showInlineActivityShortcut ? openActivityFromMessage : undefined}
-          style={showInlineActivityShortcut ? { cursor: "pointer" } : undefined}
-          title={
-            showInlineActivityShortcut
-              ? "Click to view full Codex activity log"
-              : undefined
-          }
         >
           <StaticMarkdown
             style={MARKDOWN_STYLE}

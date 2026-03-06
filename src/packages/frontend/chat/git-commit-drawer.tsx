@@ -19,6 +19,7 @@ import {
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import type { ComponentProps } from "react";
 import {
   useEffect,
   useMemo,
@@ -68,6 +69,8 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
 }));
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
+const EDITOR_HISTORY_GROUP_MS = 250;
+const MAX_EDITOR_HISTORY_ENTRIES = 200;
 
 type GitShowFile = {
   path: string;
@@ -594,6 +597,118 @@ function parseDateSafe(value?: string): Date | undefined {
   return Number.isFinite(d.valueOf()) ? d : undefined;
 }
 
+function splitCommitMessage(message?: string): {
+  subject?: string;
+  body?: string;
+} {
+  const raw = `${message ?? ""}`.replace(/\r\n/g, "\n");
+  if (!raw.trim()) return {};
+  const lines = raw.split("\n");
+  const subject = `${lines[0] ?? ""}`.trim();
+  const body = lines.slice(1).join("\n").replace(/^\n+/, "");
+  return {
+    subject: subject || undefined,
+    body: body.trim() ? body : undefined,
+  };
+}
+
+type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
+  historyId: string;
+};
+
+type EditorHistoryEntry = {
+  value: string;
+  at: number;
+};
+
+function MarkdownHistoryInput({
+  historyId,
+  value,
+  onChange,
+  ...props
+}: MarkdownHistoryInputProps) {
+  const historyRef = useRef<EditorHistoryEntry[]>([
+    { value: `${value ?? ""}`, at: Date.now() },
+  ]);
+  const historyIndexRef = useRef<number>(0);
+  const applyingHistoryRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    historyRef.current = [{ value: `${value ?? ""}`, at: Date.now() }];
+    historyIndexRef.current = 0;
+    applyingHistoryRef.current = false;
+  }, [historyId]);
+
+  useEffect(() => {
+    if (applyingHistoryRef.current) return;
+    const current = historyRef.current[historyIndexRef.current]?.value ?? "";
+    const next = `${value ?? ""}`;
+    if (next === current) return;
+    historyRef.current = [{ value: next, at: Date.now() }];
+    historyIndexRef.current = 0;
+  }, [value]);
+
+  const emitChange = (next: string) => {
+    onChange?.(next);
+  };
+
+  const applyHistoryValue = (next: string) => {
+    applyingHistoryRef.current = true;
+    emitChange(next);
+    applyingHistoryRef.current = false;
+  };
+
+  return (
+    <MarkdownInput
+      {...props}
+      value={value}
+      onChange={(next) => {
+        const normalized = `${next ?? ""}`;
+        emitChange(normalized);
+        if (applyingHistoryRef.current) return;
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        const current = history[idx]?.value ?? "";
+        if (normalized === current) {
+          history[idx] = {
+            ...(history[idx] ?? { value: normalized, at: Date.now() }),
+            at: Date.now(),
+          };
+          return;
+        }
+        const now = Date.now();
+        const trimmed = history.slice(0, idx + 1);
+        const last = trimmed[trimmed.length - 1];
+        if (last && now - last.at <= EDITOR_HISTORY_GROUP_MS) {
+          trimmed[trimmed.length - 1] = { value: normalized, at: now };
+        } else {
+          trimmed.push({ value: normalized, at: now });
+        }
+        if (trimmed.length > MAX_EDITOR_HISTORY_ENTRIES) {
+          trimmed.splice(0, trimmed.length - MAX_EDITOR_HISTORY_ENTRIES);
+        }
+        historyRef.current = trimmed;
+        historyIndexRef.current = trimmed.length - 1;
+      }}
+      onUndo={() => {
+        const idx = historyIndexRef.current;
+        if (idx <= 0) return;
+        historyIndexRef.current = idx - 1;
+        const next = historyRef.current[historyIndexRef.current]?.value ?? "";
+        applyHistoryValue(next);
+      }}
+      onRedo={() => {
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        if (idx >= history.length - 1) return;
+        historyIndexRef.current = idx + 1;
+        const next = history[historyIndexRef.current]?.value ?? "";
+        applyHistoryValue(next);
+      }}
+    />
+  );
+}
+
 function DiffBlock({
   filePath,
   lines,
@@ -879,7 +994,8 @@ function DiffBlock({
                         </Typography.Text>
                       </div>
                       {isEditing ? (
-                        <MarkdownInput
+                        <MarkdownHistoryInput
+                          historyId={`git-inline-edit:${filePath}:${comment.id}`}
                           cacheId={`git-inline-edit:${filePath}:${comment.id}`}
                           value={editingText}
                           onChange={setEditingText}
@@ -996,7 +1112,8 @@ function DiffBlock({
                 <Typography.Text strong style={{ fontSize: 13 }}>
                   Add inline review comment
                 </Typography.Text>
-                <MarkdownInput
+                <MarkdownHistoryInput
+                  historyId={`git-inline-draft:${filePath}:${anchorId}`}
                   cacheId={`git-inline-draft:${filePath}:${anchorId}`}
                   value={draftText}
                   onChange={setDraftText}
@@ -1722,22 +1839,33 @@ export function GitCommitDrawer({
       await onRequestAgentTurn(prompt);
       const now = Date.now();
       const turnId = `git-review-${now}`;
-      await mutateInlineComments((comments) => {
-        for (const comment of actionable) {
-          const existing = comments[comment.id];
-          if (!existing) continue;
-          comments[comment.id] = {
-            ...existing,
-            status: "submitted",
-            submitted_at: now,
-            submission_turn_id: turnId,
-            updated_at: Math.max(existing.updated_at ?? now, now),
-            local_revision: Math.max(1, existing.local_revision ?? 1),
-          };
+      const nextComments = {
+        ...(reviewRecord?.comments ?? {}),
+      } as Record<string, GitReviewCommentV2>;
+      for (const comment of actionable) {
+        const existing = nextComments[comment.id];
+        if (!existing) continue;
+        nextComments[comment.id] = {
+          ...existing,
+          status: "submitted",
+          submitted_at: now,
+          submission_turn_id: turnId,
+          updated_at: Math.max(existing.updated_at ?? now, now),
+          local_revision: Math.max(1, existing.local_revision ?? 1),
+        };
+      }
+      if (commit) {
+        const normalizedCommit = normalizeCommitSha(commit);
+        if (normalizedCommit) {
+          saveReviewDraft(normalizedCommit, {
+            reviewed: Boolean(reviewed),
+            note: `${reviewNote ?? ""}`,
+            comments: nextComments,
+          });
         }
-        return comments;
-      });
+      }
       await saveReview({
+        comments: nextComments,
         last_submitted_at: now,
         last_submission_turn_id: turnId,
       });
@@ -2520,7 +2648,8 @@ export function GitCommitDrawer({
             </div>
           </div>
           {reviewNoteEditing ? (
-            <MarkdownInput
+            <MarkdownHistoryInput
+              historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
               key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
               value={reviewNoteDraft}
               onChange={(value) => {
@@ -2700,6 +2829,7 @@ export function GitCommitDrawer({
                 { label: "Committer", value: summary.committer },
                 { label: "Commit Date", value: summary.commitDate, asDate: true },
               ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
+              const commitMessage = splitCommitMessage(summary.message);
               return (
                 <div
                   style={{
@@ -2763,15 +2893,32 @@ export function GitCommitDrawer({
                       style={{
                         borderTop: `1px solid ${COLORS.GRAY_LL}`,
                         paddingTop: 10,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: commitMessage.body ? 8 : 0,
                       }}
                     >
-                      <StaticMarkdown
-                        value={summary.message}
-                        style={{
-                          fontSize: Math.max(13, fontSize),
-                          lineHeight: 1.55,
-                        }}
-                      />
+                      {commitMessage.subject ? (
+                        <Typography.Text
+                          strong
+                          style={{
+                            fontSize: Math.max(13, fontSize),
+                            lineHeight: 1.55,
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {commitMessage.subject}
+                        </Typography.Text>
+                      ) : null}
+                      {commitMessage.body ? (
+                        <StaticMarkdown
+                          value={commitMessage.body}
+                          style={{
+                            fontSize: Math.max(13, fontSize),
+                            lineHeight: 1.55,
+                          }}
+                        />
+                      ) : null}
                     </div>
                   ) : summary.extraHeaderLines.length ? (
                     <Typography.Paragraph

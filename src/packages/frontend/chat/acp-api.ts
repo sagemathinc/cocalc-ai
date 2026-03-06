@@ -486,6 +486,7 @@ export async function processAcpLLM({
             : undefined,
         browser_id: webapp_client.browser_id,
         messageDate: newMessageDate,
+        reply_to: threadRootDate,
         thread_id,
         message_id,
         parent_message_id: user_message_id,
@@ -742,6 +743,7 @@ function buildChatMetadata({
   api_url,
   browser_id,
   messageDate,
+  reply_to,
   thread_id,
   message_id,
   parent_message_id,
@@ -755,6 +757,7 @@ function buildChatMetadata({
   api_url?: string;
   browser_id?: string;
   messageDate: Date;
+  reply_to?: Date;
   thread_id?: string;
   message_id?: string;
   parent_message_id?: string;
@@ -778,6 +781,10 @@ function buildChatMetadata({
     api_url,
     browser_id,
     message_date: messageDate.toISOString(),
+    reply_to:
+      reply_to instanceof Date && !Number.isNaN(reply_to.valueOf())
+        ? reply_to.toISOString()
+        : undefined,
     thread_id,
     message_id,
     parent_message_id,
