@@ -209,3 +209,28 @@ test("multiline paste with html type does not force code-block mode", () => {
 
   expect(editor.children.find((n: any) => n.type === "code_block")).toBeFalsy();
 });
+
+test("forced plain-text paste ignores html formatting payloads", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 0 },
+    focus: { path: [0, 0], offset: 0 },
+  };
+  (editor as any).__forcePlainTextPaste = true;
+
+  const data = {
+    getData: (type: string) => {
+      if (type === "text/plain") return "-x";
+      if (type === "text/html") return "<ul><li>x</li></ul>";
+      return "";
+    },
+    types: ["text/plain", "text/html"],
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  expect((editor.children[0] as any).children[0].text).toBe("-x");
+  expect(editor.children.find((n: any) => n.type === "bullet_list")).toBeFalsy();
+});
