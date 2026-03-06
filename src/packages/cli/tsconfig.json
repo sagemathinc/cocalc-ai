@@ -7,6 +7,8 @@
     "paths": {
       "@cocalc/conat": ["../conat"],
       "@cocalc/conat/*": ["../conat/*"],
+      "@cocalc/export": ["../export"],
+      "@cocalc/export/*": ["../export/*"],
       "@cocalc/util": ["../util"],
       "@cocalc/util/*": ["../util/*"]
     }
@@ -15,6 +17,7 @@
   "exclude": ["dist", "node_modules"],
   "references": [
     { "path": "../conat" },
+    { "path": "../export" },
     { "path": "../util" }
   ]
 }

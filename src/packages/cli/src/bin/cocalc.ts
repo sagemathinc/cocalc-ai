@@ -118,6 +118,7 @@ import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon
 import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
 import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
 import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
+import { registerExportCommand, type ExportCommandDeps } from "./commands/export";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1923,6 +1924,15 @@ const orgCommandDeps = {
 } satisfies OrgCommandDeps;
 
 registerOrgCommand(program, orgCommandDeps);
+
+const exportCommandDeps = {
+  globalsFrom,
+  emitSuccess,
+  emitError,
+  normalizeUrl,
+} satisfies ExportCommandDeps;
+
+registerExportCommand(program, exportCommandDeps);
 
 const browserCommandDeps = {
   withContext,
