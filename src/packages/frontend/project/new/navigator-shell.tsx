@@ -174,13 +174,6 @@ function summarizeTitle(rootMessage: any): string {
   return "Navigator session";
 }
 
-function toReplyDate(threadKey: string | null): Date | undefined {
-  if (!threadKey || !/^\d+$/.test(threadKey)) return;
-  const ms = Number(threadKey);
-  if (!Number.isFinite(ms)) return;
-  return new Date(ms);
-}
-
 function resolveReplyThreadId(
   actions: ChatActions,
   threadKey: string | null,
@@ -662,12 +655,11 @@ export function NavigatorShell({
         actions,
         selectedThreadKey ?? storedThreadKey ?? undefined,
       );
-      let replyTo = toReplyDate(resolvedThreadKey);
       let replyThreadId = resolveReplyThreadId(actions, resolvedThreadKey);
-      if (replyTo && !replyThreadId) {
+      if (resolvedThreadKey && !replyThreadId) {
         // If we cannot confidently resolve thread identity yet, open a new
         // thread instead of dropping the prompt.
-        replyTo = undefined;
+        replyThreadId = undefined;
       }
       const isCodex = intent.forceCodex !== false;
       const model =
@@ -676,12 +668,11 @@ export function NavigatorShell({
           : undefined;
       const timeStamp = actions.sendChat({
         input,
-        reply_to: replyTo,
         reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
         threadAgent:
-          !replyTo && isCodex
+          !replyThreadId && isCodex
             ? {
                 mode: "codex",
                 model,
@@ -700,7 +691,7 @@ export function NavigatorShell({
       if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(resolvedThreadKey);
       }
-      if (!replyTo) {
+      if (!replyThreadId) {
         const threadTime = new Date(timeStamp).valueOf();
         if (Number.isFinite(threadTime)) {
           setSelectedThreadKey(`${threadTime}`);

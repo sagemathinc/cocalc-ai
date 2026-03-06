@@ -704,40 +704,27 @@ export function ChatPanel({
     [actions, clearInput],
   );
 
-  function resolveReplyTarget(replyToOverride?: Date | null): {
-    reply_to?: Date;
+  function resolveReplyTarget(): {
     thread_id?: string;
     parent_message_id?: string;
     lookup?: string;
   } {
-    if (replyToOverride !== undefined) {
-      return { reply_to: replyToOverride ?? undefined };
-    }
     const resolveFromThreadKey = (threadKey?: string | null) => {
       if (!threadKey) {
         return {
-          reply_to: undefined,
           thread_id: undefined,
           parent_message_id: undefined,
           lookup: undefined,
         };
       }
       const thread_id = normalizeThreadKey(threadKey);
-      const metadata = actions.getThreadMetadata?.(threadKey, {
-        threadId: thread_id,
-      });
       const threadMessages =
         thread_id ? actions.getMessagesInThread(thread_id) ?? [] : [];
       const latestMessageId =
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim() ||
         undefined;
-      const configDate =
-        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
-      const reply_to =
-        configDate && !Number.isNaN(configDate.valueOf()) ? configDate : undefined;
       const lookup = thread_id;
       return {
-        reply_to: reply_to ?? undefined,
         thread_id,
         parent_message_id: latestMessageId,
         lookup,
@@ -750,11 +737,9 @@ export function ChatPanel({
   }
 
   function interruptThreadIfRunning({
-    reply_to,
     thread_id,
     lookup,
   }: {
-    reply_to?: Date;
     thread_id?: string;
     lookup?: string;
   }): void {
@@ -763,7 +748,7 @@ export function ChatPanel({
     const sessionId = resolveAgentSessionIdForThread({
       actions,
       threadId: thread_id,
-      threadKey: thread_id ?? (reply_to ? `${reply_to.valueOf()}` : ""),
+      threadKey: thread_id ?? "",
       persistedSessionId:
         thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined,
     });
@@ -787,14 +772,12 @@ export function ChatPanel({
       if (!interruptTargetThreadId) continue;
       actions.languageModelStopGenerating(new Date(msgDate.valueOf()), {
         threadId: interruptTargetThreadId,
-        replyTo: reply_to,
         senderId: field<string>(msg, "sender_id"),
       });
     }
   }
 
   function sendMessage(
-    replyToOverride?: Date | null,
     extraInput?: string,
     opts?: { immediate?: boolean },
   ): void {
@@ -802,8 +785,7 @@ export function ChatPanel({
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
     advanceComposerSession();
-    const target = resolveReplyTarget(replyToOverride);
-    const reply_to = target.reply_to;
+    const target = resolveReplyTarget();
     const reply_thread_id = target.thread_id;
     const parent_message_id = target.parent_message_id;
     const existingThreadMetadata =
@@ -815,10 +797,8 @@ export function ChatPanel({
     const shouldFocusLogAfterSend =
       existingThreadMetadata?.agent_kind === "acp" ||
       existingThreadMetadata?.agent_kind === "llm" ||
-      (!reply_to &&
-        !reply_thread_id &&
-        newThreadSetup.agentMode !== "human");
-    if (!reply_to && !reply_thread_id) {
+      (!reply_thread_id && newThreadSetup.agentMode !== "human");
+    if (!reply_thread_id) {
       // Creating a new thread should never auto-fallback to Combined while
       // thread metadata is hydrating.
       setAllowAutoSelectThread(false);
@@ -826,11 +806,10 @@ export function ChatPanel({
       setAllowAutoSelectThread(false);
     }
 
-    if ((reply_to || reply_thread_id) && opts?.immediate && isSelectedThreadAI) {
+    if (reply_thread_id && opts?.immediate && isSelectedThreadAI) {
       interruptThreadIfRunning(target);
       resetAcpThreadState({
         actions,
-        threadRootDate: reply_to,
         threadId: reply_thread_id,
       });
     }
@@ -839,17 +818,16 @@ export function ChatPanel({
 
     const timeStamp = actions.sendChat({
       submitMentionsRef,
-      reply_to,
       reply_thread_id,
       parent_message_id,
       extraInput,
       send_mode: opts?.immediate ? "immediate" : undefined,
       name:
-        !reply_to && !reply_thread_id && newThreadSetup.title.trim()
+        !reply_thread_id && newThreadSetup.title.trim()
           ? newThreadSetup.title.trim()
           : undefined,
       threadAgent:
-        !reply_to && !reply_thread_id && newThreadSetup.agentMode
+        !reply_thread_id && newThreadSetup.agentMode
           ? {
               mode: newThreadSetup.agentMode,
               model: newThreadSetup.model?.trim(),
@@ -865,7 +843,7 @@ export function ChatPanel({
             }
           : undefined,
       threadAppearance:
-        !reply_to && !reply_thread_id
+        !reply_thread_id
           ? {
               color: newThreadSetup.color?.trim(),
               icon: newThreadSetup.icon?.trim(),
@@ -875,13 +853,11 @@ export function ChatPanel({
       // Replies sent from Combined should keep Combined selected.
       // Brand new threads should always switch to the newly created thread.
       preserveSelectedThread:
-        isCombinedFeedSelected && (reply_to != null || reply_thread_id != null),
+        isCombinedFeedSelected && reply_thread_id != null,
       acp_loop_config:
         composerLoopConfig?.enabled === true &&
         (isSelectedThreadCodex ||
-          (!reply_to &&
-            !reply_thread_id &&
-            newThreadSetup.agentMode === "codex"))
+          (!reply_thread_id && newThreadSetup.agentMode === "codex"))
           ? composerLoopConfig
           : undefined,
     });
@@ -897,14 +873,14 @@ export function ChatPanel({
     setComposerLoopConfig(undefined);
     setComposerLoopConfigDirty(false);
     const threadKey =
-      !reply_to && !reply_thread_id && timeStamp
+      !reply_thread_id && timeStamp
         ? (() => {
             const created = actions.getMessageByDate(new Date(timeStamp));
             const threadId = field<string>(created as any, "thread_id");
             return threadId?.trim() || null;
           })()
         : null;
-    if (!reply_to && !reply_thread_id && threadKey) {
+    if (!reply_thread_id && threadKey) {
       if (
         newThreadSetup.color?.trim() ||
         newThreadSetup.icon?.trim() ||
@@ -917,7 +893,7 @@ export function ChatPanel({
         });
       }
     }
-    if (!reply_to && !reply_thread_id && threadKey) {
+    if (!reply_thread_id && threadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
       setTimeout(() => {
@@ -936,11 +912,11 @@ export function ChatPanel({
     }
   }
   function on_send(value?: string): void {
-    sendMessage(undefined, value);
+    sendMessage(value);
   }
 
   function on_send_immediately(value?: string): void {
-    sendMessage(undefined, value, { immediate: true });
+    sendMessage(value, { immediate: true });
   }
 
   function onNewChat(): void {
@@ -985,17 +961,8 @@ export function ChatPanel({
       const targetThreadKey =
         gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
       const thread_id = normalizeThreadKey(targetThreadKey);
-      const metadata =
-        targetThreadKey != null
-          ? actions.getThreadMetadata?.(targetThreadKey, { threadId: thread_id })
-          : undefined;
-      const threadDate =
-        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
-      const reply_to =
-        threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
       actions.sendChat({
         extraInput: trimmed,
-        reply_to,
         reply_thread_id: thread_id,
         parent_message_id:
           `${(actions.getMessagesInThread(thread_id ?? "")?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
@@ -1013,21 +980,12 @@ export function ChatPanel({
       const targetThreadKey =
         gitBrowserThreadKey ?? selectedThreadKey ?? composerTargetKey;
       const thread_id = normalizeThreadKey(targetThreadKey);
-      const metadata =
-        targetThreadKey != null
-          ? actions.getThreadMetadata?.(targetThreadKey, { threadId: thread_id })
-          : undefined;
-      const threadDate =
-        metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
-      const reply_to =
-        threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
       const lines = ["Committed manually.", `Commit: ${commit}`];
       if (`${subject ?? ""}`.trim()) {
         lines.push(`Subject: ${subject.trim()}`);
       }
       actions.sendChat({
         extraInput: lines.join("\n"),
-        reply_to,
         reply_thread_id: thread_id,
         parent_message_id:
           `${(actions.getMessagesInThread(thread_id ?? "")?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||

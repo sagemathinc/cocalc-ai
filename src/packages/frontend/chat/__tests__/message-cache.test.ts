@@ -169,7 +169,7 @@ describe("ChatMessageCache message_id index", () => {
     cache.dispose();
   });
 
-  it("groups replies by thread_id even if reply_to is stale", async () => {
+  it("groups replies by thread_id and parent_message_id", async () => {
     const rootDate = "2026-01-03T00:00:00.000Z";
     const staleReplyTarget = "2026-01-01T00:00:00.000Z";
     const replyDate = "2026-01-03T00:00:01.000Z";
@@ -188,8 +188,9 @@ describe("ChatMessageCache message_id index", () => {
         date: replyDate,
         message_id: "reply-thread-2",
         thread_id: "thread-2",
-        // Intentionally stale/incorrect; grouping should still follow thread_id.
+        // Legacy reply_to is ignored once parent/thread ids are present.
         reply_to: staleReplyTarget,
+        parent_message_id: "root-thread-2",
         history: [],
       },
     ];

@@ -18,7 +18,6 @@ import {
   senderId,
   editingArray,
   dateValue,
-  replyTo as replyToField,
   parentMessageId as parentMessageIdField,
 } from "./access";
 
@@ -163,7 +162,6 @@ export function getRootMessage({
   messages: ChatMessages;
 }): ChatMessageTyped | undefined {
   const directParentMessageId = parentMessageIdField(message);
-  const reply_to = replyToField(message);
   const date = dateValue(message);
   const threadId =
     typeof (message as any)?.thread_id === "string"
@@ -185,7 +183,7 @@ export function getRootMessage({
           earliest = candidate as ChatMessageTyped;
         }
       }
-      if (!replyToField(candidate as any)) {
+      if (!parentMessageIdField(candidate as any)) {
         root = candidate as ChatMessageTyped;
         break;
       }
@@ -212,27 +210,10 @@ export function getRootMessage({
     }
     return current;
   };
-  // we can't find the original message, if there is no reply_to
-  if (!reply_to) {
-    const byParentChain = fallbackRootByParentChain();
-    if (byParentChain) return byParentChain;
-    // the msssage itself is the root
-    const ms = new Date(date ?? Date.now()).valueOf();
-    return getMessageAtDate({ messages, date: ms }) ?? fallbackRootByThreadId();
-  } else {
-    const byParentChain = fallbackRootByParentChain();
-    if (byParentChain) return byParentChain;
-    // All messages in a thread have the same reply_to, which points to the root.
-    const ms = new Date(reply_to).valueOf();
-    const root = getMessageAtDate({ messages, date: ms });
-    if (
-      root &&
-      (!threadId || `${(root as any)?.thread_id ?? ""}`.trim() === threadId)
-    ) {
-      return root;
-    }
-    return fallbackRootByThreadId();
-  }
+  const byParentChain = fallbackRootByParentChain();
+  if (byParentChain) return byParentChain;
+  const ms = new Date(date ?? Date.now()).valueOf();
+  return getMessageAtDate({ messages, date: ms }) ?? fallbackRootByThreadId();
 }
 
 function stableMessageOrder(

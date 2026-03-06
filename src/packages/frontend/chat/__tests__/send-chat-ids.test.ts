@@ -170,7 +170,7 @@ describe("sendChat identity fields", () => {
     expect(replySet.message_id.length).toBeGreaterThan(0);
   });
 
-  it("refuses replies when root message lacks v2 identity fields", async () => {
+  it("treats legacy reply_to-only sends as new threads", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootMs = rootDate.valueOf();
     const messages = new Map<string, any>([
@@ -191,23 +191,18 @@ describe("sendChat identity fields", () => {
       ],
     ]);
     const actions = makeActions(messages);
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
 
     const sent = actions.sendChat({
       input: "reply content",
-      reply_to: rootDate,
+      reply_thread_id: undefined,
     });
     await Promise.resolve();
 
-    expect(sent).toBe("");
-    expect(actions.syncdb.set).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      "chat sendChat reply skipped: missing reply_thread_id",
-      expect.objectContaining({
-        reply_to: rootDate.toISOString(),
-      }),
-    );
-    warn.mockRestore();
+    expect(sent).toBeTruthy();
+    expect(actions.syncdb.set).toHaveBeenCalled();
+    const newMessage = actions.syncdb.set.mock.calls[0]?.[0];
+    expect(newMessage?.thread_id).toBeTruthy();
+    expect(newMessage?.parent_message_id).toBeUndefined();
   });
 });
 

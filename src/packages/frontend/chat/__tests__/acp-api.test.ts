@@ -105,7 +105,7 @@ describe("processAcpLLM", () => {
     expect(mockStreamAcp).toHaveBeenCalledTimes(1);
     const arg = mockStreamAcp.mock.calls[0][0];
     expect(arg.chat.message_date).toBe(new Date(1003).toISOString());
-    expect(arg.chat.reply_to).toBe(new Date(1000).toISOString());
+    expect(arg.chat.reply_to).toBeUndefined();
     expect(typeof arg.chat.message_id).toBe("string");
     expect(arg.chat.message_id).toBeTruthy();
     expect(arg.chat.message_id).not.toBe("user-msg-1");
@@ -185,13 +185,12 @@ describe("processAcpLLM", () => {
       model: "codex-agent",
       input: "continue",
       actions,
-      reply_to: threadRoot,
     });
 
     expect(mockStreamAcp).toHaveBeenCalledTimes(1);
     const arg = mockStreamAcp.mock.calls[0][0];
     expect(arg.session_id).toBe("codex-session-123");
     expect(arg.config?.sessionId).toBe("codex-session-123");
-    expect(arg.chat.reply_to).toBe(threadRoot.toISOString());
+    expect(arg.chat.reply_to).toBeUndefined();
   });
 });

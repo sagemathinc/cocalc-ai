@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { enableMapSet, produce } from "immer";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import type { PlainChatMessage } from "./types";
-import { dateValue, parentMessageId, replyTo } from "./access";
+import { dateValue, parentMessageId } from "./access";
 import { once } from "@cocalc/util/async-utils";
 import { normalizeChatMessage } from "./normalize";
 
@@ -189,7 +189,7 @@ export class ChatMessageCache extends EventEmitter {
     if (d && d.valueOf() > thread.newestTime) {
       thread.newestTime = d.valueOf();
     }
-    if (!parentMessageId(message) && !replyTo(message)) {
+    if (!parentMessageId(message)) {
       thread.rootMessage = message;
       threadKeyByThreadId.set(threadKey, messageKey);
     }
@@ -208,11 +208,7 @@ export class ChatMessageCache extends EventEmitter {
     if (!thread) return;
     thread.messageKeys.delete(messageKey);
     thread.messageCount = thread.messageKeys.size;
-    if (
-      !parentMessageId(message) &&
-      !replyTo(message) &&
-      thread.rootMessage?.date === message.date
-    ) {
+    if (!parentMessageId(message) && thread.rootMessage?.date === message.date) {
       thread.rootMessage = undefined;
       const threadId = this.getThreadId(message);
       if (threadId && threadKeyByThreadId.get(threadId) === messageKey) {
@@ -363,7 +359,7 @@ export class ChatMessageCache extends EventEmitter {
     for (const row0 of list) {
       if ((row0 as any)?.event !== "chat") continue;
       const message = row0 as PlainChatMessage;
-      if (replyTo(message)) continue;
+      if (parentMessageId(message)) continue;
       const threadId = this.getThreadId(message);
       const dateKey = this.getDateKey(message);
       if (!threadId || !dateKey) continue;

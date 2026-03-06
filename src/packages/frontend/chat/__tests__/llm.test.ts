@@ -112,12 +112,10 @@ describe("processLLM streaming updates", () => {
   it("streams tokens into the same thinking message using ISO date", async () => {
     const { actions, syncdb, sendReply } = makeActions();
     const message = makeMessage();
-    const reply_to = new Date("2025-02-02T01:00:00.000Z");
 
     await processLLM({
       actions,
       message,
-      reply_to,
       threadModel: "gpt-4",
     });
 
@@ -141,7 +139,6 @@ describe("processLLM streaming updates", () => {
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
       threadModel: "gpt-4",
     });
 
@@ -167,7 +164,6 @@ describe("processLLM guards", () => {
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
       threadModel: "gpt-4",
     });
     expect(mockQueryStream).not.toHaveBeenCalled();
@@ -185,7 +181,6 @@ describe("processLLM guards", () => {
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
       threadModel: "gpt-4",
     });
     expect(emitter).toBeDefined();
@@ -214,7 +209,6 @@ describe("processLLM guards", () => {
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
       threadModel: "gpt-4",
     });
 
@@ -259,7 +253,6 @@ describe("processLLM guards", () => {
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
       tag: "regenerate",
       llm: "gpt-4",
     });
@@ -281,11 +274,9 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const { actions } = makeActions();
     const message = makeMessage();
     message.history[0].content = "please do something";
-    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to,
       threadModel: "gpt-4",
     });
     expect(mockQueryStream).toHaveBeenCalled();
@@ -302,11 +293,9 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const message = makeMessage();
     message.history[0].content = "@codex do something";
     const { processAcpLLM } = require("../acp-api");
-    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to,
       threadModel: "codex-agent",
     });
     expect(processAcpLLM).toHaveBeenCalled();
@@ -321,11 +310,9 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const message = makeMessage();
     message.history[0].content = "please continue";
     const { processAcpLLM } = require("../acp-api");
-    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to,
       threadModel: "gpt-5.4",
     });
     expect(processAcpLLM).toHaveBeenCalled();
@@ -343,7 +330,6 @@ describe("processLLM model resolution and Codex dispatch", () => {
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
       threadModel: "codex-agent",
       acpSendMode: "immediate",
     });

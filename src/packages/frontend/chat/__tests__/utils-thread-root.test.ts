@@ -3,7 +3,7 @@
 import { getThreadRootDate } from "../utils";
 
 describe("getThreadRootDate thread_id fallback", () => {
-  it("resolves root by thread_id when reply_to is stale", () => {
+  it("resolves root by parent_message_id when legacy reply_to is stale", () => {
     const rootDate = new Date("2026-02-21T22:00:00.000Z");
     const staleReplyTo = new Date("2026-02-21T21:00:00.000Z").toISOString();
     const replyDate = new Date("2026-02-21T22:00:05.000Z");
@@ -27,7 +27,8 @@ describe("getThreadRootDate thread_id fallback", () => {
           date: replyDate,
           message_id: "reply-1",
           thread_id: "thread-1",
-          // intentionally wrong date
+          parent_message_id: "root-1",
+          // intentionally wrong date; ignored once parent identity exists
           reply_to: staleReplyTo,
           history: [],
         },
@@ -41,4 +42,3 @@ describe("getThreadRootDate thread_id fallback", () => {
     expect(root).toBe(rootDate.valueOf());
   });
 });
-

@@ -64,7 +64,7 @@ import {
   dateValue,
   field,
   historyArray,
-  replyTo,
+  parentMessageId,
   editingArray,
 } from "./access";
 import { SyncOutlined } from "@ant-design/icons";
@@ -510,10 +510,6 @@ export default function Message({
     return Number.isFinite(date) ? date : undefined;
   }, [date, messages]);
 
-  const threadRootIso = useMemo(
-    () => (threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined),
-    [threadRootMs],
-  );
   const messageThreadId = useMemo(() => {
     const id = field<string>(message, "thread_id");
     return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
@@ -1374,7 +1370,6 @@ export default function Message({
           onClick={() => {
             actions?.languageModelStopGenerating(new Date(date), {
               threadId: sessionIdForInterrupt,
-              replyTo: replyTo(message),
               senderId: field<string>(message, "sender_id"),
             });
           }}
@@ -1400,8 +1395,7 @@ export default function Message({
     ) {
       return null;
     }
-    const rootDateIso = replyTo(message) ?? threadRootIso;
-    if (!rootDateIso) return null;
+    if (!messageThreadId) return null;
     return (
       <div
         style={{
@@ -1418,13 +1412,12 @@ export default function Message({
           onClick={() => {
             resetAcpThreadState({
               actions,
-              threadRootDate: new Date(rootDateIso),
+              threadId: messageThreadId,
             });
             actions.sendReply({
               message,
               reply: "continue",
               noNotification: true,
-              reply_to: new Date(rootDateIso),
             });
           }}
           title="Ask Codex to continue from this interrupted turn"
@@ -1436,7 +1429,7 @@ export default function Message({
   }
 
   function renderForkNotice() {
-    if (replyTo(message) != null) return null;
+    if (parentMessageId(message) != null) return null;
     const forkedFromRoot = field<string>(message, "forked_from_root_date");
     if (!forkedFromRoot) return null;
     const forkedTitle = field<string>(message, "forked_from_title")?.trim();
@@ -1656,14 +1649,12 @@ export default function Message({
     if (actions == null || !messageThreadId) return;
     const commit = `${hash ?? ""}`.trim();
     if (!commit) return;
-    const reply_to = threadRootIso ? new Date(threadRootIso) : undefined;
     const lines = ["Committed manually.", `Commit: ${commit}`];
     if (`${subject ?? ""}`.trim()) {
       lines.push(`Subject: ${subject.trim()}`);
     }
     actions.sendChat({
       extraInput: lines.join("\n"),
-      reply_to,
       reply_thread_id: messageThreadId,
       preserveSelectedThread: true,
       skipModelDispatch: true,
