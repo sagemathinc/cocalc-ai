@@ -594,6 +594,21 @@ function parseDateSafe(value?: string): Date | undefined {
   return Number.isFinite(d.valueOf()) ? d : undefined;
 }
 
+function splitCommitMessage(message?: string): {
+  subject?: string;
+  body?: string;
+} {
+  const raw = `${message ?? ""}`.replace(/\r\n/g, "\n");
+  if (!raw.trim()) return {};
+  const lines = raw.split("\n");
+  const subject = `${lines[0] ?? ""}`.trim();
+  const body = lines.slice(1).join("\n").replace(/^\n+/, "");
+  return {
+    subject: subject || undefined,
+    body: body.trim() ? body : undefined,
+  };
+}
+
 function DiffBlock({
   filePath,
   lines,
@@ -2700,6 +2715,7 @@ export function GitCommitDrawer({
                 { label: "Committer", value: summary.committer },
                 { label: "Commit Date", value: summary.commitDate, asDate: true },
               ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
+              const commitMessage = splitCommitMessage(summary.message);
               return (
                 <div
                   style={{
@@ -2763,15 +2779,32 @@ export function GitCommitDrawer({
                       style={{
                         borderTop: `1px solid ${COLORS.GRAY_LL}`,
                         paddingTop: 10,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: commitMessage.body ? 8 : 0,
                       }}
                     >
-                      <StaticMarkdown
-                        value={summary.message}
-                        style={{
-                          fontSize: Math.max(13, fontSize),
-                          lineHeight: 1.55,
-                        }}
-                      />
+                      {commitMessage.subject ? (
+                        <Typography.Text
+                          strong
+                          style={{
+                            fontSize: Math.max(13, fontSize),
+                            lineHeight: 1.55,
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {commitMessage.subject}
+                        </Typography.Text>
+                      ) : null}
+                      {commitMessage.body ? (
+                        <StaticMarkdown
+                          value={commitMessage.body}
+                          style={{
+                            fontSize: Math.max(13, fontSize),
+                            lineHeight: 1.55,
+                          }}
+                        />
+                      ) : null}
                     </div>
                   ) : summary.extraHeaderLines.length ? (
                     <Typography.Paragraph
