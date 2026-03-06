@@ -392,13 +392,19 @@ export function ChatRoomModals({
                   UI.
                 </div>
                 <div>
+                  The export command runs on the local <code>.chat</code> file
+                  and archived SQLite data where the command executes. It does
+                  not copy the chat itself over the network first.
+                </div>
+                <div>
                   Use <code>Include blobs/assets</code> when you want embedded
                   images or uploaded files copied into the export.
                 </div>
                 <div>
                   The same export path is available from the CLI via{" "}
                   <code>cocalc export chat ...</code>, which is useful for
-                  automation, testing, and agent workflows.
+                  automation, testing, and agent workflows. Network access is
+                  only needed when the export fetches blobs/assets.
                 </div>
               </div>
             </HelpIcon>

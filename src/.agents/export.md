@@ -103,6 +103,17 @@ Recommended split:
 - `src/packages/cli`
   - command wrappers over `@cocalc/export`
 
+Execution model:
+
+- exporters should run against local files in the environment where the export
+  command executes
+- for chat, this means reading the `.chat` file and archived SQLite rows
+  directly from disk
+- export should not require streaming the document contents through websocket or
+  RPC first
+- network access should be limited to optional asset/blob fetching when an
+  exporter explicitly includes assets
+
 ## 6. Generic Export Bundle Model
 
 Each exporter should produce an in-memory bundle with:

@@ -50,6 +50,7 @@ Export is intended to be both user-facing and agent-facing.
 - Use it to produce self-contained archives with human-readable transcripts and machine-readable metadata.
 - Prefer it when an agent needs to solve a problem outside the live CoCalc UI, e.g. analysis, conversion, reporting, or handing the document to other tools.
 - Structured exports are better long-term inputs for automation than screen scraping or ad hoc markdown dumps.
+- Export runs against local files in the current environment. It does not stream document contents through the CLI service; the main network use is optional blob fetching when requested by an exporter.
 `,
     );
 
@@ -86,6 +87,12 @@ Chat export bundles include:
 - optional copied blobs/assets when --include-blobs is used
 
 Codex activity/thinking logs are intentionally excluded.
+
+Implementation note:
+
+- cocalc export chat reads the .chat file and archived SQLite store locally in the environment where the command runs.
+- It does not copy the chat document over RPC/websocket first.
+- Network access is only needed when the exporter fetches blob URLs for --include-blobs.
 
 This command is designed for automation. Agents should prefer it when they need
 to inspect, transform, summarize, migrate, or hand chat data to external tools.
