@@ -33,6 +33,11 @@ import { EditorFunctions } from "@cocalc/frontend/editors/markdown-input/multimo
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
+import {
+  handoffProjectNavigationFromLocalOwner,
+  matchProjectNavigationCommand,
+  type ProjectNavigationCommandId,
+} from "@cocalc/frontend/project/page/keyboard-navigation";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
@@ -102,6 +107,60 @@ import type { CodeBlock } from "./elements/code-block/types";
 import type { JupyterGapCursor } from "./jupyter-cell-context";
 
 export type { SlateEditor };
+
+type EditableMarkdownNavigationActions = {
+  get_frame_ids_in_order?: () => string[];
+  _get_project_actions?: () => unknown;
+};
+
+type EditableMarkdownNavigationEvent = Pick<
+  KeyboardEvent,
+  | "key"
+  | "ctrlKey"
+  | "shiftKey"
+  | "altKey"
+  | "metaKey"
+  | "defaultPrevented"
+  | "preventDefault"
+  | "stopPropagation"
+>;
+
+interface EditableMarkdownNavigationOptions {
+  event: EditableMarkdownNavigationEvent;
+  projectId?: string;
+  frameId: string;
+  actions?: unknown;
+  blurActiveElement?: Element | null;
+}
+
+export function handleEditableMarkdownProjectNavigationKeydown({
+  event,
+  projectId,
+  frameId,
+  actions,
+  blurActiveElement,
+}: EditableMarkdownNavigationOptions): ProjectNavigationCommandId | undefined {
+  if (projectId == null) return;
+  const command = matchProjectNavigationCommand(event as KeyboardEvent);
+  if (command == null) return;
+  const navigationActions = actions as EditableMarkdownNavigationActions | undefined;
+
+  event.preventDefault();
+  event.stopPropagation();
+  handoffProjectNavigationFromLocalOwner(command, projectId, {
+    blurActiveElement,
+    currentFrameId: frameId,
+    editorActions:
+      typeof navigationActions?.get_frame_ids_in_order === "function"
+        ? (navigationActions as any)
+        : undefined,
+    projectActions:
+      typeof navigationActions?._get_project_actions === "function"
+        ? (navigationActions._get_project_actions() as any)
+        : undefined,
+  });
+  return command;
+}
 
 // Whether or not to use windowing by default (=only rendering visible elements).
 // This is unfortunately essential.  I've tried everything I can think
@@ -1520,6 +1579,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   );
 
   function onKeyDown(e) {
+    if (
+      handleEditableMarkdownProjectNavigationKeydown({
+        event: e,
+        projectId: project_id,
+        frameId: id,
+        actions: actions0,
+        blurActiveElement: document.activeElement,
+      }) != null
+    ) {
+      return;
+    }
+
     if (read_only) {
       e.preventDefault();
       return;
