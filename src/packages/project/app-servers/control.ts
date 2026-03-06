@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { userInfo } from "node:os";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
 import { conat } from "@cocalc/conat/client";
@@ -263,7 +264,10 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
     managedByPort.get(row.port)!.push(row.id);
   }
   const ignoredPorts = new Set<number>();
-  const proxyPort = Number(process.env.COCALC_PROXY_PORT ?? 0);
+  // Keep this in sync with project/servers/proxy/proxy.ts:startProxyServer().
+  const proxyPort =
+    Number(process.env.COCALC_PROXY_PORT ?? 0) ||
+    (userInfo().username === "root" ? 80 : 8080);
   if (Number.isInteger(proxyPort) && proxyPort > 0) ignoredPorts.add(proxyPort);
   const hubPort = Number(process.env.HUB_PORT ?? 0);
   if (Number.isInteger(hubPort) && hubPort > 0) ignoredPorts.add(hubPort);
