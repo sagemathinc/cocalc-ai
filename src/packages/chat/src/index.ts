@@ -85,7 +85,6 @@ export interface ChatMessage {
   history: MessageHistory[];
   date: Date | string;
   schema_version?: number;
-  reply_to?: string;
   generating?: boolean;
   editing?: string[];
   feedback?: Record<string, unknown>;
@@ -99,11 +98,9 @@ export interface ChatMessage {
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
-  // schema-v2 fields (optional while migrating)
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
-  reply_to_message_id?: string;
   inline_code_links?: InlineCodeLink[];
 }
 
@@ -133,7 +130,6 @@ export interface BuildChatMessageOptions {
   content: string;
   generating: boolean;
   schema_version?: number;
-  reply_to?: string;
   acp_events?: any[];
   acp_log_store?: string | null;
   acp_log_key?: string | null;
@@ -146,7 +142,6 @@ export interface BuildChatMessageOptions {
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
-  reply_to_message_id?: string;
   inline_code_links?: InlineCodeLink[];
 }
 
@@ -168,7 +163,6 @@ export function buildChatMessage(
     date: messageDate.toISOString(),
     history,
     generating: options.generating,
-    reply_to: options.reply_to,
     schema_version: options.schema_version,
     acp_events: options.acp_events,
     acp_log_store: options.acp_log_store,
@@ -180,7 +174,6 @@ export function buildChatMessage(
     message_id: options.message_id,
     thread_id: options.thread_id,
     parent_message_id: options.parent_message_id,
-    reply_to_message_id: options.reply_to_message_id,
     inline_code_links: options.inline_code_links,
   };
 }

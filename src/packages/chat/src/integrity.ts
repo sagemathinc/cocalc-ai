@@ -27,9 +27,7 @@ interface NormalizedMessage {
   thread_id: string;
   date_iso?: string;
   sender_id?: string;
-  reply_to?: string;
   parent_message_id?: string;
-  reply_to_message_id?: string;
   acp_config?: any;
   is_root: boolean;
 }
@@ -43,18 +41,6 @@ function normalizeDate(value: unknown): string | undefined {
 
 function toJs(value: any): any {
   return value && typeof value.toJS === "function" ? value.toJS() : value;
-}
-
-function threadIdFromDates(replyTo?: string, dateIso?: string): string | undefined {
-  if (replyTo) {
-    const ms = new Date(replyTo).valueOf();
-    if (Number.isFinite(ms)) return `legacy-thread-${ms}`;
-  }
-  if (dateIso) {
-    const ms = new Date(dateIso).valueOf();
-    if (Number.isFinite(ms)) return `legacy-thread-${ms}`;
-  }
-  return undefined;
 }
 
 function isCodexConfig(config: any): boolean {
@@ -102,7 +88,6 @@ export function computeChatIntegrityReport(
 
   const messages: NormalizedMessage[] = [];
   const messageById = new Map<string, NormalizedMessage>();
-  const messageByDateIso = new Map<string, NormalizedMessage>();
   const threadConfigByThreadId = new Set<string>();
 
   for (const row of rows) {
@@ -117,8 +102,6 @@ export function computeChatIntegrityReport(
     if (event !== "chat") continue;
 
     const dateIso = normalizeDate(row?.date);
-    const replyTo = normalizeDate(row?.reply_to);
-    const fallbackThreadId = threadIdFromDates(replyTo, dateIso);
     const messageId =
       (typeof row?.message_id === "string" && row.message_id.length > 0
         ? row.message_id
@@ -129,7 +112,7 @@ export function computeChatIntegrityReport(
     const threadId =
       (typeof row?.thread_id === "string" && row.thread_id.length > 0
         ? row.thread_id
-        : undefined) ?? fallbackThreadId;
+        : undefined);
     if (
       !(typeof row?.message_id === "string" && row.message_id.length > 0) ||
       !(typeof row?.thread_id === "string" && row.thread_id.length > 0)
@@ -145,28 +128,19 @@ export function computeChatIntegrityReport(
       thread_id: threadId,
       date_iso: dateIso,
       sender_id: row?.sender_id,
-      reply_to: replyTo,
       parent_message_id:
         typeof row?.parent_message_id === "string"
           ? row.parent_message_id
-          : typeof row?.reply_to_message_id === "string"
-            ? row.reply_to_message_id
-            : undefined,
-      reply_to_message_id:
-        typeof row?.reply_to_message_id === "string"
-          ? row.reply_to_message_id
           : undefined,
       acp_config: toJs(row?.acp_config),
       is_root:
-        !replyTo &&
-        !(typeof row?.parent_message_id === "string" && row.parent_message_id) &&
-        !row?.reply_to_message_id,
+        !(
+          typeof row?.parent_message_id === "string" &&
+          row.parent_message_id
+        ),
     };
     messages.push(message);
     messageById.set(message.message_id, message);
-    if (dateIso) {
-      messageByDateIso.set(dateIso, message);
-    }
   }
 
   const rootCountByThread = new Map<string, number>();
@@ -195,11 +169,6 @@ export function computeChatIntegrityReport(
         : undefined;
     if (parentMessageId) {
       if (!messageById.has(parentMessageId)) {
-        counters.invalid_reply_targets += 1;
-        pushExample(examples.invalid_reply_message_ids, message.message_id);
-      }
-    } else if (message.reply_to) {
-      if (!messageByDateIso.has(message.reply_to)) {
         counters.invalid_reply_targets += 1;
         pushExample(examples.invalid_reply_message_ids, message.message_id);
       }
