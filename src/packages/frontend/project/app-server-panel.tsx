@@ -27,6 +27,7 @@ type AppKind = "service" | "static";
 type PresetKind = "service" | "static";
 type AppServiceOpenMode = "proxy" | "port";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
+type AppRowAction = "expose" | "unexpose" | "audit";
 
 interface AppServerPreset {
   key: string;
@@ -279,7 +280,10 @@ export function AppServerPanel({
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submittingToAgent, setSubmittingToAgent] = useState<boolean>(false);
-  const [actionAppId, setActionAppId] = useState<string>("");
+  const [rowAction, setRowAction] = useState<{
+    appId: string;
+    action: AppRowAction;
+  } | null>(null);
   const [error, setError] = useState<Error | undefined>(undefined);
   const [audit, setAudit] = useState<AppPublicReadinessAudit | undefined>(
     undefined,
@@ -687,7 +691,7 @@ export function AppServerPanel({
   async function onExpose(id: string) {
     try {
       setSubmitting(true);
-      setActionAppId(id);
+      setRowAction({ appId: id, action: "expose" });
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       const ttl = Math.max(
@@ -708,14 +712,14 @@ export function AppServerPanel({
       setError(normalizeError(err));
     } finally {
       setSubmitting(false);
-      setActionAppId("");
+      setRowAction(null);
     }
   }
 
   async function onUnexpose(id: string) {
     try {
       setSubmitting(true);
-      setActionAppId(id);
+      setRowAction({ appId: id, action: "unexpose" });
       setError(undefined);
       await api.apps.unexposeApp(id);
       await refresh();
@@ -723,14 +727,14 @@ export function AppServerPanel({
       setError(normalizeError(err));
     } finally {
       setSubmitting(false);
-      setActionAppId("");
+      setRowAction(null);
     }
   }
 
   async function onAuditWithAgent(id: string) {
     try {
       setSubmitting(true);
-      setActionAppId(id);
+      setRowAction({ appId: id, action: "audit" });
       setError(undefined);
       const next = await api.apps.auditAppPublicReadiness(id);
       setAudit(next);
@@ -739,7 +743,7 @@ export function AppServerPanel({
       setError(normalizeError(err));
     } finally {
       setSubmitting(false);
-      setActionAppId("");
+      setRowAction(null);
     }
   }
 
@@ -1353,7 +1357,11 @@ export function AppServerPanel({
                     <Button
                       size="small"
                       onClick={() => void onUnexpose(row.id)}
-                      loading={submitting && actionAppId === row.id}
+                      loading={
+                        submitting &&
+                        rowAction?.appId === row.id &&
+                        rowAction.action === "unexpose"
+                      }
                     >
                       Unexpose
                     </Button>
@@ -1361,7 +1369,11 @@ export function AppServerPanel({
                     <Button
                       size="small"
                       onClick={() => void onExpose(row.id)}
-                      loading={submitting && actionAppId === row.id}
+                      loading={
+                        submitting &&
+                        rowAction?.appId === row.id &&
+                        rowAction.action === "expose"
+                      }
                     >
                       Expose
                     </Button>
@@ -1369,7 +1381,11 @@ export function AppServerPanel({
                   <Button
                     size="small"
                     onClick={() => void onAuditWithAgent(row.id)}
-                    loading={submitting && actionAppId === row.id}
+                    loading={
+                      submitting &&
+                      rowAction?.appId === row.id &&
+                      rowAction.action === "audit"
+                    }
                   >
                     Audit with Codex
                   </Button>
