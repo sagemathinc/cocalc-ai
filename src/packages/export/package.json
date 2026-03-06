@@ -19,6 +19,8 @@
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/jest"
   },
   "dependencies": {
+    "@cocalc/backend": "workspace:*",
+    "@cocalc/chat": "workspace:*",
     "fflate": "^0.8.2"
   },
   "devDependencies": {
