@@ -37,6 +37,9 @@ describe("migrateChatRows", () => {
     expect(chats.every((x) => typeof x.message_id === "string")).toBe(true);
     expect(chats.every((x) => typeof x.thread_id === "string")).toBe(true);
     expect(chats[0].schema_version).toBe(2);
+    expect(chats[0].parent_message_id).toBeUndefined();
+    expect(chats[1].parent_message_id).toBe(chats[0].message_id);
+    expect(chats[1].reply_to_message_id).toBeUndefined();
     expect(thread?.thread_id).toBe(chats[0].thread_id);
     expect(thread?.root_message_id).toBe(chats[0].message_id);
     expect(config?.thread_id).toBe(chats[0].thread_id);
@@ -48,6 +51,34 @@ describe("migrateChatRows", () => {
     expect(draft).toBeTruthy();
     expect(report.invalid_chat_rows_skipped).toBe(0);
     expect(report.integrity_after.missing_thread_config).toBe(0);
+  });
+
+  it("canonicalizes legacy reply targets into parent_message_id", () => {
+    const rootIso = "2026-02-20T13:00:00.000Z";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootIso,
+        message_id: "root-1",
+        history: [{ author_id: "user-1", content: "root", date: rootIso }],
+      },
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2026-02-20T13:00:01.000Z",
+        message_id: "reply-1",
+        reply_to: rootIso,
+        reply_to_message_id: "root-1",
+        history: [{ author_id: "user-1", content: "reply", date: rootIso }],
+      },
+    ];
+    const { rows: out, report } = migrateChatRows(rows);
+    const chats = out.filter((x) => x.event === "chat");
+    expect(chats[0].parent_message_id).toBeUndefined();
+    expect(chats[1].parent_message_id).toBe("root-1");
+    expect(chats[1].reply_to_message_id).toBeUndefined();
+    expect(report.fixed_parent_message_ids).toBeGreaterThanOrEqual(1);
   });
 
   it("can strip legacy root thread fields when requested", () => {
