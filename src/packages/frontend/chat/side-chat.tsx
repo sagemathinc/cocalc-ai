@@ -1,5 +1,6 @@
 import { CSS } from "@cocalc/frontend/app-framework";
 import { redux, useEditorRedux } from "@cocalc/frontend/app-framework";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { ChatActions } from "./actions";
 import { ChatPanel } from "./chatroom";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
@@ -41,7 +42,8 @@ export default function SideChat({
 
   return (
     <ChatDocProvider cache={actions.messageCache}>
-      <div
+      <KeyboardBoundary
+        boundary="side-chat"
         style={{
           height: "100%",
           width: "100%",
@@ -59,7 +61,7 @@ export default function SideChat({
           desc={desc}
           hideSidebar={hideSidebar}
         />
-      </div>
+      </KeyboardBoundary>
     </ChatDocProvider>
   );
 }

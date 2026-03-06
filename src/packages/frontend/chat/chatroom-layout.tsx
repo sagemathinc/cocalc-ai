@@ -6,6 +6,7 @@
 import { Badge, Button, Drawer, Layout } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { COLORS } from "@cocalc/util/theme";
 import { ChatRoomSidebar } from "./chatroom-sidebar";
 
@@ -60,7 +61,9 @@ export function ChatRoomLayout({
           destroyOnHidden
           resizable
         >
-          {sidebarContent}
+          <KeyboardBoundary boundary="chat-drawer">
+            {sidebarContent}
+          </KeyboardBoundary>
         </Drawer>
         <div
           style={{
