@@ -45,8 +45,6 @@ export const chatroom: EditorDescription = {
     "scrollToBottom",
     "scrollToTop",
     "show_search",
-    "foldAIThreads",
-    "foldAllThreads",
     "terminal",
   ]),
   customizeCommands: {
@@ -69,7 +67,6 @@ export const chatroom: EditorDescription = {
     "scrollToTop",
     "scrollToBottom",
     "show_search",
-    "foldAIThreads",
   ]),
 } as const;
 

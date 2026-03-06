@@ -177,7 +177,12 @@ function normalizeLoopConfig(
   if (!config || config.enabled !== true) return undefined;
   return {
     enabled: true,
-    max_turns: clampLoopNumber(config.max_turns, LOOP_DEFAULT_MAX_TURNS, 1, 200),
+    max_turns: clampLoopNumber(
+      config.max_turns,
+      LOOP_DEFAULT_MAX_TURNS,
+      1,
+      200,
+    ),
     max_wall_time_ms: clampLoopNumber(
       config.max_wall_time_ms,
       LOOP_DEFAULT_MAX_WALL_TIME_MS,
@@ -210,7 +215,10 @@ function normalizeLoopDecision(
 ): AcpLoopContractDecision | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const data = raw as any;
-  if (typeof data.rerun !== "boolean" || typeof data.needs_human !== "boolean") {
+  if (
+    typeof data.rerun !== "boolean" ||
+    typeof data.needs_human !== "boolean"
+  ) {
     return undefined;
   }
   return {
@@ -295,7 +303,10 @@ function stripLoopContractForDisplay(
     for (let j = i; j <= maxJ; j++) {
       const last = lines[j].trim();
       if (!last.endsWith("}")) continue;
-      const candidate = lines.slice(i, j + 1).join("\n").trim();
+      const candidate = lines
+        .slice(i, j + 1)
+        .join("\n")
+        .trim();
       const decision = parseLoopDecisionPayload(candidate);
       if (!decision) continue;
       i = j;
@@ -401,10 +412,7 @@ function parseDelayMs(value: unknown, fallback: number): number {
 }
 
 function normalizeMockScript(raw: any): AcpMockScript {
-  const base =
-    raw && typeof raw === "object" && !Array.isArray(raw)
-      ? raw
-      : {};
+  const base = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const rulesRaw = Array.isArray(base.rules) ? base.rules : [];
   const rules: AcpMockRule[] = [];
   for (const item of rulesRaw) {
@@ -438,13 +446,18 @@ function normalizeMockScript(raw: any): AcpMockScript {
         typeof item.message === "string" && item.message.length > 0
           ? item.message
           : undefined,
-      delayMs: parseDelayMs(item.delayMs, DEFAULT_ACP_MOCK_SCRIPT.defaultDelayMs),
+      delayMs: parseDelayMs(
+        item.delayMs,
+        DEFAULT_ACP_MOCK_SCRIPT.defaultDelayMs,
+      ),
       threadId:
         typeof item.threadId === "string" && item.threadId.trim().length > 0
           ? item.threadId.trim()
           : undefined,
       usage:
-        item.usage && typeof item.usage === "object" && !Array.isArray(item.usage)
+        item.usage &&
+        typeof item.usage === "object" &&
+        !Array.isArray(item.usage)
           ? (item.usage as AcpStreamUsage)
           : undefined,
     };
@@ -452,11 +465,13 @@ function normalizeMockScript(raw: any): AcpMockScript {
   }
   return {
     defaultResponse:
-      typeof base.defaultResponse === "string" && base.defaultResponse.length > 0
+      typeof base.defaultResponse === "string" &&
+      base.defaultResponse.length > 0
         ? base.defaultResponse
         : DEFAULT_ACP_MOCK_SCRIPT.defaultResponse,
     defaultThinking:
-      typeof base.defaultThinking === "string" && base.defaultThinking.length > 0
+      typeof base.defaultThinking === "string" &&
+      base.defaultThinking.length > 0
         ? base.defaultThinking
         : DEFAULT_ACP_MOCK_SCRIPT.defaultThinking,
     defaultMessage:
@@ -496,9 +511,12 @@ async function loadAcpMockScript(): Promise<AcpMockScript> {
         logger.info("acp mock mode: loaded script from file", { file });
         return normalizeMockScript(parsed);
       }
-      logger.warn("acp mock mode: invalid JSON in script file; using defaults", {
-        file,
-      });
+      logger.warn(
+        "acp mock mode: invalid JSON in script file; using defaults",
+        {
+          file,
+        },
+      );
       return DEFAULT_ACP_MOCK_SCRIPT;
     } catch (err) {
       logger.warn("acp mock mode: failed reading script file; using defaults", {
@@ -532,7 +550,10 @@ function ruleMatchesPrompt(rule: AcpMockRule, prompt: string): boolean {
   return false;
 }
 
-function chooseMockRule(script: AcpMockScript, prompt: string): AcpMockRule | undefined {
+function chooseMockRule(
+  script: AcpMockScript,
+  prompt: string,
+): AcpMockRule | undefined {
   for (const rule of script.rules) {
     if (ruleMatchesPrompt(rule, prompt)) return rule;
   }
@@ -542,7 +563,11 @@ function chooseMockRule(script: AcpMockScript, prompt: string): AcpMockRule | un
 class MockAgent implements AcpAgent {
   constructor(private readonly script: AcpMockScript) {}
 
-  async evaluate({ prompt, session_id, stream }: AcpEvaluateRequest): Promise<void> {
+  async evaluate({
+    prompt,
+    session_id,
+    stream,
+  }: AcpEvaluateRequest): Promise<void> {
     const rule = chooseMockRule(this.script, prompt);
     const thinking = rule?.thinking ?? this.script.defaultThinking;
     const message = rule?.message ?? this.script.defaultMessage;
@@ -591,8 +616,9 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const totalBufferedEvents = snapshots.reduce((sum, x) => sum + x.events, 0);
   const timeTravelSnapshots = snapshots
     .map((x) => x.timeTravel)
-    .filter((x): x is NonNullable<(typeof snapshots)[number]["timeTravel"]> =>
-      x != null,
+    .filter(
+      (x): x is NonNullable<(typeof snapshots)[number]["timeTravel"]> =>
+        x != null,
     );
   const timeTravelActiveRecorders = timeTravelSnapshots.filter(
     (x) => !x.disposed,
@@ -689,7 +715,8 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       "chat.acp.lookup_message_id_index_hits": acpLookupByMessageIdIndexHits,
       "chat.acp.lookup_message_id_index_misses":
         acpLookupByMessageIdIndexMisses,
-      "chat.acp.lookup_message_id_rows_scanned": acpLookupByMessageIdRowsScanned,
+      "chat.acp.lookup_message_id_rows_scanned":
+        acpLookupByMessageIdRowsScanned,
       "chat.acp.lookup_message_id_rows_scanned_max":
         acpLookupByMessageIdRowsScannedMax,
       "chat.acp.lookup_message_id_large_scan_warnings":
@@ -1125,11 +1152,15 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
-        reply_to: this.metadata.reply_to,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
-        reply_to_message_id: this.metadata.reply_to_message_id,
+        parent_message_id: (this.metadata as any).parent_message_id,
       } as any);
+      if ((this.metadata as any).parent_message_id) {
+        (placeholder as any).parent_message_id = (
+          this.metadata as any
+        ).parent_message_id;
+      }
       db.set(placeholder);
       db.commit();
       try {
@@ -1242,12 +1273,10 @@ export class ChatStreamWriter {
         const finishedFromError = this.finishedBy === "error";
         const latestSummary = getLatestSummaryText(this.events);
         const hasSummary =
-          typeof latestSummary === "string" &&
-          latestSummary.trim().length > 0;
+          typeof latestSummary === "string" && latestSummary.trim().length > 0;
         const latestMessage = getLatestMessageText(this.events);
         const hasStreamedMessage =
-          typeof latestMessage === "string" &&
-          latestMessage.trim().length > 0;
+          typeof latestMessage === "string" && latestMessage.trim().length > 0;
         const summaryText =
           (hasSummary ? latestSummary : undefined) ??
           (typeof payload.finalResponse === "string" &&
@@ -1320,34 +1349,43 @@ export class ChatStreamWriter {
 
   private buildChatUpdate(generating: boolean): Record<string, unknown> {
     const rowDate = this.resolvedChatKey?.date ?? this.metadata.message_date;
-    const rowSender = this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
+    const rowSender =
+      this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
     const message = buildChatMessage({
       sender_id: rowSender,
       date: rowDate,
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
-      reply_to: this.metadata.reply_to,
       acp_thread_id: this.threadId,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
-      reply_to_message_id: this.metadata.reply_to_message_id,
+      parent_message_id: (this.metadata as any).parent_message_id,
       inline_code_links: generating ? undefined : this.resolveInlineCodeLinks(),
-    });
+    } as any);
+    if ((this.metadata as any).parent_message_id) {
+      (message as any).parent_message_id = (
+        this.metadata as any
+      ).parent_message_id;
+    }
     const update: any = { ...message };
     if (this.interruptNotified) {
       update.acp_interrupted = true;
       update.acp_interrupted_reason = "interrupt";
-      update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
+      update.acp_interrupted_text =
+        this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
     }
     return update;
   }
 
-  private buildChatMetadataUpdate(generating: boolean): Record<string, unknown> {
+  private buildChatMetadataUpdate(
+    generating: boolean,
+  ): Record<string, unknown> {
     const rowDate = this.resolvedChatKey?.date ?? this.metadata.message_date;
-    const rowSender = this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
+    const rowSender =
+      this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
     const update: Record<string, unknown> = {
       event: "chat",
       sender_id: rowSender,
@@ -1358,8 +1396,7 @@ export class ChatStreamWriter {
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
-      reply_to_message_id: this.metadata.reply_to_message_id,
-      reply_to: this.metadata.reply_to,
+      parent_message_id: (this.metadata as any).parent_message_id,
     };
     if (this.interruptNotified) {
       (update as any).acp_interrupted = true;
@@ -1379,7 +1416,8 @@ export class ChatStreamWriter {
   }
 
   private hasMetadataDelta(generating: boolean): boolean {
-    const usageChanged = this.lastCommittedUsageJson !== this.usageFingerprint();
+    const usageChanged =
+      this.lastCommittedUsageJson !== this.usageFingerprint();
     return (
       this.lastCommittedThreadId !== this.threadId ||
       this.lastCommittedInterrupted !== this.interruptNotified ||
@@ -1501,21 +1539,27 @@ export class ChatStreamWriter {
         const current = this.findChatRow();
         lastGenerating = this.recordField<boolean>(current, "generating");
       } catch (err) {
-        logger.warn("chat syncdb readback failed during terminal verification", {
-          chatKey: this.chatKey,
-          source,
-          attempt: i + 1,
-          err,
-        });
+        logger.warn(
+          "chat syncdb readback failed during terminal verification",
+          {
+            chatKey: this.chatKey,
+            source,
+            attempt: i + 1,
+            err,
+          },
+        );
       }
       if (lastGenerating === false) {
         if (i > 0) {
           acpFinalizeRecoveredAfterRetryCount += 1;
-          logger.warn("chat terminal state recovered after verification retry", {
-            chatKey: this.chatKey,
-            source,
-            attempts: i + 1,
-          });
+          logger.warn(
+            "chat terminal state recovered after verification retry",
+            {
+              chatKey: this.chatKey,
+              source,
+              attempts: i + 1,
+            },
+          );
         }
         return;
       }
@@ -1935,7 +1979,9 @@ export class ChatStreamWriter {
 
   public markLoopStopped(reason: AcpLoopStopReason): void {
     try {
-      this.setThreadState(reason === "user_stopped" ? "interrupted" : "complete");
+      this.setThreadState(
+        reason === "user_stopped" ? "interrupted" : "complete",
+      );
     } catch (err) {
       logger.debug("failed to mark loop stopped", { reason, err });
     }
@@ -2122,11 +2168,10 @@ export async function recoverOrphanedAcpTurns(
       path: turn.path,
       message_date: turn.message_date,
       sender_id: turn.sender_id ?? "openai-codex-agent",
-      reply_to: turn.reply_to ?? undefined,
       message_id: turn.message_id ?? undefined,
       thread_id: turn.thread_id ?? undefined,
-      reply_to_message_id: turn.reply_to_message_id ?? undefined,
-    };
+      parent_message_id: (turn as any).parent_message_id ?? undefined,
+    } as any;
     try {
       clearAcpPayloads(context);
     } catch (err) {
@@ -2158,7 +2203,8 @@ export async function recoverOrphanedAcpTurns(
             normalizeIsoDateString(syncdbField(current, "date")) ??
             normalizeIsoDateString(turn.message_date) ??
             turn.message_date;
-          const rowSender = syncdbField<string>(current, "sender_id") ?? senderId;
+          const rowSender =
+            syncdbField<string>(current, "sender_id") ?? senderId;
           const update: any = {
             event: "chat",
             date: rowDate,
@@ -2174,8 +2220,8 @@ export async function recoverOrphanedAcpTurns(
           if (turn.thread_id) {
             update.thread_id = turn.thread_id;
           }
-          if (turn.reply_to_message_id) {
-            update.reply_to_message_id = turn.reply_to_message_id;
+          if ((turn as any).parent_message_id) {
+            update.parent_message_id = (turn as any).parent_message_id;
           }
           if (history.length > 0) {
             update.history = history;
@@ -2188,8 +2234,7 @@ export async function recoverOrphanedAcpTurns(
             return d.toISOString();
           })();
           const threadId =
-            syncdbField<string>(current, "thread_id") ??
-            turn.thread_id;
+            syncdbField<string>(current, "thread_id") ?? turn.thread_id;
           if (threadId) {
             syncdb.set({
               event: THREAD_STATE_EVENT,
@@ -2807,7 +2852,8 @@ export async function evaluate({
         LOOP_DEFAULT_REPEATED_BLOCKER_LIMIT;
 
       const summaryText =
-        chatWriter.getLatestSummaryText() ?? chatWriter.getLoopFallbackSummary();
+        chatWriter.getLatestSummaryText() ??
+        chatWriter.getLoopFallbackSummary();
       const decision = parseLoopContractDecision(summaryText);
 
       let stopReason: AcpLoopStopReason | undefined;
@@ -2819,7 +2865,9 @@ export async function evaluate({
       } else if (loopState.iteration >= maxTurns) {
         stopReason = "max_turns";
       } else if (!decision) {
-        stopReason = terminalFallbackError ? "backend_error" : "missing_contract";
+        stopReason = terminalFallbackError
+          ? "backend_error"
+          : "missing_contract";
       } else if (decision.needs_human) {
         stopReason = "needs_human";
         nextStatus = "paused";
@@ -2827,7 +2875,9 @@ export async function evaluate({
         stopReason = "completed";
       }
 
-      const blockerSignature = `${decision?.blocker ?? ""}`.trim().toLowerCase();
+      const blockerSignature = `${decision?.blocker ?? ""}`
+        .trim()
+        .toLowerCase();
       if (!stopReason && blockerSignature) {
         const prevSig = `${loopState.last_blocker_signature ?? ""}`
           .trim()
@@ -2894,7 +2944,12 @@ export async function evaluate({
 
       let sleepMs = loopConfig?.sleep_ms_between_turns ?? 0;
       if (typeof decision?.sleep_sec === "number") {
-        sleepMs = clampLoopNumber(decision.sleep_sec * 1000, sleepMs, 0, 60_000);
+        sleepMs = clampLoopNumber(
+          decision.sleep_sec * 1000,
+          sleepMs,
+          0,
+          60_000,
+        );
       }
       if (sleepMs > 0) {
         await sleep(sleepMs);

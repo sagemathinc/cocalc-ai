@@ -11,6 +11,13 @@ This plan is optimized for current reality:
 
 Primary objective: make chat/codex data integrity robust enough that thread identity/config corruption is effectively impossible in normal operation.
 
+Additional 2026-03 constraint:
+
+- Older messages are now archived automatically, so the root message row of a
+  thread may not exist in the live syncdoc at all.
+- Runtime correctness must therefore never depend on loading or mutating the
+  thread root row.
+
 ## 2. Non-Negotiable Outcomes
 
 1. Thread identity is explicit and immutable (not inferred from timestamp).
@@ -19,6 +26,8 @@ Primary objective: make chat/codex data integrity robust enough that thread iden
 4. ACP finalize/recovery/interrupt flows never target rows by date-only.
 5. A one-off migration tool exists for the few legacy files that matter.
 6. Integrity checks and watchdog logs can prove invariants hold.
+7. No runtime code path requires the thread root message row to be present in
+   the live syncdoc.
 
 ## 3. Target Schema (v2)
 
@@ -31,8 +40,15 @@ Immutable thread identity record.
 - `thread_id` (UUID/ULID)
 - `created_at`
 - `created_by`
-- `root_message_id`
+- `root_message_id?`
+- `root_message_date?`
 - `schema_version`
+
+Notes:
+
+- `root_message_id` / `root_message_date` are descriptive metadata only.
+- They may point at an archived message and must not be required for runtime
+  thread lookup, ordering, folding, interrupt, or ACP execution.
 
 ### 3.2 `thread_config`
 
@@ -58,12 +74,18 @@ One row per chat message.
 - `thread_id`
 - `sender_id`
 - `date`
-- `reply_to_message_id?`
+- `parent_message_id?`
 - `history`
 - `generating`
 - `acp_thread_id?`
 - `acp_usage?`
 - `acp_interrupted_*?`
+
+Notes:
+
+- `parent_message_id` is the direct parent in the linear thread chain.
+- This replaces `reply_to` (root-date anchor) and the current mixed-use
+  `reply_to_message_id` field.
 
 ### 3.4 `thread_state` (persisted)
 
@@ -79,7 +101,18 @@ Persisted lightweight runtime state for restart-safe UX.
 - IDs are canonical identity (`thread_id`, `message_id`).
 - Timestamps are ordering metadata only.
 - UI ordering can still sort by `message.date`.
-- Reply linkage is by `reply_to_message_id`, not thread-root timestamp.
+- Reply linkage is by `parent_message_id`, not thread-root timestamp.
+
+Linear ordering model:
+
+1. Messages with no `parent_message_id` render at the top of the thread.
+2. A message with `parent_message_id = X` renders immediately after `X`.
+3. If multiple messages share the same parent (race / concurrent sends), sort
+   siblings by:
+   - strongest stable timestamp available
+   - then message_id as a final tie-breaker
+4. A bad client clock may affect sibling ordering, but must never strand a
+   message far away from its parent.
 
 ID format:
 
@@ -89,11 +122,15 @@ ID format:
 ## 5. Invariants
 
 1. Every `message.thread_id` resolves to an existing `thread`.
-2. Exactly one root message per thread, and it matches `thread.root_message_id`.
+2. Every non-root message either has a valid `parent_message_id` in the same
+   thread or is flagged by migration/integrity checks.
 3. Exactly one `thread_config` per `thread_id` (or a deterministic default if absent).
 4. Message writes never mutate thread config fields.
 5. ACP lifecycle updates target rows by explicit IDs.
 6. Codex-thread UI state is derived from `thread_config.agent/acp_config`, not message-content heuristics.
+7. Runtime code may use `thread.root_message_id` / `thread.root_message_date`
+   for display hints only, never as the source of thread identity or message
+   placement.
 
 ## 6. Backward Compatibility Policy
 
@@ -121,13 +158,21 @@ The script must:
 1. Assign deterministic `thread_id` and `message_id` mapping.
 2. Split root metadata into `thread_config`.
 3. Preserve message history and ordering.
-4. Rewrite reply links to `reply_to_message_id`.
+4. Rewrite root-anchored reply links to `parent_message_id`.
 5. Emit a verification report:
    - thread count
    - message count
    - invariant check result
    - list of anomalies fixed
 6. Write backup (`.bak`) before replacing original.
+
+Migration policy for current greenfield cutover:
+
+- After the one-off migration runs successfully on the handful of real `.chat`
+  files and the archived SQLite database, runtime code does not need to carry
+  generalized support for pre-migration rows.
+- Transitional fallback code should be deleted aggressively once migration is
+  complete.
 
 ## 8. Implementation Plan (Phases)
 
@@ -143,7 +188,8 @@ Relevant files:
 ## Phase B: Introduce explicit IDs in message flow
 
 1. Add `message_id` and `thread_id` to all new messages.
-2. Refactor cache/index to key by `message_id`.
+2. Add `parent_message_id` to all non-root messages.
+3. Refactor cache/index to key by `message_id`.
 3. Keep date-based ordering as derived view only.
 
 Likely files:
@@ -168,7 +214,8 @@ Likely files:
 ## Phase D: ACP protocol on IDs
 
 1. Pass `thread_id` + `message_id` in ACP chat metadata.
-2. Backend writer/finalizer/recovery paths use IDs exclusively.
+2. Pass `parent_message_id` when ACP is continuing a linear thread.
+3. Backend writer/finalizer/recovery paths use IDs exclusively.
 3. `persistSessionId` writes only to `thread_config`.
 
 Likely files:
@@ -217,6 +264,77 @@ Given very small migration scope:
 - Test script against representative fixtures.
 - Verify before/after counts and invariants.
 - Manual inspection acceptable for the few real files.
+
+## 11. Codepaths That Must Stop Depending on the Root Row
+
+These are the primary runtime paths that still depend on `reply_to`,
+`thread_date`, or root-row lookup and should be migrated to `thread_id` +
+`parent_message_id`.
+
+### 11.1 Thread placement / root lookup helpers
+
+- `src/packages/frontend/chat/utils.ts`
+  - `getRootMessage`
+  - `getReplyToRoot`
+  - `getThreadRootDate`
+
+These helpers should be removed or reduced to migration-only utilities.
+
+### 11.2 Message rendering / folding / reply actions
+
+- `src/packages/frontend/chat/message.tsx`
+  - negative-date draft keys for replies
+  - fold/unfold operations via `getThreadRootDate(...)`
+  - continue/reply actions that pass `reply_to`
+
+- `src/packages/frontend/chat/actions.ts`
+  - `toggleFoldThread(reply_to: Date, ...)`
+  - `sendChat(...)` reply path that resolves root message/root date
+  - `sendReply(...)` deriving thread context from `message.reply_to` /
+    `thread_date`
+
+These should become `thread_id` / `parent_message_id` operations.
+
+### 11.3 Chatroom composer / selected-thread plumbing
+
+- `src/packages/frontend/chat/chatroom.tsx`
+  - `resolveReplyTarget(...)`
+  - composer send path that still passes `reply_to`
+  - selected-thread helpers that consult `metadata.thread_date`
+
+These should target the selected `thread_id` and selected parent message id.
+
+### 11.4 Chat log / thread selection
+
+- `src/packages/frontend/chat/chat-log.tsx`
+  - root lookup for scrolling/folding/thread rendering
+- `src/packages/frontend/chat/thread-selection.tsx`
+  - thread ordering derived from `thread_date`
+
+This code should use thread metadata plus per-message parent links, not root
+message fetches.
+
+### 11.5 LLM / ACP protocol
+
+- `src/packages/frontend/chat/actions/llm.ts`
+  - `reply_to`
+  - `getReplyToRoot(...)`
+
+- `src/packages/frontend/chat/acp-api.ts`
+  - `threadRootDate`
+  - `reply_to`
+  - current mixed-use `reply_to_message_id`
+
+ACP metadata should become `thread_id`, `message_id`, and `parent_message_id`
+based. Root-date metadata can remain only as optional descriptive context.
+
+### 11.6 Thread metadata compatibility indexes
+
+- `src/packages/frontend/chat/message-cache.ts`
+  - `thread_id -> root-date-key` compatibility map
+
+This should be removed once thread selection/opening no longer relies on root
+date keys.
 
 ## 11. Rollout
 

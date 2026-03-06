@@ -3548,22 +3548,6 @@ export class BaseEditorActions<
     }
   }
 
-  foldAIThreads(_id: string) {
-    const actions = getSideChatActions({
-      project_id: this.project_id,
-      path: this.path,
-    });
-    actions?.foldAllThreads(true);
-  }
-
-  foldAllThreads(_id: string) {
-    const actions = getSideChatActions({
-      project_id: this.project_id,
-      path: this.path,
-    });
-    actions?.foldAllThreads();
-  }
-
   fs = () => {
     const a = this.redux.getProjectActions(this.project_id);
     return a.fs(0);

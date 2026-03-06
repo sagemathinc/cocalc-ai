@@ -38,11 +38,10 @@ import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageAtDate,
-  getRootMessage,
-  getThreadRootDate,
   newest_content,
+  orderLinearThreadMessages,
 } from "./utils";
-import { dateValue, field, replyTo, foldingList } from "./access";
+import { dateValue, field, replyTo, parentMessageId } from "./access";
 import { COMBINED_FEED_KEY } from "./threads";
 
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
@@ -194,7 +193,6 @@ export function ChatLog({
     const { dates, numChildren } = getSortedDates(
       messages,
       account_id!,
-      singleThreadView,
       visibleKeys,
     );
     // TODO: This is an ugly hack because I'm tired and need to finish this.
@@ -256,26 +254,7 @@ export function ChatLog({
         actions.clearScrollRequest();
         return;
       }
-      let tryAgain = false;
-      // we clear all filters and ALSO make sure
-      // if message is in a folded thread, then that thread is not folded.
-      if (account_id && isFolded(messages, message, account_id)) {
-        // this actually unfolds it, since it was folded.
-        const date = new Date(
-          getThreadRootDate({ date: parseFloat(scrollToDate), messages }),
-        );
-        actions.toggleFoldThread(date);
-        tryAgain = true;
-      }
-      if (tryAgain) {
-        // we have to wait a while for full re-render to happen
-        setTimeout(() => {
-          actions.scrollToDate(parseFloat(scrollToDate));
-        }, 10);
-      } else {
-        // totally give up
-        actions.clearScrollRequest();
-      }
+      actions.clearScrollRequest();
       return;
     }
     virtuosoRef.current?.scrollToIndex({ index });
@@ -446,27 +425,11 @@ function isPrevMessageSender(
 }
 
 function isThread(message: ChatMessageTyped, numChildren: NumChildren) {
-  if (replyTo(message) != null) {
+  if (parentMessageId(message) != null || replyTo(message) != null) {
     return true;
   }
   const d = dateValue(message)?.valueOf();
   return d != null ? (numChildren[d] ?? 0) > 0 : false;
-}
-
-function isFolded(
-  messages: ChatMessages,
-  message: ChatMessageTyped,
-  account_id: string,
-) {
-  if (account_id == null) {
-    return false;
-  }
-  const rootMsg = getRootMessage({
-    message,
-    messages,
-  }) as any;
-  const folding = rootMsg ? foldingList(rootMsg) : undefined;
-  return Boolean(folding?.includes?.(account_id));
 }
 
 // Messages are sorted using each message record's `date` value.
@@ -474,26 +437,22 @@ function isFolded(
 // away from date-keyed storage.
 export function getSortedDates(
   messages: ChatMessages,
-  account_id: string,
-  disableFolding?: boolean,
+  _account_id: string,
   visibleKeys?: Set<string>,
 ): {
   dates: string[];
-  numFolded: number;
   numChildren: NumChildren;
 } {
-  let numFolded = 0;
   let m = messages;
   if (m == null) {
     return {
       dates: [],
-      numFolded: 0,
       numChildren: {},
     };
   }
 
-  // Do a linear pass through all messages to divide into threads, so that
-  // getSortedDates is O(n) instead of O(n^2) !
+  const visibleMessages: ChatMessageTyped[] = [];
+  const visibleById = new Map<string, ChatMessageTyped>();
   const numChildren: NumChildren = {};
   for (const [, message] of m) {
     if (message == null) continue;
@@ -501,6 +460,21 @@ export function getSortedDates(
     if (!messageDate) continue;
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
+    visibleMessages.push(message);
+    const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
+    if (messageId) visibleById.set(messageId, message);
+  }
+
+  for (const message of visibleMessages) {
+    const parentId = parentMessageId(message);
+    if (parentId) {
+      const parent = visibleById.get(parentId);
+      const d = dateValue(parent)?.valueOf();
+      if (d != null) {
+        numChildren[d] = (numChildren[d] ?? 0) + 1;
+        continue;
+      }
+    }
     const parent = replyTo(message);
     if (parent != null) {
       const d = new Date(parent).valueOf();
@@ -508,61 +482,34 @@ export function getSortedDates(
     }
   }
 
-  const v: [date: number, reply_to: number | undefined][] = [];
-  for (const [, message] of m) {
-    if (message == null) continue;
-    const messageDate = dateValue(message);
-    if (!messageDate) continue;
-    const date = messageDate.valueOf();
-    if (visibleKeys && !visibleKeys.has(`${date}`)) continue;
+  const groups = new Map<string, ChatMessageTyped[]>();
+  for (const message of visibleMessages) {
+    const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
+    const groupKey =
+      threadId || `${field<string>(message, "message_id") ?? dateValue(message)?.valueOf() ?? Math.random()}`;
+    const bucket = groups.get(groupKey) ?? [];
+    bucket.push(message);
+    groups.set(groupKey, bucket);
+  }
 
-    if (!disableFolding) {
-      const is_thread = isThread(message, numChildren);
-      const is_folded = is_thread && isFolded(messages, message, account_id);
-      const is_thread_body = is_thread && replyTo(message) != null;
-      const folded = is_thread && is_folded && is_thread_body;
-      if (folded) {
-        numFolded++;
-        continue;
-      }
+  const orderedGroups = Array.from(groups.values())
+    .map((group) => orderLinearThreadMessages(group))
+    .sort((a, b) => {
+      const aTime = dateValue(a[0])?.valueOf() ?? Number.POSITIVE_INFINITY;
+      const bTime = dateValue(b[0])?.valueOf() ?? Number.POSITIVE_INFINITY;
+      return cmp(aTime, bTime);
+    });
+
+  const dates: string[] = [];
+  for (const group of orderedGroups) {
+    for (const message of group) {
+      const messageDate = dateValue(message);
+      if (!messageDate) continue;
+      const date = messageDate.valueOf();
+      dates.push(`${date}`);
     }
-
-    const reply_to = replyTo(message);
-    v.push([
-      date,
-      reply_to != null ? new Date(reply_to).valueOf() : undefined,
-    ]);
   }
-  v.sort(cmpMessages);
-  const dates = v.map((z) => `${z[0]}`);
-  return { dates, numFolded, numChildren };
-}
-
-/*
-Compare messages as follows:
- - if message has a parent it is a reply, so we use the parent instead for the
-   compare
- - except in special cases:
-    - one of them is the parent and other is a child of that parent
-    - both have same parent
-*/
-function cmpMessages([a_time, a_parent], [b_time, b_parent]): number {
-  // special case:
-  // same parent:
-  if (a_parent !== undefined && a_parent == b_parent) {
-    return cmp(a_time, b_time);
-  }
-  // one of them is the parent and other is a child of that parent
-  if (a_parent == b_time) {
-    // b is the parent of a, so b is first.
-    return 1;
-  }
-  if (b_parent == a_time) {
-    // a is the parent of b, so a is first.
-    return -1;
-  }
-  // general case.
-  return cmp(a_parent ?? a_time, b_parent ?? b_time);
+  return { dates, numChildren };
 }
 
 export function getUserName(userMap, accountId: string): string {
@@ -693,12 +640,13 @@ export function MessageList({
     if (!showThreadHeaders || !currentThreadKey || currentThreadKey === prevThreadKey) {
       return null;
     }
-    const root = getRootMessage({ message, messages });
-    const rootDate = dateValue(root)?.valueOf();
-    const threadKey = rootDate != null ? `${rootDate}` : currentThreadKey;
+    const threadKey = currentThreadKey;
+    const metadata = actions?.getThreadMetadata?.(threadKey, {
+      threadId: threadKey,
+    });
     const rawTitle =
-      (root ? field(root, "name") : undefined)?.trim() ||
-      (root ? newest_content(root) : undefined) ||
+      `${metadata?.name ?? ""}`.trim() ||
+      newest_content(message) ||
       "Thread";
     const threadTitle = stripHtml(rawTitle);
     return (
@@ -732,29 +680,20 @@ export function MessageList({
       return <div style={{ height: "30px" }} />;
     }
     const currentThreadKey = showThreadHeaders
-      ? `${getThreadRootDate({
-          date: dateValue(message)?.valueOf() ?? 0,
-          messages,
-        })}`
+      ? `${field<string>(message, "thread_id") ?? date}`
       : undefined;
     const prevThreadKey =
       showThreadHeaders && index > 0
-        ? `${getThreadRootDate({
-            date:
-              dateValue(
-                getMessageAtDate({
-                  messages,
-                  date: parseFloat(sortedDates[index - 1]),
-                }),
-              )?.valueOf() ?? 0,
-            messages,
-          })}`
+        ? `${field<string>(
+            getMessageAtDate({
+              messages,
+              date: parseFloat(sortedDates[index - 1]),
+            }),
+            "thread_id",
+          ) ?? sortedDates[index - 1]}`
         : undefined;
 
     const is_thread = numChildren != null && isThread(message, numChildren);
-    const is_folded =
-      !singleThreadView && is_thread && isFolded(messages, message, account_id);
-    const is_thread_body = is_thread && replyTo(message) != null;
     const h = virtuosoHeightsRef.current?.[index];
     const shouldDim =
       showThreadHeaders &&
@@ -775,7 +714,6 @@ export function MessageList({
         <DivTempHeight height={h ? `${h}px` : undefined}>
           <Message
             messages={messages}
-            numChildren={numChildren?.[dateValue(message)?.valueOf() ?? NaN]}
             key={date}
             index={index}
             account_id={account_id}
@@ -787,8 +725,10 @@ export function MessageList({
             font_size={fontSize}
             actions={actions}
             is_thread={is_thread}
-            is_folded={is_folded}
-            is_thread_body={is_thread_body}
+            is_thread_body={
+              is_thread &&
+              (parentMessageId(message) != null || replyTo(message) != null)
+            }
             is_prev_sender={isPrevMessageSender(index, sortedDates, messages)}
             show_avatar={!isNextMessageSender(index, sortedDates, messages)}
             mode={mode}

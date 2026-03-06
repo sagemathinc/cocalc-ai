@@ -19,9 +19,21 @@ import {
   editingArray,
   dateValue,
   replyTo as replyToField,
+  parentMessageId as parentMessageIdField,
 } from "./access";
 
 export const INPUT_HEIGHT = "auto";
+
+export function stableDraftKeyFromThreadKey(threadKey: string): number {
+  let hash = 0;
+  for (let i = 0; i < threadKey.length; i++) {
+    hash = (hash * 33 + threadKey.charCodeAt(i)) | 0;
+  }
+  // Keep reply/thread draft keys negative and non-zero so they never collide
+  // with the global composer bucket `0`.
+  const positive = Math.abs(hash) || 1;
+  return -positive;
+}
 
 export const USER_MENTION_MARKUP =
   '<span class="user-mention" account-id=__id__ >@__display__</span>';
@@ -150,6 +162,7 @@ export function getRootMessage({
   message: ChatMessage;
   messages: ChatMessages;
 }): ChatMessageTyped | undefined {
+  const directParentMessageId = parentMessageIdField(message);
   const reply_to = replyToField(message);
   const date = dateValue(message);
   const threadId =
@@ -179,12 +192,36 @@ export function getRootMessage({
     }
     return root ?? earliest;
   };
+  const fallbackRootByParentChain = (): ChatMessageTyped | undefined => {
+    if (!directParentMessageId) return undefined;
+    const byId = new Map<string, ChatMessageTyped>();
+    for (const candidate of messages.values?.() ?? []) {
+      const id = `${(candidate as any)?.message_id ?? ""}`.trim();
+      if (!id) continue;
+      byId.set(id, candidate as ChatMessageTyped);
+    }
+    let current = byId.get(directParentMessageId);
+    let guard = 0;
+    while (current && guard < 1000) {
+      const nextParentId = parentMessageIdField(current);
+      if (!nextParentId) return current;
+      const next = byId.get(nextParentId);
+      if (!next) return current;
+      current = next;
+      guard += 1;
+    }
+    return current;
+  };
   // we can't find the original message, if there is no reply_to
   if (!reply_to) {
+    const byParentChain = fallbackRootByParentChain();
+    if (byParentChain) return byParentChain;
     // the msssage itself is the root
     const ms = new Date(date ?? Date.now()).valueOf();
     return getMessageAtDate({ messages, date: ms }) ?? fallbackRootByThreadId();
   } else {
+    const byParentChain = fallbackRootByParentChain();
+    if (byParentChain) return byParentChain;
     // All messages in a thread have the same reply_to, which points to the root.
     const ms = new Date(reply_to).valueOf();
     const root = getMessageAtDate({ messages, date: ms });
@@ -196,6 +233,72 @@ export function getRootMessage({
     }
     return fallbackRootByThreadId();
   }
+}
+
+function stableMessageOrder(
+  a: ChatMessageTyped,
+  b: ChatMessageTyped,
+): number {
+  const aMs = dateValue(a)?.valueOf() ?? Number.POSITIVE_INFINITY;
+  const bMs = dateValue(b)?.valueOf() ?? Number.POSITIVE_INFINITY;
+  if (aMs !== bMs) return aMs - bMs;
+  const aId = `${(a as any)?.message_id ?? ""}`.trim();
+  const bId = `${(b as any)?.message_id ?? ""}`.trim();
+  if (aId && bId) return aId.localeCompare(bId);
+  return `${senderId(a) ?? ""}`.localeCompare(`${senderId(b) ?? ""}`);
+}
+
+export function orderLinearThreadMessages(
+  messages: ChatMessageTyped[],
+): ChatMessageTyped[] {
+  if (!Array.isArray(messages) || messages.length <= 1) {
+    return Array.isArray(messages) ? messages.slice() : [];
+  }
+  const sorted = messages.slice().sort(stableMessageOrder);
+  const byId = new Map<string, ChatMessageTyped>();
+  for (const message of sorted) {
+    const id = `${(message as any)?.message_id ?? ""}`.trim();
+    if (id) byId.set(id, message);
+  }
+
+  const children = new Map<string, ChatMessageTyped[]>();
+  const anchors: ChatMessageTyped[] = [];
+  for (const message of sorted) {
+    const parentId = parentMessageIdField(message);
+    if (parentId && byId.has(parentId) && parentId !== `${(message as any)?.message_id ?? ""}`.trim()) {
+      const bucket = children.get(parentId) ?? [];
+      bucket.push(message);
+      children.set(parentId, bucket);
+    } else {
+      anchors.push(message);
+    }
+  }
+  for (const bucket of children.values()) {
+    bucket.sort(stableMessageOrder);
+  }
+  anchors.sort(stableMessageOrder);
+
+  const ordered: ChatMessageTyped[] = [];
+  const visited = new Set<string>();
+  const visit = (message: ChatMessageTyped) => {
+    const id = `${(message as any)?.message_id ?? ""}`.trim();
+    const key = id || `${dateValue(message)?.valueOf() ?? "no-date"}:${senderId(message) ?? ""}`;
+    if (visited.has(key)) return;
+    visited.add(key);
+    ordered.push(message);
+    if (!id) return;
+    for (const child of children.get(id) ?? []) {
+      visit(child);
+    }
+  };
+
+  for (const anchor of anchors) {
+    visit(anchor);
+  }
+  for (const message of sorted) {
+    visit(message);
+  }
+  return ordered;
 }
 
 export function getReplyToRoot({

@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { enableMapSet, produce } from "immer";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import type { PlainChatMessage } from "./types";
-import { dateValue, replyTo } from "./access";
+import { dateValue, parentMessageId, replyTo } from "./access";
 import { once } from "@cocalc/util/async-utils";
 import { normalizeChatMessage } from "./normalize";
 
@@ -189,7 +189,7 @@ export class ChatMessageCache extends EventEmitter {
     if (d && d.valueOf() > thread.newestTime) {
       thread.newestTime = d.valueOf();
     }
-    if (!replyTo(message)) {
+    if (!parentMessageId(message) && !replyTo(message)) {
       thread.rootMessage = message;
       threadKeyByThreadId.set(threadKey, messageKey);
     }
@@ -208,7 +208,11 @@ export class ChatMessageCache extends EventEmitter {
     if (!thread) return;
     thread.messageKeys.delete(messageKey);
     thread.messageCount = thread.messageKeys.size;
-    if (!replyTo(message) && thread.rootMessage?.date === message.date) {
+    if (
+      !parentMessageId(message) &&
+      !replyTo(message) &&
+      thread.rootMessage?.date === message.date
+    ) {
       thread.rootMessage = undefined;
       const threadId = this.getThreadId(message);
       if (threadId && threadKeyByThreadId.get(threadId) === messageKey) {
@@ -354,8 +358,8 @@ export class ChatMessageCache extends EventEmitter {
       threadConfigByThreadId.set(threadId, row0 as Record<string, unknown>);
     }
 
-    // Build thread_id -> root-date-key mapping for opening root messages from
-    // thread metadata (used by a few date-keyed helpers).
+    // Build thread_id -> root-date-key mapping for compatibility helpers that
+    // still need to open a thread's root message by date key.
     for (const row0 of list) {
       if ((row0 as any)?.event !== "chat") continue;
       const message = row0 as PlainChatMessage;

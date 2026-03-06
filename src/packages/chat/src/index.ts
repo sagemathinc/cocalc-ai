@@ -51,7 +51,6 @@ export interface ChatMessage {
   reply_to?: string;
   generating?: boolean;
   editing?: string[];
-  folding?: string[];
   feedback?: Record<string, unknown>;
   acp_events?: any[];
   acp_log_store?: string | null;
@@ -66,6 +65,7 @@ export interface ChatMessage {
   // schema-v2 fields (optional while migrating)
   message_id?: string;
   thread_id?: string;
+  parent_message_id?: string;
   reply_to_message_id?: string;
   inline_code_links?: InlineCodeLink[];
 }
@@ -105,6 +105,7 @@ export interface BuildChatMessageOptions {
   acp_account_id?: string;
   message_id?: string;
   thread_id?: string;
+  parent_message_id?: string;
   reply_to_message_id?: string;
   inline_code_links?: InlineCodeLink[];
 }
@@ -135,6 +136,7 @@ export function buildChatMessage(
     acp_account_id: options.acp_account_id,
     message_id: options.message_id,
     thread_id: options.thread_id,
+    parent_message_id: options.parent_message_id,
     reply_to_message_id: options.reply_to_message_id,
     inline_code_links: options.inline_code_links,
   };

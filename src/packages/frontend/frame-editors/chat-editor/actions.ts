@@ -111,14 +111,6 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     });
   }
 
-  foldAIThreads(id: string) {
-    this.chatActions[id]?.foldAllThreads(true);
-  }
-
-  foldAllThreads(id: string) {
-    this.chatActions[id]?.foldAllThreads(false);
-  }
-
   getChatActions(frameId?): ChatActions | undefined {
     if (frameId == null) {
       for (const actions of Object.values(this.chatActions)) {

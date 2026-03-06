@@ -221,6 +221,7 @@ export const SPEC = {
     VERSION: "0.110.0",
     script: () => {
       // https://github.com/openai/codex/releases/download/rust-v0.80.0/codex-aarch64-apple-darwin.tar.gz
+      // https://github.com/openai/codex/releases/download/rust-v0.80.0/codex-aarch64-apple-darwin.tar.gz
       let p;
       switch (effectivePlatform()) {
         case "darwin":

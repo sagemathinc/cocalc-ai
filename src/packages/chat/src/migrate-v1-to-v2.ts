@@ -23,7 +23,7 @@ export interface MigrationReport {
   thread_state_records_created: number;
   generated_message_ids: number;
   generated_thread_ids: number;
-  fixed_reply_to_message_ids: number;
+  fixed_parent_message_ids: number;
   duplicate_message_ids_resolved: number;
   synthetic_roots_created: number;
   invalid_chat_rows_skipped: number;
@@ -203,7 +203,7 @@ export function migrateChatRows(
     thread_state_records_created: 0,
     generated_message_ids: 0,
     generated_thread_ids: 0,
-    fixed_reply_to_message_ids: 0,
+    fixed_parent_message_ids: 0,
     duplicate_message_ids_resolved: 0,
     synthetic_roots_created: 0,
     invalid_chat_rows_skipped: 0,
@@ -237,17 +237,34 @@ export function migrateChatRows(
     }
 
     for (const msg of threadMessages) {
+      const currentParent =
+        typeof msg.row.parent_message_id === "string" &&
+        msg.row.parent_message_id.trim().length > 0
+          ? msg.row.parent_message_id.trim()
+          : typeof msg.row.reply_to_message_id === "string" &&
+              msg.row.reply_to_message_id.trim().length > 0
+            ? msg.row.reply_to_message_id.trim()
+            : undefined;
       if (msg.messageId === root.messageId) {
+        if (msg.row.parent_message_id != null) {
+          delete msg.row.parent_message_id;
+          reportBase.fixed_parent_message_ids += 1;
+        }
         if (msg.row.reply_to_message_id != null) {
           delete msg.row.reply_to_message_id;
-          reportBase.fixed_reply_to_message_ids += 1;
+          reportBase.fixed_parent_message_ids += 1;
         }
         continue;
       }
-      const current = msg.row.reply_to_message_id;
-      if (current !== root.messageId) {
-        msg.row.reply_to_message_id = root.messageId;
-        reportBase.fixed_reply_to_message_ids += 1;
+      if (currentParent !== root.messageId) {
+        msg.row.parent_message_id = root.messageId;
+        reportBase.fixed_parent_message_ids += 1;
+      } else if (msg.row.parent_message_id !== root.messageId) {
+        msg.row.parent_message_id = root.messageId;
+      }
+      if (msg.row.reply_to_message_id != null) {
+        delete msg.row.reply_to_message_id;
+        reportBase.fixed_parent_message_ids += 1;
       }
     }
 

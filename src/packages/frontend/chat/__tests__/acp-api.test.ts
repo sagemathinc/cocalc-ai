@@ -105,12 +105,13 @@ describe("processAcpLLM", () => {
     expect(mockStreamAcp).toHaveBeenCalledTimes(1);
     const arg = mockStreamAcp.mock.calls[0][0];
     expect(arg.chat.message_date).toBe(new Date(1003).toISOString());
-    expect(arg.chat.reply_to).toBe(new Date(1000).toISOString());
+    expect(arg.chat.reply_to).toBeUndefined();
     expect(typeof arg.chat.message_id).toBe("string");
     expect(arg.chat.message_id).toBeTruthy();
     expect(arg.chat.message_id).not.toBe("user-msg-1");
     expect(arg.chat.thread_id).toBe("thread-1");
-    expect(arg.chat.reply_to_message_id).toBe("user-msg-1");
+    expect(arg.chat.parent_message_id).toBe("user-msg-1");
+    expect(arg.chat.reply_to_message_id).toBeUndefined();
     expect(arg.session_id).toBe("thread-1");
   });
 

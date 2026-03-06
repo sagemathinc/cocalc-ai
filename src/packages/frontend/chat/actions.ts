@@ -27,7 +27,7 @@ import {
   model2service,
   type LanguageModel,
 } from "@cocalc/util/db-schema/llm-utils";
-import { cmp, history_path, isValidUUID, uuid } from "@cocalc/util/misc";
+import { history_path, isValidUUID, uuid } from "@cocalc/util/misc";
 import { getSortedDates, getUserName } from "./chat-log";
 import { message_to_markdown } from "./message";
 import { ChatState, ChatStore } from "./store";
@@ -58,6 +58,8 @@ import {
   toISOString,
   toMsString,
   newest_content,
+  orderLinearThreadMessages,
+  stableDraftKeyFromThreadKey,
 } from "./utils";
 import type {
   AcpChatContext,
@@ -65,7 +67,6 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import {
   field,
-  foldingList,
   historyArray,
   dateValue,
   editingArray,
@@ -176,8 +177,7 @@ export function collectThreadMessages({
       list.push(msg);
     }
   }
-  list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
-  return list;
+  return orderLinearThreadMessages(list);
 }
 
 export function resolveThreadAgentModel({
@@ -375,71 +375,6 @@ export class ChatActions extends Actions<ChatState> {
     handleSyncDBChange({ changes, store: this.store, syncdb: this.syncdb });
   };
 
-  toggleFoldThread = (reply_to: Date, messageIndex?: number) => {
-    if (this.syncdb == null) return;
-    const account_id = this.redux.getStore("account").get_account_id();
-    const rootMessage = this.getMessageByDate(reply_to);
-    const replyToIso = toISOString(reply_to);
-    const cur =
-      (replyToIso &&
-        rootMessage &&
-        this.getSyncdbOne({
-          event: "chat",
-          date: replyToIso,
-          sender_id: senderId(rootMessage),
-        })) ??
-      rootMessage;
-    const folding = foldingList(cur);
-    const folded = folding.includes(account_id);
-    const next = folded
-      ? folding.filter((x) => x !== account_id)
-      : [...folding, account_id];
-
-    const d = toISOString(reply_to);
-    if (!d) {
-      return;
-    }
-    const targetSenderId = senderId(cur ?? rootMessage);
-    if (!targetSenderId) {
-      return;
-    }
-    this.setSyncdb({
-      event: "chat",
-      sender_id: targetSenderId,
-      folding: next,
-      date: d,
-    });
-
-    this.syncdb.commit();
-
-    if (folded && messageIndex != null) {
-      this.scrollToIndex(messageIndex);
-    }
-  };
-
-  foldAllThreads = (onlyLLM = true) => {
-    if (this.syncdb == null) return;
-    const messages = this.getAllMessages();
-    const account_id = this.redux.getStore("account").get_account_id();
-    for (const [_timestamp, message] of messages) {
-      const date = dateValue(message);
-      // ignore replies
-      if (replyTo(message) != null || !date) continue;
-      const isLLMThread = this.isLanguageModelThread(date) !== false;
-      if (onlyLLM && !isLLMThread) continue;
-      const folding = foldingList(message);
-      const folded = folding.includes(account_id);
-      if (!folded) {
-        this.setSyncdb({
-          event: "chat",
-          sender_id: senderId(message),
-          folding: [...folding, account_id],
-          date: toISOString(date),
-        });
-      }
-    }
-  };
-
   feedback = (message: ChatMessageTyped, feedback: Feedback | null) => {
     if (this.syncdb == null) return;
     const date = dateValue(message);
@@ -500,6 +435,7 @@ export class ChatActions extends Actions<ChatState> {
     preserveSelectedThread,
     skipModelDispatch,
     acp_loop_config,
+    parent_message_id,
   }: {
     input?: string;
     sender_id?: string;
@@ -530,6 +466,8 @@ export class ChatActions extends Actions<ChatState> {
     skipModelDispatch?: boolean;
     // optional ACP loop config attached to this message
     acp_loop_config?: AcpLoopConfig;
+    // direct parent for linear thread placement
+    parent_message_id?: string;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -553,13 +491,13 @@ export class ChatActions extends Actions<ChatState> {
       return "";
     }
     let thread_id: string;
-    let reply_to_message_id: string | undefined;
-    let resolvedReplyToIso: string | undefined;
+    let resolvedParentMessageId: string | undefined;
+    let resolvedThreadDateIso: string | undefined;
     const explicitReplyThreadId =
       typeof reply_thread_id === "string" ? reply_thread_id.trim() : "";
     if (!reply_to && !explicitReplyThreadId) {
       thread_id = uuid();
-      resolvedReplyToIso = undefined;
+      resolvedThreadDateIso = undefined;
     } else {
       thread_id = explicitReplyThreadId;
       if (!thread_id) {
@@ -571,26 +509,18 @@ export class ChatActions extends Actions<ChatState> {
       const threadMessages = this.getMessagesInThread(thread_id) ?? [];
       const rootMessage =
         threadMessages.find((msg) => !replyTo(msg)) ?? threadMessages[0];
-      const rootMessageId = `${(rootMessage as any)?.message_id ?? ""}`.trim();
-      if (rootMessageId) {
-        reply_to_message_id = rootMessageId;
-      }
-      resolvedReplyToIso =
+      const explicitParentMessageId =
+        typeof parent_message_id === "string" ? parent_message_id.trim() : "";
+      const latestMessageId =
+        `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim();
+      resolvedParentMessageId =
+        explicitParentMessageId || latestMessageId || undefined;
+      resolvedThreadDateIso =
         toISOString(reply_to) ??
         asIsoDateString(
           field<string>(this.getThreadConfigRecordById(thread_id), "date"),
         ) ??
         toISOString(dateValue(rootMessage));
-      if (!resolvedReplyToIso) {
-        console.warn(
-          "chat sendChat reply skipped: unable to resolve thread root date",
-          {
-            thread_id,
-            reply_to: toISOString(reply_to),
-          },
-        );
-        return "";
-      }
     }
     const trimmedName = name?.trim();
     const message = {
@@ -605,10 +535,9 @@ export class ChatActions extends Actions<ChatState> {
         },
       ],
       date: time_stamp_str,
-      reply_to: resolvedReplyToIso,
       message_id,
       thread_id,
-      reply_to_message_id,
+      parent_message_id: resolvedParentMessageId,
       editing: {},
     } as ChatMessage;
     if (send_mode === "immediate") {
@@ -683,21 +612,6 @@ export class ChatActions extends Actions<ChatState> {
       }
       selectedThreadKey = thread_id;
     } else {
-      // when replying we make sure that the thread is expanded, since otherwise
-      // our reply won't be visible
-      // If the replied-to thread is folded, ensure it's expanded. In the
-      // new flow we rely on the live sync doc and foldingList handles plain data.
-      const threadMessages = this.getMessagesInThread(thread_id) ?? [];
-      const replyMsg =
-        threadMessages.find((msg) => !replyTo(msg)) ?? threadMessages[0];
-      const folding = foldingList(replyMsg);
-      if (folding?.includes?.(sender_id)) {
-        if (reply_to) {
-          this.toggleFoldThread(reply_to);
-        } else if (resolvedReplyToIso) {
-          this.toggleFoldThread(new Date(resolvedReplyToIso));
-        }
-      }
       selectedThreadKey = thread_id;
     }
     if (selectedThreadKey != "0" && !preserveSelectedThread) {
@@ -740,8 +654,8 @@ export class ChatActions extends Actions<ChatState> {
       (async () => {
         await this.processLLM({
           message,
-          reply_to: resolvedReplyToIso
-            ? new Date(resolvedReplyToIso)
+          reply_to: resolvedThreadDateIso
+            ? new Date(resolvedThreadDateIso)
             : time_stamp,
           tag,
           acpSendMode: send_mode,
@@ -829,7 +743,7 @@ export class ChatActions extends Actions<ChatState> {
       sender_id?: string;
       message_id?: string;
       thread_id?: string;
-      reply_to_message_id?: string;
+      parent_message_id?: string;
     },
     content: string,
     author_id: string,
@@ -851,7 +765,7 @@ export class ChatActions extends Actions<ChatState> {
       sender_id: message.sender_id ?? author_id,
       message_id: message.message_id,
       thread_id: message.thread_id,
-      reply_to_message_id: message.reply_to_message_id,
+      parent_message_id: message.parent_message_id,
       history: addToHistory(prevHistory, {
         author_id,
         content,
@@ -870,7 +784,12 @@ export class ChatActions extends Actions<ChatState> {
     reply_to,
     submitMentionsRef,
   }: {
-    message: { date: string | Date; thread_id?: string; reply_to?: string };
+    message: {
+      date: string | Date;
+      thread_id?: string;
+      reply_to?: string;
+      message_id?: string;
+    };
     reply?: string;
     from?: string;
     noNotification?: boolean;
@@ -900,12 +819,10 @@ export class ChatActions extends Actions<ChatState> {
       sender_id: from ?? this.redux.getStore("account").get_account_id(),
       reply_to: normalizedReplyTo,
       reply_thread_id,
+      parent_message_id: `${message.message_id ?? ""}`.trim() || undefined,
       noNotification,
     });
-    if (normalizedReplyTo) {
-      // negative date of reply_to root is used for replies.
-      this.deleteDraft(-normalizedReplyTo.valueOf());
-    }
+    this.deleteDraft(stableDraftKeyFromThreadKey(reply_thread_id));
     return time_stamp_str;
   };
 
@@ -1823,7 +1740,6 @@ export class ChatActions extends Actions<ChatState> {
         },
       ],
       date: newRootIso,
-      reply_to: undefined,
       editing: [],
     };
     (newMessage as any).name = title;
@@ -2024,11 +1940,15 @@ export class ChatActions extends Actions<ChatState> {
     if (message == null) {
       return;
     }
-    const reply_to = message.reply_to;
-    if (!reply_to) return;
+    const replyToIso =
+      `${field<string>(message, "reply_to") ?? ""}`.trim() ||
+      this.getThreadMetadata(`${message.thread_id ?? ""}`.trim(), {
+        threadId: `${message.thread_id ?? ""}`.trim() || undefined,
+      }).thread_date;
+    if (!replyToIso) return;
     await this.processLLM({
       message,
-      reply_to: new Date(reply_to),
+      reply_to: new Date(replyToIso),
       tag: "regenerate",
       llm,
       dateLimit: date0,

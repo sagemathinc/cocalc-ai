@@ -6,7 +6,7 @@ Shared chat schema/types/helpers used by frontend and lite backend.
 
 Chat schema v2 introduces explicit records:
 
-- `chat` (messages) with `message_id`, `thread_id`, `reply_to_message_id`
+- `chat` (messages) with `message_id`, `thread_id`, `parent_message_id`
 - `chat-thread` (thread identity)
 - `chat-thread-config` (title/icon/color/pin/codex config)
 - `chat-thread-state` (runtime state: queued/running/interrupted/etc.)
@@ -48,7 +48,7 @@ Primary counters:
 
 If a codex thread appears to lose codex controls/config:
 
-1. Confirm a `chat-thread-config` row exists for the thread root date.
+1. Confirm a `chat-thread-config` row exists for the thread's `thread_id`.
 2. Confirm `thread_id` matches between message rows and the thread-config row.
 3. Run migration on the chat file and re-check integrity counters.
 

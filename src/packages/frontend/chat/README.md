@@ -2,14 +2,14 @@
 
 ## State / normalization (2025-02)
 
-- Chat data now lives in a single source of truth: the SyncDoc backed by Patchflow/Immer. `message-cache.ts` listens to SyncDoc change events and exposes a plain `Map<string, ChatMessage>` (keyed by the thread root date in milliseconds as a string). Messages are stored as the raw frozen syncdb objects to avoid extra copies.
+- Chat data now lives in a single source of truth: the SyncDoc backed by Patchflow/Immer. `message-cache.ts` listens to SyncDoc change events and exposes plain JS message maps plus thread metadata indexes. Thread config is keyed by `thread_id`; legacy date-key indexes remain only for compatibility with older helpers and root-message lookups. Messages are stored as the raw frozen syncdb objects to avoid extra copies.
 - Normalization upgrades legacy rows (adds `schema_version`, coerces dates, flattens history/payload) and writes the upgraded record back once so disk stays consistent.
 - The Redux store still uses immutable.js for unrelated UI state, but chat messages themselves are plain JS objects served from the cache/context.
 
 ## Timestamps
 
 - Stored on disk as ISO strings; in memory we normalize to `Date` objects for all chat messages.
-- Thread keys and message keys use the millisecond timestamp as a string (e.g., `"1733958748000"`). Callers are expected to pass keys in that form.
+- Legacy thread/message date keys use the millisecond timestamp as a string (e.g., `"1733958748000"`). New thread metadata/config lookups should prefer `thread_id` and only fall back to date keys when working with root-message compatibility paths.
 
 ## Overview
 

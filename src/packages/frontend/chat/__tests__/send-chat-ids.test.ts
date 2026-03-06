@@ -52,7 +52,6 @@ function makeActions(messages: Map<string, any> = new Map()): any {
   actions.clearAllFilters = jest.fn();
   actions.setSelectedThread = jest.fn();
   actions.renameThread = jest.fn().mockReturnValue(true);
-  actions.toggleFoldThread = jest.fn();
   actions.processLLM = jest.fn().mockResolvedValue(undefined);
   actions.isLanguageModelThread = jest.fn().mockReturnValue(false);
   return actions;
@@ -123,7 +122,7 @@ describe("sendChat identity fields", () => {
     expect(writtenMs).toBe(baseMs + 1);
   });
 
-  it("writes reply messages with inherited thread_id and reply_to_message_id", async () => {
+  it("writes reply messages with inherited thread_id and parent_message_id", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootIso = rootDate.toISOString();
     const rootMs = rootDate.valueOf();
@@ -163,7 +162,9 @@ describe("sendChat identity fields", () => {
       .find((row: any) => row?.event === "chat" && row?.history?.[0]?.content === "reply content");
     expect(replySet).toBeTruthy();
     expect(replySet.thread_id).toBe("thread-abc-1");
-    expect(replySet.reply_to_message_id).toBe("root-msg-1");
+    expect(replySet.parent_message_id).toBe("root-msg-1");
+    expect(replySet.reply_to_message_id).toBeUndefined();
+    expect(replySet.reply_to).toBeUndefined();
     expect(typeof replySet.message_id).toBe("string");
     expect(replySet.message_id.length).toBeGreaterThan(0);
   });

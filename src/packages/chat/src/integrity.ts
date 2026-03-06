@@ -28,6 +28,7 @@ interface NormalizedMessage {
   date_iso?: string;
   sender_id?: string;
   reply_to?: string;
+  parent_message_id?: string;
   reply_to_message_id?: string;
   acp_config?: any;
   is_root: boolean;
@@ -145,12 +146,21 @@ export function computeChatIntegrityReport(
       date_iso: dateIso,
       sender_id: row?.sender_id,
       reply_to: replyTo,
+      parent_message_id:
+        typeof row?.parent_message_id === "string"
+          ? row.parent_message_id
+          : typeof row?.reply_to_message_id === "string"
+            ? row.reply_to_message_id
+            : undefined,
       reply_to_message_id:
         typeof row?.reply_to_message_id === "string"
           ? row.reply_to_message_id
           : undefined,
       acp_config: toJs(row?.acp_config),
-      is_root: !replyTo && !row?.reply_to_message_id,
+      is_root:
+        !replyTo &&
+        !(typeof row?.parent_message_id === "string" && row.parent_message_id) &&
+        !row?.reply_to_message_id,
     };
     messages.push(message);
     messageById.set(message.message_id, message);
@@ -178,8 +188,13 @@ export function computeChatIntegrityReport(
   }
 
   for (const message of messages) {
-    if (message.reply_to_message_id) {
-      if (!messageById.has(message.reply_to_message_id)) {
+    const parentMessageId =
+      typeof message.parent_message_id === "string" &&
+      message.parent_message_id.length > 0
+        ? message.parent_message_id
+        : undefined;
+    if (parentMessageId) {
+      if (!messageById.has(parentMessageId)) {
         counters.invalid_reply_targets += 1;
         pushExample(examples.invalid_reply_message_ids, message.message_id);
       }

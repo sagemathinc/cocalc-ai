@@ -116,6 +116,109 @@ describe("ChatActions.getMessagesInThread", () => {
     ]);
   });
 
+  it("orders a linear thread by parent_message_id instead of raw timestamps", () => {
+    const t = Date.parse("2026-01-01T00:00:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${t}`,
+        {
+          event: "chat",
+          sender_id: "assistant",
+          date: new Date(t),
+          thread_id: "thread-linear",
+          message_id: "assistant-0",
+          history: [],
+        },
+      ],
+      [
+        `${t + 1}`,
+        {
+          event: "chat",
+          sender_id: "user",
+          date: new Date(t + 1),
+          thread_id: "thread-linear",
+          message_id: "user-x",
+          parent_message_id: "assistant-0",
+          history: [],
+        },
+      ],
+      [
+        `${t + 2}`,
+        {
+          event: "chat",
+          sender_id: "user",
+          date: new Date(t + 2),
+          thread_id: "thread-linear",
+          message_id: "user-y",
+          parent_message_id: "assistant-x",
+          history: [],
+        },
+      ],
+      [
+        `${t + 3}`,
+        {
+          event: "chat",
+          sender_id: "user",
+          date: new Date(t + 3),
+          thread_id: "thread-linear",
+          message_id: "user-z",
+          parent_message_id: "assistant-y",
+          history: [],
+        },
+      ],
+      [
+        `${t + 4}`,
+        {
+          event: "chat",
+          sender_id: "assistant",
+          date: new Date(t + 4),
+          thread_id: "thread-linear",
+          message_id: "assistant-x",
+          parent_message_id: "user-x",
+          history: [],
+        },
+      ],
+      [
+        `${t + 5}`,
+        {
+          event: "chat",
+          sender_id: "assistant",
+          date: new Date(t + 5),
+          thread_id: "thread-linear",
+          message_id: "assistant-y",
+          parent_message_id: "user-y",
+          history: [],
+        },
+      ],
+      [
+        `${t + 6}`,
+        {
+          event: "chat",
+          sender_id: "assistant",
+          date: new Date(t + 6),
+          thread_id: "thread-linear",
+          message_id: "assistant-z",
+          parent_message_id: "user-z",
+          history: [],
+        },
+      ],
+    ]);
+    const result =
+      collectThreadMessages({
+        messages: messages as any,
+        threadId: "thread-linear",
+      }) ?? [];
+    expect(result.map((m: any) => m.message_id)).toEqual([
+      "assistant-0",
+      "user-x",
+      "assistant-x",
+      "user-y",
+      "assistant-y",
+      "user-z",
+      "assistant-z",
+    ]);
+  });
+
   it("returns no thread messages when thread_id is missing", () => {
     const rootDate = new Date("2026-01-02T00:00:00.000Z");
     const rootIso = rootDate.toISOString();
