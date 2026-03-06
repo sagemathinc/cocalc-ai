@@ -5,18 +5,12 @@ import { join } from "path";
  *
  * These identifiers must be derived deterministically from:
  *   - `project_id` + `path` (chat file)           → AKV store name
- *   - `thread_root_date` (root message ISO date)  → per-thread namespace
- *   - `turn_date` (assistant reply ISO date)      → per-turn namespace
+ *   - `thread_id`                                 → per-thread namespace
+ *   - `message_id` (assistant reply row id)       → per-turn namespace
  *
  * Both frontend and backend should use this helper so we never have to
  * "invent" subjects/keys in multiple places (which is fragile and can lead to
  * races and mis-associated logs).
- *
- * Notes:
- * - `thread_root_date` and `turn_date` are expected to be ISO timestamps
- *   (e.g. `new Date().toISOString()`), matching how chat messages store `date`.
- * - The pub/sub subject is project-scoped so authorization naturally follows
- *   project membership via conat/NATS subjects.
  */
 
 export type AcpLogRefs = Readonly<{
@@ -39,13 +33,13 @@ export function deriveAcpLogStoreName(
 export function deriveAcpLogRefs(opts: {
   project_id: string;
   path: string;
-  thread_root_date: string;
-  turn_date: string;
+  thread_id: string;
+  message_id: string;
 }): AcpLogRefs {
-  const { project_id, path, thread_root_date, turn_date } = opts;
+  const { project_id, path, thread_id, message_id } = opts;
   const store = deriveAcpLogStoreName(project_id, path);
-  const thread = thread_root_date;
-  const turn = turn_date;
+  const thread = thread_id;
+  const turn = message_id;
   const key = `${thread}:${turn}`;
   const subject = `project.${project_id}.acp-log.${thread}.${turn}`;
   return { store, thread, turn, key, subject };

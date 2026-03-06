@@ -580,19 +580,16 @@ export default function Message({
   // Resolve log identifiers deterministically (shared with backend) so we never
   // invent subjects/keys in multiple places.
   const fallbackLogRefs = useMemo(() => {
-    const msgDate = dateValue(message);
-    const turn_date =
-      msgDate instanceof Date ? msgDate.toISOString() : undefined;
-    const thread_root_date =
-      threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined;
+    const turn_message_id = `${field<string>(message, "message_id") ?? ""}`.trim();
+    const normalizedThreadId = `${messageThreadId ?? ""}`.trim();
 
     const derived =
-      project_id && path && thread_root_date && turn_date
+      project_id && path && normalizedThreadId && turn_message_id
         ? deriveAcpLogRefs({
             project_id,
             path,
-            thread_root_date,
-            turn_date,
+            thread_id: normalizedThreadId,
+            message_id: turn_message_id,
           })
         : undefined;
 
@@ -603,7 +600,7 @@ export default function Message({
       key: derived?.key,
       subject: derived?.subject,
     };
-  }, [message, project_id, path, threadRootMs]);
+  }, [message, project_id, path, messageThreadId]);
 
   const showCodexActivity = useMemo(() => {
     // Only show for ACP-driven turns (Codex activity). The log identifiers are

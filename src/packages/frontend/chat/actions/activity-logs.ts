@@ -47,7 +47,7 @@ export async function deleteActivityLog({
 
 export async function deleteAllActivityLogs({
   actions,
-  threadRootMs,
+  threadRootMs: _threadRootMs,
   threadId,
   message,
   project_id,
@@ -58,8 +58,6 @@ export async function deleteAllActivityLogs({
   const logRefs: { store: string; key: string }[] = [];
   const normalizedThreadId =
     `${threadId ?? field<string>(message, "thread_id") ?? ""}`.trim() || undefined;
-  const rootIso =
-    threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined;
   if (normalizedThreadId && actions) {
     const seq = actions.getMessagesInThread(normalizedThreadId);
     for (const msg of seq ?? []) {
@@ -76,15 +74,13 @@ export async function deleteAllActivityLogs({
         logRefs.push({ store: explicitStore, key: explicitKey });
         continue;
       }
+      const messageId = `${field<string>(msg, "message_id") ?? ""}`.trim();
+      if (!messageId) continue;
       const refs = deriveAcpLogRefs({
         project_id,
         path,
-        thread_root_date:
-          rootIso ??
-          (typeof (msg as any)?.reply_to === "string"
-            ? (msg as any).reply_to
-            : d.toISOString()),
-        turn_date: d.toISOString(),
+        thread_id: normalizedThreadId,
+        message_id: messageId,
       });
       logRefs.push({ store: refs.store, key: refs.key });
     }
