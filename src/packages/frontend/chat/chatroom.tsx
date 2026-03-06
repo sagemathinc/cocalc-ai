@@ -54,6 +54,7 @@ import {
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
+import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -313,6 +314,7 @@ export function ChatPanel({
     undefined,
   );
   const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
+  const anyOverlayOpen = useAnyChatOverlayOpen();
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -908,6 +910,7 @@ export function ChatPanel({
       }, 100);
     }
     setTimeout(() => {
+      if (anyOverlayOpen) return;
       scrollToBottomRef.current?.(true);
     }, 100);
     if (shouldFocusLogAfterSend) {
