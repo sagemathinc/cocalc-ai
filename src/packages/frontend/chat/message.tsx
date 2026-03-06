@@ -254,7 +254,7 @@ interface Props {
   // that don't have an existing reply to them already.
   allowReply?: boolean;
 
-  is_thread?: boolean; // if true, there is a thread starting in a reply_to message
+  is_thread?: boolean; // if true, this message belongs to a threaded conversation
   is_thread_body: boolean;
 
   selected?: boolean;
