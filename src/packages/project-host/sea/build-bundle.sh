@@ -52,6 +52,13 @@ else
   echo "  (skipping dist; not found)"
 fi
 
+echo "- Write build identity"
+node "$ROOT/scripts/dev/write-build-identity.js" \
+  --root "$ROOT" \
+  --package-root "$ROOT/packages/project-host" \
+  --artifact-kind "project-host-bundle" \
+  --out "$OUT/build-identity.json"
+
 # zeromq expects its build manifest next to the native addon; ncc copies the
 # compiled .node file but not the manifest.json, so copy it manually.
 ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)

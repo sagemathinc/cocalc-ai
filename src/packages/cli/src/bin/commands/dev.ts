@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { Command } from "commander";
 
 export type DevCommandDeps = {
@@ -44,6 +44,11 @@ function artifactSummary(path: string): Record<string, unknown> {
 
 function readJsonFile(path: string): Record<string, any> {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function readOptionalJson(path: string): Record<string, any> | null {
+  if (!existsSync(path)) return null;
+  return readJsonFile(path);
 }
 
 function packageVersionSummary(path: string): Record<string, unknown> {
@@ -147,6 +152,8 @@ function localRuntimeSummary(): Record<string, unknown> {
   const srcRoot = repoSrcRoot();
   const packagesRoot = join(srcRoot, "packages");
   const staticDist = join(packagesRoot, "static", "dist", "app.html");
+  const projectHostBundleRoot = join(packagesRoot, "project-host", "build", "bundle");
+  const projectBundleRoot = join(packagesRoot, "project", "build", "bundle");
   return {
     git: gitSummary(resolve(srcRoot, "..")),
     packages: {
@@ -161,8 +168,14 @@ function localRuntimeSummary(): Record<string, unknown> {
       project_host_bundle: artifactSummary(
         join(packagesRoot, "project-host", "build", "bundle-linux.tar.xz"),
       ),
+      project_host_bundle_identity: readOptionalJson(
+        join(projectHostBundleRoot, "build-identity.json"),
+      ),
       project_bundle: artifactSummary(
         join(packagesRoot, "project", "build", "bundle-linux.tar.xz"),
+      ),
+      project_bundle_identity: readOptionalJson(
+        join(projectBundleRoot, "build-identity.json"),
       ),
       tools_linux_amd64: artifactSummary(
         join(packagesRoot, "project", "build", "tools-linux-amd64.tar.xz"),
@@ -248,6 +261,9 @@ async function buildLocalArtifact({
     stdout_tail: tailLines(build.stdout),
     stderr_tail: tailLines(build.stderr),
     artifact: artifactSummary(artifactPath),
+    build_identity: readOptionalJson(
+      join(dirname(artifactPath), "bundle", "build-identity.json"),
+    ),
   };
 }
 
