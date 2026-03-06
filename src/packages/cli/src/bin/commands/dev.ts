@@ -19,7 +19,7 @@ type CommandCapture = {
 };
 
 function cliPackageRoot(): string {
-  return resolve(__dirname, "../../../..");
+  return resolve(__dirname, "../../..");
 }
 
 function repoSrcRoot(): string {
