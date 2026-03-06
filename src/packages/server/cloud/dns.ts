@@ -355,6 +355,24 @@ export async function ensureAppSubdomainDns(opts: {
   return { record_id: record_id! };
 }
 
+export async function getCnameTargetForHostname(
+  hostname: string,
+): Promise<string | undefined> {
+  const name = `${hostname ?? ""}`.trim().toLowerCase();
+  if (!name) return;
+  const { token } = await getConfig();
+  if (!token) {
+    throw new Error("cloudflare DNS not configured");
+  }
+  const zoneId = await getZoneIdForHostname(token, name);
+  const records = await listDnsRecords(token, zoneId, name, "CNAME");
+  const record = records.find(
+    (entry) => `${entry.name ?? ""}`.trim().toLowerCase() === name,
+  );
+  const target = `${record?.content ?? ""}`.trim().toLowerCase();
+  return target || undefined;
+}
+
 export async function deleteAppSubdomainDns(opts: { record_id?: string }): Promise<void> {
   if (!opts.record_id) return;
   const { token, zoneId } = await getClient();

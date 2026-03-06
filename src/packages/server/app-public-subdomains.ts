@@ -11,6 +11,7 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   deleteAppSubdomainDns,
   ensureAppSubdomainDns,
+  getCnameTargetForHostname,
   hasDns,
 } from "@cocalc/server/cloud/dns";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
@@ -46,6 +47,14 @@ export interface ReserveProjectAppPublicSubdomainResult {
   base_path: string;
   url_public: string;
   warnings: string[];
+}
+
+async function resolvePublicAppDnsTarget(site_hostname: string): Promise<string> {
+  const existingTarget = await getCnameTargetForHostname(site_hostname);
+  if (existingTarget?.endsWith(".cfargotunnel.com")) {
+    return existingTarget;
+  }
+  return site_hostname;
 }
 
 const ensureSchema = reuseInFlight(async () => {
@@ -116,7 +125,13 @@ function buildHostname({
   suffix: string;
   dns_domain: string;
 }): string {
-  return suffix ? `${label}-${suffix}.${dns_domain}` : `${label}.${dns_domain}`;
+  const parts = dns_domain.split(".").filter(Boolean);
+  const root =
+    parts.length > 2 ? parts.slice(-2).join(".") : dns_domain;
+  const prefix =
+    parts.length > 2 ? parts.slice(0, -2).join("-") : "";
+  const hostLabel = [label, suffix, prefix].filter(Boolean).join("-");
+  return `${hostLabel}.${root}`;
 }
 
 async function getProjectHostCloudProvider(project_id: string): Promise<string | undefined> {
@@ -348,9 +363,10 @@ export async function reserveProjectAppPublicSubdomain(opts: {
     }
   }
 
+  const dnsTarget = await resolvePublicAppDnsTarget(policy.site_hostname);
   const dns = await ensureAppSubdomainDns({
     hostname: reserved.hostname,
-    target_hostname: policy.site_hostname,
+    target_hostname: dnsTarget,
     record_id: reserved.dns_record_id,
   });
 

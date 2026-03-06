@@ -84,7 +84,9 @@ describe("app expose launchpad reservation", () => {
     });
 
     expect(getPolicy).toHaveBeenCalled();
+    expect(getPolicy).toHaveBeenCalledWith({ project_id: expect.any(String) });
     expect(reserve).toHaveBeenCalledWith({
+      project_id: expect.any(String),
       app_id: id,
       base_path: `/apps/${id}`,
       ttl_s: 600,

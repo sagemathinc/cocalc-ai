@@ -1004,10 +1004,11 @@ export async function exposeApp({
     | undefined;
   try {
     const hub = hubApi(conat());
-    const policy = await hub.system.getProjectAppPublicPolicy();
+    const policy = await hub.system.getProjectAppPublicPolicy({ project_id });
     warnings.push(...(policy?.warnings ?? []));
     if (policy?.enabled) {
       const value = await hub.system.reserveProjectAppPublicSubdomain({
+        project_id,
         app_id: id,
         base_path: spec.proxy?.base_path ?? `/apps/${id}`,
         ttl_s,
@@ -1039,7 +1040,10 @@ export async function exposeApp({
     if (reserved) {
       try {
         const hub = hubApi(conat());
-        await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
+        await hub.system.releaseProjectAppPublicSubdomain({
+          project_id,
+          app_id: id,
+        });
       } catch {
         // ignore cleanup errors after a failed local state write
       }
@@ -1057,7 +1061,7 @@ export async function unexposeApp(id: string): Promise<AppStatus> {
   await getAppSpec(id);
   try {
     const hub = hubApi(conat());
-    await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
+    await hub.system.releaseProjectAppPublicSubdomain({ project_id, app_id: id });
   } catch (err) {
     logger.warn("failed to release app public subdomain", {
       app_id: id,
@@ -1319,7 +1323,9 @@ export async function auditAppPublicReadiness(
   const suggested_actions: string[] = [];
   if (launchpad) {
     try {
-      const policy = await hubApi(conat()).system.getProjectAppPublicPolicy();
+      const policy = await hubApi(conat()).system.getProjectAppPublicPolicy({
+        project_id,
+      });
       for (const warning of policy.warnings ?? []) {
         add({
           id: `policy.${warning.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`,

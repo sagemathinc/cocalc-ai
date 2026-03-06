@@ -16,6 +16,7 @@ import { path as STATIC_PATH } from "@cocalc/static";
 import { setup_health_checks as setupHealthChecks } from "../health-checks";
 import { getLogger } from "../logger";
 import initProxy from "../proxy";
+import { maybeRewritePublicAppSubdomainRequest } from "../proxy/public-app-subdomain";
 import initAppRedirect from "./app/app-redirect";
 import initBlobUpload from "./app/blob-upload";
 import initUpload from "./app/upload";
@@ -261,6 +262,21 @@ export default async function init(opts: Options): Promise<{
   if (!opts.nextServer) {
     logger.info("enabling api/v2 express router (nextjs disabled)");
     router.use("/api/v2", createApiV2Router());
+  }
+
+  if (opts.proxyServer) {
+    app.all("*", async (req, _res, next) => {
+      try {
+        await maybeRewritePublicAppSubdomainRequest(req);
+      } catch (err) {
+        logger.debug("early public app subdomain rewrite failed", {
+          host: req.headers?.host,
+          url: req.url,
+          err: `${err}`,
+        });
+      }
+      next();
+    });
   }
 
   if (basePath !== "/") {
