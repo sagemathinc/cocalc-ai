@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, extname, basename, resolve } from "node:path";
+import { dirname, basename, resolve } from "node:path";
 
 import { Command } from "commander";
 
@@ -388,24 +388,22 @@ function defaultChatExportOutputPath(
   scope: ChatExportScope,
   threadId?: string,
 ): string {
-  const extension = extname(chatPath);
-  const stem = basename(chatPath, extension || undefined) || "chat";
+  const name = basename(chatPath) || "chat.chat";
   const scopeSuffix =
     scope === "current-thread"
       ? `.${sanitizeFilename(threadId || "thread")}`
       : scope === "all-threads"
         ? ".all-threads"
         : ".threads";
-  return resolve(dirname(chatPath), `${stem}${scopeSuffix}.cocalc-export.zip`);
+  return resolve(dirname(chatPath), `${name}${scopeSuffix}.cocalc-export.zip`);
 }
 
 function defaultDocumentExportOutputPath(
   documentPath: string,
   kind: string,
 ): string {
-  const extension = extname(documentPath);
-  const stem = basename(documentPath, extension || undefined) || kind;
-  return resolve(dirname(documentPath), `${stem}.cocalc-export.zip`);
+  const name = basename(documentPath) || kind;
+  return resolve(dirname(documentPath), `${name}.cocalc-export.zip`);
 }
 
 function sanitizeFilename(value: string): string {
