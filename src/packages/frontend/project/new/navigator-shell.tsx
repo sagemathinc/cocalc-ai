@@ -14,6 +14,7 @@ import {
 import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  redux,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -787,6 +788,13 @@ export function NavigatorShell({
     [project_id, navigatorPath],
   );
 
+  const clearActiveEditorKeyHandler = useCallback(() => {
+    // SideChat's composer uses a DIV-backed editor. Jupyter intentionally still
+    // treats focused DIVs as eligible for notebook shortcuts, so explicitly clear
+    // the active page key handler when focus enters navigator controls.
+    redux.getActions("page")?.erase_active_key_handler?.();
+  }, []);
+
   const threadTitle = useMemo(() => {
     if (!selectedThreadKey) return "New chat";
     const name =
@@ -1109,14 +1117,7 @@ export function NavigatorShell({
           background: "white",
           height: "min(70vh, 760px)",
         }}
-        onKeyDownCapture={(event) => {
-          // Navigator can be rendered over editors (e.g. Jupyter). Keep
-          // keystrokes inside SideChat so underlying frame shortcuts don't fire.
-          event.stopPropagation();
-        }}
-        onKeyUpCapture={(event) => {
-          event.stopPropagation();
-        }}
+        onFocus={clearActiveEditorKeyHandler}
       >
         {actions ? (
           <FileContext.Provider value={chatFileContext}>
