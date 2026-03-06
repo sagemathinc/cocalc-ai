@@ -118,6 +118,7 @@ import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon
 import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
 import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
 import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
+import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1923,6 +1924,16 @@ const orgCommandDeps = {
 } satisfies OrgCommandDeps;
 
 registerOrgCommand(program, orgCommandDeps);
+
+const devCommandDeps = {
+  runLocalCommand,
+  withContext,
+  resolveHost,
+  resolveWorkspaceFromArgOrContext,
+  waitForLro,
+} satisfies DevCommandDeps;
+
+registerDevCommand(program, devCommandDeps);
 
 const browserCommandDeps = {
   withContext,
