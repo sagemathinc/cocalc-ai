@@ -1,5 +1,7 @@
 # CoCalc CLI Interface Plan
 
+See also: [Dev CLI Wishlist](./dev-cli.md)
+
 TODO:
 
 - [ ] ideas to expand the browser api:
