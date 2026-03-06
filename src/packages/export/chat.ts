@@ -241,7 +241,13 @@ export async function collectChatExport(
   const sortedAggregates = sortThreads(Array.from(threads.values()));
   const senderDirectory = buildSenderDirectory(sortedAggregates);
 
-  const files: ExportFile[] = [];
+  const files: ExportFile[] = [
+    {
+      path: "README.md",
+      content: renderChatExportReadme(options.includeBlobs === true),
+      contentType: "text/markdown; charset=utf-8",
+    },
+  ];
   const threadIndex: ChatExportIndexEntry[] = [];
   for (const aggregate of sortedAggregates) {
     const threadDir = `threads/${aggregate.threadId}`;
@@ -345,6 +351,19 @@ export async function collectChatExport(
       version: 1,
       kind: "chat",
       exported_at: options.exportedAt ?? new Date().toISOString(),
+      entrypoints: {
+        human_overview: "README.md",
+        machine_index: "threads/index.json",
+        canonical_data: ["threads/<thread_id>/messages.jsonl"],
+        derived_views: ["threads/<thread_id>/transcript.md"],
+        assets_index: assetIndex.length ? "assets/index.json" : undefined,
+      },
+      agent_hints: {
+        local_first: true,
+        reconstruction_source: "threads/<thread_id>/messages.jsonl",
+        derived_files_are_optional: true,
+        excludes_activity_logs: true,
+      },
       source: {
         project_id: options.projectId ?? null,
         path: options.chatPath,
@@ -385,6 +404,33 @@ export async function collectChatExport(
         )
       : undefined,
   };
+}
+
+function renderChatExportReadme(includeBlobs: boolean): string {
+  return `# Chat Export
+
+This archive is designed for both people and agents.
+
+Start here:
+
+- Read \`manifest.json\` for top-level metadata and entrypoints.
+- Use \`threads/index.json\` to discover exported threads.
+- Treat \`threads/<thread_id>/messages.jsonl\` as the canonical machine-readable message stream for each thread.
+- Treat \`threads/<thread_id>/transcript.md\` as a derived, human-readable rendering.
+
+Important properties:
+
+- Selected threads include archived/offloaded chat messages.
+- Codex activity/thinking logs are intentionally excluded.
+- Blob references are ${includeBlobs ? "copied into `assets/` and rewritten to local paths." : "left as external references because blobs were not included."}
+
+Recommended agent workflow:
+
+1. Inspect \`manifest.json\` and \`threads/index.json\`.
+2. Work from \`messages.jsonl\` for analysis, transformation, or reconstruction.
+3. Use \`transcript.md\` when a quick human-readable view is helpful.
+4. If you need to rebuild a chat later, prefer the canonical JSONL over the derived transcript.
+`;
 }
 
 function defaultChatExportRootDir(chatPath: string): string {

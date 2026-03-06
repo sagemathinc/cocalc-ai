@@ -98,6 +98,10 @@ export async function collectTaskExport(
 
   const files: ExportFile[] = [
     {
+      path: "README.md",
+      content: renderTasksExportReadme(options.includeBlobs === true),
+    },
+    {
       path: "document.json",
       content: `${JSON.stringify(document, null, 2)}\n`,
     },
@@ -127,6 +131,18 @@ export async function collectTaskExport(
       version: 1,
       kind: "tasks",
       exported_at: options.exportedAt ?? new Date().toISOString(),
+      entrypoints: {
+        human_overview: "README.md",
+        machine_index: "document.json",
+        canonical_data: ["tasks.jsonl"],
+        derived_views: ["tasks.md"],
+        assets_index: assetIndex.length ? "assets/index.json" : undefined,
+      },
+      agent_hints: {
+        local_first: true,
+        reconstruction_source: "document.jsonl",
+        derived_files_are_optional: true,
+      },
       source: { path: options.taskPath },
       task_count: exportedTasks.length,
       asset_count: assetIndex.length,
@@ -135,6 +151,30 @@ export async function collectTaskExport(
     files,
     assets: assetResult?.assets,
   };
+}
+
+function renderTasksExportReadme(includeBlobs: boolean): string {
+  return `# Tasks Export
+
+This archive is designed for both people and agents.
+
+Start here:
+
+- Read \`manifest.json\` for top-level metadata and entrypoints.
+- Read \`document.json\` for counts and hashtags.
+- Treat \`tasks.jsonl\` as the canonical normalized task stream.
+- Treat \`document.jsonl\` as a reconstructable view of the underlying task rows.
+- Treat \`tasks.md\` as a derived human-readable rendering.
+
+Blob references are ${includeBlobs ? "copied into `assets/` and rewritten to local paths." : "left as external references because blobs were not included."}
+
+Recommended agent workflow:
+
+1. Inspect \`document.json\` to understand counts and tags.
+2. Work from \`tasks.jsonl\` for triage, rewriting, prioritization, or analysis.
+3. Use \`tasks.md\` when a compact human-readable summary is more useful than JSONL.
+4. If you need to reconstruct the live document, prefer \`document.jsonl\` / \`tasks.jsonl\` over the markdown rendering.
+`;
 }
 
 function isTaskRow(row: any): row is TaskRow {

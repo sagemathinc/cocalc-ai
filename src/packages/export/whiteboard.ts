@@ -95,6 +95,10 @@ export async function collectWhiteboardExport(
   const rawReplacements = buildRelativeBlobReplacementMap("document.jsonl", assetIndex);
 
   const files: ExportFile[] = [];
+  files.push({
+    path: "README.md",
+    content: renderWhiteboardExportReadme(options.kind, options.includeBlobs === true),
+  });
   const pageIndex: WhiteboardPageIndexEntry[] = [];
   const documentSections: string[] = [
     options.kind === "slides" ? "# Slides Export" : "# Whiteboard Export",
@@ -215,6 +219,21 @@ export async function collectWhiteboardExport(
       version: 1,
       kind: options.kind,
       exported_at: options.exportedAt ?? new Date().toISOString(),
+      entrypoints: {
+        human_overview: "README.md",
+        machine_index: "pages/index.json",
+        canonical_data: ["document.jsonl", "pages/<page>/elements.jsonl"],
+        derived_views:
+          options.kind === "slides"
+            ? ["document.md", "pages/<page>/content.md", "pages/<page>/speaker-notes.md"]
+            : ["document.md", "pages/<page>/content.md"],
+        assets_index: assetIndex.length ? "assets/index.json" : undefined,
+      },
+      agent_hints: {
+        local_first: true,
+        reconstruction_source: "document.jsonl",
+        derived_files_are_optional: true,
+      },
       source: { path: options.documentPath },
       page_count: pageRows.length,
       element_count: documentData.element_count,
@@ -224,6 +243,39 @@ export async function collectWhiteboardExport(
     files,
     assets: assetResult?.assets,
   };
+}
+
+function renderWhiteboardExportReadme(
+  kind: "board" | "slides",
+  includeBlobs: boolean,
+): string {
+  const label = kind === "slides" ? "Slides" : "Whiteboard";
+  const notesLine =
+    kind === "slides"
+      ? "- Slides also include per-page `speaker-notes.md` files.\n"
+      : "";
+  return `# ${label} Export
+
+This archive is designed for both people and agents.
+
+Start here:
+
+- Read \`manifest.json\` for top-level metadata and entrypoints.
+- Read \`document.json\` for document-level counts and metadata.
+- Use \`pages/index.json\` to discover pages and their exported paths.
+- Treat \`document.jsonl\` as the canonical reconstructable document stream.
+- Treat \`pages/<page>/elements.jsonl\` as the canonical page-scoped element data.
+- Treat \`document.md\` and \`pages/<page>/content.md\` as derived human-readable views.
+${notesLine}
+Blob references are ${includeBlobs ? "copied into `assets/` and rewritten to local paths." : "left as external references because blobs were not included."}
+
+Recommended agent workflow:
+
+1. Inspect \`document.json\` and \`pages/index.json\`.
+2. Work from \`document.jsonl\` / \`elements.jsonl\` for transformation or reconstruction.
+3. Use the markdown files for quick reading-order inspection or downstream text-based conversions.
+4. If you rebuild the live document later, prefer the canonical JSONL over the derived markdown.
+`;
 }
 
 function isWhiteboardRow(row: any): row is WhiteboardRow {

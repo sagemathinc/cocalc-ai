@@ -142,7 +142,10 @@ describe("chat export", () => {
     });
 
     expect(bundle.manifest.kind).toBe("chat");
+    expect((bundle.manifest as any).entrypoints.machine_index).toBe("threads/index.json");
     expect((bundle.manifest as any).thread_count).toBe(1);
+    const readme = `${bundle.files.find((file) => file.path === "README.md")?.content ?? ""}`;
+    expect(readme).toContain("canonical machine-readable message stream");
 
     const threadIndex = JSON.parse(
       `${bundle.files.find((file) => file.path === "threads/index.json")?.content ?? "[]"}`,

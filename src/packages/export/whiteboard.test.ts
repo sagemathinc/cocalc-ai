@@ -33,6 +33,9 @@ describe("whiteboard export", () => {
     });
 
     expect(bundle.manifest.kind).toBe("board");
+    expect((bundle.manifest as any).entrypoints.machine_index).toBe("pages/index.json");
+    const readme = `${bundle.files.find((file) => file.path === "README.md")?.content ?? ""}`;
+    expect(readme).toContain("canonical reconstructable document stream");
     const pageIndex = JSON.parse(
       `${bundle.files.find((file) => file.path === "pages/index.json")?.content ?? "[]"}`,
     );
@@ -69,6 +72,9 @@ describe("whiteboard export", () => {
     });
 
     expect(bundle.manifest.kind).toBe("slides");
+    expect((bundle.manifest as any).entrypoints.derived_views).toContain(
+      "pages/<page>/speaker-notes.md",
+    );
     const document = JSON.parse(
       `${bundle.files.find((file) => file.path === "document.json")?.content ?? "{}"}`,
     );

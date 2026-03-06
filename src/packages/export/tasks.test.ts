@@ -39,7 +39,12 @@ describe("tasks export", () => {
 
     const bundle = await collectTaskExport({ taskPath });
     expect(bundle.manifest.kind).toBe("tasks");
+    expect((bundle.manifest as any).entrypoints.canonical_data).toEqual([
+      "tasks.jsonl",
+    ]);
     expect(bundle.rootDir).toBe("todo");
+    const readme = `${bundle.files.find((file) => file.path === "README.md")?.content ?? ""}`;
+    expect(readme).toContain("canonical normalized task stream");
 
     const document = JSON.parse(
       `${bundle.files.find((file) => file.path === "document.json")?.content ?? "{}"}`,
