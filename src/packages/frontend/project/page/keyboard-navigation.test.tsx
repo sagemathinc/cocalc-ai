@@ -1,9 +1,20 @@
 /** @jest-environment jsdom */
 
+const mockRedux = {
+  getEditorActions: jest.fn(),
+  getProjectActions: jest.fn(),
+  getProjectStore: jest.fn(),
+};
+
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: mockRedux,
+}));
+
 import {
   FILE_TAB_STRIP_ATTRIBUTE as FILE_TAB_STRIP_ATTR,
   PROJECT_PAGE_ATTRIBUTE,
   focusProjectFileTabStrip,
+  handleProjectNavigationKeydown,
   getAdjacentOpenFilePath,
   matchProjectNavigationCommand,
   runProjectNavigationCommand,
@@ -56,6 +67,9 @@ function setupProjectRoot() {
 describe("project keyboard navigation", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
+    mockRedux.getEditorActions.mockReset();
+    mockRedux.getProjectActions.mockReset();
+    mockRedux.getProjectStore.mockReset();
   });
 
   it("chooses adjacent file tabs from the current editor tab", () => {
@@ -193,5 +207,48 @@ describe("project keyboard navigation", () => {
     expect(handled).toBe(true);
     expect(activateNext).toHaveBeenCalled();
     expect(focusStrip).toHaveBeenCalled();
+  });
+
+  it("resolves project navigation state from redux for local keyboard owners", () => {
+    const { activeTab, root } = setupProjectRoot();
+    activeTab.focus();
+    const activateNext = jest.fn().mockReturnValue(true);
+    const focusStrip = jest.fn().mockReturnValue(true);
+    const setActiveId = jest.fn();
+    mockRedux.getProjectStore.mockReturnValue({
+      get: (key: string) => {
+        if (key === "active_project_tab") return "editor-a.ipynb";
+        if (key === "open_files") {
+          return {
+            getIn: (path: string[]) =>
+              path[0] === "a.ipynb" && path[1] === "sync_path" ? "a.ipynb" : undefined,
+          };
+        }
+      },
+    });
+    mockRedux.getProjectActions.mockReturnValue({
+      activate_next_file_tab: activateNext,
+      focus_file_tab_strip: focusStrip,
+    });
+    mockRedux.getEditorActions.mockReturnValue({
+      get_active_frame_id: () => "frame-a",
+      get_frame_ids_in_order: () => ["frame-a", "frame-b"],
+      set_active_id: setActiveId,
+    });
+
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "F6",
+    });
+
+    expect(
+      handleProjectNavigationKeydown(event, "project-1", { projectRoot: root }),
+    ).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(activateNext).toHaveBeenCalled();
+    expect(focusStrip).toHaveBeenCalled();
+    expect(mockRedux.getEditorActions).toHaveBeenCalledWith("project-1", "a.ipynb");
   });
 });

@@ -69,9 +69,7 @@ import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
 import {
   PROJECT_PAGE_ATTRIBUTE,
-  getActiveEditorTabPath,
-  matchProjectNavigationCommand,
-  runProjectNavigationCommand,
+  handleProjectNavigationKeydown,
 } from "./keyboard-navigation";
 
 const START_BANNER = false;
@@ -173,26 +171,11 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     if (!is_active) return;
 
     function handleKeydown(event: KeyboardEvent) {
-      if (event.defaultPrevented) return;
-      const command = matchProjectNavigationCommand(event);
-      if (command == null) return;
-      const editorPath = getActiveEditorTabPath(active_project_tab);
-      const syncPath =
-        editorPath != null
-          ? ((open_files?.getIn([editorPath, "sync_path"]) as string | undefined) ??
-            editorPath)
-          : undefined;
-      const editorActions =
-        syncPath != null ? (redux.getEditorActions(project_id, syncPath) as any) : undefined;
-      const handled = runProjectNavigationCommand(command, {
+      handleProjectNavigationKeydown(event, project_id, {
         activeProjectTab: active_project_tab,
-        editorActions,
         projectActions: actions as any,
         projectRoot: projectPageRef.current,
       });
-      if (!handled) return;
-      event.preventDefault();
-      event.stopPropagation();
     }
 
     window.addEventListener("keydown", handleKeydown);

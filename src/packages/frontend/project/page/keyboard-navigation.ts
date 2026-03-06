@@ -1,3 +1,4 @@
+import { redux } from "@cocalc/frontend/app-framework";
 import { KEYBOARD_BOUNDARY_ATTRIBUTE } from "@cocalc/frontend/keyboard/boundary";
 import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 
@@ -91,6 +92,13 @@ type EditorNavigationActions = {
 };
 
 export interface ProjectNavigationRuntime {
+  activeProjectTab?: string;
+  editorActions?: EditorNavigationActions;
+  projectActions?: ProjectNavigationActions;
+  projectRoot?: ParentNode | null;
+}
+
+interface ProjectNavigationRuntimeOptions {
   activeProjectTab?: string;
   editorActions?: EditorNavigationActions;
   projectActions?: ProjectNavigationActions;
@@ -361,6 +369,58 @@ export function runProjectNavigationCommand(
     default:
       return false;
   }
+}
+
+export function resolveProjectNavigationRuntime(
+  projectId: string,
+  opts: ProjectNavigationRuntimeOptions = {},
+): ProjectNavigationRuntime {
+  const store = redux.getProjectStore(projectId);
+  const activeProjectTab = opts.activeProjectTab ?? store?.get("active_project_tab");
+  const projectActions =
+    opts.projectActions ?? ((redux.getProjectActions(projectId) as any) ?? undefined);
+  const editorPath = getActiveEditorTabPath(activeProjectTab);
+  const openFiles = store?.get("open_files");
+  const syncPath =
+    editorPath != null
+      ? ((openFiles?.getIn([editorPath, "sync_path"]) as string | undefined) ??
+        editorPath)
+      : undefined;
+  const editorActions =
+    opts.editorActions ??
+    (syncPath != null ? ((redux.getEditorActions(projectId, syncPath) as any) ?? undefined) : undefined);
+  return {
+    activeProjectTab,
+    editorActions,
+    projectActions,
+    projectRoot: opts.projectRoot ?? getProjectPageRoot(projectId),
+  };
+}
+
+export function runProjectNavigationCommandForProject(
+  command: ProjectNavigationCommandId,
+  projectId: string,
+  opts: ProjectNavigationRuntimeOptions = {},
+): boolean {
+  return runProjectNavigationCommand(
+    command,
+    resolveProjectNavigationRuntime(projectId, opts),
+  );
+}
+
+export function handleProjectNavigationKeydown(
+  event: KeyboardEvent,
+  projectId: string,
+  opts: ProjectNavigationRuntimeOptions = {},
+): boolean {
+  if (event.defaultPrevented) return false;
+  const command = matchProjectNavigationCommand(event);
+  if (command == null) return false;
+  const handled = runProjectNavigationCommandForProject(command, projectId, opts);
+  if (!handled) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
 }
 
 export function getActiveEditorTabPath(activeProjectTab?: string): string | undefined {
