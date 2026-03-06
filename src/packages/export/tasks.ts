@@ -168,12 +168,36 @@ Start here:
 
 Blob references are ${includeBlobs ? "copied into `assets/` and rewritten to local paths." : "left as external references because blobs were not included."}
 
+\`tasks.jsonl\` row schema:
+
+- \`event: "task"\`
+- \`message_kind: "task"\`
+- \`task_id\`: stable task identifier; may be omitted by agents when creating a new task during import
+- \`timestamp\`: last edited time in ISO format
+- \`due_at\`: due date in ISO format
+- \`content\`: markdown task body
+- \`content_format\`: currently always \`markdown\`
+- \`done\`: completion flag
+- \`deleted\`: trash flag
+- \`position\`: numeric ordering key
+- \`hashtags\`: extracted hashtag list
+- \`color\`: optional task color
+- \`hide_body\`: whether the task body is collapsed in the UI
+
+Import workflow:
+
+1. Treat \`document.jsonl\` as the export-time base snapshot.
+2. Edit \`tasks.jsonl\` as the desired final task state.
+3. Use \`cocalc import tasks <bundle-or-directory>\` to merge those task changes back into the live \`.tasks\` file by \`task_id\`.
+4. The importer detects conflicting live edits instead of overwriting them blindly.
+
 Recommended agent workflow:
 
 1. Inspect \`document.json\` to understand counts and tags.
 2. Work from \`tasks.jsonl\` for triage, rewriting, prioritization, or analysis.
 3. Use \`tasks.md\` when a compact human-readable summary is more useful than JSONL.
-4. If you need to reconstruct the live document, prefer \`document.jsonl\` / \`tasks.jsonl\` over the markdown rendering.
+4. If you need to import changes back, edit \`tasks.jsonl\` and preserve \`task_id\` values for tasks you intend to update.
+5. Prefer \`document.jsonl\` / \`tasks.jsonl\` over the markdown rendering for any reconstruction or import.
 `;
 }
 

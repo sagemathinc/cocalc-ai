@@ -421,7 +421,48 @@ This is useful not only for users but for AI agents:
 6. Add generic frame/menu export hooks.
 7. Add more document exporters.
 
-## 16. Open Questions
+## 16. Import Direction
+
+Import should not be a blind overwrite of a live document.
+
+The right model is:
+
+- export a structured local bundle
+- edit the canonical machine-readable files
+- import by computing a structured patch or merge against the exported base
+
+This matters for agents because:
+
+- agents work much better against explicit local files than hidden remote state
+- exports are inspectable, testable, and easy to diff
+- imports can detect concurrent edits instead of silently destroying user work
+
+### 16.1 First Import Target: Tasks
+
+Tasks are the best first importer because the document is already line-oriented,
+has stable task ids, and merges naturally by `task_id`.
+
+The implemented `tasks` import contract is:
+
+- `document.jsonl` is the export-time base snapshot
+- `tasks.jsonl` is the edited desired task state
+- import merges by `task_id` into the live `.tasks` file
+- omitted tasks are preserved rather than deleted by omission
+- tasks with conflicting live edits fail import instead of being overwritten
+- rows without `task_id` are treated as new tasks and get ids assigned on import
+
+This is intentionally patch-oriented, not overwrite-oriented.
+
+### 16.2 Recommended Import Order
+
+1. `tasks`
+2. `board`
+3. `slides`
+
+Chat is not a priority importer. Notebook import may still be valuable, but it
+likely needs a different export/import surface than raw `.ipynb`.
+
+## 17. Open Questions
 
 1. Should `messages.jsonl` store normalized current-format rows exactly, or a
    separate archive-specific row schema?

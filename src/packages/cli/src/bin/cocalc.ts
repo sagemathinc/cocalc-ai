@@ -119,6 +119,7 @@ import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
 import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
 import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
 import { registerExportCommand, type ExportCommandDeps } from "./commands/export";
+import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1933,6 +1934,15 @@ const exportCommandDeps = {
 } satisfies ExportCommandDeps;
 
 registerExportCommand(program, exportCommandDeps);
+
+const importCommandDeps = {
+  globalsFrom,
+  emitSuccess,
+  emitError,
+  normalizeUrl,
+} satisfies ImportCommandDeps;
+
+registerImportCommand(program, importCommandDeps);
 
 const browserCommandDeps = {
   withContext,
