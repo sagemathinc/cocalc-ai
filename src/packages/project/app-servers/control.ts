@@ -995,8 +995,6 @@ export async function exposeApp({
 }): Promise<AppStatus> {
   const spec = await getAppSpec(id);
   const warnings: string[] = [];
-  const isLaunchpad =
-    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad";
   let reserved:
     | {
         hostname: string;
@@ -1004,29 +1002,27 @@ export async function exposeApp({
         url_public: string;
       }
     | undefined;
-  if (isLaunchpad) {
-    try {
-      const hub = hubApi(conat());
-      const policy = await hub.system.getProjectAppPublicPolicy();
-      warnings.push(...(policy?.warnings ?? []));
-      if (policy?.enabled) {
-        const value = await hub.system.reserveProjectAppPublicSubdomain({
-          app_id: id,
-          base_path: spec.proxy?.base_path ?? `/apps/${id}`,
-          ttl_s,
-          preferred_label: `${subdomain_label ?? ""}`.trim() || undefined,
-          random_subdomain,
-        });
-        reserved = value;
-        warnings.push(...(value?.warnings ?? []));
-      }
-    } catch (err) {
-      logger.warn("failed to reserve app public subdomain", {
+  try {
+    const hub = hubApi(conat());
+    const policy = await hub.system.getProjectAppPublicPolicy();
+    warnings.push(...(policy?.warnings ?? []));
+    if (policy?.enabled) {
+      const value = await hub.system.reserveProjectAppPublicSubdomain({
         app_id: id,
-        err: `${err}`,
+        base_path: spec.proxy?.base_path ?? `/apps/${id}`,
+        ttl_s,
+        preferred_label: `${subdomain_label ?? ""}`.trim() || undefined,
+        random_subdomain,
       });
-      warnings.push(`App subdomain allocation failed: ${err}`);
+      reserved = value;
+      warnings.push(...(value?.warnings ?? []));
     }
+  } catch (err) {
+    logger.warn("failed to reserve app public subdomain", {
+      app_id: id,
+      err: `${err}`,
+    });
+    warnings.push(`App subdomain allocation failed: ${err}`);
   }
 
   try {
@@ -1040,7 +1036,7 @@ export async function exposeApp({
       public_url: reserved?.url_public,
     });
   } catch (err) {
-    if (isLaunchpad && reserved) {
+    if (reserved) {
       try {
         const hub = hubApi(conat());
         await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
@@ -1059,18 +1055,14 @@ export async function exposeApp({
 
 export async function unexposeApp(id: string): Promise<AppStatus> {
   await getAppSpec(id);
-  const isLaunchpad =
-    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad";
-  if (isLaunchpad) {
-    try {
-      const hub = hubApi(conat());
-      await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
-    } catch (err) {
-      logger.warn("failed to release app public subdomain", {
-        app_id: id,
-        err: `${err}`,
-      });
-    }
+  try {
+    const hub = hubApi(conat());
+    await hub.system.releaseProjectAppPublicSubdomain({ app_id: id });
+  } catch (err) {
+    logger.warn("failed to release app public subdomain", {
+      app_id: id,
+      err: `${err}`,
+    });
   }
   await unexposeAppState(id);
   return await statusApp(id);
