@@ -7,10 +7,12 @@ https://support.google.com/mail/answer/6594?hl=en&authuser=1#zippy=%2Cjumping%2C
 
 import { useEffect } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
+import { shouldSuppressGlobalShortcuts } from "@cocalc/frontend/keyboard/boundary";
 
 function handler(e) {
-  if ($(":focus").length > 0) {
-    // never use this handler if something is focused.
+  if (shouldSuppressGlobalShortcuts(e)) {
+    // Message-list shortcuts are shell-level shortcuts and should not run
+    // from editable surfaces or shared keyboard-boundary overlays.
     return;
   }
   // obviously dumb -- use a map instead!
