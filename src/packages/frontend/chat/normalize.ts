@@ -41,11 +41,20 @@ export function normalizeChatMessage(base: any): NormalizedChatMessage {
     upgraded = true;
   }
   if (
+    x.parent_message_id == null &&
     x.reply_to != null &&
     x.reply_to_message_id == null &&
     Number.isFinite(rootMs)
   ) {
     x.reply_to_message_id = `legacy-message-${rootMs}`;
+    upgraded = true;
+  }
+  if (
+    x.parent_message_id == null &&
+    typeof x.reply_to_message_id === "string" &&
+    x.reply_to_message_id.trim().length > 0
+  ) {
+    x.parent_message_id = x.reply_to_message_id.trim();
     upgraded = true;
   }
   if (x.schema_version == CURRENT_CHAT_MESSAGE_VERSION) {

@@ -845,13 +845,12 @@ export class ChatStreamWriter {
         rowSender.trim().length > 0 &&
         rowSender !== this.metadata.sender_id
       ) {
-        logger.warn("acp writer row-sender mismatch; refusing to mutate row", {
+        logger.warn("acp writer row-sender mismatch; trusting message_id match", {
           chatKey: this.chatKey,
           message_id: this.metadata.message_id,
           expected_sender: this.metadata.sender_id,
           actual_sender: rowSender,
         });
-        return undefined;
       }
       this.setResolvedChatKey(byMessageId);
       return byMessageId;
@@ -1125,8 +1124,12 @@ export class ChatStreamWriter {
         reply_to: this.metadata.reply_to,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
+        parent_message_id: (this.metadata as any).parent_message_id,
         reply_to_message_id: this.metadata.reply_to_message_id,
       } as any);
+      if ((this.metadata as any).parent_message_id) {
+        (placeholder as any).parent_message_id = (this.metadata as any).parent_message_id;
+      }
       db.set(placeholder);
       db.commit();
       try {
@@ -1330,9 +1333,13 @@ export class ChatStreamWriter {
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
+      parent_message_id: (this.metadata as any).parent_message_id,
       reply_to_message_id: this.metadata.reply_to_message_id,
       inline_code_links: generating ? undefined : this.resolveInlineCodeLinks(),
-    });
+    } as any);
+    if ((this.metadata as any).parent_message_id) {
+      (message as any).parent_message_id = (this.metadata as any).parent_message_id;
+    }
     const update: any = { ...message };
     if (this.interruptNotified) {
       update.acp_interrupted = true;
@@ -1355,6 +1362,7 @@ export class ChatStreamWriter {
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
+      parent_message_id: (this.metadata as any).parent_message_id,
       reply_to_message_id: this.metadata.reply_to_message_id,
       reply_to: this.metadata.reply_to,
     };
@@ -2122,8 +2130,9 @@ export async function recoverOrphanedAcpTurns(
       reply_to: turn.reply_to ?? undefined,
       message_id: turn.message_id ?? undefined,
       thread_id: turn.thread_id ?? undefined,
+      parent_message_id: (turn as any).parent_message_id ?? undefined,
       reply_to_message_id: turn.reply_to_message_id ?? undefined,
-    };
+    } as any;
     try {
       clearAcpPayloads(context);
     } catch (err) {
@@ -2170,6 +2179,9 @@ export async function recoverOrphanedAcpTurns(
           }
           if (turn.thread_id) {
             update.thread_id = turn.thread_id;
+          }
+          if ((turn as any).parent_message_id) {
+            update.parent_message_id = (turn as any).parent_message_id;
           }
           if (turn.reply_to_message_id) {
             update.reply_to_message_id = turn.reply_to_message_id;

@@ -764,6 +764,7 @@ describe("ChatStreamWriter", () => {
         ...baseMetadata,
         message_id: "msg-1",
         thread_id: "thread-1",
+        parent_message_id: "user-msg-1",
         reply_to_message_id: "root-msg-1",
       } as any,
       client: makeFakeClient(),
@@ -782,9 +783,14 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1] as any;
+    const final = [...sets]
+      .reverse()
+      .find(
+        (row: any) => row?.message_id === "msg-1" && row?.parent_message_id,
+      ) as any;
     expect(final.message_id).toBe("msg-1");
     expect(final.thread_id).toBe("thread-1");
+    expect(final.parent_message_id).toBe("user-msg-1");
     expect(final.reply_to_message_id).toBe("root-msg-1");
     writer.dispose?.(true);
   });
@@ -966,7 +972,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    const final = sets[sets.length - 1] as any;
+    const final = [...sets].reverse().find((x) => x?.event === "chat") as any;
     expect(final.date).toBe(rowDate);
     expect(final.sender_id).toBe("legacy-codex");
     writer.dispose?.(true);

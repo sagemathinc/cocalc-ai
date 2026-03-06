@@ -690,23 +690,41 @@ export function ChatPanel({
   function resolveReplyTarget(replyToOverride?: Date | null): {
     reply_to?: Date;
     thread_id?: string;
+    parent_message_id?: string;
     lookup?: string;
   } {
     if (replyToOverride !== undefined) {
       return { reply_to: replyToOverride ?? undefined };
     }
     const resolveFromThreadKey = (threadKey?: string | null) => {
-      if (!threadKey) return { reply_to: undefined, thread_id: undefined, lookup: undefined };
+      if (!threadKey) {
+        return {
+          reply_to: undefined,
+          thread_id: undefined,
+          parent_message_id: undefined,
+          lookup: undefined,
+        };
+      }
       const thread_id = normalizeThreadKey(threadKey);
       const metadata = actions.getThreadMetadata?.(threadKey, {
         threadId: thread_id,
       });
+      const threadMessages =
+        thread_id ? actions.getMessagesInThread(thread_id) ?? [] : [];
+      const latestMessageId =
+        `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim() ||
+        undefined;
       const configDate =
         metadata?.thread_date != null ? new Date(metadata.thread_date) : undefined;
       const reply_to =
         configDate && !Number.isNaN(configDate.valueOf()) ? configDate : undefined;
       const lookup = thread_id;
-      return { reply_to: reply_to ?? undefined, thread_id, lookup };
+      return {
+        reply_to: reply_to ?? undefined,
+        thread_id,
+        parent_message_id: latestMessageId,
+        lookup,
+      };
     };
     if (isCombinedFeedSelected) {
       return resolveFromThreadKey(composerTargetKey ?? threads[0]?.key);
@@ -770,6 +788,7 @@ export function ChatPanel({
     const target = resolveReplyTarget(replyToOverride);
     const reply_to = target.reply_to;
     const reply_thread_id = target.thread_id;
+    const parent_message_id = target.parent_message_id;
     if (!reply_to && !reply_thread_id) {
       // Creating a new thread should never auto-fallback to Combined while
       // thread metadata is hydrating.
@@ -793,6 +812,7 @@ export function ChatPanel({
       submitMentionsRef,
       reply_to,
       reply_thread_id,
+      parent_message_id,
       extraInput,
       send_mode: opts?.immediate ? "immediate" : undefined,
       name:
@@ -941,6 +961,9 @@ export function ChatPanel({
         extraInput: trimmed,
         reply_to,
         reply_thread_id: thread_id,
+        parent_message_id:
+          `${(actions.getMessagesInThread(thread_id ?? "")?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
+          undefined,
         preserveSelectedThread: true,
       });
     },
@@ -970,6 +993,9 @@ export function ChatPanel({
         extraInput: lines.join("\n"),
         reply_to,
         reply_thread_id: thread_id,
+        parent_message_id:
+          `${(actions.getMessagesInThread(thread_id ?? "")?.slice(-1)[0] as any)?.message_id ?? ""}`.trim() ||
+          undefined,
         preserveSelectedThread: true,
         skipModelDispatch: true,
       });

@@ -27,7 +27,7 @@ import {
   model2service,
   type LanguageModel,
 } from "@cocalc/util/db-schema/llm-utils";
-import { cmp, history_path, isValidUUID, uuid } from "@cocalc/util/misc";
+import { history_path, isValidUUID, uuid } from "@cocalc/util/misc";
 import { getSortedDates, getUserName } from "./chat-log";
 import { message_to_markdown } from "./message";
 import { ChatState, ChatStore } from "./store";
@@ -58,6 +58,7 @@ import {
   toISOString,
   toMsString,
   newest_content,
+  orderLinearThreadMessages,
 } from "./utils";
 import type {
   AcpChatContext,
@@ -176,8 +177,7 @@ export function collectThreadMessages({
       list.push(msg);
     }
   }
-  list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
-  return list;
+  return orderLinearThreadMessages(list);
 }
 
 export function resolveThreadAgentModel({
@@ -500,6 +500,7 @@ export class ChatActions extends Actions<ChatState> {
     preserveSelectedThread,
     skipModelDispatch,
     acp_loop_config,
+    parent_message_id,
   }: {
     input?: string;
     sender_id?: string;
@@ -530,6 +531,8 @@ export class ChatActions extends Actions<ChatState> {
     skipModelDispatch?: boolean;
     // optional ACP loop config attached to this message
     acp_loop_config?: AcpLoopConfig;
+    // direct parent for linear thread placement
+    parent_message_id?: string;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -553,6 +556,7 @@ export class ChatActions extends Actions<ChatState> {
       return "";
     }
     let thread_id: string;
+    let resolvedParentMessageId: string | undefined;
     let reply_to_message_id: string | undefined;
     let resolvedReplyToIso: string | undefined;
     const explicitReplyThreadId =
@@ -571,6 +575,12 @@ export class ChatActions extends Actions<ChatState> {
       const threadMessages = this.getMessagesInThread(thread_id) ?? [];
       const rootMessage =
         threadMessages.find((msg) => !replyTo(msg)) ?? threadMessages[0];
+      const explicitParentMessageId =
+        typeof parent_message_id === "string" ? parent_message_id.trim() : "";
+      const latestMessageId =
+        `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim();
+      resolvedParentMessageId =
+        explicitParentMessageId || latestMessageId || undefined;
       const rootMessageId = `${(rootMessage as any)?.message_id ?? ""}`.trim();
       if (rootMessageId) {
         reply_to_message_id = rootMessageId;
@@ -608,6 +618,7 @@ export class ChatActions extends Actions<ChatState> {
       reply_to: resolvedReplyToIso,
       message_id,
       thread_id,
+      parent_message_id: resolvedParentMessageId,
       reply_to_message_id,
       editing: {},
     } as ChatMessage;
@@ -829,6 +840,7 @@ export class ChatActions extends Actions<ChatState> {
       sender_id?: string;
       message_id?: string;
       thread_id?: string;
+      parent_message_id?: string;
       reply_to_message_id?: string;
     },
     content: string,
@@ -851,6 +863,7 @@ export class ChatActions extends Actions<ChatState> {
       sender_id: message.sender_id ?? author_id,
       message_id: message.message_id,
       thread_id: message.thread_id,
+      parent_message_id: message.parent_message_id,
       reply_to_message_id: message.reply_to_message_id,
       history: addToHistory(prevHistory, {
         author_id,
@@ -870,7 +883,12 @@ export class ChatActions extends Actions<ChatState> {
     reply_to,
     submitMentionsRef,
   }: {
-    message: { date: string | Date; thread_id?: string; reply_to?: string };
+    message: {
+      date: string | Date;
+      thread_id?: string;
+      reply_to?: string;
+      message_id?: string;
+    };
     reply?: string;
     from?: string;
     noNotification?: boolean;
@@ -900,6 +918,7 @@ export class ChatActions extends Actions<ChatState> {
       sender_id: from ?? this.redux.getStore("account").get_account_id(),
       reply_to: normalizedReplyTo,
       reply_thread_id,
+      parent_message_id: `${message.message_id ?? ""}`.trim() || undefined,
       noNotification,
     });
     if (normalizedReplyTo) {

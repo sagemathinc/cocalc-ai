@@ -20,6 +20,7 @@ type QueueItem = {
   messageId: string;
   threadId?: string;
   replyTo?: Date;
+  parentMessageId?: string;
   senderId?: string;
   queuedAtMs: number;
   sendMode?: "immediate";
@@ -135,6 +136,23 @@ function maybeDecorateLoopPrompt({
     "- If human input is needed, set needs_human=true and explain blocker.",
     "- Do not omit the JSON contract block.",
   ].join("\n");
+}
+
+function latestThreadMessageId(
+  actions: ChatActions,
+  threadId?: string,
+  excludeMessageId?: string,
+): string | undefined {
+  const normalizedThreadId = `${threadId ?? ""}`.trim();
+  if (!normalizedThreadId) return undefined;
+  const threadMessages = actions.getMessagesInThread?.(normalizedThreadId) ?? [];
+  for (let i = threadMessages.length - 1; i >= 0; i--) {
+    const id = `${(threadMessages[i] as any)?.message_id ?? ""}`.trim();
+    if (!id) continue;
+    if (excludeMessageId && id === excludeMessageId) continue;
+    return id;
+  }
+  return undefined;
 }
 
 function interruptActiveThreadTurn({
@@ -369,6 +387,8 @@ export async function processAcpLLM({
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
   const message_id = uuid();
+  const initialParentMessageId =
+    `${(message as any)?.parent_message_id ?? ""}`.trim() || undefined;
   const reply_to_message_id =
     `${(message as any)?.reply_to_message_id ?? ""}`.trim() || user_message_id;
 
@@ -403,6 +423,7 @@ export async function processAcpLLM({
     messageId: user_message_id,
     threadId: thread_id,
     replyTo: threadRootDate,
+    parentMessageId: initialParentMessageId,
     senderId: field<string>(message, "sender_id"),
     queuedAtMs,
     sendMode,
@@ -411,6 +432,34 @@ export async function processAcpLLM({
     run: async (): Promise<void> => {
     try {
       setState("sending");
+      const activeParentMessageId =
+        latestThreadMessageId(actions, thread_id, user_message_id) ??
+        queueItem.parentMessageId ??
+        undefined;
+      if (
+        activeParentMessageId &&
+        typeof actions.syncdb?.set === "function" &&
+        typeof actions.syncdb?.commit === "function"
+      ) {
+        const currentUserRow = actions.getMessageById?.(user_message_id) as
+          | ChatMessage
+          | undefined;
+        const rowDate = dateValue(currentUserRow ?? message);
+        const rowSender =
+          field<string>(currentUserRow ?? message, "sender_id") ??
+          field<string>(message, "sender_id");
+        if (rowDate && rowSender) {
+          actions.syncdb.set({
+            event: "chat",
+            sender_id: rowSender,
+            date: rowDate.toISOString(),
+            message_id: user_message_id,
+            thread_id,
+            parent_message_id: activeParentMessageId,
+          });
+          actions.syncdb.commit();
+        }
+      }
       const promptForRun = maybeDecorateQueuedPrompt({
         prompt: workingInput,
         queuedAtMs: queueItem.queuedAtMs,
@@ -442,6 +491,7 @@ export async function processAcpLLM({
         reply_to: threadRootDate,
         thread_id,
         message_id,
+        parent_message_id: user_message_id,
         reply_to_message_id,
         sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
         loop_config: loopConfig,
@@ -699,6 +749,7 @@ function buildChatMetadata({
   reply_to,
   thread_id,
   message_id,
+  parent_message_id,
   reply_to_message_id,
   sendMode,
   loop_config,
@@ -713,6 +764,7 @@ function buildChatMetadata({
   reply_to?: Date;
   thread_id?: string;
   message_id?: string;
+  parent_message_id?: string;
   reply_to_message_id?: string;
   sendMode?: "immediate";
   loop_config?: AcpLoopConfig;
@@ -737,9 +789,10 @@ function buildChatMetadata({
     reply_to: reply_to?.toISOString(),
     thread_id,
     message_id,
+    parent_message_id,
     reply_to_message_id,
     send_mode: sendMode,
     loop_config,
     loop_state,
-  };
+  } as AcpChatContext;
 }

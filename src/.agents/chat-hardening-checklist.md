@@ -8,6 +8,11 @@ Goals:
 - Preserve a runnable system after every commit.
 - Remove timestamp-as-identity assumptions as early as possible.
 - Avoid generalized backward-compat complexity; use one-off migration tooling.
+- Use a linear thread model: `thread_id` for membership and
+  `parent_message_id` for placement.
+- Queued user messages should appear immediately in the transcript, but their
+  `parent_message_id` may be updated when they actually become the next active
+  prompt so the final rendered order remains linear and intuitive.
 
 ## Pre-Flight (before commit 1)
 
@@ -179,7 +184,9 @@ Checklist:
   - [x] backup original file (`.bak`)
   - [x] deterministic ID mapping
   - [x] emit `thread`/`thread_config`/`message`/`thread_state`
-  - [x] rewrite reply references to `reply_to_message_id`
+  - [ ] rewrite reply references to `parent_message_id`
+  - [ ] reparent queued user messages when they become active so X -> assistant(X)
+        -> Y -> assistant(Y) renders as a linear chain
   - [x] print integrity report
 - [x] Document exact usage in script header/comments.
 
@@ -197,7 +204,7 @@ Commit message suggestion:
 Checklist:
 
 - [x] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (frontend chat + lite/acp syncdb chat ops now sender-qualified)
-- [ ] Keep date only for sort/time display. (partial: ACP queue + status state now key by `thread_id`/`message_id` only; thread-config reads are `thread_id` only; thread-config writes now accept explicit `thread_id` (UUID) without timestamp thread keys; codex config/agent-model updates are now `thread_id`-only; thread delete/read helpers now accept UUID thread keys; date remains for ordering/UI thread selection and selected legacy updates)
+- [ ] Keep date only for sort/time display / sibling tie-breaking. (partial: ACP queue + status state now key by `thread_id`/`message_id` only; thread-config reads are `thread_id` only; thread-config writes now accept explicit `thread_id` (UUID) without timestamp thread keys; codex config/agent-model updates are now `thread_id`-only; thread delete/read helpers now accept UUID thread keys; date remains for ordering/UI thread selection and selected legacy updates)
 - [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: removed ACP date-key state fallback paths in queue/cancel/render/autoscroll; ACP backend chat-row lookup now uses `message_id` first and skips date+sender fallback when `message_id` is present; ACP writer no longer emits legacy `reply_to2`; thread metadata no longer auto-copies root message fields into `thread_config`; thread list rendering no longer reads root `name/thread_color/thread_icon`; language-model thread detection is thread-config driven and no longer performs side-effect writeback inference; streaming row resolution now checks `message_id` before date+sender fallback; `collectThreadMessages` supports UUID `thread_id` keys directly and no longer depends on reply-to/date fallback for thread grouping; `deleteThread` now supports UUID `thread_id` targeting and cleans `chat-thread-config`/`chat-thread-state`; thread-config writes no longer require timestamp-only thread keys; reply send path no longer backfills legacy roots by writing new PK identity fields and now fails fast for unmigrated roots)
 
 Validation:

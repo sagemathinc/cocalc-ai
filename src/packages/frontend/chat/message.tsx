@@ -702,9 +702,9 @@ export default function Message({
     );
   }, [actions, threadLookup]);
 
-  // Prefer the persisted sessionId on the thread root's acp_config; fall back
-  // to the latest assistant-row acp_thread_id, then the message payload, then
-  // the thread key.
+  // Prefer the persisted sessionId from the thread_id-indexed thread config;
+  // fall back to the latest assistant-row acp_thread_id, then the message
+  // payload, then the legacy date-key/thread key.
   const sessionIdForInterrupt = useMemo(
     () => {
       const resolved = resolveAgentSessionIdForThread({

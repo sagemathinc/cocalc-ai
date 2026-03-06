@@ -49,6 +49,20 @@ export function replyTo(msg: ChatMessage | undefined): string | undefined {
   return msg?.reply_to;
 }
 
+export function parentMessageId(
+  msg: ChatMessage | undefined,
+): string | undefined {
+  const parent = (msg as any)?.parent_message_id;
+  if (typeof parent === "string" && parent.trim().length > 0) {
+    return parent.trim();
+  }
+  const legacy = (msg as any)?.reply_to_message_id;
+  if (typeof legacy === "string" && legacy.trim().length > 0) {
+    return legacy.trim();
+  }
+  return undefined;
+}
+
 // Return list of account IDs currently editing the message.
 export function editingArray(msg: ChatMessage | undefined): string[] {
   const editing = msg?.editing;

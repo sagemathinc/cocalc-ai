@@ -168,6 +168,9 @@ export async function processLLM({
     toISOString(date) ?? (typeof date === "string" ? date : undefined);
   const messageId = (message as any)?.message_id as string | undefined;
   const threadId = (message as any)?.thread_id as string | undefined;
+  const parentMessageId = (message as any)?.parent_message_id as
+    | string
+    | undefined;
   const replyToMessageId = (message as any)?.reply_to_message_id as
     | string
     | undefined;
@@ -196,6 +199,7 @@ export async function processLLM({
       reply_to: toISOString(reply_to),
       message_id: messageId,
       thread_id: threadId,
+      parent_message_id: parentMessageId,
       reply_to_message_id: replyToMessageId,
     });
     actions.syncdb.commit();
@@ -230,6 +234,7 @@ export async function processLLM({
         reply_to: replyRoot,
         message_id: (cur as any)?.message_id ?? messageId,
         thread_id: (cur as any)?.thread_id ?? threadId,
+        parent_message_id: (cur as any)?.parent_message_id ?? parentMessageId,
         reply_to_message_id: (cur as any)?.reply_to_message_id ?? replyToMessageId,
       });
     }
@@ -269,6 +274,7 @@ export async function processLLM({
       reply_to: toISOString(reply_to),
       message_id: messageId,
       thread_id: threadId,
+      parent_message_id: parentMessageId,
       reply_to_message_id: replyToMessageId,
     });
 
@@ -303,6 +309,7 @@ export async function processLLM({
       reply_to: toISOString(reply_to),
       message_id: messageId,
       thread_id: threadId,
+      parent_message_id: parentMessageId,
       reply_to_message_id: replyToMessageId,
     });
     actions.syncdb.commit();
