@@ -10,6 +10,7 @@
     { "path": "./comm" },
     { "path": "./conat" },
     { "path": "./database" },
+    { "path": "./export" },
     { "path": "./file-server" },
     { "path": "./frontend" },
     { "path": "./hub" },

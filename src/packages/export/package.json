@@ -1,0 +1,30 @@
+{
+  "name": "@cocalc/export",
+  "version": "0.0.1",
+  "description": "Generic CoCalc export bundle helpers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "pnpm exec tsc --build",
+    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
+    "test": "pnpm exec jest",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/jest"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.10.10",
+    "ts-jest": "^29.4.5"
+  },
+  "license": "SEE LICENSE.md"
+}
