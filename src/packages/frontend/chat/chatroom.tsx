@@ -269,6 +269,18 @@ export function ChatPanel({
     preferLatestThread: preferLatestThreadFromDesc,
   });
 
+  useEffect(() => {
+    if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
+    actions.frameTreeActions.set_frame_data({
+      id: actions.frameId,
+      selectedThreadKey,
+    });
+  }, [
+    selectedThreadKey,
+    actions?.frameTreeActions,
+    actions?.frameId,
+  ]);
+
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
