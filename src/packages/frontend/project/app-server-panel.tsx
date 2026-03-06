@@ -132,6 +132,10 @@ function renderLogTailBlock({
   );
 }
 
+function isPublicExposure(status: ManagedAppStatus): boolean {
+  return status.exposure?.mode === "public";
+}
+
 function isPositiveIntegerText(value: string): boolean {
   const text = `${value ?? ""}`.trim();
   if (!text) return false;
@@ -365,7 +369,7 @@ export function AppServerPanel({
       if (rowFilter === "running" && row.state !== "running") return false;
       if (rowFilter === "stopped" && row.state !== "stopped") return false;
       if (rowFilter === "error" && !rowHasError) return false;
-      if (rowFilter === "public" && !row.exposure?.public_url) return false;
+      if (rowFilter === "public" && !isPublicExposure(row)) return false;
       if (!needle) return true;
       const haystacks = [
         row.id,
@@ -373,6 +377,9 @@ export function AppServerPanel({
         row.kind,
         row.state,
         row.exposure?.public_url,
+        row.exposure?.public_hostname,
+        row.exposure?.random_subdomain,
+        row.exposure?.mode,
         spec?.proxy?.base_path,
         spec?.static?.root,
       ];
@@ -1296,6 +1303,7 @@ export function AppServerPanel({
       <Space direction="vertical" style={{ width: "100%" }}>
         {filteredRows.map((row) => {
           const isRunning = row.state === "running";
+          const isPublic = isPublicExposure(row);
           const spec = specById[row.id];
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
@@ -1318,7 +1326,7 @@ export function AppServerPanel({
                     <Tag color={isRunning ? "green" : "default"}>
                       {isRunning ? "running" : "stopped"}
                     </Tag>
-                    {row.exposure?.public_url ? <Tag color="gold">public</Tag> : null}
+                    {isPublic ? <Tag color="gold">public</Tag> : null}
                   </div>
                   <div style={{ opacity: 0.7, fontFamily: "monospace", fontSize: "12px" }}>
                     {row.id}
@@ -1353,7 +1361,7 @@ export function AppServerPanel({
                       Delete
                     </Button>
                   </Popconfirm>
-                  {row.exposure?.public_url ? (
+                  {isPublic ? (
                     <Button
                       size="small"
                       onClick={() => void onUnexpose(row.id)}
@@ -1420,12 +1428,22 @@ export function AppServerPanel({
                   ))}
                 </div>
               ) : null}
-              {row.exposure?.public_url ? (
+              {isPublic ? (
                 <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
-                  Public URL:{" "}
-                  <a href={row.exposure.public_url} target="_blank" rel="noreferrer">
-                    {row.exposure.public_url}
-                  </a>
+                  {row.exposure?.public_url ? (
+                    <>
+                      Public URL:{" "}
+                      <a href={row.exposure.public_url} target="_blank" rel="noreferrer">
+                        {row.exposure.public_url}
+                      </a>
+                    </>
+                  ) : row.exposure?.public_hostname ? (
+                    <>Public Hostname: {row.exposure.public_hostname}</>
+                  ) : row.exposure?.random_subdomain ? (
+                    <>Public exposure active (subdomain label: {row.exposure.random_subdomain})</>
+                  ) : (
+                    <>Public exposure active</>
+                  )}
                   {row.exposure?.expires_at_ms ? (
                     <span>
                       {" "}
