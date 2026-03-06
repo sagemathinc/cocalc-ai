@@ -31,18 +31,13 @@ import { special_filenames_with_no_extension } from "@cocalc/frontend/project-fi
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import { filename_extension, is_only_downloadable, keys } from "@cocalc/util/misc";
-import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import type { NamedServerName } from "@cocalc/util/types/servers";
 import { PathNavigator } from "../explorer/path-navigator";
 import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
 import { AIGenerateDocumentModal } from "../page/home-page/ai-generate-document";
 import { Ext } from "../page/home-page/ai-generate-examples";
-import {
-  APP_CATALOG,
-  APP_MAP,
-  QUICK_CREATE_MAP,
-} from "./launcher-catalog";
+import { QUICK_CREATE_MAP } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
@@ -58,8 +53,6 @@ import {
   updateUserLauncherPrefs,
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
-import { NamedServerPanel } from "../named-server-panel";
-import { AppServerPanel } from "../app-server-panel";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -88,8 +81,6 @@ export default function NewFilePage(props: Props) {
   }, [autoFocusFilename]);
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
-  const student_project_functionality =
-    useStudentProjectFunctionality(project_id);
   const other_settings = useTypedRedux("account", "other_settings");
   const account_id = useTypedRedux("account", "account_id");
   const is_admin = useTypedRedux("account", "is_admin");
@@ -145,10 +136,6 @@ export default function NewFilePage(props: Props) {
   const [showCustomizeModal, setShowCustomizeModal] =
     useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
-  const [showServerPanel, setShowServerPanel] = useState<"" | NamedServerName>(
-    "",
-  );
-  const [showAppServerPanel, setShowAppServerPanel] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -202,23 +189,6 @@ export default function NewFilePage(props: Props) {
     }
   }
 
-  function isAppVisible(id: NamedServerName): boolean {
-    switch (id) {
-      case "jupyterlab":
-        return !student_project_functionality.disableJupyterLabServer;
-      case "jupyter":
-        return !student_project_functionality.disableJupyterClassicServer;
-      case "code":
-        return !student_project_functionality.disableVSCodeServer;
-      case "pluto":
-        return !student_project_functionality.disablePlutoServer;
-      case "rserver":
-        return !student_project_functionality.disableRServer;
-      default:
-        return true;
-    }
-  }
-
   const quickCreateIds = mergedLauncher.quickCreate
     .filter((id) => id !== "sage")
     .filter(isQuickCreateAvailable);
@@ -262,25 +232,6 @@ export default function NewFilePage(props: Props) {
     }
     return options;
   }, []);
-
-  const visibleAppsSeen = new Set<NamedServerName>();
-  const appIds = mergedLauncher.apps.filter(
-    (id) => APP_CATALOG.find((app) => app.id === id) != null,
-  ) as NamedServerName[];
-  const visibleApps = appIds.filter(isAppVisible).filter((id) => {
-    if (visibleAppsSeen.has(id)) return false;
-    visibleAppsSeen.add(id);
-    return true;
-  });
-  const appSpecs = visibleApps
-    .map((id) => APP_MAP[id])
-    .filter(Boolean) as { id: NamedServerName; label: string; icon: IconName }[];
-  const serversDisabled: boolean =
-    !!student_project_functionality.disableJupyterLabServer &&
-    !!student_project_functionality.disableJupyterClassicServer &&
-    !!student_project_functionality.disableVSCodeServer &&
-    !!student_project_functionality.disablePlutoServer &&
-    !!student_project_functionality.disableRServer;
 
   function getActions(): ProjectActions {
     if (actions == null) throw new Error("bug");
@@ -675,60 +626,6 @@ export default function NewFilePage(props: Props) {
               Create
             </Button>
           </Space.Compact>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              marginTop: "16px",
-              marginBottom: "6px",
-            }}
-          >
-            <h4 style={{ margin: 0 }}>Apps</h4>
-            <Button size="small" onClick={() => setShowCustomizeModal(true)}>
-              Customize
-            </Button>
-          </div>
-          <Space wrap>
-            {appSpecs.map((spec) => (
-              <NewFileButton
-                key={`app-${spec.id}`}
-                name={spec.label}
-                icon={spec.icon}
-                size="small"
-                mode="secondary"
-                on_click={() => {
-                  setShowAppServerPanel(false);
-                  setShowServerPanel(spec.id);
-                }}
-              />
-            ))}
-            <NewFileButton
-              key="app-managed-server"
-              name="Managed App Server"
-              icon="server"
-              size="small"
-              mode="secondary"
-              on_click={() => {
-                setShowServerPanel("");
-                setShowAppServerPanel(true);
-              }}
-            />
-            {serversDisabled && (
-              <Button
-                size="small"
-                onClick={() =>
-                  Modal.info({
-                    title: "Servers disabled",
-                    content:
-                      "App servers are disabled in this workspace. Contact your administrator to enable them.",
-                  })
-                }
-              >
-                <Icon name="exclamation-circle" /> Servers disabled
-              </Button>
-            )}
-          </Space>
         </Col>
       </Row>
       <LauncherCustomizeModal
@@ -804,28 +701,6 @@ export default function NewFilePage(props: Props) {
           current_path={effective_current_path}
           show_header={false}
         />
-      </Modal>
-      <Modal
-        open={!!showServerPanel}
-        onCancel={() => setShowServerPanel("")}
-        footer={null}
-        width={820}
-        destroyOnHidden
-        title={showServerPanel ? APP_MAP[showServerPanel]?.label : undefined}
-      >
-        {showServerPanel && (
-          <NamedServerPanel project_id={project_id} name={showServerPanel} />
-        )}
-      </Modal>
-      <Modal
-        open={showAppServerPanel}
-        onCancel={() => setShowAppServerPanel(false)}
-        footer={null}
-        width={920}
-        destroyOnHidden
-        title="Managed App Server"
-      >
-        <AppServerPanel project_id={project_id} />
       </Modal>
     </SettingBox>
   );

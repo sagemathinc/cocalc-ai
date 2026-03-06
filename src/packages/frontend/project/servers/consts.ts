@@ -7,7 +7,7 @@ import { CSS } from "@cocalc/frontend/app-framework";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 
-export const TITLE = "Servers";
+export const TITLE = "Apps";
 export const ICON_NAME: IconName = "server";
 
 export const ICON_USERS: IconName = "users";

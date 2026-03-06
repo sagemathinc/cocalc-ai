@@ -27,19 +27,22 @@ This should replace ad hoc per-app special cases over time.
 6. CLI surface for `workspace app` lifecycle is implemented and agent-usable in JSON mode.
 7. Public-readiness audit command/prompt path is implemented (backend + CLI).
 8. Live Launchpad GCP smoke for service app flow passes end-to-end (create/start/expose/public probe/recover/unexpose/cleanup).
+9. The main user-facing app surface now uses `Apps` / `Managed Applications`, with duplicate launcher UI removed from `+New`, the `+New` flyout, and the old top-row launcher area.
+10. Detection is split in the main UI between running HTTP-app discovery and installed-template discovery.
+11. The Apps page now has real operational controls: filter/search, bulk start/stop, row-local startup failures, and a direct `Audit with Codex` action.
 
 ### Partial
 
-1. Static app mode backend exists and dedicated launchpad static-heavy smoke scenario (`apps-static`) is implemented; broader matrix (lite parity + larger cache/static variants) is still pending.
+1. Static app mode backend exists and the dedicated launchpad static-heavy smoke scenario (`apps-static`) now passes on live GCP; broader matrix (lite parity + larger cache/static variants) is still pending.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
-3. Pre-expose Codex audit exists at backend/CLI level; UI button flow is not yet implemented.
+3. The Apps page is coherent enough for real use now, but still needs visual/product polish, broader template coverage, and better advanced workflow presentation.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
 
 ### Not Done
 
-1. Dedicated app UI workflows and polish (`+New` app wizard, app management panel polish, autodetection UX, embed polish).
-2. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
-3. "Install with agent" flow from app presets/management UI.
+1. Finalized static-mode smoke matrix (lite + launchpad, large-file/static cache cases).
+2. "Install with agent" flow from app presets/management UI.
+3. Broader template catalog and stronger embed/open integration polish.
 
 ## 2. Product Goals
 
@@ -151,6 +154,54 @@ Notes:
 2. `kind=static` serves files directly from a configured path via project-host.
 3. `BASE_URL` is computed by proxy layer and injected.
 
+## 6.1 App Integration Layer
+
+An app should not be modeled only as a runtime. In many cases we also want CoCalc-native integration on top of that runtime.
+
+Model:
+
+1. App Runtime:
+   - how the backend service or native program is started and reached,
+   - examples: proxied web app, static app, SSH/X11 native app.
+2. App Integration:
+   - how CoCalc files, UI actions, and project context are routed into that runtime,
+   - examples: file-type handlers, lightweight sandboxed frontend bundle, deep links, identity/RTC glue.
+
+This is a better long-term model than treating "extensions" as a fully separate product concept. In many cases the quickjs sandbox / extensions API should be the way an app integrates more deeply into CoCalc, not a competing parallel system.
+
+Examples:
+
+1. JupyterLab:
+   - runtime: managed web app,
+   - integration: clicking an `.ipynb` ensures JupyterLab is running and opens the correct file in a new tab or iframe with the needed user/session/RTC context.
+2. code-server:
+   - runtime: managed web app,
+   - integration: future "Open with..." actions in the file explorer can route a file or directory into code-server.
+3. PostgreSQL + web UI:
+   - runtime: managed database plus a management UI,
+   - integration: CoCalc can surface project-aware actions that jump directly into the database UI.
+4. Chromium:
+   - runtime: native/X11 app inside the workspace,
+   - integration: CoCalc launches it in a safer sandboxed remote environment rather than on the user's own machine.
+
+Possible future integration block in app specs:
+
+```yaml
+integration:
+  file_types: [".ipynb"]
+  open_with_label: "JupyterLab"
+  mode: iframe # iframe | new-tab | native-launch
+  sandbox_bundle: /path/to/bundle.js
+  open_url_template: "${BASE_URL}/lab/tree/${FILE_PATH}"
+```
+
+Design implications:
+
+1. the Apps page can eventually organize both runtime behavior and integration behavior,
+2. app templates may include both a runtime preset and an integration preset,
+3. file explorer "Open with..." is a natural later surface for these integrations,
+4. the quickjs sandbox / extensions API should be viewed as an integration mechanism for apps, not just a separate plugin system.
+
 ## 7. Security Model
 
 ### 7.1 Default Private Access
@@ -244,40 +295,96 @@ Product/UX requirements:
 
 ## 10. UI Plan
 
-### 10.1 Create Flow
+### 10.1 Entry Point Decision
 
-Add `App Server` in `+New`:
+App management should be separate from file creation.
 
-1. choose app template or custom,
-2. set command/port/base path/iframe/public mode,
-3. save spec and optionally start now.
+Decision:
+
+1. the left-nav button should be renamed from `Servers` to `Apps`,
+2. the Apps page should become the single primary UI for managed apps,
+3. remove app-launch UI from `+New`,
+4. remove app-launch UI from the `+New` flyout panel,
+5. keep customization for file creation and app management separate,
+6. if needed, allow a lightweight shortcut into Apps, but not a second full app-creation workflow.
 
 Alpha priority note:
 
 1. Keep initial UI minimal and thin over CLI/API.
 2. Main investment goes to backend lifecycle + CLI + agent integration first.
 
-### 10.2 App Management
+Rationale:
+
+1. creating files and managing long-lived apps are different jobs,
+2. duplicating app-launch UI across Apps, `+New`, and flyout creates drift in code and behavior,
+3. one managed-app surface is easier for users, agents, and future policy controls.
+
+Terminology:
+
+1. left nav label: `Apps`
+2. main page heading: `Managed Applications`
+3. avoid `Servers` in user-facing copy where possible, since it is ambiguous and overly infrastructure-flavored.
+
+### 10.2 Apps Page Structure
 
 Project app panel with:
 
-1. status (running/starting/stopped/error),
-2. private URL and optional public URL,
-3. quick actions (start/stop/restart/expose/revoke/logs/edit),
-4. last error snippet and health status.
+1. top toolbar:
+   - template picker / new app,
+   - search/filter,
+   - bulk actions (`start all`, `stop all`, later selection-based actions),
+2. managed app list:
+   - status (running/starting/stopped/error),
+   - private URL and optional public URL,
+   - quick actions (start/stop/restart/expose/revoke/logs/edit),
+   - last error snippet and health status inline on the same row/card,
+3. no legacy top-row server launch buttons,
+4. JupyterLab/code-server/Pluto/etc. should appear as first-party managed-app presets instead of a separate server system.
 
-### 10.3 Port Autodetection
+### 10.3 Detection Modes
 
-Detect new local HTTP listeners and prompt:
+Detection must be split into two distinct workflows:
 
-1. "We detected service on :XXXX. Create app proxy?"
-2. one-click creates spec from discovered port.
+1. detect running HTTP apps:
+   - show candidate user applications that appear to be serving HTTP,
+   - exclude infrastructure/system ports such as SSH and the project proxy itself,
+   - ideally verify HTTP response before surfacing,
+   - prompt: "We detected a running HTTP service on :XXXX. Create managed app?"
+2. detect installed template apps:
+   - check whether known templates are installed and runnable,
+   - examples: JupyterLab, code-server, Pluto, RStudio, Streamlit, Gradio, TensorBoard,
+   - use this to drive which presets are shown as ready-to-use vs install-needed.
 
 ### 10.4 Embedding
 
 1. `iframe=auto` tries embedded view first.
 2. if blocked by headers/policies, auto-fallback to external tab.
 3. "Open in full tab" button always present.
+
+### 10.5 Template Scope
+
+Template catalog should be broader, but structured:
+
+1. core built-ins:
+   - JupyterLab
+   - code-server
+   - Pluto
+   - RStudio
+   - Static site
+   - Python hello world
+   - Node hello world
+2. app/dev templates:
+   - Streamlit
+   - Gradio
+   - Dash
+   - Bokeh
+   - TensorBoard
+   - Dask dashboard
+3. advanced:
+   - custom command
+   - native/X11 app
+   - SSH-forwarded app
+4. templates that are not installed should offer `Install with agent`.
 
 ## 11. CLI Plan (Agent-First)
 
@@ -346,6 +453,99 @@ Why this matters:
 1. It bypasses HTTP path rewriting entirely.
 2. It uses our already-hardened sshpiperd + Cloudflare tunnel path.
 3. It gives users/agents a reliable escape hatch for non-cooperative services.
+4. It naturally extends beyond web apps to native/X11 applications that have no useful browser deployment path.
+
+### 13.3.1 Native/X11 App Extension
+
+This SSH-based fallback should also support native GUI applications, especially:
+
+1. simple X11 test apps such as `xclock`,
+2. legacy scientific visualization tools with no serious web counterpart,
+3. desktop-style editors such as Zed or similar tools that are better launched locally than proxied through a browser.
+4. a full web browser such as chromium -- it can be useful having it run directly inside the workspace
+
+Conceptually, this is a second app-launch mode:
+
+1. managed web app:
+   - start service in workspace,
+   - expose through CoCalc proxy/public URL machinery.
+2. managed native app:
+   - start through SSH/X11 workflow,
+   - no HTTP proxying required,
+   - UI gives the user a generated local bootstrap command instead of a web URL.
+
+User flow:
+
+1. configure a native app spec or choose a native-app preset,
+2. click launch,
+3. CoCalc shows a small generated bootstrap command,
+4. user pastes it into a terminal on their laptop,
+5. the command:
+   - ensures `cocalc-cli` is installed or upgraded,
+   - ensures SSH access is configured,
+   - sets up SSH forwarding/X11 transport,
+   - launches the requested application against the project.
+
+This is especially valuable because it lets CoCalc manage the remote environment while still using native local rendering/input for apps that do not belong in a browser.
+
+Platform scope for first pass:
+
+1. Linux desktop first, since X11 forwarding is straightforward there.
+2. macOS and Windows should be explicitly documented as requiring additional local prerequisites and may initially be unsupported or best-effort only.
+3. Generated commands should be OS-aware and fail early with a clear prerequisite message if the local machine is missing required pieces.
+
+### 13.3.2 Daemon-Assisted Local Launch and Forwarding
+
+Longer term, the local `cocalc-cli` daemon should become the preferred control plane for SSH port forwarding and native app launch.
+
+Why this is attractive:
+
+1. the daemon already exists to maintain persistent websocket connectivity to project-hosts,
+2. it can own local process lifecycle for forwarded ports and launched apps,
+3. it avoids fragile copy/paste commands and shell-quoting problems,
+4. it provides a natural place for local approval prompts, retries, cleanup, and status reporting.
+
+Preferred flow:
+
+1. user installs `cocalc-cli` and authenticates at an appropriate control level,
+2. CoCalc detects that a paired local daemon is available,
+3. when the user clicks `Port Forward (SSH)` or `Launch on my computer`, CoCalc sends a typed request to the daemon,
+4. the daemon shows a native popup approval dialog describing exactly what local action will happen,
+5. upon approval, the daemon performs the SSH setup and either:
+   - starts the local port forward, or
+   - launches the requested native application.
+
+Approval dialog should include:
+
+1. workspace/project identity,
+2. remote target details,
+3. local port or local application being launched,
+4. expected duration/persistence,
+5. whether the action is one-shot or remembered for the current session/project.
+
+Security model:
+
+1. daemon requests must be narrowly typed capabilities, not arbitrary shell commands,
+2. examples:
+   - "forward remote port 8787 to local 127.0.0.1:8877",
+   - "launch `xclock` over approved SSH/X11 session",
+3. every action should be attributable to a signed-in user and a specific project/workspace,
+4. there should be a local audit trail and one-click stop/revoke path,
+5. copy/paste bootstrap remains the low-trust fallback when daemon pairing is unavailable.
+
+Product tiers of trust:
+
+1. low trust:
+   - copy/paste only,
+   - no daemon control.
+2. medium trust:
+   - daemon available,
+   - explicit approval for every action.
+3. higher trust:
+   - daemon may remember approval for a given project/session for a short period,
+   - still no unrestricted arbitrary local execution.
+
+This makes the system feel dramatically smoother while keeping the right security boundary: the daemon is a typed local agent, not a general remote shell.
 
 CLI shape (proposed):
 
@@ -357,6 +557,9 @@ CLI shape (proposed):
    - prints a single copy/paste command for local laptop execution.
 3. `cocalc workspace app ssh-forward stop <session-id>`
    - optional if we manage background local helpers from CLI wrappers.
+4. `cocalc workspace app launch-native <app-id> --json`
+   - returns a generated local bootstrap command instead of a URL,
+   - includes platform/prerequisite metadata so UI and agent can explain what will happen.
 
 Agent workflow:
 
@@ -365,12 +568,14 @@ Agent workflow:
 3. If still failing, suggest SSH forwarding with explicit command.
 4. Return a short explanation:
    - "this app is not proxy-compatible; using direct SSH forwarding."
+5. For declared native apps, skip web-proxy steps entirely and return the generated local launch command.
 
 UI behavior:
 
 1. In app details/actions, add "Port Forward (SSH)".
 2. Show one-click copy command and brief trust/scope note.
 3. Keep this private by default and separate from public exposure controls.
+4. For native apps, use language such as "Launch on my computer" instead of "Open".
 
 Security/ops constraints:
 
@@ -378,6 +583,7 @@ Security/ops constraints:
 2. No new public URL is created by default.
 3. Log forwarding sessions in project-host activity state for auditability.
 4. Provide explicit stop/cleanup guidance for long-running forwards.
+5. Native launch helpers must remain thin wrappers around SSH/CLI setup and app launch, not arbitrary local installer scripts.
 
 ## 14. Static Site Mode
 
@@ -485,10 +691,12 @@ Existing components to reuse where possible:
 
 ### Phase 3: UI Expansion (after backend confidence) (Status: not started)
 
-1. `+New` app server wizard polish
-2. app management panel polish
-3. autodetection suggestions UX
-4. iframe auto-fallback polish
+1. Apps page becomes the single managed-app surface
+2. remove duplicated app-launch UI from `+New` and flyout
+3. app management panel polish
+4. split autodetection into running-HTTP vs installed-template UX
+5. iframe auto-fallback polish
+6. expand template catalog and `Install with agent`
 
 ## 17. Acceptance Criteria (A1.4)
 
@@ -522,18 +730,74 @@ Existing components to reuse where possible:
 6. `[done]` Add public exposure controls (TTL/revoke/random subdomain + optional front token).
 7. `[partial]` Add host-aware cost guardrails (especially metered-egress behavior). (NOTE: egress is the primary special-cost driver here.)
 8. `[partial]` Add static file serving mode with cache presets.
-9. `[partial]` Add Codex app audit prompt/action path for public expose (backend+CLI done; UI action pending).
-10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; static smoke pending).
-10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
-11. `[todo]` Build minimal UI wrapper (`+New` + manage panel) over stable backend/CLI.
-12. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
-13. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
+9. `[done]` Add Codex app audit prompt/action path for public expose (backend, CLI, and Apps-page action are implemented).
+10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; live GCP `apps-static` smoke passes; lite parity + broader static matrix pending).
+11. `[done]` Rename the left-nav button from `Servers` to `Apps` and use `Managed Applications` as the main page heading.
+12. `[done]` Make Apps page the single managed-app surface and remove duplicated app-launch UI from `+New` and flyout.
+13. `[done]` Remove legacy top-row server launcher UI and map JupyterLab/code-server/etc. to managed-app presets.
+14. `[done]` Split detection into running-HTTP discovery vs installed-template discovery.
+15. `[done]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
+16. `[done]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
+17. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
+18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
+19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 
 ## 19.1 Next Execution Order
 
 1. Run and harden launchpad `apps-static` smoke in live cloud loop, then add lite static parity and broader static matrix.
-2. Add minimal UI wrappers after static smoke is green.
-3. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
+2. Rename `Servers` to `Apps` and use `Managed Applications` as the primary page language.
+3. Collapse Apps / `+New` / flyout app entry points into one Apps-first surface.
+4. Remove legacy top-row server launcher UI and map built-ins to managed-app presets.
+5. Split detection into running-HTTP discovery vs installed-template discovery.
+6. Add filter/search/bulk-actions and row-local error handling.
+7. Add pre-expose "Audit with Codex" UI action, likely using the same style/pattern as the new in-progress agentized Help-me-fix flow.
+
+## 19.2 Strict Remaining Queue
+
+### Alpha-blocking
+
+These are the remaining items that matter most to calling A1.4 effectively finished as a coherent product feature.
+
+1. finish static-mode validation:
+   - harden launchpad `apps-static`,
+   - add lite parity,
+   - cover broader static/cache cases.
+2. finish the last Apps-page polish needed for alpha:
+   - tighten copy/labels,
+   - improve layout density and preset presentation,
+   - smooth remaining rough edges in error/display behavior.
+3. do a focused XSS/origin-isolation audit for managed apps:
+   - verify which CoCalc cookies or bearer mechanisms can ever reach private app requests,
+   - verify which cookies are stripped before upstream proxying,
+   - strip project-host auth/session cookies before forwarding traffic upstream to the managed app,
+   - scope the project-host session cookie as narrowly as possible instead of using a broad path,
+   - audit project-host session-cookie scope/path/domain behavior,
+   - determine whether additional per-project/per-app origin isolation is required for private apps,
+   - harden static HTML serving assumptions accordingly.
+
+### Post-alpha
+
+These improve the product substantially, but do not need to block first public release.
+
+1. broader template catalog and better preset organization.
+2. `Install with agent` from presets and app rows.
+3. deeper host-aware egress guardrails beyond warnings/policy hints.
+4. richer static refresh policy options and sandbox-ephemeral execution.
+5. iframe/embed polish and better "open in full tab" fallback behavior.
+
+### Longer-term platform work
+
+These are real extensions of the Apps platform, but are clearly beyond the first finish line.
+
+1. SSH port-forward fallback UI/CLI completion.
+2. native/X11 app support.
+3. daemon-assisted local launch and forwarding via `cocalc-cli`.
+4. app integration layer:
+   - file-type handlers,
+   - future `Open with...` actions in the file explorer,
+   - quickjs/extensions-backed frontend integration.
+5. tighter policy/membership integration for app/public-expose limits.
+6. possible convergence of apps plus CoCalc-integrated extension bundles into a broader Apps platform.
 
 ## 20. Alpha-Safe Public Model (Minimum to Ship)
 

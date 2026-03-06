@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { userInfo } from "node:os";
 import { delay } from "awaiting";
 import basePath from "@cocalc/backend/base-path";
 import { conat } from "@cocalc/conat/client";
@@ -98,6 +99,13 @@ export interface DetectedAppPort {
   managed_app_ids: string[];
   proxy_url: string;
   source: "ss" | "procfs";
+}
+
+export interface InstalledAppTemplate {
+  key: string;
+  label: string;
+  available: boolean;
+  details?: string;
 }
 
 export interface AppAuditCheck {
@@ -256,7 +264,10 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
     managedByPort.get(row.port)!.push(row.id);
   }
   const ignoredPorts = new Set<number>();
-  const proxyPort = Number(process.env.COCALC_PROXY_PORT ?? 0);
+  // Keep this in sync with project/servers/proxy/proxy.ts:startProxyServer().
+  const proxyPort =
+    Number(process.env.COCALC_PROXY_PORT ?? 0) ||
+    (userInfo().username === "root" ? 80 : 8080);
   if (Number.isInteger(proxyPort) && proxyPort > 0) ignoredPorts.add(proxyPort);
   const hubPort = Number(process.env.HUB_PORT ?? 0);
   if (Number.isInteger(hubPort) && hubPort > 0) ignoredPorts.add(hubPort);
@@ -275,6 +286,101 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
   }
   entries.sort((a, b) => a.port - b.port);
   return entries;
+}
+
+function normalizeProbeHost(hosts: string[]): string {
+  for (const host of hosts) {
+    if (host === "127.0.0.1" || host === "::1") return host;
+  }
+  return "127.0.0.1";
+}
+
+async function portLooksHttp(port: number, host: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = net.createConnection({ port, host });
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(750);
+    socket.once("connect", () => {
+      socket.write("GET / HTTP/1.0\r\nHost: localhost\r\n\r\n");
+    });
+    socket.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      const text = Buffer.concat(chunks).toString("utf8");
+      if (text.startsWith("HTTP/")) {
+        finish(true);
+      }
+    });
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+    socket.once("close", () => {
+      if (!settled) {
+        const text = Buffer.concat(chunks).toString("utf8");
+        finish(text.startsWith("HTTP/"));
+      }
+    });
+  });
+}
+
+async function detectHttpPorts(
+  entries: DetectedAppPort[],
+): Promise<DetectedAppPort[]> {
+  const out: DetectedAppPort[] = [];
+  for (const entry of entries) {
+    const host = normalizeProbeHost(entry.hosts);
+    if (await portLooksHttp(entry.port, host)) {
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+async function runAvailabilityCheck({
+  cmd,
+  timeoutMs = 4000,
+}: {
+  cmd: string;
+  timeoutMs?: number;
+}): Promise<{ available: boolean; details?: string }> {
+  return await new Promise((resolve) => {
+    const child = spawn("bash", ["-lc", cmd], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      if (!settled) {
+        settled = true;
+        resolve({ available: false, details: "timeout" });
+      }
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      resolve({ available: false, details: `${err}` });
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      const text = Buffer.concat([...stdout, ...stderr]).toString("utf8").trim();
+      resolve({
+        available: code === 0,
+        details: text ? text.split(/\r?\n/)[0].slice(0, 160) : undefined,
+      });
+    });
+  });
 }
 
 function auditSummary(checks: AppAuditCheck[]) {
@@ -992,12 +1098,75 @@ export async function appLogs(id: string): Promise<{
 export async function detectApps(opts?: {
   include_managed?: boolean;
   limit?: number;
+  http_only?: boolean;
 }): Promise<DetectedAppPort[]> {
   const includeManaged = !!opts?.include_managed;
   const limit = Math.max(1, Math.floor(Number(opts?.limit ?? 200)));
-  const detected = await detectListeningPorts();
+  let detected = await detectListeningPorts();
+  if (opts?.http_only) {
+    detected = await detectHttpPorts(detected);
+  }
   const filtered = includeManaged ? detected : detected.filter((d) => !d.managed);
   return filtered.slice(0, limit);
+}
+
+export async function detectInstalledTemplates(): Promise<InstalledAppTemplate[]> {
+  const checks: Array<InstalledAppTemplate & { cmd?: string }> = [
+    {
+      key: "jupyterlab",
+      label: "JupyterLab",
+      cmd: "command -v jupyter >/dev/null 2>&1 && jupyter lab --version",
+      available: false,
+    },
+    {
+      key: "code-server",
+      label: "code-server",
+      cmd: "command -v code-server >/dev/null 2>&1 && code-server --version",
+      available: false,
+    },
+    {
+      key: "pluto",
+      label: "Pluto",
+      cmd: "command -v julia >/dev/null 2>&1 && julia -e 'import Pluto; print(\"Pluto available\")'",
+      available: false,
+    },
+    {
+      key: "rstudio",
+      label: "RStudio / rserver",
+      cmd: "command -v rserver >/dev/null 2>&1 && rserver --version",
+      available: false,
+    },
+    {
+      key: "python-hello",
+      label: "Python runtime",
+      cmd: "command -v python3 >/dev/null 2>&1 && python3 --version",
+      available: false,
+    },
+    {
+      key: "node-hello",
+      label: "Node.js runtime",
+      cmd: "command -v node >/dev/null 2>&1 && node --version",
+      available: false,
+    },
+    {
+      key: "static-hello",
+      label: "Static site hosting",
+      available: true,
+      details: "built in",
+    },
+  ];
+  return await Promise.all(
+    checks.map(async ({ key, label, cmd, available, details }) => {
+      if (!cmd) return { key, label, available, details };
+      const result = await runAvailabilityCheck({ cmd });
+      return {
+        key,
+        label,
+        available: result.available,
+        details: result.details,
+      };
+    }),
+  );
 }
 
 export async function auditAppPublicReadiness(
