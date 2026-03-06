@@ -14,7 +14,7 @@ rm -rf "$OUT"/*
 cd "$ROOT"
 
 echo "- Build @cocalc/cli"
-pnpm --filter @cocalc/cli build
+pnpm --dir "$ROOT/packages/cli" build
 
 echo "- Bundle CLI entry point with @vercel/ncc"
 ncc build "$ROOT/packages/cli/dist/bin/cocalc.js" \
