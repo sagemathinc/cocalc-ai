@@ -196,6 +196,14 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     }
   }
 
+  async export_document(frameId?: string): Promise<void> {
+    try {
+      this.getChatActions(frameId)?.openExportModal?.();
+    } catch (error) {
+      this.set_error(`${error}`);
+    }
+  }
+
   scrollToBottom = (frameId) => {
     this.getChatActions(frameId)?.scrollToIndex(-1);
   };

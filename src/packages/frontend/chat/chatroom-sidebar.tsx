@@ -25,6 +25,7 @@ import { isCodexModelName } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
 import { ThreadBadge } from "./thread-badge";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
+import type { ChatExportOpenRequest } from "./export-types";
 
 const THREAD_SIDEBAR_HEADER: React.CSSProperties = {
   padding: "0 20px 15px",
@@ -164,7 +165,7 @@ interface ChatRoomSidebarContentProps {
     threadIcon?: string,
   ) => void;
   openGitBrowser: (threadKey: string) => void;
-  openExportModal: (threadKey: string, label: string, isAI: boolean) => void;
+  openExportModal: (opts?: ChatExportOpenRequest) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
 }
@@ -234,7 +235,7 @@ export function ChatRoomSidebarContent({
       },
       {
         key: "export",
-        label: "Export to Markdown",
+        label: "Export...",
       },
       {
         key: "fork",
@@ -270,7 +271,11 @@ export function ChatRoomSidebarContent({
         }
         antdMessage.success(pinned ? "Chat pinned." : "Chat unpinned.");
       } else if (key === "export") {
-        openExportModal(threadKey, plainLabel, isAI);
+        openExportModal({
+          scope: "current-thread",
+          threadKey,
+          label: plainLabel,
+        });
       } else if (key === "fork") {
         openForkModal(threadKey, plainLabel, isAI);
       } else if (key === "archive") {

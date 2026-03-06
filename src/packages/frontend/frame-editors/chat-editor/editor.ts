@@ -40,7 +40,7 @@ export const chatroom: EditorDescription = {
     "redo",
     "save",
     "help",
-    "export_to_markdown",
+    "export_document",
     "chatgpt",
     "scrollToBottom",
     "scrollToTop",

@@ -837,6 +837,19 @@ addCommands({
     }),
     icon: "markdown",
   },
+  export_document: {
+    group: "export",
+    label: "Export...",
+    title: defineMessage({
+      id: "command.generic.export_document.tooltip",
+      defaultMessage:
+        "Export this document using its structured export format.",
+    }),
+    icon: "file-export",
+    onClick: async ({ props }) => {
+      await props.actions.export_document?.(props.id);
+    },
+  },
 
   word_count: {
     group: "get-info",
