@@ -290,12 +290,20 @@ export function ChatPanel({
     const title = asTrimmedString(getDescValue(desc, "data-newThreadTitleDefault"));
     const icon = asTrimmedString(getDescValue(desc, "data-newThreadIconDefault"));
     const color = asTrimmedString(getDescValue(desc, "data-newThreadColorDefault"));
+    const workingDirectory = asTrimmedString(
+      getDescValue(desc, "data-newThreadWorkingDirectoryDefault"),
+    );
     return {
       ...DEFAULT_NEW_THREAD_SETUP,
       title: title ?? DEFAULT_NEW_THREAD_SETUP.title,
       icon: icon ?? DEFAULT_NEW_THREAD_SETUP.icon,
       color: color ?? DEFAULT_NEW_THREAD_SETUP.color,
       agentMode: "codex",
+      codexConfig: {
+        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        workingDirectory:
+          workingDirectory ?? DEFAULT_NEW_THREAD_SETUP.codexConfig.workingDirectory,
+      },
     };
   }, [desc]);
   const [newThreadSetup, setNewThreadSetup] =

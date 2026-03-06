@@ -773,6 +773,7 @@ export function NavigatorShell({
       "data-newThreadTitleDefault": NAVIGATOR_DEFAULT_THREAD_TITLE,
       "data-newThreadIconDefault": NAVIGATOR_DEFAULT_THREAD_ICON,
       "data-newThreadColorDefault": NAVIGATOR_DEFAULT_THREAD_COLOR,
+      "data-newThreadWorkingDirectoryDefault": homeDirectory,
     };
     if (selectedThreadKey !== null) {
       data["data-selectedThreadKey"] = selectedThreadKey;
