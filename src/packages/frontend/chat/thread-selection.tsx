@@ -34,6 +34,9 @@ export function useChatThreadSelection({
     useState<boolean>(true);
 
   const setSelectedThreadKey = (x: string | null) => {
+    if (x === selectedThreadKey) {
+      return;
+    }
     if (x != null && x != COMBINED_FEED_KEY) {
       actions.clearAllFilters();
       actions.setFragment();
@@ -112,7 +115,11 @@ export function useChatThreadSelection({
       return;
     }
     const exists = threads.some((thread) => thread.key === selectedThreadKey);
-    if (!exists && allowAutoSelectThread) {
+    if (
+      !exists &&
+      allowAutoSelectThread &&
+      selectedThreadKey !== COMBINED_FEED_KEY
+    ) {
       setSelectedThreadKey(COMBINED_FEED_KEY);
     }
   }, [
