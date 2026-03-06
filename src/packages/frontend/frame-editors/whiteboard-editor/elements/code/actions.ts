@@ -4,6 +4,7 @@
  */
 
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { delay } from "awaiting";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
@@ -49,6 +50,12 @@ export async function getJupyterFrameEditorActions({
     actions = redux.getEditorActions(project_id, aux_path) as
       | JupyterEditorActions
       | undefined;
+    for (let i = 0; actions == null && i < 25; i++) {
+      await delay(100);
+      actions = redux.getEditorActions(project_id, aux_path) as
+        | JupyterEditorActions
+        | undefined;
+    }
   }
   if (actions == null) {
     throw Error("bug -- actions must be defined");
