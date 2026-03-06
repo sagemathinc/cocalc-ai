@@ -123,6 +123,7 @@ interface Props {
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  focusLogRef?: MutableRefObject<(() => void) | null>;
 }
 
 export function ChatLog({
@@ -149,6 +150,7 @@ export function ChatLog({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
+  focusLogRef,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -365,6 +367,7 @@ export function ChatLog({
           activityJumpDate,
           activityJumpToken,
           anyOverlayOpen,
+          focusLogRef,
         }}
       />
       <Composing
@@ -551,6 +554,7 @@ export function MessageList({
   activityJumpDate,
   activityJumpToken,
   anyOverlayOpen = false,
+  focusLogRef,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -580,6 +584,7 @@ export function MessageList({
   activityJumpDate?: string;
   activityJumpToken?: number;
   anyOverlayOpen?: boolean;
+  focusLogRef?: MutableRefObject<(() => void) | null>;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -588,6 +593,18 @@ export function MessageList({
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
+
+  useEffect(() => {
+    if (!focusLogRef) return;
+    focusLogRef.current = () => {
+      listContainerRef.current?.focus?.();
+    };
+    return () => {
+      if (focusLogRef.current) {
+        focusLogRef.current = null;
+      }
+    };
+  }, [focusLogRef]);
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
@@ -819,6 +836,7 @@ export function MessageList({
   return (
     <div
       ref={listContainerRef}
+      tabIndex={-1}
       style={MESSAGE_LIST_CONTAINER_STYLE}
       onWheelCapture={maybeBlockScrollEvent}
       onTouchMoveCapture={maybeBlockScrollEvent}

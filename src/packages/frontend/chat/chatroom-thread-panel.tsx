@@ -131,6 +131,7 @@ interface ChatRoomThreadPanelProps {
   hideChatTypeSelector?: boolean;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  focusLogRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 export function ChatRoomThreadPanel({
@@ -162,6 +163,7 @@ export function ChatRoomThreadPanel({
   hideChatTypeSelector = false,
   activityJumpDate,
   activityJumpToken,
+  focusLogRef,
 }: ChatRoomThreadPanelProps) {
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchInput, setThreadSearchInput] = useState("");
@@ -1574,6 +1576,7 @@ export function ChatRoomThreadPanel({
         onAtTopStateChange={setThreadNearTop}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        focusLogRef={focusLogRef}
       />
     </div>
   );

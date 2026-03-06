@@ -228,6 +228,7 @@ export function ChatPanel({
     useState<ChatRoomThreadActionHandlers | null>(null);
   const submitMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
   const scrollToBottomRef = useRef<any>(null);
+  const messageLogFocusRef = useRef<(() => void) | null>(null);
   const lastScrollRequestRef = useRef<{
     thread: string;
     reason: "unread" | "allread";
@@ -788,6 +789,18 @@ export function ChatPanel({
     const reply_to = target.reply_to;
     const reply_thread_id = target.thread_id;
     const parent_message_id = target.parent_message_id;
+    const existingThreadMetadata =
+      reply_thread_id != null
+        ? actions.getThreadMetadata?.(reply_thread_id, {
+            threadId: reply_thread_id,
+          })
+        : undefined;
+    const shouldFocusLogAfterSend =
+      existingThreadMetadata?.agent_kind === "acp" ||
+      existingThreadMetadata?.agent_kind === "llm" ||
+      (!reply_to &&
+        !reply_thread_id &&
+        newThreadSetup.agentMode !== "human");
     if (!reply_to && !reply_thread_id) {
       // Creating a new thread should never auto-fallback to Combined while
       // thread metadata is hydrating.
@@ -897,6 +910,12 @@ export function ChatPanel({
     setTimeout(() => {
       scrollToBottomRef.current?.(true);
     }, 100);
+    if (shouldFocusLogAfterSend) {
+      setComposerFocused(false);
+      setTimeout(() => {
+        messageLogFocusRef.current?.();
+      }, 0);
+    }
   }
   function on_send(value?: string): void {
     sendMessage(undefined, value);
@@ -1075,6 +1094,7 @@ export function ChatPanel({
         hideChatTypeSelector={hideChatTypeSelector}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        focusLogRef={messageLogFocusRef}
       />
       <ChatRoomComposer
         actions={actions}
