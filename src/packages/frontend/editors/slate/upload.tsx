@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Dropzone, BlobUpload } from "@cocalc/frontend/file-upload";
 import { getFocus } from "./format/commands";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import { pastedBlobFilename } from "./upload-utils";
 
 export default function useUpload(
   editor: SlateEditor,
@@ -41,7 +42,7 @@ export default function useUpload(
           const file = item.getAsFile();
           if (file != null) {
             const blob = file.slice(0, -1, item.type);
-            const uploadFile = new File([blob], `paste-${Math.random()}`, {
+            const uploadFile = new File([blob], pastedBlobFilename(item.type), {
               type: item.type,
             });
             (uploadFile as any)._slateUploadGeneration =

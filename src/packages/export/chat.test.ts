@@ -182,14 +182,16 @@ describe("chat export", () => {
     const tmp = await mkdtemp("cocalc-export-chat-blob-");
     const chatPath = path.join(tmp, "sample.chat");
     const threadId = "thread-blob";
-    const blobRef = "/blobs/example.png?uuid=11111111-1111-4111-8111-111111111111";
-    const blobData = Buffer.from("png-binary-data");
+    const blobRef = "/blobs/example?uuid=11111111-1111-4111-8111-111111111111";
+    const blobData = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+    ]);
     let server: Server | undefined;
     try {
       server = createServer((req, res) => {
-        if (req.url?.startsWith("/blobs/example.png?uuid=11111111-1111-4111-8111-111111111111")) {
+        if (req.url?.startsWith("/blobs/example?uuid=11111111-1111-4111-8111-111111111111")) {
           res.statusCode = 200;
-          res.setHeader("content-type", "image/png");
+          res.setHeader("content-type", "application/octet-stream");
           res.end(blobData);
           return;
         }
@@ -231,6 +233,7 @@ describe("chat export", () => {
 
       expect(bundle.assets).toHaveLength(1);
       expect(bundle.assets?.[0].path).toMatch(/^assets\/[a-f0-9]{64}\.png$/);
+      expect(bundle.assets?.[0].contentType).toBe("image/png");
 
       const transcript = `${bundle.files.find((file) => file.path === `threads/${threadId}/transcript.md`)?.content ?? ""}`;
       expect(transcript).toContain(`../../${bundle.assets?.[0].path}`);
@@ -250,6 +253,7 @@ describe("chat export", () => {
       expect(assetIndex).toHaveLength(1);
       expect(assetIndex[0].originalRef).toBe(blobRef);
       expect(assetIndex[0].path).toBe(bundle.assets?.[0].path);
+      expect(assetIndex[0].contentType).toBe("image/png");
     } finally {
       if (server) {
         await new Promise<void>((resolve, reject) =>
