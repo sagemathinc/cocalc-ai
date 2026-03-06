@@ -774,6 +774,12 @@ These are the remaining items that matter most to calling A1.4 effectively finis
    - audit project-host session-cookie scope/path/domain behavior,
    - determine whether additional per-project/per-app origin isolation is required for private apps,
    - harden static HTML serving assumptions accordingly.
+4. change Cloudflare public-app routing so traffic bypasses the central hub and goes directly to the target project-host:
+   - the current implementation points public app hostnames at the same Cloudflare/site target as the main site and then relies on hub-side hostname rewrite + proxying,
+   - this is a blocker because it adds unnecessary latency and, on metered providers such as GCP, can double backhaul traffic and create unacceptable egress cost,
+   - public app DNS/tunnel resolution should instead target the owning project-host directly,
+   - the project-host should remain responsible for host-based public-app auth/routing without requiring the central hub in the request data path,
+   - verify both HTTP and websocket traffic follow the direct project-host path.
 
 ### Post-alpha
 
