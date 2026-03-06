@@ -87,7 +87,8 @@ export function export_to_ipynb(opts: Options) {
     cells: opts.cell_list.map((id: string) => cell_to_ipynb(id, opts)),
     metadata: opts.metadata ?? {},
     nbformat: 4,
-    nbformat_minor: 4,
+    // We always emit cell ids, which are part of the nbformat 4.5 schema.
+    nbformat_minor: 5,
   };
 
   ipynb.metadata.kernelspec = opts.kernelspec;

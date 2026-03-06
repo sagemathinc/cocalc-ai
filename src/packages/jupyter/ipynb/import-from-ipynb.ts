@@ -27,7 +27,7 @@ export const DEFAULT_IPYNB = {
     language_info: undefined,
   },
   nbformat: 4,
-  nbformat_minor: 4,
+  nbformat_minor: 5,
 };
 
 export class IPynbImporter {
