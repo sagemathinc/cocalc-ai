@@ -162,6 +162,14 @@ describe("chat export", () => {
       reply1,
       reply2,
     ]);
+    expect(messagesJsonl[0]).toMatchObject({
+      event: "chat-message",
+      message_kind: "message",
+      sender_type: "user",
+      sender_label: "user-1",
+      content: "alpha root",
+      timestamp: "2026-03-01T00:00:00.000Z",
+    });
 
     const transcript = `${bundle.files.find((file) => file.path === `threads/${threadId1}/transcript.md`)?.content ?? ""}`;
     expect(transcript).toContain("# Alpha Thread");
@@ -227,6 +235,14 @@ describe("chat export", () => {
       const transcript = `${bundle.files.find((file) => file.path === `threads/${threadId}/transcript.md`)?.content ?? ""}`;
       expect(transcript).toContain(`../../${bundle.assets?.[0].path}`);
       expect(transcript).not.toContain(blobRef);
+
+      const messagesJsonl = `${bundle.files.find((file) => file.path === `threads/${threadId}/messages.jsonl`)?.content ?? ""}`
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(messagesJsonl[0].content).toContain(`../../${bundle.assets?.[0].path}`);
+      expect(messagesJsonl[0].content).not.toContain(blobRef);
 
       const assetIndex = JSON.parse(
         `${bundle.files.find((file) => file.path === "assets/index.json")?.content ?? "[]"}`,

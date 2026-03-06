@@ -20,6 +20,7 @@ export interface ExportBundle {
   manifest: ExportManifest;
   files: ExportFile[];
   assets?: ExportAsset[];
+  rootDir?: string;
 }
 
 function normalizePath(path: string): string {
@@ -47,8 +48,14 @@ function assertUniquePaths(paths: string[]): void {
   }
 }
 
+function prefixBundlePath(rootDir: string | undefined, path: string): string {
+  if (!rootDir) return path;
+  return `${rootDir}/${path}`;
+}
+
 export function normalizeExportBundle(bundle: ExportBundle): ExportBundle {
   const manifest = normalizeExportManifest(bundle.manifest);
+  const rootDir = bundle.rootDir ? normalizePath(bundle.rootDir) : undefined;
   const files = (bundle.files ?? []).map((file) => ({
     ...file,
     path: normalizePath(file.path),
@@ -58,11 +65,11 @@ export function normalizeExportBundle(bundle: ExportBundle): ExportBundle {
     path: normalizePath(asset.path),
   }));
   assertUniquePaths([
-    "manifest.json",
-    ...files.map((file) => file.path),
-    ...assets.map((asset) => asset.path),
+    prefixBundlePath(rootDir, "manifest.json"),
+    ...files.map((file) => prefixBundlePath(rootDir, file.path)),
+    ...assets.map((asset) => prefixBundlePath(rootDir, asset.path)),
   ]);
-  return { manifest, files, assets };
+  return { manifest, files, assets, rootDir };
 }
 
 export function bundleEntries(
@@ -71,10 +78,16 @@ export function bundleEntries(
   const normalized = normalizeExportBundle(bundle);
   return [
     {
-      path: "manifest.json",
+      path: prefixBundlePath(normalized.rootDir, "manifest.json"),
       content: `${JSON.stringify(normalized.manifest, null, 2)}\n`,
     },
-    ...normalized.files.map(({ path, content }) => ({ path, content })),
-    ...(normalized.assets ?? []).map(({ path, content }) => ({ path, content })),
+    ...normalized.files.map(({ path, content }) => ({
+      path: prefixBundlePath(normalized.rootDir, path),
+      content,
+    })),
+    ...(normalized.assets ?? []).map(({ path, content }) => ({
+      path: prefixBundlePath(normalized.rootDir, path),
+      content,
+    })),
   ];
 }

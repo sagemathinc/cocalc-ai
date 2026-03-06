@@ -47,4 +47,27 @@ describe("@cocalc/export zip", () => {
       }),
     ).toThrow("duplicate export path");
   });
+
+  it("writes bundles under the configured root directory", () => {
+    const zip = bundleToZipBytes({
+      rootDir: "sample-chat",
+      manifest: {
+        format: "cocalc-export",
+        version: 1,
+        kind: "chat",
+        exported_at: "2026-03-06T12:00:00.000Z",
+      },
+      files: [
+        {
+          path: "threads/index.json",
+          content: '{"threads":[]}\n',
+        },
+      ],
+    });
+    const unzipped = unzipSync(zip);
+    expect(Object.keys(unzipped).sort()).toEqual([
+      "sample-chat/manifest.json",
+      "sample-chat/threads/index.json",
+    ]);
+  });
 });

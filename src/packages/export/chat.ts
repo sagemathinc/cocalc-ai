@@ -39,6 +39,14 @@ export interface ChatExportAssetIndexEntry {
   contentType?: string;
 }
 
+export type ChatExportSenderType = "user" | "agent" | "system" | "unknown";
+
+export interface ChatExportParticipant {
+  sender_id: string;
+  sender_type: ChatExportSenderType;
+  sender_label: string;
+}
+
 export interface ChatExportIndexEntry {
   thread_id: string;
   title: string;
@@ -55,20 +63,23 @@ export interface ChatExportIndexEntry {
 }
 
 export interface ChatExportMessageRow {
-  event: "chat";
+  event: "chat-message";
+  message_kind: "message";
+  message_id: string;
+  thread_id: string;
+  parent_message_id?: string;
+  timestamp: string;
+  edited_at?: string;
   sender_id: string;
-  history: MessageHistory[];
-  date: string;
-  schema_version?: number;
+  sender_type: ChatExportSenderType;
+  sender_label: string;
+  content: string;
+  content_format: "markdown";
   generating?: boolean;
-  editing?: string[];
   feedback?: Record<string, unknown>;
   acp_thread_id?: string | null;
   acp_usage?: unknown;
   acp_account_id?: string;
-  message_id?: string;
-  thread_id?: string;
-  parent_message_id?: string;
   inline_code_links?: InlineCodeLink[];
 }
 
@@ -93,6 +104,7 @@ export interface ChatExportThreadData {
   created_by?: string;
   first_message_at?: string;
   last_message_at?: string;
+  participants?: ChatExportParticipant[];
   message_count: number;
   live_message_count: number;
   offloaded_message_count: number;
@@ -103,15 +115,32 @@ export interface ChatExportThreadData {
 
 type ChatRow = any;
 type ChatThreadConfigRow = ChatThreadConfigRecord & { archived?: boolean };
+type SourceChatMessageRow = {
+  event: "chat";
+  sender_id: string;
+  history: MessageHistory[];
+  date: string;
+  schema_version?: number;
+  generating?: boolean;
+  editing?: string[];
+  feedback?: Record<string, unknown>;
+  acp_thread_id?: string | null;
+  acp_usage?: unknown;
+  acp_account_id?: string;
+  message_id?: string;
+  thread_id?: string;
+  parent_message_id?: string;
+  inline_code_links?: InlineCodeLink[];
+};
 
 type ThreadAggregate = {
   threadId: string;
   config?: ChatThreadConfigRow;
   state?: ChatThreadStateRecord;
   thread?: ChatThreadRecord;
-  liveMessages: ChatExportMessageRow[];
-  archivedMessages: ChatExportMessageRow[];
-  dedupedMessages: ChatExportMessageRow[];
+  liveMessages: SourceChatMessageRow[];
+  archivedMessages: SourceChatMessageRow[];
+  dedupedMessages: SourceChatMessageRow[];
   title: string;
   archived: boolean;
   pinned: boolean;
@@ -209,14 +238,25 @@ export async function collectChatExport(
       })
     : [];
 
+  const sortedAggregates = sortThreads(Array.from(threads.values()));
+  const senderDirectory = buildSenderDirectory(sortedAggregates);
+
   const files: ExportFile[] = [];
   const threadIndex: ChatExportIndexEntry[] = [];
-  for (const aggregate of sortThreads(Array.from(threads.values()))) {
+  for (const aggregate of sortedAggregates) {
     const threadDir = `threads/${aggregate.threadId}`;
     const transcriptPath = `${threadDir}/transcript.md`;
     const threadPath = `${threadDir}/thread.json`;
     const messagesPath = `${threadDir}/messages.jsonl`;
-    const transcript = renderThreadTranscript(aggregate);
+    const blobReplacements = buildBlobReplacementMap(aggregate);
+    const transcript = renderThreadTranscript(
+      aggregate,
+      senderDirectory,
+      blobReplacements,
+    );
+    const exportedMessages = aggregate.dedupedMessages.map((message) =>
+      toExportMessageRow(message, senderDirectory, blobReplacements),
+    );
     const threadData: ChatExportThreadData = {
       thread_id: aggregate.threadId,
       title: aggregate.title,
@@ -224,7 +264,10 @@ export async function collectChatExport(
       pinned: aggregate.pinned,
       thread_color: normalizeString(aggregate.config?.thread_color),
       thread_icon: normalizeString(aggregate.config?.thread_icon),
-      thread_image: normalizeString(aggregate.config?.thread_image),
+      thread_image: rewriteMaybeBlobRef(
+        normalizeString(aggregate.config?.thread_image),
+        blobReplacements,
+      ),
       agent_kind: normalizeString(aggregate.config?.agent_kind),
       agent_model: normalizeString(aggregate.config?.agent_model),
       agent_mode: normalizeString(aggregate.config?.agent_mode),
@@ -238,6 +281,7 @@ export async function collectChatExport(
       created_by: normalizeString(aggregate.thread?.created_by),
       first_message_at: aggregate.firstMessageAt,
       last_message_at: aggregate.lastMessageAt,
+      participants: collectThreadParticipants(aggregate, senderDirectory),
       message_count: aggregate.dedupedMessages.length,
       live_message_count: aggregate.liveMessages.length,
       offloaded_message_count: aggregate.archivedMessages.length,
@@ -272,7 +316,7 @@ export async function collectChatExport(
       },
       {
         path: messagesPath,
-        content: `${aggregate.dedupedMessages
+        content: `${exportedMessages
           .map((row) => JSON.stringify(row))
           .join("\n")}\n`,
         contentType: "application/x-ndjson; charset=utf-8",
@@ -295,6 +339,7 @@ export async function collectChatExport(
   }
 
   return {
+    rootDir: defaultChatExportRootDir(options.chatPath),
     manifest: normalizeExportManifest({
       format: "cocalc-export",
       version: 1,
@@ -340,6 +385,129 @@ export async function collectChatExport(
         )
       : undefined,
   };
+}
+
+function defaultChatExportRootDir(chatPath: string): string {
+  const stem = path.parse(chatPath).name.trim();
+  const sanitized = stem.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized || "chat";
+}
+
+function buildBlobReplacementMap(
+  aggregate: ThreadAggregate,
+): Map<string, string> {
+  const replacements = new Map<string, string>();
+  for (const asset of aggregate.assetRefs) {
+    replacements.set(asset.originalRef, `../../${asset.path}`);
+  }
+  return replacements;
+}
+
+function buildSenderDirectory(
+  threads: ThreadAggregate[],
+): Map<string, ChatExportParticipant> {
+  const directory = new Map<string, ChatExportParticipant>();
+  let nextUserNumber = 1;
+  for (const aggregate of threads) {
+    for (const message of aggregate.dedupedMessages) {
+      const senderId = normalizeString(message.sender_id) ?? "unknown";
+      if (directory.has(senderId)) continue;
+      const senderType = classifySenderType(senderId);
+      const senderLabel =
+        senderType === "user"
+          ? `user-${nextUserNumber++}`
+          : senderId || "unknown";
+      directory.set(senderId, {
+        sender_id: senderId,
+        sender_type: senderType,
+        sender_label: senderLabel,
+      });
+    }
+  }
+  return directory;
+}
+
+function classifySenderType(senderId: string): ChatExportSenderType {
+  if (!senderId) return "unknown";
+  if (senderId === "system") return "system";
+  if (/^user[-_:]/i.test(senderId)) return "user";
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      senderId,
+    )
+  ) {
+    return "user";
+  }
+  return "agent";
+}
+
+function senderParticipantFor(
+  senderDirectory: Map<string, ChatExportParticipant>,
+  senderId: string | undefined,
+): ChatExportParticipant {
+  const normalized = normalizeString(senderId) ?? "unknown";
+  return (
+    senderDirectory.get(normalized) ?? {
+      sender_id: normalized,
+      sender_type: classifySenderType(normalized),
+      sender_label: normalized || "unknown",
+    }
+  );
+}
+
+function collectThreadParticipants(
+  aggregate: ThreadAggregate,
+  senderDirectory: Map<string, ChatExportParticipant>,
+): ChatExportParticipant[] | undefined {
+  const seen = new Set<string>();
+  const participants: ChatExportParticipant[] = [];
+  for (const message of aggregate.dedupedMessages) {
+    const sender = senderParticipantFor(senderDirectory, message.sender_id);
+    if (seen.has(sender.sender_id)) continue;
+    seen.add(sender.sender_id);
+    participants.push(sender);
+  }
+  return participants.length ? participants : undefined;
+}
+
+function toExportMessageRow(
+  message: SourceChatMessageRow,
+  senderDirectory: Map<string, ChatExportParticipant>,
+  blobReplacements: Map<string, string>,
+): ChatExportMessageRow {
+  const sender = senderParticipantFor(senderDirectory, message.sender_id);
+  const current = currentHistoryEntry(message);
+  return {
+    event: "chat-message",
+    message_kind: "message",
+    message_id: normalizeString(message.message_id) ?? messageKey(message),
+    thread_id: normalizeString(message.thread_id) ?? "unknown-thread",
+    parent_message_id: normalizeString(message.parent_message_id),
+    timestamp: message.date,
+    edited_at:
+      current && current.date !== message.date ? normalizeDate(current.date) : undefined,
+    sender_id: sender.sender_id,
+    sender_type: sender.sender_type,
+    sender_label: sender.sender_label,
+    content: rewriteBlobRefs(current?.content ?? "", blobReplacements),
+    content_format: "markdown",
+    generating: message.generating === true ? true : undefined,
+    feedback: message.feedback,
+    acp_thread_id: normalizeString(message.acp_thread_id) ?? undefined,
+    acp_usage: message.acp_usage,
+    acp_account_id: normalizeString(message.acp_account_id) ?? undefined,
+    inline_code_links: Array.isArray(message.inline_code_links)
+      ? message.inline_code_links
+      : undefined,
+  };
+}
+
+function rewriteMaybeBlobRef(
+  value: string | undefined,
+  replacements: Map<string, string>,
+): string | undefined {
+  const normalized = normalizeString(value);
+  return normalized ? rewriteBlobRefs(normalized, replacements) : undefined;
 }
 
 const assetContentByPath = new Map<string, Uint8Array>();
@@ -532,7 +700,7 @@ function isThreadStateRecordRow(row: any): row is ChatThreadStateRecord {
   return row.event === "chat-thread-state";
 }
 
-function normalizeMessageRow(row: ChatMessage): ChatExportMessageRow {
+function normalizeMessageRow(row: ChatMessage): SourceChatMessageRow {
   return {
     event: "chat",
     sender_id: normalizeString(row.sender_id) ?? "",
@@ -601,7 +769,7 @@ function collectThreadIds({
   configRows,
   stateRows,
 }: {
-  messages: ChatExportMessageRow[];
+  messages: SourceChatMessageRow[];
   threadRows: ChatThreadRecord[];
   configRows: Map<string, ChatThreadConfigRecord>;
   stateRows: Map<string, ChatThreadStateRecord>;
@@ -714,15 +882,15 @@ async function hydrateArchivedMessages({
   }
 }
 
-function dedupeMessages(messages: ChatExportMessageRow[]): ChatExportMessageRow[] {
-  const byKey = new Map<string, ChatExportMessageRow>();
+function dedupeMessages(messages: SourceChatMessageRow[]): SourceChatMessageRow[] {
+  const byKey = new Map<string, SourceChatMessageRow>();
   for (const message of messages) {
     byKey.set(messageKey(message), message);
   }
   return Array.from(byKey.values());
 }
 
-function messageKey(message: ChatExportMessageRow): string {
+function messageKey(message: SourceChatMessageRow): string {
   return (
     normalizeString(message.message_id) ??
     `${normalizeString(message.thread_id) ?? "no-thread"}:${message.date}:${message.sender_id}`
@@ -730,17 +898,17 @@ function messageKey(message: ChatExportMessageRow): string {
 }
 
 function orderLinearThreadMessages(
-  messages: ChatExportMessageRow[],
-): ChatExportMessageRow[] {
+  messages: SourceChatMessageRow[],
+): SourceChatMessageRow[] {
   if (messages.length <= 1) return messages.slice();
   const sorted = messages.slice().sort(compareMessages);
-  const byId = new Map<string, ChatExportMessageRow>();
+  const byId = new Map<string, SourceChatMessageRow>();
   for (const message of sorted) {
     const id = normalizeString(message.message_id);
     if (id) byId.set(id, message);
   }
-  const children = new Map<string, ChatExportMessageRow[]>();
-  const anchors: ChatExportMessageRow[] = [];
+  const children = new Map<string, SourceChatMessageRow[]>();
+  const anchors: SourceChatMessageRow[] = [];
   for (const message of sorted) {
     const parentId = normalizeString(message.parent_message_id);
     const messageId = normalizeString(message.message_id);
@@ -757,8 +925,8 @@ function orderLinearThreadMessages(
   }
   anchors.sort(compareMessages);
   const visited = new Set<string>();
-  const ordered: ChatExportMessageRow[] = [];
-  const visit = (message: ChatExportMessageRow) => {
+  const ordered: SourceChatMessageRow[] = [];
+  const visit = (message: SourceChatMessageRow) => {
     const key = messageKey(message);
     if (visited.has(key)) return;
     visited.add(key);
@@ -774,7 +942,7 @@ function orderLinearThreadMessages(
   return ordered;
 }
 
-function compareMessages(a: ChatExportMessageRow, b: ChatExportMessageRow): number {
+function compareMessages(a: SourceChatMessageRow, b: SourceChatMessageRow): number {
   const aMs = dateNumber(a.date);
   const bMs = dateNumber(b.date);
   if (aMs !== bMs) return aMs - bMs;
@@ -803,8 +971,14 @@ function deriveThreadTitle(aggregate: ThreadAggregate): string {
     : "Untitled Chat";
 }
 
-function newestContent(message: ChatExportMessageRow | undefined): string {
-  const first = Array.isArray(message?.history) ? message?.history[0] : undefined;
+function currentHistoryEntry(
+  message: SourceChatMessageRow | undefined,
+): MessageHistory | undefined {
+  return Array.isArray(message?.history) ? message?.history[0] : undefined;
+}
+
+function newestContent(message: SourceChatMessageRow | undefined): string {
+  const first = currentHistoryEntry(message);
   return `${first?.content ?? ""}`;
 }
 
@@ -817,11 +991,11 @@ function sortThreads(threads: ThreadAggregate[]): ThreadAggregate[] {
   });
 }
 
-function renderThreadTranscript(aggregate: ThreadAggregate): string {
-  const blobReplacements = new Map<string, string>();
-  for (const asset of aggregate.assetRefs) {
-    blobReplacements.set(asset.originalRef, `../../${asset.path}`);
-  }
+function renderThreadTranscript(
+  aggregate: ThreadAggregate,
+  senderDirectory: Map<string, ChatExportParticipant>,
+  blobReplacements: Map<string, string>,
+): string {
   const lines: string[] = [];
   lines.push(`# ${escapeHeading(aggregate.title)}`);
   lines.push("");
@@ -851,10 +1025,12 @@ function renderThreadTranscript(aggregate: ThreadAggregate): string {
   lines.push("---");
   lines.push("");
   aggregate.dedupedMessages.forEach((message, index) => {
-    const authorId = normalizeString(message.history?.[0]?.author_id) ?? message.sender_id;
-    lines.push(`## ${index + 1}. ${escapeHeading(authorId)} (${message.date})`);
+    const sender = senderParticipantFor(senderDirectory, message.sender_id);
+    lines.push(`## ${index + 1}. ${escapeHeading(sender.sender_label)} (${message.date})`);
     lines.push("");
     lines.push(`- Message ID: \`${normalizeString(message.message_id) ?? ""}\``);
+    lines.push(`- Sender: ${sender.sender_label}`);
+    lines.push(`- Sender Type: ${sender.sender_type}`);
     lines.push(`- Sender ID: \`${message.sender_id}\``);
     if (message.parent_message_id) {
       lines.push(`- Parent Message ID: \`${message.parent_message_id}\``);
