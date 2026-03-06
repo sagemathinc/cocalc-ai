@@ -19,6 +19,7 @@ import {
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import type { ComponentProps } from "react";
 import {
   useEffect,
   useMemo,
@@ -68,6 +69,8 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
 }));
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
+const EDITOR_HISTORY_GROUP_MS = 250;
+const MAX_EDITOR_HISTORY_ENTRIES = 200;
 
 type GitShowFile = {
   path: string;
@@ -609,6 +612,103 @@ function splitCommitMessage(message?: string): {
   };
 }
 
+type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
+  historyId: string;
+};
+
+type EditorHistoryEntry = {
+  value: string;
+  at: number;
+};
+
+function MarkdownHistoryInput({
+  historyId,
+  value,
+  onChange,
+  ...props
+}: MarkdownHistoryInputProps) {
+  const historyRef = useRef<EditorHistoryEntry[]>([
+    { value: `${value ?? ""}`, at: Date.now() },
+  ]);
+  const historyIndexRef = useRef<number>(0);
+  const applyingHistoryRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    historyRef.current = [{ value: `${value ?? ""}`, at: Date.now() }];
+    historyIndexRef.current = 0;
+    applyingHistoryRef.current = false;
+  }, [historyId]);
+
+  useEffect(() => {
+    if (applyingHistoryRef.current) return;
+    const current = historyRef.current[historyIndexRef.current]?.value ?? "";
+    const next = `${value ?? ""}`;
+    if (next === current) return;
+    historyRef.current = [{ value: next, at: Date.now() }];
+    historyIndexRef.current = 0;
+  }, [value]);
+
+  const emitChange = (next: string) => {
+    onChange?.(next);
+  };
+
+  const applyHistoryValue = (next: string) => {
+    applyingHistoryRef.current = true;
+    emitChange(next);
+    applyingHistoryRef.current = false;
+  };
+
+  return (
+    <MarkdownInput
+      {...props}
+      value={value}
+      onChange={(next) => {
+        const normalized = `${next ?? ""}`;
+        emitChange(normalized);
+        if (applyingHistoryRef.current) return;
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        const current = history[idx]?.value ?? "";
+        if (normalized === current) {
+          history[idx] = {
+            ...(history[idx] ?? { value: normalized, at: Date.now() }),
+            at: Date.now(),
+          };
+          return;
+        }
+        const now = Date.now();
+        const trimmed = history.slice(0, idx + 1);
+        const last = trimmed[trimmed.length - 1];
+        if (last && now - last.at <= EDITOR_HISTORY_GROUP_MS) {
+          trimmed[trimmed.length - 1] = { value: normalized, at: now };
+        } else {
+          trimmed.push({ value: normalized, at: now });
+        }
+        if (trimmed.length > MAX_EDITOR_HISTORY_ENTRIES) {
+          trimmed.splice(0, trimmed.length - MAX_EDITOR_HISTORY_ENTRIES);
+        }
+        historyRef.current = trimmed;
+        historyIndexRef.current = trimmed.length - 1;
+      }}
+      onUndo={() => {
+        const idx = historyIndexRef.current;
+        if (idx <= 0) return;
+        historyIndexRef.current = idx - 1;
+        const next = historyRef.current[historyIndexRef.current]?.value ?? "";
+        applyHistoryValue(next);
+      }}
+      onRedo={() => {
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        if (idx >= history.length - 1) return;
+        historyIndexRef.current = idx + 1;
+        const next = history[historyIndexRef.current]?.value ?? "";
+        applyHistoryValue(next);
+      }}
+    />
+  );
+}
+
 function DiffBlock({
   filePath,
   lines,
@@ -894,7 +994,8 @@ function DiffBlock({
                         </Typography.Text>
                       </div>
                       {isEditing ? (
-                        <MarkdownInput
+                        <MarkdownHistoryInput
+                          historyId={`git-inline-edit:${filePath}:${comment.id}`}
                           cacheId={`git-inline-edit:${filePath}:${comment.id}`}
                           value={editingText}
                           onChange={setEditingText}
@@ -1011,7 +1112,8 @@ function DiffBlock({
                 <Typography.Text strong style={{ fontSize: 13 }}>
                   Add inline review comment
                 </Typography.Text>
-                <MarkdownInput
+                <MarkdownHistoryInput
+                  historyId={`git-inline-draft:${filePath}:${anchorId}`}
                   cacheId={`git-inline-draft:${filePath}:${anchorId}`}
                   value={draftText}
                   onChange={setDraftText}
@@ -2535,7 +2637,8 @@ export function GitCommitDrawer({
             </div>
           </div>
           {reviewNoteEditing ? (
-            <MarkdownInput
+            <MarkdownHistoryInput
+              historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
               key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
               value={reviewNoteDraft}
               onChange={(value) => {
