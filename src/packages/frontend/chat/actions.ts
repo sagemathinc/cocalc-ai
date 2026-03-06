@@ -59,6 +59,7 @@ import {
   toMsString,
   newest_content,
   orderLinearThreadMessages,
+  stableDraftKeyFromThreadKey,
 } from "./utils";
 import type {
   AcpChatContext,
@@ -491,13 +492,12 @@ export class ChatActions extends Actions<ChatState> {
     }
     let thread_id: string;
     let resolvedParentMessageId: string | undefined;
-    let reply_to_message_id: string | undefined;
-    let resolvedReplyToIso: string | undefined;
+    let resolvedThreadDateIso: string | undefined;
     const explicitReplyThreadId =
       typeof reply_thread_id === "string" ? reply_thread_id.trim() : "";
     if (!reply_to && !explicitReplyThreadId) {
       thread_id = uuid();
-      resolvedReplyToIso = undefined;
+      resolvedThreadDateIso = undefined;
     } else {
       thread_id = explicitReplyThreadId;
       if (!thread_id) {
@@ -515,26 +515,12 @@ export class ChatActions extends Actions<ChatState> {
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim();
       resolvedParentMessageId =
         explicitParentMessageId || latestMessageId || undefined;
-      const rootMessageId = `${(rootMessage as any)?.message_id ?? ""}`.trim();
-      if (rootMessageId) {
-        reply_to_message_id = rootMessageId;
-      }
-      resolvedReplyToIso =
+      resolvedThreadDateIso =
         toISOString(reply_to) ??
         asIsoDateString(
           field<string>(this.getThreadConfigRecordById(thread_id), "date"),
         ) ??
         toISOString(dateValue(rootMessage));
-      if (!resolvedReplyToIso) {
-        console.warn(
-          "chat sendChat reply skipped: unable to resolve thread root date",
-          {
-            thread_id,
-            reply_to: toISOString(reply_to),
-          },
-        );
-        return "";
-      }
     }
     const trimmedName = name?.trim();
     const message = {
@@ -549,11 +535,9 @@ export class ChatActions extends Actions<ChatState> {
         },
       ],
       date: time_stamp_str,
-      reply_to: resolvedReplyToIso,
       message_id,
       thread_id,
       parent_message_id: resolvedParentMessageId,
-      reply_to_message_id,
       editing: {},
     } as ChatMessage;
     if (send_mode === "immediate") {
@@ -670,8 +654,8 @@ export class ChatActions extends Actions<ChatState> {
       (async () => {
         await this.processLLM({
           message,
-          reply_to: resolvedReplyToIso
-            ? new Date(resolvedReplyToIso)
+          reply_to: resolvedThreadDateIso
+            ? new Date(resolvedThreadDateIso)
             : time_stamp,
           tag,
           acpSendMode: send_mode,
@@ -760,7 +744,6 @@ export class ChatActions extends Actions<ChatState> {
       message_id?: string;
       thread_id?: string;
       parent_message_id?: string;
-      reply_to_message_id?: string;
     },
     content: string,
     author_id: string,
@@ -783,7 +766,6 @@ export class ChatActions extends Actions<ChatState> {
       message_id: message.message_id,
       thread_id: message.thread_id,
       parent_message_id: message.parent_message_id,
-      reply_to_message_id: message.reply_to_message_id,
       history: addToHistory(prevHistory, {
         author_id,
         content,
@@ -840,10 +822,7 @@ export class ChatActions extends Actions<ChatState> {
       parent_message_id: `${message.message_id ?? ""}`.trim() || undefined,
       noNotification,
     });
-    if (normalizedReplyTo) {
-      // negative date of reply_to root is used for replies.
-      this.deleteDraft(-normalizedReplyTo.valueOf());
-    }
+    this.deleteDraft(stableDraftKeyFromThreadKey(reply_thread_id));
     return time_stamp_str;
   };
 
@@ -1761,7 +1740,6 @@ export class ChatActions extends Actions<ChatState> {
         },
       ],
       date: newRootIso,
-      reply_to: undefined,
       editing: [],
     };
     (newMessage as any).name = title;
@@ -1962,11 +1940,15 @@ export class ChatActions extends Actions<ChatState> {
     if (message == null) {
       return;
     }
-    const reply_to = message.reply_to;
-    if (!reply_to) return;
+    const replyToIso =
+      `${field<string>(message, "reply_to") ?? ""}`.trim() ||
+      this.getThreadMetadata(`${message.thread_id ?? ""}`.trim(), {
+        threadId: `${message.thread_id ?? ""}`.trim() || undefined,
+      }).thread_date;
+    if (!replyToIso) return;
     await this.processLLM({
       message,
-      reply_to: new Date(reply_to),
+      reply_to: new Date(replyToIso),
       tag: "regenerate",
       llm,
       dateLimit: date0,

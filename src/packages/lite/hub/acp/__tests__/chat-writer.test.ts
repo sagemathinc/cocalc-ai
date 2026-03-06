@@ -765,7 +765,6 @@ describe("ChatStreamWriter", () => {
         message_id: "msg-1",
         thread_id: "thread-1",
         parent_message_id: "user-msg-1",
-        reply_to_message_id: "root-msg-1",
       } as any,
       client: makeFakeClient(),
       approverAccountId: "u",
@@ -791,7 +790,8 @@ describe("ChatStreamWriter", () => {
     expect(final.message_id).toBe("msg-1");
     expect(final.thread_id).toBe("thread-1");
     expect(final.parent_message_id).toBe("user-msg-1");
-    expect(final.reply_to_message_id).toBe("root-msg-1");
+    expect(final.reply_to_message_id).toBeUndefined();
+    expect(final.reply_to).toBeUndefined();
     writer.dispose?.(true);
   });
 

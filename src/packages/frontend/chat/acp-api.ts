@@ -389,8 +389,6 @@ export async function processAcpLLM({
   const message_id = uuid();
   const initialParentMessageId =
     `${(message as any)?.parent_message_id ?? ""}`.trim() || undefined;
-  const reply_to_message_id =
-    `${(message as any)?.reply_to_message_id ?? ""}`.trim() || user_message_id;
 
   const id = uuid();
   chatStreams.add(id);
@@ -488,11 +486,9 @@ export async function processAcpLLM({
             : undefined,
         browser_id: webapp_client.browser_id,
         messageDate: newMessageDate,
-        reply_to: threadRootDate,
         thread_id,
         message_id,
         parent_message_id: user_message_id,
-        reply_to_message_id,
         sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
         loop_config: loopConfig,
         loop_state: loopState,
@@ -746,11 +742,9 @@ function buildChatMetadata({
   api_url,
   browser_id,
   messageDate,
-  reply_to,
   thread_id,
   message_id,
   parent_message_id,
-  reply_to_message_id,
   sendMode,
   loop_config,
   loop_state,
@@ -761,11 +755,9 @@ function buildChatMetadata({
   api_url?: string;
   browser_id?: string;
   messageDate: Date;
-  reply_to?: Date;
   thread_id?: string;
   message_id?: string;
   parent_message_id?: string;
-  reply_to_message_id?: string;
   sendMode?: "immediate";
   loop_config?: AcpLoopConfig;
   loop_state?: AcpLoopState;
@@ -786,11 +778,9 @@ function buildChatMetadata({
     api_url,
     browser_id,
     message_date: messageDate.toISOString(),
-    reply_to: reply_to?.toISOString(),
     thread_id,
     message_id,
     parent_message_id,
-    reply_to_message_id,
     send_mode: sendMode,
     loop_config,
     loop_state,

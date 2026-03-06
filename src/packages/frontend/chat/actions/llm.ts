@@ -23,7 +23,6 @@ import { uuid } from "@cocalc/util/misc";
 import { addToHistory } from "@cocalc/chat";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import type { ChatMessage, MessageHistory } from "../types";
-import { getReplyToRoot } from "../utils";
 import type { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import { processAcpLLM } from "../acp-api";
 import { type ChatActions } from "../actions";
@@ -171,9 +170,6 @@ export async function processLLM({
   const parentMessageId = (message as any)?.parent_message_id as
     | string
     | undefined;
-  const replyToMessageId = (message as any)?.reply_to_message_id as
-    | string
-    | undefined;
   try {
     chatStream = webapp_client.openai_client.queryStream({
       input,
@@ -196,11 +192,9 @@ export async function processLLM({
         content,
       }),
       generating: false,
-      reply_to: toISOString(reply_to),
       message_id: messageId,
       thread_id: threadId,
       parent_message_id: parentMessageId,
-      reply_to_message_id: replyToMessageId,
     });
     actions.syncdb.commit();
     return;
@@ -216,11 +210,6 @@ export async function processLLM({
       senderId: message.sender_id,
     });
     if (cur) {
-      const messagesMap = actions.getAllMessages();
-      const replyRoot = getReplyToRoot({
-        message: cur as any as ChatMessage,
-        messages: messagesMap,
-      });
       syncdb.delete({
         event: "chat",
         date: dateIso ?? date,
@@ -231,11 +220,9 @@ export async function processLLM({
         history: (cur as any)?.history ?? [],
         event: "chat",
         sender_id,
-        reply_to: replyRoot,
         message_id: (cur as any)?.message_id ?? messageId,
         thread_id: (cur as any)?.thread_id ?? threadId,
         parent_message_id: (cur as any)?.parent_message_id ?? parentMessageId,
-        reply_to_message_id: (cur as any)?.reply_to_message_id ?? replyToMessageId,
       });
     }
   }
@@ -271,11 +258,9 @@ export async function processLLM({
         content,
       }),
       generating: token != null,
-      reply_to: toISOString(reply_to),
       message_id: messageId,
       thread_id: threadId,
       parent_message_id: parentMessageId,
-      reply_to_message_id: replyToMessageId,
     });
 
     if (token == null) {
@@ -306,11 +291,9 @@ export async function processLLM({
         content,
       }),
       generating: false,
-      reply_to: toISOString(reply_to),
       message_id: messageId,
       thread_id: threadId,
       parent_message_id: parentMessageId,
-      reply_to_message_id: replyToMessageId,
     });
     actions.syncdb.commit();
   });

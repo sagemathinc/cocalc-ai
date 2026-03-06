@@ -1121,11 +1121,9 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
-        reply_to: this.metadata.reply_to,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
         parent_message_id: (this.metadata as any).parent_message_id,
-        reply_to_message_id: this.metadata.reply_to_message_id,
       } as any);
       if ((this.metadata as any).parent_message_id) {
         (placeholder as any).parent_message_id = (this.metadata as any).parent_message_id;
@@ -1327,14 +1325,12 @@ export class ChatStreamWriter {
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
-      reply_to: this.metadata.reply_to,
       acp_thread_id: this.threadId,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
       parent_message_id: (this.metadata as any).parent_message_id,
-      reply_to_message_id: this.metadata.reply_to_message_id,
       inline_code_links: generating ? undefined : this.resolveInlineCodeLinks(),
     } as any);
     if ((this.metadata as any).parent_message_id) {
@@ -1363,8 +1359,6 @@ export class ChatStreamWriter {
       message_id: this.metadata.message_id,
       thread_id: this.metadata.thread_id,
       parent_message_id: (this.metadata as any).parent_message_id,
-      reply_to_message_id: this.metadata.reply_to_message_id,
-      reply_to: this.metadata.reply_to,
     };
     if (this.interruptNotified) {
       (update as any).acp_interrupted = true;
@@ -2127,11 +2121,9 @@ export async function recoverOrphanedAcpTurns(
       path: turn.path,
       message_date: turn.message_date,
       sender_id: turn.sender_id ?? "openai-codex-agent",
-      reply_to: turn.reply_to ?? undefined,
       message_id: turn.message_id ?? undefined,
       thread_id: turn.thread_id ?? undefined,
       parent_message_id: (turn as any).parent_message_id ?? undefined,
-      reply_to_message_id: turn.reply_to_message_id ?? undefined,
     } as any;
     try {
       clearAcpPayloads(context);
@@ -2182,9 +2174,6 @@ export async function recoverOrphanedAcpTurns(
           }
           if ((turn as any).parent_message_id) {
             update.parent_message_id = (turn as any).parent_message_id;
-          }
-          if (turn.reply_to_message_id) {
-            update.reply_to_message_id = turn.reply_to_message_id;
           }
           if (history.length > 0) {
             update.history = history;
