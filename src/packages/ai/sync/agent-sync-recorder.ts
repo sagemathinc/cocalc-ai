@@ -50,8 +50,8 @@ type SyncDocEntry = {
 type AgentTimeTravelRecorderOptions = {
   project_id: string;
   chat_path: string;
-  thread_root_date: string;
-  turn_date: string;
+  chat_thread_id: string;
+  chat_message_id: string;
   log_store: string;
   log_key: string;
   log_subject: string;
@@ -74,8 +74,8 @@ export class AgentTimeTravelRecorder {
   // Record best-effort agent edits into patchflow without caching file contents.
   private readonly projectId: string;
   private readonly chatPath: string;
-  private readonly threadRootDate: string;
-  private readonly turnDate: string;
+  private readonly chatThreadId: string;
+  private readonly chatMessageId: string;
   private readonly logStore: string;
   private readonly logKey: string;
   private readonly logSubject: string;
@@ -110,8 +110,8 @@ export class AgentTimeTravelRecorder {
   constructor(options: AgentTimeTravelRecorderOptions) {
     this.projectId = options.project_id;
     this.chatPath = options.chat_path;
-    this.threadRootDate = options.thread_root_date;
-    this.turnDate = options.turn_date;
+    this.chatThreadId = options.chat_thread_id;
+    this.chatMessageId = options.chat_message_id;
     this.logStore = options.log_store;
     this.logKey = options.log_key;
     this.logSubject = options.log_subject;
@@ -183,7 +183,7 @@ export class AgentTimeTravelRecorder {
     const readState: ReadState = {
       patchId,
       atMs: this.now(),
-      lastReadTurnId: turnId ?? this.turnDate,
+      lastReadTurnId: turnId ?? this.chatMessageId,
     };
     const key = this.readKey(relativePath);
     this.readCache.set(key, readState);
@@ -227,7 +227,7 @@ export class AgentTimeTravelRecorder {
     }
     const meta = this.buildMeta({
       relativePath,
-      turnId: turnId ?? this.turnDate,
+      turnId: turnId ?? this.chatMessageId,
     });
     this.logger.debug("agent-tt commit metadata pending", {
       relativePath,
@@ -406,7 +406,7 @@ export class AgentTimeTravelRecorder {
   }
 
   private readKey(relativePath: string): string {
-    return `agent-tt:${this.threadRootDate}:file:${relativePath}`;
+    return `agent-tt:${this.chatThreadId}:file:${relativePath}`;
   }
 
   private getLatestPatchId(syncdoc: AgentSyncDoc): PatchId | undefined {
@@ -433,8 +433,8 @@ export class AgentTimeTravelRecorder {
   }): { [key: string]: JSONValue } {
     const meta: { [key: string]: JSONValue } = {
       source: "agent",
-      chat_thread_root_date: this.threadRootDate,
-      chat_message_date: turnId,
+      chat_thread_id: this.chatThreadId,
+      chat_message_id: turnId,
       chat_path: this.chatPath,
       log_store: this.logStore,
       log_key: this.logKey,

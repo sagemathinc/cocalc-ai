@@ -1063,8 +1063,8 @@ export class ChatStreamWriter {
       this.timeTravel = new AgentTimeTravelRecorder({
         project_id: metadata.project_id,
         chat_path: metadata.path,
-        thread_root_date: metadata.reply_to ?? metadata.message_date,
-        turn_date: metadata.message_date ?? randomUUID(),
+        chat_thread_id: thread_id,
+        chat_message_id: message_id,
         log_store: refs.store,
         log_key: refs.key,
         log_subject: refs.subject,

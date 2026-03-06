@@ -111,13 +111,13 @@ function makeStore() {
 describe("AgentTimeTravelRecorder", () => {
   const homeRoot = "/home/test";
   const workspaceRoot = "/home/test/project";
-  const threadRootDate = "2024-01-01T00:00:00Z";
-  const turnDate = "2024-01-01T00:01:00Z";
+  const chatThreadId = "chat-thread-1";
+  const chatMessageId = "assistant-msg-1";
   const baseOptions = {
     project_id: "proj",
     chat_path: "chat",
-    thread_root_date: threadRootDate,
-    turn_date: turnDate,
+    chat_thread_id: chatThreadId,
+    chat_message_id: chatMessageId,
     log_store: "store",
     log_key: "key",
     log_subject: "subject",
@@ -154,9 +154,9 @@ describe("AgentTimeTravelRecorder", () => {
       syncFactory: async () => syncDoc,
     });
 
-    await recorder.recordRead("src/file.txt", turnDate);
+    await recorder.recordRead("src/file.txt", chatMessageId);
 
-    const key = `agent-tt:${threadRootDate}:file:project/src/file.txt`;
+    const key = `agent-tt:${chatThreadId}:file:project/src/file.txt`;
     expect(map.get(key)?.patchId).toBe("p1");
     await recorder.dispose();
   });
@@ -175,12 +175,12 @@ describe("AgentTimeTravelRecorder", () => {
       writeCommitWaitMs: 50,
     });
 
-    const readPromise = recorder.recordRead("src/file.txt", turnDate);
+    const readPromise = recorder.recordRead("src/file.txt", chatMessageId);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
     syncDoc.addVersion("p1", "seeded");
     await readPromise;
 
-    const key = `agent-tt:${threadRootDate}:file:project/src/file.txt`;
+    const key = `agent-tt:${chatThreadId}:file:project/src/file.txt`;
     expect(map.get(key)?.patchId).toBe("p1");
     await recorder.dispose();
   });
@@ -199,7 +199,7 @@ describe("AgentTimeTravelRecorder", () => {
       writeCommitWaitMs: 50,
     });
 
-    const writePromise = recorder.recordWrite("src/file.txt", turnDate);
+    const writePromise = recorder.recordWrite("src/file.txt", chatMessageId);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
     syncDoc.addVersion("p2");
     await writePromise;
@@ -222,7 +222,7 @@ describe("AgentTimeTravelRecorder", () => {
       writeCommitWaitMs: 20,
     });
 
-    await recorder.recordWrite("src/file.txt", turnDate);
+    await recorder.recordWrite("src/file.txt", chatMessageId);
 
     expect(syncDoc.commitCalls).toHaveLength(0);
     await recorder.dispose();
@@ -246,7 +246,7 @@ describe("AgentTimeTravelRecorder", () => {
       Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
     );
 
-    await recorder.recordRead("src/missing.txt", turnDate);
+    await recorder.recordRead("src/missing.txt", chatMessageId);
 
     expect(syncFactory).not.toHaveBeenCalled();
     expect(map.size).toBe(0);
@@ -274,7 +274,7 @@ describe("AgentTimeTravelRecorder", () => {
       writeCommitWaitMs: 50,
     });
 
-    const readPromise = recorder.recordRead("src/file.txt", turnDate);
+    const readPromise = recorder.recordRead("src/file.txt", chatMessageId);
     const disposePromise = recorder.dispose();
     resolveFactory?.(syncDoc);
     await Promise.all([readPromise, disposePromise]);
@@ -309,7 +309,7 @@ describe("AgentTimeTravelRecorder", () => {
     });
 
     await recorder.dispose();
-    await recorder.recordRead("src/file.txt", turnDate);
+    await recorder.recordRead("src/file.txt", chatMessageId);
 
     expect(syncFactory).not.toHaveBeenCalled();
     expect(recorder.debugStats()).toMatchObject({
