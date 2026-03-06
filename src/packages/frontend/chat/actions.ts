@@ -44,7 +44,9 @@ import type {
 } from "./types";
 import {
   CHAT_SCHEMA_V2,
+  CHAT_THREAD_META_ROW_DATE,
   addToHistory,
+  threadConfigRecordKey,
   type CodexThreadConfig,
   type ChatThreadLoopConfig,
   type ChatThreadLoopState,
@@ -79,7 +81,6 @@ import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
-const THREAD_CONFIG_SENDER = "__thread_config__";
 const warnedMissingThreadIds = new Set<string>();
 let lastGeneratedChatMessageMs = 0;
 
@@ -517,9 +518,7 @@ export class ChatActions extends Actions<ChatState> {
         explicitParentMessageId || latestMessageId || undefined;
       resolvedThreadDateIso =
         toISOString(reply_to) ??
-        asIsoDateString(
-          field<string>(this.getThreadConfigRecordById(thread_id), "date"),
-        ) ??
+        this.getThreadRootDateIso(thread_id) ??
         toISOString(dateValue(rootMessage));
     }
     const trimmedName = name?.trim();
@@ -1027,10 +1026,68 @@ export class ChatActions extends Actions<ChatState> {
     return this.getThreadConfigRecordById(threadId);
   };
 
+  private pickPreferredThreadConfigRecord = (
+    rows: any[],
+    threadId: string,
+  ): Record<string, unknown> | undefined => {
+    if (!Array.isArray(rows) || rows.length === 0) return undefined;
+    const canonical = threadConfigRecordKey(threadId);
+    const rank = (row: Record<string, unknown>): number => {
+      const isCanonical =
+        field<string>(row as any, "sender_id") === canonical.sender_id &&
+        field<string>(row as any, "date") === canonical.date;
+      const updatedAt = Date.parse(`${field<string>(row as any, "updated_at") ?? ""}`);
+      const rowDate = Date.parse(`${field<string>(row as any, "date") ?? ""}`);
+      return (
+        (isCanonical ? 1_000_000_000_000_000 : 0) +
+        (Number.isFinite(updatedAt) ? updatedAt : 0) +
+        (Number.isFinite(rowDate) ? rowDate : 0)
+      );
+    };
+    let best: Record<string, unknown> | undefined;
+    let bestRank = Number.NEGATIVE_INFINITY;
+    for (const row0 of rows) {
+      if ((row0 as any)?.event !== THREAD_CONFIG_EVENT) continue;
+      const row = row0 as Record<string, unknown>;
+      const currentRank = rank(row);
+      if (best == null || currentRank > bestRank) {
+        best = row;
+        bestRank = currentRank;
+      }
+    }
+    return best;
+  };
+
+  private getThreadRootDateIso = (threadId?: string): string | undefined => {
+    const normalized = this.normalizeThreadId(threadId);
+    if (!normalized) return undefined;
+    const rootKey = this.messageCache?.getThreadKeyByThreadId?.(normalized);
+    const rootMs = Number(rootKey);
+    if (Number.isFinite(rootMs)) {
+      return new Date(rootMs).toISOString();
+    }
+    const current = this.getThreadConfigRecordById(normalized);
+    const currentObj =
+      current && typeof current.toJS === "function" ? current.toJS() : current;
+    const fallback = asIsoDateString(field<string>(currentObj, "date"));
+    if (fallback && fallback !== CHAT_THREAD_META_ROW_DATE) {
+      return fallback;
+    }
+    return undefined;
+  };
+
   private getThreadConfigRecordById = (threadId?: string): any | null => {
     if (!threadId) return null;
     const syncState = this.syncdb?.get_state?.();
     if (this.syncdb != null && (syncState == null || syncState === "ready")) {
+      const rows = this.getSyncdbMany({
+        event: THREAD_CONFIG_EVENT,
+        thread_id: threadId,
+      });
+      const preferred = this.pickPreferredThreadConfigRecord(rows, threadId);
+      if (preferred != null) {
+        return this.toImmutableRecord(preferred);
+      }
       return (
         this.getSyncdbOne({
           event: THREAD_CONFIG_EVENT,
@@ -1063,24 +1120,15 @@ export class ChatActions extends Actions<ChatState> {
     const current = this.getThreadConfigRecordById(thread_id);
     const currentObj =
       current && typeof current.toJS === "function" ? current.toJS() : current;
-    const dateIso =
-      asIsoDateString(opts?.date) ??
-      asIsoDateString(field<string>(currentObj, "date"));
-    if (!dateIso) {
-      console.warn("chat thread-config write skipped: missing valid date", {
-        threadKey,
-        thread_id,
-      });
-      return false;
-    }
     const updated_by =
       this.redux.getStore("account").get_account_id() || "__thread_config__";
+    this.syncdb.delete({
+      event: THREAD_CONFIG_EVENT,
+      thread_id,
+    });
     this.setSyncdb({
       ...(currentObj ?? {}),
-      event: THREAD_CONFIG_EVENT,
-      sender_id: THREAD_CONFIG_SENDER,
-      date: dateIso,
-      thread_id,
+      ...threadConfigRecordKey(thread_id),
       updated_at: new Date().toISOString(),
       updated_by,
       schema_version: CHAT_SCHEMA_V2,
@@ -1157,8 +1205,9 @@ export class ChatActions extends Actions<ChatState> {
     if (agent_mode == null && acp_config) {
       agent_mode = "interactive";
     }
+    const normalizedThreadId = this.normalizeThreadId(threadKey, opts?.threadId);
     return {
-      thread_date: asIsoDateString(field<string>(cfg, "date")),
+      thread_date: this.getThreadRootDateIso(normalizedThreadId),
       name: readString("name"),
       thread_color: readString("thread_color"),
       thread_icon: readString("thread_icon"),
@@ -1232,10 +1281,23 @@ export class ChatActions extends Actions<ChatState> {
   listThreadConfigRows = (): any[] => {
     const syncState = this.syncdb?.get_state?.();
     if (this.syncdb != null && (syncState == null || syncState === "ready")) {
-      return this.getSyncdbMany({
+      const rows = this.getSyncdbMany({
         event: THREAD_CONFIG_EVENT,
-        sender_id: THREAD_CONFIG_SENDER,
       });
+      const byThreadId = new Map<string, Record<string, unknown>>();
+      for (const row0 of rows) {
+        const threadId = `${(row0 as any)?.thread_id ?? ""}`.trim();
+        if (!threadId) continue;
+        const current = byThreadId.get(threadId);
+        byThreadId.set(
+          threadId,
+          this.pickPreferredThreadConfigRecord(
+            current ? [current, row0] : [row0],
+            threadId,
+          ) ?? (row0 as Record<string, unknown>),
+        );
+      }
+      return Array.from(byThreadId.values());
     }
     return this.messageCache?.listThreadConfigPreviewRows?.() ?? [];
   };

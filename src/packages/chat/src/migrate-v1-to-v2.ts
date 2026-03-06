@@ -1,4 +1,9 @@
-import { CHAT_SCHEMA_V2, computeChatIntegrityReport } from ".";
+import {
+  CHAT_SCHEMA_V2,
+  buildThreadConfigRecord,
+  buildThreadStateRecord,
+  computeChatIntegrityReport,
+} from ".";
 
 type AnyRow = Record<string, any>;
 
@@ -6,8 +11,6 @@ const THREAD_EVENT = "chat-thread";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_SENDER = "__thread__";
-const THREAD_CONFIG_SENDER = "__thread_config__";
-const THREAD_STATE_SENDER = "__thread_state__";
 
 export interface MigrationOptions {
   keepLegacyThreadFields?: boolean;
@@ -282,15 +285,12 @@ export function migrateChatRows(
 
     const source = root.row;
     const pin = normalizePin(source.pin);
-    const threadCfg: AnyRow = {
-      event: THREAD_CONFIG_EVENT,
-      sender_id: THREAD_CONFIG_SENDER,
-      date: root.dateIso,
+    const threadCfg: AnyRow = buildThreadConfigRecord({
       thread_id: threadId,
       updated_at: options.nowIso ?? root.dateIso,
       updated_by: root.senderId,
       schema_version: CHAT_SCHEMA_V2,
-    };
+    });
     if (typeof source.name === "string" && source.name.trim()) threadCfg.name = source.name.trim();
     if (typeof source.thread_color === "string" && source.thread_color.trim()) {
       threadCfg.thread_color = source.thread_color.trim();
@@ -331,16 +331,13 @@ export function migrateChatRows(
       : latest.row?.acp_interrupted
         ? "interrupted"
         : "complete";
-    threadStateRows.push({
-      event: THREAD_STATE_EVENT,
-      sender_id: THREAD_STATE_SENDER,
-      date: root.dateIso,
+    threadStateRows.push(buildThreadStateRecord({
       thread_id: threadId,
       state,
       active_message_id: hasGenerating ? latest.messageId : latest.messageId,
       updated_at: latest.dateIso,
       schema_version: CHAT_SCHEMA_V2,
-    });
+    }));
     reportBase.thread_state_records_created += 1;
 
     if (!keepLegacyThreadFields) {
