@@ -57,4 +57,43 @@ describe("deleteAllActivityLogs", () => {
     });
     expect(actions.syncdb.commit).toHaveBeenCalled();
   });
+
+  it("derives log refs from thread_id and message_id when explicit refs are absent", async () => {
+    const deleteFn = jest.fn().mockResolvedValue(undefined);
+    (webapp_client.conat_client.conat as any).mockReturnValue({
+      sync: {
+        akv: ({ name }: { name: string }) => ({
+          delete: (key: string) => deleteFn(name, key),
+        }),
+      },
+    });
+    const turnDate = new Date("2026-03-05T20:05:00.000Z");
+    const msg = {
+      sender_id: "assistant",
+      date: turnDate,
+      thread_id: "thread-2",
+      message_id: "assistant-msg-2",
+    };
+    const actions: any = {
+      syncdb: {
+        set: jest.fn(),
+        commit: jest.fn(),
+      },
+      getMessagesInThread: jest.fn().mockReturnValue([msg]),
+    };
+
+    await deleteAllActivityLogs({
+      actions,
+      threadRootMs: turnDate.valueOf(),
+      threadId: "thread-2",
+      message: msg as any,
+      project_id: "proj-1",
+      path: "x.chat",
+    });
+
+    expect(deleteFn).toHaveBeenCalledWith(
+      expect.stringContaining("acp-log"),
+      "thread-2:assistant-msg-2",
+    );
+  });
 });

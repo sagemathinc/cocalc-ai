@@ -1042,15 +1042,13 @@ export class ChatStreamWriter {
     if (sessionKey) {
       this.registerThreadKey(sessionKey);
     }
-    const thread_root_date = metadata.reply_to ?? metadata.message_date;
-    // Use the assistant reply date as a unique turn identifier so each turn gets
-    // an isolated log key; avoid reusing the session key which can span turns.
-    const turn_date = metadata.message_date ?? randomUUID();
+    const thread_id = `${metadata.thread_id ?? ""}`.trim();
+    const message_id = `${metadata.message_id ?? ""}`.trim();
     const refs = deriveAcpLogRefs({
       project_id: metadata.project_id,
       path: metadata.path,
-      thread_root_date,
-      turn_date,
+      thread_id,
+      message_id,
     });
     this.logStoreName = refs.store;
     this.logKey = refs.key;
@@ -1065,8 +1063,8 @@ export class ChatStreamWriter {
       this.timeTravel = new AgentTimeTravelRecorder({
         project_id: metadata.project_id,
         chat_path: metadata.path,
-        thread_root_date: thread_root_date,
-        turn_date: turn_date,
+        thread_root_date: metadata.reply_to ?? metadata.message_date,
+        turn_date: metadata.message_date ?? randomUUID(),
         log_store: refs.store,
         log_key: refs.key,
         log_subject: refs.subject,
@@ -1121,6 +1119,9 @@ export class ChatStreamWriter {
         prevHistory: [],
         content: ":robot: Thinking...",
         generating: true,
+        acp_log_store: this.logStoreName,
+        acp_log_key: this.logKey,
+        acp_log_subject: this.logSubject,
         message_id: this.metadata.message_id,
         thread_id: this.metadata.thread_id,
         parent_message_id: (this.metadata as any).parent_message_id,
@@ -1325,6 +1326,9 @@ export class ChatStreamWriter {
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
+      acp_log_store: this.logStoreName,
+      acp_log_key: this.logKey,
+      acp_log_subject: this.logSubject,
       acp_thread_id: this.threadId,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
@@ -1353,6 +1357,9 @@ export class ChatStreamWriter {
       sender_id: rowSender,
       date: rowDate,
       generating,
+      acp_log_store: this.logStoreName,
+      acp_log_key: this.logKey,
+      acp_log_subject: this.logSubject,
       acp_thread_id: this.threadId,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,

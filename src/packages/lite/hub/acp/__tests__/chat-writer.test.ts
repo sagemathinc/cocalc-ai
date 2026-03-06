@@ -204,6 +204,44 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("stamps activity log refs from thread_id and message_id", async () => {
+    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    const metadata: AcpChatContext = {
+      ...baseMetadata,
+      path: "folder/chat.chat",
+      message_id: "assistant-msg-7",
+      thread_id: "thread-7",
+    } as any;
+    const writer: any = new ChatStreamWriter({
+      metadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.acp_log_store).toBe("acp-log/folder/chat.chat");
+    expect(final.acp_log_key).toBe("thread-7:assistant-msg-7");
+    expect(final.acp_log_subject).toBe(
+      "project.p.acp-log.thread-7.assistant-msg-7",
+    );
+    (writer as any).dispose?.(true);
+  });
+
   it("retries terminal commit verification when generating looks stale", async () => {
     const sets: RecordedSet[] = [];
     let commits = 0;
