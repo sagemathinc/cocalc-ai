@@ -37,6 +37,7 @@ import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageByLookup,
   markChatAsReadIfUnseen,
+  stableDraftKeyFromThreadKey,
 } from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
@@ -94,15 +95,6 @@ function parseDateISOString(value: unknown): string | undefined {
   const d = value instanceof Date ? value : new Date(value as string | number);
   if (!Number.isFinite(d.valueOf())) return undefined;
   return d.toISOString();
-}
-
-function stableDraftKeyFromThreadKey(threadKey: string): number {
-  let hash = 0;
-  for (let i = 0; i < threadKey.length; i++) {
-    hash = (hash * 33 + threadKey.charCodeAt(i)) >>> 0;
-  }
-  // keep it negative and non-zero so it doesn't collide with root draft key 0
-  return -(hash || 1);
 }
 
 type MessageKeyWithTime = { key: string; time: number };
@@ -265,7 +257,6 @@ export function ChatPanel({
     selectedThreadKey,
     setSelectedThreadKey,
     setAllowAutoSelectThread,
-    selectedThreadDate,
     isCombinedFeedSelected,
     singleThreadView,
     selectedThread,
@@ -312,11 +303,8 @@ export function ChatPanel({
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
-    if (selectedThreadDate instanceof Date && !isNaN(selectedThreadDate.valueOf())) {
-      return -selectedThreadDate.valueOf();
-    }
     return stableDraftKeyFromThreadKey(selectedThreadKey);
-  }, [singleThreadView, selectedThreadDate, selectedThreadKey]);
+  }, [singleThreadView, selectedThreadKey]);
 
   const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
     account_id,
@@ -370,9 +358,8 @@ export function ChatPanel({
   const isSelectedThreadCodex =
     selectedThreadMetadata?.agent_kind === "acp" ||
     (isSelectedThreadAI &&
-      actions.isCodexThread?.(
-        selectedThreadDate instanceof Date ? selectedThreadDate : undefined,
-      ) === true);
+      typeof selectedThreadMetadata?.agent_model === "string" &&
+      `${selectedThreadMetadata.agent_model}`.toLowerCase().includes("codex"));
 
   const persistedLoopConfig = useMemo(
     () => enabledLoopConfig(selectedThreadMetadata?.loop_config),

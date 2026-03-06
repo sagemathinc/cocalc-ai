@@ -147,23 +147,10 @@ export function useChatThreadSelection({
     [threads, selectedThreadKey],
   );
 
-  const selectedThreadDate = useMemo(() => {
-    if (!selectedThreadKey || selectedThreadKey === COMBINED_FEED_KEY) {
-      return undefined;
-    }
-    const meta = actions.getThreadMetadata?.(selectedThreadKey, {
-      threadId: selectedThreadKey,
-    });
-    if (!meta?.thread_date) return undefined;
-    const d = new Date(meta.thread_date);
-    return Number.isNaN(d.valueOf()) ? undefined : d;
-  }, [actions, selectedThreadKey]);
-
   return {
     selectedThreadKey,
     setSelectedThreadKey,
     setAllowAutoSelectThread,
-    selectedThreadDate,
     isCombinedFeedSelected,
     singleThreadView,
     selectedThread,

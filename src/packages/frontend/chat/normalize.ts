@@ -94,10 +94,6 @@ export function normalizeChatMessage(base: any): NormalizedChatMessage {
     x.editing = {};
     upgraded = true;
   }
-  if (!x.folding) {
-    x.folding = [];
-    upgraded = true;
-  }
   if (!x.feedback) {
     x.feedback = {};
     upgraded = true;

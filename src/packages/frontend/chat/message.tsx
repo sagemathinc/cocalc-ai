@@ -25,7 +25,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/llm-utils";
-import { plural, unreachable } from "@cocalc/util/misc";
+import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
@@ -57,6 +57,7 @@ import {
   message_colors,
   newest_content,
   sender_is_viewer,
+  stableDraftKeyFromThreadKey,
   toMsString,
 } from "./utils";
 import {
@@ -137,11 +138,6 @@ const THREAD_STYLE_TOP: CSS = {
   borderTopLeftRadius: "10px",
   borderTopRightRadius: "10px",
   marginTop: "10px",
-} as const;
-
-const THREAD_STYLE_FOLDED: CSS = {
-  ...THREAD_STYLE_TOP,
-  ...THREAD_STYLE_BOTTOM,
 } as const;
 
 const MARGIN_TOP_VIEWER = "17px";
@@ -259,14 +255,9 @@ interface Props {
   allowReply?: boolean;
 
   is_thread?: boolean; // if true, there is a thread starting in a reply_to message
-  is_folded?: boolean; // if true, only show the reply_to root message
   is_thread_body: boolean;
 
   selected?: boolean;
-
-  // for the root of a folded thread, optionally give this number of a
-  // more informative message to the user.
-  numChildren?: number;
   threadViewMode?: boolean;
   onForceScrollToBottom?: () => void;
 
@@ -324,10 +315,8 @@ export default function Message({
   scroll_into_view,
   allowReply,
   is_thread,
-  is_folded,
   is_thread_body,
   selected,
-  numChildren,
   threadViewMode = false,
   onForceScrollToBottom,
   acpState,
@@ -392,7 +381,9 @@ export default function Message({
     if (!allowReply) {
       return false;
     }
-    const replyDate = -getThreadRootDate({ date, messages });
+    const replyThreadKey =
+      `${field<string>(message, "thread_id") ?? ""}`.trim() || `${date}`;
+    const replyDate = stableDraftKeyFromThreadKey(replyThreadKey);
     const draft = actions?.syncdb?.get_one({
       event: "draft",
       sender_id: account_id,
@@ -1080,35 +1071,6 @@ export default function Message({
       );
     }
 
-    if (is_thread && !threadViewMode) {
-      buttons.push(
-        <Tooltip
-          key="fold"
-          placement="bottom"
-          title={
-            is_folded
-              ? "Unfold this thread to show replies."
-              : "Fold this thread to hide replies."
-          }
-        >
-          <Button
-            type="text"
-            size="small"
-            style={{ color: COLORS.GRAY_M }}
-            onClick={() =>
-              actions?.toggleFoldThread(
-                new Date(getThreadRootDate({ date, messages })),
-                index,
-              )
-            }
-          >
-            <Icon name={is_folded ? "expand" : "vertical-align-middle"} />{" "}
-            {is_folded ? "Unfold" : "Fold"}
-          </Button>
-        </Tooltip>,
-      );
-    }
-
     const historySize = history_size;
     if (historySize > 1) {
       buttons.push(
@@ -1744,7 +1706,8 @@ export default function Message({
       return;
     }
 
-    const replyDate = -getThreadRootDate({ date, messages });
+    const replyThreadKey = messageThreadId ?? `${date}`;
+    const replyDate = stableDraftKeyFromThreadKey(replyThreadKey);
     let input;
     let moveCursorToEndOfLine = false;
     if (isLLMThread) {
@@ -1811,11 +1774,7 @@ export default function Message({
     }
     if (!is_thread_body) {
       if (is_thread) {
-        if (is_folded) {
-          return THREAD_STYLE_FOLDED;
-        } else {
-          return THREAD_STYLE_TOP;
-        }
+        return THREAD_STYLE_TOP;
       } else {
         return THREAD_STYLE_SINGLE;
       }
@@ -1847,65 +1806,17 @@ export default function Message({
     }
   }
 
-  function renderFoldedRow() {
-    if (threadViewMode || !is_folded || !is_thread || is_thread_body) {
-      return;
-    }
-
-    const label = numChildren ? (
-      <>
-        Show {numChildren + 1} {plural(numChildren + 1, "Message", "Messages")}…
-      </>
-    ) : (
-      "View Messages…"
-    );
-
-    return (
-      <Col xs={24}>
-        <Tip title={"Click to unfold this thread to show all messages."}>
-          <Button
-            onClick={() =>
-              actions?.toggleFoldThread(
-                dateValue(message) ?? new Date(date),
-                index,
-              )
-            }
-            type="link"
-            block
-            style={{ color: "darkblue", textAlign: "center" }}
-            icon={<Icon name="expand-arrows" />}
-          >
-            {label}
-          </Button>
-        </Tip>
-      </Col>
-    );
-  }
-
-  function getThreadFoldOrBlank() {
-    const xs = 2;
-    return BLANK_COLUMN(xs);
-  }
-
   function renderCols(): React.JSX.Element[] | React.JSX.Element {
-    // these columns should be filtered in the first place, this here is just an extra check
-    if (
-      (!threadViewMode && is_folded) ||
-      (is_thread && is_folded && is_thread_body)
-    ) {
-      return <></>;
-    }
-
     switch (mode) {
       case "standalone":
-        const cols = [avatar_column(), contentColumn(), getThreadFoldOrBlank()];
+        const cols = [avatar_column(), contentColumn(), BLANK_COLUMN(2)];
         if (reverseRowOrdering) {
           cols.reverse();
         }
         return cols;
 
       case "sidechat":
-        return [getThreadFoldOrBlank(), contentColumn()];
+        return [BLANK_COLUMN(2), contentColumn()];
 
       default:
         unreachable(mode);
@@ -1972,7 +1883,6 @@ export default function Message({
       onMouseLeave={() => setIsHovered(false)}
     >
       {renderCols()}
-      {renderFoldedRow()}
       {renderZenMessageDrawer()}
       <GitCommitDrawer
         projectId={project_id}

@@ -57,7 +57,6 @@ describe("normalizeChatMessage", () => {
       schema_version: CURRENT_CHAT_MESSAGE_VERSION,
       history: [],
       editing: {},
-      folding: [],
       feedback: {},
     };
     const { message, upgraded } = normalizeChatMessage(raw);
@@ -84,7 +83,6 @@ describe("handleSyncDBChange", () => {
         { content: "hi", author_id: "user-1", date: date.toISOString() },
       ],
       editing: {},
-      folding: [],
       feedback: {},
       schema_version: CURRENT_CHAT_MESSAGE_VERSION,
     };

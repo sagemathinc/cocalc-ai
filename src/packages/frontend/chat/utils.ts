@@ -24,6 +24,17 @@ import {
 
 export const INPUT_HEIGHT = "auto";
 
+export function stableDraftKeyFromThreadKey(threadKey: string): number {
+  let hash = 0;
+  for (let i = 0; i < threadKey.length; i++) {
+    hash = (hash * 33 + threadKey.charCodeAt(i)) | 0;
+  }
+  // Keep reply/thread draft keys negative and non-zero so they never collide
+  // with the global composer bucket `0`.
+  const positive = Math.abs(hash) || 1;
+  return -positive;
+}
+
 export const USER_MENTION_MARKUP =
   '<span class="user-mention" account-id=__id__ >@__display__</span>';
 

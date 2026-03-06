@@ -1190,22 +1190,6 @@ addCommands({
       redux.getProjectActions(props.project_id).open_chat({ path: props.path });
     },
   },
-  foldAIThreads: {
-    group: "fold",
-    pos: 1,
-    icon: "compress",
-    label: "Fold AI Assistant Threads",
-    button: "Fold AI",
-    title: "Fold just threads involving AI assistants",
-  },
-  foldAllThreads: {
-    group: "fold",
-    pos: 2,
-    icon: "vertical-align-middle",
-    label: "Fold All Threads",
-    button: "Fold All",
-    title: "Fold all threads",
-  },
   support: {
     alwaysShow: true,
     pos: 6,

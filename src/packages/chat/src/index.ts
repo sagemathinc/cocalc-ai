@@ -51,7 +51,6 @@ export interface ChatMessage {
   reply_to?: string;
   generating?: boolean;
   editing?: string[];
-  folding?: string[];
   feedback?: Record<string, unknown>;
   acp_events?: any[];
   acp_log_store?: string | null;

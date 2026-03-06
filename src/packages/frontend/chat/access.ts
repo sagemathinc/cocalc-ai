@@ -68,8 +68,3 @@ export function editingArray(msg: ChatMessage | undefined): string[] {
   const editing = msg?.editing;
   return Array.isArray(editing) ? editing : [];
 }
-
-export function foldingList(msg: ChatMessage | undefined): string[] {
-  const folding = msg?.folding;
-  return Array.isArray(folding) ? folding : [];
-}

@@ -66,7 +66,6 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import {
   field,
-  foldingList,
   historyArray,
   dateValue,
   editingArray,
@@ -375,71 +374,6 @@ export class ChatActions extends Actions<ChatState> {
     handleSyncDBChange({ changes, store: this.store, syncdb: this.syncdb });
   };
 
-  toggleFoldThread = (reply_to: Date, messageIndex?: number) => {
-    if (this.syncdb == null) return;
-    const account_id = this.redux.getStore("account").get_account_id();
-    const rootMessage = this.getMessageByDate(reply_to);
-    const replyToIso = toISOString(reply_to);
-    const cur =
-      (replyToIso &&
-        rootMessage &&
-        this.getSyncdbOne({
-          event: "chat",
-          date: replyToIso,
-          sender_id: senderId(rootMessage),
-        })) ??
-      rootMessage;
-    const folding = foldingList(cur);
-    const folded = folding.includes(account_id);
-    const next = folded
-      ? folding.filter((x) => x !== account_id)
-      : [...folding, account_id];
-
-    const d = toISOString(reply_to);
-    if (!d) {
-      return;
-    }
-    const targetSenderId = senderId(cur ?? rootMessage);
-    if (!targetSenderId) {
-      return;
-    }
-    this.setSyncdb({
-      event: "chat",
-      sender_id: targetSenderId,
-      folding: next,
-      date: d,
-    });
-
-    this.syncdb.commit();
-
-    if (folded && messageIndex != null) {
-      this.scrollToIndex(messageIndex);
-    }
-  };
-
-  foldAllThreads = (onlyLLM = true) => {
-    if (this.syncdb == null) return;
-    const messages = this.getAllMessages();
-    const account_id = this.redux.getStore("account").get_account_id();
-    for (const [_timestamp, message] of messages) {
-      const date = dateValue(message);
-      // ignore replies
-      if (replyTo(message) != null || !date) continue;
-      const isLLMThread = this.isLanguageModelThread(date) !== false;
-      if (onlyLLM && !isLLMThread) continue;
-      const folding = foldingList(message);
-      const folded = folding.includes(account_id);
-      if (!folded) {
-        this.setSyncdb({
-          event: "chat",
-          sender_id: senderId(message),
-          folding: [...folding, account_id],
-          date: toISOString(date),
-        });
-      }
-    }
-  };
-
   feedback = (message: ChatMessageTyped, feedback: Feedback | null) => {
     if (this.syncdb == null) return;
     const date = dateValue(message);
@@ -694,21 +628,6 @@ export class ChatActions extends Actions<ChatState> {
       }
       selectedThreadKey = thread_id;
     } else {
-      // when replying we make sure that the thread is expanded, since otherwise
-      // our reply won't be visible
-      // If the replied-to thread is folded, ensure it's expanded. In the
-      // new flow we rely on the live sync doc and foldingList handles plain data.
-      const threadMessages = this.getMessagesInThread(thread_id) ?? [];
-      const replyMsg =
-        threadMessages.find((msg) => !replyTo(msg)) ?? threadMessages[0];
-      const folding = foldingList(replyMsg);
-      if (folding?.includes?.(sender_id)) {
-        if (reply_to) {
-          this.toggleFoldThread(reply_to);
-        } else if (resolvedReplyToIso) {
-          this.toggleFoldThread(new Date(resolvedReplyToIso));
-        }
-      }
       selectedThreadKey = thread_id;
     }
     if (selectedThreadKey != "0" && !preserveSelectedThread) {

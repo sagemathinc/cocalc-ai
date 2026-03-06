@@ -52,7 +52,6 @@ function makeActions(messages: Map<string, any> = new Map()): any {
   actions.clearAllFilters = jest.fn();
   actions.setSelectedThread = jest.fn();
   actions.renameThread = jest.fn().mockReturnValue(true);
-  actions.toggleFoldThread = jest.fn();
   actions.processLLM = jest.fn().mockResolvedValue(undefined);
   actions.isLanguageModelThread = jest.fn().mockReturnValue(false);
   return actions;

@@ -43,7 +43,6 @@ export interface PlainChatMessage {
   generating?: boolean;
   // editing - account_id of who has open for editing
   editing?: string[];
-  folding?: string[];
   feedback?: Record<string, Feedback>;
   name?: string;
   pin?: boolean | string | number;
