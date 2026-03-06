@@ -1056,13 +1056,21 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     if (geom == null || this.pty == null || this.pty.socket.state == "closed") {
       return;
     }
-    const { rows, cols } = geom;
-    if (isNaN(rows) || isNaN(cols)) {
+    const rawRows = Number(geom.rows);
+    const rawCols = Number(geom.cols);
+    if (
+      !Number.isFinite(rawRows) ||
+      !Number.isFinite(rawCols) ||
+      rawRows < 1 ||
+      rawCols < 1
+    ) {
       // e.g., when terminal is hidden
       return;
     }
+    const rows = Math.max(1, Math.floor(rawRows));
+    const cols = Math.max(1, Math.floor(rawCols));
     try {
-      await this.pty.resize(geom);
+      await this.pty.resize({ rows, cols });
     } catch (err) {
       //console.log("WARNING: unable to resize pty", err);
       return;

@@ -381,7 +381,18 @@ export function terminalServer({
           return sizes[sessionId];
 
         case "resize":
-          const { rows, cols } = data;
+          const rawRows = Number(data?.rows);
+          const rawCols = Number(data?.cols);
+          if (
+            !Number.isFinite(rawRows) ||
+            !Number.isFinite(rawCols) ||
+            rawRows < 1 ||
+            rawCols < 1
+          ) {
+            return;
+          }
+          const rows = Math.max(1, Math.floor(rawRows));
+          const cols = Math.max(1, Math.floor(rawCols));
           if (pty != null) {
             try {
               // Newer node-pty APIs support optional pixel size as an object.
