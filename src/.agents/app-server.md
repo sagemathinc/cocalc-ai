@@ -730,17 +730,17 @@ Existing components to reuse where possible:
 6. `[done]` Add public exposure controls (TTL/revoke/random subdomain + optional front token).
 7. `[partial]` Add host-aware cost guardrails (especially metered-egress behavior). (NOTE: egress is the primary special-cost driver here.)
 8. `[partial]` Add static file serving mode with cache presets.
-9. `[partial]` Add Codex app audit prompt/action path for public expose (backend+CLI done; UI action pending).
-10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; static smoke pending).
+9. `[done]` Add Codex app audit prompt/action path for public expose (backend, CLI, and Apps-page action are implemented).
 10. `[partial]` Add end-to-end tests in lite and launchpad for service and static cases (service launchpad smoke done; launchpad `apps-static` smoke added; lite parity + broader static matrix pending).
-11. `[todo]` Rename the left-nav button from `Servers` to `Apps` and use `Managed Applications` as the main page heading.
-12. `[todo]` Make Apps page the single managed-app surface and remove duplicated app-launch UI from `+New` and flyout.
-13. `[todo]` Remove legacy top-row server launcher UI and map JupyterLab/code-server/etc. to managed-app presets.
-14. `[todo]` Split detection into running-HTTP discovery vs installed-template discovery.
-15. `[todo]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
-16. `[todo]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
+11. `[done]` Rename the left-nav button from `Servers` to `Apps` and use `Managed Applications` as the main page heading.
+12. `[done]` Make Apps page the single managed-app surface and remove duplicated app-launch UI from `+New` and flyout.
+13. `[done]` Remove legacy top-row server launcher UI and map JupyterLab/code-server/etc. to managed-app presets.
+14. `[done]` Split detection into running-HTTP discovery vs installed-template discovery.
+15. `[done]` Add filter/search plus bulk actions (`start all`, `stop all`, later selection-based actions).
+16. `[done]` Move startup errors/logs/actions to the corresponding app row/card instead of global top-of-page alerts.
 17. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
 18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
+19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 
 ## 19.1 Next Execution Order
 
@@ -766,6 +766,12 @@ These are the remaining items that matter most to calling A1.4 effectively finis
    - tighten copy/labels,
    - improve layout density and preset presentation,
    - smooth remaining rough edges in error/display behavior.
+3. do a focused XSS/origin-isolation audit for managed apps:
+   - verify which CoCalc cookies or bearer mechanisms can ever reach private app requests,
+   - verify which cookies are stripped before upstream proxying,
+   - audit project-host session-cookie scope/path/domain behavior,
+   - determine whether additional per-project/per-app origin isolation is required for private apps,
+   - harden static HTML serving assumptions accordingly.
 
 ### Post-alpha
 
