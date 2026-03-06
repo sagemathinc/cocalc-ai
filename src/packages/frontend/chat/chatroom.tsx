@@ -273,12 +273,18 @@ export function ChatPanel({
 
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
+    const persistedSelectedThreadKey =
+      selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
+        ? selectedThreadKey
+        : null;
+    if ((storedThreadFromDesc ?? null) === persistedSelectedThreadKey) return;
     actions.frameTreeActions.set_frame_data({
       id: actions.frameId,
-      selectedThreadKey,
+      selectedThreadKey: persistedSelectedThreadKey,
     });
   }, [
     selectedThreadKey,
+    storedThreadFromDesc,
     actions?.frameTreeActions,
     actions?.frameId,
   ]);
