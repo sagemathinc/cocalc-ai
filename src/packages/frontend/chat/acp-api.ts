@@ -19,7 +19,6 @@ type QueueKey = string;
 type QueueItem = {
   messageId: string;
   threadId?: string;
-  replyTo?: Date;
   parentMessageId?: string;
   senderId?: string;
   queuedAtMs: number;
@@ -157,11 +156,9 @@ function latestThreadMessageId(
 
 function interruptActiveThreadTurn({
   actions,
-  replyTo,
   threadId,
 }: {
   actions: ChatActions;
-  replyTo?: Date;
   threadId?: string;
 }): void {
   const normalizedThreadId = `${threadId ?? ""}`.trim();
@@ -173,7 +170,6 @@ function interruptActiveThreadTurn({
     if (!msgDate) continue;
     actions.languageModelStopGenerating(msgDate, {
       threadId: field<string>(msg, "acp_thread_id") ?? threadId,
-      replyTo,
       senderId: field<string>(msg, "sender_id"),
     });
   }
@@ -217,11 +213,9 @@ function resolveThreadQueueRef({
 // "continue" can start immediately instead of remaining queued forever.
 export function resetAcpThreadState({
   actions,
-  threadRootDate: _threadRootDate,
   threadId,
 }: {
   actions: ChatActions;
-  threadRootDate?: Date;
   threadId?: string;
 }): void {
   const store = actions.store;
@@ -286,7 +280,6 @@ type ProcessAcpRequest = {
   model: string;
   input: string;
   actions: ChatActions;
-  reply_to?: Date;
   sendMode?: "immediate";
 };
 
@@ -295,7 +288,6 @@ export async function processAcpLLM({
   model,
   input,
   actions,
-  reply_to,
   sendMode,
 }: ProcessAcpRequest): Promise<void> {
   const { syncdb, store, chatStreams } = actions;
@@ -350,22 +342,6 @@ export async function processAcpLLM({
     threadMeta.loop_state.loop_id.trim()
       ? (threadMeta.loop_state as AcpLoopState)
       : undefined);
-  const threadRootDate = (() => {
-    const byMessage =
-      typeof message.reply_to === "string" ? new Date(message.reply_to) : undefined;
-    if (byMessage && !Number.isNaN(byMessage.valueOf())) return byMessage;
-    const byMeta =
-      typeof threadMeta?.thread_date === "string"
-        ? new Date(threadMeta.thread_date)
-        : undefined;
-    if (byMeta && !Number.isNaN(byMeta.valueOf())) return byMeta;
-    if (reply_to && !Number.isNaN(reply_to.valueOf())) return reply_to;
-    return messageDate;
-  })();
-  if (Number.isNaN(threadRootDate?.valueOf())) {
-    throw new Error("ACP turn missing thread root date");
-  }
-
   const config = actions.getCodexConfig?.(thread_id);
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
@@ -420,7 +396,6 @@ export async function processAcpLLM({
   const queueItem: QueueItem = {
     messageId: user_message_id,
     threadId: thread_id,
-    replyTo: threadRootDate,
     parentMessageId: initialParentMessageId,
     senderId: field<string>(message, "sender_id"),
     queuedAtMs,
@@ -474,7 +449,7 @@ export async function processAcpLLM({
       // Never allow ACP assistant rows to reuse an existing timestamp.
       const newMessageDate = nextAcpMessageDate({
         actions,
-        minMs: Math.max(messageDate.valueOf(), threadRootDate.valueOf()) + 1,
+        minMs: messageDate.valueOf() + 1,
       });
       const chatMetadata = buildChatMetadata({
         project_id,
@@ -486,7 +461,6 @@ export async function processAcpLLM({
             : undefined,
         browser_id: webapp_client.browser_id,
         messageDate: newMessageDate,
-        reply_to: threadRootDate,
         thread_id,
         message_id,
         parent_message_id: user_message_id,
@@ -573,7 +547,6 @@ export async function processAcpLLM({
           reply: cleaned,
           from: sender_id,
           noNotification: true,
-          reply_to: threadRootDate,
         });
         syncdb.commit();
       } catch (writeErr) {
@@ -662,7 +635,6 @@ export function sendQueuedAcpTurnImmediately({
   if (q.running) {
     interruptActiveThreadTurn({
       actions,
-      replyTo: item.replyTo,
       threadId: item.threadId,
     });
   } else {
@@ -743,7 +715,6 @@ function buildChatMetadata({
   api_url,
   browser_id,
   messageDate,
-  reply_to,
   thread_id,
   message_id,
   parent_message_id,
@@ -757,7 +728,6 @@ function buildChatMetadata({
   api_url?: string;
   browser_id?: string;
   messageDate: Date;
-  reply_to?: Date;
   thread_id?: string;
   message_id?: string;
   parent_message_id?: string;
@@ -781,10 +751,6 @@ function buildChatMetadata({
     api_url,
     browser_id,
     message_date: messageDate.toISOString(),
-    reply_to:
-      reply_to instanceof Date && !Number.isNaN(reply_to.valueOf())
-        ? reply_to.toISOString()
-        : undefined,
     thread_id,
     message_id,
     parent_message_id,

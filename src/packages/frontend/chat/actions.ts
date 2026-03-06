@@ -44,7 +44,9 @@ import type {
 } from "./types";
 import {
   CHAT_SCHEMA_V2,
+  CHAT_THREAD_META_ROW_DATE,
   addToHistory,
+  threadConfigRecordKey,
   type CodexThreadConfig,
   type ChatThreadLoopConfig,
   type ChatThreadLoopState,
@@ -70,7 +72,7 @@ import {
   historyArray,
   dateValue,
   editingArray,
-  replyTo,
+  parentMessageId,
   senderId,
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
@@ -79,7 +81,6 @@ import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
-const THREAD_CONFIG_SENDER = "__thread_config__";
 const warnedMissingThreadIds = new Set<string>();
 let lastGeneratedChatMessageMs = 0;
 
@@ -422,7 +423,6 @@ export class ChatActions extends Actions<ChatState> {
   sendChat = ({
     input,
     sender_id = this.redux.getStore("account").get_account_id(),
-    reply_to,
     reply_thread_id,
     tag,
     noNotification,
@@ -439,7 +439,6 @@ export class ChatActions extends Actions<ChatState> {
   }: {
     input?: string;
     sender_id?: string;
-    reply_to?: Date;
     reply_thread_id?: string;
     tag?: string;
     noNotification?: boolean;
@@ -492,35 +491,25 @@ export class ChatActions extends Actions<ChatState> {
     }
     let thread_id: string;
     let resolvedParentMessageId: string | undefined;
-    let resolvedThreadDateIso: string | undefined;
     const explicitReplyThreadId =
       typeof reply_thread_id === "string" ? reply_thread_id.trim() : "";
-    if (!reply_to && !explicitReplyThreadId) {
+    if (!explicitReplyThreadId) {
       thread_id = uuid();
-      resolvedThreadDateIso = undefined;
     } else {
       thread_id = explicitReplyThreadId;
       if (!thread_id) {
         console.warn("chat sendChat reply skipped: missing reply_thread_id", {
-          reply_to: toISOString(reply_to),
+          reply_thread_id,
         });
         return "";
       }
       const threadMessages = this.getMessagesInThread(thread_id) ?? [];
-      const rootMessage =
-        threadMessages.find((msg) => !replyTo(msg)) ?? threadMessages[0];
       const explicitParentMessageId =
         typeof parent_message_id === "string" ? parent_message_id.trim() : "";
       const latestMessageId =
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim();
       resolvedParentMessageId =
         explicitParentMessageId || latestMessageId || undefined;
-      resolvedThreadDateIso =
-        toISOString(reply_to) ??
-        asIsoDateString(
-          field<string>(this.getThreadConfigRecordById(thread_id), "date"),
-        ) ??
-        toISOString(dateValue(rootMessage));
     }
     const trimmedName = name?.trim();
     const message = {
@@ -546,11 +535,11 @@ export class ChatActions extends Actions<ChatState> {
     if (acp_loop_config != null) {
       (message as any).acp_loop_config = acp_loop_config;
     }
-    if (trimmedName && !reply_to && !explicitReplyThreadId) {
+    if (trimmedName && !explicitReplyThreadId) {
       (message as any).name = trimmedName;
     }
     this.setSyncdb(message);
-    if (!reply_to && !explicitReplyThreadId) {
+    if (!explicitReplyThreadId) {
       const threadKey = thread_id;
       const threadConfigPatch: Record<string, unknown> = {};
       if (trimmedName) {
@@ -605,7 +594,7 @@ export class ChatActions extends Actions<ChatState> {
       );
     }
     let selectedThreadKey: string;
-    if (!reply_to && !explicitReplyThreadId) {
+    if (!explicitReplyThreadId) {
       this.deleteDraft(0);
       if (!preserveSelectedThread) {
         this.clearAllFilters();
@@ -617,7 +606,7 @@ export class ChatActions extends Actions<ChatState> {
     if (selectedThreadKey != "0" && !preserveSelectedThread) {
       this.setSelectedThread(selectedThreadKey);
     }
-    if (trimmedName && (reply_to || explicitReplyThreadId)) {
+    if (trimmedName && explicitReplyThreadId) {
       this.renameThread(selectedThreadKey, trimmedName);
     }
     // Commit locally before async model dispatch. This does NOT wait for
@@ -634,7 +623,7 @@ export class ChatActions extends Actions<ChatState> {
     if (
       noNotification ||
       mentionsLanguageModel(input) ||
-      this.isLanguageModelThread(reply_to, thread_id)
+      this.isLanguageModelThread(undefined, thread_id)
     ) {
       // Note: don't mark it is a chat if it is with chatgpt,
       // since no point in notifying all collaborators of this.
@@ -654,9 +643,6 @@ export class ChatActions extends Actions<ChatState> {
       (async () => {
         await this.processLLM({
           message,
-          reply_to: resolvedThreadDateIso
-            ? new Date(resolvedThreadDateIso)
-            : time_stamp,
           tag,
           acpSendMode: send_mode,
         });
@@ -781,19 +767,16 @@ export class ChatActions extends Actions<ChatState> {
     reply,
     from,
     noNotification,
-    reply_to,
     submitMentionsRef,
   }: {
     message: {
       date: string | Date;
       thread_id?: string;
-      reply_to?: string;
       message_id?: string;
     };
     reply?: string;
     from?: string;
     noNotification?: boolean;
-    reply_to?: Date;
     submitMentionsRef?;
   }): string => {
     const store = this.store;
@@ -805,19 +788,10 @@ export class ChatActions extends Actions<ChatState> {
       console.warn("sendReply skipped: missing thread_id");
       return "";
     }
-    const threadDateIso =
-      toISOString(reply_to) ??
-      (typeof message.reply_to === "string" ? message.reply_to : undefined) ??
-      this.getThreadMetadata(reply_thread_id, { threadId: reply_thread_id })
-        .thread_date;
-    const threadDate = threadDateIso ? new Date(threadDateIso) : undefined;
-    const normalizedReplyTo =
-      threadDate && !Number.isNaN(threadDate.valueOf()) ? threadDate : undefined;
     const time_stamp_str = this.sendChat({
       input: reply,
       submitMentionsRef,
       sender_id: from ?? this.redux.getStore("account").get_account_id(),
-      reply_to: normalizedReplyTo,
       reply_thread_id,
       parent_message_id: `${message.message_id ?? ""}`.trim() || undefined,
       noNotification,
@@ -1027,10 +1001,68 @@ export class ChatActions extends Actions<ChatState> {
     return this.getThreadConfigRecordById(threadId);
   };
 
+  private pickPreferredThreadConfigRecord = (
+    rows: any[],
+    threadId: string,
+  ): Record<string, unknown> | undefined => {
+    if (!Array.isArray(rows) || rows.length === 0) return undefined;
+    const canonical = threadConfigRecordKey(threadId);
+    const rank = (row: Record<string, unknown>): number => {
+      const isCanonical =
+        field<string>(row as any, "sender_id") === canonical.sender_id &&
+        field<string>(row as any, "date") === canonical.date;
+      const updatedAt = Date.parse(`${field<string>(row as any, "updated_at") ?? ""}`);
+      const rowDate = Date.parse(`${field<string>(row as any, "date") ?? ""}`);
+      return (
+        (isCanonical ? 1_000_000_000_000_000 : 0) +
+        (Number.isFinite(updatedAt) ? updatedAt : 0) +
+        (Number.isFinite(rowDate) ? rowDate : 0)
+      );
+    };
+    let best: Record<string, unknown> | undefined;
+    let bestRank = Number.NEGATIVE_INFINITY;
+    for (const row0 of rows) {
+      if ((row0 as any)?.event !== THREAD_CONFIG_EVENT) continue;
+      const row = row0 as Record<string, unknown>;
+      const currentRank = rank(row);
+      if (best == null || currentRank > bestRank) {
+        best = row;
+        bestRank = currentRank;
+      }
+    }
+    return best;
+  };
+
+  private getThreadRootDateIso = (threadId?: string): string | undefined => {
+    const normalized = this.normalizeThreadId(threadId);
+    if (!normalized) return undefined;
+    const rootKey = this.messageCache?.getThreadKeyByThreadId?.(normalized);
+    const rootMs = Number(rootKey);
+    if (Number.isFinite(rootMs)) {
+      return new Date(rootMs).toISOString();
+    }
+    const current = this.getThreadConfigRecordById(normalized);
+    const currentObj =
+      current && typeof current.toJS === "function" ? current.toJS() : current;
+    const fallback = asIsoDateString(field<string>(currentObj, "date"));
+    if (fallback && fallback !== CHAT_THREAD_META_ROW_DATE) {
+      return fallback;
+    }
+    return undefined;
+  };
+
   private getThreadConfigRecordById = (threadId?: string): any | null => {
     if (!threadId) return null;
     const syncState = this.syncdb?.get_state?.();
     if (this.syncdb != null && (syncState == null || syncState === "ready")) {
+      const rows = this.getSyncdbMany({
+        event: THREAD_CONFIG_EVENT,
+        thread_id: threadId,
+      });
+      const preferred = this.pickPreferredThreadConfigRecord(rows, threadId);
+      if (preferred != null) {
+        return this.toImmutableRecord(preferred);
+      }
       return (
         this.getSyncdbOne({
           event: THREAD_CONFIG_EVENT,
@@ -1063,24 +1095,15 @@ export class ChatActions extends Actions<ChatState> {
     const current = this.getThreadConfigRecordById(thread_id);
     const currentObj =
       current && typeof current.toJS === "function" ? current.toJS() : current;
-    const dateIso =
-      asIsoDateString(opts?.date) ??
-      asIsoDateString(field<string>(currentObj, "date"));
-    if (!dateIso) {
-      console.warn("chat thread-config write skipped: missing valid date", {
-        threadKey,
-        thread_id,
-      });
-      return false;
-    }
     const updated_by =
       this.redux.getStore("account").get_account_id() || "__thread_config__";
+    this.syncdb.delete({
+      event: THREAD_CONFIG_EVENT,
+      thread_id,
+    });
     this.setSyncdb({
       ...(currentObj ?? {}),
-      event: THREAD_CONFIG_EVENT,
-      sender_id: THREAD_CONFIG_SENDER,
-      date: dateIso,
-      thread_id,
+      ...threadConfigRecordKey(thread_id),
       updated_at: new Date().toISOString(),
       updated_by,
       schema_version: CHAT_SCHEMA_V2,
@@ -1157,8 +1180,9 @@ export class ChatActions extends Actions<ChatState> {
     if (agent_mode == null && acp_config) {
       agent_mode = "interactive";
     }
+    const normalizedThreadId = this.normalizeThreadId(threadKey, opts?.threadId);
     return {
-      thread_date: asIsoDateString(field<string>(cfg, "date")),
+      thread_date: this.getThreadRootDateIso(normalizedThreadId),
       name: readString("name"),
       thread_color: readString("thread_color"),
       thread_icon: readString("thread_icon"),
@@ -1232,10 +1256,23 @@ export class ChatActions extends Actions<ChatState> {
   listThreadConfigRows = (): any[] => {
     const syncState = this.syncdb?.get_state?.();
     if (this.syncdb != null && (syncState == null || syncState === "ready")) {
-      return this.getSyncdbMany({
+      const rows = this.getSyncdbMany({
         event: THREAD_CONFIG_EVENT,
-        sender_id: THREAD_CONFIG_SENDER,
       });
+      const byThreadId = new Map<string, Record<string, unknown>>();
+      for (const row0 of rows) {
+        const threadId = `${(row0 as any)?.thread_id ?? ""}`.trim();
+        if (!threadId) continue;
+        const current = byThreadId.get(threadId);
+        byThreadId.set(
+          threadId,
+          this.pickPreferredThreadConfigRecord(
+            current ? [current, row0] : [row0],
+            threadId,
+          ) ?? (row0 as Record<string, unknown>),
+        );
+      }
+      return Array.from(byThreadId.values());
     }
     return this.messageCache?.listThreadConfigPreviewRows?.() ?? [];
   };
@@ -1417,14 +1454,12 @@ export class ChatActions extends Actions<ChatState> {
 
   private processLLM = async ({
     message,
-    reply_to,
     tag,
     llm,
     dateLimit,
     acpSendMode,
   }: {
     message: ChatMessage;
-    reply_to?: Date;
     tag?: string;
     llm?: LanguageModel;
     dateLimit?: Date; // only for regenerate, filter history
@@ -1434,30 +1469,18 @@ export class ChatActions extends Actions<ChatState> {
       console.warn("processLLM called before chat actions initialized");
       return;
     }
-    if (
-      !tag &&
-      !reply_to &&
-      !redux
-        .getProjectsStore()
-        .hasLanguageModelEnabled(this.store?.get("project_id"))
-    ) {
-      return;
-    }
     if (tag !== "regenerate" && !isValidUUID(message.history?.[0]?.author_id)) {
       return;
     }
 
-    const threadModel = reply_to
-      ? this.isLanguageModelThread(
-          reply_to,
-          field<string>(message, "thread_id") ?? undefined,
-        )
+    const threadId = field<string>(message, "thread_id") ?? undefined;
+    const threadModel = threadId
+      ? this.isLanguageModelThread(undefined, threadId)
       : null;
 
     await processLLMExternal({
       actions: this,
       message,
-      reply_to,
       tag,
       llm,
       threadModel,
@@ -1670,7 +1693,8 @@ export class ChatActions extends Actions<ChatState> {
     if (!threadMessages.length) {
       throw new Error("Unable to locate thread root");
     }
-    const rootMessage = threadMessages.find((msg) => !replyTo(msg)) ?? threadMessages[0];
+    const rootMessage =
+      threadMessages.find((msg) => !parentMessageId(msg)) ?? threadMessages[0];
     const rootDate = dateValue(rootMessage);
     const rootIso = toISOString(rootDate);
     if (!rootIso) {
@@ -1794,7 +1818,6 @@ export class ChatActions extends Actions<ChatState> {
     date: Date,
     options?: {
       threadId?: string;
-      replyTo?: Date | string | null;
       senderId?: string;
     },
   ) => {
@@ -1814,7 +1837,6 @@ export class ChatActions extends Actions<ChatState> {
       void this.requestCodexInterrupt({
         threadId: options.threadId,
         messageDate: date,
-        replyTo: options.replyTo,
       });
     }
   };
@@ -1822,11 +1844,9 @@ export class ChatActions extends Actions<ChatState> {
   private async requestCodexInterrupt({
     threadId,
     messageDate,
-    replyTo,
   }: {
     threadId: string;
     messageDate: Date;
-    replyTo?: Date | string | null;
   }): Promise<void> {
     if (!threadId || !this.store) return;
     const project_id = this.store.get("project_id");
@@ -1842,17 +1862,6 @@ export class ChatActions extends Actions<ChatState> {
       sender_id,
       message_date,
     };
-    if (replyTo != null) {
-      const reply =
-        replyTo instanceof Date
-          ? replyTo
-          : typeof replyTo === "string"
-            ? new Date(replyTo)
-            : new Date(replyTo);
-      if (!Number.isNaN(reply.valueOf())) {
-        chat.reply_to = toISOString(reply);
-      }
-    }
     try {
       await webapp_client.conat_client.interruptAcp({
         project_id,
@@ -1940,15 +1949,8 @@ export class ChatActions extends Actions<ChatState> {
     if (message == null) {
       return;
     }
-    const replyToIso =
-      `${field<string>(message, "reply_to") ?? ""}`.trim() ||
-      this.getThreadMetadata(`${message.thread_id ?? ""}`.trim(), {
-        threadId: `${message.thread_id ?? ""}`.trim() || undefined,
-      }).thread_date;
-    if (!replyToIso) return;
     await this.processLLM({
       message,
-      reply_to: new Date(replyToIso),
       tag: "regenerate",
       llm,
       dateLimit: date0,

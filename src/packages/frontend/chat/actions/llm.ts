@@ -70,7 +70,6 @@ function findChatRecord({
 export async function processLLM({
   actions,
   message,
-  reply_to,
   tag,
   llm,
   threadModel,
@@ -79,7 +78,6 @@ export async function processLLM({
 }: {
   actions: ChatActions;
   message: ChatMessage;
-  reply_to?: Date;
   tag?: string;
   llm?: LanguageModel;
   threadModel?: LanguageModel | false | null;
@@ -96,7 +94,7 @@ export async function processLLM({
     (message as any)?.acp_send_mode === "immediate" ? "immediate" : undefined;
   const effectiveAcpSendMode = acpSendMode ?? messageAcpSendMode;
 
-  const model = resolveLLMModel({ message, reply_to, tag, llm, threadModel });
+  const model = resolveLLMModel({ message, tag, llm, threadModel });
   if (model === false || model == null) return;
   const threadIdForThread = (message as any)?.thread_id as string | undefined;
   if (threadIdForThread) {
@@ -114,7 +112,6 @@ export async function processLLM({
     await processAcpLLM({
       actions,
       message,
-      reply_to,
       model,
       input: acpInput,
       sendMode: effectiveAcpSendMode,
@@ -126,7 +123,6 @@ export async function processLLM({
   const { date, prevHistory } = ensureThinkingMessage({
     actions,
     message,
-    reply_to,
     tag,
     sender_id,
   });
@@ -138,13 +134,14 @@ export async function processLLM({
 
   const project_id = store.get("project_id");
   const path = store.get("path");
-  const effectiveTag = !tag && reply_to ? "reply" : tag;
+  const effectiveTag =
+    !tag && `${(message as any)?.parent_message_id ?? ""}`.trim() ? "reply" : tag;
 
   track("chatgpt", {
     project_id,
     path,
     type: "chat",
-    is_reply: !!reply_to,
+    is_reply: `${(message as any)?.parent_message_id ?? ""}`.trim().length > 0,
     tag: effectiveTag,
     model,
   });
@@ -156,7 +153,12 @@ export async function processLLM({
   let history = threadIdForThread
     ? actions.getLLMHistory(threadIdForThread)
     : undefined;
-  const regen = prepareRegenerateInput({ tag, history, dateLimit, reply_to });
+  const regen = prepareRegenerateInput({
+    tag,
+    history,
+    dateLimit,
+    threadId: threadIdForThread,
+  });
   if (regen?.error) return;
   history = regen?.history ?? history;
   input = regen?.input ?? input;
@@ -301,13 +303,11 @@ export async function processLLM({
 
 function resolveLLMModel({
   message,
-  reply_to,
   tag,
   llm,
   threadModel,
 }: {
   message: ChatMessage;
-  reply_to?: Date;
   tag?: string;
   llm?: LanguageModel;
   threadModel?: LanguageModel | false | null;
@@ -328,10 +328,7 @@ function resolveLLMModel({
   if (mentionedAny && !mentioned) return null;
 
   // No explicit mention: fall back to the thread's model (e.g. Codex threads)
-  if (reply_to && threadModel) return threadModel;
-
-  if (!reply_to) return null;
-  return mentioned || threadModel || null;
+  return threadModel || null;
 }
 
 function modelToSender(model: LanguageModel): string {
@@ -345,13 +342,11 @@ function modelToSender(model: LanguageModel): string {
 function ensureThinkingMessage({
   actions,
   message,
-  reply_to,
   tag,
   sender_id,
 }: {
   actions: ChatActions;
   message: ChatMessage;
-  reply_to?: Date;
   tag?: string;
   sender_id: string;
 }): { date: string; prevHistory: MessageHistory[] } {
@@ -365,7 +360,6 @@ function ensureThinkingMessage({
       reply: thinking,
       from: sender_id,
       noNotification: true,
-      reply_to,
     }),
     prevHistory: [],
   };
@@ -375,17 +369,17 @@ function prepareRegenerateInput({
   tag,
   history,
   dateLimit,
-  reply_to,
+  threadId,
 }: {
   tag?: string;
   history?: LanguageModelHistory;
   dateLimit?: Date;
-  reply_to?: Date;
+  threadId?: string;
 }): { history?: LanguageModelHistory; input?: string; error?: boolean } | null {
   if (tag !== "regenerate") return null;
   if (!history || history.length < 2) {
     console.warn(
-      `chat/llm: regenerate called without enough history for thread starting at ${reply_to}`,
+      `chat/llm: regenerate called without enough history for thread ${threadId ?? "unknown"}`,
     );
     return { error: true };
   }

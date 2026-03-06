@@ -45,8 +45,11 @@ import {
 import { getBlobstore } from "../blobs/download";
 import {
   buildChatMessage,
+  buildThreadConfigRecord,
+  buildThreadStateRecord,
   computeChatIntegrityReport,
   deriveAcpLogRefs,
+  threadConfigRecordKey,
   type MessageHistory,
 } from "@cocalc/chat";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
@@ -107,9 +110,7 @@ const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the backend server restarted.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
-const THREAD_CONFIG_SENDER = "__thread_config__";
 const THREAD_STATE_EVENT = "chat-thread-state";
-const THREAD_STATE_SENDER = "__thread_state__";
 const THREAD_STATE_SCHEMA_VERSION = 2;
 const LOOP_DEFAULT_MAX_TURNS = 8;
 const LOOP_DEFAULT_MAX_WALL_TIME_MS = 30 * 60_000;
@@ -159,6 +160,86 @@ let acpLookupByMessageIdLargeScanWarnings = 0;
 let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
 const chatOffloadRotateAt = new Map<string, number>();
+
+function syncdbRowsMatching(
+  syncdb: SyncDB,
+  where: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const source =
+    typeof (syncdb as any)?.get === "function"
+      ? ((syncdb as any).get(where) ?? (syncdb as any).get())
+      : [];
+  const rows =
+    Array.isArray(source)
+      ? source
+      : typeof source?.toJS === "function"
+        ? source.toJS()
+        : [];
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row) =>
+    Object.entries(where).every(([key, value]) => (row as any)?.[key] === value),
+  ) as Record<string, unknown>[];
+}
+
+function threadConfigRowRank(
+  row: Record<string, unknown>,
+  threadId: string,
+): number {
+  const canonical = threadConfigRecordKey(threadId);
+  const isCanonical =
+    syncdbField<string>(row, "sender_id") === canonical.sender_id &&
+    syncdbField<string>(row, "date") === canonical.date;
+  const updatedAt = Date.parse(`${syncdbField<string>(row, "updated_at") ?? ""}`);
+  const rowDate = Date.parse(`${syncdbField<string>(row, "date") ?? ""}`);
+  return (
+    (isCanonical ? 1_000_000_000_000_000 : 0) +
+    (Number.isFinite(updatedAt) ? updatedAt : 0) +
+    (Number.isFinite(rowDate) ? rowDate : 0)
+  );
+}
+
+function preferredThreadConfigRow(
+  syncdb: SyncDB,
+  threadId: string,
+): Record<string, unknown> | undefined {
+  const rows = syncdbRowsMatching(syncdb, {
+    event: THREAD_CONFIG_EVENT,
+    thread_id: threadId,
+  });
+  if (rows.length === 0) {
+    const single = (syncdb as any)?.get_one?.({
+      event: THREAD_CONFIG_EVENT,
+      thread_id: threadId,
+    });
+    if (single != null) {
+      return typeof single?.toJS === "function" ? single.toJS() : single;
+    }
+    return undefined;
+  }
+  let best: Record<string, unknown> | undefined;
+  let bestRank = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    const rank = threadConfigRowRank(row, threadId);
+    if (best == null || rank > bestRank) {
+      best = row;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+function replaceThreadScopedRow(
+  syncdb: SyncDB,
+  event: "chat-thread-config" | "chat-thread-state",
+  threadId: string,
+  row: any,
+): void {
+  (syncdb as any)?.delete?.({
+    event,
+    thread_id: threadId,
+  });
+  syncdb.set(row);
+}
 
 function clampLoopNumber(
   value: unknown,
@@ -889,15 +970,6 @@ export class ChatStreamWriter {
     return undefined;
   }
 
-  private threadRootIso(): string {
-    const raw = this.metadata.reply_to ?? this.metadata.message_date;
-    const d = new Date(raw);
-    if (Number.isNaN(d.valueOf())) {
-      return new Date(this.metadata.message_date).toISOString();
-    }
-    return d.toISOString();
-  }
-
   private resolvedThreadId(): string | undefined {
     const threadId = `${this.metadata.thread_id ?? ""}`.trim();
     return threadId || undefined;
@@ -917,16 +989,18 @@ export class ChatStreamWriter {
       return;
     }
     try {
-      this.syncdb.set({
-        event: THREAD_STATE_EVENT,
-        sender_id: THREAD_STATE_SENDER,
-        date: this.threadRootIso(),
-        thread_id: threadId,
-        state,
-        active_message_id: this.metadata.message_id,
-        updated_at: new Date().toISOString(),
-        schema_version: THREAD_STATE_SCHEMA_VERSION,
-      });
+      replaceThreadScopedRow(
+        this.syncdb,
+        THREAD_STATE_EVENT,
+        threadId,
+        buildThreadStateRecord({
+          thread_id: threadId,
+          state,
+          active_message_id: this.metadata.message_id,
+          updated_at: new Date().toISOString(),
+          schema_version: THREAD_STATE_SCHEMA_VERSION,
+        }),
+      );
       this.syncdb.commit();
     } catch (err) {
       logger.debug("failed to update chat thread state", {
@@ -1094,8 +1168,8 @@ export class ChatStreamWriter {
       this.timeTravel = new AgentTimeTravelRecorder({
         project_id: metadata.project_id,
         chat_path: metadata.path,
-        thread_root_date: metadata.reply_to ?? metadata.message_date,
-        turn_date: metadata.message_date ?? randomUUID(),
+        chat_thread_id: thread_id,
+        chat_message_id: message_id,
         log_store: refs.store,
         log_key: refs.key,
         log_subject: refs.subject,
@@ -1872,21 +1946,6 @@ export class ChatStreamWriter {
   ): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
-    const threadRoot = this.metadata.reply_to ?? this.metadata.message_date;
-    const normalizeDate = (value: unknown): string | undefined => {
-      if (value == null) return undefined;
-      const d = value instanceof Date ? value : new Date(value as any);
-      if (!Number.isFinite(d.valueOf())) return undefined;
-      return d.toISOString();
-    };
-    const threadRootIso = normalizeDate(threadRoot);
-    if (!threadRootIso) {
-      logger.warn("patchThreadConfig skipped: invalid thread root date", {
-        chatKey: this.chatKey,
-        threadRoot,
-      });
-      return;
-    }
     try {
       const threadId = this.resolvedThreadId();
       if (!threadId) {
@@ -1896,22 +1955,17 @@ export class ChatStreamWriter {
         });
         return;
       }
-      const threadCfgCurrent = this.syncdb.get_one({
-        event: THREAD_CONFIG_EVENT,
-        sender_id: THREAD_CONFIG_SENDER,
-        date: threadRootIso,
-      });
+      const threadCfgCurrent = preferredThreadConfigRow(this.syncdb, threadId);
       const base = this.toPlainRecord(threadCfgCurrent);
-      this.syncdb.set({
+      replaceThreadScopedRow(this.syncdb, THREAD_CONFIG_EVENT, threadId, {
         ...base,
-        event: THREAD_CONFIG_EVENT,
-        sender_id: THREAD_CONFIG_SENDER,
-        date: threadRootIso,
-        thread_id: threadId,
+        ...buildThreadConfigRecord({
+          thread_id: threadId,
+          updated_at: new Date().toISOString(),
+          updated_by: this.approverAccountId,
+          schema_version: THREAD_STATE_SCHEMA_VERSION,
+        }),
         ...patch,
-        updated_at: new Date().toISOString(),
-        updated_by: this.approverAccountId,
-        schema_version: THREAD_STATE_SCHEMA_VERSION,
       });
       this.syncdb.commit();
       await this.syncdb.save();
@@ -1923,12 +1977,9 @@ export class ChatStreamWriter {
   private async persistSessionId(sessionId: string): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
-    const threadRootIso = this.threadRootIso();
-    const currentRow = this.syncdb.get_one({
-      event: THREAD_CONFIG_EVENT,
-      sender_id: THREAD_CONFIG_SENDER,
-      date: threadRootIso,
-    });
+    const threadId = this.resolvedThreadId();
+    if (!threadId) return;
+    const currentRow = preferredThreadConfigRow(this.syncdb, threadId);
     const currentConfig = this.recordField<any>(currentRow, "acp_config");
     const currentConfigObj =
       currentConfig && typeof currentConfig.toJS === "function"
@@ -2234,30 +2285,22 @@ export async function recoverOrphanedAcpTurns(
             update.history = history;
           }
           syncdb.set(update);
-          const threadRootIso = (() => {
-            const raw = turn.reply_to ?? rowDate;
-            const d = new Date(raw);
-            if (Number.isNaN(d.valueOf())) return rowDate;
-            return d.toISOString();
-          })();
           const threadId =
             syncdbField<string>(current, "thread_id") ?? turn.thread_id;
           if (threadId) {
-            syncdb.set({
-              event: THREAD_STATE_EVENT,
-              sender_id: THREAD_STATE_SENDER,
-              date: threadRootIso,
-              thread_id: threadId,
-              state: "interrupted",
-              active_message_id: syncdbField<string>(current, "message_id"),
-              updated_at: new Date().toISOString(),
-              schema_version: THREAD_STATE_SCHEMA_VERSION,
-            });
-            const cfgRow = syncdb.get_one({
-              event: THREAD_CONFIG_EVENT,
-              sender_id: THREAD_CONFIG_SENDER,
-              date: threadRootIso,
-            });
+            replaceThreadScopedRow(
+              syncdb,
+              THREAD_STATE_EVENT,
+              threadId,
+              buildThreadStateRecord({
+                thread_id: threadId,
+                state: "interrupted",
+                active_message_id: syncdbField<string>(current, "message_id"),
+                updated_at: new Date().toISOString(),
+                schema_version: THREAD_STATE_SCHEMA_VERSION,
+              }),
+            );
+            const cfgRow = preferredThreadConfigRow(syncdb, threadId);
             const rawLoopCfg = syncdbField<any>(cfgRow, "loop_config");
             const loopCfg =
               rawLoopCfg && typeof rawLoopCfg.toJS === "function"
@@ -2277,12 +2320,14 @@ export async function recoverOrphanedAcpTurns(
                 cfgRow && typeof cfgRow.toJS === "function"
                   ? cfgRow.toJS()
                   : (cfgRow ?? {});
-              syncdb.set({
+              replaceThreadScopedRow(syncdb, THREAD_CONFIG_EVENT, threadId, {
                 ...cfgObj,
-                event: THREAD_CONFIG_EVENT,
-                sender_id: THREAD_CONFIG_SENDER,
-                date: threadRootIso,
-                thread_id: threadId,
+                ...buildThreadConfigRecord({
+                  thread_id: threadId,
+                  updated_at: new Date().toISOString(),
+                  updated_by: "__system__",
+                  schema_version: THREAD_STATE_SCHEMA_VERSION,
+                }),
                 loop_state: {
                   ...loopStateCurrent,
                   status: "stopped",
@@ -2290,8 +2335,6 @@ export async function recoverOrphanedAcpTurns(
                   next_prompt: undefined,
                   updated_at_ms: Date.now(),
                 },
-                updated_at: new Date().toISOString(),
-                schema_version: THREAD_STATE_SCHEMA_VERSION,
               });
             }
           }

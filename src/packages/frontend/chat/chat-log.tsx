@@ -41,7 +41,7 @@ import {
   newest_content,
   orderLinearThreadMessages,
 } from "./utils";
-import { dateValue, field, replyTo, parentMessageId } from "./access";
+import { dateValue, field, parentMessageId } from "./access";
 import { COMBINED_FEED_KEY } from "./threads";
 
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
@@ -428,7 +428,7 @@ function isPrevMessageSender(
 }
 
 function isThread(message: ChatMessageTyped, numChildren: NumChildren) {
-  if (parentMessageId(message) != null || replyTo(message) != null) {
+  if (parentMessageId(message) != null) {
     return true;
   }
   const d = dateValue(message)?.valueOf();
@@ -477,11 +477,6 @@ export function getSortedDates(
         numChildren[d] = (numChildren[d] ?? 0) + 1;
         continue;
       }
-    }
-    const parent = replyTo(message);
-    if (parent != null) {
-      const d = new Date(parent).valueOf();
-      numChildren[d] = (numChildren[d] ?? 0) + 1;
     }
   }
 
@@ -742,10 +737,7 @@ export function MessageList({
             font_size={fontSize}
             actions={actions}
             is_thread={is_thread}
-            is_thread_body={
-              is_thread &&
-              (parentMessageId(message) != null || replyTo(message) != null)
-            }
+            is_thread_body={is_thread && parentMessageId(message) != null}
             is_prev_sender={isPrevMessageSender(index, sortedDates, messages)}
             show_avatar={!isNextMessageSender(index, sortedDates, messages)}
             mode={mode}
@@ -766,7 +758,7 @@ export function MessageList({
                   messages,
                   date: parseFloat(sortedDates[index + 1]),
                 });
-                return next == null ? true : replyTo(next) == null;
+                return next == null ? true : parentMessageId(next) == null;
               })()
             }
             threadViewMode={singleThreadView}

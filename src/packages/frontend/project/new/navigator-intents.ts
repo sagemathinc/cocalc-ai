@@ -28,13 +28,6 @@ export interface NavigatorSubmitPromptDetail {
   forceCodex?: boolean;
 }
 
-function toReplyDate(threadKey?: string | null): Date | undefined {
-  if (!threadKey || !/^\d+$/.test(threadKey)) return;
-  const ms = Number(threadKey);
-  if (!Number.isFinite(ms)) return;
-  return new Date(ms);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -356,15 +349,13 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         replyThreadId = undefined;
       }
     }
-    const replyTo = toReplyDate(replyThreadKey);
     const timeStamp = actions.sendChat({
       input,
-      reply_to: replyTo,
       reply_thread_id: replyThreadId,
       tag: opts.tag ?? "intent:navigator",
       noNotification: true,
       threadAgent:
-        !replyTo && opts.forceCodex !== false
+        !replyThreadId && opts.forceCodex !== false
           ? {
               mode: "codex",
               model,

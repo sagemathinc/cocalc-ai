@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
 
+import { CHAT_THREAD_META_ROW_DATE } from "@cocalc/chat";
 import { ChatActions } from "../actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -169,7 +170,7 @@ describe("sendChat identity fields", () => {
     expect(replySet.message_id.length).toBeGreaterThan(0);
   });
 
-  it("refuses replies when root message lacks v2 identity fields", async () => {
+  it("treats legacy reply_to-only sends as new threads", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootMs = rootDate.valueOf();
     const messages = new Map<string, any>([
@@ -190,23 +191,18 @@ describe("sendChat identity fields", () => {
       ],
     ]);
     const actions = makeActions(messages);
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
 
     const sent = actions.sendChat({
       input: "reply content",
-      reply_to: rootDate,
+      reply_thread_id: undefined,
     });
     await Promise.resolve();
 
-    expect(sent).toBe("");
-    expect(actions.syncdb.set).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      "chat sendChat reply skipped: missing reply_thread_id",
-      expect.objectContaining({
-        reply_to: rootDate.toISOString(),
-      }),
-    );
-    warn.mockRestore();
+    expect(sent).toBeTruthy();
+    expect(actions.syncdb.set).toHaveBeenCalled();
+    const newMessage = actions.syncdb.set.mock.calls[0]?.[0];
+    expect(newMessage?.thread_id).toBeTruthy();
+    expect(newMessage?.parent_message_id).toBeUndefined();
   });
 });
 
@@ -275,7 +271,7 @@ describe("thread-config by thread_id", () => {
     expect(meta.archived).toBe(true);
   });
 
-  it("updates thread-config by UUID thread key without timestamp keying", () => {
+  it("updates thread-config by UUID thread key with a canonical thread row key", () => {
     const threadId = "22222222-2222-4222-8222-222222222222";
     const existing = {
       event: "chat-thread-config",
@@ -299,7 +295,7 @@ describe("thread-config by thread_id", () => {
       .map((x) => x[0])
       .find((row: any) => row?.event === "chat-thread-config" && row?.thread_id === threadId);
     expect(setRow).toBeTruthy();
-    expect(setRow.date).toBe("2026-02-21T18:30:00.000Z");
+    expect(setRow.date).toBe(CHAT_THREAD_META_ROW_DATE);
     expect(setRow.name).toBe("After");
   });
 
@@ -440,13 +436,21 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_mode).toBe("single_turn");
   });
 
-  it("requires an existing thread-config date when updating by thread_id", () => {
+  it("creates a canonical thread-config row when updating by thread_id", () => {
     const threadId = "44444444-4444-4444-8444-444444444444";
     const actions = makeActions();
 
     const ok = actions.setThreadAppearance(threadId, { name: "Thread title" });
-    expect(ok).toBe(false);
-    expect(actions.syncdb.commit).not.toHaveBeenCalled();
+    expect(ok).toBe(true);
+    const setRow = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === threadId,
+      );
+    expect(setRow).toBeTruthy();
+    expect(setRow.date).toBe(CHAT_THREAD_META_ROW_DATE);
+    expect(setRow.name).toBe("Thread title");
   });
 });
 
@@ -514,7 +518,7 @@ describe("deleteThread identity targeting", () => {
     ).toBeTruthy();
   });
 
-  it("forkThread writes a dated thread-config row and preserves codex metadata", async () => {
+  it("forkThread writes a canonical thread-config row and preserves codex metadata", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootIso = rootDate.toISOString();
     const rootMs = rootDate.valueOf();
@@ -588,7 +592,7 @@ describe("deleteThread identity targeting", () => {
         row?.event === "chat-thread-config" && row?.thread_id === newThreadId,
     );
     expect(cfgRow).toBeTruthy();
-    expect(cfgRow.date).toBe(chatRow.date);
+    expect(cfgRow.date).toBe(CHAT_THREAD_META_ROW_DATE);
     expect(cfgRow.name).toBe("Forked chat");
     expect(cfgRow.thread_color).toBe("#123456");
     expect(cfgRow.thread_icon).toBe("rocket");

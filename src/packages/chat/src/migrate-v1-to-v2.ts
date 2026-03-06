@@ -1,4 +1,9 @@
-import { CHAT_SCHEMA_V2, computeChatIntegrityReport } from ".";
+import {
+  CHAT_SCHEMA_V2,
+  buildThreadConfigRecord,
+  buildThreadStateRecord,
+  computeChatIntegrityReport,
+} from ".";
 
 type AnyRow = Record<string, any>;
 
@@ -6,8 +11,6 @@ const THREAD_EVENT = "chat-thread";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_STATE_EVENT = "chat-thread-state";
 const THREAD_SENDER = "__thread__";
-const THREAD_CONFIG_SENDER = "__thread_config__";
-const THREAD_STATE_SENDER = "__thread_state__";
 
 export interface MigrationOptions {
   keepLegacyThreadFields?: boolean;
@@ -62,7 +65,10 @@ function sanitizeIdPart(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-function makeUniqueId(base: string, used: Set<string>): { id: string; bumped: boolean } {
+function makeUniqueId(
+  base: string,
+  used: Set<string>,
+): { id: string; bumped: boolean } {
   if (!used.has(base)) {
     used.add(base);
     return { id: base, bumped: false };
@@ -78,8 +84,10 @@ function makeUniqueId(base: string, used: Set<string>): { id: string; bumped: bo
 
 function normalizePin(value: unknown): boolean | undefined {
   if (value == null) return undefined;
-  if (value === true || value === "true" || value === 1 || value === "1") return true;
-  if (value === false || value === "false" || value === 0 || value === "0") return false;
+  if (value === true || value === "true" || value === 1 || value === "1")
+    return true;
+  if (value === false || value === "false" || value === 0 || value === "0")
+    return false;
   return undefined;
 }
 
@@ -113,7 +121,10 @@ function newerThreadRecord(
 
 function normalizeRows(
   rows: AnyRow[],
-  report: Omit<MigrationReport, "input_rows" | "output_rows" | "integrity_after">,
+  report: Omit<
+    MigrationReport,
+    "input_rows" | "output_rows" | "integrity_after"
+  >,
 ): {
   messages: MigratedMessage[];
   passthroughRows: AnyRow[];
@@ -141,14 +152,18 @@ function normalizeRows(
           ? row.thread_id
           : undefined;
       if (!threadId) continue;
-      const sortIso = toIso((row as any).updated_at) ?? toIso((row as any).date);
+      const sortIso =
+        toIso((row as any).updated_at) ?? toIso((row as any).date);
       if (!sortIso) continue;
       const normalized = {
         ...row,
         event,
         thread_id: threadId,
         date: toIso((row as any).date) ?? sortIso,
-        updated_at: event === THREAD_CONFIG_EVENT || event === THREAD_STATE_EVENT ? sortIso : undefined,
+        updated_at:
+          event === THREAD_CONFIG_EVENT || event === THREAD_STATE_EVENT
+            ? sortIso
+            : undefined,
         schema_version: CHAT_SCHEMA_V2,
       };
       const record = { row: normalized, sortIso };
@@ -264,8 +279,12 @@ export function migrateChatRows(
     synthetic_roots_created: 0,
     invalid_chat_rows_skipped: 0,
   };
-  const { messages, passthroughRows, existingThreadConfigs, existingThreadStates } =
-    normalizeRows(rows, reportBase);
+  const {
+    messages,
+    passthroughRows,
+    existingThreadConfigs,
+    existingThreadStates,
+  } = normalizeRows(rows, reportBase);
   reportBase.chat_rows_migrated = messages.length;
 
   const keepLegacyThreadFields = options.keepLegacyThreadFields !== false;
@@ -279,7 +298,9 @@ export function migrateChatRows(
   }
 
   for (const list of byThread.values()) {
-    list.sort((a, b) => a.dateMs - b.dateMs || a.messageId.localeCompare(b.messageId));
+    list.sort(
+      (a, b) => a.dateMs - b.dateMs || a.messageId.localeCompare(b.messageId),
+    );
   }
 
   const threadRows: AnyRow[] = [];
@@ -357,7 +378,8 @@ export function migrateChatRows(
       updated_at:
         toIso(existingCfg?.updated_at) ?? options.nowIso ?? root.dateIso,
       updated_by:
-        (typeof existingCfg?.updated_by === "string" && existingCfg.updated_by.trim()) ||
+        (typeof existingCfg?.updated_by === "string" &&
+          existingCfg.updated_by.trim()) ||
         root.senderId,
       schema_version: CHAT_SCHEMA_V2,
     };
@@ -442,15 +464,15 @@ export function migrateChatRows(
       state:
         hasGenerating || latest.row?.acp_interrupted
           ? derivedState
-          : existingState?.state ?? derivedState,
+          : (existingState?.state ?? derivedState),
       active_message_id:
         hasGenerating || latest.row?.acp_interrupted
           ? latest.messageId
-          : existingState?.active_message_id ?? latest.messageId,
+          : (existingState?.active_message_id ?? latest.messageId),
       updated_at:
         hasGenerating || latest.row?.acp_interrupted
           ? latest.dateIso
-          : toIso(existingState?.updated_at) ?? latest.dateIso,
+          : (toIso(existingState?.updated_at) ?? latest.dateIso),
       schema_version: CHAT_SCHEMA_V2,
     });
     reportBase.thread_state_records_created += 1;

@@ -9,6 +9,10 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
+  CHAT_THREAD_META_ROW_DATE,
+  threadConfigSenderId,
+} from "@cocalc/chat";
+import {
   ChatStreamWriter,
   recoverOrphanedAcpTurns,
 } from "../index";
@@ -1024,6 +1028,7 @@ describe("ChatStreamWriter", () => {
       message_date: turnIso,
       sender_id: "codex-agent",
       reply_to: rootIso,
+      thread_id: "legacy-thread-100",
     } as AcpChatContext;
     const rows: any[] = [
       {
@@ -1042,8 +1047,8 @@ describe("ChatStreamWriter", () => {
       },
       {
         event: "chat-thread-config",
-        sender_id: "__thread_config__",
-        date: rootIso,
+        sender_id: threadConfigSenderId("legacy-thread-100"),
+        date: CHAT_THREAD_META_ROW_DATE,
         thread_id: "legacy-thread-100",
         acp_config: { model: "gpt-5.3-codex" },
       },
@@ -1093,8 +1098,8 @@ describe("ChatStreamWriter", () => {
     const threadCfgUpdate = sets.find(
       (x) =>
         x.event === "chat-thread-config" &&
-        x.sender_id === "__thread_config__" &&
-        x.date === rootIso,
+        x.sender_id === threadConfigSenderId("legacy-thread-100") &&
+        x.date === CHAT_THREAD_META_ROW_DATE,
     );
     expect(
       sets.find((x) => x.event === "chat" && x.date === rootIso && x.acp_config),
@@ -1260,8 +1265,8 @@ describe("recoverOrphanedAcpTurns", () => {
       },
       {
         event: "chat-thread-config",
-        sender_id: "__thread_config__",
-        date: rootIso,
+        sender_id: threadConfigSenderId("thread-1"),
+        date: CHAT_THREAD_META_ROW_DATE,
         thread_id: "thread-1",
         acp_config: {
           model: "gpt-5.3-codex",
@@ -1319,8 +1324,8 @@ describe("recoverOrphanedAcpTurns", () => {
     const cfg = rows.find(
       (row) =>
         row.event === "chat-thread-config" &&
-        row.sender_id === "__thread_config__" &&
-        row.date === rootIso,
+        row.sender_id === threadConfigSenderId("thread-1") &&
+        row.date === CHAT_THREAD_META_ROW_DATE,
     );
     expect(cfg?.acp_config).toEqual({
       model: "gpt-5.3-codex",

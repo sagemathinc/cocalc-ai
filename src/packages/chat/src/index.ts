@@ -1,6 +1,43 @@
 import type { CodexThreadConfig } from "./acp";
 
 export const CHAT_SCHEMA_V2 = 2;
+export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
+
+function normalizeThreadIdPart(threadId: string): string {
+  const trimmed = `${threadId ?? ""}`.trim();
+  if (!trimmed) {
+    throw new Error("thread_id is required");
+  }
+  return trimmed;
+}
+
+export function threadConfigSenderId(threadId: string): string {
+  return `__thread_config__:${normalizeThreadIdPart(threadId)}`;
+}
+
+export function threadStateSenderId(threadId: string): string {
+  return `__thread_state__:${normalizeThreadIdPart(threadId)}`;
+}
+
+export function threadConfigRecordKey(threadId: string) {
+  const normalized = normalizeThreadIdPart(threadId);
+  return {
+    event: "chat-thread-config" as const,
+    sender_id: threadConfigSenderId(normalized),
+    date: CHAT_THREAD_META_ROW_DATE,
+    thread_id: normalized,
+  };
+}
+
+export function threadStateRecordKey(threadId: string) {
+  const normalized = normalizeThreadIdPart(threadId);
+  return {
+    event: "chat-thread-state" as const,
+    sender_id: threadStateSenderId(normalized),
+    date: CHAT_THREAD_META_ROW_DATE,
+    thread_id: normalized,
+  };
+}
 
 export interface ChatThreadLoopConfig {
   enabled: boolean;
@@ -251,12 +288,13 @@ export function buildThreadConfigRecord(
   options: BuildThreadConfigRecordOptions,
 ): ChatThreadConfigRecord {
   const updatedAt = toISOStringDate(options.updated_at);
-  const date = toOptionalISOStringDate(options.date) ?? updatedAt;
+  const key = threadConfigRecordKey(options.thread_id);
+  const date = toOptionalISOStringDate(options.date) ?? key.date;
   return {
-    event: "chat-thread-config",
-    sender_id: options.sender_id ?? "__thread_config__",
+    event: key.event,
+    sender_id: options.sender_id ?? key.sender_id,
     date,
-    thread_id: options.thread_id,
+    thread_id: key.thread_id,
     name: options.name,
     thread_color: options.thread_color,
     thread_icon: options.thread_icon,
@@ -330,12 +368,13 @@ export function buildThreadStateRecord(
   options: BuildThreadStateRecordOptions,
 ): ChatThreadStateRecord {
   const updatedAt = toISOStringDate(options.updated_at);
-  const date = toOptionalISOStringDate(options.date) ?? updatedAt;
+  const key = threadStateRecordKey(options.thread_id);
+  const date = toOptionalISOStringDate(options.date) ?? key.date;
   return {
-    event: "chat-thread-state",
-    sender_id: options.sender_id ?? "__thread_state__",
+    event: key.event,
+    sender_id: options.sender_id ?? key.sender_id,
     date,
-    thread_id: options.thread_id,
+    thread_id: key.thread_id,
     state: options.state,
     active_message_id: options.active_message_id,
     updated_at: updatedAt,

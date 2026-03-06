@@ -35,11 +35,9 @@ export interface PlainChatMessage {
   event: "chat";
   history: MessageHistory[];
   date: Date | string;
-  reply_to?: string;
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
-  reply_to_message_id?: string;
   generating?: boolean;
   // editing - account_id of who has open for editing
   editing?: string[];

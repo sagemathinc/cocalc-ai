@@ -25,36 +25,12 @@ export function normalizeChatMessage(base: any): NormalizedChatMessage {
     x.date = new Date(x.date);
   }
   const messageMs = x.date?.valueOf?.();
-  const rootMs = (() => {
-    if (x.reply_to != null) {
-      const d = new Date(x.reply_to);
-      if (!Number.isNaN(d.valueOf())) return d.valueOf();
-    }
-    return messageMs;
-  })();
   if (x.message_id == null && Number.isFinite(messageMs)) {
     x.message_id = `legacy-message-${messageMs}-${x.sender_id ?? "unknown"}`;
     upgraded = true;
   }
-  if (x.thread_id == null && Number.isFinite(rootMs)) {
-    x.thread_id = `legacy-thread-${rootMs}`;
-    upgraded = true;
-  }
-  if (
-    x.parent_message_id == null &&
-    x.reply_to != null &&
-    x.reply_to_message_id == null &&
-    Number.isFinite(rootMs)
-  ) {
-    x.reply_to_message_id = `legacy-message-${rootMs}`;
-    upgraded = true;
-  }
-  if (
-    x.parent_message_id == null &&
-    typeof x.reply_to_message_id === "string" &&
-    x.reply_to_message_id.trim().length > 0
-  ) {
-    x.parent_message_id = x.reply_to_message_id.trim();
+  if (x.thread_id == null && Number.isFinite(messageMs)) {
+    x.thread_id = `legacy-thread-${messageMs}`;
     upgraded = true;
   }
   if (x.schema_version == CURRENT_CHAT_MESSAGE_VERSION) {

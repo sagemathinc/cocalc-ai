@@ -111,4 +111,48 @@ describe("useChatThreadSelection", () => {
     });
     expect(latest.selectedThreadKey).toBe("200");
   });
+
+  it("does not emit redundant combined-feed selections", () => {
+    const actions = {
+      clearAllFilters: jest.fn(),
+      setFragment: jest.fn(),
+      setSelectedThread: jest.fn(),
+    } as any;
+
+    function Harness({ threads }: { threads: ThreadMeta[] }) {
+      useChatThreadSelection({
+        actions,
+        threads,
+        messages: undefined,
+        fragmentId: null,
+        storedThreadFromDesc: COMBINED_FEED_KEY,
+      });
+      return null;
+    }
+
+    const threads: ThreadMeta[] = [
+      {
+        key: "100",
+        label: "Thread 100",
+        displayLabel: "Thread 100",
+        newestTime: 100,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 0,
+        unreadCount: 1,
+        isAI: false,
+        isPinned: false,
+        isArchived: false,
+      },
+    ];
+
+    const { rerender } = render(<Harness threads={threads} />);
+    rerender(<Harness threads={threads} />);
+    rerender(<Harness threads={threads} />);
+
+    expect(actions.setSelectedThread).not.toHaveBeenCalled();
+    expect(actions.clearAllFilters).not.toHaveBeenCalled();
+    expect(actions.setFragment).not.toHaveBeenCalled();
+  });
 });

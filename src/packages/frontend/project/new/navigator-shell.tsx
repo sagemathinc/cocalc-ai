@@ -14,6 +14,7 @@ import {
 import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  redux,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -172,13 +173,6 @@ function summarizeTitle(rootMessage: any): string {
     typeof history0?.content === "string" ? history0.content.trim() : "";
   if (content) return content.slice(0, 140);
   return "Navigator session";
-}
-
-function toReplyDate(threadKey: string | null): Date | undefined {
-  if (!threadKey || !/^\d+$/.test(threadKey)) return;
-  const ms = Number(threadKey);
-  if (!Number.isFinite(ms)) return;
-  return new Date(ms);
 }
 
 function resolveReplyThreadId(
@@ -662,12 +656,11 @@ export function NavigatorShell({
         actions,
         selectedThreadKey ?? storedThreadKey ?? undefined,
       );
-      let replyTo = toReplyDate(resolvedThreadKey);
       let replyThreadId = resolveReplyThreadId(actions, resolvedThreadKey);
-      if (replyTo && !replyThreadId) {
+      if (resolvedThreadKey && !replyThreadId) {
         // If we cannot confidently resolve thread identity yet, open a new
         // thread instead of dropping the prompt.
-        replyTo = undefined;
+        replyThreadId = undefined;
       }
       const isCodex = intent.forceCodex !== false;
       const model =
@@ -676,12 +669,11 @@ export function NavigatorShell({
           : undefined;
       const timeStamp = actions.sendChat({
         input,
-        reply_to: replyTo,
         reply_thread_id: replyThreadId,
         tag: intent.tag ?? "intent:navigator",
         noNotification: true,
         threadAgent:
-          !replyTo && isCodex
+          !replyThreadId && isCodex
             ? {
                 mode: "codex",
                 model,
@@ -700,7 +692,7 @@ export function NavigatorShell({
       if (resolvedThreadKey && resolvedThreadKey !== selectedThreadKey) {
         setSelectedThreadKey(resolvedThreadKey);
       }
-      if (!replyTo) {
+      if (!replyThreadId) {
         const threadTime = new Date(timeStamp).valueOf();
         if (Number.isFinite(threadTime)) {
           setSelectedThreadKey(`${threadTime}`);
@@ -795,6 +787,13 @@ export function NavigatorShell({
     }),
     [project_id, navigatorPath],
   );
+
+  const clearActiveEditorKeyHandler = useCallback(() => {
+    // SideChat's composer uses a DIV-backed editor. Jupyter intentionally still
+    // treats focused DIVs as eligible for notebook shortcuts, so explicitly clear
+    // the active page key handler when focus enters navigator controls.
+    redux.getActions("page")?.erase_active_key_handler?.();
+  }, []);
 
   const threadTitle = useMemo(() => {
     if (!selectedThreadKey) return "New chat";
@@ -1118,14 +1117,7 @@ export function NavigatorShell({
           background: "white",
           height: "min(70vh, 760px)",
         }}
-        onKeyDownCapture={(event) => {
-          // Navigator can be rendered over editors (e.g. Jupyter). Keep
-          // keystrokes inside SideChat so underlying frame shortcuts don't fire.
-          event.stopPropagation();
-        }}
-        onKeyUpCapture={(event) => {
-          event.stopPropagation();
-        }}
+        onFocus={clearActiveEditorKeyHandler}
       >
         {actions ? (
           <FileContext.Provider value={chatFileContext}>
