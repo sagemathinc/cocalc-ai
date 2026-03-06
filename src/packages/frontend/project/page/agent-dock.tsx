@@ -29,6 +29,7 @@ import SideChat from "@cocalc/frontend/chat/side-chat";
 import { Loading } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
+import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
@@ -298,24 +299,11 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     }));
   }, [sessions]);
 
-  const clearActiveEditorKeyHandler = useCallback(() => {
-    // The docked agent chat uses the same DIV-backed composer as SideChat.
-    // In Jupyter command mode, page-level notebook shortcuts stay active
-    // unless we explicitly clear the active page key handler when focus
-    // moves into the dock.
-    redux.getActions("page")?.erase_active_key_handler?.();
-  }, []);
-
-  const stopDockEventPropagation = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      // Jupyter command mode listens for window clicks and refocuses the notebook
-      // if the click lands inside the notebook's screen rectangle. Since the dock
-      // floats on top of the notebook, clicks inside the dock can otherwise
-      // immediately re-focus the notebook underneath it.
-      event.stopPropagation();
-    },
-    [],
-  );
+  const keyboardBoundaryProps = useKeyboardBoundary<HTMLDivElement>({
+    boundary: "dock",
+    stopMouseDownPropagation: true,
+    stopClickPropagation: true,
+  });
 
   if (!session || !is_active) return null;
 
@@ -357,9 +345,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
             flexDirection: "column",
             pointerEvents: "auto",
           }}
-          onFocus={clearActiveEditorKeyHandler}
-          onMouseDown={stopDockEventPropagation}
-          onClick={stopDockEventPropagation}
+          {...keyboardBoundaryProps}
         >
           <div
             className="cc-agent-dock-handle"

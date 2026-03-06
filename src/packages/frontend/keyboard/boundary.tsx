@@ -46,6 +46,14 @@ function isEventLike(value: unknown): value is Event {
   );
 }
 
+function isNodeLike(value: unknown): value is Node {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    typeof (value as Node).nodeType === "number"
+  );
+}
+
 function getClosestBoundary(value: unknown): HTMLElement | null {
   if (!isElement(value)) return null;
   const boundary = value.closest(KEYBOARD_BOUNDARY_SELECTOR);
@@ -84,6 +92,19 @@ export function getKeyboardBoundaryElement(value: unknown): HTMLElement | null {
 
 export function isInsideKeyboardBoundary(value: unknown): boolean {
   return getKeyboardBoundaryElement(value) != null;
+}
+
+export function eventTargetsElement(
+  event: unknown,
+  element: Element | null | undefined,
+): boolean {
+  if (!isEventLike(event) || !isElement(element)) return false;
+  for (const entry of getEventPath(event)) {
+    if (entry === element) return true;
+    if (isNodeLike(entry) && element.contains(entry)) return true;
+  }
+  const target = event.target;
+  return isNodeLike(target) ? element.contains(target) : false;
 }
 
 export function isEditableOrKeyboardInteractiveTarget(

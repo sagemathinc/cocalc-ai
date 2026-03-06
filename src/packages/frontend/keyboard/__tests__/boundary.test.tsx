@@ -14,6 +14,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 const {
+  eventTargetsElement,
   KEYBOARD_BOUNDARY_ATTRIBUTE,
   KeyboardBoundary,
   isInsideKeyboardBoundary,
@@ -47,6 +48,21 @@ describe("keyboard boundary helpers", () => {
     Object.defineProperty(event, "target", { value: button });
 
     expect(shouldSuppressGlobalShortcuts(event)).toBe(true);
+  });
+
+  it("detects when an event targets a given element through the DOM path", () => {
+    render(
+      <div data-testid="container">
+        <button data-testid="inside">inside</button>
+      </div>,
+    );
+
+    const container = screen.getByTestId("container");
+    const button = screen.getByTestId("inside");
+    const event = new MouseEvent("click", { bubbles: true });
+    Object.defineProperty(event, "target", { value: button });
+
+    expect(eventTargetsElement(event, container)).toBe(true);
   });
 
   it("suppresses global shortcuts for editable targets even without a boundary", () => {

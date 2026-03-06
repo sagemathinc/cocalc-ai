@@ -6,12 +6,12 @@
 import { debounce } from "lodash";
 import {
   CSS,
-  redux,
   useEffect,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
+import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
@@ -91,15 +91,14 @@ export function FlyoutBody({ flyout, flyoutWidth }: FlyoutBodyProps) {
     overflowX: "hidden",
   };
 
+  const keyboardBoundaryProps = useKeyboardBoundary<HTMLDivElement>({
+    boundary: "flyout",
+    stopMouseDownPropagation: true,
+    stopClickPropagation: true,
+  });
+
   return (
-    <div
-      style={style}
-      onFocus={() => {
-        // Remove any active key handler that is next to this side chat.
-        // E.g, this is critical for task lists...
-        redux.getActions("page").erase_active_key_handler();
-      }}
-    >
+    <div style={style} {...keyboardBoundaryProps}>
       {Body == null ? (
         <div style={{ textAlign: "center", marginTop: "50px" }}>
           <Loading />
