@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { Command } from "commander";
@@ -38,6 +38,19 @@ function artifactSummary(path: string): Record<string, unknown> {
     exists: true,
     size_bytes: stat.size,
     mtime: stat.mtime.toISOString(),
+  };
+}
+
+function readJsonFile(path: string): Record<string, any> {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function packageVersionSummary(path: string): Record<string, unknown> {
+  const pkg = readJsonFile(join(path, "package.json"));
+  return {
+    path,
+    name: pkg.name ?? null,
+    version: pkg.version ?? null,
   };
 }
 
@@ -96,6 +109,69 @@ async function runOrThrow(
 
 function hubSoftwareBaseUrl(apiBaseUrl: string): string {
   return `${apiBaseUrl.replace(/\/+$/, "")}/software`;
+}
+
+function runSyncText(command: string, args: string[], cwd: string): string | null {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+  });
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  const text = `${result.stdout ?? ""}`.trim();
+  return text || null;
+}
+
+function gitSummary(cwd: string): Record<string, unknown> {
+  const commit = runSyncText("git", ["rev-parse", "HEAD"], cwd);
+  const short = runSyncText("git", ["rev-parse", "--short=12", "HEAD"], cwd);
+  const branch = runSyncText("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  const status = runSyncText("git", ["status", "--short"], cwd) ?? "";
+  return {
+    root: cwd,
+    branch,
+    commit,
+    short_commit: short,
+    dirty: status.trim().length > 0,
+    dirty_entries: status
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 20),
+  };
+}
+
+function localRuntimeSummary(): Record<string, unknown> {
+  const srcRoot = repoSrcRoot();
+  const packagesRoot = join(srcRoot, "packages");
+  const staticDist = join(packagesRoot, "static", "dist", "app.html");
+  return {
+    git: gitSummary(resolve(srcRoot, "..")),
+    packages: {
+      cli: packageVersionSummary(join(packagesRoot, "cli")),
+      hub: packageVersionSummary(join(packagesRoot, "hub")),
+      project_host: packageVersionSummary(join(packagesRoot, "project-host")),
+      project: packageVersionSummary(join(packagesRoot, "project")),
+      frontend: packageVersionSummary(join(packagesRoot, "frontend")),
+      static: packageVersionSummary(join(packagesRoot, "static")),
+    },
+    artifacts: {
+      project_host_bundle: artifactSummary(
+        join(packagesRoot, "project-host", "build", "bundle-linux.tar.xz"),
+      ),
+      project_bundle: artifactSummary(
+        join(packagesRoot, "project", "build", "bundle-linux.tar.xz"),
+      ),
+      tools_linux_amd64: artifactSummary(
+        join(packagesRoot, "project", "build", "tools-linux-amd64.tar.xz"),
+      ),
+      tools_linux_arm64: artifactSummary(
+        join(packagesRoot, "project", "build", "tools-linux-arm64.tar.xz"),
+      ),
+      static_app_html: artifactSummary(staticDist),
+    },
+  };
 }
 
 function resolveUpgradeTarget(opts: {
@@ -439,6 +515,85 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             deployed_project_bundle_version: refreshed.project_bundle_version ?? null,
             workspace_restart: restartResult,
             steps,
+          };
+        });
+      },
+    );
+
+  const runtime = dev.command("runtime").description("inspect dev/runtime state");
+
+  runtime
+    .command("versions")
+    .description("show local build artifacts and live runtime versions")
+    .option("--host <host>", "host id or name")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .action(
+      async (
+        opts: { host?: string; workspace?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "dev runtime versions", async (ctx) => {
+          const local = localRuntimeSummary();
+          const remote: Record<string, unknown> = {
+            api_base_url: ctx.apiBaseUrl,
+          };
+
+          try {
+            remote.public_site_url =
+              (await ctx.hub.system.getPublicSiteUrl({})).url ?? null;
+          } catch {
+            remote.public_site_url = null;
+          }
+
+          try {
+            const customize = await ctx.hub.system.getCustomize(["version"]);
+            remote.customize_version = (customize as any)?.version ?? null;
+          } catch {
+            remote.customize_version = null;
+          }
+
+          let workspace:
+            | {
+                project_id: string;
+                title: string;
+                host_id: string | null;
+                state?: unknown;
+              }
+            | undefined;
+          if (opts.workspace?.trim()) {
+            const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace.trim());
+            workspace = ws;
+            remote.workspace = {
+              workspace_id: ws.project_id,
+              title: ws.title,
+              host_id: ws.host_id,
+              state: ws.state ?? null,
+            };
+          }
+
+          const hostIdentifier =
+            `${opts.host ?? ""}`.trim() || `${workspace?.host_id ?? ""}`.trim() || undefined;
+          if (hostIdentifier) {
+            const host = await resolveHost(ctx, hostIdentifier);
+            const connection = await ctx.hub.hosts.resolveHostConnection({
+              host_id: host.id,
+            });
+            remote.host = {
+              host_id: host.id,
+              name: host.name,
+              status: host.status ?? null,
+              version: host.version ?? null,
+              project_bundle_version: host.project_bundle_version ?? null,
+              tools_version: host.tools_version ?? null,
+              connect_url: connection.connect_url ?? null,
+              local_proxy: !!connection.local_proxy,
+              ssh_server: connection.ssh_server ?? null,
+            };
+          }
+
+          return {
+            local,
+            remote,
           };
         });
       },
