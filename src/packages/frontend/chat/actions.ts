@@ -442,6 +442,7 @@ export class ChatActions extends Actions<ChatState> {
     skipModelDispatch,
     acp_loop_config,
     parent_message_id,
+    acpConfigOverride,
   }: {
     input?: string;
     sender_id?: string;
@@ -473,6 +474,8 @@ export class ChatActions extends Actions<ChatState> {
     acp_loop_config?: AcpLoopConfig;
     // direct parent for linear thread placement
     parent_message_id?: string;
+    // explicit ACP config snapshot to use for immediate dispatch
+    acpConfigOverride?: Partial<CodexThreadConfig>;
   }): string => {
     if (this.syncdb == null || this.store == null) {
       console.warn("attempt to sendChat before chat actions initialized");
@@ -518,6 +521,7 @@ export class ChatActions extends Actions<ChatState> {
         explicitParentMessageId || latestMessageId || undefined;
     }
     const trimmedName = name?.trim();
+    let effectiveAcpConfigOverride = acpConfigOverride;
     const message = {
       sender_id,
       event: "chat",
@@ -584,6 +588,7 @@ export class ChatActions extends Actions<ChatState> {
         codexConfig.sessionMode = sessionMode;
         codexConfig.allowWrite = sessionMode !== "read-only";
         threadConfigPatch.acp_config = codexConfig;
+        effectiveAcpConfigOverride = codexConfig;
         threadConfigPatch.agent_kind = "acp";
         threadConfigPatch.agent_model = model;
         threadConfigPatch.agent_mode = "interactive";
@@ -651,6 +656,7 @@ export class ChatActions extends Actions<ChatState> {
           message,
           tag,
           acpSendMode: send_mode,
+          acpConfigOverride: effectiveAcpConfigOverride,
         });
       })();
     }
@@ -1509,12 +1515,14 @@ export class ChatActions extends Actions<ChatState> {
     llm,
     dateLimit,
     acpSendMode,
+    acpConfigOverride,
   }: {
     message: ChatMessage;
     tag?: string;
     llm?: LanguageModel;
     dateLimit?: Date; // only for regenerate, filter history
     acpSendMode?: "immediate";
+    acpConfigOverride?: Partial<CodexThreadConfig>;
   }) => {
     if (this.syncdb == null || !this.store) {
       console.warn("processLLM called before chat actions initialized");
@@ -1537,6 +1545,7 @@ export class ChatActions extends Actions<ChatState> {
       threadModel,
       dateLimit,
       acpSendMode,
+      acpConfigOverride,
     });
   };
 

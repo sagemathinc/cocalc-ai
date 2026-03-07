@@ -281,6 +281,7 @@ type ProcessAcpRequest = {
   input: string;
   actions: ChatActions;
   sendMode?: "immediate";
+  acpConfigOverride?: Partial<CodexThreadConfig>;
 };
 
 export async function processAcpLLM({
@@ -289,6 +290,7 @@ export async function processAcpLLM({
   input,
   actions,
   sendMode,
+  acpConfigOverride,
 }: ProcessAcpRequest): Promise<void> {
   const { syncdb, store, chatStreams } = actions;
   if (syncdb == null || store == null) return;
@@ -342,7 +344,10 @@ export async function processAcpLLM({
     threadMeta.loop_state.loop_id.trim()
       ? (threadMeta.loop_state as AcpLoopState)
       : undefined);
-  const config = actions.getCodexConfig?.(thread_id);
+  const config = {
+    ...(actions.getCodexConfig?.(thread_id) ?? {}),
+    ...(acpConfigOverride ?? {}),
+  };
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
   // If thread_config.sessionId has not been persisted yet, recover it from the
@@ -358,7 +363,7 @@ export async function processAcpLLM({
     }
     return undefined;
   })();
-  const effectiveSessionId = config?.sessionId ?? inferredSessionId;
+  const effectiveSessionId = config.sessionId ?? inferredSessionId;
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
@@ -493,7 +498,7 @@ export async function processAcpLLM({
               path,
               config:
                 effectiveSessionId != null
-                  ? { ...(config ?? {}), sessionId: effectiveSessionId }
+                  ? { ...config, sessionId: effectiveSessionId }
                   : config,
               model: normalizedModel,
             }),

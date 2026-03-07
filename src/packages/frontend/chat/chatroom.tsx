@@ -55,6 +55,8 @@ import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import type { CodexThreadConfig } from "@cocalc/chat";
+import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -818,6 +820,30 @@ export function ChatPanel({
 
     clearComposerNow(composerDraftKey);
 
+    const acpConfigOverride =
+      !reply_thread_id && newThreadSetup.agentMode === "codex"
+        ? (() => {
+            const model =
+              newThreadSetup.codexConfig.model?.trim() ||
+              newThreadSetup.model?.trim();
+            if (!model) return undefined;
+            const next: Partial<CodexThreadConfig> = {
+              ...newThreadSetup.codexConfig,
+              model,
+            };
+            const sessionMode = resolveCodexSessionMode(
+              next as CodexThreadConfig,
+            );
+            next.sessionMode = sessionMode;
+            next.allowWrite = sessionMode !== "read-only";
+            return next;
+          })()
+        : reply_thread_id && existingThreadMetadata?.agent_kind === "acp"
+          ? existingThreadMetadata.acp_config ??
+            actions.getCodexConfig?.(reply_thread_id) ??
+            undefined
+          : undefined;
+
     const timeStamp = actions.sendChat({
       submitMentionsRef,
       reply_thread_id,
@@ -864,6 +890,7 @@ export function ChatPanel({
           (!reply_thread_id && newThreadSetup.agentMode === "codex"))
           ? composerLoopConfig
           : undefined,
+      acpConfigOverride,
     });
     if (!timeStamp) {
       // If send preconditions fail after optimistic clear (e.g. transient

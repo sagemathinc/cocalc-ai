@@ -22,6 +22,7 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import { addToHistory } from "@cocalc/chat";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
+import type { CodexThreadConfig } from "@cocalc/chat";
 import type { ChatMessage, MessageHistory } from "../types";
 import type { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import { processAcpLLM } from "../acp-api";
@@ -75,6 +76,7 @@ export async function processLLM({
   threadModel,
   dateLimit,
   acpSendMode,
+  acpConfigOverride,
 }: {
   actions: ChatActions;
   message: ChatMessage;
@@ -83,6 +85,7 @@ export async function processLLM({
   threadModel?: LanguageModel | false | null;
   dateLimit?: Date;
   acpSendMode?: "immediate";
+  acpConfigOverride?: Partial<CodexThreadConfig>;
 }): Promise<void> {
   const { syncdb, store } = actions;
   if (!syncdb || !store) return;
@@ -115,6 +118,7 @@ export async function processLLM({
       model,
       input: acpInput,
       sendMode: effectiveAcpSendMode,
+      acpConfigOverride,
     });
     return;
   }

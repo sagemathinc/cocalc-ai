@@ -193,4 +193,86 @@ describe("processAcpLLM", () => {
     expect(arg.config?.sessionId).toBe("codex-session-123");
     expect(arg.chat.reply_to).toBeUndefined();
   });
+
+  it("prefers explicit ACP config override over lookup defaults", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(3000);
+    jest
+      .spyOn(global, "setTimeout")
+      .mockImplementation(((fn: any) => {
+        fn();
+        return 0 as any;
+      }) as any);
+    mockStreamAcp.mockResolvedValue(emptyStream());
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const messageDate = new Date(3000);
+    const actions: any = {
+      syncdb: {},
+      store,
+      chatStreams: new Set<string>(),
+      computeThreadKey: jest.fn(() => "3000"),
+      getAllMessages: () =>
+        new Map<string, any>([
+          [
+            "3000",
+            {
+              date: messageDate,
+              message_id: "root-msg-3",
+              thread_id: "thread-3",
+            },
+          ],
+        ]),
+      getCodexConfig: jest.fn(() => undefined),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: messageDate,
+      message_id: "user-msg-3",
+      thread_id: "thread-3",
+      history: [
+        {
+          author_id: "user-1",
+          content: "run codex",
+          date: messageDate.toISOString(),
+        },
+      ],
+    };
+
+    await processAcpLLM({
+      message,
+      model: "gpt-5.3-codex-spark",
+      input: "run codex",
+      actions,
+      acpConfigOverride: {
+        model: "gpt-5.3-codex-spark",
+        sessionMode: "full-access",
+        reasoning: "extra_high",
+      },
+    });
+
+    const arg = mockStreamAcp.mock.calls[0][0];
+    expect(arg.config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.3-codex-spark",
+        sessionMode: "full-access",
+        reasoning: "extra_high",
+        allowWrite: true,
+      }),
+    );
+  });
 });

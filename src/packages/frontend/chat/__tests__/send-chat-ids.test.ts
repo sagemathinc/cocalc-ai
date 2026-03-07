@@ -176,6 +176,35 @@ describe("sendChat identity fields", () => {
     );
   });
 
+  it("passes normalized new-thread codex config directly to ACP dispatch", async () => {
+    const actions = makeActions();
+
+    actions.sendChat({
+      input: "launch codex",
+      threadAgent: {
+        mode: "codex",
+        model: "gpt-5.3-codex-spark",
+        codexConfig: {
+          model: "gpt-5.3-codex-spark",
+          sessionMode: "full-access",
+          reasoning: "extra_high",
+        } as any,
+      },
+    });
+    await Promise.resolve();
+
+    expect(actions.processLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        acpConfigOverride: expect.objectContaining({
+          model: "gpt-5.3-codex-spark",
+          sessionMode: "full-access",
+          reasoning: "extra_high",
+          allowWrite: true,
+        }),
+      }),
+    );
+  });
+
   it("writes reply messages with inherited thread_id and parent_message_id", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootIso = rootDate.toISOString();
