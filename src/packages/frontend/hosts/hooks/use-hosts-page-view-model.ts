@@ -41,6 +41,64 @@ const DEFAULT_HOSTS_VIEW_MODE: HostListViewMode = "grid";
 const DEFAULT_SORT_FIELD: HostSortField = "name";
 const DEFAULT_SORT_DIRECTION: HostSortDirection = "asc";
 const DEFAULT_AUTO_RESORT = false;
+const HOST_UPGRADE_RECOVERY_WINDOW_MS = 2 * 60 * 1000;
+
+function normalizeUpgradeBaseUrl(base_url?: string): string | null {
+  const value = `${base_url ?? ""}`.trim();
+  return value || null;
+}
+
+function canonicalizeUpgradeArtifact(
+  artifact: string | undefined,
+): HostSoftwareArtifact | undefined {
+  if (artifact === "project-bundle") return "project";
+  if (
+    artifact === "project-host" ||
+    artifact === "project" ||
+    artifact === "tools"
+  ) {
+    return artifact;
+  }
+  return undefined;
+}
+
+function normalizeUpgradeArtifacts(
+  artifacts: Array<string | HostSoftwareArtifact>,
+): HostSoftwareArtifact[] {
+  return Array.from(
+    new Set(
+      artifacts
+        .map((artifact) => canonicalizeUpgradeArtifact(`${artifact}`))
+        .filter((artifact): artifact is HostSoftwareArtifact => !!artifact),
+    ),
+  ).sort();
+}
+
+function lroTimestampMs(value?: Date | string | null): number {
+  if (!value) return 0;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function matchesUpgradeRequest({
+  summary,
+  artifacts,
+  base_url,
+}: {
+  summary: { input?: any };
+  artifacts: HostSoftwareArtifact[];
+  base_url?: string;
+}): boolean {
+  const input = summary.input ?? {};
+  const summaryTargets = normalizeUpgradeArtifacts(
+    Array.isArray(input.targets)
+      ? input.targets.map((target: any) => target?.artifact)
+      : [],
+  );
+  if (summaryTargets.length !== artifacts.length) return false;
+  if (summaryTargets.join(",") !== artifacts.join(",")) return false;
+  return normalizeUpgradeBaseUrl(input.base_url) === normalizeUpgradeBaseUrl(base_url);
+}
 
 function readHostViewMode(): HostListViewMode {
   if (typeof window === "undefined") {
@@ -183,6 +241,54 @@ export const useHostsPageViewModel = () => {
     refresh,
     onHostOp: trackHostOp,
   });
+  const recoverTimedOutUpgrade = React.useCallback(
+    async ({
+      host,
+      artifacts,
+      base_url,
+    }: {
+      host: Host;
+      artifacts: HostSoftwareArtifact[];
+      base_url?: string;
+    }): Promise<boolean> => {
+      try {
+        const ops = await hub.lro.list({
+          scope_type: "host",
+          scope_id: host.id,
+          include_completed: true,
+        });
+        const cutoff = Date.now() - HOST_UPGRADE_RECOVERY_WINDOW_MS;
+        const candidate = ops
+          .filter(
+            (summary) =>
+              summary.kind === "host-upgrade-software" &&
+              lroTimestampMs(summary.updated_at ?? summary.created_at) >= cutoff &&
+              matchesUpgradeRequest({ summary, artifacts, base_url }),
+          )
+          .sort(
+            (a, b) =>
+              lroTimestampMs(b.updated_at ?? b.created_at) -
+              lroTimestampMs(a.updated_at ?? a.created_at),
+          )[0];
+        if (!candidate) {
+          return false;
+        }
+        if (candidate.status === "queued" || candidate.status === "running") {
+          trackHostOp(host.id, {
+            op_id: candidate.op_id,
+            scope_id: candidate.scope_id,
+            kind: candidate.kind,
+          });
+        }
+        await Promise.all([refreshHostOps({ force: true }), refresh()]);
+        return candidate.status !== "failed";
+      } catch (recoveryErr) {
+        console.error("failed to recover timed out host upgrade", recoveryErr);
+        return false;
+      }
+    },
+    [hub, refresh, refreshHostOps, trackHostOp],
+  );
   const runUpgrade = React.useCallback(
     async (
       host: Host,
@@ -209,10 +315,17 @@ export const useHostsPageViewModel = () => {
         trackHostOp(host.id, op);
         await refresh();
       } catch (err) {
-        console.error(err);
+        const recovered = await recoverTimedOutUpgrade({
+          host,
+          artifacts,
+          base_url: opts?.base_url,
+        });
+        if (!recovered) {
+          console.error(err);
+        }
       }
     },
-    [hub, refresh, trackHostOp],
+    [hub, recoverTimedOutUpgrade, refresh, trackHostOp],
   );
   const upgradeHostSoftware = React.useCallback(
     async (host: Host) => {
