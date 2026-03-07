@@ -14,6 +14,10 @@ import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { MarkdownTextAdapter, SlateRichTextAdapter } from "./adapters";
 import { BLURED_STYLE, FOCUSED_STYLE } from "./component";
+import {
+  restoreSelectionWithRetry,
+  retrySelectionApply,
+} from "./selection-utils";
 import type {
   MarkdownPosition,
   Mode,
@@ -232,37 +236,29 @@ export default function MultiMarkdownInput({
     const pending = pendingModeSelectionRef.current;
     if (!pending || pending.to !== mode) return;
     if (mode === "editor") {
-      let attempts = 0;
-      const tryApply = () => {
-        attempts += 1;
-        const applied =
-          slateControlRef.current?.setSelectionFromMarkdownPosition?.(
-            pending.pos,
-          ) ?? false;
-        if (applied) {
-          pendingModeSelectionRef.current = null;
-          return;
-        }
-        if (attempts < 5) {
-          setTimeout(tryApply, 30);
-        }
-      };
-      tryApply();
-      return;
+      return retrySelectionApply({
+        apply: () => {
+          const applied =
+            slateControlRef.current?.setSelectionFromMarkdownPosition?.(
+              pending.pos,
+            ) ?? false;
+          if (applied) {
+            pendingModeSelectionRef.current = null;
+          }
+          return applied;
+        },
+      });
     }
     if (mode === "markdown") {
-      let attempts = 0;
-      const tryApply = () => {
-        attempts += 1;
-        if (applyMarkdownSelection(pending.pos)) {
-          pendingModeSelectionRef.current = null;
-          return;
-        }
-        if (attempts < 5) {
-          setTimeout(tryApply, 30);
-        }
-      };
-      tryApply();
+      return retrySelectionApply({
+        apply: () => {
+          const applied = applyMarkdownSelection(pending.pos);
+          if (applied) {
+            pendingModeSelectionRef.current = null;
+          }
+          return applied;
+        },
+      });
     }
   }, [mode, slateControlRef]);
 
@@ -270,26 +266,16 @@ export default function MultiMarkdownInput({
     if (cacheId == null) {
       return;
     }
+    let cancelRestore = () => {};
     const cache = getCache();
     if (cache?.[mode] != null && selectionRef.current != null) {
-      // restore selection on mount.
-      try {
-        selectionRef.current.setSelection(cache?.[mode]);
-      } catch (_err) {
-        // it might just be that the document isn't initialized yet
-        setTimeout(() => {
-          try {
-            selectionRef.current?.setSelection(cache?.[mode]);
-          } catch (_err2) {
-            //  console.warn(_err2); // definitely don't need this.
-            // This is expected to fail, since the selection from last
-            // use will be invalid now if another user changed the
-            // document, etc., or you did in a different mode, possibly.
-          }
-        }, 100);
-      }
+      cancelRestore = restoreSelectionWithRetry({
+        getController: () => selectionRef.current,
+        selection: cache[mode],
+      });
     }
     return () => {
+      cancelRestore();
       if (selectionRef.current == null || cacheId == null) {
         return;
       }
