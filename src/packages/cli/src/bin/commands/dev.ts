@@ -731,11 +731,11 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                   },
             app: {
               app_id: spec.id,
-              kind: spec.spec.kind,
-              title: spec.spec.title,
-              base_path: spec.spec.proxy?.base_path ?? null,
-              open_mode: spec.spec.proxy?.open_mode ?? null,
-              health: spec.spec.proxy?.health ?? null,
+              kind: spec.kind,
+              title: spec.title,
+              base_path: spec.proxy?.base_path ?? null,
+              open_mode: spec.proxy?.open_mode ?? null,
+              health: spec.proxy?.health ?? null,
               status,
             },
             chain: [
@@ -794,10 +794,10 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                   },
             app: {
               app_id: spec.id,
-              kind: spec.spec.kind,
-              title: spec.spec.title,
-              base_path: spec.spec.proxy?.base_path ?? null,
-              open_mode: spec.spec.proxy?.open_mode ?? null,
+              kind: spec.kind,
+              title: spec.title,
+              base_path: spec.proxy?.base_path ?? null,
+              open_mode: spec.proxy?.open_mode ?? null,
               status,
             },
           };

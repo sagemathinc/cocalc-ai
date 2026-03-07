@@ -84,6 +84,7 @@ fetch_native_pkg() {
   echo "  (fetching ${pkg} from npm)"
   (
     cd "$tmp"
+    export npm_config_cache="$tmp/.npm-cache"
     npm pack --silent "$pkg" >/dev/null
     local tgz
     tgz=$(ls *.tgz | head -n1)
@@ -108,6 +109,7 @@ fetch_openat_binary() {
   echo "  (fetching ${pkg} binary ${filename} from npm)"
   (
     cd "$tmp"
+    export npm_config_cache="$tmp/.npm-cache"
     npm pack --silent "$pkg" >/dev/null
     local tgz
     tgz=$(ls *.tgz | head -n1)

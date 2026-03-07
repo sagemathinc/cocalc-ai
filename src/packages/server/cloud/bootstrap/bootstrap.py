@@ -1405,9 +1405,12 @@ def configure_cloudflared(cfg: BootstrapConfig) -> None:
     if cfg.cloudflared.creds_json:
         Path(f"/etc/cloudflared/{cfg.cloudflared.tunnel_id}.json").write_text(cfg.cloudflared.creds_json, encoding="utf-8")
         os.chmod(f"/etc/cloudflared/{cfg.cloudflared.tunnel_id}.json", 0o600)
+    def yaml_quote(value: str) -> str:
+        return json.dumps(value)
+
     ingress_lines = [
         "ingress:",
-        f"  - hostname: {cfg.cloudflared.hostname}",
+        f"  - hostname: {yaml_quote(cfg.cloudflared.hostname)}",
         f"    service: http://localhost:{cfg.cloudflared.port}",
     ]
     if (
@@ -1416,14 +1419,14 @@ def configure_cloudflared(cfg: BootstrapConfig) -> None:
     ):
         ingress_lines.extend(
             [
-                f"  - hostname: {cfg.cloudflared.app_public_wildcard}",
+                f"  - hostname: {yaml_quote(cfg.cloudflared.app_public_wildcard)}",
                 f"    service: http://localhost:{cfg.cloudflared.port}",
             ]
         )
     if cfg.cloudflared.ssh_hostname and cfg.cloudflared.ssh_port:
         ingress_lines.extend(
             [
-                f"  - hostname: {cfg.cloudflared.ssh_hostname}",
+                f"  - hostname: {yaml_quote(cfg.cloudflared.ssh_hostname)}",
                 f"    service: ssh://localhost:{cfg.cloudflared.ssh_port}",
             ]
         )
