@@ -33,7 +33,7 @@ import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
 import { useMentionableUsers } from "./mentionable-users";
 import { submit_mentions } from "./mentions";
-import { EditorFunctions } from "./multimode";
+import { EditorFunctions } from "./types";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 
