@@ -58,7 +58,10 @@ const logger = getLogger("sync:core-stream");
 
 const PUBLISH_MANY_BATCH_SIZE = 500;
 
-const DEFAULT_GET_ALL_TIMEOUT = 15000;
+const DEFAULT_GET_ALL_TIMEOUT = 30_000;
+const GET_ALL_RETRY_START = 1_500;
+const GET_ALL_RETRY_MAX = 30_000;
+const GET_ALL_RETRY_DECAY = 1.5;
 
 const log = (..._args) => {};
 //const log = console.log;
@@ -151,6 +154,22 @@ export function storagePath({
   return join(userPath, name);
 }
 
+const stats = {
+  created: 0,
+  closed: 0,
+  active: 0,
+  syncFromPersistRuns: 0,
+  syncFromPersistRetries: 0,
+  listenLoops: 0,
+  listenRecoveries: 0,
+  missingRecoveryRuns: 0,
+  missingRecoveryRetries: 0,
+};
+
+export function getCoreStreamDebugStats() {
+  return { ...stats };
+}
+
 export class CoreStream<T = any> extends EventEmitter {
   public readonly name: string;
 
@@ -195,6 +214,8 @@ export class CoreStream<T = any> extends EventEmitter {
   }: CoreStreamOptions) {
     super();
     logger.debug("constructor", name);
+    stats.created += 1;
+    stats.active += 1;
     if (client == null) {
       throw Error("client must be specified");
     }
@@ -261,6 +282,7 @@ export class CoreStream<T = any> extends EventEmitter {
       },
       { start: 750 },
     );
+    void this.listen();
   };
 
   debugStats = () => {
@@ -287,6 +309,8 @@ export class CoreStream<T = any> extends EventEmitter {
 
   close = () => {
     logger.debug("close", this.name);
+    stats.closed += 1;
+    stats.active = Math.max(0, stats.active - 1);
     delete this.client;
     this.removeAllListeners();
     this.persistClient?.close();
@@ -318,6 +342,7 @@ export class CoreStream<T = any> extends EventEmitter {
     if (this.storage == null) {
       throw Error("bug -- storage must be set");
     }
+    stats.syncFromPersistRuns += 1;
     await until(
       async () => {
         let messages: StoredMessage[] = [];
@@ -343,6 +368,7 @@ export class CoreStream<T = any> extends EventEmitter {
               `WARNING: getAllFromPersist - failed -- ${err}, code=${err.code}, service=${this.service}, storage=${JSON.stringify(this.storage)} -- will retry`,
             );
           }
+          stats.syncFromPersistRetries += 1;
           if (err.code == 503 || err.code == 408) {
             // 503: temporary error due to messages being dropped,
             // so return false to try again. This is expected to
@@ -374,10 +400,12 @@ export class CoreStream<T = any> extends EventEmitter {
         // success!
         return true;
       },
-      { start: 1000, max: 15000 },
+      {
+        start: GET_ALL_RETRY_START,
+        max: GET_ALL_RETRY_MAX,
+        decay: GET_ALL_RETRY_DECAY,
+      },
     );
-
-    this.listen();
   };
 
   private processPersistentMessages = (
@@ -586,63 +614,52 @@ export class CoreStream<T = any> extends EventEmitter {
   };
 
   private listen = async () => {
-    // log("core-stream: listen", this.storage);
-    await until(
-      async () => {
-        if (this.isClosed()) {
-          return true;
-        }
-        try {
-          if (this.changefeed == null) {
-            this.changefeed = await this.persistClient.changefeed();
-            if (this.isClosed()) {
-              return true;
-            }
-          }
-
-          for await (const updates of this.changefeed) {
-            this.processPersistentMessages(updates, {
-              noEmit: false,
-              noSeqCheck: false,
-            });
-            if (this.isClosed()) {
-              return true;
-            }
-          }
-        } catch (err) {
-          // There should never be a case where the changefeed throws
-          // an error or ends without this whole streaming being closed.
-          // If that happens its an unexpected bug. Instead of failing,
-          // we log this, loop around, and make a new changefeed.
-          // This normally doesn't happen but could if a persist server is being restarted
-          // frequently or things are seriously broken.  We cause this in
-          //    backend/conat/test/core/core-stream-break.test.ts
-          if (!process.env.COCALC_TEST_MODE) {
-            log(
-              `WARNING: core-stream changefeed error -- ${err}`,
-              this.storage,
-            );
+    stats.listenLoops += 1;
+    while (!this.isClosed()) {
+      try {
+        if (this.changefeed == null) {
+          this.changefeed = await this.persistClient.changefeed();
+          if (this.isClosed()) {
+            return;
           }
         }
 
-        delete this.changefeed;
-
-        // above loop exits when the persistent server
-        // stops sending messages for some reason. In that
-        // case we reconnect, picking up where we left off.
-
-        if (this.client == null) {
-          return true;
+        for await (const updates of this.changefeed) {
+          this.processPersistentMessages(updates, {
+            noEmit: false,
+            noSeqCheck: false,
+          });
+          if (this.isClosed()) {
+            return;
+          }
         }
+      } catch (err) {
+        // There should never be a case where the changefeed throws
+        // an error or ends without this whole streaming being closed.
+        // If that happens its an unexpected bug. Instead of failing,
+        // we log this, loop around, and make a new changefeed.
+        // This normally doesn't happen but could if a persist server is being restarted
+        // frequently or things are seriously broken.  We cause this in
+        //    backend/conat/test/core/core-stream-break.test.ts
+        if (!process.env.COCALC_TEST_MODE) {
+          log(`WARNING: core-stream changefeed error -- ${err}`, this.storage);
+        }
+      }
 
-        await this.getAllFromPersist({
-          start_seq: this.lastSeq + 1,
-          noEmit: false,
-        });
-        return false;
-      },
-      { start: 500, max: 7500, decay: 1.2 },
-    );
+      delete this.changefeed;
+
+      // Above loop exits when the persistent server
+      // stops sending messages for some reason. In that
+      // case we reconnect, picking up where we left off.
+      if (this.client == null) {
+        return;
+      }
+      stats.listenRecoveries += 1;
+      await this.getAllFromPersist({
+        start_seq: this.lastSeq + 1,
+        noEmit: false,
+      });
+    }
   };
 
   publish = async (
@@ -884,6 +901,7 @@ export class CoreStream<T = any> extends EventEmitter {
   };
 
   private getAllMissingMessages = reuseInFlight(async () => {
+    stats.missingRecoveryRuns += 1;
     await until(
       async () => {
         if (this.client == null || this.missingMessages.size == 0) {
@@ -905,6 +923,7 @@ export class CoreStream<T = any> extends EventEmitter {
             this.missingMessages.delete(seq);
           }
         } catch (err) {
+          stats.missingRecoveryRetries += 1;
           log(
             "core-stream: WARNING -- issue getting missing updates",
             err,
@@ -913,7 +932,11 @@ export class CoreStream<T = any> extends EventEmitter {
         }
         return false;
       },
-      { start: 1000, max: 15000, decay: 1.3 },
+      {
+        start: GET_ALL_RETRY_START,
+        max: GET_ALL_RETRY_MAX,
+        decay: GET_ALL_RETRY_DECAY,
+      },
     );
   });
 
