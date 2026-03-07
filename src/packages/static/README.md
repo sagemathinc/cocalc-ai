@@ -26,9 +26,12 @@ If your machine is memory constrained, there is now a lower-memory watch mode:
 pnpm watch:low-mem
 ```
 
-This does **not** keep rspack resident. Instead it polls the `packages/` tree for
-changes and runs one-shot `pnpm rspack build` after a short debounce. It is slower
-than `pnpm watch`, but steady-state RAM usage is much lower.
+This does **not** keep TypeScript or rspack resident. Instead it polls the
+`packages/` tree for changes, runs a one-shot
+`pnpm tsc --build --pretty tsconfig.solution.json`, and only if that succeeds
+runs one-shot `pnpm rspack build`. It is slower than `pnpm watch`, but
+steady-state RAM usage is much lower and you do not get fresh bundles for
+obviously type-broken code.
 
 This is the same as `pnpm run webpack`, but with more aggressive chunking, caching, minification, etc. It's interesting to test this before making a release, in case something surprising changes or to make sure the size of the bundle hasn't got too big. Also, check in the Network tab of Chrome dev tools that loading cocalc doesn't transfer too much data \(e.g., due to installing a huge package\).
 
