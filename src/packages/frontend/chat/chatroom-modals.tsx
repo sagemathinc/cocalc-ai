@@ -307,9 +307,10 @@ export function ChatRoomModals({
         title,
         sourceTitle: forkThread.label,
         isAI: forkThread.isAI,
+        selectNewThread: false,
       });
-      antdMessage.success("Chat forked.");
       closeForkModal();
+      antdMessage.success("Chat forked.");
     } catch (err) {
       console.error("failed to fork chat", err);
       antdMessage.error("Failed to fork chat.");

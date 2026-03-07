@@ -798,6 +798,50 @@ describe("deleteThread identity targeting", () => {
     });
   });
 
+  it("can fork without auto-selecting the new thread", async () => {
+    const rootDate = new Date("2026-02-21T17:59:00.000Z");
+    const rootIso = rootDate.toISOString();
+    const rootMs = rootDate.valueOf();
+    const messages = new Map<string, any>([
+      [
+        `${rootMs}`,
+        {
+          event: "chat",
+          sender_id: "00000000-1000-4000-8000-000000000001",
+          date: rootDate,
+          message_id: "root-msg-3",
+          thread_id: "thread-source-3",
+          history: [
+            {
+              author_id: "00000000-1000-4000-8000-000000000001",
+              content: "root",
+              date: rootIso,
+            },
+          ],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+
+    const newThreadId = await actions.forkThread({
+      threadKey: "thread-source-3",
+      title: "Fork without selecting",
+      sourceTitle: "Original chat",
+      isAI: false,
+      selectNewThread: false,
+    });
+
+    expect(newThreadId).toBeTruthy();
+    expect(actions.setSelectedThread).not.toHaveBeenCalled();
+    const cfgRow = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === newThreadId,
+      );
+    expect(cfgRow?.name).toBe("Fork without selecting");
+  });
+
   it("does not delete by timestamp keys anymore", () => {
     const thread = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const root = new Date("2026-02-21T20:00:00.000Z");
