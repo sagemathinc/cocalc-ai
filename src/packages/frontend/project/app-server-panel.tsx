@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Checkbox, Divider, Input, Modal, Popconfirm, Select, Space, Spin, Tag } from "antd";
 import type {
   AppSpec,
@@ -63,9 +63,83 @@ interface StartupFailureDetails {
   stderrTail?: string;
 }
 
+interface PortableAppSpecBundle {
+  version: 1;
+  kind: "cocalc-app-spec-bundle";
+  exported_at: string;
+  workspace_id: string;
+  apps: AppSpec[];
+  skipped?: Array<{ id: string; path?: string; error: string }>;
+}
+
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
   return new Error(`${err}`);
+}
+
+function asPortableSpec(input: unknown, context: string): AppSpec {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`${context} must be a JSON object`);
+  }
+  const id = `${(input as any).id ?? ""}`.trim();
+  if (!id) {
+    throw new Error(`${context}.id must be a non-empty string`);
+  }
+  return input as AppSpec;
+}
+
+function createPortableBundle(
+  projectId: string,
+  apps: AppSpec[],
+  skipped?: Array<{ id: string; path?: string; error: string }>,
+): PortableAppSpecBundle {
+  return {
+    version: 1,
+    kind: "cocalc-app-spec-bundle",
+    exported_at: new Date().toISOString(),
+    workspace_id: projectId,
+    apps,
+    skipped: skipped?.length ? skipped : undefined,
+  };
+}
+
+function parseImportPayload(input: unknown): {
+  format: "single" | "bundle";
+  apps: AppSpec[];
+  sourceWorkspaceId?: string;
+} {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Import file must contain a JSON object.");
+  }
+  const obj = input as Record<string, any>;
+  if (Array.isArray(obj.apps)) {
+    return {
+      format: "bundle",
+      apps: obj.apps.map((spec, idx) => asPortableSpec(spec, `apps[${idx}]`)),
+      sourceWorkspaceId:
+        typeof obj.workspace_id === "string" && obj.workspace_id.trim()
+          ? obj.workspace_id.trim()
+          : undefined,
+    };
+  }
+  return {
+    format: "single",
+    apps: [asPortableSpec(obj, "spec")],
+  };
+}
+
+function downloadJsonFile(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function defaultBasePath(appId: string): string {
@@ -368,6 +442,8 @@ export function AppServerPanel({
   const [publicAppPolicy, setPublicAppPolicy] = useState<
     PublicAppPolicy | undefined
   >(undefined);
+  const [transferBusy, setTransferBusy] = useState<boolean>(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -914,6 +990,91 @@ export function AppServerPanel({
     }
   }
 
+  async function onExport(id: string) {
+    try {
+      setTransferBusy(true);
+      setError(undefined);
+      let spec = specById[id];
+      if (!spec) {
+        spec = await api.apps.getAppSpec(id);
+        setSpecById((prev) => ({ ...prev, [id]: spec }));
+      }
+      downloadJsonFile(`${id}.app.json`, spec);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function onExportAll() {
+    try {
+      setTransferBusy(true);
+      setError(undefined);
+      const records = await api.apps.listAppSpecs();
+      const apps: AppSpec[] = [];
+      const skipped: Array<{ id: string; path?: string; error: string }> = [];
+      for (const row of records) {
+        if (row.spec) {
+          apps.push(row.spec);
+        } else {
+          skipped.push({
+            id: row.id,
+            path: row.path,
+            error: row.error ?? "spec unavailable",
+          });
+        }
+      }
+      downloadJsonFile(
+        `${project_id}-managed-apps.json`,
+        createPortableBundle(project_id, apps, skipped),
+      );
+      if (skipped.length > 0) {
+        Modal.warning({
+          title: "Exported with skipped invalid app specs",
+          content: `Exported ${apps.length} app(s). Skipped ${skipped.length} invalid spec file(s).`,
+        });
+      }
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function onImportFile(file: File) {
+    try {
+      setTransferBusy(true);
+      setError(undefined);
+      const raw = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        throw new Error(`Failed to parse ${file.name} as JSON: ${err}`);
+      }
+      const { format, apps, sourceWorkspaceId } = parseImportPayload(parsed);
+      for (const spec of apps) {
+        await api.apps.upsertAppSpec(spec);
+      }
+      await refresh();
+      Modal.success({
+        title: `Imported ${apps.length} app${apps.length === 1 ? "" : "s"}`,
+        content:
+          format === "bundle" && sourceWorkspaceId
+            ? `Imported from workspace ${sourceWorkspaceId}.`
+            : undefined,
+      });
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setTransferBusy(false);
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    }
+  }
+
   function useDetectedPort(portValue: number) {
     setPresetKey("");
     const nextId = `${appId ?? ""}`.trim() || `app-${portValue}`;
@@ -1065,6 +1226,17 @@ export function AppServerPanel({
         Create and manage applications for this workspace, including private
         service apps and static apps.
       </Paragraph>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          void onImportFile(file);
+        }}
+      />
       <ShowError error={error} setError={() => setError(undefined)} />
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
         <Select
@@ -1213,6 +1385,15 @@ export function AppServerPanel({
           </Button>
           <Button onClick={() => void refresh()} disabled={loading}>
             Refresh
+          </Button>
+          <Button onClick={() => void onExportAll()} loading={transferBusy}>
+            Export all
+          </Button>
+          <Button
+            onClick={() => importInputRef.current?.click()}
+            disabled={transferBusy}
+          >
+            Import JSON
           </Button>
           <Button onClick={() => void onDetect()} loading={detecting}>
             Detect running HTTP apps
@@ -1478,6 +1659,13 @@ export function AppServerPanel({
                     onClick={() => void onLogs(row.id)}
                   >
                     Logs
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => void onExport(row.id)}
+                    loading={transferBusy}
+                  >
+                    Export
                   </Button>
                   <Button
                     size="small"
