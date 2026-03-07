@@ -52,6 +52,7 @@ import {
   type ChatThreadLoopState,
 } from "@cocalc/chat";
 import {
+  DEFAULT_CODEX_MODEL_NAME,
   resolveCodexSessionMode,
   isCodexModelName,
   type CodexSessionMode,
@@ -575,7 +576,7 @@ export class ChatActions extends Actions<ChatState> {
         threadConfigPatch.agent_model = null;
         threadConfigPatch.agent_mode = null;
       } else if (agentMode === "codex") {
-        const model = agentModel || "gpt-5.3-codex";
+        const model = agentModel || DEFAULT_CODEX_MODEL_NAME;
         const defaultSessionMode: CodexSessionMode = lite
           ? "read-only"
           : "workspace-write";
@@ -1682,7 +1683,7 @@ export class ChatActions extends Actions<ChatState> {
     if (!threadId) {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
-    const model = config.model ?? "gpt-5.3-codex";
+    const model = config.model ?? DEFAULT_CODEX_MODEL_NAME;
     this.setThreadConfigRecord(
       threadKey,
       {
@@ -1726,7 +1727,7 @@ export class ChatActions extends Actions<ChatState> {
     const next: CodexThreadConfig = {
       ...current,
       ...patch,
-      model: patch?.model ?? current.model ?? "gpt-5.3-codex",
+      model: patch?.model ?? current.model ?? DEFAULT_CODEX_MODEL_NAME,
     };
     this.setCodexConfig(threadKey, next);
   };
@@ -1804,7 +1805,7 @@ export class ChatActions extends Actions<ChatState> {
       }
     }
     if (nextConfig && !nextConfig.model) {
-      nextConfig.model = "gpt-5.3-codex";
+      nextConfig.model = DEFAULT_CODEX_MODEL_NAME;
     }
 
     const now = webapp_client.server_time();
@@ -1853,7 +1854,7 @@ export class ChatActions extends Actions<ChatState> {
       agent_model:
         nextConfig?.model ??
         sourceMetadata.agent_model ??
-        (shouldForkAcp ? "gpt-5.3-codex" : null),
+        (shouldForkAcp ? DEFAULT_CODEX_MODEL_NAME : null),
       agent_mode:
         nextConfig != null
           ? "interactive"

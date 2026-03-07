@@ -23,6 +23,25 @@ describe("computeAcpStateToRender", () => {
     expect(state).toBe("queue");
   });
 
+  it("hides sending and running states for viewer messages", () => {
+    expect(
+      computeAcpStateToRender({
+        acpState: "sending",
+        latestThreadInterrupted: false,
+        isViewersMessage: true,
+        generating: false,
+      }),
+    ).toBe("");
+    expect(
+      computeAcpStateToRender({
+        acpState: "running",
+        latestThreadInterrupted: false,
+        isViewersMessage: true,
+        generating: false,
+      }),
+    ).toBe("");
+  });
+
   it("hides running state for non-viewer messages unless generating", () => {
     expect(
       computeAcpStateToRender({

@@ -17,6 +17,7 @@ import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
 import {
+  DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   isCodexModelName,
   resolveCodexSessionMode,
@@ -58,7 +59,8 @@ const CHAT_LOG_STYLE: React.CSSProperties = {
   position: "relative",
 } as const;
 
-const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+const DEFAULT_CODEX_MODEL =
+  DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
 const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   ? "read-only"
   : "workspace-write";

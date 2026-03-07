@@ -27,6 +27,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { path_split } from "@cocalc/util/misc";
 import {
+  DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
   type CodexReasoningId,
@@ -59,7 +60,8 @@ interface ChatRoomModalsProps {
 }
 
 type ThreadAgentMode = "codex" | "human" | "model";
-const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+const DEFAULT_CODEX_MODEL =
+  DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
 const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   ? "read-only"
   : "workspace-write";

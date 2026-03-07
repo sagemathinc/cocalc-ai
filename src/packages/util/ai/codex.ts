@@ -48,9 +48,11 @@ export function resolveCodexSessionMode(
   return "auto";
 }
 
+export const DEFAULT_CODEX_MODEL_NAME = "gpt-5.4";
+
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
-    name: "gpt-5.3-codex",
+    name: DEFAULT_CODEX_MODEL_NAME,
     description: "Latest frontier agentic coding model.",
     reasoning: [
       {
@@ -77,7 +79,7 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     ],
   },
   {
-    name: "gpt-5.4",
+    name: "gpt-5.3-codex",
     description: "Latest frontier agentic coding model.",
     reasoning: [
       {
