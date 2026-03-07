@@ -32,6 +32,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { backtickSequence } from "@cocalc/frontend/markdown/util";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -610,6 +611,20 @@ function splitCommitMessage(message?: string): {
     subject: subject || undefined,
     body: body.trim() ? body : undefined,
   };
+}
+
+export function isMergeCommitSummary(summary?: GitShowSummary): boolean {
+  return (
+    summary?.extraHeaderLines?.some((line) => /^Merge:\s+/i.test(`${line ?? ""}`)) ??
+    false
+  );
+}
+
+export function formatMergeCommitBodyMarkdown(body?: string): string | undefined {
+  const text = `${body ?? ""}`.trim();
+  if (!text) return undefined;
+  const fence = backtickSequence(text);
+  return `${fence}\n${text}\n${fence}`;
 }
 
 type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
@@ -2912,7 +2927,12 @@ export function GitCommitDrawer({
                       ) : null}
                       {commitMessage.body ? (
                         <StaticMarkdown
-                          value={commitMessage.body}
+                          value={
+                            isMergeCommitSummary(summary)
+                              ? formatMergeCommitBodyMarkdown(commitMessage.body) ??
+                                commitMessage.body
+                              : commitMessage.body
+                          }
                           style={{
                             fontSize: Math.max(13, fontSize),
                             lineHeight: 1.55,
