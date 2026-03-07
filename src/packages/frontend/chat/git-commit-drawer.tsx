@@ -185,6 +185,38 @@ async function runGitCommand({
   });
 }
 
+export function buildGitShowArgs({
+  isHeadSelected,
+  contextLines,
+  commit,
+}: {
+  isHeadSelected: boolean;
+  contextLines: number;
+  commit?: string;
+}): string[] {
+  if (isHeadSelected) {
+    return [
+      "-c",
+      "core.pager=cat",
+      "diff",
+      "--no-color",
+      "--patch",
+      `-U${contextLines}`,
+      "HEAD",
+    ];
+  }
+  return [
+    "-c",
+    "core.pager=cat",
+    "show",
+    "--no-color",
+    "--patch",
+    `-U${contextLines}`,
+    "--format=fuller",
+    `${commit ?? ""}`,
+  ];
+}
+
 function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
   const allLines = `${stdout ?? ""}`.split(/\r?\n/);
   const linesTruncated = allLines.length > MAX_GIT_SHOW_LINES;
@@ -1942,30 +1974,11 @@ export function GitCommitDrawer({
     setData(undefined);
     (async () => {
       try {
-        const args = isHeadSelected
-          ? [
-              "-c",
-              "core.pager=cat",
-              "diff",
-              "--no-color",
-              "--patch",
-              "--find-renames",
-              "--find-copies",
-              `-U${contextLines}`,
-              "HEAD",
-            ]
-          : [
-              "-c",
-              "core.pager=cat",
-              "show",
-              "--no-color",
-              "--patch",
-              "--find-renames",
-              "--find-copies",
-              `-U${contextLines}`,
-              "--format=fuller",
-              commit,
-            ];
+        const args = buildGitShowArgs({
+          isHeadSelected,
+          contextLines,
+          commit,
+        });
         const showResult = await runGitCommand({
           projectId,
           cwd: repoRoot || cwd,
