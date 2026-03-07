@@ -5,7 +5,7 @@ Edit with either plain text input **or** WYSIWYG slate-based input.
 import { Popover, Radio } from "antd";
 import { fromJS } from "immutable";
 import LRU from "lru-cache";
-import { MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
@@ -14,15 +14,10 @@ import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { MarkdownTextAdapter, SlateRichTextAdapter } from "./adapters";
 import { BLURED_STYLE, FOCUSED_STYLE } from "./component";
-import {
-  restoreSelectionWithRetry,
-  retrySelectionApply,
-} from "./selection-utils";
+import { useMultimodeSelection } from "./use-multimode-selection";
 import type {
-  MarkdownPosition,
   Mode,
   MultiMarkdownInputProps,
-  SelectionController,
 } from "./types";
 
 // NOTE: on mobile there is very little suppport for "editor" = "slate", but
@@ -133,10 +128,6 @@ export default function MultiMarkdownInput({
   const isAutoGrow = autoGrow ?? height === "auto";
   const internalControlRef = useRef<any>(null);
   const slateControlRef = controlRef ?? internalControlRef;
-  const pendingModeSelectionRef = useRef<{
-    to: Mode;
-    pos: { line: number; ch: number };
-  } | null>(null);
 
   const getKey = () => `${project_id}${path}:${cacheId}`;
 
@@ -220,72 +211,19 @@ export default function MultiMarkdownInput({
     return cursors == null ? undefined : fromJS(cursors);
   }, [cursors]);
 
-  const selectionRef = useRef<{
-    getSelection: Function;
-    setSelection: Function;
-  } | null>(null) as MutableRefObject<SelectionController | null>;
-
-  const applyMarkdownSelection = (pos: MarkdownPosition) => {
-    const selection = selectionRef.current;
-    if (selection?.setSelection == null) return false;
-    selection.setSelection([{ anchor: pos, head: pos }]);
-    return true;
-  };
-
-  useEffect(() => {
-    const pending = pendingModeSelectionRef.current;
-    if (!pending || pending.to !== mode) return;
-    if (mode === "editor") {
-      return retrySelectionApply({
-        apply: () => {
-          const applied =
-            slateControlRef.current?.setSelectionFromMarkdownPosition?.(
-              pending.pos,
-            ) ?? false;
-          if (applied) {
-            pendingModeSelectionRef.current = null;
-          }
-          return applied;
-        },
-      });
-    }
-    if (mode === "markdown") {
-      return retrySelectionApply({
-        apply: () => {
-          const applied = applyMarkdownSelection(pending.pos);
-          if (applied) {
-            pendingModeSelectionRef.current = null;
-          }
-          return applied;
-        },
-      });
-    }
-  }, [mode, slateControlRef]);
-
-  useEffect(() => {
-    if (cacheId == null) {
-      return;
-    }
-    let cancelRestore = () => {};
-    const cache = getCache();
-    if (cache?.[mode] != null && selectionRef.current != null) {
-      cancelRestore = restoreSelectionWithRetry({
-        getController: () => selectionRef.current,
-        selection: cache[mode],
-      });
-    }
-    return () => {
-      cancelRestore();
-      if (selectionRef.current == null || cacheId == null) {
-        return;
-      }
-      const selection = selectionRef.current.getSelection();
-      multimodeStateCache.set(getKey(), {
-        ...getCache(),
-        [mode]: selection,
-      });
-    };
-  }, [mode]);
+  const { selectionRef, rememberPendingSelection, getMarkdownPositionForSelection } =
+    useMultimodeSelection({
+      cacheId,
+      mode,
+      getCachedSelection: () => getCache()?.[mode],
+      saveCachedSelection: (selection) => {
+        multimodeStateCache.set(getKey(), {
+          ...getCache(),
+          [mode]: selection,
+        });
+      },
+      richTextControlRef: slateControlRef,
+    });
 
   function toggleEditBarPopover() {
     setEditBarPopover(!editBarPopover);
@@ -424,7 +362,7 @@ export default function MultiMarkdownInput({
           onAltEnter={(value, pos) => {
             onChangeRef.current?.(value);
             if (pos) {
-              pendingModeSelectionRef.current = { to: "editor", pos };
+              rememberPendingSelection("editor", pos);
             }
             setMode("editor");
           }}
@@ -482,10 +420,9 @@ export default function MultiMarkdownInput({
           }}
           onAltEnter={(value) => {
             onChangeRef.current?.(value);
-            const pos =
-              slateControlRef.current?.getMarkdownPositionForSelection?.();
+            const pos = getMarkdownPositionForSelection();
             if (pos) {
-              pendingModeSelectionRef.current = { to: "markdown", pos };
+              rememberPendingSelection("markdown", pos);
             }
             setMode("markdown");
           }}

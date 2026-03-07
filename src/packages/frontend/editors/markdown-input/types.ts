@@ -24,6 +24,11 @@ export interface SelectionController {
   getSelection: () => any;
 }
 
+export interface RichTextSelectionBridgeControl {
+  getMarkdownPositionForSelection?: () => MarkdownPosition | null | undefined;
+  setSelectionFromMarkdownPosition?: (pos: MarkdownPosition) => boolean;
+}
+
 export interface MultiMarkdownInputProps {
   cacheId?: string;
   value?: string;
@@ -72,7 +77,7 @@ export interface MultiMarkdownInputProps {
   disableBlockEditor?: boolean;
   overflowEllipsis?: boolean;
   dirtyRef?: MutableRefObject<boolean>;
-  controlRef?: MutableRefObject<any>;
+  controlRef?: MutableRefObject<RichTextSelectionBridgeControl | any>;
   preserveBlankLines?: boolean;
   slateExternalMultilinePasteAsCodeBlock?: boolean;
 }
