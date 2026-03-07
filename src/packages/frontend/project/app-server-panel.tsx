@@ -67,6 +67,9 @@ interface AppServerPreset {
   staticRefreshTimeout?: string;
   staticRefreshOnHit?: boolean;
   note?: string;
+  installCommand?: string;
+  installHint?: string;
+  installAgentPrompt?: string;
 }
 
 interface StartupFailureDetails {
@@ -75,6 +78,9 @@ interface StartupFailureDetails {
   errorMessage: string;
   stdoutTail?: string;
   stderrTail?: string;
+  installCommand?: string;
+  installHint?: string;
+  installAgentPrompt?: string;
 }
 
 interface PortableAppSpecBundle {
@@ -267,6 +273,38 @@ function buildPublicUrlFromExposure(
   return hostname ? `https://${hostname}` : undefined;
 }
 
+function normalizeCommand(exec?: string, args?: string[]): string {
+  return exec ? [exec, ...(args ?? [])].join(" ").trim() : "";
+}
+
+function matchPresetForSpec(
+  spec: AppSpec | undefined,
+  presets: AppServerPreset[],
+): AppServerPreset | undefined {
+  if (!spec) return;
+  const byId = presets.find((preset) => preset.id === spec.id);
+  if (byId) return byId;
+  if (spec.kind === "service") {
+    const command = normalizeCommand(spec.command?.exec, spec.command?.args);
+    return presets.find(
+      (preset) =>
+        preset.kind === "service" &&
+        normalizeCommand("bash", ["-lc", preset.command ?? ""]) === command,
+    );
+  }
+  if (spec.kind === "static") {
+    return presets.find(
+      (preset) =>
+        preset.kind === "static" &&
+        `${preset.staticIndex ?? ""}`.trim() ===
+          `${spec.static?.index ?? ""}`.trim() &&
+        `${preset.staticRefreshCommand ?? ""}`.trim() ===
+          `${spec.static?.refresh?.command?.args?.[1] ?? ""}`.trim(),
+    );
+  }
+  return;
+}
+
 function isPositiveIntegerText(value: string): boolean {
   const text = `${value ?? ""}`.trim();
   if (!text) return false;
@@ -285,6 +323,11 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       preferredPort: "6002",
       serviceOpenMode: "port",
       healthPath: "/lab",
+      installCommand: "python3 -m pip install --user jupyterlab",
+      installHint:
+        "JupyterLab is a Python package. Install it into the workspace environment, then start this app again.",
+      installAgentPrompt:
+        "Install JupyterLab in the current workspace so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
       command:
         "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
     },
@@ -296,6 +339,11 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       title: "code-server",
       preferredPort: "6004",
       serviceOpenMode: "proxy",
+      installCommand: "curl -fsSL https://code-server.dev/install.sh | sh",
+      installHint:
+        "code-server is not installed in this workspace image yet. The upstream installer works well on most Linux systems.",
+      installAgentPrompt:
+        "Install code-server in the current workspace so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
       command:
         "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
     },
@@ -307,6 +355,11 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       title: "Pluto",
       preferredPort: "6005",
       serviceOpenMode: "proxy",
+      installCommand: "julia -e 'using Pkg; Pkg.add(\"Pluto\")'",
+      installHint:
+        "Pluto needs Julia plus the Pluto package in this workspace environment.",
+      installAgentPrompt:
+        "Install Pluto for the current workspace so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
       command:
         "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
     },
@@ -318,6 +371,10 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       title: "RStudio Server",
       preferredPort: "6006",
       serviceOpenMode: "proxy",
+      installHint:
+        "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
+      installAgentPrompt:
+        "Set up RStudio Server (rserver) in the current Linux workspace or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
       command:
         "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
     },
@@ -466,6 +523,20 @@ export function AppServerPanel({
     () => presets.find((preset) => preset.key === presetKey),
     [presets, presetKey],
   );
+  const installedTemplateMap = useMemo(
+    () =>
+      Object.fromEntries(
+        installedTemplates.map((item) => [item.key, item] as const),
+      ) as Record<string, InstalledAppTemplate | undefined>,
+    [installedTemplates],
+  );
+  const activePresetTemplate = activePreset
+    ? installedTemplateMap[activePreset.key]
+    : undefined;
+  const unavailableActivePreset =
+    activePreset && activePresetTemplate && !activePresetTemplate.available
+      ? activePreset
+      : undefined;
 
   const canSaveForm = useMemo(() => {
     const id = `${appId ?? ""}`.trim();
@@ -622,6 +693,11 @@ export function AppServerPanel({
     setCreatorInitialized(true);
   }, [creatorInitialized, loading, rows.length]);
 
+  useEffect(() => {
+    if (detectingInstalledTemplates || installedTemplates.length > 0) return;
+    void onDetectInstalledTemplates();
+  }, [detectingInstalledTemplates, installedTemplates.length]);
+
   function applyPreset(nextKey: string) {
     const preset = presets.find((x) => x.key === nextKey);
     if (!preset) return;
@@ -657,6 +733,84 @@ export function AppServerPanel({
     setExpandedRows((prev) => ({
       ...prev,
       [id]: !prev[id],
+    }));
+  }
+
+  async function sendAgentPrompt(prompt: string, tag: string) {
+    const text = `${prompt ?? ""}`.trim();
+    if (!text) return;
+    try {
+      setSubmittingToAgent(true);
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
+        prompt: text,
+        tag,
+        forceCodex: true,
+        openFloating: true,
+      });
+      if (!sent) {
+        dispatchNavigatorPromptIntent({
+          prompt: text,
+          tag,
+          forceCodex: true,
+        });
+      }
+    } finally {
+      setSubmittingToAgent(false);
+    }
+  }
+
+  async function resolveInstalledTemplateMap(): Promise<
+    Record<string, InstalledAppTemplate | undefined>
+  > {
+    if (installedTemplates.length > 0) return installedTemplateMap;
+    const next = await api.apps.detectInstalledTemplates();
+    setInstalledTemplates(next);
+    return Object.fromEntries(
+      next.map((item) => [item.key, item] as const),
+    ) as Record<string, InstalledAppTemplate | undefined>;
+  }
+
+  async function getMissingInstallForSpec(spec: AppSpec | undefined): Promise<
+    | {
+        preset: AppServerPreset;
+        template?: InstalledAppTemplate;
+      }
+    | undefined
+  > {
+    const preset = matchPresetForSpec(spec, presets);
+    if (!preset || preset.kind !== "service") return;
+    const map = await resolveInstalledTemplateMap();
+    const template = map[preset.key];
+    if (!template?.available) {
+      return { preset, template };
+    }
+    return;
+  }
+
+  function reportMissingInstall({
+    appId,
+    action,
+    preset,
+    template,
+  }: {
+    appId: string;
+    action: "start" | "start-after-save";
+    preset: AppServerPreset;
+    template?: InstalledAppTemplate;
+  }) {
+    const details = `${template?.details ?? ""}`.trim();
+    const message = `${preset.label} is not installed in this workspace yet. Install it, then start this app again.`;
+    setStartupFailures((prev) => ({
+      ...prev,
+      [appId]: {
+        appId,
+        action,
+        errorMessage: details ? `${message} (${details})` : message,
+        installCommand: preset.installCommand,
+        installHint: preset.installHint,
+        installAgentPrompt: preset.installAgentPrompt,
+      },
     }));
   }
 
@@ -830,7 +984,21 @@ export function AppServerPanel({
       createdId = id;
       let status = await api.apps.statusApp(id);
       if (startNow && spec.kind === "service") {
-        status = await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
+        const missingInstall = await getMissingInstallForSpec(spec);
+        if (missingInstall) {
+          await refresh();
+          reportMissingInstall({
+            appId: id,
+            action: "start-after-save",
+            preset: missingInstall.preset,
+            template: missingInstall.template,
+          });
+          return;
+        }
+        status = await api.apps.ensureRunning(id, {
+          timeout: 90_000,
+          interval: 1000,
+        });
       }
       await refresh();
       if (openWhenReady && status.state === "running") {
@@ -857,6 +1025,18 @@ export function AppServerPanel({
       setSubmitting(true);
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
+      const spec = specById[id] ?? (await api.apps.getAppSpec(id));
+      setSpecById((prev) => ({ ...prev, [id]: spec }));
+      const missingInstall = await getMissingInstallForSpec(spec);
+      if (missingInstall) {
+        reportMissingInstall({
+          appId: id,
+          action: "start",
+          preset: missingInstall.preset,
+          template: missingInstall.template,
+        });
+        return;
+      }
       await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
       await refresh();
     } catch (err) {
@@ -948,36 +1128,12 @@ export function AppServerPanel({
       setError(undefined);
       const next = await api.apps.auditAppPublicReadiness(id);
       setAudit(next);
-      await sendAuditToAgent(next.agent_prompt);
+      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit");
     } catch (err) {
       setError(normalizeError(err));
     } finally {
       setSubmitting(false);
       setRowAction(null);
-    }
-  }
-
-  async function sendAuditToAgent(prompt: string) {
-    const text = `${prompt ?? ""}`.trim();
-    if (!text) return;
-    try {
-      setSubmittingToAgent(true);
-      const sent = await submitNavigatorPromptToCurrentThread({
-        project_id,
-        prompt: text,
-        tag: "intent:app-server-audit",
-        forceCodex: true,
-        openFloating: true,
-      });
-      if (!sent) {
-        dispatchNavigatorPromptIntent({
-          prompt: text,
-          tag: "intent:app-server-audit",
-          forceCodex: true,
-        });
-      }
-    } finally {
-      setSubmittingToAgent(false);
     }
   }
 
@@ -1019,6 +1175,18 @@ export function AppServerPanel({
       for (const id of ids) {
         setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
         try {
+          const spec = specById[id] ?? (await api.apps.getAppSpec(id));
+          setSpecById((prev) => ({ ...prev, [id]: spec }));
+          const missingInstall = await getMissingInstallForSpec(spec);
+          if (missingInstall) {
+            reportMissingInstall({
+              appId: id,
+              action: "start",
+              preset: missingInstall.preset,
+              template: missingInstall.template,
+            });
+            continue;
+          }
           await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
         } catch (err) {
           await reportStartupFailure({ appId: id, action: "start", err });
@@ -1377,6 +1545,7 @@ export function AppServerPanel({
               value={presetKey || undefined}
               placeholder="Preset (optional)"
               allowClear
+              style={{ width: "100%", minWidth: "320px" }}
               onClear={() => setPresetKey("")}
               onChange={(value) => applyPreset(value)}
               options={presets.map((preset) => ({
@@ -1386,6 +1555,57 @@ export function AppServerPanel({
             />
             {activePreset?.note ? (
               <Alert type="info" showIcon message={activePreset.note} />
+            ) : null}
+            {unavailableActivePreset && activePresetTemplate ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={`${unavailableActivePreset.label} is not installed yet`}
+                description={
+                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    <div>
+                      {unavailableActivePreset.installHint ??
+                        "Install this runtime in the workspace before trying to start the app."}
+                    </div>
+                    {activePresetTemplate.details ? (
+                      <div style={{ opacity: 0.8 }}>
+                        Detected state: {activePresetTemplate.details}
+                      </div>
+                    ) : null}
+                    {unavailableActivePreset.installCommand ? (
+                      <div
+                        style={{
+                          fontFamily: "monospace",
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
+                          padding: "8px",
+                          background: "#fafafa",
+                          border: "1px solid #eee",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        {unavailableActivePreset.installCommand}
+                      </div>
+                    ) : null}
+                    {unavailableActivePreset.installAgentPrompt ? (
+                      <div>
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            void sendAgentPrompt(
+                              unavailableActivePreset.installAgentPrompt ?? "",
+                              "intent:app-server-install",
+                            )
+                          }
+                          loading={submittingToAgent}
+                        >
+                          Install with agent
+                        </Button>
+                      </div>
+                    ) : null}
+                  </Space>
+                }
+              />
             ) : null}
             <Collapse
               defaultActiveKey={["basics", kind === "service" ? "runtime" : "static"]}
@@ -1902,10 +2122,42 @@ export function AppServerPanel({
                   description={
                     <div style={{ display: "grid", gap: "8px" }}>
                       <div>{startupFailure.errorMessage}</div>
+                      {startupFailure.installHint ? (
+                        <div style={{ opacity: 0.85 }}>{startupFailure.installHint}</div>
+                      ) : null}
+                      {startupFailure.installCommand ? (
+                        <div
+                          style={{
+                            fontFamily: "monospace",
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                            padding: "8px",
+                            background: "#fafafa",
+                            border: "1px solid #eee",
+                            borderRadius: "6px",
+                          }}
+                        >
+                          {startupFailure.installCommand}
+                        </div>
+                      ) : null}
                       <Space wrap>
                         <Button size="small" onClick={() => void onLogs(row.id)}>
                           View full logs
                         </Button>
+                        {startupFailure.installAgentPrompt ? (
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              void sendAgentPrompt(
+                                startupFailure.installAgentPrompt ?? "",
+                                "intent:app-server-install",
+                              )
+                            }
+                            loading={submittingToAgent}
+                          >
+                            Install with agent
+                          </Button>
+                        ) : null}
                       </Space>
                       {startupFailure.stderrTail ? (
                         renderLogTailBlock({
@@ -1970,7 +2222,9 @@ export function AppServerPanel({
               size="small"
               type="primary"
               loading={submittingToAgent}
-              onClick={() => void sendAuditToAgent(audit.agent_prompt)}
+              onClick={() =>
+                void sendAgentPrompt(audit.agent_prompt, "intent:app-server-audit")
+              }
             >
               Send to Codex
             </Button>
