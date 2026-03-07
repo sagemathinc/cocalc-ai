@@ -920,6 +920,7 @@ export function ChatRoomThreadPanel({
               chatPath={path ?? ""}
               projectId={project_id}
               actions={actions}
+              threadConfig={selectedThreadMeta?.acp_config ?? null}
               paymentSource={codexPaymentSource}
               paymentSourceLoading={codexPaymentSourceLoading}
               refreshPaymentSource={refreshCodexPaymentSource}
