@@ -39,9 +39,10 @@ const ignoreDirs = new Set([
 if (help) {
   console.log(`Low-memory rspack watch mode.
 
-This polls the packages tree for changes and runs one-shot "pnpm rspack build"
-after a short debounce. It uses much less resident memory than "pnpm rspack build -w"
-because rspack is only alive while actually building.
+This polls the packages tree for changes, runs a one-shot TypeScript solution
+build, and only if that succeeds runs one-shot "pnpm rspack build".
+It uses much less resident memory than long-lived watch modes because neither
+TypeScript nor rspack stay resident between builds.
 
 Usage:
   pnpm watch:low-mem
@@ -86,6 +87,27 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function runStep({ label, cwd, args, env }) {
+  console.log(
+    `[low-mem-watch] ${label} start (${formatTs(Date.now())}) cwd=${cwd}`,
+  );
+  const child = spawn("pnpm", args, {
+    cwd,
+    env,
+    stdio: "inherit",
+  });
+  const exitCode = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", resolve);
+  });
+  if (exitCode !== 0) {
+    throw new Error(`${label} failed with exit code ${exitCode}`);
+  }
+  console.log(
+    `[low-mem-watch] ${label} done  (${formatTs(Date.now())}) cwd=${cwd}`,
+  );
+}
+
 async function runBuild(targetMtimeMs) {
   console.log(
     `[low-mem-watch] build start (${formatTs(Date.now())}) target=${Math.trunc(
@@ -97,18 +119,18 @@ async function runBuild(targetMtimeMs) {
     NODE_ENV: process.env.NODE_ENV || "development",
     NO_RSPACK_DEV_SERVER: process.env.NO_RSPACK_DEV_SERVER || "yes",
   };
-  const child = spawn("pnpm", ["rspack", "build"], {
-    cwd: staticRoot,
+  await runStep({
+    label: "tsc",
+    cwd: packagesRoot,
+    args: ["tsc", "--build", "--pretty", "tsconfig.solution.json"],
     env,
-    stdio: "inherit",
   });
-  const exitCode = await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("exit", resolve);
+  await runStep({
+    label: "rspack",
+    cwd: staticRoot,
+    args: ["rspack", "build"],
+    env,
   });
-  if (exitCode !== 0) {
-    throw new Error(`rspack build failed with exit code ${exitCode}`);
-  }
   console.log(
     `[low-mem-watch] build done  (${formatTs(Date.now())}) target=${Math.trunc(
       targetMtimeMs,
@@ -126,11 +148,11 @@ process.on("SIGTERM", () => {
 
 async function main() {
   let lastObservedMtimeMs = await newestMtimeMs(packagesRoot);
-  let lastBuiltMtimeMs = 0;
+  let lastHandledMtimeMs = 0;
   let queuedAtMs = skipInitial ? undefined : Date.now();
 
   if (skipInitial) {
-    lastBuiltMtimeMs = lastObservedMtimeMs;
+    lastHandledMtimeMs = lastObservedMtimeMs;
   } else {
     console.log("[low-mem-watch] initial build queued");
   }
@@ -148,12 +170,18 @@ async function main() {
     if (
       queuedAtMs != null &&
       Date.now() - queuedAtMs >= debounceMs &&
-      lastBuiltMtimeMs < lastObservedMtimeMs
+      lastHandledMtimeMs < lastObservedMtimeMs
     ) {
       const target = lastObservedMtimeMs;
       queuedAtMs = undefined;
-      await runBuild(target);
-      lastBuiltMtimeMs = target;
+      try {
+        await runBuild(target);
+      } catch (err) {
+        console.error(
+          `[low-mem-watch] ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      lastHandledMtimeMs = target;
       continue;
     }
 
@@ -162,6 +190,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`[low-mem-watch] ${err instanceof Error ? err.message : err}`);
+  console.error(
+    `[low-mem-watch] fatal: ${err instanceof Error ? err.message : err}`,
+  );
   process.exit(1);
 });
