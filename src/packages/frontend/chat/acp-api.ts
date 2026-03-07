@@ -5,6 +5,7 @@ import type {
   AcpLoopState,
 } from "@cocalc/conat/ai/acp/types";
 import {
+  DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
   type CodexSessionConfig,
@@ -672,7 +673,7 @@ function buildAcpConfig({
   const opts: CodexSessionConfig = {
     workingDirectory,
   };
-  const defaultModel = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+  const defaultModel = DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
   const selectedModel = config?.model ?? model ?? defaultModel;
   if (selectedModel) {
     opts.model = selectedModel;
