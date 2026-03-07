@@ -189,7 +189,21 @@ export default function MultiMarkdownInput({
     }
   };
   const [focused, setFocused] = useState<boolean>(!!autoFocus);
-  const ignoreBlur = useRef<boolean>(false);
+  const internalInteractionRef = useRef<"mode-switch" | null>(null);
+
+  function beginModeSwitchInteraction() {
+    internalInteractionRef.current = "mode-switch";
+  }
+
+  function endModeSwitchInteraction() {
+    if (internalInteractionRef.current === "mode-switch") {
+      internalInteractionRef.current = null;
+    }
+  }
+
+  function shouldSuppressBlur() {
+    return internalInteractionRef.current != null;
+  }
 
   const cursorsMap = useMemo(() => {
     return cursors == null ? undefined : fromJS(cursors);
@@ -327,18 +341,11 @@ export default function MultiMarkdownInput({
       }}
     >
       <div
-        onMouseDown={() => {
-          // Clicking the checkbox blurs the edit field, but
-          // this is the one case we do NOT want to trigger the
-          // onBlur callback, since that would make switching
-          // back and forth between edit modes impossible.
-          ignoreBlur.current = true;
-          setTimeout(() => (ignoreBlur.current = false), 100);
-        }}
-        onTouchStart={() => {
-          ignoreBlur.current = true;
-          setTimeout(() => (ignoreBlur.current = false), 100);
-        }}
+        onMouseDown={beginModeSwitchInteraction}
+        onMouseUp={endModeSwitchInteraction}
+        onTouchStart={beginModeSwitchInteraction}
+        onTouchEnd={endModeSwitchInteraction}
+        onTouchCancel={endModeSwitchInteraction}
       >
         {showModeSwitch && (
           <div
@@ -389,6 +396,7 @@ export default function MultiMarkdownInput({
                 } else {
                   setMode(mode as Mode);
                 }
+                queueMicrotask(endModeSwitchInteraction);
               }}
               value={mode}
               optionType="button"
@@ -440,7 +448,7 @@ export default function MultiMarkdownInput({
           hideHelp={hideHelp}
           onBlur={(value) => {
             onChangeRef.current?.(value);
-            if (!ignoreBlur.current) {
+            if (!shouldSuppressBlur()) {
               onBlur?.();
             }
           }}
@@ -501,7 +509,7 @@ export default function MultiMarkdownInput({
           }}
           onBlur={() => {
             setFocused(false);
-            if (!ignoreBlur.current) {
+            if (!shouldSuppressBlur()) {
               onBlur?.();
             }
           }}

@@ -193,9 +193,18 @@ describe("MultiMarkdownInput wrapper contract", () => {
       latestEditableProps.onBlur();
     });
     expect(onBlur).not.toHaveBeenCalled();
+  });
+
+  it("stops suppressing blur once mode-switch interaction has ended", () => {
+    const onBlur = jest.fn();
+
+    render(<MultiMarkdownInput value="" onChange={() => {}} onBlur={onBlur} />);
+
+    const markdownButton = screen.getByRole("button", { name: "markdown" });
+    fireEvent.mouseDown(markdownButton);
+    fireEvent.mouseUp(markdownButton);
 
     act(() => {
-      jest.advanceTimersByTime(101);
       latestEditableProps.onBlur();
     });
     expect(onBlur).toHaveBeenCalledTimes(1);
