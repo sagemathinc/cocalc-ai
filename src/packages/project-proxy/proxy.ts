@@ -34,6 +34,9 @@ interface StartOptions {
     req: http.IncomingMessage,
     socket: Socket | Duplex,
   ) => void;
+  rewriteRequest?: (
+    req: http.IncomingMessage,
+  ) => Promise<void> | void;
 }
 
 function parseProjectId(url: string | undefined): string | null {
@@ -92,12 +95,16 @@ export async function startProxyServer({
 export function createProxyHandlers({
   resolveTarget = defaultResolveTarget,
   onUpgradeAuthorized,
+  rewriteRequest,
 }: {
   resolveTarget?: ResolveFn;
   onUpgradeAuthorized?: (
     req: http.IncomingMessage,
     socket: Socket | Duplex,
   ) => void;
+  rewriteRequest?: (
+    req: http.IncomingMessage,
+  ) => Promise<void> | void;
 } = {}) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -126,6 +133,7 @@ export function createProxyHandlers({
     res: http.ServerResponse,
   ) => {
     try {
+      await rewriteRequest?.(req);
       const { target, handled } = await resolveTarget(req, res);
       if (handled && !target) return;
       if (!handled || !target) throw new Error("not matched");
@@ -144,6 +152,7 @@ export function createProxyHandlers({
     head: Buffer,
   ) => {
     try {
+      await rewriteRequest?.(req);
       const { target, handled } = await resolveTarget(req);
       if (!handled || !target) {
         throw new Error("not matched");
@@ -177,6 +186,7 @@ export function attachProjectProxy({
   app,
   resolveTarget = defaultResolveTarget,
   onUpgradeAuthorized,
+  rewriteRequest,
 }: {
   httpServer: http.Server;
   app: express.Application;
@@ -185,6 +195,9 @@ export function attachProjectProxy({
     req: http.IncomingMessage,
     socket: Socket | Duplex,
   ) => void;
+  rewriteRequest?: (
+    req: http.IncomingMessage,
+  ) => Promise<void> | void;
 }) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -204,6 +217,7 @@ export function attachProjectProxy({
   });
 
   app.use(async (req, res, next) => {
+    await rewriteRequest?.(req);
     // Only proxy URLs that start with a project UUID segment.
     if (!parseProjectId(req.url)) return next();
     try {
@@ -226,6 +240,7 @@ export function attachProjectProxy({
   });
 
   httpServer.prependListener("upgrade", async (req, socket, head) => {
+    await rewriteRequest?.(req);
     // Only proxy project-scoped websocket upgrades.
     if (!parseProjectId(req.url)) return;
     try {

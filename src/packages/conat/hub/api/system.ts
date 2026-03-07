@@ -123,6 +123,7 @@ export interface ProjectAppPublicPolicy {
   enabled: boolean;
   launchpad: boolean;
   site_hostname?: string;
+  host_hostname?: string;
   dns_domain?: string;
   subdomain_suffix: string;
   provider?: string;
@@ -145,6 +146,7 @@ export interface PublicAppHostnameTrace {
   app_id?: string;
   base_path?: string;
   site_hostname?: string;
+  host_hostname?: string;
   dns_domain?: string;
   subdomain_suffix?: string;
   dns_target?: string;
@@ -378,6 +380,7 @@ export interface System {
 
   tracePublicAppHostname: (opts: {
     account_id?: string;
+    host_id?: string;
     hostname: string;
   }) => Promise<PublicAppHostnameTrace>;
 

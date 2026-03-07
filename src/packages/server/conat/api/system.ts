@@ -1,5 +1,6 @@
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
+import getPool from "@cocalc/database/pool";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
 import manageApiKeys from "@cocalc/server/api/manage";
@@ -840,6 +841,7 @@ export async function removeBrowserSession({
 
 async function resolveProjectContext(opts: {
   account_id?: string;
+  host_id?: string;
   project_id?: string;
 }): Promise<string> {
   const project_id = `${opts.project_id ?? ""}`.trim();
@@ -849,25 +851,43 @@ async function resolveProjectContext(opts: {
   if (opts.account_id) {
     await assertProjectCollaborator(opts.account_id, project_id);
   }
+  if (opts.host_id) {
+    const { rows } = await getPool().query<{ host_id: string | null }>(
+      "SELECT host_id FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    const assigned = `${rows[0]?.host_id ?? ""}`.trim();
+    if (!assigned || assigned !== opts.host_id) {
+      throw Error("project is not assigned to this host");
+    }
+  }
   return project_id;
 }
 
 export async function getProjectAppPublicPolicy({
   account_id,
+  host_id,
   project_id,
 }: {
   account_id?: string;
+  host_id?: string;
   project_id?: string;
 }) {
-  const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
+  const resolvedProjectId = await resolveProjectContext({
+    account_id,
+    host_id,
+    project_id,
+  });
   return await getProjectAppPublicPolicyRaw(resolvedProjectId);
 }
 
 export async function tracePublicAppHostname({
   account_id,
+  host_id,
   hostname,
 }: {
   account_id?: string;
+  host_id?: string;
   hostname: string;
 }) {
   const normalized = `${hostname ?? ""}`.trim().toLowerCase();
@@ -881,14 +901,20 @@ export async function tracePublicAppHostname({
       hostname: normalized,
     };
   }
-  if (!account_id) {
+  if (!account_id && !host_id) {
     throw Error("must be signed in");
   }
-  await assertProjectCollaborator(account_id, target.project_id);
+  if (account_id) {
+    await assertProjectCollaborator(account_id, target.project_id);
+  }
+  if (host_id) {
+    await resolveProjectContext({ host_id, project_id: target.project_id });
+  }
   const policy = await getProjectAppPublicPolicyRaw(target.project_id);
+  const dnsTargetHostname = policy.host_hostname ?? policy.site_hostname;
   const dns_target =
-    policy.site_hostname != null
-      ? await resolvePublicAppDnsTarget(policy.site_hostname)
+    dnsTargetHostname != null
+      ? await resolvePublicAppDnsTarget(dnsTargetHostname)
       : undefined;
   return {
     matched: true,
@@ -897,6 +923,7 @@ export async function tracePublicAppHostname({
     app_id: target.app_id,
     base_path: target.base_path,
     site_hostname: policy.site_hostname,
+    host_hostname: policy.host_hostname,
     dns_domain: policy.dns_domain,
     subdomain_suffix: policy.subdomain_suffix,
     dns_target,
@@ -907,6 +934,7 @@ export async function tracePublicAppHostname({
 
 export async function reserveProjectAppPublicSubdomain({
   account_id,
+  host_id,
   project_id,
   app_id,
   base_path,
@@ -915,6 +943,7 @@ export async function reserveProjectAppPublicSubdomain({
   random_subdomain,
 }: {
   account_id?: string;
+  host_id?: string;
   project_id?: string;
   app_id: string;
   base_path: string;
@@ -922,7 +951,11 @@ export async function reserveProjectAppPublicSubdomain({
   preferred_label?: string;
   random_subdomain?: boolean;
 }) {
-  const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
+  const resolvedProjectId = await resolveProjectContext({
+    account_id,
+    host_id,
+    project_id,
+  });
   return await reserveProjectAppPublicSubdomainRaw({
     project_id: resolvedProjectId,
     app_id,
@@ -935,14 +968,20 @@ export async function reserveProjectAppPublicSubdomain({
 
 export async function releaseProjectAppPublicSubdomain({
   account_id,
+  host_id,
   project_id,
   app_id,
 }: {
   account_id?: string;
+  host_id?: string;
   project_id?: string;
   app_id: string;
 }) {
-  const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
+  const resolvedProjectId = await resolveProjectContext({
+    account_id,
+    host_id,
+    project_id,
+  });
   return await releaseProjectAppPublicSubdomainRaw({
     project_id: resolvedProjectId,
     app_id,

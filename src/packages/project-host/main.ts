@@ -5,10 +5,12 @@
  * Security: intentionally insecure for now. No auth, no TLS.
  */
 import { createServer as createHttpServer } from "http";
+import type { IncomingMessage } from "http";
 import { createServer as createHttpsServer } from "https";
 import { once } from "node:events";
 import { URL } from "node:url";
 import express from "express";
+import TTL from "@isaacs/ttlcache";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -67,6 +69,7 @@ import {
   assertSecureUrlOrLocal,
 } from "@cocalc/backend/network/policy";
 import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("project-host:main");
 const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
@@ -77,6 +80,10 @@ const PROJECT_HTTP_PORT_WAIT_MS = Math.max(
 const PROJECT_HTTP_PORT_POLL_MS = Math.max(
   100,
   Number(process.env.COCALC_PROJECT_HTTP_PORT_POLL_MS ?? 500),
+);
+const PUBLIC_APP_ROUTE_CACHE_MS = Math.max(
+  1000,
+  Number(process.env.COCALC_PROJECT_HOST_PUBLIC_APP_ROUTE_CACHE_MS ?? 30_000),
 );
 
 export interface ProjectHostConfig {
@@ -94,6 +101,43 @@ type TlsConfig = {
   enabled: boolean;
   hostname: string;
 };
+
+type PublicHostnameRoute = {
+  project_id: string;
+  app_id: string;
+  base_path: string;
+};
+
+function normalizeHostHeader(value: unknown): string {
+  const raw = `${value ?? ""}`.trim().toLowerCase();
+  if (!raw) return "";
+  return raw.split(":")[0] ?? "";
+}
+
+function normalizePrefix(value: string): string {
+  const withLeading = value.startsWith("/") ? value : `/${value}`;
+  return withLeading.replace(/\/+$/, "") || "/";
+}
+
+function rewritePublicAppUrl({
+  originalUrl,
+  route,
+}: {
+  originalUrl?: string;
+  route: PublicHostnameRoute;
+}): string {
+  const parsed = new URL(originalUrl ?? "/", "http://project-host.local");
+  const incomingPath = parsed.pathname || "/";
+  const canonicalBasePath = normalizePrefix(`/${route.project_id}${route.base_path}`);
+  const proxiedPath =
+    incomingPath === canonicalBasePath ||
+    incomingPath.startsWith(`${canonicalBasePath}/`)
+      ? incomingPath
+      : normalizePrefix(
+          `${canonicalBasePath}${incomingPath === "/" ? "" : incomingPath}`,
+        );
+  return `${proxiedPath}${parsed.search ?? ""}`;
+}
 
 function resolveTlsConfig(host: string, port: number): TlsConfig {
   const httpsEnv = process.env.COCALC_PROJECT_HOST_HTTPS;
@@ -268,9 +312,57 @@ export async function main(
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
   const stopHttpProxyRevocationKickLoop =
     httpProxyAuth.startUpgradeRevocationKickLoop();
+  const publicAppRouteCache = new TTL<string, PublicHostnameRoute | null>({
+    max: 20_000,
+    ttl: PUBLIC_APP_ROUTE_CACHE_MS,
+  });
+  const maybeRewritePublicHostnameRequest = async (req: IncomingMessage) => {
+    const currentUrl = `${req.url ?? ""}`;
+    if (!currentUrl || currentUrl.startsWith(`/${hostId}/`)) {
+      return;
+    }
+    const parsed = new URL(currentUrl || "/", "http://project-host.local");
+    const pathname = parsed.pathname || "/";
+    const maybeProjectPrefix = pathname.split("/")[1];
+    if (maybeProjectPrefix && isValidUUID(maybeProjectPrefix)) {
+      return;
+    }
+    const hostname = normalizeHostHeader(req.headers.host);
+    if (!hostname) return;
+    let route = publicAppRouteCache.get(hostname);
+    if (route === undefined) {
+      try {
+        const traced = await hubApi.system.tracePublicAppHostname({
+          hostname,
+        });
+        route =
+          traced?.matched && traced.project_id && traced.app_id && traced.base_path
+            ? {
+                project_id: traced.project_id,
+                app_id: traced.app_id,
+                base_path: normalizePrefix(traced.base_path),
+              }
+            : null;
+      } catch (err) {
+        logger.debug("public hostname trace failed", {
+          hostname,
+          err: `${err}`,
+        });
+        route = null;
+      }
+      publicAppRouteCache.set(hostname, route);
+    }
+    if (!route) return;
+    req.url = rewritePublicAppUrl({
+      originalUrl: currentUrl,
+      route,
+    });
+    req.headers[PUBLIC_APP_HOST_HEADER] = hostname;
+  };
   attachProjectProxy({
     httpServer,
     app,
+    rewriteRequest: maybeRewritePublicHostnameRequest,
     onUpgradeAuthorized: (req, socket) =>
       httpProxyAuth.trackUpgradedSocket(req, socket),
     resolveTarget: async (req, res) => {

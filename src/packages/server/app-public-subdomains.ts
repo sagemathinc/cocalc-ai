@@ -34,6 +34,7 @@ export interface ProjectAppPublicPolicy {
   enabled: boolean;
   launchpad: boolean;
   site_hostname?: string;
+  host_hostname?: string;
   dns_domain?: string;
   subdomain_suffix: string;
   provider?: string;
@@ -49,12 +50,12 @@ export interface ReserveProjectAppPublicSubdomainResult {
   warnings: string[];
 }
 
-export async function resolvePublicAppDnsTarget(site_hostname: string): Promise<string> {
-  const existingTarget = await getCnameTargetForHostname(site_hostname);
+export async function resolvePublicAppDnsTarget(target_hostname: string): Promise<string> {
+  const existingTarget = await getCnameTargetForHostname(target_hostname);
   if (existingTarget?.endsWith(".cfargotunnel.com")) {
     return existingTarget;
   }
-  return site_hostname;
+  return target_hostname;
 }
 
 const ensureSchema = reuseInFlight(async () => {
@@ -150,6 +151,31 @@ async function getProjectHostCloudProvider(project_id: string): Promise<string |
   return provider || undefined;
 }
 
+async function getProjectHostPublicHostname(project_id: string): Promise<string | undefined> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+      SELECT project_hosts.public_url AS public_url, project_hosts.internal_url AS internal_url
+      FROM projects
+      LEFT JOIN project_hosts ON project_hosts.id = projects.host_id
+      WHERE projects.project_id=$1
+    `,
+    [project_id],
+  );
+  const raw =
+    `${rows[0]?.public_url ?? ""}`.trim() || `${rows[0]?.internal_url ?? ""}`.trim();
+  if (!raw) return;
+  try {
+    return new URL(raw).hostname.toLowerCase();
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, "")
+      .split("/")[0]
+      .split(":")[0]
+      .toLowerCase();
+  }
+}
+
 function resolveMetered(provider?: string): boolean {
   return provider === "google-cloud";
 }
@@ -182,6 +208,7 @@ export async function getProjectAppPublicPolicy(
   }
 
   const provider = await getProjectHostCloudProvider(project_id);
+  const host_hostname = await getProjectHostPublicHostname(project_id);
   const metered_egress = resolveMetered(provider);
   if (metered_egress) {
     warnings.push(
@@ -197,10 +224,14 @@ export async function getProjectAppPublicPolicy(
   if (!site_hostname) {
     warnings.push("Public site URL is not configured.");
   }
+  if (!host_hostname) {
+    warnings.push("Owning project-host public hostname is not available.");
+  }
   return {
-    enabled: hasCloudflareDns && !!dns_domain && !!site_hostname,
+    enabled: hasCloudflareDns && !!dns_domain && !!host_hostname,
     launchpad: true,
     site_hostname: site_hostname || undefined,
+    host_hostname: host_hostname || undefined,
     dns_domain: dns_domain || undefined,
     subdomain_suffix: suffix,
     provider,
@@ -283,7 +314,8 @@ export async function reserveProjectAppPublicSubdomain(opts: {
   const ttl_s = Math.max(60, Math.floor(Number(opts.ttl_s) || 0));
 
   const policy = await getProjectAppPublicPolicy(project_id);
-  if (!policy.enabled || !policy.dns_domain || !policy.site_hostname) {
+  const dnsTargetHostname = policy.host_hostname ?? policy.site_hostname;
+  if (!policy.enabled || !policy.dns_domain || !dnsTargetHostname) {
     throw new Error(
       policy.warnings[0] ??
         "public app subdomains are not available; cloudflare dns and public site url are required",
@@ -363,7 +395,7 @@ export async function reserveProjectAppPublicSubdomain(opts: {
     }
   }
 
-  const dnsTarget = await resolvePublicAppDnsTarget(policy.site_hostname);
+  const dnsTarget = await resolvePublicAppDnsTarget(dnsTargetHostname);
   const dns = await ensureAppSubdomainDns({
     hostname: reserved.hostname,
     target_hostname: dnsTarget,
