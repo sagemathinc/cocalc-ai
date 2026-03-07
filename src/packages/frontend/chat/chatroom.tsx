@@ -832,7 +832,9 @@ export function ChatPanel({
         !reply_thread_id && newThreadSetup.agentMode
           ? {
               mode: newThreadSetup.agentMode,
-              model: newThreadSetup.model?.trim(),
+              model:
+                newThreadSetup.codexConfig.model?.trim() ||
+                newThreadSetup.model?.trim(),
               codexConfig:
                 newThreadSetup.agentMode === "codex"
                   ? {
@@ -882,19 +884,6 @@ export function ChatPanel({
             return threadId?.trim() || null;
           })()
         : null;
-    if (!reply_thread_id && threadKey) {
-      if (
-        newThreadSetup.color?.trim() ||
-        newThreadSetup.icon?.trim() ||
-        newThreadSetup.image?.trim()
-      ) {
-        actions.setThreadAppearance?.(threadKey, {
-          color: newThreadSetup.color?.trim(),
-          icon: newThreadSetup.icon?.trim(),
-          image: newThreadSetup.image?.trim(),
-        });
-      }
-    }
     if (!reply_thread_id && threadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);

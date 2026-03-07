@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
@@ -117,6 +118,42 @@ const LOOP_DEFAULT_MAX_WALL_TIME_MS = 30 * 60_000;
 const LOOP_DEFAULT_CHECK_IN_EVERY_TURNS = 0;
 const LOOP_DEFAULT_REPEATED_BLOCKER_LIMIT = 2;
 const LOOP_DEFAULT_SLEEP_MS = 0;
+const ACP_CHAT_INTEGRITY_RECOMPUTE_MIN_MS = envNumber(
+  "COCALC_ACP_CHAT_INTEGRITY_RECOMPUTE_MIN_MS",
+  60_000,
+);
+const ACP_CHAT_INTEGRITY_SLOW_MS = envNumber(
+  "COCALC_ACP_CHAT_INTEGRITY_SLOW_MS",
+  75,
+);
+const ACP_WATCHDOG_SNAPSHOT_SLOW_MS = envNumber(
+  "COCALC_ACP_WATCHDOG_SNAPSHOT_SLOW_MS",
+  50,
+);
+const ACP_COMMIT_SLOW_MS = envNumber("COCALC_ACP_COMMIT_SLOW_MS", 50);
+const ACP_SYNCDB_SAVE_SLOW_MS = envNumber(
+  "COCALC_ACP_SYNCDB_SAVE_SLOW_MS",
+  100,
+);
+const ACP_LOG_PERSIST_SLOW_MS = envNumber(
+  "COCALC_ACP_LOG_PERSIST_SLOW_MS",
+  150,
+);
+const ACP_BLOB_MATERIALIZE_SLOW_MS = envNumber(
+  "COCALC_ACP_BLOB_MATERIALIZE_SLOW_MS",
+  250,
+);
+
+function envNumber(name: string, fallback: number): number {
+  const value = `${process.env[name] ?? ""}`.trim();
+  if (!value) return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function roundMs(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
 type AcpMockRule = {
   name?: string;
@@ -137,6 +174,21 @@ type AcpMockScript = {
   defaultMessage?: string;
   defaultDelayMs: number;
   rules: AcpMockRule[];
+};
+
+type ChatIntegrityCounters =
+  ReturnType<typeof computeChatIntegrityReport>["counters"];
+
+type ChatIntegritySnapshot = {
+  counters?: ChatIntegrityCounters;
+  computedAtMs: number;
+  durationMs: number;
+  rowCount: number;
+  dirty: boolean;
+  dirtySinceMs: number;
+  recomputeCount: number;
+  lastReason?: string;
+  lastError?: string;
 };
 
 const DEFAULT_ACP_MOCK_SCRIPT: AcpMockScript = {
@@ -719,6 +771,28 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     (sum, x) => sum + x.inflightLoads,
     0,
   );
+  const watchdogSnapshotDurationMsTotal = snapshots.reduce(
+    (sum, x) => sum + (x.watchdog?.durationMs ?? 0),
+    0,
+  );
+  const watchdogSnapshotDurationMsMax = snapshots.reduce(
+    (max, x) => Math.max(max, x.watchdog?.durationMs ?? 0),
+    0,
+  );
+  const integrityDirtyWriters = snapshots.filter(
+    (x) => x.watchdog?.integrityDirty,
+  ).length;
+  const integrityRecomputedWriters = snapshots.filter(
+    (x) => x.watchdog?.integrityRecomputed,
+  ).length;
+  const integrityDurationMsMax = snapshots.reduce(
+    (max, x) => Math.max(max, x.watchdog?.integrityDurationMs ?? 0),
+    0,
+  );
+  const integrityAgeMsMax = snapshots.reduce(
+    (max, x) => Math.max(max, x.watchdog?.integrityAgeMs ?? 0),
+    0,
+  );
   const integrityTotals = snapshots.reduce(
     (acc, snapshot) => {
       const counters = snapshot.integrity;
@@ -761,6 +835,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       disposeScheduled: x.disposeScheduled,
       threadIds: x.threadIds,
       integrity: x.integrity,
+      watchdog: x.watchdog,
       timeTravel: x.timeTravel,
     }));
   return {
@@ -776,6 +851,12 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     timeTravelPendingOps,
     timeTravelSyncDocs,
     timeTravelInflightLoads,
+    watchdogSnapshotDurationMsTotal,
+    watchdogSnapshotDurationMsMax,
+    integrityDirtyWriters,
+    integrityRecomputedWriters,
+    integrityDurationMsMax,
+    integrityAgeMsMax,
     integrityChatsWithViolations,
     integrityTotals: {
       "chat.integrity.orphan_messages": integrityTotals.orphan_messages,
@@ -883,6 +964,14 @@ export class ChatStreamWriter {
   private logSubject: string;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
+  private integritySnapshot: ChatIntegritySnapshot = {
+    computedAtMs: 0,
+    durationMs: 0,
+    rowCount: 0,
+    dirty: true,
+    dirtySinceMs: Date.now(),
+    recomputeCount: 0,
+  };
   private readonly timeTravelOps = new Set<Promise<void>>();
   private timeTravelDisposePromise?: Promise<void>;
   private leaseFinalized = false;
@@ -895,11 +984,27 @@ export class ChatStreamWriter {
   );
   private persistLogProgress = throttle(
     async () => {
+      const started = performance.now();
       try {
         const store = this.getLogStore();
         await store.set(this.logKey, this.events);
+        const durationMs = performance.now() - started;
+        if (durationMs >= ACP_LOG_PERSIST_SLOW_MS) {
+          logger.warn("acp log incremental persist slow", {
+            chatKey: this.chatKey,
+            path: this.metadata.path,
+            events: this.events.length,
+            durationMs: roundMs(durationMs),
+          });
+        }
       } catch (err) {
-        logger.debug("failed to persist acp log incrementally", err);
+        logger.debug("failed to persist acp log incrementally", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          events: this.events.length,
+          durationMs: roundMs(performance.now() - started),
+          err,
+        });
       }
     },
     1000,
@@ -975,6 +1080,68 @@ export class ChatStreamWriter {
     return threadId || undefined;
   }
 
+  private markIntegrityDirty(reason: string): void {
+    this.integritySnapshot.dirty = true;
+    this.integritySnapshot.dirtySinceMs = Date.now();
+    this.integritySnapshot.lastReason = reason;
+  }
+
+  private refreshIntegritySnapshot(reason: string): boolean {
+    const snapshot = this.integritySnapshot;
+    if (
+      this.syncdb == null ||
+      typeof (this.syncdb as any).get !== "function" ||
+      !snapshot.dirty
+    ) {
+      return false;
+    }
+    const nowMs = Date.now();
+    if (
+      snapshot.computedAtMs > 0 &&
+      nowMs - snapshot.computedAtMs < ACP_CHAT_INTEGRITY_RECOMPUTE_MIN_MS
+    ) {
+      return false;
+    }
+    const started = performance.now();
+    try {
+      const rows = (this.syncdb as any).get();
+      const rowCount = Array.isArray(rows) ? rows.length : 0;
+      snapshot.counters =
+        rowCount > 0 ? computeChatIntegrityReport(rows).counters : undefined;
+      snapshot.rowCount = rowCount;
+      snapshot.computedAtMs = nowMs;
+      snapshot.durationMs = performance.now() - started;
+      snapshot.dirty = false;
+      snapshot.recomputeCount += 1;
+      snapshot.lastReason = reason;
+      snapshot.lastError = undefined;
+      if (snapshot.durationMs >= ACP_CHAT_INTEGRITY_SLOW_MS) {
+        logger.warn("chat integrity snapshot slow", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          reason,
+          events: this.events.length,
+          rowCount,
+          durationMs: roundMs(snapshot.durationMs),
+        });
+      }
+      return true;
+    } catch (err) {
+      snapshot.computedAtMs = nowMs;
+      snapshot.durationMs = performance.now() - started;
+      snapshot.lastError =
+        err instanceof Error ? err.message : `${err ?? "unknown error"}`;
+      logger.debug("failed to compute chat integrity snapshot", {
+        chatKey: this.chatKey,
+        path: this.metadata.path,
+        reason,
+        durationMs: roundMs(snapshot.durationMs),
+        err,
+      });
+      return false;
+    }
+  }
+
   private setThreadState(
     state: "idle" | "queued" | "running" | "interrupted" | "error" | "complete",
   ): void {
@@ -1002,6 +1169,7 @@ export class ChatStreamWriter {
         }),
       );
       this.syncdb.commit();
+      this.markIntegrityDirty(`thread-state:${state}`);
     } catch (err) {
       logger.debug("failed to update chat thread state", {
         chatKey: this.chatKey,
@@ -1238,6 +1406,7 @@ export class ChatStreamWriter {
       }
       db.set(placeholder);
       db.commit();
+      this.markIntegrityDirty("init-placeholder");
       try {
         await db.save();
       } catch (err) {
@@ -1571,6 +1740,7 @@ export class ChatStreamWriter {
     if (!fullContent && !metadataDelta) {
       return true;
     }
+    const started = performance.now();
     try {
       this.syncdb.set(
         fullContent
@@ -1579,6 +1749,9 @@ export class ChatStreamWriter {
       );
       this.syncdb.commit();
       this.markCommitted(generating);
+      this.markIntegrityDirty(
+        `chat-commit:${reason}:${fullContent ? "full" : "meta"}`,
+      );
     } catch (err) {
       logger.warn("chat syncdb commit failed", {
         chatKey: this.chatKey,
@@ -1589,15 +1762,43 @@ export class ChatStreamWriter {
       });
       return false;
     }
+    const syncDurationMs = performance.now() - started;
+    if (syncDurationMs >= ACP_COMMIT_SLOW_MS) {
+      logger.warn("chat syncdb commit slow", {
+        chatKey: this.chatKey,
+        path: this.metadata.path,
+        reason,
+        generating,
+        fullContent,
+        metadataDelta,
+        events: this.events.length,
+        contentLength: this.content.length,
+        durationMs: roundMs(syncDurationMs),
+      });
+    }
     (async () => {
+      const saveStarted = performance.now();
       try {
         await this.syncdb!.save();
+        const saveDurationMs = performance.now() - saveStarted;
+        if (saveDurationMs >= ACP_SYNCDB_SAVE_SLOW_MS) {
+          logger.warn("chat syncdb save slow", {
+            chatKey: this.chatKey,
+            path: this.metadata.path,
+            reason,
+            generating,
+            fullContent,
+            events: this.events.length,
+            durationMs: roundMs(saveDurationMs),
+          });
+        }
       } catch (err) {
         logger.warn("chat syncdb save failed", {
           chatKey: this.chatKey,
           reason,
           generating,
           fullContent,
+          durationMs: roundMs(performance.now() - saveStarted),
           err,
         });
       }
@@ -1659,10 +1860,12 @@ export class ChatStreamWriter {
 
   private commit = throttle((generating: boolean): void => {
     this.heartbeatLease();
+    const content = this.content ?? "";
     logger.debug("commit", {
       generating,
       closed: this.closed,
-      content: this.content,
+      contentLength: content.length,
+      contentPreview: content.slice(0, 160),
       events: this.events.length,
       metadata: this.metadata,
     });
@@ -1852,22 +2055,29 @@ export class ChatStreamWriter {
   }
 
   watchdogSnapshot() {
+    const started = performance.now();
     const timeTravelStats = this.timeTravel?.debugStats();
-    let integrity:
-      | ReturnType<typeof computeChatIntegrityReport>["counters"]
-      | undefined;
-    if (this.syncdb && typeof (this.syncdb as any).get === "function") {
-      try {
-        const rows = (this.syncdb as any).get();
-        if (Array.isArray(rows) && rows.length > 0) {
-          integrity = computeChatIntegrityReport(rows).counters;
-        }
-      } catch (err) {
-        logger.debug("failed to compute chat integrity snapshot", {
-          chatKey: this.chatKey,
-          err,
-        });
-      }
+    const integrityRecomputed = this.refreshIntegritySnapshot("watchdog");
+    const integrity = this.integritySnapshot.counters;
+    const nowMs = Date.now();
+    const integrityAgeMs =
+      this.integritySnapshot.computedAtMs > 0
+        ? Math.max(0, nowMs - this.integritySnapshot.computedAtMs)
+        : undefined;
+    const watchdogDurationMs = performance.now() - started;
+    if (watchdogDurationMs >= ACP_WATCHDOG_SNAPSHOT_SLOW_MS) {
+      logger.warn("chat watchdog snapshot slow", {
+        chatKey: this.chatKey,
+        path: this.metadata.path,
+        events: this.events.length,
+        finished: this.finished,
+        durationMs: roundMs(watchdogDurationMs),
+        integrityRecomputed,
+        integrityDurationMs: roundMs(this.integritySnapshot.durationMs),
+        integrityRowCount: this.integritySnapshot.rowCount,
+        integrityDirty: this.integritySnapshot.dirty,
+        integrityAgeMs,
+      });
     }
     return {
       chatKey: this.chatKey,
@@ -1880,6 +2090,16 @@ export class ChatStreamWriter {
       hasSyncdbError: this.syncdbError != null,
       threadIds: this.getKnownThreadIds(),
       integrity,
+      watchdog: {
+        durationMs: roundMs(watchdogDurationMs),
+        integrityRecomputed,
+        integrityDirty: this.integritySnapshot.dirty,
+        integrityAgeMs,
+        integrityDurationMs: roundMs(this.integritySnapshot.durationMs),
+        integrityRowCount: this.integritySnapshot.rowCount,
+        integrityRecomputeCount: this.integritySnapshot.recomputeCount,
+        integrityLastReason: this.integritySnapshot.lastReason,
+      },
       timeTravel:
         timeTravelStats == null
           ? undefined
@@ -1968,6 +2188,7 @@ export class ChatStreamWriter {
         ...patch,
       });
       this.syncdb.commit();
+      this.markIntegrityDirty("thread-config");
       await this.syncdb.save();
     } catch (err) {
       logger.debug("patchThreadConfig failed", err);
@@ -3081,10 +3302,12 @@ async function materializeBlobs(
   if (!unique.length) {
     return { prompt, cleanup: async () => {} };
   }
+  const started = performance.now();
   const tempDir = await fs.mkdtemp(
     path.join(os.tmpdir(), `cocalc-blobs-${randomUUID()}-`),
   );
   const attachments: { url: string; path: string }[] = [];
+  let bytes = 0;
   try {
     for (const ref of unique) {
       try {
@@ -3094,10 +3317,26 @@ async function materializeBlobs(
         const safeName = buildSafeFilename(ref);
         const filePath = path.join(tempDir, safeName);
         await fs.writeFile(filePath, buffer);
+        bytes += buffer.byteLength;
         attachments.push({ url: ref.url, path: filePath });
       } catch (err) {
         logger.warn("failed to materialize blob", { ref, err });
       }
+    }
+    const durationMs = performance.now() - started;
+    logger.debug("materialized chat blobs", {
+      refs: unique.length,
+      attachments: attachments.length,
+      bytes,
+      durationMs: roundMs(durationMs),
+    });
+    if (durationMs >= ACP_BLOB_MATERIALIZE_SLOW_MS) {
+      logger.warn("materialize chat blobs slow", {
+        refs: unique.length,
+        attachments: attachments.length,
+        bytes,
+        durationMs: roundMs(durationMs),
+      });
     }
     if (!attachments.length) {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -3117,7 +3356,13 @@ async function materializeBlobs(
       },
     };
   } catch (err) {
-    logger.warn("failed to prepare attachments", err);
+    logger.warn("failed to prepare attachments", {
+      refs: unique.length,
+      attachments: attachments.length,
+      bytes,
+      durationMs: roundMs(performance.now() - started),
+      err,
+    });
     await fs.rm(tempDir, { recursive: true, force: true });
     return { prompt, cleanup: async () => {} };
   }

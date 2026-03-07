@@ -400,6 +400,15 @@ export function initWatchdog() {
           acp: {
             activeWriters: acp.activeWriters,
             timeTravelSyncDocs: acp.timeTravelSyncDocs,
+            watchdogSnapshotDurationMsMax: Math.round(
+              (acp.watchdogSnapshotDurationMsMax ?? 0) * 10,
+            ) / 10,
+            integrityDirtyWriters: acp.integrityDirtyWriters,
+            integrityRecomputedWriters: acp.integrityRecomputedWriters,
+            integrityDurationMsMax: Math.round(
+              (acp.integrityDurationMsMax ?? 0) * 10,
+            ) / 10,
+            integrityAgeMsMax: Math.round((acp.integrityAgeMsMax ?? 0) * 10) / 10,
           },
           syncFs: {
             activePaths: syncFs.activePaths,

@@ -24,9 +24,38 @@ import { until } from "@cocalc/util/async-utils";
 import { getPersistServerId } from "./load-balancer";
 
 let DEFAULT_RECONNECT_DELAY = 1500;
+let DEFAULT_RECONNECT_DELAY_MAX = 30_000;
+let DEFAULT_RECONNECT_DELAY_DECAY = 1.8;
+let DEFAULT_RECONNECT_DELAY_JITTER = 0.25;
+let DEFAULT_RECONNECT_STABLE_RESET_MS = 60_000;
+let DEFAULT_RECOVERY_TIMEOUT = 30_000;
 
 export function setDefaultReconnectDelay(delay) {
   DEFAULT_RECONNECT_DELAY = delay;
+}
+
+export function setDefaultReconnectOptions({
+  start = DEFAULT_RECONNECT_DELAY,
+  max = DEFAULT_RECONNECT_DELAY_MAX,
+  decay = DEFAULT_RECONNECT_DELAY_DECAY,
+  jitter = DEFAULT_RECONNECT_DELAY_JITTER,
+  stableResetMs = DEFAULT_RECONNECT_STABLE_RESET_MS,
+}: {
+  start?: number;
+  max?: number;
+  decay?: number;
+  jitter?: number;
+  stableResetMs?: number;
+}) {
+  DEFAULT_RECONNECT_DELAY = start;
+  DEFAULT_RECONNECT_DELAY_MAX = max;
+  DEFAULT_RECONNECT_DELAY_DECAY = decay;
+  DEFAULT_RECONNECT_DELAY_JITTER = jitter;
+  DEFAULT_RECONNECT_STABLE_RESET_MS = stableResetMs;
+}
+
+export function setDefaultRecoveryTimeout(timeout: number) {
+  DEFAULT_RECOVERY_TIMEOUT = timeout;
 }
 
 interface GetAllOpts {
@@ -49,10 +78,16 @@ const stats = {
   active: 0,
   initCalls: 0,
   reconnectScheduled: 0,
+  reconnectBackoffResets: 0,
+  reconnectDelayMsLast: 0,
+  reconnectDelayMsMax: 0,
+  reconnectAttemptMax: 0,
   socketDisconnected: 0,
   socketClosed: 0,
   getMissedRuns: 0,
   getMissedRetries: 0,
+  getMissedSuccess: 0,
+  getMissedJoined: 0,
   getAllCalls: 0,
   getAllErrors: 0,
   getAllCode503: 0,
@@ -107,6 +142,9 @@ class PersistStreamClient extends EventEmitter {
   private gettingMissed = false;
   private changesWhenGettingMissed: ChangefeedEvent[] = [];
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private stableReconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnectAttempt = 0;
+  private recoveryPromise?: Promise<void>;
   private readonly storageKey: string;
 
   constructor(
@@ -134,6 +172,7 @@ class PersistStreamClient extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
+    this.cancelStableReconnectReset();
     this.socket?.close();
     stats.initCalls += 1;
     bumpCounterByStorage(initByStorage, this.storageKey, 1);
@@ -149,22 +188,19 @@ class PersistStreamClient extends EventEmitter {
       storage: this.storage,
       changefeed: this.changefeeds.length > 0,
     });
-
-    // get any messages from the stream that we missed while offline;
-    // this only matters if there are changefeeds.
-    if (this.reconnecting) {
-      this.getMissed();
-    }
+    this.socket.once("ready", this.onSocketReady);
 
     this.socket.once("disconnected", () => {
       stats.socketDisconnected += 1;
       this.reconnecting = true;
+      this.cancelStableReconnectReset();
       this.socket.removeAllListeners();
       this.scheduleReconnect();
     });
     this.socket.once("closed", () => {
       stats.socketClosed += 1;
       this.reconnecting = true;
+      this.cancelStableReconnectReset();
       this.socket.removeAllListeners();
       this.scheduleReconnect();
     });
@@ -187,11 +223,33 @@ class PersistStreamClient extends EventEmitter {
     });
   };
 
+  private onSocketReady = () => {
+    this.scheduleStableReconnectReset();
+    if (this.reconnecting) {
+      void this.getMissed();
+    }
+  };
+
   private getMissed = async () => {
+    if (this.recoveryPromise != null) {
+      stats.getMissedJoined += 1;
+      await this.recoveryPromise;
+      return;
+    }
+    this.recoveryPromise = this.getMissed0();
+    try {
+      await this.recoveryPromise;
+    } finally {
+      this.recoveryPromise = undefined;
+    }
+  };
+
+  private getMissed0 = async () => {
     if (this.changefeeds.length == 0 || this.state != "ready") {
       return;
     }
     stats.getMissedRuns += 1;
+    let recovered = false;
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
@@ -202,7 +260,7 @@ class PersistStreamClient extends EventEmitter {
             return true;
           }
           try {
-            await this.socket.waitUntilReady(15000);
+            await this.socket.waitUntilReady(DEFAULT_RECOVERY_TIMEOUT);
             if (this.changefeeds.length == 0 || this.state != "ready") {
               return true;
             }
@@ -210,6 +268,7 @@ class PersistStreamClient extends EventEmitter {
               headers: {
                 cmd: "changefeed",
               },
+              timeout: DEFAULT_RECOVERY_TIMEOUT,
             });
             if (resp.headers?.error) {
               throw new ConatError(`${resp.headers?.error}`, {
@@ -221,20 +280,30 @@ class PersistStreamClient extends EventEmitter {
             }
             const updates = await this.getAll({
               start_seq: this.lastSeq,
-              timeout: 15000,
+              timeout: DEFAULT_RECOVERY_TIMEOUT,
             });
             this.changefeedEmit(updates);
+            recovered = true;
             return true;
           } catch {
             stats.getMissedRetries += 1;
             return false;
           }
         },
-        { min: 2000, max: 15000 },
+        {
+          start: DEFAULT_RECONNECT_DELAY,
+          min: Math.min(DEFAULT_RECONNECT_DELAY, 250),
+          max: DEFAULT_RECONNECT_DELAY_MAX,
+          decay: DEFAULT_RECONNECT_DELAY_DECAY,
+        },
       );
     } finally {
       if (this.state != "ready") {
         return;
+      }
+      if (recovered) {
+        this.reconnecting = false;
+        stats.getMissedSuccess += 1;
       }
       this.gettingMissed = false;
       for (const updates of this.changesWhenGettingMissed) {
@@ -273,8 +342,56 @@ class PersistStreamClient extends EventEmitter {
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
     }
-    this.reconnectTimer = setTimeout(this.init, DEFAULT_RECONNECT_DELAY);
+    const delay = this.nextReconnectDelay();
+    this.reconnectTimer = setTimeout(this.init, delay);
     this.reconnectTimer.unref?.();
+  };
+
+  private nextReconnectDelay = () => {
+    const base = Math.max(1, DEFAULT_RECONNECT_DELAY);
+    const max = Math.max(base, DEFAULT_RECONNECT_DELAY_MAX);
+    const decay = Math.max(1, DEFAULT_RECONNECT_DELAY_DECAY);
+    const jitter = Math.max(0, DEFAULT_RECONNECT_DELAY_JITTER);
+    this.reconnectAttempt += 1;
+    stats.reconnectAttemptMax = Math.max(
+      stats.reconnectAttemptMax,
+      this.reconnectAttempt,
+    );
+    const raw = Math.min(
+      max,
+      Math.round(base * decay ** Math.max(0, this.reconnectAttempt - 1)),
+    );
+    const factor = jitter == 0 ? 1 : 1 + (Math.random() * 2 - 1) * jitter;
+    const delay = Math.max(base, Math.round(raw * factor));
+    stats.reconnectDelayMsLast = delay;
+    stats.reconnectDelayMsMax = Math.max(stats.reconnectDelayMsMax, delay);
+    return delay;
+  };
+
+  private scheduleStableReconnectReset = () => {
+    if (this.reconnectAttempt == 0) {
+      return;
+    }
+    this.cancelStableReconnectReset();
+    const attempt = this.reconnectAttempt;
+    this.stableReconnectTimer = setTimeout(() => {
+      if (
+        this.state == "ready" &&
+        this.socket?.state == "ready" &&
+        this.reconnectAttempt == attempt
+      ) {
+        this.reconnectAttempt = 0;
+        stats.reconnectBackoffResets += 1;
+      }
+    }, DEFAULT_RECONNECT_STABLE_RESET_MS);
+    this.stableReconnectTimer.unref?.();
+  };
+
+  private cancelStableReconnectReset = () => {
+    if (this.stableReconnectTimer != null) {
+      clearTimeout(this.stableReconnectTimer);
+      this.stableReconnectTimer = undefined;
+    }
   };
 
   close = () => {
@@ -292,10 +409,12 @@ class PersistStreamClient extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+    this.cancelStableReconnectReset();
     for (const iter of this.changefeeds) {
       iter.close();
       this.changefeeds.length = 0;
     }
+    this.reconnecting = false;
     this.socket.close();
   };
 
