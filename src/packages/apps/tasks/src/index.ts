@@ -4,3 +4,5 @@ export * from "./contracts/host";
 export * from "./contracts/session";
 export * from "./contracts/timetravel";
 export * from "./contracts/manifest";
+export * from "./operations";
+export * from "./session/in-memory";
