@@ -200,4 +200,55 @@ describe("MultiMarkdownInput wrapper contract", () => {
     });
     expect(onBlur).toHaveBeenCalledTimes(1);
   });
+
+  it("forwards declarative focus to whichever backend is active", () => {
+    const { rerender } = render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="markdown"
+        isFocused={true}
+      />,
+    );
+
+    expect(latestMarkdownProps.isFocused).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "editor" }));
+
+    expect(latestEditableProps.isFocused).toBe(true);
+
+    rerender(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="markdown"
+        isFocused={false}
+      />,
+    );
+
+    expect(latestEditableProps.isFocused).toBe(false);
+  });
+
+  it("preserves undo and redo delegation across both modes", () => {
+    const onUndo = jest.fn();
+    const onRedo = jest.fn();
+
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="editor"
+        onUndo={onUndo}
+        onRedo={onRedo}
+      />,
+    );
+
+    expect(latestEditableProps.actions.undo).toBe(onUndo);
+    expect(latestEditableProps.actions.redo).toBe(onRedo);
+
+    fireEvent.click(screen.getByRole("button", { name: "markdown" }));
+
+    expect(latestMarkdownProps.onUndo).toBe(onUndo);
+    expect(latestMarkdownProps.onRedo).toBe(onRedo);
+  });
 });
