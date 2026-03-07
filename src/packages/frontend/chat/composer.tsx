@@ -342,28 +342,47 @@ export function ChatRoomComposer({
       const effective =
         typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
+      setIsInputFocused(false);
+      onComposerFocusChange(false);
       on_send(effective);
+      setTimeout(() => {
+        setIsInputFocused(true);
+        onComposerFocusChange(true);
+      }, 0);
       if (isZenMode) {
         void toggleZenMode();
       }
     },
-    [input, isZenMode, on_send, toggleZenMode],
+    [input, isZenMode, on_send, onComposerFocusChange, toggleZenMode],
   );
 
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
       const effective = typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
+      setIsInputFocused(false);
+      onComposerFocusChange(false);
       if (on_send_immediately) {
         on_send_immediately(effective);
       } else {
         on_send(effective);
       }
+      setTimeout(() => {
+        setIsInputFocused(true);
+        onComposerFocusChange(true);
+      }, 0);
       if (isZenMode) {
         void toggleZenMode();
       }
     },
-    [input, isZenMode, on_send, on_send_immediately, toggleZenMode],
+    [
+      input,
+      isZenMode,
+      on_send,
+      on_send_immediately,
+      onComposerFocusChange,
+      toggleZenMode,
+    ],
   );
 
   const composerStyle: CSSProperties = {
