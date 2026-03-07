@@ -502,6 +502,7 @@ export function ChatRoomComposer({
             key={`${path}${project_id}-draft-${composerDraftKey}`}
             fontSize={fontSize}
             autoFocus
+            isFocused={isInputFocused}
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
             presenceThreadKey={presenceThreadKey}

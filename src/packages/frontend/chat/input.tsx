@@ -44,6 +44,7 @@ interface Props {
   editBarStyle?: CSS;
   placeholder?: string;
   autoFocus?: boolean;
+  isFocused?: boolean;
   moveCursorToEndOfLine?: boolean;
   sessionToken?: number;
   fixedMode?: "markdown" | "editor";
@@ -84,6 +85,7 @@ export default function ChatInput({
   style,
   submitMentionsRef,
   syncdb,
+  isFocused,
   autoGrowMaxHeight,
   sessionToken,
   fixedMode,
@@ -209,6 +211,7 @@ export default function ChatInput({
         externalMultilinePasteAsCodeBlock
       }
       autoFocus={autoFocus}
+      isFocused={isFocused}
       saveDebounceMs={CHAT_INPUT_SAVE_DEBOUNCE_MS}
       onFocus={() => {
         onFocus?.();
