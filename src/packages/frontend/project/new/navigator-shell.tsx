@@ -24,6 +24,7 @@ import {
   type AgentSessionRecord,
   type AgentSessionStatus,
 } from "@cocalc/frontend/chat/agent-session-index";
+import type { CodexThreadConfig } from "@cocalc/chat";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { Loading } from "@cocalc/frontend/components";
@@ -189,6 +190,28 @@ function resolveReplyThreadId(
     if (fromRoot) return fromRoot;
   }
   return;
+}
+
+export function resolveSelectedAcpConfig({
+  actions,
+  selectedThreadKey,
+  selectedRootMessage,
+}: {
+  actions?: ChatActions | null;
+  selectedThreadKey?: string | null;
+  selectedRootMessage?: any;
+}): Partial<CodexThreadConfig> {
+  if (!actions || !selectedThreadKey) {
+    return selectedRootMessage?.acp_config ?? {};
+  }
+  const threadId =
+    typeof selectedRootMessage?.thread_id === "string"
+      ? selectedRootMessage.thread_id
+      : undefined;
+  const metadata = actions.getThreadMetadata(selectedThreadKey, {
+    threadId,
+  });
+  return metadata?.acp_config ?? selectedRootMessage?.acp_config ?? {};
 }
 
 function buildSessionRecord({
@@ -474,20 +497,6 @@ export function NavigatorShell({
     return selectedThread?.rootMessage ?? {};
   }, [selectedThread]);
 
-  const selectedAcpConfig = useMemo(() => {
-    if (!actions || !selectedThreadKey) {
-      return selectedRootMessage?.acp_config ?? {};
-    }
-    const threadId =
-      typeof selectedRootMessage?.thread_id === "string"
-        ? selectedRootMessage.thread_id
-        : undefined;
-    const metadata = actions.getThreadMetadata(selectedThreadKey, {
-      threadId,
-    });
-    return metadata?.acp_config ?? selectedRootMessage?.acp_config ?? {};
-  }, [actions, selectedRootMessage, selectedThreadKey]);
-
   const selectedThreadMetadata = useMemo(() => {
     if (!actions || !selectedThreadKey) return undefined;
     const threadId =
@@ -497,7 +506,7 @@ export function NavigatorShell({
     return actions.getThreadMetadata(selectedThreadKey, {
       threadId,
     });
-  }, [actions, selectedRootMessage, selectedThreadKey]);
+  }, [actions, selectedRootMessage, selectedThreadKey, cacheVersion]);
 
   const threadOptions = useMemo(() => {
     if (!actions) return [] as Array<{ value: string; label: string }>;
@@ -663,9 +672,14 @@ export function NavigatorShell({
         replyThreadId = undefined;
       }
       const isCodex = intent.forceCodex !== false;
+      const launchAcpConfig = resolveSelectedAcpConfig({
+        actions,
+        selectedThreadKey,
+        selectedRootMessage,
+      });
       const model =
-        typeof selectedAcpConfig?.model === "string"
-          ? selectedAcpConfig.model
+        typeof launchAcpConfig?.model === "string"
+          ? launchAcpConfig.model
           : undefined;
       const timeStamp = actions.sendChat({
         input,
@@ -678,7 +692,7 @@ export function NavigatorShell({
                 mode: "codex",
                 model,
                 codexConfig: {
-                  ...selectedAcpConfig,
+                  ...launchAcpConfig,
                   model,
                   workingDirectory: homeDirectory,
                 },
@@ -701,7 +715,7 @@ export function NavigatorShell({
       setTimeout(() => actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER), 100);
       return true;
     },
-    [actions, homeDirectory, selectedAcpConfig, selectedThreadKey],
+    [actions, homeDirectory, selectedRootMessage, selectedThreadKey],
   );
 
   useEffect(() => {

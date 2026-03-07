@@ -136,7 +136,10 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
   default: () => (value: string) => value,
 }));
 
-const { NavigatorShell } = require("./navigator-shell");
+const {
+  NavigatorShell,
+  resolveSelectedAcpConfig,
+} = require("./navigator-shell");
 
 describe("NavigatorShell keyboard suppression", () => {
   beforeEach(() => {
@@ -156,5 +159,38 @@ describe("NavigatorShell keyboard suppression", () => {
     fireEvent.focus(screen.getByTestId("navigator-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers latest thread metadata acp_config over stale root-message config", () => {
+    const latestConfig = {
+      model: "gpt-5.3-codex-spark",
+      reasoning: "extra_high",
+      sessionMode: "full-access",
+      allowWrite: true,
+    };
+    const actions = {
+      getThreadMetadata: jest.fn(() => ({
+        acp_config: latestConfig,
+      })),
+    };
+
+    const resolved = resolveSelectedAcpConfig({
+      actions,
+      selectedThreadKey: "thread-1",
+      selectedRootMessage: {
+        thread_id: "thread-1",
+        acp_config: {
+          model: "gpt-5.3-codex-spark",
+          reasoning: "high",
+          sessionMode: "auto",
+          allowWrite: true,
+        },
+      },
+    });
+
+    expect(actions.getThreadMetadata).toHaveBeenCalledWith("thread-1", {
+      threadId: "thread-1",
+    });
+    expect(resolved).toEqual(latestConfig);
   });
 });
