@@ -193,6 +193,18 @@ export function ChatRoomComposer({
   );
   const wasFullscreenRef = useRef<boolean>(false);
 
+  const refocusComposerInput = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.setTimeout(() => {
+      const root = inputContainerRef.current;
+      if (!root) return;
+      const target = root.querySelector<HTMLElement>(
+        "textarea, [contenteditable='true'], input",
+      );
+      target?.focus?.({ preventScroll: true } as FocusOptions);
+    }, 0);
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -342,35 +354,25 @@ export function ChatRoomComposer({
       const effective =
         typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
-      setIsInputFocused(false);
-      onComposerFocusChange(false);
       on_send(effective);
-      setTimeout(() => {
-        setIsInputFocused(true);
-        onComposerFocusChange(true);
-      }, 0);
+      refocusComposerInput();
       if (isZenMode) {
         void toggleZenMode();
       }
     },
-    [input, isZenMode, on_send, onComposerFocusChange, toggleZenMode],
+    [input, isZenMode, on_send, refocusComposerInput, toggleZenMode],
   );
 
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
       const effective = typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
-      setIsInputFocused(false);
-      onComposerFocusChange(false);
       if (on_send_immediately) {
         on_send_immediately(effective);
       } else {
         on_send(effective);
       }
-      setTimeout(() => {
-        setIsInputFocused(true);
-        onComposerFocusChange(true);
-      }, 0);
+      refocusComposerInput();
       if (isZenMode) {
         void toggleZenMode();
       }
@@ -380,7 +382,7 @@ export function ChatRoomComposer({
       isZenMode,
       on_send,
       on_send_immediately,
-      onComposerFocusChange,
+      refocusComposerInput,
       toggleZenMode,
     ],
   );
