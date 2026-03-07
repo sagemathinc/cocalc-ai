@@ -664,7 +664,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                           style={{ justifyContent: "space-between", width: "100%" }}
                         >
                           <Typography.Text type="secondary">
-                            running <code>{running ?? "n/a"}</code> | configured{" "}
+                            running <code>{running ?? "n/a"}</code> | latest available{" "}
                             <code>{configured?.version ?? "unknown"}</code>
                           </Typography.Text>
                           <Space wrap>
