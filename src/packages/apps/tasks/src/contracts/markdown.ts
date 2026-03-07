@@ -3,9 +3,13 @@ export type MarkdownStyleValue = string | number | undefined;
 export type MarkdownStyle = Readonly<Record<string, MarkdownStyleValue>>;
 export type TasksSurfaceComponent<Props> = (props: Props) => unknown;
 
-export type MutableRefBox<T> = { current?: T | undefined };
+export type MutableRefBox<T> =
+  | { current: T }
+  | { current?: T | undefined };
 
 export interface TasksMarkdownEditorProps {
+  saveDebounceMs?: number;
+  cacheId?: string;
   value: string;
   onChange: (value: string) => void;
   getValueRef?: MutableRefBox<MarkdownValueGetter>;
@@ -34,7 +38,7 @@ export interface TasksMostlyStaticMarkdownProps {
   value: string;
   searchWords?: readonly string[];
   onChange?: (value: string) => void;
-  selectedHashtags?: ReadonlySet<string>;
+  selectedHashtags?: Set<string>;
   toggleHashtag?: (tag: string) => void;
 }
 

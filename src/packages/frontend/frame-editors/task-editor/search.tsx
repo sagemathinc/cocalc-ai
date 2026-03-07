@@ -1,9 +1,10 @@
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { createSearchEditor } from "@cocalc/frontend/frame-editors/generic/search";
+import { defaultTasksMarkdownSurface } from "@cocalc/frontend/editors/task-editor/default-adapters";
 
 export const DONE = "☑ ";
 
 function Preview({ content }) {
+  const { StaticMarkdown } = defaultTasksMarkdownSurface;
   return (
     <StaticMarkdown
       value={content}

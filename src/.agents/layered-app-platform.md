@@ -1,4 +1,4 @@
-# Layered App Platform: First Cut With Tasks And Slate
+# Layered App Platform: First Cut With Tasks And Interface Boundaries
 
 This note proposes a concrete first step toward a layered app platform in CoCalc.
 
@@ -8,9 +8,9 @@ The goal is to do one focused refactor well enough that it becomes the pattern f
 The first two pieces are:
 
 - `tasks` as the first real app package
-- `slate` as the first shared frontend platform package
+- explicit interfaces for the hard swappable dependencies that tasks needs
 
-This is the minimum cut that directly helps agent workflows while also improving application organization.
+This is the minimum cut that directly helps agent workflows while also improving application organization, without requiring a broad frontend extraction first.
 
 ## 1. Why This Exists
 
@@ -45,7 +45,7 @@ Tasks is the best place to solve this first because:
 - it is much simpler than chat or jupyter
 - it already wants headless operations for CLI and agents
 - it already wants export/import
-- it currently depends on frontend-oriented Slate code in awkward ways
+- it currently depends on frontend-oriented markdown editing/rendering and shell services in awkward ways
 
 ## 2. Core Architectural Decision
 
@@ -109,10 +109,11 @@ Examples of things that should usually remain direct imports:
 
 Examples of things that should usually be provided via contracts:
 
-- markdown editor components
+- markdown editor components (e.g., based on slate, prosemirror, etc.)
+- source code editing (e.g., based on codemirror, monaco, etc.)
 - static markdown rendering
 - workbench/app-framework services
-- sync session providers
+- sync session providers (e.g., our patchflow based implementation; maybe something else based on yjs later)
 - dialogs/notifications if app-specific UI actions require them
 
 ## 3. Scope Of This First Refactor
@@ -121,7 +122,7 @@ This document is intentionally narrow.
 
 In scope:
 
-- define the first shared package for Slate-based editor functionality
+- define the first contract boundaries for the hard dependencies that tasks needs
 - define the first app package for tasks
 - define how export/import/CLI fit into that app package
 - define migration phases that can be done incrementally
@@ -138,37 +139,22 @@ The purpose is to validate a concrete pattern.
 
 ## 4. Proposed Package Structure
 
-### 4.1 New Shared Platform Package
+### 4.1 Interface First, Implementation Second
 
-Create a shared package for markdown-oriented editor infrastructure, backed by Slate now and potentially CodeMirror or other implementations later.
+Do **not** start by extracting Slate or Markdown code just because it is shared.
 
-Suggested package layering:
+Start by defining the contracts that tasks actually needs.
+Then keep the current frontend implementation behind adapters until the contracts are stable.
 
-- first extraction target: `src/packages/ui-markdown`
-- supporting implementation package later if needed: `src/packages/ui-slate`
+This is important because the main goal is not code movement.
+The main goal is to make the app boundary explicit and swappable.
 
-The exact names matter less than the roles:
+Only after the contracts are clear should we decide whether a shared implementation package is worth extracting.
 
-- `ui-markdown` is the shared markdown editing and rendering surface
-- `ui-slate` is an implementation package under that surface
-- neither package is an app
-- neither package should know about task rows, task ids, hashtags, due dates, or any other task-specific behavior
+A future package such as `src/packages/ui-markdown` may still make sense, but it is not the first step.
+The first step is to define the markdown/editor and host interfaces precisely enough that tasks can depend on them instead of on raw frontend code.
 
-This first shared package should contain code that is currently useful across multiple apps/editors, such as:
-
-- multimode markdown editor wrappers
-- static and mostly-static markdown rendering
-- shared markdown editing contracts
-- shared commands and keyboard handling
-- upload/paste behavior
-- test helpers for markdown/slate-driven editors
-
-This package may depend on React and Slate.
-That is fine.
-
-The important point is that tasks should depend on the markdown surface contract, not on raw Slate internals.
-
-### 4.1.1 Contract Boundary For Tasks
+### 4.1.1 First Contracts To Define For Tasks
 
 The tasks app should not import the markdown implementation everywhere directly.
 Instead, it should define a narrow contract for what it needs.
@@ -192,6 +178,60 @@ This gives the tasks app:
 - lower coupling
 - easier future swappability
 - a more plugin-like shape for agents and later third-party apps
+
+#### Markdown surface required by tasks today
+
+Based on the current task description editor and renderers, the markdown contract needed by tasks is not that large.
+
+Tasks currently needs something equivalent to:
+
+- an editable markdown surface with:
+  - `value`
+  - `onChange`
+  - `getValueRef`
+  - `fontSize`
+  - `onShiftEnter`
+  - `onFocus`
+  - `enableUpload`
+  - `enableMentions`
+  - `height`
+  - `placeholder`
+  - `autoFocus`
+  - `onSave`
+  - `onUndo`
+  - `onRedo`
+  - `minimal`
+  - `disableBlockEditor`
+  - optional style props such as `modeSwitchStyle`
+- a mostly-static markdown renderer with:
+  - `value`
+  - `searchWords`
+  - optional `onChange`
+  - `selectedHashtags`
+  - `toggleHashtag`
+- a static markdown renderer with at least:
+  - `value`
+  - optional style props
+
+That is already much more concrete than saying "tasks depends on Slate".
+Tasks actually depends on a markdown editing/rendering surface with a fairly small contract.
+
+This is a strong argument for defining a `MarkdownSurface` interface first and only later deciding how the default implementation is packaged.
+
+#### Host services required by tasks today
+
+The task app also needs a host/workbench contract, but again it should be minimal and explicit.
+
+Examples include:
+
+- document state access
+- mutation dispatch
+- key handler enable/disable hooks
+- undo/redo/save hooks
+- sync session access
+- fragment/navigation support if still required
+
+The current frontend implementation can satisfy this through adapters around existing app-framework and syncdb code, without making the tasks app depend on all of `packages/frontend`.
 
 ### 4.2 New Tasks App Package
 
@@ -280,7 +320,7 @@ This includes:
 - task-specific view logic
 - task-specific commands/toolbars
 
-This UI code should use the shared markdown surface and host adapters, with the first-party implementation provided by `ui-markdown`.
+This UI code should use the markdown surface and host adapters defined by the tasks app boundary, with the current frontend stack providing the default implementation.
 
 ### 5.5 Export and import
 
@@ -326,23 +366,31 @@ If tasks remains spread across `packages/frontend` and CLI/export code elsewhere
 
 Making tasks its own package solves that.
 
-## 7. Why Slate Must Be Extracted First
+## 7. Why Interfaces Must Be Defined First
 
-Right now, tasks is blocked from being a clean app package because a significant part of its editor behavior is tied to frontend-oriented Slate code.
+Right now, tasks is blocked from being a clean app package because a significant part of its editor behavior is tied to concrete frontend implementations.
 
-That coupling is not specific to tasks.
+The first mistake would be to respond to that only by moving code around.
+If the contracts remain implicit, we still have tight coupling, just in a different directory.
 
-Slate is a shared editing substrate used across multiple document surfaces.
+So the correct first step is:
 
-So before tasks can become a clean app package, shared Slate code should move out into a dedicated platform package.
+- define the interfaces for the hard dependencies
+- provide adapters from the current frontend implementation
+- keep code movement secondary to contract clarity
 
-This lets:
+This matters especially for the markdown editor dependency.
+There are many plausible implementations of "a markdown editor".
+What tasks needs from one is much narrower than the full feature set of Slate or CodeMirror.
 
-- tasks depend on shared editing primitives
-- chat continue to use the same shared editing primitives later
-- other Slate-based editors avoid depending on all of `packages/frontend`
+Once that interface is explicit, we gain:
 
-This is the right first example of "platform package, not app package".
+- a clean app boundary
+- easier testing
+- easier future swaps of the markdown implementation
+- clearer agent understanding of what is actually required
+
+After that, shared implementation extraction becomes an optimization and organizational improvement, not a prerequisite.
 
 ## 8. Relationship To `packages/frontend`
 
@@ -421,7 +469,7 @@ A headless syncdoc-backed tasks session allows:
 
 Agents need to know where task behavior lives.
 
-A single app package plus a single shared Slate package is far better than scattered logic across:
+A single app package plus explicit host/editor interfaces is far better than scattered logic across:
 
 - `packages/frontend/...`
 - export code
@@ -431,31 +479,22 @@ A single app package plus a single shared Slate package is far better than scatt
 
 ## 11. Concrete Migration Plan
 
-### Phase 1: Define package boundaries
+### Phase 1: Define package boundaries and contracts
 
 Create:
 
-- `src/packages/ui-slate`
 - `src/packages/apps/tasks`
 
+And define the first contracts for:
+
+- markdown editing/rendering
+- tasks host/workbench services
+- sync session access
+
 Do not move everything immediately.
-Just establish ownership and intended roles.
+Just establish ownership, required interfaces, and default adapters.
 
-### Phase 2: Move shared markdown infrastructure
-
-Move the truly shared, app-agnostic markdown editing/rendering code into `ui-markdown`.
-
-Target only code that:
-
-- is reused or should be reused
-- defines the markdown surface tasks and other apps can depend on
-- does not know about tasks specifically
-
-Do not move task-specific rendering or commands here.
-
-If deeper Slate-specific code needs to be split further later, that can happen under `ui-slate`, but that is not the first goal.
-
-### Phase 3: Move headless task model into the tasks app package
+### Phase 2: Move headless task model into the tasks app package
 
 Move or reimplement:
 
@@ -466,7 +505,7 @@ Move or reimplement:
 
 This code should be testable without React.
 
-### Phase 4: Move task export/import ownership into the tasks app package
+### Phase 3: Move task export/import ownership into the tasks app package
 
 Keep using the shared export core in `packages/export`, but make tasks-specific logic owned by the tasks app package.
 
@@ -475,7 +514,7 @@ The pattern should be:
 - shared export core stays generic
 - tasks app provides tasks-specific exporter/importer logic
 
-### Phase 5: Add syncdoc-backed CLI task session
+### Phase 4: Add syncdoc-backed CLI task session
 
 Add a tasks CLI session layer that:
 
@@ -485,7 +524,17 @@ Add a tasks CLI session layer that:
 
 This is the most important phase for agent productivity.
 
-### Phase 6: Move remaining task frontend editor code behind the app boundary
+### Phase 5: Move remaining task frontend editor code behind the app boundary
+
+Only after the contracts are stable should we decide whether a shared implementation package such as `ui-markdown` or `ui-slate` should be created.
+
+If the adapters prove clean and the implementation is clearly reused, then extracting that package becomes low-risk and justified.
+
+### Phase 6: Optional shared implementation extraction
+
+If the earlier phases succeed, then extract the shared markdown implementation into a dedicated package such as `ui-markdown`.
+
+That extraction should follow the interfaces, not define them.
 
 At this point the frontend shell should mostly be hosting the tasks app, not owning its logic.
 
@@ -494,7 +543,7 @@ At this point the frontend shell should mostly be hosting the tasks app, not own
 This first refactor is successful if:
 
 - there is a real `packages/apps/tasks` workspace package
-- there is a real shared `ui-markdown` package
+- there is a clear markdown/editor contract and default adapter implementation
 - tasks no longer depends directly on all of `packages/frontend`
 - the headless task model is reusable from CLI and export/import code
 - fast syncdoc-backed CLI task operations are possible
@@ -521,7 +570,7 @@ This first cut should earn the right to generalize.
 ## 14. Why This Is The Right First Experiment
 
 Tasks is small enough to move.
-Markdown editing/rendering is obviously shared enough to extract.
+The markdown editor dependency is obviously important enough to make explicit via interfaces.
 Agents already need both export/import and fast live task editing.
 
 That makes this the highest-value, lowest-risk first example of a layered app platform in CoCalc.

@@ -8,10 +8,10 @@ Rendered view of the description of a single task
 */
 
 import { React } from "../../app-framework";
-import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-markdown";
 import { header_part } from "./desc-rendering";
 import { TaskActions } from "./actions";
 import { MAX_HEIGHT } from "./constants";
+import { defaultTasksMarkdownSurface } from "./default-adapters";
 
 interface Props {
   actions?: TaskActions;
@@ -35,6 +35,7 @@ export const DescriptionRendered: React.FC<Props> = React.memo(
     is_current,
     hideBody,
   }) => {
+    const { MostlyStaticMarkdown } = defaultTasksMarkdownSurface;
     function render_content() {
       let value = desc;
       if (!value.trim()) {

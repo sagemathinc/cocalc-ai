@@ -4,7 +4,11 @@
     "rootDir": "./",
     "outDir": "dist",
     "sourceMap": true,
-    "lib": ["es5", "es6", "es2017", "dom"]
+    "lib": ["es5", "es6", "es2017", "dom"],
+    "paths": {
+      "@cocalc/app-tasks": ["../apps/tasks"],
+      "@cocalc/app-tasks/*": ["../apps/tasks/*"]
+    }
   },
   "exclude": [
     "dist",
@@ -30,6 +34,7 @@
     "*__test__*"
   ],
   "references": [
+    { "path": "../apps/tasks" },
     { "path": "../chat" },
     { "path": "../comm" },
     { "path": "../jupyter" },
