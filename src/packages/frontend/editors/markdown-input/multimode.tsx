@@ -121,6 +121,7 @@ export default function MultiMarkdownInput({
   }, [onChange]);
   const activeCacheIdRef = useRef<string | undefined>(cacheId);
   const activeModeRef = useRef<Mode>("markdown");
+  const reportedModeRef = useRef<Mode | null>(null);
   const mountedRef = useRef<boolean>(true);
 
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
@@ -174,17 +175,23 @@ export default function MultiMarkdownInput({
   }
 
   useEffect(() => {
+    if (reportedModeRef.current === mode) {
+      return;
+    }
+    reportedModeRef.current = mode;
     onModeChange?.(mode);
-  }, []);
+  }, [mode, onModeChange]);
 
-  const setMode = (mode: Mode) => {
-    set_local_storage(LOCAL_STORAGE_KEY, mode);
-    setMode0(mode);
-    onModeChange?.(mode);
+  const setMode = (nextMode: Mode) => {
+    if (activeModeRef.current === nextMode) {
+      return;
+    }
+    set_local_storage(LOCAL_STORAGE_KEY, nextMode);
+    setMode0(nextMode);
     if (cacheId !== undefined) {
       multimodeStateCache.set(`${project_id}${path}:${cacheId}`, {
         ...getCache(),
-        mode,
+        mode: nextMode,
       });
     }
   };

@@ -114,6 +114,18 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(screen.queryByTestId("markdown-input")).not.toBeNull();
   });
 
+  it("does not re-emit onModeChange when the active mode is selected again", () => {
+    const onModeChange = jest.fn();
+
+    render(<MultiMarkdownInput value="" onChange={() => {}} onModeChange={onModeChange} />);
+
+    expect(onModeChange).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "editor" }));
+
+    expect(onModeChange).toHaveBeenCalledTimes(1);
+  });
+
   it("switches from markdown to rich text and reapplies the markdown cursor position", () => {
     const onChange = jest.fn();
     const setSelectionFromMarkdownPosition = jest.fn(() => true);
