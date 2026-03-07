@@ -37,12 +37,24 @@ import {
 } from "@cocalc/conat/auth/subject-policy";
 
 const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
-const DEFAULT_AGENT_SCOPES = ["browser_session"] as const;
+const DEFAULT_AGENT_SCOPES = ["browser_session", "project_session"] as const;
 
 type CoCalcUserWithAgent = CoCalcUser & {
   auth_actor?: "account" | "agent";
   auth_scopes?: string[];
+  auth_project_id?: string;
 };
+
+function readAgentProjectId(socket): string | undefined {
+  const value = socket?.handshake?.auth?.project_id;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!isValidUUID(trimmed)) {
+    throw Error("invalid agent project_id");
+  }
+  return trimmed;
+}
 
 function parseProjectHostAudienceHostId(token: string): string | undefined {
   const parts = token.split(".");
@@ -67,6 +79,7 @@ function parseProjectHostAudienceHostId(token: string): string | undefined {
 
 function verifyAgentScopedProjectHostBearer(
   bearerToken: string,
+  socket?: any,
 ): CoCalcUserWithAgent | undefined {
   const host_id = parseProjectHostAudienceHostId(bearerToken);
   if (!host_id) return;
@@ -83,6 +96,7 @@ function verifyAgentScopedProjectHostBearer(
       account_id: claims.sub,
       auth_actor: "agent",
       auth_scopes: [...DEFAULT_AGENT_SCOPES],
+      auth_project_id: readAgentProjectId(socket),
     };
   } catch {
     return;
@@ -101,7 +115,7 @@ export async function getUser(
     if (hostToken) {
       return { host_id: hostToken.host_id };
     }
-    const agentUser = verifyAgentScopedProjectHostBearer(bearerToken);
+    const agentUser = verifyAgentScopedProjectHostBearer(bearerToken, socket);
     if (agentUser) {
       return agentUser;
     }
@@ -213,6 +227,44 @@ export async function isAllowed({
     return false;
   }
   const userType = getCoCalcUserType(user);
+  const agentUser = user as CoCalcUserWithAgent;
+  if (agentUser.auth_actor === "agent") {
+    const userId = getCoCalcUserId(agentUser);
+    if (type === "pub" && subject.startsWith("_INBOX.")) {
+      return true;
+    }
+    const common = checkCommonPermissions({
+      userId,
+      userType: "account",
+      user: agentUser,
+      subject,
+      type,
+    });
+    if (common != null && !subject.startsWith(`hub.account.${userId}.`)) {
+      return common;
+    }
+    if (
+      agentUser.auth_scopes?.includes("project_session") &&
+      agentUser.auth_project_id
+    ) {
+      const project_id = extractProjectSubject(subject);
+      if (
+        project_id &&
+        project_id === agentUser.auth_project_id &&
+        (await isCollaborator({ account_id: userId, project_id }))
+      ) {
+        return true;
+      }
+    }
+    if (
+      agentUser.auth_scopes?.includes("browser_session") &&
+      subject.startsWith(`services.account-${userId}.`) &&
+      subject.endsWith(".browser-session")
+    ) {
+      return true;
+    }
+    return false;
+  }
   if (userType == "hub") {
     // right now hubs have full permissions.
     return true;

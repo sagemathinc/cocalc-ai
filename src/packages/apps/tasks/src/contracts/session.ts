@@ -13,6 +13,7 @@ export interface OpenTasksSessionOptions {
   projectId?: string;
   path: string;
   readOnly?: boolean;
+  openTimeoutMs?: number;
 }
 
 export interface TasksSession {

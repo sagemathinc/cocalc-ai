@@ -72,8 +72,9 @@ export class SyncDBTasksSession implements TasksSession {
   static async open(
     syncdb: TaskSyncDBLike,
     options: SyncDBTasksSessionOptions = {},
+    openTimeoutMs?: number,
   ): Promise<SyncDBTasksSession> {
-    await syncdb.wait_until_ready();
+    await waitForTasksSyncDBReady(syncdb, openTimeoutMs);
     return new SyncDBTasksSession(syncdb, options);
   }
 
@@ -209,7 +210,7 @@ export class SyncDBTasksSessionProvider implements TasksSessionProvider {
     });
     return await SyncDBTasksSession.open(syncdb, {
       readOnly: options.readOnly,
-    });
+    }, options.openTimeoutMs);
   }
 }
 
@@ -261,6 +262,39 @@ function normalizeTaskRows(value: unknown): TaskRecord[] {
   return rows
     .map((row) => normalizeTaskRecord(row))
     .filter((row): row is TaskRecord => row != null);
+}
+
+async function waitForTasksSyncDBReady(
+  syncdb: TaskSyncDBLike,
+  openTimeoutMs?: number,
+): Promise<void> {
+  const timeoutMs =
+    openTimeoutMs != null && Number.isFinite(openTimeoutMs) && openTimeoutMs > 0
+      ? openTimeoutMs
+      : undefined;
+  if (timeoutMs == null) {
+    await syncdb.wait_until_ready();
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      syncdb.wait_until_ready(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `timeout waiting for live tasks session to become ready (${timeoutMs}ms)`,
+            ),
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function normalizeTaskRecord(value: unknown): TaskRecord | undefined {

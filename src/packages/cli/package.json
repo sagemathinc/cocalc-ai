@@ -35,6 +35,7 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
+    "@cocalc/app-tasks": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/export": "workspace:*",
     "@cocalc/util": "workspace:*",

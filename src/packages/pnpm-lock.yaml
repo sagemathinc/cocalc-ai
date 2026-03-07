@@ -280,6 +280,9 @@ importers:
 
   cli:
     dependencies:
+      '@cocalc/app-tasks':
+        specifier: workspace:*
+        version: link:../apps/tasks
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat

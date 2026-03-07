@@ -12,6 +12,7 @@ i.ls()
 import { dkv, type DKV } from "./dkv";
 import { dstream, type DStream } from "./dstream";
 import { dko, type DKO } from "./dko";
+import type { Client } from "@cocalc/conat/core/client";
 import getTime from "@cocalc/conat/time";
 import refCache from "@cocalc/util/refcache";
 import type { JSONValue } from "@cocalc/util/types";
@@ -64,6 +65,7 @@ interface Options {
   account_id?: string;
   project_id?: string;
   service?: string;
+  client?: Client;
 }
 
 type StoreType = "stream" | "kv";
@@ -90,6 +92,7 @@ export class Inventory {
     account_id?: string;
     project_id?: string;
     service?: string;
+    client?: Client;
   }) {
     this.options = options;
   }
@@ -353,6 +356,13 @@ function dateToString(d: Date) {
 
 export const cache = refCache<Options & { noCache?: boolean }, Inventory>({
   name: "inventory",
+  createKey: ({ account_id, project_id, service, client }) =>
+    JSON.stringify({
+      account_id,
+      project_id,
+      service,
+      client_id: client?.id,
+    }),
   createObject: async (loc) => {
     const k = new Inventory(loc);
     await k.init();

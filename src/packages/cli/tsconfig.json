@@ -5,6 +5,8 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
+      "@cocalc/app-tasks": ["../apps/tasks"],
+      "@cocalc/app-tasks/*": ["../apps/tasks/*"],
       "@cocalc/conat": ["../conat"],
       "@cocalc/conat/*": ["../conat/*"],
       "@cocalc/export": ["../export"],
@@ -16,6 +18,7 @@
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"],
   "references": [
+    { "path": "../apps/tasks" },
     { "path": "../conat" },
     { "path": "../export" },
     { "path": "../util" }
