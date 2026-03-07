@@ -22,11 +22,13 @@ export interface MarkdownPosition {
 export interface SelectionController {
   setSelection: (selection: any) => void;
   getSelection: () => any;
+  isSelectionReady?: () => boolean;
 }
 
 export interface RichTextSelectionBridgeControl {
   getMarkdownPositionForSelection?: () => MarkdownPosition | null | undefined;
   setSelectionFromMarkdownPosition?: (pos: MarkdownPosition) => boolean;
+  isSelectionReady?: () => boolean;
 }
 
 export interface MultiMarkdownInputProps {

@@ -49,6 +49,8 @@ export function useMultimodeSelection({
     }
     if (mode === "editor") {
       return retrySelectionApply({
+        isReady: () =>
+          richTextControlRef.current?.isSelectionReady?.() ?? true,
         apply: () => {
           const applied =
             richTextControlRef.current?.setSelectionFromMarkdownPosition?.(
@@ -62,6 +64,7 @@ export function useMultimodeSelection({
       });
     }
     return retrySelectionApply({
+      isReady: () => selectionRef.current?.isSelectionReady?.() ?? true,
       apply: () => {
         const applied = applyMarkdownSelection(pending.pos);
         if (applied) {

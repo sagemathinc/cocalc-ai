@@ -29,7 +29,11 @@ import {
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
-import { EditorFunctions } from "@cocalc/frontend/editors/markdown-input/types";
+import {
+  EditorFunctions,
+  RichTextSelectionBridgeControl,
+  SelectionController,
+} from "@cocalc/frontend/editors/markdown-input/types";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
@@ -248,10 +252,7 @@ interface Props {
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
   scrollDivRef?: MutableRefObject<HTMLDivElement | null>;
-  selectionRef?: MutableRefObject<{
-    setSelection: Function;
-    getSelection: Function;
-  } | null>;
+  selectionRef?: MutableRefObject<SelectionController | null>;
   height?: string; // css style or if "auto", then editor will grow to size of content instead of scrolling.
   onCursorTop?: () => void;
   onCursorBottom?: () => void;
@@ -263,21 +264,17 @@ interface Props {
   editBar2?: MutableRefObject<React.JSX.Element | undefined>;
   dirtyRef?: MutableRefObject<boolean>;
   minimal?: boolean;
-  controlRef?: MutableRefObject<{
-    setSelection?: (selection: any) => boolean;
-    getSelection?: () => any;
-    getValue?: () => any;
-    moveCursorToEndOfLine: () => void;
-    allowNextValueUpdateWhileFocused?: () => void;
-    setValueNow?: (value: string) => void;
-    cancelPendingUploads?: () => void;
-    setSelectionFromMarkdownPosition?: (
-      pos: { line: number; ch: number } | undefined,
-    ) => boolean;
-    getMarkdownPositionForSelection?: () =>
-      | { line: number; ch: number }
-      | null;
-  } | null>;
+  controlRef?: MutableRefObject<
+    (RichTextSelectionBridgeControl & {
+      setSelection?: (selection: any) => boolean;
+      getSelection?: () => any;
+      getValue?: () => any;
+      moveCursorToEndOfLine: () => void;
+      allowNextValueUpdateWhileFocused?: () => void;
+      setValueNow?: (value: string) => void;
+      cancelPendingUploads?: () => void;
+    }) | null
+  >;
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
   disableBlockEditor?: boolean;
@@ -457,6 +454,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
     if (selectionRef != null) {
       selectionRef.current = {
+        isSelectionReady: () => ed.children.length > 0,
         setSelection: (selection: any) => {
           if (!selection) return;
           const safe = ensureRange(editor, selection);
@@ -533,6 +531,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           if (!point) return null;
           return nearestMarkdownPositionForSlatePoint(ed, point) ?? null;
         },
+        isSelectionReady: () => ed.children.length > 0,
       };
     }
 

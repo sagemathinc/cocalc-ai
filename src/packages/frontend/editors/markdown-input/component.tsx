@@ -33,7 +33,7 @@ import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
 import { useMentionableUsers } from "./mentionable-users";
 import { submit_mentions } from "./mentions";
-import { EditorFunctions } from "./types";
+import { EditorFunctions, SelectionController } from "./types";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 
@@ -90,10 +90,7 @@ interface Props {
   lineNumbers?: boolean;
   autoFocus?: boolean;
   cmOptions?: { [key: string]: any }; // if given, use this for CodeMirror options, taking precedence over anything derived from other inputs, e.g., lineNumbers, above and account settings.
-  selectionRef?: MutableRefObject<{
-    setSelection: Function;
-    getSelection: Function;
-  } | null>;
+  selectionRef?: MutableRefObject<SelectionController | null>;
   onUndo?: () => void; // user requests undo -- if given, codemirror's internal undo is not used
   onRedo?: () => void; // user requests redo
   onSave?: () => void; // user requests save
@@ -547,6 +544,7 @@ export function MarkdownInput(props: Props) {
 
     if (selectionRef != null) {
       selectionRef.current = {
+        isSelectionReady: () => cm.current != null,
         setSelection: (selection: any) => {
           cm.current?.setSelections(selection);
         },

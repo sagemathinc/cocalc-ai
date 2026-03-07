@@ -8,12 +8,14 @@ type TimeoutHandle = ReturnType<typeof setTimeout>;
 
 interface RetrySelectionApplyOptions {
   apply: () => boolean;
+  isReady?: () => boolean;
   maxAttempts?: number;
   delayMs?: number;
 }
 
 export function retrySelectionApply({
   apply,
+  isReady,
   maxAttempts = PENDING_SELECTION_MAX_ATTEMPTS,
   delayMs = PENDING_SELECTION_RETRY_MS,
 }: RetrySelectionApplyOptions): () => void {
@@ -26,6 +28,12 @@ export function retrySelectionApply({
       return;
     }
     attempts += 1;
+    if (isReady != null && !isReady()) {
+      if (attempts < maxAttempts) {
+        timeout = setTimeout(tryApply, delayMs);
+      }
+      return;
+    }
     if (apply()) {
       return;
     }
@@ -55,25 +63,37 @@ export function restoreSelectionWithRetry({
   selection,
   delayMs = CACHED_SELECTION_RESTORE_DELAY_MS,
 }: RestoreSelectionWithRetryOptions): () => void {
-  const controller = getController();
-  if (controller == null) {
+  const tryRestore = () => {
+    const controller = getController();
+    if (controller == null) {
+      return false;
+    }
+    if (controller.isSelectionReady != null && !controller.isSelectionReady()) {
+      return false;
+    }
+    try {
+      controller.setSelection(selection);
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  };
+
+  if (tryRestore()) {
     return () => {};
   }
 
-  try {
-    controller.setSelection(selection);
-    return () => {};
-  } catch (_err) {
-    const timeout = setTimeout(() => {
-      try {
-        getController()?.setSelection(selection);
-      } catch (_retryErr) {
+  const timeout = setTimeout(() => {
+    try {
+      if (!tryRestore()) {
         // stale or invalid selections are expected to fail harmlessly
       }
-    }, delayMs);
+    } catch (_retryErr) {
+      // stale or invalid selections are expected to fail harmlessly
+    }
+  }, delayMs);
 
-    return () => {
-      clearTimeout(timeout);
-    };
-  }
+  return () => {
+    clearTimeout(timeout);
+  };
 }
