@@ -19,6 +19,7 @@
     "build": "pnpm run build0 && ./production-build.py",
     "build:dev": "pnpm run build0 && NODE_ENV=development pnpm rspack build",
     "watch": "NO_RSPACK_DEV_SERVER=yes NODE_ENV=development pnpm rspack build -w",
+    "watch:low-mem": "node ./scripts/watch-low-memory-rspack.mjs",
     "test": "pnpm exec jest",
     "prepublishOnly": "pnpm test"
   },

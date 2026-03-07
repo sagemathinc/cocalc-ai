@@ -35,6 +35,7 @@
     "smoke:self-host": "bash ./scripts/dev/self-host-smoke.sh",
     "smoke:cloud-host": "bash ./scripts/dev/cloud-host-smoke.sh",
     "static:watch": "cd packages/static && pnpm watch",
+    "static:watch:low-mem": "cd packages/static && pnpm watch:low-mem",
     "static": "cd packages/static && pnpm build",
     "version-check": "cd packages && pnpm check-deps",
     "check-doc-urls": "cd scripts; python3 check_doc_urls.py",

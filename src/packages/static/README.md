@@ -20,6 +20,16 @@ Use `pnpm webpack-prod` to build and test the production version:
 pnpm webpack-prod
 ```
 
+If your machine is memory constrained, there is now a lower-memory watch mode:
+
+```sh
+pnpm watch:low-mem
+```
+
+This does **not** keep rspack resident. Instead it polls the `packages/` tree for
+changes and runs one-shot `pnpm rspack build` after a short debounce. It is slower
+than `pnpm watch`, but steady-state RAM usage is much lower.
+
 This is the same as `pnpm run webpack`, but with more aggressive chunking, caching, minification, etc. It's interesting to test this before making a release, in case something surprising changes or to make sure the size of the bundle hasn't got too big. Also, check in the Network tab of Chrome dev tools that loading cocalc doesn't transfer too much data \(e.g., due to installing a huge package\).
 
 If you get really weird errors that make no sense, the on-disk cashing may be broken. In that case, delete it and restart webpack:
@@ -105,4 +115,3 @@ We used to use [npmjs.com](http://npmjs.com) extensively for packaging under the
 
 1. Change something in `packages/util`.
 2. You **must** do `pnpm build` in `packages/util` to make the changes visible! This is because anything outside of `packages/util` actually only sees `packages/util/dist` which is the compiled versions of everything. This is a significant change from before. You can also do `pnpm tsc` in `packages/util` to compile and update `dist`.
-
