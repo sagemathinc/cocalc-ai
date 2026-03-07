@@ -12,6 +12,7 @@ import { getBackendWatcherDebugStats } from "../watcher-debug";
 class FakeAStream {
   public messages: { mesg: any; seq: number }[] = [];
   public lastStartSeq?: number;
+  public closeCalls = 0;
   private seq: number;
 
   constructor(messages: { mesg: any; seq: number }[] = []) {
@@ -38,8 +39,23 @@ class FakeAStream {
   }
 
   close(): void {
-    // no-op
+    this.closeCalls += 1;
   }
+}
+
+function installWriterCache(
+  svc: SyncFsService,
+  writers: Map<string, FakeAStream>,
+): void {
+  (svc as any).getPatchWriter = async ({ string_id }) => {
+    let writer = writers.get(string_id);
+    if (writer == null) {
+      writer = new FakeAStream();
+      writers.set(string_id, writer);
+    }
+    ((svc as any).patchWriters as Map<string, FakeAStream>).set(string_id, writer);
+    return writer;
+  };
 }
 
 describe("SyncFsService", () => {
@@ -98,6 +114,32 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 
+  it("releases cached patch writers when active=false", async () => {
+    const path = join(dir, "release.txt");
+    writeFileSync(path, "keep");
+
+    const svc = new SyncFsService();
+    const fake = new FakeAStream();
+    installWriterCache(svc, new Map([["sid-release", fake]]));
+
+    await svc.heartbeat(path, true, {
+      project_id: "p-release",
+      relativePath: "release.txt",
+      string_id: "sid-release",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect((svc as any).getDebugStats().patchWriters).toBe(1);
+    await svc.heartbeat(path, false);
+
+    expect(fake.closeCalls).toBe(1);
+    expect((svc as any).getDebugStats()).toMatchObject({
+      activePaths: 0,
+      patchWriters: 0,
+    });
+    svc.close();
+  }, 10_000);
+
   it("emits delete when file removed", async () => {
     const path = join(dir, "b.txt");
     writeFileSync(path, "bye");
@@ -134,6 +176,92 @@ describe("SyncFsService", () => {
       stats.activeByPathTop.find((x: any) => x.path === dir)?.count ?? 0;
     expect(countForDir).toBe(1);
 
+    svc.close();
+  }, 10_000);
+
+  it("prunes stale paths individually even within the same directory", async () => {
+    const a = join(dir, "ttl-a.txt");
+    const b = join(dir, "ttl-b.txt");
+    writeFileSync(a, "a");
+    writeFileSync(b, "b");
+
+    const svc = new SyncFsService();
+    const fakeA = new FakeAStream();
+    const fakeB = new FakeAStream();
+    const writers = new Map<string, FakeAStream>([
+      ["sid-a", fakeA],
+      ["sid-b", fakeB],
+    ]);
+    installWriterCache(svc, writers);
+
+    await svc.heartbeat(b, true, {
+      project_id: "p-ttl",
+      relativePath: "ttl-b.txt",
+      string_id: "sid-b",
+    });
+    await svc.heartbeat(a, true, {
+      project_id: "p-ttl",
+      relativePath: "ttl-a.txt",
+      string_id: "sid-a",
+    });
+    const pathStates = (svc as any).pathStates as Map<
+      string,
+      { lastHeartbeat: number }
+    >;
+    const now = Date.now();
+    pathStates.get(a)!.lastHeartbeat = now;
+    pathStates.get(b)!.lastHeartbeat = now - 61_000;
+    (svc as any).pruneStale();
+
+    const stats = (svc as any).getDebugStats();
+    expect(stats).toMatchObject({
+      activePaths: 1,
+      activePathsTop: [{ path: a }],
+      releasesByReasonTop: [{ reason: "stale", count: 1 }],
+    });
+    expect(stats.recentReleases[0]).toMatchObject({
+      path: b,
+      reason: "stale",
+    });
+    svc.close();
+  }, 10_000);
+
+  it("evicts the oldest active path when the cap is exceeded", async () => {
+    const a = join(dir, "cap-a.txt");
+    const b = join(dir, "cap-b.txt");
+    writeFileSync(a, "a");
+    writeFileSync(b, "b");
+
+    const svc = new SyncFsService(undefined, {
+      maxActivePaths: 1,
+      heartbeatTtlMs: 60_000,
+      pruneIntervalMs: 60_000,
+    });
+    const fakeA = new FakeAStream();
+    const fakeB = new FakeAStream();
+    const writers = new Map<string, FakeAStream>([
+      ["sid-cap-a", fakeA],
+      ["sid-cap-b", fakeB],
+    ]);
+    installWriterCache(svc, writers);
+
+    await svc.heartbeat(a, true, {
+      project_id: "p-cap",
+      relativePath: "cap-a.txt",
+      string_id: "sid-cap-a",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    await svc.heartbeat(b, true, {
+      project_id: "p-cap",
+      relativePath: "cap-b.txt",
+      string_id: "sid-cap-b",
+    });
+
+    expect(fakeA.closeCalls).toBeGreaterThanOrEqual(1);
+    expect((svc as any).getDebugStats()).toMatchObject({
+      activePaths: 1,
+      patchWriters: 1,
+    });
     svc.close();
   }, 10_000);
 

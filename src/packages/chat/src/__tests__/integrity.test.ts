@@ -2,12 +2,11 @@ import { computeChatIntegrityReport } from "../integrity";
 
 describe("computeChatIntegrityReport", () => {
   it("returns zero counters for a healthy codex thread", () => {
-    const rootIso = "2026-02-20T00:00:00.000Z";
     const rows = [
       {
         event: "chat",
         sender_id: "user-1",
-        date: rootIso,
+        date: "2026-02-20T00:00:00.000Z",
         message_id: "m-root",
         thread_id: "t-1",
         history: [],
@@ -19,14 +18,13 @@ describe("computeChatIntegrityReport", () => {
         date: "2026-02-20T00:00:01.000Z",
         message_id: "m-2",
         thread_id: "t-1",
-        reply_to: rootIso,
-        reply_to_message_id: "m-root",
+        parent_message_id: "m-root",
         history: [],
       },
       {
         event: "chat-thread-config",
         sender_id: "__thread_config__",
-        date: rootIso,
+        date: "1970-01-01T00:00:00.000Z",
         thread_id: "t-1",
         acp_config: { model: "gpt-5.3-codex", sessionId: "s-1" },
       },
@@ -42,12 +40,11 @@ describe("computeChatIntegrityReport", () => {
   });
 
   it("detects duplicate roots and invalid reply targets", () => {
-    const rootIso = "2026-02-20T00:00:00.000Z";
     const rows = [
       {
         event: "chat",
         sender_id: "user-1",
-        date: rootIso,
+        date: "2026-02-20T00:00:00.000Z",
         message_id: "m-root-1",
         thread_id: "t-dup",
         history: [],
@@ -66,8 +63,7 @@ describe("computeChatIntegrityReport", () => {
         date: "2026-02-20T00:00:02.000Z",
         message_id: "m-reply",
         thread_id: "t-dup",
-        reply_to: rootIso,
-        reply_to_message_id: "missing-root",
+        parent_message_id: "missing-root",
         history: [],
       },
     ];

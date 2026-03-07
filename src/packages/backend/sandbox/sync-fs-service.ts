@@ -23,6 +23,7 @@ import {
   type PatchId,
 } from "patchflow";
 import { trackBackendWatcher } from "../watcher-debug";
+import getLogger from "@cocalc/backend/logger";
 
 export interface WatchEvent {
   path: string;
@@ -35,6 +36,8 @@ export interface WatchMeta {
   relativePath?: string;
   string_id?: string;
   history_epoch?: number;
+  owner_id?: string;
+  turn_id?: string;
   doctype?: {
     type?: string;
     patch_format?: number;
@@ -44,12 +47,37 @@ export interface WatchMeta {
 
 interface WatchEntry {
   watcher: FSWatcher;
-  lastHeartbeat: number;
   paths: Set<string>;
   stopTrackingWatcher?: () => void;
 }
 
-const HEARTBEAT_TTL = 60_000; // ms to keep a watch alive without heartbeats
+type PathState = {
+  dir: string;
+  lastHeartbeat: number;
+  createdAt: number;
+  meta?: WatchMeta;
+  string_id?: string;
+};
+
+type ReleaseRecord = {
+  at: number;
+  path: string;
+  reason: string;
+  string_id?: string;
+  ageMs: number;
+};
+
+export type SyncFsServiceOptions = {
+  heartbeatTtlMs?: number;
+  pruneIntervalMs?: number;
+  maxActivePaths?: number;
+};
+
+const logger = getLogger("sandbox:sync-fs-service");
+
+const DEFAULT_HEARTBEAT_TTL_MS = 60_000;
+const DEFAULT_MAX_ACTIVE_PATHS = 256;
+const MAX_RECENT_RELEASES = 32;
 const DEBOUNCE_MS = 250; // coalesce rapid events
 const SUPPRESS_TTL_MS = 5_000; // suppress self-inflicted fs events briefly
 
@@ -66,6 +94,167 @@ type SuppressWriteMarker = {
   until: number;
 };
 
+type SyncFsReasonCounters = {
+  [reason: string]: number;
+};
+
+function envNumber(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value == null || value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const activeServices = new Set<SyncFsService>();
+
+function topEntries<T>(
+  items: Iterable<T>,
+  limit: number,
+  getValue: (item: T) => number,
+): T[] {
+  return [...items]
+    .sort((left, right) => getValue(right) - getValue(left))
+    .slice(0, Math.max(1, limit));
+}
+
+export function getSyncFsDebugStats({
+  topN = 8,
+}: {
+  topN?: number;
+} = {}) {
+  const services = [...activeServices];
+  if (services.length === 0) {
+    return {
+      services: 0,
+      activeDirs: 0,
+      activePaths: 0,
+      patchWriters: 0,
+      streamInfoEntries: 0,
+      debounceTimers: 0,
+      suppressMarkers: 0,
+      heartbeatTtlMs: 0,
+      pruneIntervalMs: 0,
+      maxActivePaths: 0,
+      maxActivePathsObserved: 0,
+      counters: {
+        heartbeatActive: 0,
+        heartbeatInactive: 0,
+        watcherStarts: 0,
+        watcherStops: 0,
+        pathReleases: 0,
+        stalePrunes: 0,
+        capEvictions: 0,
+      },
+      releasesByReasonTop: [] as Array<{ reason: string; count: number }>,
+      activePathsTop: [] as Array<{
+        path: string;
+        ageMs: number;
+        idleMs: number;
+        string_id?: string;
+      }>,
+      activeDirsTop: [] as Array<{ dir: string; paths: number }>,
+      recentReleases: [] as ReleaseRecord[],
+    };
+  }
+  if (services.length === 1) {
+    return {
+      services: 1,
+      ...services[0].getDebugStats({ topN }),
+    };
+  }
+  const reasonCounts = new Map<string, number>();
+  const activePaths: Array<{
+    path: string;
+    ageMs: number;
+    idleMs: number;
+    string_id?: string;
+  }> = [];
+  const activeDirs = new Map<string, number>();
+  const recentReleases: ReleaseRecord[] = [];
+  let activePathCount = 0;
+  let activeDirCount = 0;
+  let patchWriters = 0;
+  let streamInfoEntries = 0;
+  let debounceTimers = 0;
+  let suppressMarkers = 0;
+  let heartbeatTtlMs = 0;
+  let pruneIntervalMs = 0;
+  let maxActivePaths = 0;
+  let maxActivePathsObserved = 0;
+  const counters = {
+    heartbeatActive: 0,
+    heartbeatInactive: 0,
+    watcherStarts: 0,
+    watcherStops: 0,
+    pathReleases: 0,
+    stalePrunes: 0,
+    capEvictions: 0,
+  };
+  for (const service of services) {
+    const stats = service.getDebugStats({ topN });
+    activePathCount += stats.activePaths;
+    activeDirCount += stats.activeDirs;
+    patchWriters += stats.patchWriters;
+    streamInfoEntries += stats.streamInfoEntries;
+    debounceTimers += stats.debounceTimers;
+    suppressMarkers += stats.suppressMarkers;
+    heartbeatTtlMs = Math.max(heartbeatTtlMs, stats.heartbeatTtlMs);
+    pruneIntervalMs = Math.max(pruneIntervalMs, stats.pruneIntervalMs);
+    maxActivePaths = Math.max(maxActivePaths, stats.maxActivePaths);
+    maxActivePathsObserved = Math.max(
+      maxActivePathsObserved,
+      stats.maxActivePathsObserved,
+    );
+    counters.heartbeatActive += stats.counters.heartbeatActive;
+    counters.heartbeatInactive += stats.counters.heartbeatInactive;
+    counters.watcherStarts += stats.counters.watcherStarts;
+    counters.watcherStops += stats.counters.watcherStops;
+    counters.pathReleases += stats.counters.pathReleases;
+    counters.stalePrunes += stats.counters.stalePrunes;
+    counters.capEvictions += stats.counters.capEvictions;
+    for (const item of stats.releasesByReasonTop) {
+      reasonCounts.set(item.reason, (reasonCounts.get(item.reason) ?? 0) + item.count);
+    }
+    for (const item of stats.activePathsTop) {
+      activePaths.push(item);
+    }
+    for (const item of stats.activeDirsTop) {
+      activeDirs.set(item.dir, (activeDirs.get(item.dir) ?? 0) + item.paths);
+    }
+    recentReleases.push(...stats.recentReleases);
+  }
+  return {
+    services: services.length,
+    activeDirs: activeDirCount,
+    activePaths: activePathCount,
+    patchWriters,
+    streamInfoEntries,
+    debounceTimers,
+    suppressMarkers,
+    heartbeatTtlMs,
+    pruneIntervalMs,
+    maxActivePaths,
+    maxActivePathsObserved,
+    counters,
+    releasesByReasonTop: Array.from(reasonCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, Math.max(1, topN))
+      .map(([reason, count]) => ({ reason, count })),
+    activePathsTop: topEntries(
+      activePaths,
+      topN,
+      (item) => item.ageMs,
+    ),
+    activeDirsTop: Array.from(activeDirs.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, Math.max(1, topN))
+      .map(([dir, paths]) => ({ dir, paths })),
+    recentReleases: recentReleases
+      .sort((left, right) => right.at - left.at)
+      .slice(0, Math.max(1, topN)),
+  };
+}
+
 /**
  * Centralized filesystem watcher that:
  * - Maintains a durable snapshot of last-on-disk content (via SyncFsWatchStore).
@@ -80,18 +269,54 @@ export class SyncFsService extends EventEmitter {
   private watchers: Map<string, WatchEntry> = new Map();
   private watcherInFlight: Map<string, Promise<WatchEntry>> = new Map();
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
-  private metaByPath: Map<string, WatchMeta> = new Map();
+  private pathStates: Map<string, PathState> = new Map();
   private patchWriters: Map<string, AStream<any>> = new Map();
   private streamInfo: Map<string, StreamInfo> = new Map();
   private suppressOnce: Map<string, SuppressWriteMarker> = new Map();
   private conatClient?: any;
   private readonly clientId: string;
+  private readonly heartbeatTtlMs: number;
+  private readonly pruneIntervalMs: number;
+  private readonly maxActivePaths: number;
+  private pruneTimer?: NodeJS.Timeout;
+  private readonly counters = {
+    heartbeatActive: 0,
+    heartbeatInactive: 0,
+    watcherStarts: 0,
+    watcherStops: 0,
+    pathReleases: 0,
+    stalePrunes: 0,
+    capEvictions: 0,
+  };
+  private readonly releasesByReason: SyncFsReasonCounters = {};
+  private readonly recentReleases: ReleaseRecord[] = [];
+  private maxActivePathsObserved = 0;
 
-  constructor(store?: SyncFsWatchStore) {
+  constructor(store?: SyncFsWatchStore, opts?: SyncFsServiceOptions) {
     super();
     this.store = store ?? new SyncFsWatchStore();
     this.clientId = makeClientId();
-    setInterval(this.pruneStale, HEARTBEAT_TTL);
+    this.heartbeatTtlMs = Math.max(
+      1_000,
+      opts?.heartbeatTtlMs ??
+        envNumber("COCALC_SYNC_FS_HEARTBEAT_TTL_MS", DEFAULT_HEARTBEAT_TTL_MS),
+    );
+    this.pruneIntervalMs = Math.max(
+      1_000,
+      opts?.pruneIntervalMs ??
+        envNumber("COCALC_SYNC_FS_PRUNE_INTERVAL_MS", this.heartbeatTtlMs),
+    );
+    this.maxActivePaths = Math.max(
+      1,
+      opts?.maxActivePaths ??
+        envNumber(
+          "COCALC_SYNC_FS_MAX_ACTIVE_PATHS",
+          DEFAULT_MAX_ACTIVE_PATHS,
+        ),
+    );
+    this.pruneTimer = setInterval(this.pruneStale, this.pruneIntervalMs);
+    this.pruneTimer.unref?.();
+    activeServices.add(this);
   }
 
   private sha256 = (content: string): string => {
@@ -104,6 +329,129 @@ export class SyncFsService extends EventEmitter {
     clearTimeout(marker.timer);
     this.suppressOnce.delete(path);
   };
+
+  private normalizeMeta(path: string, meta?: WatchMeta): WatchMeta | undefined {
+    if (meta == null) {
+      return this.pathStates.get(path)?.meta;
+    }
+    if (!meta.project_id || !meta.relativePath) {
+      return meta;
+    }
+    return {
+      ...meta,
+      string_id:
+        meta.string_id ?? client_db.sha1(meta.project_id, meta.relativePath),
+    };
+  }
+
+  private rememberRelease(record: ReleaseRecord): void {
+    this.counters.pathReleases += 1;
+    this.releasesByReason[record.reason] =
+      (this.releasesByReason[record.reason] ?? 0) + 1;
+    this.recentReleases.unshift(record);
+    if (this.recentReleases.length > MAX_RECENT_RELEASES) {
+      this.recentReleases.length = MAX_RECENT_RELEASES;
+    }
+  }
+
+  private closeStreamState(string_id: string | undefined): void {
+    if (!string_id) return;
+    const writer = this.patchWriters.get(string_id);
+    if (writer != null) {
+      writer.close();
+      this.patchWriters.delete(string_id);
+    }
+    this.streamInfo.delete(string_id);
+  }
+
+  private hasActivePathForStringId(
+    string_id: string | undefined,
+    excludePath?: string,
+  ): boolean {
+    if (!string_id) return false;
+    for (const [path, state] of this.pathStates.entries()) {
+      if (path === excludePath) continue;
+      if (state.string_id === string_id) return true;
+    }
+    return false;
+  }
+
+  private closeWatcher(dir: string, reason: string): void {
+    const entry = this.watchers.get(dir);
+    if (!entry) return;
+    entry.stopTrackingWatcher?.();
+    entry.watcher.close();
+    this.watchers.delete(dir);
+    this.counters.watcherStops += 1;
+    if (process.env.SYNC_FS_DEBUG) {
+      logger.debug("sync-fs close watcher", {
+        dir,
+        reason,
+        activeDirs: this.watchers.size,
+        activePaths: this.pathStates.size,
+      });
+    }
+  }
+
+  private releasePath(path: string, reason: string): void {
+    const state = this.pathStates.get(path);
+    const dir = state?.dir ?? dirname(path);
+    const existingEntry = this.watchers.get(dir);
+    if (state == null && !existingEntry?.paths.has(path)) {
+      return;
+    }
+    const string_id = state?.string_id;
+    const createdAt = state?.createdAt ?? Date.now();
+    this.pathStates.delete(path);
+    this.clearSuppress(path);
+    const timer = this.debounceTimers.get(path);
+    if (timer != null) {
+      clearTimeout(timer);
+      this.debounceTimers.delete(path);
+    }
+    const entry = existingEntry ?? this.watchers.get(dir);
+    if (entry != null) {
+      entry.paths.delete(path);
+      if (entry.paths.size === 0) {
+        this.closeWatcher(dir, reason);
+      }
+    }
+    if (!this.hasActivePathForStringId(string_id, path)) {
+      this.closeStreamState(string_id);
+    }
+    this.rememberRelease({
+      at: Date.now(),
+      path,
+      reason,
+      string_id,
+      ageMs: Math.max(0, Date.now() - createdAt),
+    });
+  }
+
+  private enforceActivePathCap(preferredPath?: string): void {
+    this.maxActivePathsObserved = Math.max(
+      this.maxActivePathsObserved,
+      this.pathStates.size,
+    );
+    if (this.pathStates.size <= this.maxActivePaths) return;
+    const evicted: string[] = [];
+    const candidates = [...this.pathStates.entries()]
+      .filter(([path]) => path !== preferredPath)
+      .sort((left, right) => left[1].lastHeartbeat - right[1].lastHeartbeat);
+    for (const [path] of candidates) {
+      if (this.pathStates.size <= this.maxActivePaths) break;
+      this.counters.capEvictions += 1;
+      evicted.push(path);
+      this.releasePath(path, "cap");
+    }
+    if (evicted.length > 0) {
+      logger.warn("sync-fs active path cap reached", {
+        maxActivePaths: this.maxActivePaths,
+        activePaths: this.pathStates.size,
+        evicted: evicted.slice(0, 8),
+      });
+    }
+  }
 
   private async initPath(path: string, meta?: WatchMeta): Promise<void> {
     if (!meta?.project_id || !meta.relativePath) return;
@@ -164,12 +512,17 @@ export class SyncFsService extends EventEmitter {
   }
 
   close(): void {
+    activeServices.delete(this);
+    if (this.pruneTimer != null) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = undefined;
+    }
     this.watcherInFlight.clear();
-    for (const { watcher, stopTrackingWatcher } of this.watchers.values()) {
-      stopTrackingWatcher?.();
-      watcher.close();
+    for (const dir of [...this.watchers.keys()]) {
+      this.closeWatcher(dir, "service-close");
     }
     this.watchers.clear();
+    this.pathStates.clear();
     for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer);
     }
@@ -182,6 +535,7 @@ export class SyncFsService extends EventEmitter {
       clearTimeout(marker.timer);
     }
     this.suppressOnce.clear();
+    this.streamInfo.clear();
     this.store.close();
     this.removeAllListeners();
   }
@@ -206,7 +560,7 @@ export class SyncFsService extends EventEmitter {
 
   async recordLocalDelete(path: string): Promise<void> {
     let change: ExternalChange = { deleted: true, content: "", hash: "" };
-    const meta = this.metaByPath.get(path);
+    const meta = this.pathStates.get(path)?.meta;
     const codec = this.resolveCodec(meta);
     try {
       const computed = await this.store.handleExternalChange(
@@ -249,40 +603,46 @@ export class SyncFsService extends EventEmitter {
   ): Promise<void> {
     const dir = dirname(path);
     if (active) {
-      if (meta) {
-        // Record metadata
-        this.metaByPath.set(path, meta);
-      }
-
+      this.counters.heartbeatActive += 1;
+      const normalizedMeta = this.normalizeMeta(path, meta);
+      const now = Date.now();
+      const existingState = this.pathStates.get(path);
+      this.pathStates.set(path, {
+        dir,
+        lastHeartbeat: now,
+        createdAt: existingState?.createdAt ?? now,
+        meta: normalizedMeta,
+        string_id: normalizedMeta?.string_id,
+      });
+      this.maxActivePathsObserved = Math.max(
+        this.maxActivePathsObserved,
+        this.pathStates.size,
+      );
+      this.enforceActivePathCap(path);
       let entry = this.watchers.get(dir);
 
       if (!entry?.paths.has(path)) {
-        await this.initPath(path, meta);
+        await this.initPath(path, normalizedMeta);
       }
 
       if (!entry) {
         entry = await this.ensureWatcher(dir, path);
       }
 
-      entry.lastHeartbeat = Date.now();
+      const currentState = this.pathStates.get(path);
+      if (currentState == null) {
+        if (entry.paths.size === 0) {
+          this.closeWatcher(dir, "released-during-init");
+        }
+        if (!this.hasActivePathForStringId(normalizedMeta?.string_id, path)) {
+          this.closeStreamState(normalizedMeta?.string_id);
+        }
+        return;
+      }
       entry.paths.add(path);
     } else {
-      let existing = this.watchers.get(dir);
-      if (!existing) {
-        const inflight = this.watcherInFlight.get(dir);
-        if (!inflight) return;
-        try {
-          existing = await inflight;
-        } catch {
-          return;
-        }
-      }
-      if (!existing) return;
-      existing.paths.delete(path);
-      this.metaByPath.delete(path);
-      if (existing.paths.size === 0) {
-        this.closeEntry(dir);
-      }
+      this.counters.heartbeatInactive += 1;
+      this.releasePath(path, "inactive");
     }
   }
 
@@ -299,7 +659,7 @@ export class SyncFsService extends EventEmitter {
     }
     const timer = setTimeout(async () => {
       this.debounceTimers.delete(path);
-      const meta = this.metaByPath.get(path);
+      const meta = this.pathStates.get(path)?.meta;
       const codec = this.resolveCodec(meta);
       if (event === "unlink") {
         try {
@@ -483,24 +843,27 @@ export class SyncFsService extends EventEmitter {
 
   private pruneStale = (): void => {
     const now = Date.now();
-    for (const [dir, entry] of this.watchers.entries()) {
-      if (entry.paths.size === 0 || now - entry.lastHeartbeat > HEARTBEAT_TTL) {
-        this.closeEntry(dir);
+    let staleReleased = 0;
+    for (const [path, state] of [...this.pathStates.entries()]) {
+      if (now - state.lastHeartbeat <= this.heartbeatTtlMs) continue;
+      staleReleased += 1;
+      this.counters.stalePrunes += 1;
+      this.releasePath(path, "stale");
+    }
+    for (const [dir, entry] of [...this.watchers.entries()]) {
+      if (entry.paths.size === 0) {
+        this.closeWatcher(dir, "empty");
       }
     }
-  };
-
-  private closeEntry(dir: string): void {
-    const entry = this.watchers.get(dir);
-    if (!entry) return;
-    for (const p of entry.paths) {
-      this.metaByPath.delete(p);
-      this.clearSuppress(p);
+    if (staleReleased > 0) {
+      logger.debug("sync-fs pruned stale paths", {
+        staleReleased,
+        activePaths: this.pathStates.size,
+        activeDirs: this.watchers.size,
+        patchWriters: this.patchWriters.size,
+      });
     }
-    entry.stopTrackingWatcher?.();
-    entry.watcher.close();
-    this.watchers.delete(dir);
-  }
+  };
 
   private async ensureWatcher(dir: string, path: string): Promise<WatchEntry> {
     const existing = this.watchers.get(dir);
@@ -534,11 +897,11 @@ export class SyncFsService extends EventEmitter {
       });
       const entry: WatchEntry = {
         watcher,
-        lastHeartbeat: Date.now(),
         paths: new Set(),
         stopTrackingWatcher,
       };
       this.watchers.set(dir, entry);
+      this.counters.watcherStarts += 1;
 
       const ready = new Promise<void>((resolve, reject) => {
         let settled = false;
@@ -568,7 +931,7 @@ export class SyncFsService extends EventEmitter {
       } catch (err) {
         // Ensure partially-created entries are not leaked on startup errors.
         if (this.watchers.get(dir) === entry) {
-          this.closeEntry(dir);
+          this.closeWatcher(dir, "startup-error");
         } else {
           stopTrackingWatcher?.();
           watcher.close();
@@ -585,6 +948,46 @@ export class SyncFsService extends EventEmitter {
         this.watcherInFlight.delete(dir);
       }
     }
+  }
+
+  getDebugStats({ topN = 8 }: { topN?: number } = {}) {
+    const top = Math.max(1, topN);
+    const now = Date.now();
+    const dirCounts = new Map<string, number>();
+    for (const state of this.pathStates.values()) {
+      dirCounts.set(state.dir, (dirCounts.get(state.dir) ?? 0) + 1);
+    }
+    return {
+      activeDirs: this.watchers.size,
+      activePaths: this.pathStates.size,
+      patchWriters: this.patchWriters.size,
+      streamInfoEntries: this.streamInfo.size,
+      debounceTimers: this.debounceTimers.size,
+      suppressMarkers: this.suppressOnce.size,
+      heartbeatTtlMs: this.heartbeatTtlMs,
+      pruneIntervalMs: this.pruneIntervalMs,
+      maxActivePaths: this.maxActivePaths,
+      maxActivePathsObserved: this.maxActivePathsObserved,
+      counters: { ...this.counters },
+      releasesByReasonTop: Object.entries(this.releasesByReason)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, top)
+        .map(([reason, count]) => ({ reason, count })),
+      activePathsTop: [...this.pathStates.entries()]
+        .map(([path, state]) => ({
+          path,
+          string_id: state.string_id,
+          ageMs: Math.max(0, now - state.createdAt),
+          idleMs: Math.max(0, now - state.lastHeartbeat),
+        }))
+        .sort((a, b) => b.idleMs - a.idleMs)
+        .slice(0, top),
+      activeDirsTop: Array.from(dirCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, top)
+        .map(([dir, paths]) => ({ dir, paths })),
+      recentReleases: this.recentReleases.slice(0, top),
+    };
   }
 
   private async appendPatch(

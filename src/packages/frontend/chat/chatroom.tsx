@@ -1163,6 +1163,11 @@ export function ChatPanel({
       <ChatRoomModals
         actions={actions}
         path={path}
+        selectedThreadKey={selectedThreadKey}
+        selectedThreadLabel={
+          !isCombinedFeedSelected ? selectedThread?.label : undefined
+        }
+        isCombinedFeedSelected={isCombinedFeedSelected}
         onHandlers={setModalHandlers}
       />
       <ChatRoomThreadActions

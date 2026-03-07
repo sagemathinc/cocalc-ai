@@ -3,14 +3,29 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Select, Space, message as antdMessage } from "antd";
-import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import {
+  Button,
+  Checkbox,
+  Input,
+  Modal,
+  Select,
+  Space,
+  message as antdMessage,
+} from "antd";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { lite } from "@cocalc/frontend/lite";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import { path_split } from "@cocalc/util/misc";
 import {
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
@@ -20,6 +35,7 @@ import {
 import type { ChatActions } from "./actions";
 import { ThreadImageUpload } from "./thread-image-upload";
 import { ChatIconPicker } from "./chat-icon-picker";
+import type { ChatExportOpenRequest, ChatExportScope } from "./export-types";
 
 export interface ChatRoomModalHandlers {
   openRenameModal: (
@@ -29,13 +45,16 @@ export interface ChatRoomModalHandlers {
     currentColor?: string,
     currentIcon?: string,
   ) => void;
-  openExportModal: (threadKey: string, label: string, isAI: boolean) => void;
+  openExportModal: (opts?: ChatExportOpenRequest) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
 }
 
 interface ChatRoomModalsProps {
   actions: ChatActions;
   path: string;
+  selectedThreadKey?: string | null;
+  selectedThreadLabel?: string;
+  isCombinedFeedSelected?: boolean;
   onHandlers?: (handlers: ChatRoomModalHandlers) => void;
 }
 
@@ -50,7 +69,20 @@ const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "full-access", label: "Full access" },
 ];
 
-export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProps) {
+type ExportRequest = {
+  scope: ChatExportScope;
+  threadKey?: string;
+  label?: string;
+};
+
+export function ChatRoomModals({
+  actions,
+  path,
+  selectedThreadKey,
+  selectedThreadLabel,
+  isCombinedFeedSelected = false,
+  onHandlers,
+}: ChatRoomModalsProps) {
   const { project_id } = useFrameContext();
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
@@ -67,19 +99,19 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     sessionMode: DEFAULT_CODEX_SESSION_MODE,
     workingDirectory: defaultWorkingDir(path),
   });
-  const [exportThread, setExportThread] = useState<{
-    key: string;
-    label: string;
-    isAI: boolean;
-  } | null>(null);
+  const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
+  const [exportScope, setExportScope] =
+    useState<ChatExportScope>("all-non-archived-threads");
   const [exportFilename, setExportFilename] = useState<string>("");
+  const [exportIncludeBlobs, setExportIncludeBlobs] = useState<boolean>(false);
+  const [exportRunning, setExportRunning] = useState<boolean>(false);
   const [forkThread, setForkThread] = useState<{
     key: string;
     label: string;
     isAI: boolean;
   } | null>(null);
   const [forkName, setForkName] = useState<string>("");
-  const openRenameModal = (
+  const openRenameModal = useCallback((
     threadKey: string,
     currentLabel: string,
     _useCurrentLabel: boolean,
@@ -125,7 +157,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         desired: savedConfig.reasoning,
       }),
     });
-  };
+  }, [actions, path]);
 
   const closeRenameModal = () => {
     setRenamingThread(null);
@@ -190,17 +222,31 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     closeRenameModal();
   };
 
-  const openExportModal = (threadKey: string, label: string, isAI: boolean) => {
-    setExportThread({ key: threadKey, label, isAI });
-  };
+  const openExportModal = useCallback((opts?: ChatExportOpenRequest) => {
+    const requestThreadKey =
+      opts?.threadKey?.trim() ||
+      (!isCombinedFeedSelected ? selectedThreadKey?.trim() || undefined : undefined);
+    const requestLabel =
+      opts?.label?.trim() ||
+      (!isCombinedFeedSelected ? selectedThreadLabel?.trim() || undefined : undefined);
+    const scope =
+      opts?.scope ??
+      (requestThreadKey ? "current-thread" : "all-non-archived-threads");
+    setExportRequest({
+      scope,
+      threadKey: requestThreadKey,
+      label: requestLabel,
+    });
+  }, [isCombinedFeedSelected, selectedThreadKey, selectedThreadLabel]);
 
   const closeExportModal = () => {
-    setExportThread(null);
+    setExportRequest(null);
+    setExportRunning(false);
   };
 
   const handleExportThread = async () => {
-    if (!exportThread) return;
-    if (!actions?.exportThreadToMarkdown) {
+    if (!exportRequest) return;
+    if (!actions?.exportChatArchive) {
       antdMessage.error("Export is not available.");
       return;
     }
@@ -209,22 +255,35 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
       antdMessage.error("Please enter a filename.");
       return;
     }
+    if (exportScope === "current-thread" && !exportRequest.threadKey) {
+      antdMessage.error("Select a thread to export.");
+      return;
+    }
     try {
-      await actions.exportThreadToMarkdown({
-        threadKey: exportThread.key,
-        path: outputPath,
+      setExportRunning(true);
+      await actions.exportChatArchive({
+        scope: exportScope,
+        threadId: exportScope === "current-thread" ? exportRequest.threadKey : undefined,
+        outputPath,
+        includeBlobs: exportIncludeBlobs,
       });
       antdMessage.success("Chat exported.");
       closeExportModal();
     } catch (err) {
       console.error("failed to export chat", err);
-      antdMessage.error("Failed to export chat.");
+      antdMessage.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to export chat.",
+      );
+    } finally {
+      setExportRunning(false);
     }
   };
 
-  const openForkModal = (threadKey: string, label: string, isAI: boolean) => {
+  const openForkModal = useCallback((threadKey: string, label: string, isAI: boolean) => {
     setForkThread({ key: threadKey, label, isAI });
-  };
+  }, []);
 
   const closeForkModal = () => {
     setForkThread(null);
@@ -256,7 +315,11 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
 
   const handlers = useMemo(
     () => ({ openRenameModal, openExportModal, openForkModal }),
-    [],
+    [
+      openRenameModal,
+      openExportModal,
+      openForkModal,
+    ],
   );
 
   useEffect(() => {
@@ -264,14 +327,25 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
   }, [handlers, onHandlers]);
 
   useEffect(() => {
-    if (!exportThread) return;
-    const defaultPath = buildThreadExportPath(
-      path,
-      exportThread.key,
-      exportThread.label,
+    actions.openExportModal = openExportModal;
+    return () => {
+      if (actions.openExportModal === openExportModal) {
+        actions.openExportModal = undefined;
+      }
+    };
+  }, [actions, openExportModal]);
+
+  useEffect(() => {
+    if (!exportRequest) return;
+    setExportScope(exportRequest.scope);
+    setExportIncludeBlobs(false);
+    setExportFilename(
+      buildChatExportPath(path, exportRequest.scope, {
+        threadKey: exportRequest.threadKey,
+        label: exportRequest.label,
+      }),
     );
-    setExportFilename(defaultPath);
-  }, [exportThread, path]);
+  }, [exportRequest, path]);
 
   useEffect(() => {
     if (!forkThread) return;
@@ -297,17 +371,87 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     <>
       <Modal
         title={
-          exportThread?.label?.trim()
-            ? `Export "${exportThread.label.trim()}"`
-            : "Export chat"
+          <span>
+            {exportRequest?.label?.trim()
+              ? `Export "${exportRequest.label.trim()}"`
+              : "Export..."}{" "}
+            <HelpIcon
+              title="Chat export"
+              maxWidth="34rem"
+              style={{ marginLeft: 6 }}
+            >
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                <div>
+                  Export creates a self-contained archive bundle for the
+                  selected chat scope. It includes archived/offloaded chat
+                  messages and a human-readable transcript.
+                </div>
+                <div>
+                  The archive also includes machine-readable JSON so agents can
+                  inspect, transform, or re-use chat data outside the live chat
+                  UI.
+                </div>
+                <div>
+                  The export command runs on the local <code>.chat</code> file
+                  and archived SQLite data where the command executes. It does
+                  not copy the chat itself over the network first.
+                </div>
+                <div>
+                  Use <code>Include blobs/assets</code> when you want embedded
+                  images or uploaded files copied into the export.
+                </div>
+                <div>
+                  The same export path is available from the CLI via{" "}
+                  <code>cocalc export chat ...</code>, which is useful for
+                  automation, testing, and agent workflows. Network access is
+                  only needed when the export fetches blobs/assets.
+                </div>
+              </div>
+            </HelpIcon>
+          </span>
         }
-        open={exportThread != null}
+        open={exportRequest != null}
         onCancel={closeExportModal}
         onOk={handleExportThread}
         okText="Export"
+        okButtonProps={{ loading: exportRunning }}
         destroyOnHidden
       >
         <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Scope</div>
+            <Select
+              value={exportScope}
+              style={{ width: "100%" }}
+              onChange={(value) => {
+                const scope = value as ChatExportScope;
+                setExportScope(scope);
+                setExportFilename(
+                  buildChatExportPath(path, scope, {
+                    threadKey: exportRequest?.threadKey,
+                    label: exportRequest?.label,
+                  }),
+                );
+              }}
+              options={[
+                {
+                  value: "current-thread",
+                  label: exportRequest?.label?.trim()
+                    ? `This thread (${exportRequest.label.trim()})`
+                    : "This thread",
+                  disabled: !exportRequest?.threadKey,
+                },
+                {
+                  value: "all-non-archived-threads",
+                  label: "All non-archived threads",
+                },
+                {
+                  value: "all-threads",
+                  label: "All threads",
+                },
+              ]}
+            />
+          </div>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Filename
@@ -317,6 +461,16 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
               onChange={(e) => setExportFilename(e.target.value)}
               onPressEnter={handleExportThread}
             />
+          </div>
+          <Checkbox
+            checked={exportIncludeBlobs}
+            onChange={(e) => setExportIncludeBlobs(e.target.checked)}
+          >
+            Include blobs/assets
+          </Checkbox>
+          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+            Export includes archived/offloaded chat messages for the selected
+            threads. Codex activity logs are excluded.
           </div>
         </Space>
       </Modal>
@@ -598,15 +752,24 @@ function defaultWorkingDir(chatPath: string): string {
   return chatPath.slice(0, i);
 }
 
-function buildThreadExportPath(
+function buildChatExportPath(
   chatPath: string | undefined,
-  threadKey: string,
-  label?: string,
+  scope: ChatExportScope,
+  opts: {
+    threadKey?: string;
+    label?: string;
+  } = {},
 ): string {
-  const base = (chatPath || "chat").replace(/\/+$/, "");
-  const slug = slugifyLabel(label);
-  const suffix = slug || threadKey || "thread";
-  return `${base}.${suffix}.md`;
+  const normalizedPath = `${chatPath ?? "chat"}`.trim() || "chat";
+  const { head, tail } = path_split(normalizedPath);
+  const stem = tail.endsWith(".chat") ? tail.slice(0, -".chat".length) : tail;
+  const scopeSuffix =
+    scope === "current-thread"
+      ? `.${slugifyLabel(opts.label) || opts.threadKey || "thread"}`
+      : scope === "all-threads"
+        ? ".all-threads"
+        : ".threads";
+  return `${head ? `${head}/` : ""}${stem || "chat"}${scopeSuffix}.cocalc-export.zip`;
 }
 
 function slugifyLabel(label?: string): string {

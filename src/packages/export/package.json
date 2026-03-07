@@ -1,7 +1,7 @@
 {
-  "name": "@cocalc/chat",
+  "name": "@cocalc/export",
   "version": "0.0.1",
-  "description": "Shared chat helpers and types for CoCalc",
+  "description": "Generic CoCalc export bundle helpers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -10,22 +10,18 @@
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./server": {
-      "import": "./dist/server.js",
-      "require": "./dist/server.js",
-      "types": "./dist/server.d.ts"
-    },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "rm -f tsconfig.tsbuildinfo; pnpm exec tsc --build",
-    "test": "pnpm exec jest",
+    "build": "pnpm exec tsc --build",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
+    "test": "pnpm exec jest",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/jest"
   },
   "dependencies": {
-    "@cocalc/conat": "workspace:*",
-    "@cocalc/util": "workspace:*"
+    "@cocalc/backend": "workspace:*",
+    "@cocalc/chat": "workspace:*",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

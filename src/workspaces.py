@@ -126,6 +126,7 @@ def all_packages() -> List[str]:
         'packages/project-runner',
         'packages/project-host',
         'packages/plus',
+        'packages/export',
         'packages/cli',
         'packages/launchpad',
         'packages/cloud',

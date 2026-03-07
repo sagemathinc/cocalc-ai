@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "jest"],
+    "rootDir": "./",
+    "outDir": "dist",
+    "module": "commonjs",
+    "target": "es2020",
+    "lib": ["es2020", "dom"],
+    "baseUrl": ".",
+    "paths": {
+      "@cocalc/backend": ["../backend"],
+      "@cocalc/backend/*": ["../backend/*"],
+      "@cocalc/chat": ["../chat"],
+      "@cocalc/chat/*": ["../chat/*"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["dist", "node_modules"],
+  "references": [{ "path": "../backend" }, { "path": "../chat" }]
+}

@@ -95,6 +95,29 @@ function withTimeoutAndRetry<T>(
 ): () => Promise<T> {
   const extStr = Array.isArray(ext) ? ext.join(",") : ext;
 
+  function getErrorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    return String(err);
+  }
+
+  function getEditorLoadGuidance(errorMsg: string): string | undefined {
+    const lower = errorMsg.toLowerCase();
+    const looksLikeMissingChunk =
+      lower.includes("unexpected token '<'") ||
+      lower.includes("failed to fetch dynamically imported module") ||
+      lower.includes("importing a module script failed") ||
+      lower.includes("loading chunk") ||
+      lower.includes("chunkloaderror") ||
+      (lower.includes("/static/") && lower.includes(".js")) ||
+      (lower.includes("timeout") && lower.includes("editor load"));
+    if (!looksLikeMissingChunk) return undefined;
+    return [
+      `Failed to load frontend assets for the ${extStr} editor.`,
+      "This usually means a required JS chunk is missing or stale, for example because the frontend build/watch process is broken or out of date.",
+      "Rebuild the frontend/static assets, make sure the missing chunk exists under /static, then refresh the browser tab and try again.",
+    ].join(" ");
+  }
+
   return async () => {
     let lastError: Error | null = null;
 
@@ -129,7 +152,7 @@ function withTimeoutAndRetry<T>(
         return result;
       } catch (err) {
         lastError = err as Error;
-        const errorMsg = lastError.message || String(lastError);
+        const errorMsg = getErrorMessage(lastError);
 
         if (attempt < maxRetries) {
           // Check if it's a timeout error or immediate network error
@@ -156,6 +179,11 @@ function withTimeoutAndRetry<T>(
     }
 
     // All retries exhausted
+    const errorMsg = getErrorMessage(lastError);
+    const guidance = getEditorLoadGuidance(errorMsg);
+    if (guidance != null) {
+      throw new Error(`${guidance} Original error: ${errorMsg}`);
+    }
     throw lastError || new Error(`Failed to load editor for ${extStr}`);
   };
 }

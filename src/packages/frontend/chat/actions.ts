@@ -78,6 +78,10 @@ import {
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processLLM as processLLMExternal } from "./actions/llm";
 import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
+import type {
+  ChatArchiveExportOptions,
+  ChatExportOpenRequest,
+} from "./export-types";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
@@ -231,6 +235,7 @@ export class ChatActions extends Actions<ChatState> {
   public frameId: string = "";
   // this might not be set for deprecated side chat:
   public frameTreeActions?: CodeEditorActions;
+  public openExportModal?: (opts?: ChatExportOpenRequest) => void;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
@@ -356,6 +361,7 @@ export class ChatActions extends Actions<ChatState> {
   dispose(): void {
     // do NOT dispose of messageCache and syncdb here; that's managed
     // elsewhere.
+    this.openExportModal = undefined;
     this.messageCache = undefined;
     this.syncdb?.removeListener("change", this.autosave);
     this.syncdb = undefined;
@@ -1395,6 +1401,51 @@ export class ChatActions extends Actions<ChatState> {
       project_id,
       path: outputPath,
       content,
+    });
+    this.redux
+      .getProjectActions(project_id)
+      .open_file({ path: outputPath, foreground: true });
+  };
+
+  exportChatArchive = async ({
+    scope,
+    threadId,
+    outputPath,
+    includeBlobs = false,
+  }: ChatArchiveExportOptions): Promise<void> => {
+    if (!this.store) return;
+    const project_id = this.store.get("project_id");
+    const chatPath = this.store.get("path");
+    if (project_id == null || !chatPath) return;
+
+    const args = [
+      "export",
+      "chat",
+      chatPath,
+      "--scope",
+      scope,
+      "--project-id",
+      project_id,
+      "--out",
+      outputPath,
+      "--json",
+    ];
+    if (scope === "current-thread" && threadId?.trim()) {
+      args.push("--thread-id", threadId.trim());
+    }
+    if (includeBlobs) {
+      args.push("--include-blobs");
+      if (typeof window !== "undefined" && window.location?.origin) {
+        args.push("--blob-base-url", window.location.origin);
+      }
+    }
+
+    await webapp_client.project_client.exec({
+      project_id,
+      command: "cocalc",
+      args,
+      filesystem: true,
+      timeout: includeBlobs ? 180 : 120,
     });
     this.redux
       .getProjectActions(project_id)

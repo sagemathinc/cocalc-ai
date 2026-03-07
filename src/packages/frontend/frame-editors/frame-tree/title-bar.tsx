@@ -70,6 +70,7 @@ import { ConnectionStatus, EditorDescription, EditorSpec } from "./types";
 // In all cases, we check these are actually defined before calling
 // them to avoid a runtime stacktrace.
 export interface FrameActions extends Actions {
+  export_document?: (id: string) => void | Promise<void>;
   zoom_page_width?: (id: string) => void;
   zoom_page_height?: (id: string) => void;
   sync?: (id: string, editor_actions: EditorActions) => void;
@@ -87,6 +88,7 @@ export interface FrameActions extends Actions {
 }
 
 interface EditorActions extends Actions {
+  export_document?: (id: string) => void | Promise<void>;
   download?: (id: string) => void;
   restart?: () => void;
   rescan_latex_directive?: () => void;

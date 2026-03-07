@@ -195,9 +195,11 @@ export interface Filesystem {
     options?: WriteFileDeltaOptions,
   ) => Promise<void>;
   // Signal interest in a file so the backend can keep a shared watcher alive.
-  // active=false can be used to drop interest immediately (otherwise TTL will prune).
+  // active=false drops interest immediately; otherwise the backend prunes stale
+  // interest after COCALC_SYNC_FS_HEARTBEAT_TTL_MS (default 60s).
+  // The backend also enforces a shared active-path cap via
+  // COCALC_SYNC_FS_MAX_ACTIVE_PATHS to prevent runaway retention.
   // Optional metadata can be sent to help the backend map to patch streams.
-  // Returns a simple acknowledgment; backend may later enforce limits here.
   syncFsWatch: (
     path: string,
     active?: boolean,
