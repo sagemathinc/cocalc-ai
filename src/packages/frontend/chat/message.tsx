@@ -145,12 +145,7 @@ const MARGIN_TOP_VIEWER = "17px";
 const AVATAR_MARGIN_LEFTRIGHT = "15px";
 
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
-const NON_RUNNING_USER_ONLY_STATES = new Set([
-  "queue",
-  "sending",
-  "sent",
-  "not-sent",
-]);
+const VIEWER_ONLY_STATES = new Set(["queue", "not-sent"]);
 
 function linkifyCommitHashes(text: string): string {
   if (!text || !/[0-9a-f]{7,40}/i.test(text)) return text;
@@ -224,7 +219,10 @@ export function computeAcpStateToRender({
 }): string {
   const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
   if (!state) return "";
-  if (NON_RUNNING_USER_ONLY_STATES.has(state) && !isViewersMessage) {
+  if (VIEWER_ONLY_STATES.has(state)) {
+    return isViewersMessage ? state : "";
+  }
+  if (isViewersMessage) {
     return "";
   }
   if (state === "running" && !isViewersMessage && generating !== true) {
@@ -431,25 +429,13 @@ export default function Message({
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread =
     typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
-  const acpStateActive = useMemo(
-    () =>
-      acpState === "running" ||
-      acpState === "sending" ||
-      acpState === "sent" ||
-      acpState === "queue",
-    [acpState],
-  );
   const effectiveGenerating = useMemo(() => {
     if (!isCodexThread) return generating === true;
-    if (is_viewers_message) {
-      // Viewer rows represent queued/sending state before assistant output rows exist.
-      return acpStateActive;
-    }
     // Assistant rows: rely on persisted chat-row generating flag only.
     // This avoids stale thread-state "running" entries keeping completed turns
     // visually live after reconnect/refresh.
     return generating === true;
-  }, [generating, isCodexThread, is_viewers_message, acpStateActive]);
+  }, [generating, isCodexThread]);
 
   useEffect(() => {
     if (isEditing) return;
