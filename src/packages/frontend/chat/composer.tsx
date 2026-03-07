@@ -193,6 +193,18 @@ export function ChatRoomComposer({
   );
   const wasFullscreenRef = useRef<boolean>(false);
 
+  const refocusComposerInput = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.setTimeout(() => {
+      const root = inputContainerRef.current;
+      if (!root) return;
+      const target = root.querySelector<HTMLElement>(
+        "textarea, [contenteditable='true'], input",
+      );
+      target?.focus?.({ preventScroll: true } as FocusOptions);
+    }, 0);
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -300,7 +312,7 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
-  const collapseWhenIdle = !isZenMode && !hasInput && !isInputFocused;
+  const collapseWhenIdle = !isZenMode && !hasInput;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
     : collapseWhenIdle
@@ -343,11 +355,12 @@ export function ChatRoomComposer({
         typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
       on_send(effective);
+      refocusComposerInput();
       if (isZenMode) {
         void toggleZenMode();
       }
     },
-    [input, isZenMode, on_send, toggleZenMode],
+    [input, isZenMode, on_send, refocusComposerInput, toggleZenMode],
   );
 
   const handleSendImmediately = useCallback(
@@ -359,11 +372,19 @@ export function ChatRoomComposer({
       } else {
         on_send(effective);
       }
+      refocusComposerInput();
       if (isZenMode) {
         void toggleZenMode();
       }
     },
-    [input, isZenMode, on_send, on_send_immediately, toggleZenMode],
+    [
+      input,
+      isZenMode,
+      on_send,
+      on_send_immediately,
+      refocusComposerInput,
+      toggleZenMode,
+    ],
   );
 
   const composerStyle: CSSProperties = {
@@ -502,6 +523,7 @@ export function ChatRoomComposer({
             key={`${path}${project_id}-draft-${composerDraftKey}`}
             fontSize={fontSize}
             autoFocus
+            isFocused={isInputFocused}
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
             presenceThreadKey={presenceThreadKey}

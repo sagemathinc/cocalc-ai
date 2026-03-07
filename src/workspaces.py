@@ -114,6 +114,7 @@ def all_packages() -> List[str]:
         'packages/conat',
         'packages/backend',
         'packages/api-client',
+        'packages/apps/tasks',
         'packages/jupyter',
         'packages/comm',
         'packages/project',
