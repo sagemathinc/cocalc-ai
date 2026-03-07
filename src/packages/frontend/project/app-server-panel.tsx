@@ -4,7 +4,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Checkbox, Divider, Input, Modal, Popconfirm, Select, Space, Spin, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Collapse,
+  Empty,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Tag,
+} from "antd";
 import type {
   AppSpec,
   AppPublicReadinessAudit,
@@ -444,6 +458,9 @@ export function AppServerPanel({
   >(undefined);
   const [transferBusy, setTransferBusy] = useState<boolean>(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
+  const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -511,6 +528,33 @@ export function AppServerPanel({
     });
   }, [rowFilter, rowSearch, rows, specById, startupFailures]);
 
+  const summaryCounts = useMemo(() => {
+    const running = rows.filter((row) => row.state === "running").length;
+    const exposed = rows.filter((row) => isPublicExposure(row)).length;
+    const attention = rows.filter(
+      (row) =>
+        !!row.error ||
+        !!startupFailures[row.id] ||
+        (row.warnings?.length ?? 0) > 0,
+    ).length;
+    return {
+      total: rows.length,
+      running,
+      stopped: Math.max(0, rows.length - running),
+      exposed,
+      attention,
+    };
+  }, [rows, startupFailures]);
+
+  const quickPresetKeys = useMemo(
+    () => ["jupyterlab", "code-server", "pluto", "rstudio", "python-hello", "static-hello"],
+    [],
+  );
+  const quickPresets = useMemo(
+    () => presets.filter((preset) => quickPresetKeys.includes(preset.key)),
+    [presets, quickPresetKeys],
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function loadPublicAppPolicy() {
@@ -572,6 +616,12 @@ export function AppServerPanel({
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (creatorInitialized || loading) return;
+    setCreatorOpen(rows.length === 0);
+    setCreatorInitialized(true);
+  }, [creatorInitialized, loading, rows.length]);
+
   function applyPreset(nextKey: string) {
     const preset = presets.find((x) => x.key === nextKey);
     if (!preset) return;
@@ -601,6 +651,13 @@ export function AppServerPanel({
       setStartNow(false);
       setOpenWhenReady(false);
     }
+  }
+
+  function toggleRowExpanded(id: string) {
+    setExpandedRows((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
   }
 
   async function openStatus(status: ManagedAppStatus) {
@@ -1221,11 +1278,16 @@ export function AppServerPanel({
   }
 
   return (
-    <div>
-      <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
-        Create and manage applications for this workspace, including private
-        service apps and static apps.
-      </Paragraph>
+    <div style={{ display: "grid", gap: "12px" }}>
+      <div>
+        <div style={{ fontSize: "20px", fontWeight: 700, marginBottom: "4px" }}>
+          Managed Applications
+        </div>
+        <Paragraph style={{ color: "#666", marginBottom: 0 }}>
+          Run, expose, and troubleshoot workspace apps without mixing this page
+          with normal file-creation workflows.
+        </Paragraph>
+      </div>
       <input
         ref={importInputRef}
         type="file"
@@ -1238,215 +1300,302 @@ export function AppServerPanel({
         }}
       />
       <ShowError error={error} setError={() => setError(undefined)} />
-      <Space direction="vertical" style={{ width: "100%" }} size={8}>
-        <Select
-          value={presetKey || undefined}
-          placeholder="Preset (optional)"
-          allowClear
-          onClear={() => setPresetKey("")}
-          onChange={(value) => applyPreset(value)}
-          options={presets.map((preset) => ({
-            value: preset.key,
-            label: preset.label,
-          }))}
-        />
-        {activePreset?.note ? (
-          <Alert type="info" showIcon message={activePreset.note} />
-        ) : null}
-        <Space.Compact style={{ width: "100%" }}>
-          <Select<AppKind>
-            value={kind}
-            style={{ width: "130px" }}
-            options={[
-              { label: "Service", value: "service" },
-              { label: "Static", value: "static" },
-            ]}
-            onChange={(value) => setKind(value)}
-          />
-          <Input
-            value={appId}
-            placeholder="app-id (e.g. streamlit-demo)"
-            onChange={(e) => {
-              const next = e.target.value;
-              const previousDefault = defaultBasePath(appId);
-              setAppId(next);
-              if (!basePath || basePath === previousDefault) {
-                setBasePath(defaultBasePath(next));
-              }
-            }}
-          />
-        </Space.Compact>
-        <Input
-          value={title}
-          placeholder="Title (optional)"
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <Input
-          value={basePath}
-          placeholder={`/apps/${appId || "my-app"}`}
-          onChange={(e) => setBasePath(e.target.value)}
-        />
-        {kind === "service" ? (
-          <>
-            <Input
-              value={command}
-              placeholder="Command (runs as: bash -lc ...)"
-              onChange={(e) => setCommand(e.target.value)}
-            />
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={port}
-                placeholder="Preferred port (optional)"
-                onChange={(e) => setPort(e.target.value)}
-              />
-              <Input
-                value={healthPath}
-                placeholder="Health path (optional, e.g. /health)"
-                onChange={(e) => setHealthPath(e.target.value)}
-              />
-              <Select<AppServiceOpenMode>
-                value={serviceOpenMode}
-                style={{ width: "170px" }}
-                options={[
-                  { label: "Open: /proxy", value: "proxy" },
-                  { label: "Open: /port", value: "port" },
-                ]}
-                onChange={(value) => setServiceOpenMode(value)}
-              />
-            </Space.Compact>
-            <Paragraph style={{ color: "#666", margin: 0, fontSize: "12px" }}>
-              Open mode: <code>/proxy</code> strips your app base path before
-              forwarding; <code>/port</code> keeps the raw port-style URL path.
-              Use <code>/port</code> for apps that do not proxy cleanly behind
-              stripped base paths.
-            </Paragraph>
-          </>
-        ) : (
-          <>
-            <Input
-              value={staticRoot}
-              placeholder="Static root path (e.g. /home/user/project/site)"
-              onChange={(e) => setStaticRoot(e.target.value)}
-            />
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={staticIndex}
-                placeholder="Index file (optional)"
-                onChange={(e) => setStaticIndex(e.target.value)}
-              />
-              <Input
-                value={staticCacheControl}
-                placeholder="Cache-Control (optional)"
-                onChange={(e) => setStaticCacheControl(e.target.value)}
-              />
-            </Space.Compact>
-            <Input
-              value={staticRefreshCommand}
-              placeholder="Refresh command (optional, runs on first/stale hit)"
-              onChange={(e) => setStaticRefreshCommand(e.target.value)}
-            />
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={staticRefreshStaleAfter}
-                placeholder="Refresh stale-after seconds (default 3600)"
-                onChange={(e) => setStaticRefreshStaleAfter(e.target.value)}
-              />
-              <Input
-                value={staticRefreshTimeout}
-                placeholder="Refresh timeout seconds (default 120)"
-                onChange={(e) => setStaticRefreshTimeout(e.target.value)}
-              />
-            </Space.Compact>
-            <Checkbox
-              checked={staticRefreshOnHit}
-              onChange={(e) => setStaticRefreshOnHit(e.target.checked)}
+      <Card size="small" style={{ background: "#fafafa", borderColor: "#efefef" }}>
+        <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
+          <Space wrap>
+            <Tag color="blue">apps {summaryCounts.total}</Tag>
+            <Tag color={summaryCounts.running > 0 ? "green" : "default"}>
+              running {summaryCounts.running}
+            </Tag>
+            <Tag color={summaryCounts.exposed > 0 ? "gold" : "default"}>
+              public {summaryCounts.exposed}
+            </Tag>
+            <Tag color={summaryCounts.attention > 0 ? "red" : "default"}>
+              attention {summaryCounts.attention}
+            </Tag>
+          </Space>
+          <Space wrap>
+            <Button onClick={() => setCreatorOpen((open) => !open)}>
+              {creatorOpen ? "Hide new app form" : "New app"}
+            </Button>
+            <Button onClick={() => void refresh()} disabled={loading}>
+              Refresh
+            </Button>
+            <Button onClick={() => void onExportAll()} loading={transferBusy}>
+              Export all
+            </Button>
+            <Button
+              onClick={() => importInputRef.current?.click()}
+              disabled={transferBusy}
             >
-              Trigger refresh on hit when stale
-            </Checkbox>
-          </>
-        )}
-        <Space wrap>
-          <Checkbox checked={startNow} onChange={(e) => setStartNow(e.target.checked)}>
-            Start after save
-          </Checkbox>
-          <Checkbox
-            checked={openWhenReady}
-            onChange={(e) => setOpenWhenReady(e.target.checked)}
-          >
-            Open when ready
-          </Checkbox>
-          <Button
-            type="primary"
-            loading={formSubmitting}
-            disabled={!canSaveForm}
-            onClick={() => void onCreate()}
-          >
-            Save app
-          </Button>
-          <Button onClick={() => void refresh()} disabled={loading}>
-            Refresh
-          </Button>
-          <Button onClick={() => void onExportAll()} loading={transferBusy}>
-            Export all
-          </Button>
-          <Button
-            onClick={() => importInputRef.current?.click()}
-            disabled={transferBusy}
-          >
-            Import JSON
-          </Button>
-          <Button onClick={() => void onDetect()} loading={detecting}>
-            Detect running HTTP apps
-          </Button>
-          <Button
-            onClick={() => void onDetectInstalledTemplates()}
-            loading={detectingInstalledTemplates}
-          >
-            Detect installed templates
-          </Button>
+              Import JSON
+            </Button>
+            <Button onClick={() => void onDetect()} loading={detecting}>
+              Detect running HTTP apps
+            </Button>
+            <Button
+              onClick={() => void onDetectInstalledTemplates()}
+              loading={detectingInstalledTemplates}
+            >
+              Detect installed templates
+            </Button>
+          </Space>
         </Space>
-        <Divider style={{ margin: "8px 0" }} />
-        <div style={{ fontWeight: 600 }}>Public expose defaults</div>
-        <Space.Compact style={{ width: "100%" }}>
-          <Input
-            value={exposeTtlHours}
-            onChange={(e) => setExposeTtlHours(e.target.value)}
-            placeholder="TTL hours (e.g. 24)"
-          />
-          <Select<"none" | "token">
-            value={exposeAuthFront}
-            style={{ width: "140px" }}
-            options={[
-              { label: "No front auth", value: "none" },
-              { label: "Token gate", value: "token" },
-            ]}
-            onChange={(value) => setExposeAuthFront(value)}
-          />
-        </Space.Compact>
-        <Space wrap>
-          <Checkbox
-            checked={exposeRandomSubdomain}
-            onChange={(e) => setExposeRandomSubdomain(e.target.checked)}
-          >
-            Random subdomain
-          </Checkbox>
-          {!exposeRandomSubdomain ? (
-            <Input
-              value={exposeSubdomainLabel}
-              onChange={(e) => setExposeSubdomainLabel(e.target.value)}
-              placeholder="subdomain label (optional)"
-              style={{ width: "220px" }}
+      </Card>
+      <Card
+        size="small"
+        title="Create a managed application"
+        extra={
+          <Button type="link" onClick={() => setCreatorOpen((open) => !open)}>
+            {creatorOpen ? "Collapse" : "Expand"}
+          </Button>
+        }
+      >
+        {!creatorOpen ? (
+          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+            <Paragraph style={{ color: "#666", marginBottom: 0 }}>
+              Start from a preset or expand the full form when you need custom
+              commands and proxy settings.
+            </Paragraph>
+            <Space wrap>
+              {quickPresets.map((preset) => (
+                <Button
+                  key={preset.key}
+                  onClick={() => {
+                    applyPreset(preset.key);
+                    setCreatorOpen(true);
+                  }}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </Space>
+          </Space>
+        ) : (
+          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+            <Select
+              value={presetKey || undefined}
+              placeholder="Preset (optional)"
+              allowClear
+              onClear={() => setPresetKey("")}
+              onChange={(value) => applyPreset(value)}
+              options={presets.map((preset) => ({
+                value: preset.key,
+                label: preset.label,
+              }))}
             />
-          ) : null}
-        </Space>
-      </Space>
-      <Divider style={{ margin: "14px 0" }} />
+            {activePreset?.note ? (
+              <Alert type="info" showIcon message={activePreset.note} />
+            ) : null}
+            <Collapse
+              defaultActiveKey={["basics", kind === "service" ? "runtime" : "static"]}
+              items={[
+                {
+                  key: "basics",
+                  label: "Basics",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                      <Space.Compact style={{ width: "100%" }}>
+                        <Select<AppKind>
+                          value={kind}
+                          style={{ width: "130px" }}
+                          options={[
+                            { label: "Service", value: "service" },
+                            { label: "Static", value: "static" },
+                          ]}
+                          onChange={(value) => setKind(value)}
+                        />
+                        <Input
+                          value={appId}
+                          placeholder="app-id (e.g. streamlit-demo)"
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            const previousDefault = defaultBasePath(appId);
+                            setAppId(next);
+                            if (!basePath || basePath === previousDefault) {
+                              setBasePath(defaultBasePath(next));
+                            }
+                          }}
+                        />
+                      </Space.Compact>
+                      <Input
+                        value={title}
+                        placeholder="Title (optional)"
+                        onChange={(e) => setTitle(e.target.value)}
+                      />
+                      <Input
+                        value={basePath}
+                        placeholder={`/apps/${appId || "my-app"}`}
+                        onChange={(e) => setBasePath(e.target.value)}
+                      />
+                    </Space>
+                  ),
+                },
+                kind === "service"
+                  ? {
+                      key: "runtime",
+                      label: "Runtime and proxy",
+                      children: (
+                        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                          <Input
+                            value={command}
+                            placeholder="Command (runs as: bash -lc ...)"
+                            onChange={(e) => setCommand(e.target.value)}
+                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={port}
+                              placeholder="Preferred port (optional)"
+                              onChange={(e) => setPort(e.target.value)}
+                            />
+                            <Input
+                              value={healthPath}
+                              placeholder="Health path (optional, e.g. /health)"
+                              onChange={(e) => setHealthPath(e.target.value)}
+                            />
+                            <Select<AppServiceOpenMode>
+                              value={serviceOpenMode}
+                              style={{ width: "170px" }}
+                              options={[
+                                { label: "Open: /proxy", value: "proxy" },
+                                { label: "Open: /port", value: "port" },
+                              ]}
+                              onChange={(value) => setServiceOpenMode(value)}
+                            />
+                          </Space.Compact>
+                          <Paragraph style={{ color: "#666", margin: 0, fontSize: "12px" }}>
+                            Open mode: <code>/proxy</code> strips your app base
+                            path before forwarding; <code>/port</code> keeps the
+                            raw port-style URL path. Use <code>/port</code> for
+                            apps that do not proxy cleanly behind stripped base
+                            paths.
+                          </Paragraph>
+                        </Space>
+                      ),
+                    }
+                  : {
+                      key: "static",
+                      label: "Static content and refresh",
+                      children: (
+                        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                          <Input
+                            value={staticRoot}
+                            placeholder="Static root path (e.g. /home/user/project/site)"
+                            onChange={(e) => setStaticRoot(e.target.value)}
+                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={staticIndex}
+                              placeholder="Index file (optional)"
+                              onChange={(e) => setStaticIndex(e.target.value)}
+                            />
+                            <Input
+                              value={staticCacheControl}
+                              placeholder="Cache-Control (optional)"
+                              onChange={(e) => setStaticCacheControl(e.target.value)}
+                            />
+                          </Space.Compact>
+                          <Input
+                            value={staticRefreshCommand}
+                            placeholder="Refresh command (optional, runs on first/stale hit)"
+                            onChange={(e) => setStaticRefreshCommand(e.target.value)}
+                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={staticRefreshStaleAfter}
+                              placeholder="Refresh stale-after seconds (default 3600)"
+                              onChange={(e) => setStaticRefreshStaleAfter(e.target.value)}
+                            />
+                            <Input
+                              value={staticRefreshTimeout}
+                              placeholder="Refresh timeout seconds (default 120)"
+                              onChange={(e) => setStaticRefreshTimeout(e.target.value)}
+                            />
+                          </Space.Compact>
+                          <Checkbox
+                            checked={staticRefreshOnHit}
+                            onChange={(e) => setStaticRefreshOnHit(e.target.checked)}
+                          >
+                            Trigger refresh on hit when stale
+                          </Checkbox>
+                        </Space>
+                      ),
+                    },
+                {
+                  key: "launch",
+                  label: "Launch and public defaults",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                      <Space wrap>
+                        <Checkbox
+                          checked={startNow}
+                          onChange={(e) => setStartNow(e.target.checked)}
+                        >
+                          Start after save
+                        </Checkbox>
+                        <Checkbox
+                          checked={openWhenReady}
+                          onChange={(e) => setOpenWhenReady(e.target.checked)}
+                        >
+                          Open when ready
+                        </Checkbox>
+                      </Space>
+                      <div style={{ fontWeight: 600, fontSize: "12px", color: "#666" }}>
+                        Public expose defaults
+                      </div>
+                      <Space.Compact style={{ width: "100%" }}>
+                        <Input
+                          value={exposeTtlHours}
+                          onChange={(e) => setExposeTtlHours(e.target.value)}
+                          placeholder="TTL hours (e.g. 24)"
+                        />
+                        <Select<"none" | "token">
+                          value={exposeAuthFront}
+                          style={{ width: "140px" }}
+                          options={[
+                            { label: "No front auth", value: "none" },
+                            { label: "Token gate", value: "token" },
+                          ]}
+                          onChange={(value) => setExposeAuthFront(value)}
+                        />
+                      </Space.Compact>
+                      <Space wrap>
+                        <Checkbox
+                          checked={exposeRandomSubdomain}
+                          onChange={(e) => setExposeRandomSubdomain(e.target.checked)}
+                        >
+                          Random subdomain
+                        </Checkbox>
+                        {!exposeRandomSubdomain ? (
+                          <Input
+                            value={exposeSubdomainLabel}
+                            onChange={(e) => setExposeSubdomainLabel(e.target.value)}
+                            placeholder="subdomain label (optional)"
+                            style={{ width: "220px" }}
+                          />
+                        ) : null}
+                      </Space>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+            <Space wrap>
+              <Button
+                type="primary"
+                loading={formSubmitting}
+                disabled={!canSaveForm}
+                onClick={() => void onCreate()}
+              >
+                Save app
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </Card>
       {installedTemplates.length > 0 ? (
-        <>
-          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
-            Installed templates
-          </div>
-          <Space wrap style={{ width: "100%", marginBottom: "12px" }}>
+        <Card size="small" title={`Installed templates (${installedTemplates.length})`}>
+          <Space wrap style={{ width: "100%" }}>
             {installedTemplates.map((item) => (
               <Tag
                 key={item.key}
@@ -1460,15 +1609,11 @@ export function AppServerPanel({
               </Tag>
             ))}
           </Space>
-          <Divider style={{ margin: "14px 0" }} />
-        </>
+        </Card>
       ) : null}
       {detected.length > 0 ? (
-        <>
-          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
-            Detected running HTTP apps
-          </div>
-          <Space direction="vertical" style={{ width: "100%", marginBottom: "12px" }}>
+        <Card size="small" title={`Detected running HTTP apps (${detected.length})`}>
+          <Space direction="vertical" style={{ width: "100%" }}>
             {detected.map((item) => (
               <div
                 key={`${item.port}-${item.hosts.join(",")}`}
@@ -1492,7 +1637,10 @@ export function AppServerPanel({
                   <Space wrap>
                     <Button
                       size="small"
-                      onClick={() => useDetectedPort(item.port)}
+                      onClick={() => {
+                        useDetectedPort(item.port);
+                        setCreatorOpen(true);
+                      }}
                     >
                       Use in form
                     </Button>
@@ -1501,63 +1649,66 @@ export function AppServerPanel({
               </div>
             ))}
           </Space>
-          <Divider style={{ margin: "14px 0" }} />
-        </>
+        </Card>
       ) : null}
-      <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed Applications</div>
-      {loading ? <Spin /> : null}
-      {!loading && rows.length === 0 ? (
-        <Alert type="info" showIcon message="No managed app servers yet." />
-      ) : null}
-      {!loading && rows.length > 0 ? (
-        <Space
-          wrap
-          style={{ width: "100%", justifyContent: "space-between", marginBottom: "10px" }}
-        >
-          <Space wrap>
-            <Input
-              value={rowSearch}
-              placeholder="Filter apps"
-              onChange={(e) => setRowSearch(e.target.value)}
-              style={{ width: "220px" }}
-              allowClear
-            />
-            <Select<AppStatusFilter>
-              value={rowFilter}
-              style={{ width: "150px" }}
-              onChange={(value) => setRowFilter(value)}
-              options={[
-                { value: "all", label: "All" },
-                { value: "running", label: "Running" },
-                { value: "stopped", label: "Stopped" },
-                { value: "error", label: "Needs attention" },
-                { value: "public", label: "Public" },
-              ]}
-            />
+      <Card size="small" title={`Managed Applications (${summaryCounts.total})`}>
+        {loading ? <Spin /> : null}
+        {!loading && rows.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="No managed applications yet."
+          />
+        ) : null}
+        {!loading && rows.length > 0 ? (
+          <Space
+            wrap
+            style={{ width: "100%", justifyContent: "space-between", marginBottom: "10px" }}
+          >
+            <Space wrap>
+              <Input
+                value={rowSearch}
+                placeholder="Filter apps"
+                onChange={(e) => setRowSearch(e.target.value)}
+                style={{ width: "220px" }}
+                allowClear
+              />
+              <Select<AppStatusFilter>
+                value={rowFilter}
+                style={{ width: "150px" }}
+                onChange={(value) => setRowFilter(value)}
+                options={[
+                  { value: "all", label: "All" },
+                  { value: "running", label: "Running" },
+                  { value: "stopped", label: "Stopped" },
+                  { value: "error", label: "Needs attention" },
+                  { value: "public", label: "Public" },
+                ]}
+              />
+            </Space>
+            <Space wrap>
+              <Button
+                onClick={() => void onStartMany(startableRows.map((row) => row.id))}
+                disabled={submitting || startableRows.length === 0}
+              >
+                Start all stopped ({startableRows.length})
+              </Button>
+              <Button
+                onClick={() => void onStopMany(stoppableRows.map((row) => row.id))}
+                disabled={submitting || stoppableRows.length === 0}
+              >
+                Stop all running ({stoppableRows.length})
+              </Button>
+            </Space>
           </Space>
-          <Space wrap>
-            <Button
-              onClick={() => void onStartMany(startableRows.map((row) => row.id))}
-              disabled={submitting || startableRows.length === 0}
-            >
-              Start all stopped ({startableRows.length})
-            </Button>
-            <Button
-              onClick={() => void onStopMany(stoppableRows.map((row) => row.id))}
-              disabled={submitting || stoppableRows.length === 0}
-            >
-              Stop all running ({stoppableRows.length})
-            </Button>
-          </Space>
-        </Space>
-      ) : null}
-      <Space direction="vertical" style={{ width: "100%" }}>
+        ) : null}
+        <Space direction="vertical" style={{ width: "100%" }}>
         {filteredRows.map((row) => {
           const isRunning = row.state === "running";
           const isPublic = isPublicExposure(row);
           const spec = specById[row.id];
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
+          const isExpanded = !!expandedRows[row.id] || !!startupFailure;
           return (
             <div
               key={row.id}
@@ -1584,6 +1735,9 @@ export function AppServerPanel({
                   </div>
                 </div>
                 <Space wrap>
+                  <Button size="small" onClick={() => toggleRowExpanded(row.id)}>
+                    {isExpanded ? "Hide details" : "Details"}
+                  </Button>
                   <Button
                     size="small"
                     onClick={() => void openStatus(row)}
@@ -1676,7 +1830,7 @@ export function AppServerPanel({
                   </Button>
                 </Space>
               </div>
-              {specSummary.length > 0 ? (
+              {isExpanded && specSummary.length > 0 ? (
                 <div
                   style={{
                     marginTop: "8px",
@@ -1692,7 +1846,7 @@ export function AppServerPanel({
                   ))}
                 </div>
               ) : null}
-              {isPublic ? (
+              {isExpanded && isPublic ? (
                 <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
                   {buildPublicUrlFromExposure(row, publicAppPolicy) ? (
                     <>
@@ -1724,7 +1878,7 @@ export function AppServerPanel({
                   ) : null}
                 </div>
               ) : null}
-              {row.warnings?.length ? (
+              {isExpanded && row.warnings?.length ? (
                 <Alert
                   style={{ marginTop: "8px" }}
                   type="warning"
@@ -1732,7 +1886,7 @@ export function AppServerPanel({
                   message={row.warnings.join(" ")}
                 />
               ) : null}
-              {startupFailure ? (
+              {isExpanded && startupFailure ? (
                 <Alert
                   style={{ marginTop: "8px" }}
                   type="error"
@@ -1774,7 +1928,8 @@ export function AppServerPanel({
             </div>
           );
         })}
-      </Space>
+        </Space>
+      </Card>
       {audit ? (
         <div
           style={{
