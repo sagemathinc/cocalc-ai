@@ -3,10 +3,16 @@ import getLogger from "../logger";
 import { parseReq } from "./parse";
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
+import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
+import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
+import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 
 const logger = getLogger("proxy:project-host");
+const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
+const HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS = 60_000;
 
 type HostRow = {
+  host_id?: string;
   internal_url?: string;
   public_url?: string;
   metadata?: any;
@@ -14,13 +20,18 @@ type HostRow = {
 
 const cache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
 const hostCache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
+const publicAuthTokenCache = new LRU<
+  string,
+  { token: string; expiresAt: number }
+>({ max: 10_000, ttl: 10 * 60_000 });
 
 async function getHost(project_id: string): Promise<HostRow | undefined> {
   const cached = cache.get(project_id);
   if (cached) return cached;
   const { rows } = await getPool().query(
     `
-      SELECT project_hosts.internal_url AS internal_url,
+      SELECT project_hosts.id           AS host_id,
+             project_hosts.internal_url AS internal_url,
              project_hosts.public_url   AS public_url,
              project_hosts.metadata     AS metadata
       FROM projects
@@ -41,7 +52,8 @@ async function getHostById(host_id: string): Promise<HostRow | undefined> {
   if (cached) return cached;
   const { rows } = await getPool().query(
     `
-      SELECT internal_url AS internal_url,
+      SELECT id           AS host_id,
+             internal_url AS internal_url,
              public_url   AS public_url,
              metadata     AS metadata
       FROM project_hosts
@@ -54,6 +66,26 @@ async function getHostById(host_id: string): Promise<HostRow | undefined> {
     hostCache.set(host_id, row);
   }
   return row;
+}
+
+function getPublicAppHubAuthToken(host_id: string): string {
+  const cached = publicAuthTokenCache.get(host_id);
+  if (cached && Date.now() < cached.expiresAt - HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS) {
+    return cached.token;
+  }
+  const issued = issueProjectHostAuthToken({
+    host_id,
+    actor: "hub",
+    hub_id: "hub",
+    ttl_seconds: 5 * 60,
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  const value = {
+    token: issued.token,
+    expiresAt: issued.expires_at,
+  };
+  publicAuthTokenCache.set(host_id, value);
+  return value.token;
 }
 
 export async function createProjectHostProxyHandlers() {
@@ -164,10 +196,20 @@ export async function createProjectHostProxyHandlers() {
       if (parsed.type === "conat") {
         rewriteConatPath(req, parsed.project_id);
       }
+      const host =
+        parsed.type === "conat"
+          ? await getHostById(parsed.project_id).catch(() => undefined)
+          : await getHost(parsed.project_id);
+      if (isPublicAppSubdomainRequest(req) && req.headers.host) {
+        req.headers[PUBLIC_APP_HOST_HEADER] = req.headers.host;
+        if (host?.host_id) {
+          req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
+        }
+      }
       const target =
         parsed.type === "conat"
           ? await targetForConatRoute(parsed.project_id)
-          : await targetForProject(parsed.project_id);
+          : (host?.internal_url || host?.public_url || (await targetForProject(parsed.project_id))).replace(/\/+$/, "");
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy request error", { err: `${err}`, url: req?.url });
@@ -186,10 +228,20 @@ export async function createProjectHostProxyHandlers() {
       if (parsed.type === "conat") {
         rewriteConatPath(req, parsed.project_id);
       }
+      const host =
+        parsed.type === "conat"
+          ? await getHostById(parsed.project_id).catch(() => undefined)
+          : await getHost(parsed.project_id);
+      if (isPublicAppSubdomainRequest(req) && req.headers.host) {
+        req.headers[PUBLIC_APP_HOST_HEADER] = req.headers.host;
+        if (host?.host_id) {
+          req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
+        }
+      }
       const target =
         parsed.type === "conat"
           ? await targetForConatRoute(parsed.project_id)
-          : await targetForProject(parsed.project_id);
+          : (host?.internal_url || host?.public_url || (await targetForProject(parsed.project_id))).replace(/\/+$/, "");
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy upgrade error", { err: `${err}`, url: req?.url });

@@ -802,25 +802,47 @@ async function writeCloudflaredConfig(opts: {
   tunnel: CloudflareTunnel;
   origin: string;
   noTLSVerify: boolean;
+  appPublicWildcard?: string;
 }): Promise<void> {
+  const yamlString = (value: string): string => JSON.stringify(value);
   const ingress: string[] = [
     "ingress:",
-    `  - hostname: ${opts.tunnel.hostname}`,
-    `    service: ${opts.origin}`,
+    `  - hostname: ${yamlString(opts.tunnel.hostname)}`,
+    `    service: ${yamlString(opts.origin)}`,
   ];
   if (opts.noTLSVerify) {
     ingress.push("    originRequest:");
     ingress.push("      noTLSVerify: true");
   }
+  if (
+    opts.appPublicWildcard &&
+    opts.appPublicWildcard !== opts.tunnel.hostname
+  ) {
+    ingress.push(`  - hostname: ${yamlString(opts.appPublicWildcard)}`);
+    ingress.push(`    service: ${yamlString(opts.origin)}`);
+    if (opts.noTLSVerify) {
+      ingress.push("    originRequest:");
+      ingress.push("      noTLSVerify: true");
+    }
+  }
   ingress.push("  - service: http_status:404");
   const lines = [
-    `tunnel: ${opts.tunnel.id}`,
-    `credentials-file: ${opts.credentialsPath}`,
+    `tunnel: ${yamlString(opts.tunnel.id)}`,
+    `credentials-file: ${yamlString(opts.credentialsPath)}`,
     ...ingress,
     "",
   ];
   await writeFile(opts.path, lines.join("\n"), { mode: 0o600 });
   await chmod(opts.path, 0o600);
+}
+
+function appPublicWildcardHostname(dns?: string): string | undefined {
+  const raw = clean(dns)?.toLowerCase();
+  if (!raw) return;
+  const parts = raw.split(".").filter(Boolean);
+  if (!parts.length) return;
+  const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
+  return `*.${root}`;
 }
 
 async function loadCloudflaredStateFile(
@@ -944,6 +966,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   }
 
   const { origin, noTLSVerify } = resolveCloudflaredOrigin();
+  const appPublicWildcard = appPublicWildcardHostname(settings.project_hosts_dns);
   await writeCloudflaredCredentials(credentialsPath, tunnel);
   await writeCloudflaredConfig({
     path: configPath,
@@ -951,6 +974,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     tunnel,
     origin,
     noTLSVerify,
+    appPublicWildcard,
   });
 
   const persistedPid = await readPidFile(pidPath);

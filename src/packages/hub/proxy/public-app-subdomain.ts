@@ -53,8 +53,14 @@ export async function maybeRewritePublicAppSubdomainRequest(
   const parsed = new URL(req.url ?? "/", "http://proxy.local");
   const incomingPath = parsed.pathname || "/";
   const appBasePath = normalizePrefix(target.base_path);
-  const suffixPath = incomingPath === "/" ? "" : incomingPath;
-  const proxiedPath = normalizePrefix(`/${target.project_id}${appBasePath}${suffixPath}`);
+  const canonicalBasePath = normalizePrefix(`/${target.project_id}${appBasePath}`);
+  const proxiedPath =
+    incomingPath === canonicalBasePath ||
+    incomingPath.startsWith(`${canonicalBasePath}/`)
+      ? incomingPath
+      : normalizePrefix(
+          `${canonicalBasePath}${incomingPath === "/" ? "" : incomingPath}`,
+        );
   const rewritten = withBasePath(`${proxiedPath}${parsed.search ?? ""}`);
   req.url = rewritten;
   (req as any)[PUBLIC_APP_SUBDOMAIN_MARKER] = {
@@ -76,4 +82,3 @@ export async function maybeRewritePublicAppSubdomainRequest(
 export function isPublicAppSubdomainRequest(req: IncomingMessage): boolean {
   return !!(req as any)[PUBLIC_APP_SUBDOMAIN_MARKER];
 }
-

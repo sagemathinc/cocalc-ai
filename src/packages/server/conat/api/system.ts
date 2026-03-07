@@ -38,7 +38,9 @@ import {
 } from "./browser-sessions";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
+  getPublicAppRouteByHostname as getPublicAppRouteByHostnameRaw,
   releaseProjectAppPublicSubdomain as releaseProjectAppPublicSubdomainRaw,
+  resolvePublicAppDnsTarget,
   reserveProjectAppPublicSubdomain as reserveProjectAppPublicSubdomainRaw,
 } from "@cocalc/server/app-public-subdomains";
 import { conat } from "@cocalc/backend/conat";
@@ -859,6 +861,48 @@ export async function getProjectAppPublicPolicy({
 }) {
   const resolvedProjectId = await resolveProjectContext({ account_id, project_id });
   return await getProjectAppPublicPolicyRaw(resolvedProjectId);
+}
+
+export async function tracePublicAppHostname({
+  account_id,
+  hostname,
+}: {
+  account_id?: string;
+  hostname: string;
+}) {
+  const normalized = `${hostname ?? ""}`.trim().toLowerCase();
+  if (!normalized) {
+    throw Error("hostname is required");
+  }
+  const target = await getPublicAppRouteByHostnameRaw(normalized);
+  if (!target) {
+    return {
+      matched: false,
+      hostname: normalized,
+    };
+  }
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  await assertProjectCollaborator(account_id, target.project_id);
+  const policy = await getProjectAppPublicPolicyRaw(target.project_id);
+  const dns_target =
+    policy.site_hostname != null
+      ? await resolvePublicAppDnsTarget(policy.site_hostname)
+      : undefined;
+  return {
+    matched: true,
+    hostname: normalized,
+    project_id: target.project_id,
+    app_id: target.app_id,
+    base_path: target.base_path,
+    site_hostname: policy.site_hostname,
+    dns_domain: policy.dns_domain,
+    subdomain_suffix: policy.subdomain_suffix,
+    dns_target,
+    metered_egress: policy.metered_egress,
+    warnings: policy.warnings,
+  };
 }
 
 export async function reserveProjectAppPublicSubdomain({

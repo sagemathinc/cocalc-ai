@@ -37,6 +37,7 @@ export const system = {
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
   getProjectAppPublicPolicy: authFirst,
+  tracePublicAppHostname: authFirst,
   reserveProjectAppPublicSubdomain: authFirst,
   releaseProjectAppPublicSubdomain: authFirst,
 
@@ -135,6 +136,20 @@ export interface ReserveProjectAppPublicSubdomainResult {
   base_path: string;
   url_public: string;
   warnings: string[];
+}
+
+export interface PublicAppHostnameTrace {
+  matched: boolean;
+  hostname: string;
+  project_id?: string;
+  app_id?: string;
+  base_path?: string;
+  site_hostname?: string;
+  dns_domain?: string;
+  subdomain_suffix?: string;
+  dns_target?: string;
+  metered_egress?: boolean;
+  warnings?: string[];
 }
 
 export interface System {
@@ -360,6 +375,11 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<ProjectAppPublicPolicy>;
+
+  tracePublicAppHostname: (opts: {
+    account_id?: string;
+    hostname: string;
+  }) => Promise<PublicAppHostnameTrace>;
 
   reserveProjectAppPublicSubdomain: (opts: {
     account_id?: string;

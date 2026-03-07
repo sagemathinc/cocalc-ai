@@ -53,6 +53,18 @@ interface Options {
   parsed?: ReturnType<typeof parseReq>;
 }
 
+function shouldAutoStartForProxyRoute(type: string, port_desc: string): boolean {
+  if (type === "port" || type === "proxy" || type === "server" || type === "apps") {
+    return true;
+  }
+  return (
+    port_desc === "jupyter" ||
+    port_desc === "jupyterlab" ||
+    port_desc === "code" ||
+    port_desc === "rserver"
+  );
+}
+
 export async function getTarget({
   remember_me,
   api_key,
@@ -96,26 +108,17 @@ export async function getTarget({
   let state = await project.state();
   let host = state.ip;
   dbg("host", host);
-  if (
-    port_desc === "jupyter" || // Jupyter Classic
-    port_desc === "jupyterlab" || // JupyterLab
-    port_desc === "code" || // VSCode = "code-server"
-    port_desc === "rserver"
-  ) {
-    if (host == null || state.state !== "running") {
-      // We just start the project.
-      // This is used specifically by Juno, but also makes it
-      // easier to continually use Jupyter/Lab without having
-      // to worry about the cocalc project.
-      dbg(
-        "project not running and jupyter requested, so starting to run",
-        port_desc,
-      );
-      await project.start();
-      state = await project.state();
-      host = state.ip;
-    } else {
-      // Touch project so it doesn't idle timeout
+  if (shouldAutoStartForProxyRoute(type, port_desc)) {
+    dbg("proxied service requested, ensuring project is running", {
+      type,
+      port_desc,
+      state: state.state,
+      host,
+    });
+    await project.start();
+    state = await project.state();
+    host = state.ip;
+    if (state.state === "running") {
       database.touch_project({ project_id });
     }
   }

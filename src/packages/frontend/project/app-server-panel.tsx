@@ -29,6 +29,12 @@ type AppServiceOpenMode = "proxy" | "port";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 type AppRowAction = "expose" | "unexpose" | "audit";
 
+interface PublicAppPolicy {
+  enabled: boolean;
+  dns_domain?: string;
+  subdomain_suffix?: string;
+}
+
 interface AppServerPreset {
   key: string;
   label: string;
@@ -130,6 +136,47 @@ function renderLogTailBlock({
       </div>
     </div>
   );
+}
+
+function isPublicExposure(status: ManagedAppStatus): boolean {
+  return status.exposure?.mode === "public";
+}
+
+function normalizePublicSuffix(raw?: string): string {
+  const value = `${raw ?? ""}`.trim().toLowerCase();
+  return value || "app";
+}
+
+function currentPublicDnsDomain(): string | undefined {
+  if (typeof window === "undefined") return;
+  const host = `${window.location.hostname ?? ""}`.trim().toLowerCase();
+  if (!host || host === "localhost") return;
+  return host;
+}
+
+function buildPublicHostnameFromExposure(
+  status: ManagedAppStatus,
+  policy?: PublicAppPolicy,
+): string | undefined {
+  const exposure = status.exposure;
+  if (exposure?.public_hostname) return exposure.public_hostname;
+  const label = `${exposure?.random_subdomain ?? ""}`.trim().toLowerCase();
+  const dnsDomain =
+    `${policy?.dns_domain ?? ""}`.trim().toLowerCase() ||
+    currentPublicDnsDomain();
+  if (!label || !dnsDomain) return;
+  const suffix = normalizePublicSuffix(policy?.subdomain_suffix);
+  return suffix ? `${label}-${suffix}.${dnsDomain}` : `${label}.${dnsDomain}`;
+}
+
+function buildPublicUrlFromExposure(
+  status: ManagedAppStatus,
+  policy?: PublicAppPolicy,
+): string | undefined {
+  const exposure = status.exposure;
+  if (exposure?.public_url) return exposure.public_url;
+  const hostname = buildPublicHostnameFromExposure(status, policy);
+  return hostname ? `https://${hostname}` : undefined;
 }
 
 function isPositiveIntegerText(value: string): boolean {
@@ -318,6 +365,9 @@ export function AppServerPanel({
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
   const [rowFilter, setRowFilter] = useState<AppStatusFilter>("all");
   const [rowSearch, setRowSearch] = useState<string>("");
+  const [publicAppPolicy, setPublicAppPolicy] = useState<
+    PublicAppPolicy | undefined
+  >(undefined);
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -365,7 +415,7 @@ export function AppServerPanel({
       if (rowFilter === "running" && row.state !== "running") return false;
       if (rowFilter === "stopped" && row.state !== "stopped") return false;
       if (rowFilter === "error" && !rowHasError) return false;
-      if (rowFilter === "public" && !row.exposure?.public_url) return false;
+      if (rowFilter === "public" && !isPublicExposure(row)) return false;
       if (!needle) return true;
       const haystacks = [
         row.id,
@@ -373,6 +423,9 @@ export function AppServerPanel({
         row.kind,
         row.state,
         row.exposure?.public_url,
+        row.exposure?.public_hostname,
+        row.exposure?.random_subdomain,
+        row.exposure?.mode,
         spec?.proxy?.base_path,
         spec?.static?.root,
       ];
@@ -381,6 +434,30 @@ export function AppServerPanel({
       );
     });
   }, [rowFilter, rowSearch, rows, specById, startupFailures]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPublicAppPolicy() {
+      try {
+        const policy = await webapp_client.conat_client.hub.system.getProjectAppPublicPolicy(
+          { project_id },
+        );
+        if (!cancelled) {
+          setPublicAppPolicy({
+            enabled: !!policy?.enabled,
+            dns_domain: policy?.dns_domain,
+            subdomain_suffix: policy?.subdomain_suffix,
+          });
+        }
+      } catch {
+        if (!cancelled) setPublicAppPolicy(undefined);
+      }
+    }
+    void loadPublicAppPolicy();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id]);
 
   const startableRows = useMemo(
     () => rows.filter((row) => row.kind === "service" && row.state !== "running"),
@@ -462,7 +539,7 @@ export function AppServerPanel({
       return localUrl;
     };
 
-    let url = status.exposure?.public_url;
+    let url = buildPublicUrlFromExposure(status, publicAppPolicy);
     if (!url) {
       let spec = specById[status.id];
       if (!spec) {
@@ -1296,6 +1373,7 @@ export function AppServerPanel({
       <Space direction="vertical" style={{ width: "100%" }}>
         {filteredRows.map((row) => {
           const isRunning = row.state === "running";
+          const isPublic = isPublicExposure(row);
           const spec = specById[row.id];
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
@@ -1318,14 +1396,20 @@ export function AppServerPanel({
                     <Tag color={isRunning ? "green" : "default"}>
                       {isRunning ? "running" : "stopped"}
                     </Tag>
-                    {row.exposure?.public_url ? <Tag color="gold">public</Tag> : null}
+                    {isPublic ? <Tag color="gold">public</Tag> : null}
                   </div>
                   <div style={{ opacity: 0.7, fontFamily: "monospace", fontSize: "12px" }}>
                     {row.id}
                   </div>
                 </div>
                 <Space wrap>
-                  <Button size="small" onClick={() => void openStatus(row)} disabled={!row.url && !row.exposure?.public_url}>
+                  <Button
+                    size="small"
+                    onClick={() => void openStatus(row)}
+                    disabled={
+                      !row.url && !buildPublicUrlFromExposure(row, publicAppPolicy)
+                    }
+                  >
                     Open
                   </Button>
                   <Button
@@ -1353,7 +1437,7 @@ export function AppServerPanel({
                       Delete
                     </Button>
                   </Popconfirm>
-                  {row.exposure?.public_url ? (
+                  {isPublic ? (
                     <Button
                       size="small"
                       onClick={() => void onUnexpose(row.id)}
@@ -1420,12 +1504,29 @@ export function AppServerPanel({
                   ))}
                 </div>
               ) : null}
-              {row.exposure?.public_url ? (
+              {isPublic ? (
                 <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
-                  Public URL:{" "}
-                  <a href={row.exposure.public_url} target="_blank" rel="noreferrer">
-                    {row.exposure.public_url}
-                  </a>
+                  {buildPublicUrlFromExposure(row, publicAppPolicy) ? (
+                    <>
+                      Public URL:{" "}
+                      <a
+                        href={buildPublicUrlFromExposure(row, publicAppPolicy)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {buildPublicUrlFromExposure(row, publicAppPolicy)}
+                      </a>
+                    </>
+                  ) : buildPublicHostnameFromExposure(row, publicAppPolicy) ? (
+                    <>
+                      Public Hostname:{" "}
+                      {buildPublicHostnameFromExposure(row, publicAppPolicy)}
+                    </>
+                  ) : row.exposure?.random_subdomain ? (
+                    <>Public exposure active (subdomain label: {row.exposure.random_subdomain})</>
+                  ) : (
+                    <>Public exposure active</>
+                  )}
                   {row.exposure?.expires_at_ms ? (
                     <span>
                       {" "}

@@ -174,7 +174,9 @@ export interface Host {
   status: HostStatus;
   reprovision_required?: boolean;
   version?: string;
+  project_host_build_id?: string;
   project_bundle_version?: string;
+  project_bundle_build_id?: string;
   tools_version?: string;
   machine?: HostMachine;
   public_ip?: string;

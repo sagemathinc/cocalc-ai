@@ -57,6 +57,8 @@ type TunnelResponse = {
   name?: string;
   tunnel_secret?: string;
   token?: string;
+  deleted_at?: string | null;
+  created_at?: string;
 };
 
 function clean(value: unknown): string | undefined {
@@ -582,7 +584,7 @@ async function ensureCloudflareTunnel(opts: {
   if (tunnelId) {
     try {
       const info = await fetchTunnel(opts.accountId, opts.token, tunnelId);
-      if (!info?.id) {
+      if (!info?.id || info.deleted_at) {
         tunnelId = undefined;
         tunnelName = opts.name;
         tunnelSecret = undefined;

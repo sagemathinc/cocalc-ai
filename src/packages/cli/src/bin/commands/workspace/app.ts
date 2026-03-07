@@ -242,9 +242,17 @@ export function registerWorkspaceAppCommands(
             opts.workspace,
           );
           const status = await api.apps.statusApp(appId);
+          const stdout = Buffer.isBuffer(status.stdout)
+            ? status.stdout.toString("utf8")
+            : status.stdout;
+          const stderr = Buffer.isBuffer(status.stderr)
+            ? status.stderr.toString("utf8")
+            : status.stderr;
           return {
             workspace_id: ws.project_id,
             ...status,
+            stdout,
+            stderr,
           };
         });
       },

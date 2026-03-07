@@ -57,6 +57,13 @@ fs.writeFileSync(
 );
 NODE
 
+echo "- Write build identity"
+node "$ROOT/scripts/dev/write-build-identity.js" \
+  --root "$ROOT" \
+  --package-root "$ROOT/packages/project" \
+  --artifact-kind "project-bundle" \
+  --out "$OUT/build-identity.json"
+
 # Copy zeromq native manifest/build artifacts expected at runtime (via @cocalc/jupyter)
 ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)
 if [ -n "$ZEROMQ_BUILD" ]; then
