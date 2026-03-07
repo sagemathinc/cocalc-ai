@@ -17,5 +17,9 @@
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "depcheck": "pnpm -w exec depcheck \"$PWD\""
   },
+  "dependencies": {
+    "@cocalc/conat": "workspace:*",
+    "@cocalc/sync": "workspace:*"
+  },
   "license": "SEE LICENSE.md"
 }

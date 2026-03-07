@@ -6,3 +6,4 @@ export * from "./contracts/timetravel";
 export * from "./contracts/manifest";
 export * from "./operations";
 export * from "./session/in-memory";
+export * from "./session/syncdb";

@@ -5,8 +5,16 @@
     "outDir": "dist",
     "module": "commonjs",
     "target": "es2020",
-    "lib": ["es2020", "dom"]
+    "lib": ["es2020", "dom"],
+    "baseUrl": ".",
+    "paths": {
+      "@cocalc/conat": ["../../conat"],
+      "@cocalc/conat/*": ["../../conat/*"],
+      "@cocalc/sync": ["../../sync"],
+      "@cocalc/sync/*": ["../../sync/*"]
+    }
   },
   "include": ["./src/**/*.ts", "./src/**/*.tsx"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules"],
+  "references": [{ "path": "../../conat" }, { "path": "../../sync" }]
 }
