@@ -10,10 +10,10 @@ import {
   Card,
   Checkbox,
   Collapse,
+  Dropdown,
   Empty,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Spin,
@@ -1343,6 +1343,48 @@ export function AppServerPanel({
     }
   }
 
+  function onRowMenuAction(
+    row: ManagedAppStatus,
+    action:
+      | "expose"
+      | "unexpose"
+      | "audit"
+      | "logs"
+      | "export"
+      | "edit"
+      | "delete",
+  ) {
+    switch (action) {
+      case "expose":
+        void onExpose(row.id);
+        return;
+      case "unexpose":
+        void onUnexpose(row.id);
+        return;
+      case "audit":
+        void onAuditWithAgent(row.id);
+        return;
+      case "logs":
+        void onLogs(row.id);
+        return;
+      case "export":
+        void onExport(row.id);
+        return;
+      case "edit":
+        void onEditSpec(row.id);
+        return;
+      case "delete":
+        Modal.confirm({
+          title: "Delete app spec?",
+          content: `Delete '${row.id}' and its managed status.`,
+          okText: "Delete",
+          okButtonProps: { danger: true },
+          onOk: async () => onDelete(row.id),
+        });
+        return;
+    }
+  }
+
   async function onSaveSpecEdit() {
     try {
       setEditSpecSaving(true);
@@ -1929,6 +1971,36 @@ export function AppServerPanel({
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
           const isExpanded = !!expandedRows[row.id] || !!startupFailure;
+          const rowMenuItems = [
+            {
+              key: isPublic ? "unexpose" : "expose",
+              label: isPublic ? "Unexpose" : "Expose",
+            },
+            {
+              key: "audit",
+              label: "Audit with Codex",
+            },
+            {
+              key: "logs",
+              label: "Logs",
+            },
+            {
+              key: "export",
+              label: "Export",
+            },
+            {
+              key: "edit",
+              label: "Edit spec",
+            },
+            {
+              type: "divider" as const,
+            },
+            {
+              key: "delete",
+              label: "Delete",
+              danger: true,
+            },
+          ];
           return (
             <div
               key={row.id}
@@ -1981,73 +2053,38 @@ export function AppServerPanel({
                   >
                     Stop
                   </Button>
-                  <Popconfirm
-                    title="Delete app spec?"
-                    description={`Delete '${row.id}' and its managed status.`}
-                    okText="Delete"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => void onDelete(row.id)}
+                  <Dropdown
+                    trigger={["click"]}
+                    menu={{
+                      items: rowMenuItems,
+                      onClick: ({ key }) =>
+                        onRowMenuAction(
+                          row,
+                          key as
+                            | "expose"
+                            | "unexpose"
+                            | "audit"
+                            | "logs"
+                            | "export"
+                            | "edit"
+                            | "delete",
+                        ),
+                    }}
                   >
-                    <Button size="small" danger disabled={submitting}>
-                      Delete
-                    </Button>
-                  </Popconfirm>
-                  {isPublic ? (
                     <Button
                       size="small"
-                      onClick={() => void onUnexpose(row.id)}
                       loading={
                         submitting &&
                         rowAction?.appId === row.id &&
-                        rowAction.action === "unexpose"
+                        (rowAction.action === "expose" ||
+                          rowAction.action === "unexpose" ||
+                          rowAction.action === "audit")
                       }
+                      disabled={submitting || transferBusy}
                     >
-                      Unexpose
+                      Actions
                     </Button>
-                  ) : (
-                    <Button
-                      size="small"
-                      onClick={() => void onExpose(row.id)}
-                      loading={
-                        submitting &&
-                        rowAction?.appId === row.id &&
-                        rowAction.action === "expose"
-                      }
-                    >
-                      Expose
-                    </Button>
-                  )}
-                  <Button
-                    size="small"
-                    onClick={() => void onAuditWithAgent(row.id)}
-                    loading={
-                      submitting &&
-                      rowAction?.appId === row.id &&
-                      rowAction.action === "audit"
-                    }
-                  >
-                    Audit with Codex
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onLogs(row.id)}
-                  >
-                    Logs
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onExport(row.id)}
-                    loading={transferBusy}
-                  >
-                    Export
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onEditSpec(row.id)}
-                    disabled={submitting}
-                  >
-                    Edit spec
-                  </Button>
+                  </Dropdown>
                 </Space>
               </div>
               {isExpanded && specSummary.length > 0 ? (
