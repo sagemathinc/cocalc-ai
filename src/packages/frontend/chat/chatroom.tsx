@@ -317,7 +317,6 @@ export function ChatPanel({
   }, [desc]);
   const [newThreadSetup, setNewThreadSetup] =
     useState<NewThreadSetup>(defaultNewThreadSetup);
-  const newThreadSetupRef = useRef<NewThreadSetup>(defaultNewThreadSetup);
   const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
@@ -353,22 +352,6 @@ export function ChatPanel({
   useEffect(() => {
     composerSessionRef.current = composerSession;
   }, [composerSession]);
-  useEffect(() => {
-    newThreadSetupRef.current = newThreadSetup;
-  }, [newThreadSetup]);
-  const setCurrentNewThreadSetup = useCallback(
-    (update: React.SetStateAction<NewThreadSetup>) => {
-      setNewThreadSetup((current) => {
-        const next =
-          typeof update === "function"
-            ? (update as (current: NewThreadSetup) => NewThreadSetup)(current)
-            : update;
-        newThreadSetupRef.current = next;
-        return next;
-      });
-    },
-    [],
-  );
   const setComposerInput = useCallback(
     (value: string, sessionToken?: number) => {
       if (
@@ -800,7 +783,6 @@ export function ChatPanel({
     extraInput?: string,
     opts?: { immediate?: boolean },
   ): void {
-    const currentNewThreadSetup = newThreadSetupRef.current;
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
@@ -817,7 +799,7 @@ export function ChatPanel({
     const shouldFocusLogAfterSend =
       existingThreadMetadata?.agent_kind === "acp" ||
       existingThreadMetadata?.agent_kind === "llm" ||
-      (!reply_thread_id && currentNewThreadSetup.agentMode !== "human");
+      (!reply_thread_id && newThreadSetup.agentMode !== "human");
     if (!reply_thread_id) {
       // Creating a new thread should never auto-fallback to Combined while
       // thread metadata is hydrating.
@@ -843,23 +825,23 @@ export function ChatPanel({
       extraInput,
       send_mode: opts?.immediate ? "immediate" : undefined,
       name:
-        !reply_thread_id && currentNewThreadSetup.title.trim()
-          ? currentNewThreadSetup.title.trim()
+        !reply_thread_id && newThreadSetup.title.trim()
+          ? newThreadSetup.title.trim()
           : undefined,
       threadAgent:
-        !reply_thread_id && currentNewThreadSetup.agentMode
+        !reply_thread_id && newThreadSetup.agentMode
           ? {
-              mode: currentNewThreadSetup.agentMode,
+              mode: newThreadSetup.agentMode,
               model:
-                currentNewThreadSetup.codexConfig.model?.trim() ||
-                currentNewThreadSetup.model?.trim(),
+                newThreadSetup.codexConfig.model?.trim() ||
+                newThreadSetup.model?.trim(),
               codexConfig:
-                currentNewThreadSetup.agentMode === "codex"
+                newThreadSetup.agentMode === "codex"
                   ? {
-                      ...currentNewThreadSetup.codexConfig,
+                      ...newThreadSetup.codexConfig,
                       model:
-                        currentNewThreadSetup.codexConfig.model?.trim() ||
-                        currentNewThreadSetup.model?.trim(),
+                        newThreadSetup.codexConfig.model?.trim() ||
+                        newThreadSetup.model?.trim(),
                     }
                   : undefined,
             }
@@ -867,9 +849,9 @@ export function ChatPanel({
       threadAppearance:
         !reply_thread_id
           ? {
-              color: currentNewThreadSetup.color?.trim(),
-              icon: currentNewThreadSetup.icon?.trim(),
-              image: currentNewThreadSetup.image?.trim(),
+              color: newThreadSetup.color?.trim(),
+              icon: newThreadSetup.icon?.trim(),
+              image: newThreadSetup.image?.trim(),
             }
           : undefined,
       // Replies sent from Combined should keep Combined selected.
@@ -879,7 +861,7 @@ export function ChatPanel({
       acp_loop_config:
         composerLoopConfig?.enabled === true &&
         (isSelectedThreadCodex ||
-          (!reply_thread_id && currentNewThreadSetup.agentMode === "codex"))
+          (!reply_thread_id && newThreadSetup.agentMode === "codex"))
           ? composerLoopConfig
           : undefined,
     });
@@ -937,7 +919,7 @@ export function ChatPanel({
     void clearComposerDraft(0);
     setAllowAutoSelectThread(false);
     setSelectedThreadKey(null);
-    setCurrentNewThreadSetup(defaultNewThreadSetup);
+    setNewThreadSetup(defaultNewThreadSetup);
   }
 
   const openGitBrowserForThread = useCallback(
@@ -1074,7 +1056,7 @@ export function ChatPanel({
         codexPaymentSourceLoading={codexPaymentSourceLoading}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
-        onNewThreadSetupChange={setCurrentNewThreadSetup}
+        onNewThreadSetupChange={setNewThreadSetup}
         showThreadImagePreview={showThreadImagePreview}
         hideChatTypeSelector={hideChatTypeSelector}
         activityJumpDate={activityJumpDate}
