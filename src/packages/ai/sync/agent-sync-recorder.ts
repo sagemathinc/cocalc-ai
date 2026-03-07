@@ -88,6 +88,7 @@ export class AgentTimeTravelRecorder {
   private readonly syncDocCacheMax: number;
   private readonly writeCommitWaitMs: number;
   private readonly syncDocs = new Map<string, SyncDocEntry>();
+  private readonly turnPaths = new Map<string, Set<string>>();
   private readonly syncDocLoads = new Map<
     string,
     Promise<AgentSyncDoc | undefined>
@@ -106,6 +107,8 @@ export class AgentTimeTravelRecorder {
   private threadId?: string;
   private disposed = false;
   private readonly pendingOps = new Set<Promise<void>>();
+  private finalizedTurns = 0;
+  private finalizedTurnSyncDocsClosed = 0;
 
   constructor(options: AgentTimeTravelRecorderOptions) {
     this.projectId = options.project_id;
@@ -169,6 +172,7 @@ export class AgentTimeTravelRecorder {
       this.logger.debug("agent-tt skip read (no syncdoc)", { relativePath });
       return;
     }
+    this.trackTurnPath(relativePath, turnId ?? this.chatMessageId);
     let patchId = this.getLatestPatchId(syncdoc);
     if (!patchId) {
       patchId = await this.waitForCommit(syncdoc, patchId);
@@ -215,6 +219,7 @@ export class AgentTimeTravelRecorder {
       this.logger.debug("agent-tt skip write (no syncdoc)", { relativePath });
       return;
     }
+    this.trackTurnPath(relativePath, turnId ?? this.chatMessageId);
 
     const startPatchId = this.getLatestPatchId(syncdoc);
     const patchId = await this.waitForCommit(syncdoc, startPatchId);
@@ -236,7 +241,41 @@ export class AgentTimeTravelRecorder {
     });
   }
 
-  async finalizeTurn(_turnId?: string): Promise<void> {
+  async finalizeTurn(turnId?: string): Promise<void> {
+    if (this.disposed) return;
+    const pending = [...this.pendingOps];
+    if (pending.length > 0) {
+      await Promise.allSettled(pending);
+    }
+    const paths =
+      turnId == null
+        ? [...this.syncDocs.keys()]
+        : [...(this.turnPaths.get(turnId) ?? [])];
+    if (turnId != null) {
+      this.turnPaths.delete(turnId);
+    } else {
+      this.turnPaths.clear();
+    }
+    let closed = 0;
+    for (const relativePath of paths) {
+      if (turnId != null && this.isTrackedByOtherTurn(relativePath, turnId)) {
+        continue;
+      }
+      const entry = this.syncDocs.get(relativePath);
+      if (!entry) continue;
+      this.syncDocs.delete(relativePath);
+      await this.closeSyncDoc(relativePath, entry.doc);
+      closed += 1;
+    }
+    this.finalizedTurns += 1;
+    this.finalizedTurnSyncDocsClosed += closed;
+    if (closed > 0) {
+      this.logger.debug("agent-tt finalize closed syncdocs", {
+        turnId: turnId ?? this.chatMessageId,
+        closed,
+        remainingSyncDocs: this.syncDocs.size,
+      });
+    }
     this.pruneSyncDocs();
   }
 
@@ -271,6 +310,7 @@ export class AgentTimeTravelRecorder {
     this.pendingOps.clear();
     this.readCache.clear();
     this.docTypeCache.clear();
+    this.turnPaths.clear();
     this.store.close?.();
     this.logger.debug("agent-tt dispose complete", {
       durationMs: this.now() - started,
@@ -284,6 +324,10 @@ export class AgentTimeTravelRecorder {
     pendingOps: number;
     readCache: number;
     oldestDocAgeMs: number;
+    trackedTurns: number;
+    trackedTurnPaths: number;
+    finalizedTurns: number;
+    finalizedTurnSyncDocsClosed: number;
   } {
     const nowMs = this.now();
     let oldestDocAgeMs = 0;
@@ -300,6 +344,13 @@ export class AgentTimeTravelRecorder {
       pendingOps: this.pendingOps.size,
       readCache: this.readCache.size,
       oldestDocAgeMs,
+      trackedTurns: this.turnPaths.size,
+      trackedTurnPaths: [...this.turnPaths.values()].reduce(
+        (sum, paths) => sum + paths.size,
+        0,
+      ),
+      finalizedTurns: this.finalizedTurns,
+      finalizedTurnSyncDocsClosed: this.finalizedTurnSyncDocsClosed,
     };
   }
 
@@ -407,6 +458,24 @@ export class AgentTimeTravelRecorder {
 
   private readKey(relativePath: string): string {
     return `agent-tt:${this.chatThreadId}:file:${relativePath}`;
+  }
+
+  private trackTurnPath(relativePath: string, turnId?: string): void {
+    if (!turnId) return;
+    const paths = this.turnPaths.get(turnId) ?? new Set<string>();
+    paths.add(relativePath);
+    this.turnPaths.set(turnId, paths);
+  }
+
+  private isTrackedByOtherTurn(
+    relativePath: string,
+    excludingTurnId: string,
+  ): boolean {
+    for (const [turnId, paths] of this.turnPaths.entries()) {
+      if (turnId === excludingTurnId) continue;
+      if (paths.has(relativePath)) return true;
+    }
+    return false;
   }
 
   private getLatestPatchId(syncdoc: AgentSyncDoc): PatchId | undefined {

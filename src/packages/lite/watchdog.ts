@@ -4,6 +4,7 @@ import getLogger from "@cocalc/backend/logger";
 import { getPersistClientDebugStats } from "@cocalc/conat/persist/client";
 import { getChangefeedServerDebugStats } from "@cocalc/conat/hub/changefeeds";
 import { getBackendWatcherDebugStats } from "@cocalc/backend/watcher-debug";
+import { getSyncFsDebugStats } from "@cocalc/backend/sandbox/sync-fs-service";
 import { getAcpWatchdogStats } from "./hub/acp";
 import { info as getRefCacheInfo } from "@cocalc/util/refcache";
 
@@ -18,7 +19,10 @@ const DEFAULT_PERSIST_ACTIVE_WARN = 120;
 const DEFAULT_CHANGEFEED_ACTIVE_WARN = 200;
 const DEFAULT_CHANGEFEED_UNTRACKED_WARN = 100;
 const DEFAULT_ACP_ACTIVE_WRITERS_WARN = 20;
+const DEFAULT_ACP_TIME_TRAVEL_SYNCDOCS_WARN = 48;
 const DEFAULT_BACKEND_WATCHER_ACTIVE_WARN = 500;
+const DEFAULT_SYNC_FS_ACTIVE_PATHS_WARN = 128;
+const DEFAULT_SYNC_FS_PATCH_WRITERS_WARN = 128;
 const DEFAULT_TOP_N = 6;
 const DEFAULT_HOT_LOG_EVERY_MS = 5 * 60_000;
 
@@ -200,9 +204,21 @@ export function initWatchdog() {
     "COCALC_WATCHDOG_ACP_ACTIVE_WRITERS_WARN",
     DEFAULT_ACP_ACTIVE_WRITERS_WARN,
   );
+  const acpTimeTravelSyncDocsWarn = envNumber(
+    "COCALC_WATCHDOG_ACP_TIME_TRAVEL_SYNCDOCS_WARN",
+    DEFAULT_ACP_TIME_TRAVEL_SYNCDOCS_WARN,
+  );
   const backendWatcherActiveWarn = envNumber(
     "COCALC_WATCHDOG_BACKEND_WATCHER_ACTIVE_WARN",
     DEFAULT_BACKEND_WATCHER_ACTIVE_WARN,
+  );
+  const syncFsActivePathsWarn = envNumber(
+    "COCALC_WATCHDOG_SYNC_FS_ACTIVE_PATHS_WARN",
+    DEFAULT_SYNC_FS_ACTIVE_PATHS_WARN,
+  );
+  const syncFsPatchWritersWarn = envNumber(
+    "COCALC_WATCHDOG_SYNC_FS_PATCH_WRITERS_WARN",
+    DEFAULT_SYNC_FS_PATCH_WRITERS_WARN,
   );
   const hotLogEveryMs = Math.max(
     intervalMs,
@@ -233,7 +249,10 @@ export function initWatchdog() {
     changefeedActiveWarn,
     changefeedUntrackedWarn,
     acpActiveWritersWarn,
+    acpTimeTravelSyncDocsWarn,
     backendWatcherActiveWarn,
+    syncFsActivePathsWarn,
+    syncFsPatchWritersWarn,
     hotLogEveryMs,
     hotDetailed,
   });
@@ -273,6 +292,7 @@ export function initWatchdog() {
     const acp = getAcpWatchdogStats({ topN });
     const acpIntegrity = acp.integrityTotals ?? {};
     const backendWatchers = getBackendWatcherDebugStats({ topN });
+    const syncFs = getSyncFsDebugStats({ topN });
 
     const reasons: string[] = [];
     if (cpuPct >= cpuWarnPct) reasons.push(`cpu=${cpuPct.toFixed(1)}%`);
@@ -289,6 +309,9 @@ export function initWatchdog() {
       reasons.push(`changefeeds.untracked=${changefeedUntracked}`);
     if (acp.activeWriters >= acpActiveWritersWarn)
       reasons.push(`acp.activeWriters=${acp.activeWriters}`);
+    if (acp.timeTravelSyncDocs >= acpTimeTravelSyncDocsWarn) {
+      reasons.push(`acp.timeTravelSyncDocs=${acp.timeTravelSyncDocs}`);
+    }
     if ((acpIntegrity["chat.acp.finalize_mismatch"] ?? 0) > 0) {
       reasons.push(
         `chat.acp.finalize_mismatch=${acpIntegrity["chat.acp.finalize_mismatch"]}`,
@@ -316,6 +339,10 @@ export function initWatchdog() {
     }
     if (backendWatchers.active >= backendWatcherActiveWarn)
       reasons.push(`backendWatchers.active=${backendWatchers.active}`);
+    if (syncFs.activePaths >= syncFsActivePathsWarn)
+      reasons.push(`syncFs.activePaths=${syncFs.activePaths}`);
+    if (syncFs.patchWriters >= syncFsPatchWritersWarn)
+      reasons.push(`syncFs.patchWriters=${syncFs.patchWriters}`);
 
     const hot = reasons.length > 0;
     hotStreak = hot ? hotStreak + 1 : 0;
@@ -342,6 +369,7 @@ export function initWatchdog() {
       loadavg: os.loadavg().map((x) => Math.round(x * 100) / 100),
       acp,
       backendWatchers,
+      syncFs,
       persist,
       persistRefCache,
       changefeeds,
@@ -369,6 +397,17 @@ export function initWatchdog() {
           loopDelayMs: snapshot.loopDelayMs,
           memoryMB: snapshot.memoryMB,
           loadavg: snapshot.loadavg,
+          acp: {
+            activeWriters: acp.activeWriters,
+            timeTravelSyncDocs: acp.timeTravelSyncDocs,
+          },
+          syncFs: {
+            activePaths: syncFs.activePaths,
+            activeDirs: syncFs.activeDirs,
+            patchWriters: syncFs.patchWriters,
+            stalePrunes: syncFs.counters.stalePrunes,
+            capEvictions: syncFs.counters.capEvictions,
+          },
         });
       }
     }

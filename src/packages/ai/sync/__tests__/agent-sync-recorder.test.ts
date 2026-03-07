@@ -228,6 +228,34 @@ describe("AgentTimeTravelRecorder", () => {
     await recorder.dispose();
   });
 
+  it("closes touched syncdocs when a turn finalizes", async () => {
+    const syncDoc = new FakeSyncDoc({
+      content: "before",
+      versions: ["p1"],
+      versionMap: new Map([["p1", "before"]]),
+    });
+    const { store } = makeStore();
+    const recorder = new AgentTimeTravelRecorder({
+      ...baseOptions,
+      readStateStore: store,
+      syncFactory: async () => syncDoc,
+    });
+
+    await recorder.recordRead("src/file.txt", chatMessageId);
+    expect(recorder.debugStats().syncDocs).toBe(1);
+
+    await recorder.finalizeTurn(chatMessageId);
+
+    expect(syncDoc.closeCalls).toBe(1);
+    expect(recorder.debugStats()).toMatchObject({
+      syncDocs: 0,
+      trackedTurns: 0,
+      finalizedTurns: 1,
+      finalizedTurnSyncDocsClosed: 1,
+    });
+    await recorder.dispose();
+  });
+
   it("skips missing files without creating a syncdoc", async () => {
     const syncFactory = jest.fn(async () =>
       new FakeSyncDoc({
