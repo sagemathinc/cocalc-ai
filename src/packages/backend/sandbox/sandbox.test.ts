@@ -20,7 +20,9 @@ beforeAll(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cocalc"));
 });
 
-async function expectRejectsWithError(promise: Promise<unknown>): Promise<Error> {
+async function expectRejectsWithError(
+  promise: Promise<unknown>,
+): Promise<Error> {
   try {
     await promise;
   } catch (err) {
@@ -32,24 +34,27 @@ async function expectRejectsWithError(promise: Promise<unknown>): Promise<Error>
 
 const describeIfLinux = process.platform === "linux" ? describe : describe.skip;
 
-describeIfLinux("test using the filesystem sandbox to do a few standard things", () => {
-  let fs;
-  it("creates and reads file", async () => {
-    await mkdir(join(tempDir, "test-1"));
-    fs = new SandboxedFilesystem(join(tempDir, "test-1"));
-    await fs.writeFile("a", "hi");
-    const r = await fs.readFile("a", "utf8");
-    expect(r).toEqual("hi");
-    expect(fs.unsafeMode).toBe(false);
-  });
+describeIfLinux(
+  "test using the filesystem sandbox to do a few standard things",
+  () => {
+    let fs;
+    it("creates and reads file", async () => {
+      await mkdir(join(tempDir, "test-1"));
+      fs = new SandboxedFilesystem(join(tempDir, "test-1"));
+      await fs.writeFile("a", "hi");
+      const r = await fs.readFile("a", "utf8");
+      expect(r).toEqual("hi");
+      expect(fs.unsafeMode).toBe(false);
+    });
 
-  it("truncate file", async () => {
-    await fs.writeFile("b", "hello");
-    await fs.truncate("b", 4);
-    const r = await fs.readFile("b", "utf8");
-    expect(r).toEqual("hell");
-  });
-});
+    it("truncate file", async () => {
+      await fs.writeFile("b", "hello");
+      await fs.truncate("b", 4);
+      const r = await fs.readFile("b", "utf8");
+      expect(r).toEqual("hell");
+    });
+  },
+);
 
 describeIfLinux("baseline mutator parity behavior", () => {
   let fs;
@@ -89,7 +94,9 @@ describeIfLinux("baseline mutator parity behavior", () => {
   it("move defaults to no-overwrite behavior", async () => {
     await fs.writeFile("move-src.txt", "new");
     await fs.writeFile("move-dest.txt", "old");
-    await expect(fs.move("move-src.txt", "move-dest.txt")).rejects.toMatchObject({
+    await expect(
+      fs.move("move-src.txt", "move-dest.txt"),
+    ).rejects.toMatchObject({
       code: "EEXIST",
     });
     expect(await fs.readFile("move-src.txt", "utf8")).toBe("new");
@@ -117,6 +124,35 @@ describeIfLinux("baseline mutator parity behavior", () => {
     await fs.writeFile("tmp/z.txt", "z");
     await fs.rm("tmp", { recursive: true });
     expect(await fs.exists("tmp")).toBe(false);
+  });
+});
+
+describeIfLinux("sync-fs watch identity canonicalization", () => {
+  let home;
+  let fs;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tempDir, "sync-fs-watch-identity-"));
+    fs = new SandboxedFilesystem(home);
+  });
+
+  it("canonicalizes existing files through symlink aliases", async () => {
+    await mkdir(join(home, "real"), { recursive: true });
+    await writeFile(join(home, "real", "tracked.txt"), "x");
+    await symlink("real", join(home, "link"));
+
+    expect(await (fs as any).canonicalSyncFsWatchPath("link/tracked.txt")).toBe(
+      join(home, "real", "tracked.txt"),
+    );
+  });
+
+  it("keeps a stable canonical identity for missing files under symlinked parents", async () => {
+    await mkdir(join(home, "real-dir"), { recursive: true });
+    await symlink("real-dir", join(home, "link-dir"));
+
+    expect(await (fs as any).canonicalSyncFsWatchPath("link-dir/new.txt")).toBe(
+      join(home, "real-dir", "new.txt"),
+    );
   });
 });
 
@@ -421,12 +457,12 @@ describeIfLinux("safe mode sandbox", () => {
 
   it("denies link and symlink creation by default in safe mode", async () => {
     await fs.writeFile("link-policy-src.txt", "src");
-    await expect(fs.link("link-policy-src.txt", "hard-link.txt")).rejects.toThrow(
-      "operation not permitted in safe mode",
-    );
-    await expect(fs.symlink("link-policy-src.txt", "sym-link.txt")).rejects.toThrow(
-      "operation not permitted in safe mode",
-    );
+    await expect(
+      fs.link("link-policy-src.txt", "hard-link.txt"),
+    ).rejects.toThrow("operation not permitted in safe mode");
+    await expect(
+      fs.symlink("link-policy-src.txt", "sym-link.txt"),
+    ).rejects.toThrow("operation not permitted in safe mode");
   });
 });
 
@@ -460,18 +496,30 @@ describeIfLinux("safe mode mutator escape checks", () => {
     await writeFile(outsideFile(), "s3cr3t");
     await mkdir(outsideDir(), { recursive: true });
     await fs.writeFile("inside.txt", "inside");
-    await symlink(outsideFile(), join(tempDir, "test-safe-mutator-escapes", "escape-link"));
-    await symlink(outsideDir(), join(tempDir, "test-safe-mutator-escapes", "escape-dir"));
+    await symlink(
+      outsideFile(),
+      join(tempDir, "test-safe-mutator-escapes", "escape-link"),
+    );
+    await symlink(
+      outsideDir(),
+      join(tempDir, "test-safe-mutator-escapes", "escape-dir"),
+    );
   });
 
   it("blocks unlink/rm on symlink that resolves outside sandbox", async () => {
-    await expect(fs.unlink("escape-link")).rejects.toThrow("outside of sandbox");
+    await expect(fs.unlink("escape-link")).rejects.toThrow(
+      "outside of sandbox",
+    );
     await expect(fs.rm("escape-link")).rejects.toThrow("outside of sandbox");
   });
 
   it("blocks rename/move/copyFile when source resolves outside sandbox", async () => {
-    await expect(fs.rename("escape-link", "x")).rejects.toThrow("outside of sandbox");
-    await expect(fs.move("escape-link", "x")).rejects.toThrow("outside of sandbox");
+    await expect(fs.rename("escape-link", "x")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(fs.move("escape-link", "x")).rejects.toThrow(
+      "outside of sandbox",
+    );
     await expect(fs.copyFile("escape-link", "copied.txt")).rejects.toThrow(
       "outside of sandbox",
     );
@@ -507,22 +555,31 @@ describeIfLinux("safe mode mutator escape checks", () => {
   });
 
   it("blocks metadata mutators when target resolves outside sandbox", async () => {
-    await expect(fs.truncate("escape-link", 1)).rejects.toThrow("outside of sandbox");
-    await expect(fs.chmod("escape-link", 0o600)).rejects.toThrow("outside of sandbox");
-    await expect(fs.utimes("escape-link", new Date(), new Date())).rejects.toThrow(
+    await expect(fs.truncate("escape-link", 1)).rejects.toThrow(
       "outside of sandbox",
     );
+    await expect(fs.chmod("escape-link", 0o600)).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(
+      fs.utimes("escape-link", new Date(), new Date()),
+    ).rejects.toThrow("outside of sandbox");
   });
 
   it("blocks mkdir when an existing ancestor resolves outside sandbox", async () => {
-    await expect(fs.mkdir("escape-dir/new-dir")).rejects.toThrow("outside of sandbox");
-    await expect(fs.mkdir("escape-dir/deeper/new-dir", { recursive: true })).rejects.toThrow(
+    await expect(fs.mkdir("escape-dir/new-dir")).rejects.toThrow(
       "outside of sandbox",
     );
+    await expect(
+      fs.mkdir("escape-dir/deeper/new-dir", { recursive: true }),
+    ).rejects.toThrow("outside of sandbox");
   });
 
   it("blocks rename/move when destination symlink resolves outside sandbox", async () => {
-    await symlink(outsideFile(), join(tempDir, "test-safe-mutator-escapes", "escape-dest"));
+    await symlink(
+      outsideFile(),
+      join(tempDir, "test-safe-mutator-escapes", "escape-dest"),
+    );
     await expect(fs.rename("inside.txt", "escape-dest")).rejects.toThrow(
       "outside of sandbox",
     );
@@ -551,7 +608,9 @@ describeIfLinux("safe mode race-condition regressions", () => {
     for (let i = 0; i < 80; i++) {
       await rm(racePath(), { force: true });
       await symlink(outsideFile(), racePath());
-      await expect(fs.truncate("race.txt", 2)).rejects.toThrow("outside of sandbox");
+      await expect(fs.truncate("race.txt", 2)).rejects.toThrow(
+        "outside of sandbox",
+      );
       denied += 1;
 
       await rm(racePath(), { force: true });
@@ -614,7 +673,8 @@ describeIfLinux("openat2 motivation regressions", () => {
       return;
     }
 
-    const originalRenameNoReplace = openAt2Root.renameNoReplace.bind(openAt2Root);
+    const originalRenameNoReplace =
+      openAt2Root.renameNoReplace.bind(openAt2Root);
     openAt2Root.renameNoReplace = (oldPath: string, newPath: string) => {
       const linkPath = join(sandboxRoot, "nested");
       rmSync(linkPath, { force: true, recursive: true });
@@ -687,7 +747,9 @@ describeIfLinux("openat2 motivation regressions", () => {
     } catch (err: any) {
       expect(err?.message ?? "").toContain("outside of sandbox");
     }
-    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe("secret");
+    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe(
+      "secret",
+    );
     expect(await fs.exists("tree")).toBe(false);
   });
 
@@ -719,7 +781,9 @@ describeIfLinux("openat2 motivation regressions", () => {
     } catch (err: any) {
       expect(err?.message ?? "").toContain("outside of sandbox");
     }
-    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe("secret");
+    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe(
+      "secret",
+    );
     expect(await fs.exists("tree")).toBe(false);
   });
 
@@ -918,7 +982,9 @@ describeIfLinux("openat2 motivation regressions", () => {
     await expect(
       fs.cp("srcdir", "nested/copied-srcdir", { recursive: true }),
     ).rejects.toThrow("outside of sandbox");
-    await expect(stat(join(outsideRoot, "copied-srcdir"))).rejects.toMatchObject({
+    await expect(
+      stat(join(outsideRoot, "copied-srcdir")),
+    ).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -954,7 +1020,9 @@ describeIfLinux("rootfs option sandbox", () => {
     rootfs = join(tempDir, "test-rootfs-missing");
     await mkdir(home);
     fs = new SandboxedFilesystem(home, { rootfs });
-    const err = await expectRejectsWithError(fs.writeFile("/alpha.txt", "from-home"));
+    const err = await expectRejectsWithError(
+      fs.writeFile("/alpha.txt", "from-home"),
+    );
     expect(err.message).toContain(
       "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
     );
@@ -988,7 +1056,9 @@ describeIfLinux("rootfs option sandbox", () => {
     expect(await readFile(join(rootfs, "tmp", "from-root.txt"), "utf8")).toBe(
       "from-root",
     );
-    await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
+    await expect(
+      readFile(join(home, "tmp", "from-root.txt"), "utf8"),
+    ).rejects.toThrow();
   });
 
   it("openat2 hardening applies to rootfs absolute paths", async () => {
@@ -1017,37 +1087,49 @@ describeIfLinux("rootfs option sandbox", () => {
       return originalOpenWrite(relPath, create, truncate, append, mode);
     };
 
-    await expect(fs.writeFile("/tmp/race-target.txt", "inside-updated")).rejects.toThrow(
-      "outside of sandbox",
-    );
+    await expect(
+      fs.writeFile("/tmp/race-target.txt", "inside-updated"),
+    ).rejects.toThrow("outside of sandbox");
     expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
   });
 
   it("keeps /root and relative paths mapped to home path when rootfs exists", async () => {
     await fs.writeFile("/root/home-abs.txt", "from-home-abs");
     await fs.writeFile("home-rel.txt", "from-home-rel");
-    expect(await fs.readFile("/root/home-abs.txt", "utf8")).toBe("from-home-abs");
+    expect(await fs.readFile("/root/home-abs.txt", "utf8")).toBe(
+      "from-home-abs",
+    );
     expect(await fs.readFile("home-rel.txt", "utf8")).toBe("from-home-rel");
     const rootListing = (await fs.readdir("/root")) as string[];
     expect(rootListing).toContain("home-abs.txt");
-    expect(await readFile(join(home, "home-abs.txt"), "utf8")).toBe("from-home-abs");
-    expect(await readFile(join(home, "home-rel.txt"), "utf8")).toBe("from-home-rel");
-    await expect(readFile(join(rootfs, "root", "home-abs.txt"), "utf8")).rejects.toThrow();
-    await expect(readFile(join(rootfs, "home-rel.txt"), "utf8")).rejects.toThrow();
+    expect(await readFile(join(home, "home-abs.txt"), "utf8")).toBe(
+      "from-home-abs",
+    );
+    expect(await readFile(join(home, "home-rel.txt"), "utf8")).toBe(
+      "from-home-rel",
+    );
+    await expect(
+      readFile(join(rootfs, "root", "home-abs.txt"), "utf8"),
+    ).rejects.toThrow();
+    await expect(
+      readFile(join(rootfs, "home-rel.txt"), "utf8"),
+    ).rejects.toThrow();
   });
 
   it("fails closed for move across home/rootfs base boundary", async () => {
     await fs.writeFile("/root/move-home.txt", "home");
     await fs.writeFile("/tmp/move-rootfs.txt", "rootfs");
 
-    await expect(fs.move("/root/move-home.txt", "/tmp/move-home.txt")).rejects.toMatchObject({
+    await expect(
+      fs.move("/root/move-home.txt", "/tmp/move-home.txt"),
+    ).rejects.toMatchObject({
       code: "EXDEV",
     });
-    await expect(fs.move("/tmp/move-rootfs.txt", "/root/move-rootfs.txt")).rejects.toMatchObject(
-      {
-        code: "EXDEV",
-      },
-    );
+    await expect(
+      fs.move("/tmp/move-rootfs.txt", "/root/move-rootfs.txt"),
+    ).rejects.toMatchObject({
+      code: "EXDEV",
+    });
     expect(await fs.readFile("/root/move-home.txt", "utf8")).toBe("home");
     expect(await fs.readFile("/tmp/move-rootfs.txt", "utf8")).toBe("rootfs");
   });
@@ -1062,7 +1144,10 @@ describeIfLinux("rootfs option sandbox", () => {
 
   it("safe mode still blocks symlink escape outside rootfs", async () => {
     await writeFile(join(tempDir, "root-secret.txt"), "s3cr3t");
-    await symlink(join(tempDir, "root-secret.txt"), join(rootfs, "danger-link"));
+    await symlink(
+      join(tempDir, "root-secret.txt"),
+      join(rootfs, "danger-link"),
+    );
     await expect(fs.readFile("/danger-link", "utf8")).rejects.toThrow(
       "outside of sandbox",
     );
@@ -1132,11 +1217,10 @@ describeIfLinux("rootfs option sandbox", () => {
       "rootfs-ok",
     );
     await fsMissingScratch.writeFile("/root/home-still-ok.txt", "home-ok");
-    expect(await fsMissingScratch.readFile("/root/home-still-ok.txt", "utf8")).toBe(
-      "home-ok",
-    );
+    expect(
+      await fsMissingScratch.readFile("/root/home-still-ok.txt", "utf8"),
+    ).toBe("home-ok");
   });
-
 });
 
 afterAll(async () => {

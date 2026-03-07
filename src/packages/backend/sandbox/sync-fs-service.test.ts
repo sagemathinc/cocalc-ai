@@ -8,6 +8,7 @@ import { SyncFsWatchStore } from "./sync-fs-watch";
 import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { decodePatchId, legacyPatchId } from "patchflow";
 import { getBackendWatcherDebugStats } from "../watcher-debug";
+import { client_db } from "@cocalc/util/db-schema/client-db";
 
 class FakeAStream {
   public messages: { mesg: any; seq: number }[] = [];
@@ -53,9 +54,16 @@ function installWriterCache(
       writer = new FakeAStream();
       writers.set(string_id, writer);
     }
-    ((svc as any).patchWriters as Map<string, FakeAStream>).set(string_id, writer);
+    ((svc as any).patchWriters as Map<string, FakeAStream>).set(
+      string_id,
+      writer,
+    );
     return writer;
   };
+}
+
+function syncStringId(projectId: string, syncPath: string): string {
+  return client_db.sha1(projectId, syncPath);
 }
 
 describe("SyncFsService", () => {
@@ -119,13 +127,15 @@ describe("SyncFsService", () => {
     writeFileSync(path, "keep");
 
     const svc = new SyncFsService();
+    const projectId = "p-release";
+    const syncPath = "release.txt";
+    const stringId = syncStringId(projectId, syncPath);
     const fake = new FakeAStream();
-    installWriterCache(svc, new Map([["sid-release", fake]]));
+    installWriterCache(svc, new Map([[stringId, fake]]));
 
     await svc.heartbeat(path, true, {
-      project_id: "p-release",
-      relativePath: "release.txt",
-      string_id: "sid-release",
+      project_id: projectId,
+      syncPath,
     });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -188,21 +198,22 @@ describe("SyncFsService", () => {
     const svc = new SyncFsService();
     const fakeA = new FakeAStream();
     const fakeB = new FakeAStream();
+    const projectId = "p-ttl";
+    const syncPathA = "ttl-a.txt";
+    const syncPathB = "ttl-b.txt";
     const writers = new Map<string, FakeAStream>([
-      ["sid-a", fakeA],
-      ["sid-b", fakeB],
+      [syncStringId(projectId, syncPathA), fakeA],
+      [syncStringId(projectId, syncPathB), fakeB],
     ]);
     installWriterCache(svc, writers);
 
     await svc.heartbeat(b, true, {
-      project_id: "p-ttl",
-      relativePath: "ttl-b.txt",
-      string_id: "sid-b",
+      project_id: projectId,
+      syncPath: syncPathB,
     });
     await svc.heartbeat(a, true, {
-      project_id: "p-ttl",
-      relativePath: "ttl-a.txt",
-      string_id: "sid-a",
+      project_id: projectId,
+      syncPath: syncPathA,
     });
     const pathStates = (svc as any).pathStates as Map<
       string,
@@ -239,22 +250,23 @@ describe("SyncFsService", () => {
     });
     const fakeA = new FakeAStream();
     const fakeB = new FakeAStream();
+    const projectId = "p-cap";
+    const syncPathA = "cap-a.txt";
+    const syncPathB = "cap-b.txt";
     const writers = new Map<string, FakeAStream>([
-      ["sid-cap-a", fakeA],
-      ["sid-cap-b", fakeB],
+      [syncStringId(projectId, syncPathA), fakeA],
+      [syncStringId(projectId, syncPathB), fakeB],
     ]);
     installWriterCache(svc, writers);
 
     await svc.heartbeat(a, true, {
-      project_id: "p-cap",
-      relativePath: "cap-a.txt",
-      string_id: "sid-cap-a",
+      project_id: projectId,
+      syncPath: syncPathA,
     });
     await new Promise((r) => setTimeout(r, 10));
     await svc.heartbeat(b, true, {
-      project_id: "p-cap",
-      relativePath: "cap-b.txt",
-      string_id: "sid-cap-b",
+      project_id: projectId,
+      syncPath: syncPathB,
     });
 
     expect(fakeA.closeCalls).toBeGreaterThanOrEqual(1);
@@ -272,10 +284,11 @@ describe("SyncFsService", () => {
     const svc = new SyncFsService();
     const fake = new FakeAStream();
     (svc as any).getPatchWriter = async () => fake;
+    const projectId = "p1";
+    const syncPath = "recreate.txt";
     await svc.heartbeat(path, true, {
-      project_id: "p1",
-      relativePath: "recreate.txt",
-      string_id: "sid-recreate",
+      project_id: projectId,
+      syncPath,
     });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -334,10 +347,13 @@ describe("SyncFsService", () => {
     // Monkeypatch writer factory for testing.
     (svc1 as any).getPatchWriter = async () => fake;
 
-    const meta = { project_id: "p1", relativePath: "a.txt", string_id: "sid" };
+    const projectId = "p1";
+    const syncPath = "a.txt";
+    const stringId = syncStringId(projectId, syncPath);
+    const meta = { project_id: projectId, syncPath };
     const change = { patch: [], content: "v1", hash: "h1", deleted: false };
     await (svc1 as any).appendPatch(meta, "change", change);
-    const head1 = store1.getFsHead("sid");
+    const head1 = store1.getFsHead(stringId);
     expect(head1?.lastSeq).toBe(1);
     svc1.close();
 
@@ -352,7 +368,7 @@ describe("SyncFsService", () => {
     await (svc2 as any).appendPatch(meta, "change", change2);
 
     expect(fake.lastStartSeq).toBe(2); // resume after persisted lastSeq
-    const head2 = store2.getFsHead("sid");
+    const head2 = store2.getFsHead(stringId);
     expect(head2?.lastSeq).toBe(3);
     expect(head2?.version).toBe(3);
     expect(head2?.heads?.length).toBe(1);
@@ -366,7 +382,7 @@ describe("SyncFsService", () => {
     const dbPath = tmpNameSync({ prefix: "sync-fs-heads-", postfix: ".db" });
     const store = new SyncFsWatchStore(dbPath);
     store.setFsHead({
-      string_id: "sid2",
+      string_id: syncStringId("p2", "c.txt"),
       time: legacyPatchId(50),
       version: 1,
       heads: [],
@@ -379,7 +395,7 @@ describe("SyncFsService", () => {
     const svc = new SyncFsService(store);
     (svc as any).getPatchWriter = async () => fake;
 
-    const meta = { project_id: "p2", relativePath: "c.txt", string_id: "sid2" };
+    const meta = { project_id: "p2", syncPath: "c.txt" };
     const change = { patch: [], content: "v3", hash: "h3", deleted: false };
     await (svc as any).appendPatch(meta, "change", change);
 
@@ -389,7 +405,7 @@ describe("SyncFsService", () => {
     expect(published.parents.length).toBe(1);
     expect(decodePatchId(published.parents[0]).timeMs).toBe(50);
 
-    const head = store.getFsHead("sid2");
+    const head = store.getFsHead(syncStringId("p2", "c.txt"));
     expect(head?.heads).toEqual([published.time]);
     expect(head?.lastSeq).toBe(fake.messages.length);
     svc.close();
@@ -399,7 +415,7 @@ describe("SyncFsService", () => {
     const dbPath = tmpNameSync({ prefix: "sync-fs-heads-", postfix: ".db" });
     const store = new SyncFsWatchStore(dbPath);
     store.setFsHead({
-      string_id: "sid3",
+      string_id: syncStringId("p3", "d.txt"),
       time: legacyPatchId(123),
       version: 7,
       heads: [legacyPatchId(123)],
@@ -411,7 +427,7 @@ describe("SyncFsService", () => {
     const svc = new SyncFsService(store);
     (svc as any).getPatchWriter = async () => fake;
 
-    const meta = { project_id: "p3", relativePath: "d.txt", string_id: "sid3" };
+    const meta = { project_id: "p3", syncPath: "d.txt" };
     const change = { patch: [], content: "fresh", hash: "h4", deleted: false };
     await (svc as any).appendPatch(meta, "change", change);
 
@@ -420,7 +436,7 @@ describe("SyncFsService", () => {
     expect(published.parents.length).toBe(0);
     expect(published.version).toBe(1);
 
-    const head = store.getFsHead("sid3");
+    const head = store.getFsHead(syncStringId("p3", "d.txt"));
     expect(head?.version).toBe(1);
     expect(head?.lastSeq).toBe(1);
     expect(head?.heads?.length).toBe(1);
@@ -443,8 +459,7 @@ describe("SyncFsService", () => {
 
     await (svc as any).initPath(path, {
       project_id: "p4",
-      relativePath: "cached.txt",
-      string_id: "sid-cached",
+      syncPath: "cached.txt",
     });
 
     expect(fake.messages.length).toBe(1);
@@ -482,8 +497,7 @@ describe("SyncFsService", () => {
 
     await (svc as any).initPath(path, {
       project_id: "p5",
-      relativePath: "history.txt",
-      string_id: "sid-history",
+      syncPath: "history.txt",
     });
 
     // No extra publish is needed because disk content already matches stream.
@@ -512,8 +526,7 @@ describe("SyncFsService", () => {
 
     await (svc as any).initPath(path, {
       project_id: "p6",
-      relativePath: "history-fallback.txt",
-      string_id: "sid-history-fallback",
+      syncPath: "history-fallback.txt",
     });
 
     // Existing stream message + one published reconciliation patch.
@@ -522,32 +535,34 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 
-  it("reinitializes a watched path when metadata switches to a new string identity", async () => {
+  it("reinitializes a watched path when syncPath switches to a new canonical identity", async () => {
     const path = join(dir, "identity-switch.txt");
     writeFileSync(path, "tracked");
 
     const svc = new SyncFsService();
+    const projectId = "p7";
+    const relativeSyncPath = "build/cocalc-lite4/identity-switch.txt";
+    const absoluteSyncPath =
+      "/home/wstein/build/cocalc-lite4/identity-switch.txt";
     const oldWriter = new FakeAStream();
     const newWriter = new FakeAStream();
     installWriterCache(
       svc,
       new Map([
-        ["sid-relative", oldWriter],
-        ["sid-absolute", newWriter],
+        [syncStringId(projectId, relativeSyncPath), oldWriter],
+        [syncStringId(projectId, absoluteSyncPath), newWriter],
       ]),
     );
 
     await svc.heartbeat(path, true, {
-      project_id: "p7",
-      relativePath: "build/cocalc-lite4/identity-switch.txt",
-      string_id: "sid-relative",
+      project_id: projectId,
+      syncPath: relativeSyncPath,
     });
     expect(oldWriter.messages).toHaveLength(1);
 
     await svc.heartbeat(path, true, {
-      project_id: "p7",
-      relativePath: "/home/wstein/build/cocalc-lite4/identity-switch.txt",
-      string_id: "sid-absolute",
+      project_id: projectId,
+      syncPath: absoluteSyncPath,
     });
 
     // The new identity must get its own initial patch even though the same

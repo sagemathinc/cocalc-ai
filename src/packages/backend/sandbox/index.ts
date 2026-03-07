@@ -86,13 +86,16 @@ import LRU from "lru-cache";
 import TTL from "@isaacs/ttlcache";
 import watch, { type WatchIterator, type WatchOptions } from "./watch";
 import { sha1 } from "@cocalc/backend/sha1";
-import { apply_patch, make_patch, type CompressedPatch } from "@cocalc/util/dmp";
+import {
+  apply_patch,
+  make_patch,
+  type CompressedPatch,
+} from "@cocalc/util/dmp";
 import getLogger from "@cocalc/backend/logger";
 
 import { SyncFsWatchStore } from "./sync-fs-watch";
 export { SyncFsWatchStore };
 import { SyncFsService } from "./sync-fs-service";
-import { client_db } from "@cocalc/util/db-schema/client-db";
 
 const logger = getLogger("sandbox:fs");
 const OPENAT2_SETTING = (process.env.COCALC_SANDBOX_OPENAT2 ?? "")
@@ -144,10 +147,7 @@ const LAST_ON_DISK_TTL = 1000 * 60 * 5; // 5 minutes
 // other editors (e.g., vscode).
 const LAST_ON_DISK_TTL_HASH = 1000 * 15;
 
-const readFileByFd = (
-  fd: number,
-  encoding?: any,
-): Promise<string | Buffer> =>
+const readFileByFd = (fd: number, encoding?: any): Promise<string | Buffer> =>
   new Promise((resolve, reject) => {
     readFileFdCallback(fd, encoding as any, (err, data) => {
       if (err != null) {
@@ -326,9 +326,8 @@ export class SandboxedFilesystem {
           let sandboxBasePath = this.path;
           try {
             if (typeof args?.[0] === "string") {
-              sandboxBasePath = (
-                await this.resolvePathInSandbox(args[0])
-              ).sandboxBasePath;
+              sandboxBasePath = (await this.resolvePathInSandbox(args[0]))
+                .sandboxBasePath;
             } else {
               sandboxBasePath = await this.resolveSandboxBasePath();
             }
@@ -423,7 +422,9 @@ export class SandboxedFilesystem {
   }
 
   private isOpenAt2Enabled(): boolean {
-    return !this.unsafeMode && process.platform === "linux" && !OPENAT2_DISABLED;
+    return (
+      !this.unsafeMode && process.platform === "linux" && !OPENAT2_DISABLED
+    );
   }
 
   private makeOpenAt2RequiredError(
@@ -562,7 +563,8 @@ export class SandboxedFilesystem {
   private async getOpenAt2PathTarget(
     path: string,
   ): Promise<{ root: OpenAt2SandboxRoot; rel: string } | null> {
-    const { pathInSandbox, sandboxBasePath } = await this.resolvePathInSandbox(path);
+    const { pathInSandbox, sandboxBasePath } =
+      await this.resolvePathInSandbox(path);
     const root =
       sandboxBasePath === this.path
         ? this.getOpenAt2Root()
@@ -580,7 +582,11 @@ export class SandboxedFilesystem {
   private async getOpenAt2DualPathTarget(
     src: string,
     dest: string,
-  ): Promise<{ root: OpenAt2SandboxRoot; srcRel: string; destRel: string } | null> {
+  ): Promise<{
+    root: OpenAt2SandboxRoot;
+    srcRel: string;
+    destRel: string;
+  } | null> {
     const [srcResolved, destResolved] = await Promise.all([
       this.resolvePathInSandbox(src),
       this.resolvePathInSandbox(dest),
@@ -697,12 +703,11 @@ export class SandboxedFilesystem {
     // Relative paths (and absolute /root paths) are always interpreted relative
     // to the project home mount `path`, even when rootfs mode is enabled.
     if (!isAbsoluteInput || isAbsoluteHomeAlias) {
-      const rel =
-        isAbsoluteHomeAlias
-          ? resolvedInput == HOME_ROOT
-            ? ""
-            : resolvedInput.slice(HOME_ROOT.length + 1)
-          : resolvedInput.slice(1);
+      const rel = isAbsoluteHomeAlias
+        ? resolvedInput == HOME_ROOT
+          ? ""
+          : resolvedInput.slice(HOME_ROOT.length + 1)
+        : resolvedInput.slice(1);
       return {
         pathInSandbox: join(this.path, rel),
         sandboxBasePath: this.path,
@@ -712,7 +717,8 @@ export class SandboxedFilesystem {
     }
 
     if (isAbsoluteScratchAlias) {
-      const scratchBase = await this.requireScratchForAbsolutePath(resolvedInput);
+      const scratchBase =
+        await this.requireScratchForAbsolutePath(resolvedInput);
       const rel =
         resolvedInput == "/scratch"
           ? ""
@@ -756,7 +762,10 @@ export class SandboxedFilesystem {
     }
   };
 
-  private assertSafeModeLinkPolicy(kind: "link" | "symlink", path: string): void {
+  private assertSafeModeLinkPolicy(
+    kind: "link" | "symlink",
+    path: string,
+  ): void {
     if (this.unsafeMode) {
       return;
     }
@@ -781,7 +790,80 @@ export class SandboxedFilesystem {
     return await this.safeAbsPath(path);
   };
 
-  private resolveWritableSandboxPath = async (path: string): Promise<string> => {
+  private toAbsoluteSyncFsPath = ({
+    pathInSandbox,
+    sandboxBasePath,
+    absoluteScratchAlias,
+  }: {
+    pathInSandbox: string;
+    sandboxBasePath: string;
+    absoluteScratchAlias: boolean;
+  }): string => {
+    const rel = this.toSandboxRelativePath(pathInSandbox, sandboxBasePath);
+    if (sandboxBasePath === this.path) {
+      if (rel === "") {
+        return this.path;
+      }
+      return join(this.path, rel);
+    }
+    if (absoluteScratchAlias) {
+      if (rel === "" || rel === "/") {
+        return "/scratch";
+      }
+      return rel.startsWith("/")
+        ? `/scratch/${rel.slice(1)}`
+        : `/scratch/${rel}`;
+    }
+    return rel.startsWith("/") ? rel : join(this.path, rel);
+  };
+
+  private canonicalSyncFsWatchPath = async (path: string): Promise<string> => {
+    const { pathInSandbox, sandboxBasePath, absoluteScratchAlias } =
+      await this.resolvePathInSandbox(path);
+    const compareBase = this.unsafeMode
+      ? undefined
+      : await this.resolveSandboxBasePathForComparison(sandboxBasePath);
+    const suffix: string[] = [];
+    let candidate = pathInSandbox;
+    while (true) {
+      try {
+        const resolved = await realpath(candidate);
+        if (
+          compareBase != null &&
+          !this.isInsideSandbox(resolved, compareBase)
+        ) {
+          throw Error(
+            `realpath of '${path}' resolves to a path outside of sandbox`,
+          );
+        }
+        const canonicalInSandbox =
+          suffix.length === 0 ? resolved : join(resolved, ...suffix);
+        return this.toAbsoluteSyncFsPath({
+          pathInSandbox: canonicalInSandbox,
+          sandboxBasePath,
+          absoluteScratchAlias,
+        });
+      } catch (err: any) {
+        if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
+          throw err;
+        }
+      }
+      const parent = dirname(candidate);
+      if (parent === candidate) {
+        return this.toAbsoluteSyncFsPath({
+          pathInSandbox,
+          sandboxBasePath,
+          absoluteScratchAlias,
+        });
+      }
+      suffix.unshift(basename(candidate));
+      candidate = parent;
+    }
+  };
+
+  private resolveWritableSandboxPath = async (
+    path: string,
+  ): Promise<string> => {
     this.assertWritable(path);
     return await this.resolveSandboxPath(path);
   };
@@ -823,7 +905,10 @@ export class SandboxedFilesystem {
       flags: constants.O_RDONLY,
     });
     try {
-      const [fdStat, pathStat] = await Promise.all([handle.stat(), stat(absPath)]);
+      const [fdStat, pathStat] = await Promise.all([
+        handle.stat(),
+        stat(absPath),
+      ]);
       if (fdStat.dev !== pathStat.dev || fdStat.ino !== pathStat.ino) {
         const err: NodeJS.ErrnoException = new Error(
           `Path changed during operation: '${path}'`,
@@ -921,7 +1006,9 @@ export class SandboxedFilesystem {
     const compareBase =
       await this.resolveSandboxBasePathForComparison(sandboxBasePath);
     if (!this.isInsideSandbox(resolved, compareBase)) {
-      throw Error(`realpath of '${path}' resolves to a path outside of sandbox`);
+      throw Error(
+        `realpath of '${path}' resolves to a path outside of sandbox`,
+      );
     }
   };
 
@@ -937,7 +1024,10 @@ export class SandboxedFilesystem {
     let fdStat;
     let pathStat;
     try {
-      [fdStat, pathStat] = await Promise.all([handle.stat(), stat(pathInSandbox)]);
+      [fdStat, pathStat] = await Promise.all([
+        handle.stat(),
+        stat(pathInSandbox),
+      ]);
     } catch (err: any) {
       if (err?.code === "ENOENT") {
         const stale: NodeJS.ErrnoException = new Error(
@@ -961,7 +1051,9 @@ export class SandboxedFilesystem {
     const compareBase =
       await this.resolveSandboxBasePathForComparison(sandboxBasePath);
     if (!this.isInsideSandbox(resolved, compareBase)) {
-      throw Error(`realpath of '${path}' resolves to a path outside of sandbox`);
+      throw Error(
+        `realpath of '${path}' resolves to a path outside of sandbox`,
+      );
     }
   };
 
@@ -1119,7 +1211,10 @@ export class SandboxedFilesystem {
     const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
     if (openAt2Target != null) {
       try {
-        openAt2Target.root.copyFile(openAt2Target.srcRel, openAt2Target.destRel);
+        openAt2Target.root.copyFile(
+          openAt2Target.srcRel,
+          openAt2Target.destRel,
+        );
         return;
       } catch (err) {
         this.throwOpenAt2PathError(src, err);
@@ -1138,7 +1233,10 @@ export class SandboxedFilesystem {
       // same inode.
       try {
         const destStat = await stat(destPath);
-        if (sourceStat.dev === destStat.dev && sourceStat.ino === destStat.ino) {
+        if (
+          sourceStat.dev === destStat.dev &&
+          sourceStat.ino === destStat.ino
+        ) {
           const err: NodeJS.ErrnoException = new Error(
             `Source and destination must not be the same file: '${src}'`,
           );
@@ -1431,12 +1529,18 @@ export class SandboxedFilesystem {
   // hard link
   link = async (existingPath: string, newPath: string) => {
     this.assertSafeModeLinkPolicy("link", newPath);
-    await Promise.all([this.safeAbsPath(existingPath), this.safeAbsPath(newPath)]);
+    await Promise.all([
+      this.safeAbsPath(existingPath),
+      this.safeAbsPath(newPath),
+    ]);
     const openAt2Target = await this.getOpenAt2DualPathTarget(
       existingPath,
       newPath,
     );
-    if (openAt2Target != null && typeof openAt2Target.root.link === "function") {
+    if (
+      openAt2Target != null &&
+      typeof openAt2Target.root.link === "function"
+    ) {
       try {
         openAt2Target.root.link(openAt2Target.srcRel, openAt2Target.destRel);
         return;
@@ -1444,7 +1548,10 @@ export class SandboxedFilesystem {
         this.throwOpenAt2PathError(existingPath, err);
       }
     }
-    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(existingPath, newPath);
+    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
+      existingPath,
+      newPath,
+    );
     return await link(srcPath, destPath);
   };
 
@@ -1543,7 +1650,10 @@ export class SandboxedFilesystem {
   };
 
   readdir = async (path: string, options?) => {
-    const x = (await readdir(await this.resolveSandboxPath(path), options)) as any[];
+    const x = (await readdir(
+      await this.resolveSandboxPath(path),
+      options,
+    )) as any[];
     if (options?.withFileTypes) {
       const sandboxBasePath = await this.resolveSandboxBasePath();
       // each entry in x has a name and parentPath field, which refers to the
@@ -1566,10 +1676,7 @@ export class SandboxedFilesystem {
             sandboxBasePath,
           );
         }
-        if (
-          a.name == this.path ||
-          a.name.startsWith(this.path + "/")
-        ) {
+        if (a.name == this.path || a.name.startsWith(this.path + "/")) {
           a.name = this.toSandboxRelativePath(a.name, this.path);
         }
         if (
@@ -1594,8 +1701,7 @@ export class SandboxedFilesystem {
       sandboxBasePath,
       absoluteHomeAlias,
       absoluteScratchAlias,
-    } =
-      await this.resolvePathInSandbox(path);
+    } = await this.resolvePathInSandbox(path);
     const x = await realpath(pathInSandbox);
     const rel = this.toSandboxRelativePath(x, sandboxBasePath);
     if (absoluteHomeAlias) {
@@ -1655,7 +1761,10 @@ export class SandboxedFilesystem {
     }
     const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
     if (openAt2Target != null) {
-      if (!overwrite && typeof openAt2Target.root.renameNoReplace === "function") {
+      if (
+        !overwrite &&
+        typeof openAt2Target.root.renameNoReplace === "function"
+      ) {
         try {
           openAt2Target.root.renameNoReplace(
             openAt2Target.srcRel,
@@ -1679,7 +1788,10 @@ export class SandboxedFilesystem {
         }
       } else if (overwrite) {
         try {
-          openAt2Target.root.rename(openAt2Target.srcRel, openAt2Target.destRel);
+          openAt2Target.root.rename(
+            openAt2Target.srcRel,
+            openAt2Target.destRel,
+          );
           return;
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
@@ -1710,8 +1822,16 @@ export class SandboxedFilesystem {
   rm = async (path: string | string[], options?) => {
     const paths = typeof path == "string" ? [path] : path;
     const v = await this.resolveWritableSandboxPaths(paths);
-    const recursive = !!(options != null && typeof options === "object" && options.recursive);
-    const force = !!(options != null && typeof options === "object" && options.force);
+    const recursive = !!(
+      options != null &&
+      typeof options === "object" &&
+      options.recursive
+    );
+    const force = !!(
+      options != null &&
+      typeof options === "object" &&
+      options.force
+    );
     const f = async (inputPath: string, absPath: string) => {
       const openAt2Target = await this.getOpenAt2PathTarget(inputPath);
       if (
@@ -1742,7 +1862,11 @@ export class SandboxedFilesystem {
   rmdir = async (path: string, options?) => {
     this.assertWritable(path);
     await this.safeAbsPath(path);
-    const recursive = !!(options != null && typeof options === "object" && options.recursive);
+    const recursive = !!(
+      options != null &&
+      typeof options === "object" &&
+      options.recursive
+    );
     if (recursive) {
       // Keep recursive rmdir fail-closed by routing through the hardened rm path.
       await this.rm(path, { recursive: true, force: false });
@@ -2169,25 +2293,15 @@ export class SandboxedFilesystem {
     active: boolean = true,
     info?: {
       project_id?: string;
-      relativePath?: string;
-      string_id?: string;
       history_epoch?: number;
       doctype?: any;
     },
   ): Promise<void> => {
-    const abs = await this.resolveSandboxPath(path);
+    const syncPath = await this.canonicalSyncFsWatchPath(path);
     const project_id = info?.project_id ?? this.host;
-    const relativePath = info?.relativePath ?? path;
-    const string_id =
-      info?.string_id && info.string_id.length > 0 && project_id && relativePath
-        ? info.string_id
-        : project_id && relativePath
-          ? client_db.sha1(project_id, relativePath)
-          : undefined;
-    await globalSyncFsService.heartbeat(abs, active, {
+    await globalSyncFsService.heartbeat(syncPath, active, {
       project_id,
-      relativePath,
-      string_id,
+      syncPath,
       history_epoch: info?.history_epoch,
       doctype: info?.doctype,
     });

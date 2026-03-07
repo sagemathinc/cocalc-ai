@@ -134,7 +134,6 @@ export interface SyncOpts0 {
   // is the Set of all values.  If true, that initial big
   // change event happens, but the Set is empty.
   ignoreInitialChanges?: boolean;
-
 }
 
 export interface SyncOpts extends SyncOpts0 {
@@ -185,7 +184,6 @@ export class SyncDoc extends EventEmitter {
 
   private syncstring_table: SyncTable;
   public patches_table: SyncTable;
-
 
   public ipywidgets_state?: IpywidgetsState;
 
@@ -2067,7 +2065,9 @@ export class SyncDoc extends EventEmitter {
     this.emit("settings-change", this.settings);
   };
 
-  private metadataHistoryEpoch = (settings: Map<string, any>): number | undefined => {
+  private metadataHistoryEpoch = (
+    settings: Map<string, any>,
+  ): number | undefined => {
     const raw = settings?.get?.("history_epoch");
     return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
   };
@@ -2120,7 +2120,8 @@ export class SyncDoc extends EventEmitter {
 
     const settings = data.get("settings", Map());
     const previous_history_epoch = this.history_epoch;
-    const previous_history_purged_at = this.settings?.get?.("history_purged_at");
+    const previous_history_purged_at =
+      this.settings?.get?.("history_purged_at");
     const current_history_epoch = this.metadataHistoryEpoch(settings);
     const current_history_purged_at = settings?.get?.("history_purged_at");
     this.history_epoch = current_history_epoch;
@@ -2213,8 +2214,12 @@ export class SyncDoc extends EventEmitter {
       try {
         const status = await this.fs.readFile("/proc/self/status", "utf8");
         if (typeof status === "string") {
-          const uidLine = status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
-          const gidLine = status.match(/^Gid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
+          const uidLine = status.match(
+            /^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m,
+          );
+          const gidLine = status.match(
+            /^Gid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m,
+          );
           const groupsLine = status.match(/^Groups:\s+(.+)$/m);
           const effectiveUid = Number(uidLine?.[2] ?? uidLine?.[1]);
           const effectiveGid = Number(gidLine?.[2] ?? gidLine?.[1]);
@@ -2749,8 +2754,6 @@ export class SyncDoc extends EventEmitter {
     try {
       await syncFsWatch(this.path, active, {
         project_id: this.project_id,
-        relativePath: this.path,
-        string_id: this.string_id,
         history_epoch: this.history_epoch,
         doctype: this.doctype,
       });
