@@ -883,19 +883,6 @@ export function ChatPanel({
           })()
         : null;
     if (!reply_thread_id && threadKey) {
-      if (
-        newThreadSetup.color?.trim() ||
-        newThreadSetup.icon?.trim() ||
-        newThreadSetup.image?.trim()
-      ) {
-        actions.setThreadAppearance?.(threadKey, {
-          color: newThreadSetup.color?.trim(),
-          icon: newThreadSetup.icon?.trim(),
-          image: newThreadSetup.image?.trim(),
-        });
-      }
-    }
-    if (!reply_thread_id && threadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
       setTimeout(() => {

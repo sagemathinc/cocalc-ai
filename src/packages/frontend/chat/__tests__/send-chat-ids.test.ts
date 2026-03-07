@@ -123,6 +123,59 @@ describe("sendChat identity fields", () => {
     expect(writtenMs).toBe(baseMs + 1);
   });
 
+  it("writes new-thread codex config and appearance in the initial thread-config row", async () => {
+    const actions = makeActions();
+
+    actions.sendChat({
+      input: "launch codex",
+      name: "Configured thread",
+      threadAgent: {
+        mode: "codex",
+        model: "gpt-5.4",
+        codexConfig: {
+          model: "gpt-5.4",
+          sessionMode: "workspace-write",
+          reasoning: "high",
+        } as any,
+      },
+      threadAppearance: {
+        color: "#123456",
+        icon: "rocket",
+        image: "https://example.com/thread.png",
+      },
+    });
+    await Promise.resolve();
+
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    const chatSet = rows.find(
+      (row: any) =>
+        row?.event === "chat" && row?.history?.[0]?.content === "launch codex",
+    );
+    const cfgSet = rows.find(
+      (row: any) =>
+        row?.event === "chat-thread-config" &&
+        row?.thread_id === chatSet?.thread_id,
+    );
+
+    expect(chatSet).toBeTruthy();
+    expect(cfgSet).toBeTruthy();
+    expect(cfgSet.name).toBe("Configured thread");
+    expect(cfgSet.thread_color).toBe("#123456");
+    expect(cfgSet.thread_icon).toBe("rocket");
+    expect(cfgSet.thread_image).toBe("https://example.com/thread.png");
+    expect(cfgSet.agent_kind).toBe("acp");
+    expect(cfgSet.agent_mode).toBe("interactive");
+    expect(cfgSet.agent_model).toBe("gpt-5.4");
+    expect(cfgSet.acp_config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+        reasoning: "high",
+        allowWrite: true,
+      }),
+    );
+  });
+
   it("writes reply messages with inherited thread_id and parent_message_id", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootIso = rootDate.toISOString();
