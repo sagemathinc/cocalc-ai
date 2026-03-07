@@ -17,6 +17,7 @@ import { useHostLog } from "./use-host-log";
 import { useHostOps } from "./use-host-ops";
 import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
+import { useHostSoftwareVersions } from "./use-host-software-versions";
 import { buildRegionGroupOptions } from "../utils/normalize-catalog";
 import {
   buildCreateHostPayload,
@@ -30,7 +31,7 @@ import type {
   HostSortField,
   HostProvider,
 } from "../types";
-import type { Host } from "@cocalc/conat/hub/api/hosts";
+import type { Host, HostSoftwareArtifact } from "@cocalc/conat/hub/api/hosts";
 
 const HOSTS_VIEW_MODE_STORAGE_KEY = "cocalc:hosts:viewMode";
 const HOSTS_SORT_FIELD_STORAGE_KEY = "cocalc:hosts:sortField";
@@ -183,21 +184,26 @@ export const useHostsPageViewModel = () => {
     onHostOp: trackHostOp,
   });
   const runUpgrade = React.useCallback(
-    async (host: Host, opts?: { base_url?: string }) => {
+    async (
+      host: Host,
+      opts?: { base_url?: string; artifacts?: HostSoftwareArtifact[] },
+    ) => {
       if (!hub.hosts.upgradeHostSoftware) {
         return;
       }
       if (host.status !== "running") {
         return;
       }
+      const artifacts = opts?.artifacts?.length
+        ? opts.artifacts
+        : (["project-host", "project", "tools"] as HostSoftwareArtifact[]);
       try {
         const op = await hub.hosts.upgradeHostSoftware({
           id: host.id,
-          targets: [
-            { artifact: "project-host", channel: "latest" },
-            { artifact: "project", channel: "latest" },
-            { artifact: "tools", channel: "latest" },
-          ],
+          targets: artifacts.map((artifact) => ({
+            artifact,
+            channel: "latest",
+          })),
           ...(opts?.base_url ? { base_url: opts.base_url } : {}),
         });
         trackHostOp(host.id, op);
@@ -359,10 +365,31 @@ export const useHostsPageViewModel = () => {
     const raw = `${window.location.origin}${basePath}`;
     return raw.replace(/\/$/, "");
   }, []);
+  const softwareVersions = useHostSoftwareVersions(hub, {
+    enabled: drawerOpen && !!selected,
+    hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
+  });
   const upgradeHostSoftwareFromHub = React.useCallback(
     async (host: Host) => {
       if (!baseUrl) return;
       await runUpgrade(host, { base_url: `${baseUrl}/software` });
+    },
+    [baseUrl, runUpgrade],
+  );
+  const upgradeHostArtifact = React.useCallback(
+    async ({
+      host,
+      artifact,
+      useHubSource,
+    }: {
+      host: Host;
+      artifact: HostSoftwareArtifact;
+      useHubSource?: boolean;
+    }) => {
+      await runUpgrade(host, {
+        artifacts: [artifact],
+        ...(useHubSource && baseUrl ? { base_url: `${baseUrl}/software` } : {}),
+      });
     },
     [baseUrl, runUpgrade],
   );
@@ -745,10 +772,15 @@ export const useHostsPageViewModel = () => {
     onEdit: openEdit,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
     onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
+    onUpgradeArtifact: isAdmin ? upgradeHostArtifact : undefined,
     canUpgrade: isAdmin,
     onCancelOp: cancelHostOp,
     hostLog,
     loadingLog,
+    softwareVersions: {
+      ...softwareVersions,
+      hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
+    },
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,
