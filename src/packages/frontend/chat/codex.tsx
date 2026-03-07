@@ -77,6 +77,7 @@ export interface CodexConfigButtonProps {
   chatPath: string;
   projectId?: string;
   actions?: ChatActions;
+  threadConfig?: Partial<CodexThreadConfig> | null;
   paymentSource?: CodexPaymentSourceInfo;
   paymentSourceLoading?: boolean;
   refreshPaymentSource?: () => void;
@@ -116,6 +117,7 @@ export function CodexConfigButton({
   chatPath,
   projectId,
   actions,
+  threadConfig,
   paymentSource,
   paymentSourceLoading = false,
   refreshPaymentSource,
@@ -159,7 +161,7 @@ export function CodexConfigButton({
       reasoning: baseReasoning,
       sessionMode: DEFAULT_CODEX_SESSION_MODE,
     };
-    const saved = actions?.getCodexConfig?.(threadId);
+    const saved = threadConfig ?? actions?.getCodexConfig?.(threadId);
     const merged: CodexThreadConfig = { ...defaults, ...saved };
     const model = models.some((m) => m.value === merged.model)
       ? merged.model
@@ -179,7 +181,7 @@ export function CodexConfigButton({
     };
     form.setFieldsValue(currentValue);
     setValue(currentValue);
-  }, [models, threadKey, chatPath, actions, form, open]);
+  }, [models, threadKey, chatPath, actions, form, open, threadConfig]);
 
   const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
   const selectedReasoningValue =
