@@ -344,6 +344,46 @@ export class SyncFsService extends EventEmitter {
     };
   }
 
+  private canInitMeta(meta?: WatchMeta): meta is WatchMeta & {
+    project_id: string;
+    relativePath: string;
+  } {
+    return typeof meta?.project_id === "string" && meta.project_id.length > 0 &&
+      typeof meta?.relativePath === "string" && meta.relativePath.length > 0;
+  }
+
+  private shouldReinitializePath(
+    existingState: PathState | undefined,
+    nextMeta?: WatchMeta,
+  ): boolean {
+    if (!this.canInitMeta(nextMeta)) {
+      return false;
+    }
+    const prevMeta = existingState?.meta;
+    if (!this.canInitMeta(prevMeta)) {
+      return true;
+    }
+    if (existingState?.string_id !== nextMeta.string_id) {
+      return true;
+    }
+    if (prevMeta.project_id !== nextMeta.project_id) {
+      return true;
+    }
+    if (prevMeta.relativePath !== nextMeta.relativePath) {
+      return true;
+    }
+    if (prevMeta.doctype?.type !== nextMeta.doctype?.type) {
+      return true;
+    }
+    if (prevMeta.doctype?.patch_format !== nextMeta.doctype?.patch_format) {
+      return true;
+    }
+    return (
+      JSON.stringify(prevMeta.doctype?.opts ?? null) !==
+      JSON.stringify(nextMeta.doctype?.opts ?? null)
+    );
+  }
+
   private rememberRelease(record: ReleaseRecord): void {
     this.counters.pathReleases += 1;
     this.releasesByReason[record.reason] =
@@ -607,6 +647,11 @@ export class SyncFsService extends EventEmitter {
       const normalizedMeta = this.normalizeMeta(path, meta);
       const now = Date.now();
       const existingState = this.pathStates.get(path);
+      const shouldReinitialize = this.shouldReinitializePath(
+        existingState,
+        normalizedMeta,
+      );
+      const previousStringId = existingState?.string_id;
       this.pathStates.set(path, {
         dir,
         lastHeartbeat: now,
@@ -614,6 +659,13 @@ export class SyncFsService extends EventEmitter {
         meta: normalizedMeta,
         string_id: normalizedMeta?.string_id,
       });
+      if (
+        previousStringId != null &&
+        previousStringId !== normalizedMeta?.string_id &&
+        !this.hasActivePathForStringId(previousStringId, path)
+      ) {
+        this.closeStreamState(previousStringId);
+      }
       this.maxActivePathsObserved = Math.max(
         this.maxActivePathsObserved,
         this.pathStates.size,
@@ -621,7 +673,7 @@ export class SyncFsService extends EventEmitter {
       this.enforceActivePathCap(path);
       let entry = this.watchers.get(dir);
 
-      if (!entry?.paths.has(path)) {
+      if (!entry?.paths.has(path) || shouldReinitialize) {
         await this.initPath(path, normalizedMeta);
       }
 

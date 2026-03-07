@@ -521,4 +521,40 @@ describe("SyncFsService", () => {
     expect((svc as any).store.get(path)?.content).toBe("disk-new");
     svc.close();
   }, 10_000);
+
+  it("reinitializes a watched path when metadata switches to a new string identity", async () => {
+    const path = join(dir, "identity-switch.txt");
+    writeFileSync(path, "tracked");
+
+    const svc = new SyncFsService();
+    const oldWriter = new FakeAStream();
+    const newWriter = new FakeAStream();
+    installWriterCache(
+      svc,
+      new Map([
+        ["sid-relative", oldWriter],
+        ["sid-absolute", newWriter],
+      ]),
+    );
+
+    await svc.heartbeat(path, true, {
+      project_id: "p7",
+      relativePath: "build/cocalc-lite4/identity-switch.txt",
+      string_id: "sid-relative",
+    });
+    expect(oldWriter.messages).toHaveLength(1);
+
+    await svc.heartbeat(path, true, {
+      project_id: "p7",
+      relativePath: "/home/wstein/build/cocalc-lite4/identity-switch.txt",
+      string_id: "sid-absolute",
+    });
+
+    // The new identity must get its own initial patch even though the same
+    // on-disk file path was already being watched.
+    expect(newWriter.messages).toHaveLength(1);
+    expect(oldWriter.closeCalls).toBe(1);
+    expect((svc as any).getDebugStats().patchWriters).toBe(1);
+    svc.close();
+  }, 10_000);
 });
