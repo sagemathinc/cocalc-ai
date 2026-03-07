@@ -300,7 +300,7 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
-  const collapseWhenIdle = !isZenMode && !hasInput && !isInputFocused;
+  const collapseWhenIdle = !isZenMode && !hasInput;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
     : collapseWhenIdle
