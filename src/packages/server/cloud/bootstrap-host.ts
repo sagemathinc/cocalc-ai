@@ -305,6 +305,7 @@ export type BootstrapScripts = {
   cloudflaredConfig?: {
     enabled: boolean;
     hostname?: string;
+    appPublicWildcard?: string;
     port?: number;
     sshHostname?: string;
     sshPort?: number;
@@ -575,6 +576,18 @@ export async function buildBootstrapScripts(
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
+  const serverSettings = await getServerSettings();
+
+  const appPublicWildcard = (() => {
+    const raw = `${serverSettings.project_hosts_dns ?? ""}`
+      .trim()
+      .toLowerCase();
+    if (!raw) return undefined;
+    const parts = raw.split(".").filter(Boolean);
+    if (!parts.length) return undefined;
+    const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
+    return `*.${root}`;
+  })();
 
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
     if (tunnel && tunnelEnabled) {
@@ -594,6 +607,7 @@ export async function buildBootstrapScripts(
       return {
         enabled: true,
         hostname: tunnel.hostname,
+        appPublicWildcard,
         port,
         sshHostname: tunnel.ssh_hostname,
         sshPort,

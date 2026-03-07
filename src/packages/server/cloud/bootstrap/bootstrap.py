@@ -50,6 +50,7 @@ class CloudflaredSpec:
     enabled: bool
     hostname: str | None = None
     port: int | None = None
+    app_public_wildcard: str | None = None
     ssh_hostname: str | None = None
     ssh_port: int | None = None
     token: str | None = None
@@ -171,6 +172,8 @@ def load_config(path: str) -> BootstrapConfig:
             enabled=_ensure_bool(cloudflared.get("enabled"), "cloudflared.enabled"),
             hostname=cloudflared.get("hostname"),
             port=cloudflared.get("port"),
+            app_public_wildcard=cloudflared.get("appPublicWildcard")
+            or cloudflared.get("app_public_wildcard"),
             ssh_hostname=cloudflared.get("sshHostname")
             or cloudflared.get("ssh_hostname"),
             ssh_port=cloudflared.get("sshPort") or cloudflared.get("ssh_port"),
@@ -1407,6 +1410,16 @@ def configure_cloudflared(cfg: BootstrapConfig) -> None:
         f"  - hostname: {cfg.cloudflared.hostname}",
         f"    service: http://localhost:{cfg.cloudflared.port}",
     ]
+    if (
+        cfg.cloudflared.app_public_wildcard
+        and cfg.cloudflared.app_public_wildcard != cfg.cloudflared.hostname
+    ):
+        ingress_lines.extend(
+            [
+                f"  - hostname: {cfg.cloudflared.app_public_wildcard}",
+                f"    service: http://localhost:{cfg.cloudflared.port}",
+            ]
+        )
     if cfg.cloudflared.ssh_hostname and cfg.cloudflared.ssh_port:
         ingress_lines.extend(
             [
