@@ -832,7 +832,9 @@ export function ChatPanel({
         !reply_thread_id && newThreadSetup.agentMode
           ? {
               mode: newThreadSetup.agentMode,
-              model: newThreadSetup.model?.trim(),
+              model:
+                newThreadSetup.codexConfig.model?.trim() ||
+                newThreadSetup.model?.trim(),
               codexConfig:
                 newThreadSetup.agentMode === "codex"
                   ? {

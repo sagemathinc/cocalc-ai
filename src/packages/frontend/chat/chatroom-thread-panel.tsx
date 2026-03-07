@@ -96,6 +96,13 @@ export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup = {
   },
 };
 
+export function applyNewThreadSetupPatch(
+  current: NewThreadSetup,
+  patch: Partial<NewThreadSetup>,
+): NewThreadSetup {
+  return { ...current, ...patch };
+}
+
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
   if (!key || key === COMBINED_FEED_KEY) return undefined;
@@ -126,7 +133,7 @@ interface ChatRoomThreadPanelProps {
   codexPaymentSourceLoading?: boolean;
   refreshCodexPaymentSource?: () => void;
   newThreadSetup: NewThreadSetup;
-  onNewThreadSetupChange: (next: NewThreadSetup) => void;
+  onNewThreadSetupChange: React.Dispatch<React.SetStateAction<NewThreadSetup>>;
   showThreadImagePreview?: boolean;
   hideChatTypeSelector?: boolean;
   activityJumpDate?: string;
@@ -616,7 +623,9 @@ export function ChatRoomThreadPanel({
       reasoning?: CodexReasoningLevel[];
     };
     const update = (patch: Partial<NewThreadSetup>) =>
-      onNewThreadSetupChange({ ...newThreadSetup, ...patch });
+      onNewThreadSetupChange((current) =>
+        applyNewThreadSetupPatch(current, patch),
+      );
     const codexModel = newThreadSetup.codexConfig.model ?? DEFAULT_CODEX_MODEL;
     const codexModelOptions: ModelOption[] = DEFAULT_CODEX_MODELS.map((model) => ({
       value: model.name,
