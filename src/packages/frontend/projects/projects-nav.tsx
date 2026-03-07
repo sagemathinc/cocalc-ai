@@ -35,6 +35,7 @@ import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
 import { useProjectHasInternetAccess } from "../project/settings/has-internet-access-hook";
+import { shouldOpenProjectsNavShortcut } from "./projects-nav-shortcut";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
 
@@ -293,14 +294,13 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
   useEffect(() => {
     function handleKeydown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        if (mode !== "dropdown") {
-          setMode("dropdown");
-        }
-        setDropdownOpen(true);
-        setTimeout(() => selectRef.current?.focus?.(), 0);
+      if (!shouldOpenProjectsNavShortcut(e)) return;
+      e.preventDefault();
+      if (mode !== "dropdown") {
+        setMode("dropdown");
       }
+      setDropdownOpen(true);
+      setTimeout(() => selectRef.current?.focus?.(), 0);
     }
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);

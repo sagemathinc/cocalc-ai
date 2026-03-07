@@ -23,6 +23,10 @@ import { ProjectActions, redux } from "@cocalc/frontend/app-framework";
 import { get_buffer, set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { isCoCalcURL } from "@cocalc/frontend/lib/cocalc-urls";
+import {
+  handoffProjectNavigationFromLocalOwner,
+  matchProjectNavigationCommand,
+} from "@cocalc/frontend/project/page/keyboard-navigation";
 import { close, filename_extension, replace_all } from "@cocalc/util/misc";
 import {
   BaseEditorActions as Actions,
@@ -752,6 +756,32 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       //         shiftKey: event.shiftKey,
       //         key: event.key,
       //       });
+
+      const navigationCommand = matchProjectNavigationCommand(event);
+      if (navigationCommand != null) {
+        event.preventDefault();
+        event.stopPropagation();
+        const editorNavigationActions =
+          typeof (this.actions as any)?.get_frame_ids_in_order === "function"
+            ? ((this.actions as any) ?? undefined)
+            : undefined;
+        const activeElement =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        handoffProjectNavigationFromLocalOwner(
+          navigationCommand,
+          this.project_id,
+          {
+            blurActiveElement:
+              activeElement != null && this.element?.contains(activeElement)
+                ? activeElement
+                : null,
+            currentFrameId: this.id,
+            editorActions: editorNavigationActions,
+            projectActions: this.project_actions as any,
+          },
+        );
+        return false;
+      }
 
       if (this.is_paused) {
         this.pauseKeyCount += 1;

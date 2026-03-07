@@ -9,6 +9,7 @@ Tabs for the open files in a project.
 
 import type { TabsProps } from "antd";
 import { Tabs } from "antd";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useActions } from "@cocalc/frontend/app-framework";
 import {
   renderTabBar,
@@ -19,6 +20,7 @@ import {
 import { EDITOR_PREFIX, path_to_tab } from "@cocalc/util/misc";
 import { file_tab_labels } from "../file-tab-labels";
 import { FileTab } from "./file-tab";
+import { FILE_TAB_STRIP_ATTRIBUTE } from "./keyboard-navigation";
 
 const MIN_WIDTH = 48;
 
@@ -134,6 +136,48 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     ? pathToKey(activeTab.slice(EDITOR_PREFIX.length))
     : "";
 
+  function focusTabStripSoon(): void {
+    setTimeout(() => {
+      actions?.focus_file_tab_strip?.();
+    }, 0);
+  }
+
+  function activateTabByKeyboard(
+    index: number,
+    currentTarget: HTMLDivElement,
+  ): void {
+    const tabs = Array.from(currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+    tabs[index]?.click();
+    focusTabStripSoon();
+  }
+
+  function onTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!(event.target instanceof HTMLElement)) return;
+    if (event.target.getAttribute("role") !== "tab") return;
+    if (keys.length === 0) return;
+    const currentIndex = Math.max(0, keys.indexOf(activeKey));
+    let nextIndex: number | undefined;
+    switch (event.key) {
+      case "ArrowLeft":
+        nextIndex = (currentIndex - 1 + keys.length) % keys.length;
+        break;
+      case "ArrowRight":
+        nextIndex = (currentIndex + 1) % keys.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = keys.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    activateTabByKeyboard(nextIndex, event.currentTarget);
+  }
+
   function onDragStart(event) {
     if (actions == null) return;
     if (event?.active?.id != activeKey) {
@@ -150,26 +194,31 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
 
   return (
     <SortableTabs items={keys} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <Tabs
-        animated={false}
-        renderTabBar={renderTabBar}
-        tabBarStyle={{
-          minHeight: "36px",
-          background: "#e8e8e8",
-          borderTop: "2px solid lightgrey",
-        }}
-        onEdit={onEdit}
-        style={{ width: "100%" }}
-        size="small"
-        items={items}
-        activeKey={activeKey}
-        type={"editable-card"}
-        onChange={(key) => {
-          if (actions == null || !key) return;
-          actions.set_active_tab(path_to_tab(keyToPath(key)));
-        }}
-        classNames={{ popup: { root: "cocalc-files-tabs-more" } }}
-      />
+      <div
+        {...{ [FILE_TAB_STRIP_ATTRIBUTE]: project_id }}
+        onKeyDownCapture={onTabKeyDown}
+      >
+        <Tabs
+          animated={false}
+          renderTabBar={renderTabBar}
+          tabBarStyle={{
+            minHeight: "36px",
+            background: "#e8e8e8",
+            borderTop: "2px solid lightgrey",
+          }}
+          onEdit={onEdit}
+          style={{ width: "100%" }}
+          size="small"
+          items={items}
+          activeKey={activeKey}
+          type={"editable-card"}
+          onChange={(key) => {
+            if (actions == null || !key) return;
+            actions.set_active_tab(path_to_tab(keyToPath(key)));
+          }}
+          classNames={{ popup: { root: "cocalc-files-tabs-more" } }}
+        />
+      </div>
     </SortableTabs>
   );
 }

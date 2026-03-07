@@ -55,6 +55,11 @@ import {
   storeFlyoutState,
 } from "@cocalc/frontend/project/page/flyouts/state";
 import {
+  PROJECT_PAGE_ATTRIBUTE,
+  focusProjectFileTabStrip,
+  getAdjacentOpenFilePath,
+} from "@cocalc/frontend/project/page/keyboard-navigation";
+import {
   FLYOUT_LOG_FILTER_DEFAULT,
   FlyoutLogFilter,
 } from "@cocalc/frontend/project/page/flyouts/utils";
@@ -758,6 +763,34 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     }
     this.close_file(path);
+  }
+
+  public activate_next_file_tab(): boolean {
+    return this.activate_adjacent_file_tab(1);
+  }
+
+  public activate_previous_file_tab(): boolean {
+    return this.activate_adjacent_file_tab(-1);
+  }
+
+  private activate_adjacent_file_tab(direction: 1 | -1): boolean {
+    const store = this.get_store();
+    if (store == undefined) return false;
+    const nextPath = getAdjacentOpenFilePath(
+      store.get("open_files_order")?.toArray?.() ?? [],
+      store.get("active_project_tab"),
+      direction,
+    );
+    if (nextPath == null) return false;
+    this.set_active_tab(misc.path_to_tab(nextPath));
+    return true;
+  }
+
+  public focus_file_tab_strip(): boolean {
+    const projectRoot = document.querySelector(
+      `[${PROJECT_PAGE_ATTRIBUTE}="${this.project_id}"]`,
+    ) as HTMLElement | null;
+    return focusProjectFileTabStrip(projectRoot);
   }
 
   // Expects one of ['files', 'new', 'log', 'search', 'servers', 'settings']

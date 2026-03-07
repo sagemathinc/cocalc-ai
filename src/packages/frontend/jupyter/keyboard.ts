@@ -7,12 +7,15 @@
 Keyboard event handler
 */
 
-declare const $: any; // jQuery
-
 import json from "json-stable-stringify";
 
 import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
 import { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
+import { shouldSuppressGlobalShortcuts } from "@cocalc/frontend/keyboard/boundary";
+import {
+  handoffProjectNavigationFromLocalOwner,
+  matchProjectNavigationCommand,
+} from "@cocalc/frontend/project/page/keyboard-navigation";
 import { copy_without, merge } from "@cocalc/util/misc";
 import { JupyterActions } from "./browser-actions";
 import { commands, KeyboardCommand } from "./commands";
@@ -151,23 +154,31 @@ export function create_key_handler(
       }
       return;
     }
+    const navigationCommand = matchProjectNavigationCommand(evt);
+    if (navigationCommand != null) {
+      evt.preventDefault?.();
+      evt.stopPropagation?.();
+      handoffProjectNavigationFromLocalOwner(
+        navigationCommand,
+        editor_actions.project_id,
+        {
+          blurActiveElement: document.activeElement,
+          currentFrameId: frame_actions.frame_id,
+          editorActions: editor_actions as any,
+          projectActions: editor_actions._get_project_actions() as any,
+        },
+      );
+      return false;
+    }
     if (jupyter_actions.store.get("complete") != null) {
       return;
     }
     const mode = frame_actions.store.get("mode");
     if (mode === "escape") {
-      const focused = $(":focus");
-      if (
-        focused.length > 0 &&
-        (focused[0].tagName != "DIV" ||
-          focused[0].className?.includes("widget-readout"))
-      ) {
-        // Never use keyboard shortcuts when something is focused, e.g.,
-        // getting a password or using text input widget.  However, the cell list DIV
-        // itself gets focused often, so we have to avoid that special case.
-        // An example with ipywidgets that the className case above covers:
-        //   import ipywidgets as widgets; w = widgets.IntSlider(0,1,100); w
-        // Then put your cursor in the number to the right of the slider and hit backspace.
+      if (shouldSuppressGlobalShortcuts(evt)) {
+        // Never use keyboard shortcuts when a real editable surface or explicit
+        // keyboard boundary owns focus. Plain notebook DIV focus remains allowed
+        // so command mode continues to work normally.
         return;
       }
     }

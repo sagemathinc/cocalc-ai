@@ -67,6 +67,10 @@ import {
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
+import {
+  PROJECT_PAGE_ATTRIBUTE,
+  handleProjectNavigationKeydown,
+} from "./keyboard-navigation";
 
 const START_BANNER = false;
 
@@ -85,6 +89,7 @@ interface Props {
 export const ProjectPage: React.FC<Props> = (props: Props) => {
   const { project_id, is_active } = props;
   const intl = useIntl();
+  const projectPageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const [mainWidthPx, setMainWidthPx] = useState<number>(0);
   const hideActionButtons = useTypedRedux({ project_id }, "hideActionButtons");
@@ -161,6 +166,23 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       setFlyoutWidth(Math.max(FLYOUT_DEFAULT_WIDTH_PX / 2, pageWidthPx * 0.9));
     }
   }, [pageWidthPx]);
+
+  useEffect(() => {
+    if (!is_active) return;
+
+    function handleKeydown(event: KeyboardEvent) {
+      handleProjectNavigationKeydown(event, project_id, {
+        activeProjectTab: active_project_tab,
+        projectActions: actions as any,
+        projectRoot: projectPageRef.current,
+      });
+    }
+
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [active_project_tab, actions, is_active, open_files, project_id]);
 
   // observe debounced width changes of mainRef div and set it via setMainWidthPx
   useEffect(() => {
@@ -506,7 +528,9 @@ You can wait for this host to become available again, or move this workspace to 
   return (
     <ProjectContext.Provider value={projectCtx}>
       <div
+        ref={projectPageRef}
         className="container-content"
+        {...{ [PROJECT_PAGE_ATTRIBUTE]: project_id }}
         style={{
           ...PAGE_STYLE,
           borderLeft: project_color ? `2.5px solid ${project_color}` : undefined,

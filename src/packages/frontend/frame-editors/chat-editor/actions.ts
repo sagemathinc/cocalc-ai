@@ -34,8 +34,37 @@ import {
 
 const FRAME_TYPE = "chatroom";
 const FAST_OPEN_CHAT_STATUS = "Loading live collaboration...";
+const CHAT_FRAME_FOCUS_SELECTORS = [
+  '[contenteditable="true"]',
+  '[data-slate-editor="true"]',
+  '[role="textbox"]',
+  ".CodeMirror textarea",
+  ".CodeMirror-code",
+  ".cm-content",
+  "textarea:not([disabled])",
+  'input:not([disabled]):not([type="hidden"])',
+] as const;
 
 type ChatEditorState = CodeEditorState & ChatState;
+
+export function focusChatFrameInput(frameId: string): boolean {
+  const frame = document.getElementById(`frame-${frameId}`);
+  if (!(frame instanceof HTMLElement)) return false;
+  let target: HTMLElement | null = null;
+  for (const selector of CHAT_FRAME_FOCUS_SELECTORS) {
+    const match = frame.querySelector<HTMLElement>(selector);
+    if (match != null) {
+      target = match;
+      break;
+    }
+  }
+  target = target ?? frame;
+  if (!target.hasAttribute("tabindex") && target.tabIndex < 0) {
+    target.setAttribute("tabindex", "-1");
+  }
+  target.focus({ preventScroll: true });
+  return target === document.activeElement || target.contains(document.activeElement);
+}
 
 export class Actions extends CodeEditorActions<ChatEditorState> {
   protected syncDocOptions = {
@@ -211,6 +240,16 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   scrollToTop = (frameId) => {
     this.getChatActions(frameId)?.scrollToIndex(0);
   };
+
+  override focus(id?: string): void {
+    if (id == null) {
+      id = this._get_active_id();
+    }
+    if (id != null && focusChatFrameInput(id)) {
+      return;
+    }
+    super.focus(id);
+  }
 
   async gotoFragment(fragmentId: FragmentId) {
     const { chat } = fragmentId as any;

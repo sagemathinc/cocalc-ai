@@ -34,6 +34,7 @@ interface Props {
   resize: number;
   is_visible: boolean;
   name: string;
+  onFocus?: () => void;
 }
 
 const COMMAND_STYLE = {
@@ -185,7 +186,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
   /* 4px padding is consistent with CodeMirror */
 
   return (
-    <div className={"smc-vfill"}>
+    <div className={"smc-vfill"} onFocusCapture={props.onFocus}>
       {render_command()}
       <div
         className={"smc-vfill"}
@@ -193,6 +194,7 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
         onClick={() => {
           // Focus on click, since otherwise, clicking right outside term de-focusses,
           // which is confusing.
+          props.onFocus?.();
           terminalRef.current?.focus();
         }}
       >

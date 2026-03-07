@@ -28,6 +28,10 @@ import {
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
+import {
+  eventTargetsElement,
+  isInsideKeyboardBoundary,
+} from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { LLMTools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { JupyterActions } from "./browser-actions";
@@ -259,7 +263,22 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
 
   function window_click(event: any): void {
     // if click in the cell list, focus the cell list; otherwise, blur it.
-    const elt = $(cellListDivRef.current);
+    const cellListElement = cellListDivRef.current;
+    if (cellListElement == null) return;
+    if (isInsideKeyboardBoundary(event)) {
+      frameActions.current?.blur();
+      return;
+    }
+    if (eventTargetsElement(event, cellListElement)) {
+      frameActions.current?.focus();
+      return;
+    }
+    if (event?.target != null) {
+      frameActions.current?.blur();
+      return;
+    }
+
+    const elt = $(cellListElement);
     // list no longer exists, nothing left to do
     // Maybe elt can be null? https://github.com/sagemathinc/cocalc/issues/3580
     if (elt.length == 0) return;

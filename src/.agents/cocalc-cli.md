@@ -47,6 +47,94 @@ TODO:
 - Extend extension runtime from hello-world MVP to generic bundle/manifest install.
 - Add policy/approval hooks directly in browser exec API methods.
 
+## Live Browser Automation Feedback
+
+This is direct feedback from a real debugging session against the lite dev env
+while reproducing Jupyter keyboard-routing issues with floating agent windows.
+
+### What worked well
+
+- `browser action click`
+- `browser action type`
+- `browser screenshot`
+- `browser logs tail`
+- raw `browser exec` for DOM and runtime inspection
+
+### Friction Found
+
+#### Session targeting is too easy to get wrong
+
+- after a reload, a second active browser session appeared for the same live
+  browser tab
+- unpinned commands then targeted the newer session implicitly
+- this is dangerous for debugging because the agent can think it is operating
+  on the user's exact tab when it is not
+
+Requested improvement:
+
+- once a browser session is selected, strongly prefer strict target pinning by
+  default
+- make any fallback to a different browser id very explicit
+
+#### Target context output can be inconsistent
+
+- one command reported a `target_session_url` of project home while the actual
+  runtime `page_url` and DOM state were on the notebook tab
+- this makes it harder to trust CLI output during debugging
+
+Requested improvement:
+
+- ensure `target_browser_id`, `target_session_url`, and runtime `page_url`
+  always agree, or emit a clear mismatch warning
+
+#### `click-at` is literal topmost-hit behavior
+
+- trying to click the notebook underneath an overlapping floating dock hit a
+  dock button instead
+- this made it awkward to force the notebook into command mode when debugging
+  keyboard ownership under overlays
+
+Requested improvement:
+
+- add better selector-driven focus/click helpers
+- consider higher-level notebook/editor actions for "focus selected cell",
+  "enter command mode", etc.
+
+#### `press` and `type` differ significantly on contenteditable surfaces
+
+- `browser action type` appended text correctly in the floating agent editor
+- `browser action press` on the same contenteditable selector did not insert
+  text, even though it did preserve focus and was useful for shortcut leakage
+  checks
+
+Requested improvement:
+
+- document this distinction more clearly
+- add richer diagnostics for `press`, including before/after active element and
+  whether `keydown` and `input` reached the intended target
+
+#### Menus still require raw DOM scripting
+
+- opening the `...` menu worked fine
+- selecting a menu item by label still required raw DOM inspection to find the
+  generated selector
+
+Requested improvement:
+
+- add actions such as `click-text`, `click-menu-item`, or `select-menu-item`
+
+#### High-level browser API helpers can stall in busy live sessions
+
+- browser action plus raw DOM inspection was reliable
+- some higher-level helpers like file opening and notebook cell listing were
+  more likely to stall during a busy live-session workflow
+
+Requested improvement:
+
+- harden those helpers for live sessions
+- add better timeout/error reporting so the caller can distinguish "slow" from
+  "stuck"
+
 ## Goals
 
 - Provide a single, scriptable CLI for CoCalc Launchpad and related products.
