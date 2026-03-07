@@ -3,6 +3,7 @@
   "references": [
     { "path": "./ai" },
     { "path": "./api-client" },
+    { "path": "./apps/tasks" },
     { "path": "./backend" },
     { "path": "./chat" },
     { "path": "./cli" },
