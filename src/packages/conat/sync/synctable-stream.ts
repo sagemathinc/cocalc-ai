@@ -19,7 +19,6 @@ import { fromJS, Map } from "immutable";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
 import type { Client } from "@cocalc/conat/core/client";
 import type { Headers } from "@cocalc/conat/core/client";
-import { join } from "path";
 
 export type State = "disconnected" | "connected" | "closed";
 
@@ -122,7 +121,8 @@ export class SyncTableStream extends EventEmitter {
     this.dstream.on("reject", (err) => {
       console.warn("synctable-stream: rejected - ", err);
     });
-    for (const mesg of this.dstream.getAll()) {
+    const initial = this.dstream.getAll();
+    for (const mesg of initial) {
       this.handle(mesg, false);
     }
     this.setState("connected");
@@ -241,5 +241,5 @@ export class SyncTableStream extends EventEmitter {
 }
 
 export function patchesStreamName({ path }: { path: string }): string {
-  return join("patchflow", path);
+  return `patchflow/${path}`;
 }

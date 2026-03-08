@@ -18,7 +18,6 @@ import { wait } from "@cocalc/util/async-wait";
 import { fromJS, Map } from "immutable";
 import type { JSONValue } from "@cocalc/util/types";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
-import { join } from "path";
 
 export class SyncTableKV extends EventEmitter {
   public readonly table;
@@ -115,9 +114,9 @@ export class SyncTableKV extends EventEmitter {
       throw Error("spec not defined");
     }
     if (spec.path) {
-      return join(this.table, spec.path);
+      return `${this.table}/${spec.path}`;
     }
-    return join(this.table, jsonStableStringify(spec)!);
+    return `${this.table}/${jsonStableStringify(spec)!}`;
   };
 
   init = async () => {

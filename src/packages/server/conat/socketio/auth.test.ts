@@ -19,6 +19,7 @@ const PUBSUB: ("pub" | "sub")[] = ["pub", "sub"];
 
 const project_id = "00000000-0000-4000-8000-000000000000";
 const project_id2 = "00000000-0000-4000-8000-000000000001";
+const project_id3 = "00000000-0000-4000-8000-000000000002";
 
 const account_id = "00000000-0000-4000-8000-000000000010";
 const account_id2 = "00000000-0000-4000-8000-000000000011";
@@ -280,6 +281,18 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
         type: "pub",
       }),
     ).toBe(false);
+  });
+
+  it("verifies an account can access a project hub subject it collaborates on", async () => {
+    (isCollaborator as jest.Mock).mockResolvedValue(true);
+
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `hub.project.${project_id3}.foo`,
+        type: "pub",
+      }),
+    ).toBe(true);
   });
 });
 

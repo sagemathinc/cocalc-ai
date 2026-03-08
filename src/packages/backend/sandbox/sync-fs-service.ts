@@ -33,7 +33,7 @@ export interface WatchEvent {
 
 export interface WatchMeta {
   project_id?: string;
-  relativePath?: string;
+  syncPath?: string;
   string_id?: string;
   history_epoch?: number;
   owner_id?: string;
@@ -213,7 +213,10 @@ export function getSyncFsDebugStats({
     counters.stalePrunes += stats.counters.stalePrunes;
     counters.capEvictions += stats.counters.capEvictions;
     for (const item of stats.releasesByReasonTop) {
-      reasonCounts.set(item.reason, (reasonCounts.get(item.reason) ?? 0) + item.count);
+      reasonCounts.set(
+        item.reason,
+        (reasonCounts.get(item.reason) ?? 0) + item.count,
+      );
     }
     for (const item of stats.activePathsTop) {
       activePaths.push(item);
@@ -240,11 +243,7 @@ export function getSyncFsDebugStats({
       .sort((a, b) => b[1] - a[1])
       .slice(0, Math.max(1, topN))
       .map(([reason, count]) => ({ reason, count })),
-    activePathsTop: topEntries(
-      activePaths,
-      topN,
-      (item) => item.ageMs,
-    ),
+    activePathsTop: topEntries(activePaths, topN, (item) => item.ageMs),
     activeDirsTop: Array.from(activeDirs.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, Math.max(1, topN))
@@ -309,10 +308,7 @@ export class SyncFsService extends EventEmitter {
     this.maxActivePaths = Math.max(
       1,
       opts?.maxActivePaths ??
-        envNumber(
-          "COCALC_SYNC_FS_MAX_ACTIVE_PATHS",
-          DEFAULT_MAX_ACTIVE_PATHS,
-        ),
+        envNumber("COCALC_SYNC_FS_MAX_ACTIVE_PATHS", DEFAULT_MAX_ACTIVE_PATHS),
     );
     this.pruneTimer = setInterval(this.pruneStale, this.pruneIntervalMs);
     this.pruneTimer.unref?.();
@@ -334,14 +330,71 @@ export class SyncFsService extends EventEmitter {
     if (meta == null) {
       return this.pathStates.get(path)?.meta;
     }
-    if (!meta.project_id || !meta.relativePath) {
-      return meta;
+    const syncPath =
+      typeof meta.syncPath === "string" && meta.syncPath.length > 0
+        ? meta.syncPath
+        : path;
+    if (!meta.project_id) {
+      return {
+        ...meta,
+        syncPath,
+      };
     }
     return {
       ...meta,
-      string_id:
-        meta.string_id ?? client_db.sha1(meta.project_id, meta.relativePath),
+      syncPath,
+      // Canonical sync identity is derived from the canonical filesystem path,
+      // never from caller-supplied ids.
+      string_id: client_db.sha1(meta.project_id, syncPath),
     };
+  }
+
+  private canInitMeta(meta?: WatchMeta): meta is WatchMeta & {
+    project_id: string;
+    syncPath: string;
+  } {
+    return (
+      typeof meta?.project_id === "string" &&
+      meta.project_id.length > 0 &&
+      typeof meta?.syncPath === "string" &&
+      meta.syncPath.length > 0
+    );
+  }
+
+  private syncStringId(meta: { project_id: string; syncPath: string }): string {
+    return client_db.sha1(meta.project_id, meta.syncPath);
+  }
+
+  private shouldReinitializePath(
+    existingState: PathState | undefined,
+    nextMeta?: WatchMeta,
+  ): boolean {
+    if (!this.canInitMeta(nextMeta)) {
+      return false;
+    }
+    const prevMeta = existingState?.meta;
+    if (!this.canInitMeta(prevMeta)) {
+      return true;
+    }
+    if (existingState?.string_id !== nextMeta.string_id) {
+      return true;
+    }
+    if (prevMeta.project_id !== nextMeta.project_id) {
+      return true;
+    }
+    if (prevMeta.syncPath !== nextMeta.syncPath) {
+      return true;
+    }
+    if (prevMeta.doctype?.type !== nextMeta.doctype?.type) {
+      return true;
+    }
+    if (prevMeta.doctype?.patch_format !== nextMeta.doctype?.patch_format) {
+      return true;
+    }
+    return (
+      JSON.stringify(prevMeta.doctype?.opts ?? null) !==
+      JSON.stringify(nextMeta.doctype?.opts ?? null)
+    );
   }
 
   private rememberRelease(record: ReleaseRecord): void {
@@ -454,9 +507,8 @@ export class SyncFsService extends EventEmitter {
   }
 
   private async initPath(path: string, meta?: WatchMeta): Promise<void> {
-    if (!meta?.project_id || !meta.relativePath) return;
-    const string_id =
-      meta.string_id ?? client_db.sha1(meta.project_id, meta.relativePath);
+    if (!this.canInitMeta(meta)) return;
+    const string_id = this.syncStringId(meta);
     const codec = this.resolveCodec(meta);
     try {
       // Always reconcile local snapshot state against the actual patch stream.
@@ -467,7 +519,7 @@ export class SyncFsService extends EventEmitter {
       const { heads, maxVersion } = await this.getStreamHeads({
         project_id: meta.project_id,
         string_id,
-        path: meta.relativePath,
+        path: meta.syncPath,
       });
       const hasHistory = heads.length > 0 || maxVersion > 0;
       if (hasHistory) {
@@ -477,13 +529,13 @@ export class SyncFsService extends EventEmitter {
         const current = await this.loadDocViaSyncDoc({
           project_id: meta.project_id,
           string_id,
-          relativePath: meta.relativePath,
+          syncPath: meta.syncPath,
           doctype: meta.doctype,
         });
         if (current == null) {
           if (process.env.SYNC_FS_DEBUG) {
             console.log("sync-fs initPath: unable to load stream baseline", {
-              path: meta.relativePath,
+              path: meta.syncPath,
               string_id,
             });
           }
@@ -607,6 +659,11 @@ export class SyncFsService extends EventEmitter {
       const normalizedMeta = this.normalizeMeta(path, meta);
       const now = Date.now();
       const existingState = this.pathStates.get(path);
+      const shouldReinitialize = this.shouldReinitializePath(
+        existingState,
+        normalizedMeta,
+      );
+      const previousStringId = existingState?.string_id;
       this.pathStates.set(path, {
         dir,
         lastHeartbeat: now,
@@ -614,6 +671,13 @@ export class SyncFsService extends EventEmitter {
         meta: normalizedMeta,
         string_id: normalizedMeta?.string_id,
       });
+      if (
+        previousStringId != null &&
+        previousStringId !== normalizedMeta?.string_id &&
+        !this.hasActivePathForStringId(previousStringId, path)
+      ) {
+        this.closeStreamState(previousStringId);
+      }
       this.maxActivePathsObserved = Math.max(
         this.maxActivePathsObserved,
         this.pathStates.size,
@@ -621,7 +685,7 @@ export class SyncFsService extends EventEmitter {
       this.enforceActivePathCap(path);
       let entry = this.watchers.get(dir);
 
-      if (!entry?.paths.has(path)) {
+      if (!entry?.paths.has(path) || shouldReinitialize) {
         await this.initPath(path, normalizedMeta);
       }
 
@@ -690,10 +754,7 @@ export class SyncFsService extends EventEmitter {
             } catch {
               preloaded = undefined;
             }
-            if (
-              preloaded != null &&
-              this.sha256(preloaded) === marker.hash
-            ) {
+            if (preloaded != null && this.sha256(preloaded) === marker.hash) {
               // Exact-content echo from our own recent write.
               return;
             }
@@ -733,19 +794,19 @@ export class SyncFsService extends EventEmitter {
   private async loadDocViaSyncDoc({
     project_id,
     string_id,
-    relativePath,
+    syncPath,
     doctype,
   }: {
     project_id: string;
     string_id: string;
-    relativePath: string;
+    syncPath: string;
     doctype?: WatchMeta["doctype"];
   }): Promise<string | undefined> {
     const client = this.getConatClient();
 
     const commonOpts = {
       project_id,
-      path: relativePath,
+      path: syncPath,
       string_id,
       // important to avoid any possible feedback loop
       noSaveToDisk: true,
@@ -995,21 +1056,19 @@ export class SyncFsService extends EventEmitter {
     type: "change" | "delete",
     change: ExternalChange,
   ): Promise<void> {
-    if (!meta.project_id) return;
-    const relativePath = meta.relativePath;
-    if (!relativePath) return;
+    if (!this.canInitMeta(meta)) return;
+    const syncPath = meta.syncPath;
     if (process.env.SYNC_FS_DEBUG) {
       console.log("sync-fs appendPatch start", {
-        relativePath,
+        syncPath,
         type,
       });
     }
-    const string_id =
-      meta.string_id ?? client_db.sha1(meta.project_id, relativePath);
+    const string_id = this.syncStringId(meta);
     const { heads, maxVersion, maxTimeMs } = await this.getStreamHeads({
       project_id: meta.project_id,
       string_id,
-      path: relativePath,
+      path: syncPath,
     });
     const parents = heads;
     const parentMaxMs =
@@ -1022,7 +1081,7 @@ export class SyncFsService extends EventEmitter {
     const obj: any = {
       string_id,
       project_id: meta.project_id,
-      path: relativePath,
+      path: syncPath,
       time,
       wall: timeMs,
       user_id: 0,
@@ -1045,7 +1104,7 @@ export class SyncFsService extends EventEmitter {
       const writer = await this.getPatchWriter({
         project_id: meta.project_id,
         string_id,
-        path: relativePath,
+        path: syncPath,
       });
       if (process.env.SYNC_FS_DEBUG) {
         console.log("sync-fs appendPatch publish", {
@@ -1068,7 +1127,7 @@ export class SyncFsService extends EventEmitter {
       this.updateStreamInfo(string_id, obj, seq);
       if (process.env.SYNC_FS_DEBUG) {
         console.log("sync-fs appendPatch", {
-          path: meta.relativePath,
+          path: meta.syncPath,
           type,
           time,
           version,
@@ -1107,21 +1166,19 @@ export class SyncFsService extends EventEmitter {
 
   private updateStreamInfo(string_id: string, patch: any, seq: number): void {
     const persisted = this.store.getFsHead(string_id);
-    let info: StreamInfo =
-      this.streamInfo.get(string_id) ??
-      {
-        heads: new Set<PatchId>(
-          (persisted?.heads ?? [])
-            .map((h) => this.normalizePatchId(h))
-            .filter((h): h is PatchId => !!h),
-        ),
-        maxVersion: persisted?.version ?? 0,
-        maxTimeMs: (() => {
-          const t = this.normalizePatchId((persisted as any)?.time);
-          return t ? this.timeMs(t) : 0;
-        })(),
-        lastSeq: persisted?.lastSeq,
-      };
+    let info: StreamInfo = this.streamInfo.get(string_id) ?? {
+      heads: new Set<PatchId>(
+        (persisted?.heads ?? [])
+          .map((h) => this.normalizePatchId(h))
+          .filter((h): h is PatchId => !!h),
+      ),
+      maxVersion: persisted?.version ?? 0,
+      maxTimeMs: (() => {
+        const t = this.normalizePatchId((persisted as any)?.time);
+        return t ? this.timeMs(t) : 0;
+      })(),
+      lastSeq: persisted?.lastSeq,
+    };
     info = {
       heads: new Set<PatchId>(
         [...info.heads]
@@ -1201,21 +1258,19 @@ export class SyncFsService extends EventEmitter {
   }> {
     const writer = await this.getPatchWriter({ project_id, string_id, path });
     const persisted = this.store.getFsHead(string_id);
-    let info: StreamInfo =
-      this.streamInfo.get(string_id) ??
-      {
-        heads: new Set<PatchId>(
-          (persisted?.heads ?? [])
-            .map((h) => this.normalizePatchId(h))
-            .filter((h): h is PatchId => !!h),
-        ),
-        maxVersion: persisted?.version ?? 0,
-        maxTimeMs: (() => {
-          const t = this.normalizePatchId((persisted as any)?.time);
-          return t ? this.timeMs(t) : 0;
-        })(),
-        lastSeq: persisted?.lastSeq,
-      };
+    let info: StreamInfo = this.streamInfo.get(string_id) ?? {
+      heads: new Set<PatchId>(
+        (persisted?.heads ?? [])
+          .map((h) => this.normalizePatchId(h))
+          .filter((h): h is PatchId => !!h),
+      ),
+      maxVersion: persisted?.version ?? 0,
+      maxTimeMs: (() => {
+        const t = this.normalizePatchId((persisted as any)?.time);
+        return t ? this.timeMs(t) : 0;
+      })(),
+      lastSeq: persisted?.lastSeq,
+    };
     // Normalize legacy entries that may still be in-memory.
     info = {
       heads: new Set<PatchId>(

@@ -11,6 +11,9 @@ import listen from "@cocalc/backend/misc/async-server-listen";
 const logger = getLogger("project-proxy:http");
 
 const CACHE_TTL = 1000;
+const PROJECT_HOST_HTTP_AUTH_COOKIE_NAME = "cocalc_project_host_http_bearer";
+const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME =
+  "cocalc_project_host_http_session";
 const cache = new TTLCache<string, { proxy?: number; err? }>({
   max: 100000,
   ttl: CACHE_TTL,
@@ -37,6 +40,26 @@ interface StartOptions {
   rewriteRequest?: (
     req: http.IncomingMessage,
   ) => Promise<void> | void;
+}
+
+function stripProjectHostProxyAuthCookies(
+  cookieHeader: string | string[] | undefined,
+): string | undefined {
+  if (cookieHeader == null) return undefined;
+  const raw = Array.isArray(cookieHeader) ? cookieHeader.join(";") : cookieHeader;
+  const kept = raw
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const idx = part.indexOf("=");
+      const name = idx === -1 ? part : part.slice(0, idx).trim();
+      return (
+        name !== PROJECT_HOST_HTTP_AUTH_COOKIE_NAME &&
+        name !== PROJECT_HOST_HTTP_SESSION_COOKIE_NAME
+      );
+    });
+  return kept.length > 0 ? kept.join("; ") : undefined;
 }
 
 function parseProjectId(url: string | undefined): string | null {
@@ -116,11 +139,23 @@ export function createProxyHandlers({
     logger.warn("proxy error", { err: `${err}`, url });
   });
 
-  proxy.on("proxyReq", (proxyReq) => {
+  proxy.on("proxyReq", (proxyReq, req) => {
     proxyReq.setHeader("X-Proxy-By", "cocalc-proxy");
+    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+    if (cookie) {
+      proxyReq.setHeader("cookie", cookie);
+    } else {
+      proxyReq.removeHeader("cookie");
+    }
   });
 
-  proxy.on("proxyReqWs", (_proxyReq, req) => {
+  proxy.on("proxyReqWs", (proxyReq, req) => {
+    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+    if (cookie) {
+      proxyReq.setHeader("cookie", cookie);
+    } else {
+      proxyReq.removeHeader("cookie");
+    }
     logger.debug("forwarding-ws", {
       url: req.url,
       host: req.headers?.host,
@@ -208,7 +243,23 @@ export function attachProjectProxy({
     logger.debug("proxy error", { err: `${err}`, url: req?.url });
   });
 
+  proxy.on("proxyReq", (proxyReq, req) => {
+    proxyReq.setHeader("X-Proxy-By", "cocalc-proxy");
+    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+    if (cookie) {
+      proxyReq.setHeader("cookie", cookie);
+    } else {
+      proxyReq.removeHeader("cookie");
+    }
+  });
+
   proxy.on("proxyReqWs", (_proxyReq, req) => {
+    const cookie = stripProjectHostProxyAuthCookies(req.headers.cookie);
+    if (cookie) {
+      _proxyReq.setHeader("cookie", cookie);
+    } else {
+      _proxyReq.removeHeader("cookie");
+    }
     logger.debug("forwarding-ws", {
       url: req.url,
       host: req.headers?.host,

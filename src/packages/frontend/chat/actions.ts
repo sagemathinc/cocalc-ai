@@ -1737,11 +1737,13 @@ export class ChatActions extends Actions<ChatState> {
     title,
     sourceTitle,
     isAI,
+    selectNewThread = true,
   }: {
     threadKey: string;
     title: string;
     sourceTitle: string;
     isAI: boolean;
+    selectNewThread?: boolean;
   }): Promise<string> => {
     if (!this.syncdb || !this.store) {
       throw new Error("Chat actions are not initialized");
@@ -1871,7 +1873,9 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
     void this.saveSyncdb();
 
-    this.setSelectedThread(newThreadId);
+    if (selectNewThread) {
+      this.setSelectedThread(newThreadId);
+    }
     return newThreadId;
   };
 

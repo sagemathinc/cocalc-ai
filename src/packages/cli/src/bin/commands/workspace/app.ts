@@ -3,9 +3,21 @@
  *
  * Phase 0 intentionally keeps this JSON-first and deterministic for agent flows.
  */
+import { dirname } from "node:path";
 import { Command } from "commander";
 
 import type { WorkspaceCommandDeps } from "../workspace";
+
+type PortableAppSpec = Record<string, any> & { id: string };
+
+type PortableAppSpecBundle = {
+  version: 1;
+  kind: "cocalc-app-spec-bundle";
+  exported_at: string;
+  workspace_id: string;
+  apps: PortableAppSpec[];
+  skipped?: Array<{ id: string; path?: string; error: string }>;
+};
 
 function parsePositiveIntOrThrow(value: string | undefined, context: string): number | undefined {
   if (value == null || `${value}`.trim() === "") return undefined;
@@ -21,12 +33,94 @@ function normalizePrefix(value: string): string {
   return withLeading.replace(/\/+$/, "") || "/";
 }
 
+function asPortableSpec(spec: unknown, context: string): PortableAppSpec {
+  if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
+    throw new Error(`${context} must be an app spec object`);
+  }
+  const id = `${(spec as any).id ?? ""}`.trim();
+  if (!id) {
+    throw new Error(`${context}.id must be a non-empty string`);
+  }
+  return spec as PortableAppSpec;
+}
+
+function createPortableBundle(
+  workspaceId: string,
+  apps: PortableAppSpec[],
+  skipped?: Array<{ id: string; path?: string; error: string }>,
+): PortableAppSpecBundle {
+  return {
+    version: 1,
+    kind: "cocalc-app-spec-bundle",
+    exported_at: new Date().toISOString(),
+    workspace_id: workspaceId,
+    apps,
+    skipped: skipped?.length ? skipped : undefined,
+  };
+}
+
+function parseImportPayload(input: unknown): {
+  format: "single" | "bundle";
+  specs: PortableAppSpec[];
+  source_workspace_id?: string;
+} {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("import payload must be a JSON object");
+  }
+  const obj = input as Record<string, any>;
+  if (Array.isArray(obj.apps)) {
+    return {
+      format: "bundle",
+      specs: obj.apps.map((spec, idx) => asPortableSpec(spec, `apps[${idx}]`)),
+      source_workspace_id:
+        typeof obj.workspace_id === "string" && obj.workspace_id.trim()
+          ? obj.workspace_id.trim()
+          : undefined,
+    };
+  }
+  return {
+    format: "single",
+    specs: [asPortableSpec(obj, "spec")],
+  };
+}
+
+async function readJsonFileOrStdin(
+  path: string,
+  readFileLocal: WorkspaceCommandDeps["readFileLocal"],
+  readAllStdin: WorkspaceCommandDeps["readAllStdin"],
+): Promise<unknown> {
+  const raw =
+    path === "-" ? await readAllStdin() : await readFileLocal(path, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`failed to parse JSON from ${path === "-" ? "stdin" : path}: ${err}`);
+  }
+}
+
+async function writeJsonFile(
+  path: string,
+  value: unknown,
+  mkdirLocal: WorkspaceCommandDeps["mkdirLocal"],
+  writeFileLocal: WorkspaceCommandDeps["writeFileLocal"],
+): Promise<void> {
+  await mkdirLocal(dirname(path), { recursive: true });
+  await writeFileLocal(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
 export function registerWorkspaceAppCommands(
   workspace: Command,
   deps: WorkspaceCommandDeps,
 ): void {
-  const { withContext, resolveWorkspaceProjectApi, resolveWorkspaceFromArgOrContext, readFileLocal } =
-    deps;
+  const {
+    withContext,
+    resolveWorkspaceProjectApi,
+    resolveWorkspaceFromArgOrContext,
+    readFileLocal,
+    readAllStdin,
+    mkdirLocal,
+    writeFileLocal,
+  } = deps;
 
   const app = workspace
     .command("app")
@@ -70,6 +164,214 @@ export function registerWorkspaceAppCommands(
             workspace_id: ws.project_id,
             app_id: spec.id,
             spec,
+          };
+        });
+      },
+    );
+
+  app
+    .command("export <appId>")
+    .description("export one app spec as JSON")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--file <path>", "write JSON to a local file instead of stdout")
+    .action(
+      async (
+        appId: string,
+        opts: { workspace?: string; file?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app export", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const spec = asPortableSpec(await api.apps.getAppSpec(appId), "spec");
+          if (!opts.file) {
+            return {
+              workspace_id: ws.project_id,
+              app_id: spec.id,
+              spec,
+            };
+          }
+          await writeJsonFile(opts.file, spec, mkdirLocal, writeFileLocal);
+          return {
+            workspace_id: ws.project_id,
+            app_id: spec.id,
+            file: opts.file,
+            exported: true,
+          };
+        });
+      },
+    );
+
+  app
+    .command("export-all")
+    .description("export all app specs as one JSON bundle")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--file <path>", "write JSON bundle to a local file instead of stdout")
+    .action(
+      async (
+        opts: { workspace?: string; file?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app export-all", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const rows = await api.apps.listAppSpecs();
+          const apps: PortableAppSpec[] = [];
+          const skipped: Array<{ id: string; path?: string; error: string }> = [];
+          for (const row of rows) {
+            if (row.spec) {
+              apps.push(asPortableSpec(row.spec, `spec:${row.id}`));
+              continue;
+            }
+            skipped.push({
+              id: row.id,
+              path: row.path,
+              error: row.error ?? "spec unavailable",
+            });
+          }
+          const bundle = createPortableBundle(ws.project_id, apps, skipped);
+          if (!opts.file) {
+            return bundle;
+          }
+          await writeJsonFile(opts.file, bundle, mkdirLocal, writeFileLocal);
+          return {
+            workspace_id: ws.project_id,
+            file: opts.file,
+            exported: apps.length,
+            skipped,
+          };
+        });
+      },
+    );
+
+  app
+    .command("import")
+    .description("import one app spec or an app bundle from local JSON")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .requiredOption("--file <path>", "local JSON file path, or '-' for stdin")
+    .action(
+      async (
+        opts: { workspace?: string; file: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app import", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const parsed = await readJsonFileOrStdin(
+            opts.file,
+            readFileLocal,
+            readAllStdin,
+          );
+          const { format, specs, source_workspace_id } = parseImportPayload(parsed);
+          const imported: Array<{
+            app_id: string;
+            path: string;
+            spec: unknown;
+          }> = [];
+          for (const spec of specs) {
+            const saved = await api.apps.upsertAppSpec(spec);
+            imported.push({
+              app_id: saved.id,
+              path: saved.path,
+              spec: saved.spec,
+            });
+          }
+          return {
+            workspace_id: ws.project_id,
+            source_workspace_id,
+            import_format: format,
+            imported_count: imported.length,
+            imported,
+          };
+        });
+      },
+    );
+
+  app
+    .command("clone <appId>")
+    .description("copy one app spec from one workspace to another")
+    .requiredOption("--from-workspace <workspace>", "source workspace id or name")
+    .requiredOption("--to-workspace <workspace>", "destination workspace id or name")
+    .action(
+      async (
+        appId: string,
+        opts: { fromWorkspace: string; toWorkspace: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app clone", async (ctx) => {
+          const { workspace: fromWs, api: fromApi } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.fromWorkspace,
+          );
+          const { workspace: toWs, api: toApi } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.toWorkspace,
+          );
+          const spec = asPortableSpec(await fromApi.apps.getAppSpec(appId), "spec");
+          const saved = await toApi.apps.upsertAppSpec(spec);
+          return {
+            source_workspace_id: fromWs.project_id,
+            destination_workspace_id: toWs.project_id,
+            app_id: saved.id,
+            path: saved.path,
+            spec: saved.spec,
+          };
+        });
+      },
+    );
+
+  app
+    .command("clone-all")
+    .description("copy all app specs from one workspace to another")
+    .requiredOption("--from-workspace <workspace>", "source workspace id or name")
+    .requiredOption("--to-workspace <workspace>", "destination workspace id or name")
+    .action(
+      async (
+        opts: { fromWorkspace: string; toWorkspace: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app clone-all", async (ctx) => {
+          const { workspace: fromWs, api: fromApi } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.fromWorkspace,
+          );
+          const { workspace: toWs, api: toApi } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.toWorkspace,
+          );
+          const rows = await fromApi.apps.listAppSpecs();
+          const cloned: Array<{
+            app_id: string;
+            path: string;
+          }> = [];
+          const skipped: Array<{ id: string; path?: string; error: string }> = [];
+          for (const row of rows) {
+            if (!row.spec) {
+              skipped.push({
+                id: row.id,
+                path: row.path,
+                error: row.error ?? "spec unavailable",
+              });
+              continue;
+            }
+            const saved = await toApi.apps.upsertAppSpec(row.spec);
+            cloned.push({
+              app_id: saved.id,
+              path: saved.path,
+            });
+          }
+          return {
+            source_workspace_id: fromWs.project_id,
+            destination_workspace_id: toWs.project_id,
+            cloned_count: cloned.length,
+            cloned,
+            skipped,
           };
         });
       },

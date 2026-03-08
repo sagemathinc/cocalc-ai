@@ -16,32 +16,7 @@ import type { CodexThreadConfig } from "@cocalc/chat";
 import { dateValue, field } from "./access";
 import { type ChatActions } from "./actions";
 
-type QueueKey = string;
-type QueueItem = {
-  messageId: string;
-  threadId?: string;
-  parentMessageId?: string;
-  senderId?: string;
-  queuedAtMs: number;
-  sendMode?: "immediate";
-  forceImmediate?: boolean;
-  run: () => Promise<void>;
-  canceled: boolean;
-};
-type QueueState = { running: boolean; items: QueueItem[] };
-const turnQueues: Map<QueueKey, QueueState> = new Map();
 let lastGeneratedAcpMessageMs = 0;
-const QUEUED_PROMPT_NOTE_THRESHOLD_MS = 1500;
-const SESSION_BUSY_RETRY_DELAYS_MS = [350, 900, 1600];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isSessionBusyError(err: unknown): boolean {
-  const text = `${err ?? ""}`.toLowerCase();
-  return text.includes("already processing a request for this session");
-}
 
 function nextAcpMessageDate({
   actions,
@@ -68,46 +43,6 @@ function nextAcpMessageDate({
   }
   lastGeneratedAcpMessageMs = candidate;
   return new Date(candidate);
-}
-
-function getQueue(key: QueueKey): QueueState {
-  let q = turnQueues.get(key);
-  if (q == null) {
-    q = { running: false, items: [] };
-    turnQueues.set(key, q);
-  }
-  return q;
-}
-
-function formatQueuedDelay(ms: number): string {
-  const seconds = Math.max(1, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remain = seconds % 60;
-  return remain > 0 ? `${minutes}m ${remain}s` : `${minutes}m`;
-}
-
-function maybeDecorateQueuedPrompt({
-  prompt,
-  queuedAtMs,
-  sendMode,
-}: {
-  prompt: string;
-  queuedAtMs: number;
-  sendMode?: "immediate";
-}): string {
-  if (sendMode === "immediate") return prompt;
-  const delayMs = Date.now() - queuedAtMs;
-  if (!Number.isFinite(delayMs) || delayMs < QUEUED_PROMPT_NOTE_THRESHOLD_MS) {
-    return prompt;
-  }
-  return [
-    `System note: this message was queued for ${formatQueuedDelay(
-      delayMs,
-    )} while another turn was active, and is being sent automatically now.`,
-    "",
-    prompt,
-  ].join("\n");
 }
 
 function maybeDecorateLoopPrompt({
@@ -138,80 +73,9 @@ function maybeDecorateLoopPrompt({
   ].join("\n");
 }
 
-function latestThreadMessageId(
-  actions: ChatActions,
-  threadId?: string,
-  excludeMessageId?: string,
-): string | undefined {
-  const normalizedThreadId = `${threadId ?? ""}`.trim();
-  if (!normalizedThreadId) return undefined;
-  const threadMessages = actions.getMessagesInThread?.(normalizedThreadId) ?? [];
-  for (let i = threadMessages.length - 1; i >= 0; i--) {
-    const id = `${(threadMessages[i] as any)?.message_id ?? ""}`.trim();
-    if (!id) continue;
-    if (excludeMessageId && id === excludeMessageId) continue;
-    return id;
-  }
-  return undefined;
-}
-
-function interruptActiveThreadTurn({
-  actions,
-  threadId,
-}: {
-  actions: ChatActions;
-  threadId?: string;
-}): void {
-  const normalizedThreadId = `${threadId ?? ""}`.trim();
-  if (!normalizedThreadId) return;
-  const threadMessages = actions.getMessagesInThread(normalizedThreadId) ?? [];
-  for (const msg of threadMessages) {
-    if (field<boolean>(msg, "generating") !== true) continue;
-    const msgDate = dateValue(msg);
-    if (!msgDate) continue;
-    actions.languageModelStopGenerating(msgDate, {
-      threadId: field<string>(msg, "acp_thread_id") ?? threadId,
-      senderId: field<string>(msg, "sender_id"),
-    });
-  }
-}
-
-function makeQueueKey({ project_id, path, threadKey }): QueueKey {
-  return `${project_id}::${path}::${threadKey}`;
-}
-
-type ThreadQueueRef = {
-  queueKey: QueueKey;
-  threadToken: string;
-  project_id: string;
-  path: string;
-};
-
-function resolveThreadQueueRef({
-  actions,
-  threadId,
-}: {
-  actions: ChatActions;
-  threadId?: string;
-}): ThreadQueueRef | undefined {
-  const store = actions.store;
-  if (!store) return undefined;
-  const project_id = store.get("project_id");
-  const path = store.get("path");
-  if (!project_id || !path) return undefined;
-  const threadToken = `${threadId ?? ""}`.trim();
-  if (!threadToken) return undefined;
-  return {
-    queueKey: makeQueueKey({ project_id, path, threadKey: threadToken }),
-    threadToken,
-    project_id,
-    path,
-  };
-}
-
-// Clear stale in-memory queue/running state for a thread.
-// This is important after backend restarts or interrupted turns so a new
-// "continue" can start immediately instead of remaining queued forever.
+// Clear transient frontend-rendered ACP state for a thread. Persisted queue and
+// running state is rehydrated from SyncDB, so there is no browser-owned queue
+// to reset anymore.
 export function resetAcpThreadState({
   actions,
   threadId,
@@ -221,18 +85,6 @@ export function resetAcpThreadState({
 }): void {
   const store = actions.store;
   if (!store) return;
-  const queueRef = resolveThreadQueueRef({ actions, threadId });
-  if (queueRef) {
-    const q = turnQueues.get(queueRef.queueKey);
-    if (q) {
-      for (const item of q.items) {
-        item.canceled = true;
-      }
-      q.items = [];
-      q.running = false;
-      turnQueues.delete(queueRef.queueKey);
-    }
-  }
 
   const normalizedThreadId = `${threadId ?? ""}`.trim();
   const threadMessages = normalizedThreadId
@@ -250,30 +102,6 @@ export function resetAcpThreadState({
     }
   }
   store.setState({ acpState: nextState });
-}
-
-async function runQueue(key: QueueKey): Promise<void> {
-  const q = turnQueues.get(key);
-  if (!q) return;
-  let next = q.items.shift();
-  while (next && next.canceled) {
-    next = q.items.shift();
-  }
-  if (!next) {
-    q.running = false;
-    if (q.items.length === 0) {
-      turnQueues.delete(key);
-    }
-    return;
-  }
-  q.running = true;
-  try {
-    await next.run();
-  } catch (err) {
-    console.error("ACP turn queue job failed", err);
-  } finally {
-    void runQueue(key);
-  }
 }
 
 type ProcessAcpRequest = {
@@ -369,8 +197,6 @@ export async function processAcpLLM({
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
   const message_id = uuid();
-  const initialParentMessageId =
-    `${(message as any)?.parent_message_id ?? ""}`.trim() || undefined;
 
   const id = uuid();
   chatStreams.add(id);
@@ -381,272 +207,167 @@ export async function processAcpLLM({
 
   const setState = (state) => {
     const messageIdKey = `message:${user_message_id}`;
-    const threadStateKey = `thread:${thread_id}`;
     let next = store.get("acpState");
     if (state) {
       next = next.set(messageIdKey, state);
-      next = next.set(threadStateKey, state);
     } else {
       next = next.delete(messageIdKey);
-      next = next.delete(threadStateKey);
     }
     store.setState({
       acpState: next,
     });
   };
 
-  const threadToken = thread_id;
-  const sessionKey = effectiveSessionId ?? threadToken;
-  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
-  const queuedAtMs = Date.now();
-  const queueItem: QueueItem = {
-    messageId: user_message_id,
-    threadId: thread_id,
-    parentMessageId: initialParentMessageId,
-    senderId: field<string>(message, "sender_id"),
-    queuedAtMs,
-    sendMode,
-    forceImmediate: false,
-    canceled: false,
-    run: async (): Promise<void> => {
-    try {
-      setState("sending");
-      const activeParentMessageId =
-        latestThreadMessageId(actions, thread_id, user_message_id) ??
-        queueItem.parentMessageId ??
-        undefined;
-      if (
-        activeParentMessageId &&
-        typeof actions.syncdb?.set === "function" &&
-        typeof actions.syncdb?.commit === "function"
-      ) {
-        const currentUserRow = actions.getMessageById?.(user_message_id) as
-          | ChatMessage
-          | undefined;
-        const rowDate = dateValue(currentUserRow ?? message);
-        const rowSender =
-          field<string>(currentUserRow ?? message, "sender_id") ??
-          field<string>(message, "sender_id");
-        if (rowDate && rowSender) {
-          actions.syncdb.set({
-            event: "chat",
-            sender_id: rowSender,
-            date: rowDate.toISOString(),
-            message_id: user_message_id,
-            thread_id,
-            parent_message_id: activeParentMessageId,
-          });
-          actions.syncdb.commit();
-        }
-      }
-      const promptForRun = maybeDecorateQueuedPrompt({
-        prompt: workingInput,
-        queuedAtMs: queueItem.queuedAtMs,
-        sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
-      });
-      const promptForRunWithLoop = maybeDecorateLoopPrompt({
-        prompt: promptForRun,
-        loopConfig,
-      });
-      // Generate a stable assistant-reply key for this turn, but do NOT write any
-      // corresponding chat row here. The backend is the sole writer of the assistant
-      // reply row (avoids frontend/backend sync races on the same row).
-      // Chat cache and thread lookup currently key by millisecond timestamp.
-      // Never allow ACP assistant rows to reuse an existing timestamp.
-      const newMessageDate = nextAcpMessageDate({
-        actions,
-        minMs: messageDate.valueOf() + 1,
-      });
-      const chatMetadata = buildChatMetadata({
-        project_id,
+  const sessionKey = effectiveSessionId ?? thread_id;
+  const promptForRunWithLoop = maybeDecorateLoopPrompt({
+    prompt: workingInput,
+    loopConfig,
+  });
+  // Generate a stable assistant-reply key for this turn, but do NOT write any
+  // corresponding chat row here. The backend is the sole writer of the assistant
+  // reply row (avoids frontend/backend sync races on the same row).
+  const newMessageDate = nextAcpMessageDate({
+    actions,
+    minMs: messageDate.valueOf() + 1,
+  });
+  const chatMetadata = buildChatMetadata({
+    project_id,
+    path,
+    sender_id,
+    api_url:
+      typeof window !== "undefined"
+        ? `${window.location.protocol}//${window.location.host}`
+        : undefined,
+    browser_id: webapp_client.browser_id,
+    messageDate: newMessageDate,
+    thread_id,
+    message_id,
+    parent_message_id: user_message_id,
+    sendMode: sendMode,
+    loop_config: loopConfig,
+    loop_state: loopState,
+  });
+  let acknowledged = false;
+  try {
+    setState("sending");
+    const stream = await webapp_client.conat_client.streamAcp({
+      project_id,
+      prompt: promptForRunWithLoop,
+      session_id: sessionKey,
+      config: buildAcpConfig({
         path,
-        sender_id,
-        api_url:
-          typeof window !== "undefined"
-            ? `${window.location.protocol}//${window.location.host}`
-            : undefined,
-        browser_id: webapp_client.browser_id,
-        messageDate: newMessageDate,
-        thread_id,
-        message_id,
-        parent_message_id: user_message_id,
-        sendMode: queueItem.forceImmediate ? "immediate" : queueItem.sendMode,
-        loop_config: loopConfig,
-        loop_state: loopState,
-      });
-      let runtimeEnv: Record<string, string> | undefined;
-      try {
-        const bearer = await webapp_client.conat_client.getProjectHostAcpBearer(
-          { project_id },
-        );
-        if (bearer?.trim()) {
-          runtimeEnv = {
-            COCALC_BEARER_TOKEN: bearer.trim(),
-            COCALC_AGENT_TOKEN: bearer.trim(),
-          };
-        }
-      } catch (err) {
-        console.warn("failed to fetch ACP project-host bearer token", err);
+        config:
+          effectiveSessionId != null
+            ? { ...config, sessionId: effectiveSessionId }
+            : config,
+        model: normalizedModel,
+      }),
+      chat: chatMetadata,
+    });
+    setState("sent");
+    for await (const response of stream) {
+      if (response?.type === "error") {
+        throw Error(response.error);
       }
-      let attempt = 0;
-      while (true) {
-        try {
-          const stream = await webapp_client.conat_client.streamAcp({
-            project_id,
-            prompt: promptForRunWithLoop,
-            session_id: sessionKey,
-            config: buildAcpConfig({
-              path,
-              config:
-                effectiveSessionId != null
-                  ? { ...config, sessionId: effectiveSessionId }
-                  : config,
-              model: normalizedModel,
-            }),
-            chat: chatMetadata,
-            runtime_env: runtimeEnv,
-          });
-          setState("sent");
-          for await (const response of stream) {
-            setState("running");
-            // when something goes wrong, the stream may send this sort of message:
-            // {seq: 0, error: 'Error: ACP agent is already processing a request', type: 'error'}
-            if (response?.type == "error") {
-              throw Error(response.error);
-            }
-          }
-          break;
-        } catch (err) {
-          if (
-            isSessionBusyError(err) &&
-            attempt < SESSION_BUSY_RETRY_DELAYS_MS.length
-          ) {
-            const delayMs = SESSION_BUSY_RETRY_DELAYS_MS[attempt];
-            attempt += 1;
-            console.warn("ACP turn retrying after session-busy race", {
-              project_id,
-              path,
-              message_id: user_message_id,
-              thread_id,
-              attempt,
-              delayMs,
-            });
-            await sleep(delayMs);
-            continue;
-          }
-          throw err;
-        }
+      if (response?.type !== "status") {
+        continue;
       }
-    } catch (err) {
-      chatStreams.delete(id);
-      console.error("ACP turn failed", err);
-      // Backend owns the assistant reply row, but if we fail before the backend
-      // can even start the turn (e.g., immediate stream error), we still want
-      // the user to see *something* in the chat UI.
-      try {
-        const raw = `${err}`;
-        const cleaned = raw.startsWith("Error: Error:")
-          ? raw.slice("Error: ".length)
-          : raw;
-        actions.sendReply({
-          message,
-          reply: cleaned,
-          from: sender_id,
-          noNotification: true,
-        });
-        syncdb.commit();
-      } catch (writeErr) {
-        console.error("Failed to write ACP error reply", writeErr);
+      acknowledged = true;
+      if (response.state === "queued") {
+        setState("queue");
+      } else if (response.state === "running") {
+        setState("running");
+      } else {
+        setState("sent");
       }
-    } finally {
-      setState("");
     }
-  },
-  };
-
-  const q = getQueue(queueKey);
-  q.items.push(queueItem);
-  setState("queue");
-  if (!q.running) {
-    void runQueue(queueKey);
+    if (!acknowledged) {
+      throw Error("ACP queue submission ended without acknowledgement");
+    }
+  } catch (err) {
+    console.error("ACP turn failed", err);
+    // Backend owns the assistant reply row, but if we fail before the backend
+    // can even enqueue the turn, we still want the user to see *something*.
+    try {
+      const raw = `${err}`;
+      const cleaned = raw.startsWith("Error: Error:")
+        ? raw.slice("Error: ".length)
+        : raw;
+      actions.sendReply({
+        message,
+        reply: cleaned,
+        from: sender_id,
+        noNotification: true,
+      });
+      syncdb.commit();
+    } catch (writeErr) {
+      console.error("Failed to write ACP error reply", writeErr);
+    }
+    setState("");
+  } finally {
+    chatStreams.delete(id);
   }
 }
 
-export function cancelQueuedAcpTurn({
+export async function cancelQueuedAcpTurn({
   actions,
   message,
 }: {
   actions: ChatActions;
   message: ChatMessage;
-}): boolean {
+}): Promise<boolean> {
   const { store } = actions;
   if (!store) return false;
   const messageId = field<string>(message, "message_id");
   if (!messageId) return false;
-  const threadToken = field<string>(message, "thread_id");
-  if (!threadToken) return false;
+  const threadId = field<string>(message, "thread_id");
+  if (!threadId) return false;
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
-  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
-  const q = turnQueues.get(queueKey);
-  if (!q) return false;
-  const targetIndex = q.items.findIndex(
-    (item) => item.messageId === messageId,
-  );
-  if (targetIndex < 0) return false;
-  const [item] = q.items.splice(targetIndex, 1);
-  item.canceled = true;
-  if (!q.running && q.items.length === 0) {
-    turnQueues.delete(queueKey);
+  const result = await webapp_client.conat_client.controlAcp({
+    project_id,
+    path,
+    thread_id: threadId,
+    user_message_id: messageId,
+    action: "cancel",
+  });
+  if (!result?.ok) {
+    return false;
   }
   store.setState({
-    acpState: (() => {
-      let next = store.get("acpState").set(`message:${messageId}`, "not-sent");
-      const threadId = field<string>(message, "thread_id");
-      if (threadId) {
-        next = next.set(`thread:${threadId}`, "not-sent");
-      }
-      return next;
-    })(),
+    acpState: (store.get("acpState") ?? new Map()).set(
+      `message:${messageId}`,
+      "not-sent",
+    ),
   });
   return true;
 }
 
-export function sendQueuedAcpTurnImmediately({
+export async function sendQueuedAcpTurnImmediately({
   actions,
   message,
 }: {
   actions: ChatActions;
   message: ChatMessage;
-}): boolean {
+}): Promise<boolean> {
   const { store } = actions;
   if (!store) return false;
   const messageId = field<string>(message, "message_id");
   if (!messageId) return false;
-  const threadToken = field<string>(message, "thread_id");
-  if (!threadToken) return false;
+  const threadId = field<string>(message, "thread_id");
+  if (!threadId) return false;
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
-  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
-  const q = turnQueues.get(queueKey);
-  if (!q) return false;
-  const targetIndex = q.items.findIndex((item) => item.messageId === messageId);
-  if (targetIndex < 0) return false;
-  const [item] = q.items.splice(targetIndex, 1);
-  item.forceImmediate = true;
-  item.sendMode = "immediate";
-  q.items.unshift(item);
-  if (q.running) {
-    interruptActiveThreadTurn({
-      actions,
-      threadId: item.threadId,
-    });
-  } else {
-    void runQueue(queueKey);
-  }
-  return true;
+  const result = await webapp_client.conat_client.controlAcp({
+    project_id,
+    path,
+    thread_id: threadId,
+    user_message_id: messageId,
+    action: "send_immediately",
+  });
+  return result?.ok === true;
 }
 
 function normalizeCodexMention(model?: string): string | undefined {

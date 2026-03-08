@@ -188,6 +188,22 @@ test("composer editor mode: shift+enter sends and clears", async ({ page }) => {
   await expectHarnessHealthy(page);
 });
 
+test("composer editor mode: send button keeps slate ready for immediate follow-up typing", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await typeInSlate(page, "first");
+  await expectComposerInput(page, "first");
+  await clickSendButton(page);
+  await expectComposerInput(page, "");
+
+  await page.keyboard.type("x");
+  await expectComposerInput(page, "x");
+  await expectHarnessHealthy(page);
+});
+
 test("composer editor mode: shift+enter stays cleared across draft-key oscillation", async ({
   page,
 }) => {

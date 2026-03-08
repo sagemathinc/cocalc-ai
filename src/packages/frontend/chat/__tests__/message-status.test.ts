@@ -23,13 +23,45 @@ describe("computeAcpStateToRender", () => {
     expect(state).toBe("queue");
   });
 
-  it("hides sending and running states for viewer messages", () => {
+  it("shows pre-run sending states for viewer messages", () => {
     expect(
       computeAcpStateToRender({
         acpState: "sending",
         latestThreadInterrupted: false,
         isViewersMessage: true,
         generating: false,
+      }),
+    ).toBe("sending");
+    expect(
+      computeAcpStateToRender({
+        acpState: "sent",
+        latestThreadInterrupted: false,
+        isViewersMessage: true,
+        generating: false,
+      }),
+    ).toBe("sent");
+  });
+
+  it("shows running state for viewer messages until the assistant row exists", () => {
+    expect(
+      computeAcpStateToRender({
+        acpState: "running",
+        latestThreadInterrupted: false,
+        isViewersMessage: true,
+        generating: false,
+        showViewerRunning: true,
+      }),
+    ).toBe("running");
+  });
+
+  it("hides running state for viewer messages after the assistant row exists", () => {
+    expect(
+      computeAcpStateToRender({
+        acpState: "running",
+        latestThreadInterrupted: false,
+        isViewersMessage: true,
+        generating: false,
+        showViewerRunning: false,
       }),
     ).toBe("");
     expect(
@@ -38,6 +70,7 @@ describe("computeAcpStateToRender", () => {
         latestThreadInterrupted: false,
         isViewersMessage: true,
         generating: false,
+        showViewerRunning: false,
       }),
     ).toBe("");
   });

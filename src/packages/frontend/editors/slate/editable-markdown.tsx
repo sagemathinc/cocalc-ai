@@ -29,7 +29,11 @@ import {
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
-import { EditorFunctions } from "@cocalc/frontend/editors/markdown-input/multimode";
+import {
+  EditorFunctions,
+  RichTextSelectionBridgeControl,
+  SelectionController,
+} from "@cocalc/frontend/editors/markdown-input/types";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
@@ -162,6 +166,33 @@ export function handleEditableMarkdownProjectNavigationKeydown({
   return command;
 }
 
+function focusSlateEditorSafely(editor: SlateEditor): boolean {
+  try {
+    if (editor.selection != null) {
+      const safe = ensureRange(editor, editor.selection);
+      Transforms.setSelection(editor, safe);
+    } else {
+      resetSelection(editor);
+    }
+  } catch {
+    resetSelection(editor);
+  }
+  ReactEditor.focus(editor);
+  if (typeof window !== "undefined" && editor.selection != null) {
+    const domSelection = window.getSelection?.();
+    if (domSelection != null && domSelection.rangeCount === 0) {
+      try {
+        const domRange = ReactEditor.toDOMRange(editor, editor.selection);
+        domSelection.removeAllRanges();
+        domSelection.addRange(domRange);
+      } catch {
+        // ignore; DOM may not be ready yet for the current Slate selection
+      }
+    }
+  }
+  return true;
+}
+
 // Whether or not to use windowing by default (=only rendering visible elements).
 // This is unfortunately essential.  I've tried everything I can think
 // of to optimize slate without using windowing, and I just can't do it
@@ -248,10 +279,7 @@ interface Props {
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
   scrollDivRef?: MutableRefObject<HTMLDivElement | null>;
-  selectionRef?: MutableRefObject<{
-    setSelection: Function;
-    getSelection: Function;
-  } | null>;
+  selectionRef?: MutableRefObject<SelectionController | null>;
   height?: string; // css style or if "auto", then editor will grow to size of content instead of scrolling.
   onCursorTop?: () => void;
   onCursorBottom?: () => void;
@@ -263,21 +291,17 @@ interface Props {
   editBar2?: MutableRefObject<React.JSX.Element | undefined>;
   dirtyRef?: MutableRefObject<boolean>;
   minimal?: boolean;
-  controlRef?: MutableRefObject<{
-    setSelection?: (selection: any) => boolean;
-    getSelection?: () => any;
-    getValue?: () => any;
-    moveCursorToEndOfLine: () => void;
-    allowNextValueUpdateWhileFocused?: () => void;
-    setValueNow?: (value: string) => void;
-    cancelPendingUploads?: () => void;
-    setSelectionFromMarkdownPosition?: (
-      pos: { line: number; ch: number } | undefined,
-    ) => boolean;
-    getMarkdownPositionForSelection?: () =>
-      | { line: number; ch: number }
-      | null;
-  } | null>;
+  controlRef?: MutableRefObject<
+    (RichTextSelectionBridgeControl & {
+      setSelection?: (selection: any) => boolean;
+      getSelection?: () => any;
+      getValue?: () => any;
+      moveCursorToEndOfLine: () => void;
+      allowNextValueUpdateWhileFocused?: () => void;
+      setValueNow?: (value: string) => void;
+      cancelPendingUploads?: () => void;
+    }) | null
+  >;
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
   disableBlockEditor?: boolean;
@@ -457,6 +481,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
     if (selectionRef != null) {
       selectionRef.current = {
+        isSelectionReady: () => ed.children.length > 0,
         setSelection: (selection: any) => {
           if (!selection) return;
           const safe = ensureRange(editor, selection);
@@ -494,6 +519,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         getSelection: () => ed.selection ?? null,
         getValue: () => ed.children,
         moveCursorToEndOfLine: () => control.moveCursorToEndOfLine(ed),
+        focus: () => focusSlateEditorSafely(ed),
         allowNextValueUpdateWhileFocused: () => {
           allowFocusedValueUpdateRef.current = true;
         },
@@ -533,6 +559,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           if (!point) return null;
           return nearestMarkdownPositionForSlatePoint(ed, point) ?? null;
         },
+        isSelectionReady: () => ed.children.length > 0,
       };
     }
 
@@ -701,12 +728,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (isFocused == null) return;
     if (ReactEditor.isFocused(editor) != isFocused) {
       if (isFocused) {
-        ReactEditor.focus(editor);
+        focusSlateEditorSafely(editor);
       } else {
         ReactEditor.blur(editor);
       }
     }
-  }, [isFocused]);
+  }, [editor, isFocused]);
 
   const [editorValue, setEditorValue] = useState<Descendant[]>(() => {
     const doc =
@@ -915,6 +942,30 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const internalScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = scrollDivRef ?? internalScrollRef;
+  const restoreEditableDomSelectionAtStart = useCallback(() => {
+    if (typeof window === "undefined") return false;
+    const container = scrollRef.current;
+    const target =
+      container?.matches?.("[data-slate-editor='true']")
+        ? container
+        : container?.querySelector<HTMLElement>("[data-slate-editor='true']");
+    if (target == null) return false;
+    target.focus?.({ preventScroll: true } as FocusOptions);
+    const selection = window.getSelection?.();
+    if (selection == null) return false;
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    const firstTextNode = walker.nextNode();
+    const range = document.createRange();
+    if (firstTextNode != null) {
+      range.setStart(firstTextNode, 0);
+    } else {
+      range.selectNodeContents(target);
+    }
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }, [scrollRef]);
   const didRestoreScrollRef = useRef<boolean>(false);
   const restoreScroll = useMemo(() => {
     return async () => {
@@ -1669,18 +1720,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const isRunShortcut =
       e.key === "Enter" && (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey);
     const isFocused = ReactEditor.isFocused(editor);
-    if (isRunShortcut) {
-      // eslint-disable-next-line no-console
-      console.log("slate onKeyDown enter shortcut", {
-        key: e.key,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-        ctrlKey: e.ctrlKey,
-        metaKey: e.metaKey,
-        isFocused,
-        selection: editor.selection ?? null,
-      });
-    }
 
     if (!isFocused && !isRunShortcut) {
       // E.g., when typing into a codemirror editor embedded
@@ -2019,6 +2058,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           // we want all the change handler stuff to happen, e.g.,
           // broadcasting cursors.
           onChange(nextEditorValue);
+          if (forceDirectSetForClear) {
+            if (isFocused || ReactEditor.isFocused(editor)) {
+              window.setTimeout(() => {
+                if (!isMountedRef.current) return;
+                try {
+                  const start = { path: [0, 0], offset: 0 };
+                  Transforms.select(editor, { anchor: start, focus: start });
+                } catch {
+                  resetSelection(editor);
+                }
+                focusSlateEditorSafely(editor);
+                restoreEditableDomSelectionAtStart();
+              }, 0);
+            }
+          }
           // console.log("time to set directly ", new Date() - t);
         } else if (!blockPatchApplied) {
           // Applying this operation below will trigger

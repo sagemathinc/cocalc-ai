@@ -145,7 +145,7 @@ const MARGIN_TOP_VIEWER = "17px";
 const AVATAR_MARGIN_LEFTRIGHT = "15px";
 
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
-const VIEWER_ONLY_STATES = new Set(["queue", "not-sent"]);
+const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
 function linkifyCommitHashes(text: string): string {
   if (!text || !/[0-9a-f]{7,40}/i.test(text)) return text;
@@ -211,16 +211,24 @@ export function computeAcpStateToRender({
   latestThreadInterrupted,
   isViewersMessage,
   generating,
+  showViewerRunning,
 }: {
   acpState?: string;
   latestThreadInterrupted: boolean;
   isViewersMessage: boolean;
   generating?: boolean;
+  showViewerRunning?: boolean;
 }): string {
-  const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
+  const state =
+    acpState === "running" && latestThreadInterrupted
+      ? ""
+      : acpState;
   if (!state) return "";
   if (VIEWER_ONLY_STATES.has(state)) {
     return isViewersMessage ? state : "";
+  }
+  if (state === "running" && isViewersMessage) {
+    return showViewerRunning ? state : "";
   }
   if (isViewersMessage) {
     return "";
@@ -1787,11 +1795,11 @@ export default function Message({
 
   const handleCancelQueued = () => {
     if (!actions) return;
-    cancelQueuedAcpTurn({ actions, message });
+    void cancelQueuedAcpTurn({ actions, message });
   };
   const handleSendQueuedImmediately = () => {
     if (!actions) return;
-    sendQueuedAcpTurnImmediately({ actions, message });
+    void sendQueuedAcpTurnImmediately({ actions, message });
   };
 
   const acpStateToRender = useMemo(() => {
@@ -1800,8 +1808,16 @@ export default function Message({
       latestThreadInterrupted,
       isViewersMessage: is_viewers_message,
       generating,
+      showViewerRunning: latestThreadMessage == null || isLastMessageInThread,
     });
-  }, [acpState, latestThreadInterrupted, is_viewers_message, generating]);
+  }, [
+    acpState,
+    latestThreadInterrupted,
+    is_viewers_message,
+    generating,
+    latestThreadMessage,
+    isLastMessageInThread,
+  ]);
 
   const renderAcpState = () => {
     if (!acpStateToRender) return null;
@@ -1831,8 +1847,18 @@ export default function Message({
     }
     return (
       <Tag color="blue">
-        {acpStateToRender == "running" ? <SyncOutlined spin /> : null}{" "}
-        {acpStateToRender}
+        {acpStateToRender === "sending" ||
+        acpStateToRender === "sent" ||
+        acpStateToRender === "running" ? (
+          <SyncOutlined spin />
+        ) : null}{" "}
+        {acpStateToRender === "sending"
+          ? "submitting to Codex"
+          : acpStateToRender === "sent"
+            ? "waiting for Codex"
+            : acpStateToRender === "running" && is_viewers_message
+              ? "Codex is starting"
+            : acpStateToRender}
       </Tag>
     );
   };
