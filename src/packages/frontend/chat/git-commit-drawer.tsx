@@ -752,8 +752,11 @@ export function MarkdownHistoryInput({
         const next = history[historyIndexRef.current]?.value ?? "";
         applyHistoryValue(next);
       }}
-      undoMode="local"
-      redoMode="local"
+      // Git review editors need self-contained undo/redo across both backends.
+      // CodeMirror has local history, but embedded Slate does not, so route
+      // both modes through this wrapper-owned history stack.
+      undoMode="external"
+      redoMode="external"
     />
   );
 }
