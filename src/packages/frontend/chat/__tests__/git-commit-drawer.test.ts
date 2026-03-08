@@ -87,6 +87,7 @@ describe("git commit drawer merge commit formatting", () => {
     );
 
     expect(latestMarkdownInputProps).toBeTruthy();
+    expect(latestMarkdownInputProps.saveDebounceMs).toBe(0);
     expect(latestMarkdownInputProps.undoMode).toBe("external");
     expect(latestMarkdownInputProps.redoMode).toBe("external");
 

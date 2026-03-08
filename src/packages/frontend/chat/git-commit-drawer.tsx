@@ -678,6 +678,7 @@ export function MarkdownHistoryInput({
   defaultMode,
   fixedMode,
   onModeChange,
+  saveDebounceMs = 0,
   ...props
 }: MarkdownHistoryInputProps) {
   const [activeMode, setActiveMode] = useState<MarkdownHistoryMode>(
@@ -725,6 +726,7 @@ export function MarkdownHistoryInput({
       {...props}
       defaultMode={defaultMode}
       fixedMode={fixedMode}
+      saveDebounceMs={saveDebounceMs}
       value={value}
       onChange={(next) => {
         const normalized = `${next ?? ""}`;
@@ -773,7 +775,10 @@ export function MarkdownHistoryInput({
         setActiveMode(nextMode);
         onModeChange?.(nextMode);
       }}
-      // Git review editors need self-contained undo/redo, but the two
+      // Git review editors need immediate parent sync so local undo/redo never
+      // races against a stale debounced value flush.
+      //
+      // They also need self-contained undo/redo, but the two
       // backends get there differently: CodeMirror should keep its native
       // local history, while embedded Slate must route through this wrapper.
       undoMode={activeMode === "editor" ? "external" : "local"}
