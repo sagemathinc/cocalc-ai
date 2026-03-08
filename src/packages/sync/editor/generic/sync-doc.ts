@@ -154,6 +154,8 @@ export class SyncDoc extends EventEmitter {
   public readonly opts: SyncOpts;
   public readonly project_id: string; // project_id that contains the doc
   public readonly path: string; // path of the file corresponding to the doc
+  // Canonical document identity used for sync tables and patch streams.
+  private syncPath: string;
   private string_id: string;
   private my_user_id: number;
 
@@ -285,6 +287,7 @@ export class SyncDoc extends EventEmitter {
         this[field] = opts[field];
       }
     }
+    this.syncPath = this.path;
 
     this.client.once("closed", this.close);
 
@@ -380,6 +383,45 @@ export class SyncDoc extends EventEmitter {
       this.before_change = this.doc;
     }
     this.emit_change(); // from nothing to something.
+  });
+
+  private resolveCanonicalSyncFsPath = async (
+    path: string,
+  ): Promise<string> => {
+    const fs = this.fs as any;
+    if (typeof fs?.canonicalSyncFsPath === "function") {
+      try {
+        const canonical = await fs.canonicalSyncFsPath(path);
+        if (typeof canonical === "string" && canonical.length > 0) {
+          return canonical;
+        }
+      } catch {
+        // Older file servers may not expose this helper yet.
+      }
+    }
+    if (typeof fs?.realpath === "function") {
+      try {
+        const canonical = await fs.realpath(path);
+        if (typeof canonical === "string" && canonical.length > 0) {
+          return canonical;
+        }
+      } catch {
+        // Keep the original path if the backend cannot canonicalize it.
+      }
+    }
+    return path;
+  };
+
+  private canonicalizeFsIdentity = reuseInFlight(async (): Promise<void> => {
+    if (this.opts.string_id !== undefined) {
+      return;
+    }
+    const canonicalPath = await this.resolveCanonicalSyncFsPath(this.path);
+    if (canonicalPath === this.syncPath) {
+      return;
+    }
+    this.syncPath = canonicalPath;
+    this.string_id = schema.client_db.sha1(this.project_id, canonicalPath);
   });
 
   /* Set this user's cursors to the given locs. */
@@ -881,11 +923,11 @@ export class SyncDoc extends EventEmitter {
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
-          path: this.path,
+          path: this.syncPath,
         },
         stream: true,
         atomic: true,
-        desc: { path: this.path },
+        desc: { path: this.syncPath },
         start_seq: this.last_seq,
         ephemeral,
         noAutosave: this.noAutosave,
@@ -902,11 +944,11 @@ export class SyncDoc extends EventEmitter {
           synctable = await this.client.synctable_conat(query, {
             obj: {
               project_id: this.project_id,
-              path: this.path,
+              path: this.syncPath,
             },
             stream: true,
             atomic: true,
-            desc: { path: this.path },
+            desc: { path: this.syncPath },
             ephemeral,
             noAutosave: this.noAutosave,
           });
@@ -949,12 +991,12 @@ export class SyncDoc extends EventEmitter {
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
-          path: this.path,
+          path: this.syncPath,
         },
         stream: false,
         atomic: false,
         immutable: true,
-        desc: { path: this.path },
+        desc: { path: this.syncPath },
         ephemeral,
         noAutosave: this.noAutosave,
       });
@@ -962,7 +1004,7 @@ export class SyncDoc extends EventEmitter {
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
-          path: this.path,
+          path: this.syncPath,
         },
         stream: false,
         atomic: true,
@@ -970,7 +1012,7 @@ export class SyncDoc extends EventEmitter {
         // for now just putting a 1-day limit on the ipywidgets table
         // so we don't waste a ton of space.
         config: { max_age: 1000 * 60 * 60 * 24 },
-        desc: { path: this.path },
+        desc: { path: this.syncPath },
         ephemeral: true, // ipywidgets state always ephemeral
         noAutosave: this.noAutosave,
       });
@@ -978,13 +1020,13 @@ export class SyncDoc extends EventEmitter {
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
-          path: this.path,
+          path: this.syncPath,
         },
         stream: false,
         atomic: true,
         immutable: true,
         config: { max_age: 5 * 60 * 1000 },
-        desc: { path: this.path },
+        desc: { path: this.syncPath },
         ephemeral: true, // eval state is always ephemeral
         noAutosave: this.noAutosave,
       });
@@ -992,12 +1034,12 @@ export class SyncDoc extends EventEmitter {
       synctable = await this.client.synctable_conat(query, {
         obj: {
           project_id: this.project_id,
-          path: this.path,
+          path: this.syncPath,
         },
         stream: false,
         atomic: true,
         immutable: true,
-        desc: { path: this.path },
+        desc: { path: this.syncPath },
         ephemeral,
         noAutosave: this.noAutosave,
       });
@@ -1026,7 +1068,7 @@ export class SyncDoc extends EventEmitter {
         {
           string_id: this.string_id,
           project_id: this.project_id,
-          path: this.path,
+          path: this.syncPath,
           users: null,
           last_snapshot: null,
           last_seq: null,
@@ -1077,6 +1119,7 @@ export class SyncDoc extends EventEmitter {
     // Ensure we load syncstring metadata (including last_snapshot/last_seq)
     // before opening the patches table, so we don't fetch the entire history
     // when a snapshot is available.
+    await this.canonicalizeFsIdentity();
     await this.init_syncstring_table();
     // Prime backend sync-fs reconciliation first so the patch stream reflects
     // current on-disk content before we load it into this client session.
@@ -1787,7 +1830,7 @@ export class SyncDoc extends EventEmitter {
     if (this.useConat && this.client.pubsub_conat) {
       const table = await this.client.pubsub_conat({
         project_id: this.project_id,
-        path: this.path,
+        path: this.syncPath,
         name: "cursors",
       });
       const listeners: Array<(state: unknown, clientId: string) => void> = [];
@@ -2050,7 +2093,7 @@ export class SyncDoc extends EventEmitter {
     const obj = {
       string_id: this.string_id,
       project_id: this.project_id,
-      path: this.path,
+      path: this.syncPath,
       last_snapshot: this.last_snapshot,
       users: this.users,
       doctype: JSON.stringify(this.doctype),
@@ -2113,9 +2156,11 @@ export class SyncDoc extends EventEmitter {
       // @ts-ignore
       this.project_id = x.project_id;
     }
+    if (x.string_id) {
+      this.string_id = x.string_id;
+    }
     if (x.path) {
-      // @ts-ignore
-      this.path = x.path;
+      this.syncPath = x.path;
     }
 
     const settings = data.get("settings", Map());

@@ -171,6 +171,7 @@ export interface Filesystem {
   readdir(path: string, options: { withFileTypes: true }): Promise<IDirent[]>;
   readlink: (path: string) => Promise<string>;
   realpath: (path: string) => Promise<string>;
+  canonicalSyncFsPath?: (path: string) => Promise<string>;
   rename: (oldPath: string, newPath: string) => Promise<void>;
   rm: (path: string | string[], options?) => Promise<void>;
   rmdir: (path: string, options?) => Promise<void>;
@@ -504,6 +505,20 @@ export async function fsServer({
     async realpath(path: string) {
       return await (await fs(this.subject)).realpath(path);
     },
+    async canonicalSyncFsPath(path: string) {
+      const filesystem = await fs(this.subject);
+      if (typeof filesystem.canonicalSyncFsPath === "function") {
+        return await filesystem.canonicalSyncFsPath(path);
+      }
+      if (typeof filesystem.realpath === "function") {
+        try {
+          return await filesystem.realpath(path);
+        } catch {
+          return path;
+        }
+      }
+      return path;
+    },
     async syncFsWatch(path: string, active: boolean = true, info?: any) {
       return await (await fs(this.subject)).syncFsWatch(path, active, info);
     },
@@ -665,9 +680,9 @@ async function writeFileDeltaImpl(
       saveLast,
     );
   } catch (err: any) {
-      if (!PATCH_FALLBACK_CODES.has(err?.code)) {
-        throw err;
-      }
+    if (!PATCH_FALLBACK_CODES.has(err?.code)) {
+      throw err;
+    }
     await writeFile(path, content, saveLast);
   }
 }

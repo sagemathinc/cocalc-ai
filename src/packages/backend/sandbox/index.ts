@@ -817,7 +817,7 @@ export class SandboxedFilesystem {
     return rel.startsWith("/") ? rel : join(this.path, rel);
   };
 
-  private canonicalSyncFsWatchPath = async (path: string): Promise<string> => {
+  canonicalSyncFsPath = async (path: string): Promise<string> => {
     const { pathInSandbox, sandboxBasePath, absoluteScratchAlias } =
       await this.resolvePathInSandbox(path);
     const compareBase = this.unsafeMode
@@ -2297,7 +2297,7 @@ export class SandboxedFilesystem {
       doctype?: any;
     },
   ): Promise<void> => {
-    const syncPath = await this.canonicalSyncFsWatchPath(path);
+    const syncPath = await this.canonicalSyncFsPath(path);
     const project_id = info?.project_id ?? this.host;
     await globalSyncFsService.heartbeat(syncPath, active, {
       project_id,

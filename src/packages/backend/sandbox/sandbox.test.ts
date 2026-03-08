@@ -141,7 +141,7 @@ describeIfLinux("sync-fs watch identity canonicalization", () => {
     await writeFile(join(home, "real", "tracked.txt"), "x");
     await symlink("real", join(home, "link"));
 
-    expect(await (fs as any).canonicalSyncFsWatchPath("link/tracked.txt")).toBe(
+    expect(await (fs as any).canonicalSyncFsPath("link/tracked.txt")).toBe(
       join(home, "real", "tracked.txt"),
     );
   });
@@ -150,7 +150,7 @@ describeIfLinux("sync-fs watch identity canonicalization", () => {
     await mkdir(join(home, "real-dir"), { recursive: true });
     await symlink("real-dir", join(home, "link-dir"));
 
-    expect(await (fs as any).canonicalSyncFsWatchPath("link-dir/new.txt")).toBe(
+    expect(await (fs as any).canonicalSyncFsPath("link-dir/new.txt")).toBe(
       join(home, "real-dir", "new.txt"),
     );
   });
