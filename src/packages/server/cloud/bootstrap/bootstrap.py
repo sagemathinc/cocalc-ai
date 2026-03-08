@@ -1393,11 +1393,32 @@ def verify_runtime_sudoers(cfg: BootstrapConfig) -> None:
 def configure_cloudflared(cfg: BootstrapConfig) -> None:
     if not cfg.cloudflared.enabled:
         return
-    log_line(cfg, "bootstrap: installing cloudflared")
-    arch = cfg.expected_arch
-    deb_name = f"cloudflared-linux-{arch}.deb"
-    run_cmd(cfg, ["curl", "-fsSL", "-o", "/tmp/cloudflared.deb", f"https://github.com/cloudflare/cloudflared/releases/latest/download/{deb_name}"], "download cloudflared")
-    run_cmd(cfg, ["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared")
+    configure_cloudflared_with_options(cfg, install_package=True)
+
+
+def configure_cloudflared_with_options(
+    cfg: BootstrapConfig, *, install_package: bool
+) -> None:
+    if not cfg.cloudflared.enabled:
+        return
+    if install_package:
+        log_line(cfg, "bootstrap: installing cloudflared")
+        arch = cfg.expected_arch
+        deb_name = f"cloudflared-linux-{arch}.deb"
+        run_cmd(
+            cfg,
+            [
+                "curl",
+                "-fsSL",
+                "-o",
+                "/tmp/cloudflared.deb",
+                f"https://github.com/cloudflare/cloudflared/releases/latest/download/{deb_name}",
+            ],
+            "download cloudflared",
+        )
+        run_cmd(cfg, ["dpkg", "-i", "/tmp/cloudflared.deb"], "install cloudflared")
+    else:
+        log_line(cfg, "bootstrap: reconciling cloudflared config")
     Path("/etc/cloudflared").mkdir(parents=True, exist_ok=True)
     if cfg.cloudflared.token:
         Path("/etc/cloudflared/token.env").write_text(f"CLOUDFLARED_TOKEN={cfg.cloudflared.token}\n", encoding="utf-8")
@@ -1454,7 +1475,8 @@ Type=simple
     unit += "\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n"
     Path("/etc/systemd/system/cocalc-cloudflared.service").write_text(unit, encoding="utf-8")
     run_cmd(cfg, ["systemctl", "daemon-reload"], "daemon-reload")
-    run_cmd(cfg, ["systemctl", "enable", "--now", "cocalc-cloudflared"], "enable cloudflared")
+    run_cmd(cfg, ["systemctl", "enable", "cocalc-cloudflared"], "enable cloudflared")
+    run_cmd(cfg, ["systemctl", "restart", "cocalc-cloudflared"], "restart cloudflared")
 
 
 def install_gpu_support(cfg: BootstrapConfig) -> None:
@@ -1572,7 +1594,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument(
         "--only",
-        help="Comma-separated subset (project_bundle, project_host_bundle, tools_bundle)",
+        help="Comma-separated subset (project_bundle, project_host_bundle, tools_bundle, cloudflared)",
     )
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
@@ -1591,6 +1613,8 @@ def main(argv: list[str]) -> int:
                 extract_bundle(cfg, cfg.project_bundle)
             if "tools_bundle" in only:
                 extract_bundle(cfg, cfg.tools_bundle)
+            if "cloudflared" in only:
+                configure_cloudflared_with_options(cfg, install_package=False)
             return 0
         ensure_platform(cfg)
         image_size_gb = compute_image_size(cfg)

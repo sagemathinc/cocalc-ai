@@ -836,13 +836,16 @@ async function writeCloudflaredConfig(opts: {
   await chmod(opts.path, 0o600);
 }
 
-function appPublicWildcardHostname(dns?: string): string | undefined {
+function appPublicWildcardHostname(dns?: string, suffix?: string): string | undefined {
   const raw = clean(dns)?.toLowerCase();
   if (!raw) return;
   const parts = raw.split(".").filter(Boolean);
   if (!parts.length) return;
   const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
-  return `*.${root}`;
+  const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
+  const normalizedSuffix = clean(suffix)?.toLowerCase() || "app";
+  const wildcardLabel = ["*", normalizedSuffix, prefix].filter(Boolean).join("-");
+  return `${wildcardLabel}.${root}`;
 }
 
 async function loadCloudflaredStateFile(
@@ -966,7 +969,10 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   }
 
   const { origin, noTLSVerify } = resolveCloudflaredOrigin();
-  const appPublicWildcard = appPublicWildcardHostname(settings.project_hosts_dns);
+  const appPublicWildcard = appPublicWildcardHostname(
+    settings.project_hosts_dns,
+    settings.project_hosts_app_public_subdomain_suffix,
+  );
   await writeCloudflaredCredentials(credentialsPath, tunnel);
   await writeCloudflaredConfig({
     path: configPath,
