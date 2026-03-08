@@ -19,6 +19,42 @@ the markdown editor a reliable primitive that can be used across CoCalc and in
 future apps, including chat, comments, notes, notebook cells, task descriptions,
 and agent-facing workflows.
 
+## Status Snapshot
+
+This document started as a forward-looking plan. It now needs to be read as a
+hybrid of:
+
+1. architecture record for work already completed
+2. checklist for the remaining cleanup
+
+Current overall status:
+
+1. Phase 0: completed
+2. Phase 1: completed
+3. Phase 2: mostly completed
+4. Phase 3: partially completed
+5. Phase 4: mostly completed for the current embedded-editor targets
+6. Phase 5: partially completed
+7. Phase 6: intentionally deferred
+8. Phase 7: not started
+
+What is already true:
+
+1. the multimode wrapper now has explicit shared types, backend adapters,
+   extracted mode/focus/selection helpers, and much stronger regression tests
+2. the old blur timeout heuristic is gone
+3. undo ownership is explicit
+4. Slate local undo/redo is now supported officially via opt-in `slate-history`
+5. chat composer and git review note/comment editors have already been migrated
+   off compensating wrapper-owned undo hacks
+
+What is still open:
+
+1. more selection cleanup remains
+2. more embedded consumers still need migration
+3. browser-level coverage is still lighter than ideal
+4. backend evaluation is intentionally not the current priority
+
 ## Current Scope
 
 Right now the multimode markdown editor supports exactly two editing backends:
@@ -29,6 +65,13 @@ Right now the multimode markdown editor supports exactly two editing backends:
 This plan assumes those remain the starting point, but it explicitly allows for
 replacing one or both backends if that is the highest-confidence path to a
 better component.
+
+Current project direction:
+
+1. continue improving the current Slate + CM5 implementation first
+2. keep future backend replacement possible
+3. do not actively spend time on CM6 / ProseMirror spikes unless the current
+   architecture work stalls or a replacement becomes clearly necessary
 
 In particular, the plan should support evaluation of:
 
@@ -493,6 +536,15 @@ against multiple backend combinations.
 
 ## Phase 0: Document The Contract And Freeze Regressions
 
+Status: completed
+
+Completed work:
+
+1. characterization tests were added for the multimode shell, stale callback
+   behavior, focus/blur behavior, selection handoff, and backend wrapper
+   contracts
+2. bug reproduction is now much less dependent on manual rediscovery
+
 Deliverables:
 
 1. document the current and target public contract
@@ -514,6 +566,14 @@ Acceptance:
 
 ## Phase 1: Extract Types And Adapter Boundary Without Behavior Change
 
+Status: completed
+
+Completed work:
+
+1. shared shell/backend contracts live in `types.ts`
+2. explicit backend adapters exist for CodeMirror and Slate
+3. the multimode shell is much smaller and mostly orchestration now
+
 Deliverables:
 
 1. `types.ts` for shell and adapter contracts
@@ -533,6 +593,21 @@ Acceptance:
 
 ## Phase 2: Focus And Blur Cleanup
 
+Status: mostly completed
+
+Completed work:
+
+1. the `ignoreBlur` timeout heuristic was removed
+2. focus/interaction state was moved into an explicit hook
+3. mode-switch interaction blur suppression is now state-driven instead of
+   timeout-driven
+4. several send/focus regressions were fixed on top of that work
+
+Remaining work:
+
+1. keep tightening browser-level focus behavior in real embedded consumers
+2. continue reducing backend-specific surprises in imperative focus behavior
+
 Deliverables:
 
 1. remove `ignoreBlur` timeout heuristics
@@ -548,6 +623,23 @@ Acceptance:
 
 ## Phase 3: Selection And Mode-Switch Cleanup
 
+Status: partially completed
+
+Completed work:
+
+1. selection retry logic was extracted into utilities
+2. explicit selection-readiness signaling was added
+3. multimode selection state was moved into its own hook
+4. typed markdown-position bridging exists now
+5. browser coverage exists for immediate post-switch typing staying live
+
+Remaining work:
+
+1. further reduce retry-oriented behavior in favor of readiness/event-driven
+   handoff
+2. strengthen browser-level verification of exact selection/caret preservation
+3. continue auditing remaining mode-switch edge cases in real consumers
+
 Deliverables:
 
 1. replace pending selection retry loops with ready-based application
@@ -562,6 +654,21 @@ Acceptance:
 3. no repeated `setTimeout` retries are needed for normal flows
 
 ## Phase 4: Undo/Redo Architecture
+
+Status: mostly completed
+
+Completed work:
+
+1. undo ownership is explicit
+2. local undo now works in both backends for the migrated embedded-editor
+   contexts
+3. upstream Slate local history is enabled via opt-in `slate-history`
+4. the old rich-text no-op local undo behavior is gone
+
+Remaining work:
+
+1. continue migrating remaining embedded consumers onto the local-undo path
+2. keep host-controlled undo opt-in only
 
 Deliverables:
 
@@ -580,10 +687,12 @@ Acceptance:
 
 Target consumers:
 
-1. chat composer
-2. chat message/comment editors
-3. git commit note editor
-4. task editing surfaces
+1. chat composer: done
+2. git commit note editor and git review comments: done
+3. chat message/comment editors: still open in part
+4. messages compose editor in `src/packages/frontend/messages/compose.tsx`:
+   not started
+5. task editing surfaces: not started
 
 Deliverables:
 
@@ -591,12 +700,29 @@ Deliverables:
 2. adopt the new imperative API where needed
 3. simplify focus handling in callers
 
+Status: partially completed
+
+Notes:
+
+1. the messages compose editor is now the clearest remaining migration target
+2. today it still uses a syncstring-backed pseudo-history model with
+   `versions()`, `undo()`, `redo()`, and a visible slider/fake timetravel UI
+   instead of local editor undo/redo
+3. that surface should be migrated to the new local-undo model and simplified
+
 Acceptance:
 
 1. recent bug-fix patterns no longer require guessing about editor internals
 2. consumers rely on documented behavior, not timing luck
 
 ## Phase 6: Backend Evaluation Spike
+
+Status: intentionally deferred
+
+Current decision:
+
+1. do not spend active project time on backend spikes right now
+2. keep the current architecture ready for future evaluation if needed
 
 This phase is a deliberate evaluation, not a commitment to rewrite.
 
@@ -625,6 +751,8 @@ Decision:
 
 ## Phase 7: Incremental Migration
 
+Status: not started
+
 If a replacement backend wins:
 
 1. migrate one mode first
@@ -638,20 +766,22 @@ Acceptance:
 
 ## Recommended Immediate Priorities
 
-If work begins now, the best order is:
+The next best order is:
 
-1. Phase 0 characterization tests
-2. Phase 1 typed adapter extraction
-3. Phase 2 focus/blur cleanup
-4. Phase 4 undo/redo architecture for embedded editors
-5. Phase 3 selection/mode-switch cleanup
+1. finish Phase 5 by migrating the messages compose editor off syncstring
+   pseudo-undo and onto local editor undo/redo
+2. audit remaining embedded consumers such as task/message editing surfaces
+3. continue Phase 3 cleanup with more browser-level selection and mode-switch
+   coverage
+4. keep backend evaluation deferred unless the current architecture work stops
+   paying off
 
 Reason:
 
-1. recent bugs are dominated by focus and hidden lifecycle behavior
-2. undo/redo is a product requirement for embedded editors
-3. selection cleanup becomes easier once adapters and focus semantics are
-   explicit
+1. the biggest architectural work has already landed
+2. the remaining value is now mostly in consumer migration and hardening
+3. the messages compose editor is a conspicuous remaining embedded-editor
+   outlier
 
 ## Exit Criteria
 
