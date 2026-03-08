@@ -311,9 +311,64 @@ function formatBytes(value?: number): string {
   return `${size.toFixed(digits)} ${units[unit]}`;
 }
 
+function formatCount(value?: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  return Math.round(n).toLocaleString();
+}
+
+function formatLatency(value?: number | null): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "n/a";
+  return `${Math.round(n).toLocaleString()} ms`;
+}
+
+function formatRelativeTime(msAgo: number): string {
+  const seconds = Math.max(1, Math.round(msAgo / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 function formatLastHit(last_hit_ms?: number): string {
   if (!last_hit_ms) return "never";
-  return new Date(last_hit_ms).toLocaleString();
+  const ts = new Date(last_hit_ms);
+  const delta = Date.now() - last_hit_ms;
+  if (!Number.isFinite(delta) || delta < 0) return ts.toLocaleString();
+  return `${formatRelativeTime(delta)} (${ts.toLocaleString()})`;
+}
+
+function MetricStat({
+  label,
+  value,
+  subtle,
+}: {
+  label: string;
+  value: string;
+  subtle?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid #f0f0f0",
+        borderRadius: "8px",
+        padding: "8px 10px",
+        background: subtle ? "#fcfcfc" : "#fff",
+        minHeight: "58px",
+      }}
+    >
+      <div style={{ fontSize: "11px", opacity: 0.72, marginBottom: "3px" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "14px", fontWeight: 600, lineHeight: 1.25 }}>
+        {value}
+      </div>
+    </div>
+  );
 }
 
 function MetricsSparkline({
@@ -2235,29 +2290,63 @@ export function AppServerPanel({
                     <div style={{ fontWeight: 600, fontSize: "12px" }}>
                       Recent usage
                     </div>
-                    <MetricsSparkline
-                      values={metrics.history.map((item) => item.requests)}
-                    />
+                    <div style={{ display: "grid", justifyItems: "end", gap: "2px" }}>
+                      <MetricsSparkline
+                        values={metrics.history.map((item) => item.requests)}
+                      />
+                      <div style={{ fontSize: "11px", opacity: 0.65 }}>
+                        request trend
+                      </div>
+                    </div>
                   </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-                      gap: "6px 10px",
-                      fontSize: "12px",
-                    }}
-                  >
-                    <div>last hit: {formatLastHit(metrics.last_hit_ms)}</div>
-                    <div>requests: {metrics.totals.requests}</div>
-                    <div>egress: {formatBytes(metrics.totals.bytes_sent)}</div>
-                    <div>ingress: {formatBytes(metrics.totals.bytes_received)}</div>
-                    <div>active websockets: {metrics.active_websockets}</div>
-                    <div>wake count: {metrics.totals.wake_count}</div>
-                    <div>public requests: {metrics.totals.public_requests}</div>
-                    <div>private requests: {metrics.totals.private_requests}</div>
-                    <div>p50 latency: {metrics.totals.p50_ms ?? 0} ms</div>
-                    <div>p95 latency: {metrics.totals.p95_ms ?? 0} ms</div>
-                  </div>
+                  {metrics.totals.requests > 0 ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
+                        gap: "8px",
+                      }}
+                    >
+                      <MetricStat
+                        label="Last hit"
+                        value={formatLastHit(metrics.last_hit_ms)}
+                      />
+                      <MetricStat
+                        label="Requests"
+                        value={formatCount(metrics.totals.requests)}
+                      />
+                      <MetricStat
+                        label="Bytes sent"
+                        value={formatBytes(metrics.totals.bytes_sent)}
+                      />
+                      <MetricStat
+                        label="Bytes received"
+                        value={formatBytes(metrics.totals.bytes_received)}
+                      />
+                      <MetricStat
+                        label="Active websockets"
+                        value={formatCount(metrics.active_websockets)}
+                      />
+                      <MetricStat
+                        label="Wake-ups"
+                        value={formatCount(metrics.totals.wake_count)}
+                      />
+                      <MetricStat
+                        label="Public / private"
+                        value={`${formatCount(metrics.totals.public_requests)} / ${formatCount(metrics.totals.private_requests)}`}
+                        subtle
+                      />
+                      <MetricStat
+                        label="Latency p50 / p95"
+                        value={`${formatLatency(metrics.totals.p50_ms)} / ${formatLatency(metrics.totals.p95_ms)}`}
+                        subtle
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "12px", opacity: 0.78 }}>
+                      No app traffic recorded yet.
+                    </div>
+                  )}
                 </div>
               ) : null}
               {isExpanded && isPublic ? (
