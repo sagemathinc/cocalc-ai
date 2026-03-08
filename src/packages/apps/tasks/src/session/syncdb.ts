@@ -25,6 +25,7 @@ import {
   getTask,
   listTasks,
   patchTasks,
+  removeTasks,
   searchTasks,
   setTaskDone,
   updateTask,
@@ -113,6 +114,17 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = patchTasks(snapshot, patches);
+    this.persistResult(result.snapshot, result.changedTaskIds);
+    return {
+      changedTaskIds: result.changedTaskIds,
+      revision: result.revision,
+    };
+  }
+
+  async removeTasks(taskIds: readonly string[]) {
+    this.assertWritable();
+    const snapshot = this.readSnapshot();
+    const result = removeTasks(snapshot, taskIds);
     this.persistResult(result.snapshot, result.changedTaskIds);
     return {
       changedTaskIds: result.changedTaskIds,

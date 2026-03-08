@@ -122,6 +122,26 @@ export function patchTasks(
   };
 }
 
+export function removeTasks(
+  snapshot: TaskListSnapshot,
+  taskIds: readonly string[],
+): TaskOperationResult {
+  if (taskIds.length === 0) {
+    return {
+      snapshot,
+      changedTaskIds: [],
+      revision: snapshot.revision,
+    };
+  }
+  const removed = new Set(taskIds);
+  const nextTasks = snapshot.tasks.filter((task) => !removed.has(task.task_id));
+  return {
+    snapshot: createTaskSnapshot(nextTasks, snapshot.revision),
+    changedTaskIds: [...removed],
+    revision: snapshot.revision,
+  };
+}
+
 export function updateTask(
   snapshot: TaskListSnapshot,
   taskId: string,

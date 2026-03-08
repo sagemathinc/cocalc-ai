@@ -19,6 +19,7 @@ import {
   getTask,
   listTasks,
   patchTasks,
+  removeTasks,
   searchTasks,
   setTaskDone,
   updateTask,
@@ -69,6 +70,16 @@ export class InMemoryTasksSession implements TasksSession {
   async patchTasks(patches: readonly TaskPatch[]) {
     this.assertOpen();
     const result = patchTasks(this.snapshot, patches);
+    this.snapshot = result.snapshot;
+    return {
+      changedTaskIds: result.changedTaskIds,
+      revision: result.revision,
+    };
+  }
+
+  async removeTasks(taskIds: readonly string[]) {
+    this.assertOpen();
+    const result = removeTasks(this.snapshot, taskIds);
     this.snapshot = result.snapshot;
     return {
       changedTaskIds: result.changedTaskIds,

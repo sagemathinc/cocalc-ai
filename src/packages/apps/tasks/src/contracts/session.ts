@@ -23,6 +23,7 @@ export interface TasksSession {
   search(query: TaskQuery): Promise<TasksSearchResult>;
   createTask(input?: TaskCreateInput): Promise<TaskRecord>;
   patchTasks(patches: readonly TaskPatch[]): Promise<TaskMutationResult>;
+  removeTasks(taskIds: readonly string[]): Promise<TaskMutationResult>;
   setDone(taskId: string, done: boolean): Promise<TaskMutationResult>;
   updateTask(
     taskId: string,
