@@ -668,7 +668,7 @@ type EditorHistoryEntry = {
   at: number;
 };
 
-function MarkdownHistoryInput({
+export function MarkdownHistoryInput({
   historyId,
   value,
   onChange,
@@ -752,6 +752,8 @@ function MarkdownHistoryInput({
         const next = history[historyIndexRef.current]?.value ?? "";
         applyHistoryValue(next);
       }}
+      undoMode="local"
+      redoMode="local"
     />
   );
 }

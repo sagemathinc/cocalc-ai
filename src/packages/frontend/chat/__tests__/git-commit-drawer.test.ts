@@ -1,10 +1,27 @@
+import React from "react";
 import {
+  MarkdownHistoryInput,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
 } from "../git-commit-drawer";
+import { render } from "@testing-library/react";
+
+let latestMarkdownInputProps: any = null;
+
+jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
+  __esModule: true,
+  default: (props: any) => {
+    latestMarkdownInputProps = props;
+    return null;
+  },
+}));
 
 describe("git commit drawer merge commit formatting", () => {
+  beforeEach(() => {
+    latestMarkdownInputProps = null;
+  });
+
   it("detects merge commits from summary headers", () => {
     expect(
       isMergeCommitSummary({
@@ -58,5 +75,19 @@ describe("git commit drawer merge commit formatting", () => {
       "-U7",
       "HEAD",
     ]);
+  });
+
+  it("forces local undo ownership for git review note/comment editors", () => {
+    render(
+      React.createElement(MarkdownHistoryInput, {
+        historyId: "git-inline-draft:file.ts:1",
+        value: "hello",
+        onChange: () => {},
+      }),
+    );
+
+    expect(latestMarkdownInputProps).toBeTruthy();
+    expect(latestMarkdownInputProps.undoMode).toBe("local");
+    expect(latestMarkdownInputProps.redoMode).toBe("local");
   });
 });
