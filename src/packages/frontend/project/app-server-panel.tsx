@@ -346,9 +346,9 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       preferredPort: "6002",
       serviceOpenMode: "port",
       healthPath: "/lab",
-      installCommand: "python3 -m pip install --user jupyterlab",
+      installCommand: "apt-get update && apt-get install -y jupyterlab jupyter",
       installHint:
-        "JupyterLab is a Python package. Install it into the workspace environment, then start this app again.",
+        "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
       installAgentPrompt:
         "Install JupyterLab in the current workspace so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
       command:
