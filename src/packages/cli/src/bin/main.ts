@@ -234,7 +234,7 @@ type LroStatus = {
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
 const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
-const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
+const WORKSPACE_CONTEXT_FILENAME = ".cocalc-project";
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const HOST_CONNECTION_CACHE_TTL_MS = 15_000;
@@ -255,7 +255,8 @@ function parseLroScopeType(value: string): LroScopeType {
 }
 
 type WorkspaceContextRecord = {
-  workspace_id: string;
+  workspace_id?: string;
+  project_id?: string;
   title?: string;
   set_at?: string;
 };
@@ -265,9 +266,13 @@ function workspaceContextPath(cwd = process.cwd()): string {
 }
 
 function saveWorkspaceContext(context: WorkspaceContextRecord, cwd = process.cwd()): void {
+  const project_id = `${context.project_id ?? context.workspace_id ?? ""}`.trim();
+  if (!isValidUUID(project_id)) {
+    throw new Error("project context requires a valid project_id UUID");
+  }
   writeFileSync(
     workspaceContextPath(cwd),
-    `${JSON.stringify({ ...context, set_at: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ project_id, title: context.title, set_at: new Date().toISOString() }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -279,7 +284,7 @@ function readWorkspaceContext(cwd = process.cwd()): WorkspaceContextRecord | und
   if (!raw) return undefined;
 
   if (isValidUUID(raw)) {
-    return { workspace_id: raw };
+    return { workspace_id: raw, project_id: raw };
   }
 
   let parsed: any;
@@ -287,19 +292,25 @@ function readWorkspaceContext(cwd = process.cwd()): WorkspaceContextRecord | und
     parsed = JSON.parse(raw);
   } catch (err) {
     throw new Error(
-      `invalid workspace context file at ${path}: ${
+      `invalid project context file at ${path}: ${
         err instanceof Error ? err.message : `${err}`
       }`,
     );
   }
-  const workspace_id = parsed?.workspace_id;
-  if (typeof workspace_id !== "string" || !isValidUUID(workspace_id)) {
+  const project_id =
+    typeof parsed?.project_id === "string"
+      ? parsed.project_id
+      : typeof parsed?.workspace_id === "string"
+        ? parsed.workspace_id
+        : undefined;
+  if (typeof project_id !== "string" || !isValidUUID(project_id)) {
     throw new Error(
-      `invalid workspace context file at ${path}: expected JSON with workspace_id UUID`,
+      `invalid project context file at ${path}: expected JSON with project_id UUID`,
     );
   }
   return {
-    workspace_id,
+    workspace_id: project_id,
+    project_id,
     title: typeof parsed?.title === "string" ? parsed.title : undefined,
     set_at: typeof parsed?.set_at === "string" ? parsed.set_at : undefined,
   };
@@ -1257,7 +1268,7 @@ async function getOrCreateRoutedProjectHostClient(
 ): Promise<RoutedProjectHostClientState> {
   const host_id = workspace.host_id;
   if (!host_id) {
-    throw new Error("workspace has no assigned host");
+    throw new Error("project has no assigned host");
   }
 
   let connection: HostConnectionInfo | undefined;
@@ -1796,7 +1807,7 @@ async function resolveProxyUrl({
       ? await resolveHost(ctx, workspace.host_id)
       : null;
   if (!host) {
-    throw new Error("workspace has no assigned host; specify --host or start/move the workspace first");
+    throw new Error("project has no assigned host; specify --host or start/move the project first");
   }
 
   const connection = await ctx.hub.hosts.resolveHostConnection({ host_id: host.id });

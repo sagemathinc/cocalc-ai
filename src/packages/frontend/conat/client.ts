@@ -375,7 +375,7 @@ export class ConatClient extends EventEmitter {
   };
 
   // Mint a short-lived project-host auth token for ACP/Codex runtime use.
-  // Returns undefined when this workspace is not project-host routed.
+  // Returns undefined when this project is not project-host routed.
   public getProjectHostAcpBearer = async ({
     project_id,
   }: {
@@ -709,7 +709,7 @@ export class ConatClient extends EventEmitter {
       const routing = this.getProjectRoutingInfo(project_id!);
       if (!routing && !PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name)) {
         throw Error(
-          `unable to route '${name}' to project-host for workspace ${project_id}; host routing info unavailable (open the workspace first so host info is loaded)`,
+          `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
         );
       }
       if (routing) {
@@ -788,7 +788,7 @@ export class ConatClient extends EventEmitter {
     const routing = this.getProjectRoutingInfo(project_id);
     if (!routing) {
       throw Error(
-        `unable to route publish to project-host for workspace ${project_id}; host routing info unavailable`,
+        `unable to route publish to project-host for project ${project_id}; host routing info unavailable`,
       );
     }
     const cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });

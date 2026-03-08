@@ -4,10 +4,10 @@ export const BROWSER_EXEC_API_DECLARATION = `/**
  *
  * Quick start:
  *   pnpm cli browser exec-api
- *   pnpm cli browser exec <workspace> 'const files = api.listOpenFiles(); return files;'
+ *   pnpm cli browser exec <project> 'const files = api.listOpenFiles(); return files;'
  *
  * Useful snippets:
- *   // Close all currently open markdown files in this workspace:
+ *   // Close all currently open markdown files in this project:
  *   const md = api.listOpenFiles().filter((x) => x.path.endsWith(".md"));
  *   await api.closeFiles(md.map((x) => x.path));
  *
@@ -25,7 +25,7 @@ export const BROWSER_EXEC_API_DECLARATION = `/**
  *
  * Notes:
  * - paths are absolute (e.g. "/home/user/file.txt")
- * - api.projectId is the workspace id passed to browser exec
+ * - api.projectId is the project id passed to browser exec
  * - In prod posture, if policy.allow_raw_exec is not true, exec runs in a
  *   QuickJS sandbox with a constrained API (api.navigate/click/type/...) where
  *   each api call executes immediately via policy-gated host actions and
@@ -176,7 +176,6 @@ export type BrowserInstallHelloWorldOptions = {
 
 export type BrowserExecApi = {
   projectId: string;
-  workspaceId: string;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (

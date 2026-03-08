@@ -2,7 +2,7 @@
  * System command execution helpers.
  *
  * This module centralizes process spawning, command existence checks, and ssh/
- * cloudflared utility probes used by host and workspace command handlers.
+ * cloudflared utility probes used by host and project command handlers.
  */
 import { spawn, spawnSync } from "node:child_process";
 
@@ -62,7 +62,7 @@ export function resolveCloudflaredBinary(): string {
     return "cloudflared";
   }
   throw new Error(
-    `cloudflared is required for workspace ssh via the Cloudflare ssh hostname; install it (${cloudflaredInstallHint()}) or use --direct`,
+    `cloudflared is required for project ssh via the Cloudflare ssh hostname; install it (${cloudflaredInstallHint()}) or use --direct`,
   );
 }
 

@@ -382,7 +382,6 @@ export function createBrowserSessionAutomation({
 
     const api: BrowserExecApi = {
       projectId: project_id,
-      workspaceId: project_id,
       listOpenFiles: (): BrowserOpenFileInfo[] => {
         assertExecNotCanceled(isCanceled);
         const snapshot = buildSessionSnapshot(client);

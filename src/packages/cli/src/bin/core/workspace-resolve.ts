@@ -144,11 +144,11 @@ export async function resolveWorkspace<W extends WorkspaceLike = WorkspaceLike>(
     limit: 25,
   });
   if (!rows.length) {
-    throw new Error(`workspace '${identifier}' not found`);
+    throw new Error(`project '${identifier}' not found`);
   }
   if (rows.length > 1) {
     throw new Error(
-      `workspace name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
+      `project name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
     );
   }
   setCachedWorkspace(ctx, rows[0], workspaceCacheTtlMs);
@@ -178,7 +178,7 @@ export async function resolveWorkspaceFromArgOrContext<W extends WorkspaceLike =
   const context = readWorkspaceContext(currentDir);
   if (!context?.workspace_id) {
     throw new Error(
-      `missing --workspace and no workspace context is set at ${workspaceContextPath(currentDir)}; run 'cocalc ws use --workspace <workspace>'`,
+      `missing --project and no project context is set at ${workspaceContextPath(currentDir)}; run 'cocalc project use --project <project>'`,
     );
   }
   return await resolveWorkspace(ctx, context.workspace_id, workspaceCacheTtlMs);

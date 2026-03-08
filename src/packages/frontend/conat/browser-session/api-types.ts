@@ -85,7 +85,6 @@ export type BrowserInstallHelloOptions = BrowserInstallHelloWorldOptions;
 
 export type BrowserExecApi = {
   projectId: string;
-  workspaceId: string;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (
