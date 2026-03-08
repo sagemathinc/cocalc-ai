@@ -123,6 +123,7 @@ const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
+let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -2647,30 +2648,48 @@ export async function recoverOrphanedAcpTurns(
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
-  // IMPORTANT: initialize sqlite with the same hub.db path used by hub api,
-  // before any ACP queue/lease tables are touched. Otherwise ACP can
-  // accidentally lock the sqlite module onto a fallback cwd-relative file.
-  const sqliteFilename = path.join(data, "hub.db");
+  // IMPORTANT: initialize sqlite with the same path used by the embedding
+  // process before any ACP queue/lease tables are touched. Otherwise ACP can
+  // accidentally lock the sqlite module onto a fallback cwd-relative file or a
+  // Lite-only default that differs from project-host.
+  const sqliteFilename =
+    `${process.env.COCALC_LITE_SQLITE_FILENAME ?? ""}`.trim() ||
+    path.join(data, "hub.db");
   initDatabase({ filename: sqliteFilename });
   conatClient = client;
   blobStore = getBlobstore(client);
 }
 
+export function configureAcpDetachedWorkerRunning(
+  ensureRunning:
+    | typeof ensureAcpWorkerRunning
+    | undefined,
+): void {
+  ensureDetachedWorkerRunning = ensureRunning ?? ensureAcpWorkerRunning;
+}
+
 export async function runDetachedAcpQueueWorker(
   client: ConatClient,
+  options: {
+    idleExitMs?: number | null;
+    restartReason?: string;
+  } = {},
 ): Promise<void> {
   initializeAcpRuntime(client);
   if (typeof (client as any)?.waitUntilSignedIn === "function") {
     await (client as any).waitUntilSignedIn({ timeout: 5000 });
   }
+  const idleExitMs =
+    options.idleExitMs === undefined ? ACP_WORKER_IDLE_EXIT_MS : options.idleExitMs;
+  const restartReason = options.restartReason ?? "worker restart";
   logger.warn("starting ACP queue worker", {
     instance: ACP_INSTANCE_ID,
     pid: process.pid,
     poll_ms: ACP_WORKER_POLL_MS,
-    idle_exit_ms: ACP_WORKER_IDLE_EXIT_MS,
+    idle_exit_ms: idleExitMs,
   });
   await recoverOrphanedAcpTurns(client);
-  markRunningAcpJobsInterrupted("worker restart");
+  markRunningAcpJobsInterrupted(restartReason);
   let idleSince = 0;
   while (true) {
     kickAllQueuedAcpJobs();
@@ -2681,7 +2700,11 @@ export async function runDetachedAcpQueueWorker(
       idleSince = 0;
     } else if (!idleSince) {
       idleSince = Date.now();
-    } else if (Date.now() - idleSince >= ACP_WORKER_IDLE_EXIT_MS) {
+    } else if (
+      idleExitMs != null &&
+      idleExitMs >= 0 &&
+      Date.now() - idleSince >= idleExitMs
+    ) {
       logger.warn("stopping ACP queue worker after idle timeout", {
         instance: ACP_INSTANCE_ID,
         pid: process.pid,
@@ -3817,7 +3840,7 @@ async function enqueueChatAcpTurn({
         : "queued",
   });
   await stream(null);
-  await ensureAcpWorkerRunning({ force: true });
+  await ensureDetachedWorkerRunning({ force: true });
 }
 
 async function handleAcpControlRequest(
@@ -3888,7 +3911,7 @@ async function handleAcpControlRequest(
         err,
       });
     }
-    await ensureAcpWorkerRunning({ force: true });
+    await ensureDetachedWorkerRunning({ force: true });
     return { ok: true, state: "queued" };
   }
   throw new Error(`unsupported ACP control action: ${request.action}`);
@@ -3907,7 +3930,12 @@ export async function evaluate({
   await executeAcpRequest({ ...request, stream });
 }
 
-export async function init(client: ConatClient): Promise<void> {
+export async function init(
+  client: ConatClient,
+  options: {
+    manageDetachedWorker?: boolean;
+  } = {},
+): Promise<void> {
   logger.debug(
     "initializing ACP conat server",
     "preferContainerExecutor =",
@@ -3933,8 +3961,10 @@ export async function init(client: ConatClient): Promise<void> {
     },
     client,
   );
-  startAcpWorkerSupervisor();
-  await ensureAcpWorkerRunning();
+  if (options.manageDetachedWorker !== false) {
+    startAcpWorkerSupervisor();
+    await ensureDetachedWorkerRunning();
+  }
 }
 
 type BlobReference = {
