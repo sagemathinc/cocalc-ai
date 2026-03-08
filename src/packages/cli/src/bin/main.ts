@@ -61,7 +61,7 @@ import {
 } from "./core/workspace-resolve";
 import { createWorkspaceFileOps } from "./core/workspace-file";
 import { createWorkspaceCodexOps } from "./core/workspace-codex";
-import { createWorkspaceSyncOps } from "./core/workspace-sync";
+import { createProjectSyncOps as createWorkspaceSyncOps } from "./core/workspace-sync";
 import { createWorkspaceTasksOps } from "./core/workspace-tasks";
 import {
   commandExists,
@@ -113,7 +113,7 @@ import {
 } from "./core/lro";
 import { registerOpCommand, type OpCommandDeps } from "./commands/op";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
-import { registerWorkspaceCommand, type WorkspaceCommandDeps } from "./commands/workspace";
+import { registerProjectCommand, type ProjectCommandDeps } from "./commands/project";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
 import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon";
 import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
@@ -1088,6 +1088,21 @@ async function resolveWorkspaceFromArgOrContext(
   });
 }
 
+async function resolveProject(
+  ctx: CommandContext,
+  identifier: string,
+): Promise<WorkspaceRow> {
+  return await resolveWorkspace(ctx, identifier);
+}
+
+async function resolveProjectFromArgOrContext(
+  ctx: CommandContext,
+  identifier?: string,
+  cwd = process.cwd(),
+): Promise<WorkspaceRow> {
+  return await resolveWorkspaceFromArgOrContext(ctx, identifier, cwd);
+}
+
 function normalizeUserSearchName(row: UserSearchResult): string {
   return normalizeUserSearchNameCore(row);
 }
@@ -1149,7 +1164,7 @@ function compactInviteRow(
   const other = outbound ? inviteeName : inviterName;
   return {
     invite_id: invite.invite_id,
-    workspace: invite.project_title ?? invite.project_id,
+    project: invite.project_title ?? invite.project_id,
     direction,
     with: other,
     status: invite.status,
@@ -1363,6 +1378,19 @@ async function resolveWorkspaceFilesystem(
   return { workspace, fs };
 }
 
+async function resolveProjectFilesystem(
+  ctx: CommandContext,
+  projectIdentifier?: string,
+  cwd = process.cwd(),
+): Promise<{ project: WorkspaceRow; fs: FilesystemClient }> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(
+    ctx,
+    projectIdentifier,
+    cwd,
+  );
+  return { project: workspace, fs };
+}
+
 async function resolveWorkspaceProjectApi(
   ctx: CommandContext,
   workspaceIdentifier?: string,
@@ -1379,6 +1407,19 @@ async function resolveWorkspaceProjectApi(
     timeout: Math.max(1_000, Math.min(ctx.timeoutMs, ctx.rpcTimeoutMs)),
   });
   return { workspace, api };
+}
+
+async function resolveProjectProjectApi(
+  ctx: CommandContext,
+  projectIdentifier?: string,
+  cwd = process.cwd(),
+): Promise<{ project: WorkspaceRow; api: ProjectApi }> {
+  const { workspace, api } = await resolveWorkspaceProjectApi(
+    ctx,
+    projectIdentifier,
+    cwd,
+  );
+  return { project: workspace, api };
 }
 
 async function resolveWorkspaceConatClient(
@@ -1410,6 +1451,19 @@ async function resolveWorkspaceConatClient(
     );
   }
   return { workspace, client: routed.client };
+}
+
+async function resolveProjectConatClient(
+  ctx: CommandContext,
+  projectIdentifier?: string,
+  cwd = process.cwd(),
+): Promise<{ project: WorkspaceRow; client: ConatClient }> {
+  const { workspace, client } = await resolveWorkspaceConatClient(
+    ctx,
+    projectIdentifier,
+    cwd,
+  );
+  return { project: workspace, client };
 }
 
 const {
@@ -1454,47 +1508,62 @@ const {
   expandUserPath,
   normalizeSyncKeyBasePath,
   syncKeyPublicPath,
-  normalizeWorkspaceSshConfigPath,
-  normalizeWorkspaceSshHostAlias,
-  workspaceSshConfigBlockMarkers,
-  removeWorkspaceSshConfigBlock,
+  normalizeProjectSshConfigPath,
+  normalizeProjectSshHostAlias,
+  projectSshConfigBlockMarkers,
+  removeProjectSshConfigBlock,
   readSyncPublicKey,
   ensureSyncKeyPair,
-  installSyncPublicKey,
-  resolveWorkspaceSshTarget,
-  resolveWorkspaceSshConnection,
+  installSyncPublicKey: installProjectSyncPublicKey,
+  resolveProjectSshTarget,
+  resolveProjectSshConnection,
   runReflectSyncCli,
   listReflectForwards,
   parseCreatedForwardId,
-  forwardsForWorkspace,
+  forwardsForProject,
   formatReflectForwardRow,
   terminateReflectForwards,
   reflectSyncHomeDir,
   reflectSyncSessionDbPath,
 } = createWorkspaceSyncOps<CommandContext, WorkspaceRow>({
-  resolveWorkspaceFilesystem,
-  resolveWorkspaceFromArgOrContext,
+  resolveProjectFilesystem,
+  resolveProjectFromArgOrContext,
   parseSshServer,
   authConfigPath,
   resolveModule: (specifier) => requireCjs.resolve(specifier),
 });
 
-const {
-  withWorkspaceTasksSession,
-} = createWorkspaceTasksOps<CommandContext, WorkspaceRow>({
+const { withWorkspaceTasksSession } = createWorkspaceTasksOps<
+  CommandContext,
+  WorkspaceRow
+>({
   resolveWorkspaceConatClient,
 });
 
+async function withProjectTasksSession<T>(
+  ctx: CommandContext,
+  options: Parameters<typeof withWorkspaceTasksSession>[1],
+  fn: (args: {
+    project: WorkspaceRow;
+    session: any;
+    path: string;
+  }) => Promise<T>,
+): Promise<T> {
+  return await withWorkspaceTasksSession(ctx, options, async ({ workspace, session, path }) => {
+    return await fn({ project: workspace, session, path });
+  });
+}
+
 const tasksApi = createTasksApi<CommandContext, WorkspaceRow>({
-  withWorkspaceTasksSession,
+  withProjectTasksSession,
 });
 
 const textApi = createLiveTextBinder<CommandContext, WorkspaceRow>({
-  resolveWorkspaceConatClient,
+  resolveProjectConatClient,
 });
 
 const timeTravelApi = createLiveTimeTravelBinder<CommandContext, WorkspaceRow>({
-  resolveWorkspaceConatClient,
+  resolveProjectConatClient,
 });
 
 const exportApi = createExportApi<CommandContext>({
@@ -1664,14 +1733,14 @@ async function confirmHardWorkspaceDelete({
       ? `Only file backups are retained for ${backupRetentionDays} day(s), then purged.`
       : "File backups will be purged immediately.";
   console.error(
-    "WARNING: hard delete immediately and permanently removes workspace metadata (title/description, collaborators, invites, logs, API keys, shares, etc.).",
+    "WARNING: hard delete immediately and permanently removes project metadata (title/description, collaborators, invites, logs, API keys, shares, etc.).",
   );
   console.error(
     "Only file backup data can be restored while retention is active.",
   );
   console.error(backupMessage);
   console.error(
-    `Type project_id '${expected}' to permanently delete workspace '${title?.trim() || workspace_id}'.`,
+    `Type project_id '${expected}' to permanently delete project '${title?.trim() || workspace_id}'.`,
   );
   const rl = createInterface({
     input: process.stdin,
@@ -1715,7 +1784,7 @@ async function resolveProxyUrl({
   port: number;
   hostIdentifier?: string;
 }): Promise<{
-  workspace_id: string;
+  project_id: string;
   host_id: string;
   url: string;
   local_proxy: boolean;
@@ -1748,7 +1817,7 @@ async function resolveProxyUrl({
   }
 
   return {
-    workspace_id: workspace.project_id,
+    project_id: workspace.project_id,
     host_id: host.id,
     local_proxy: !!connection.local_proxy,
     url: `${base}/${workspace.project_id}/proxy/${port}/`,
@@ -1787,6 +1856,8 @@ function emitWorkspaceFileCatHumanContent(content: string): void {
     process.stdout.write("\n");
   }
 }
+
+const emitProjectFileCatHumanContent = emitWorkspaceFileCatHumanContent;
 
 const program = new Command();
 
@@ -1869,57 +1940,57 @@ const authCommandDeps = {
 } satisfies AuthCommandDeps;
 
 registerAuthCommand(program, authCommandDeps);
-const workspaceCommandDeps = {
+const projectCommandDeps = {
   withContext,
   resolveHost,
   queryProjects,
-  workspaceState,
+  projectState: workspaceState,
   toIso,
-  resolveWorkspaceFromArgOrContext,
-  resolveWorkspace,
-  saveWorkspaceContext,
-  workspaceContextPath,
-  clearWorkspaceContext,
+  resolveProjectFromArgOrContext,
+  resolveProject,
+  saveProjectContext: saveWorkspaceContext,
+  projectContextPath: workspaceContextPath,
+  clearProjectContext: clearWorkspaceContext,
   isValidUUID,
-  confirmHardWorkspaceDelete,
+  confirmHardProjectDelete: confirmHardWorkspaceDelete,
   waitForLro,
-  waitForWorkspaceNotRunning,
-  resolveWorkspaceSshConnection,
+  waitForProjectNotRunning: waitForWorkspaceNotRunning,
+  resolveProjectSshConnection,
   ensureSyncKeyPair,
-  installSyncPublicKey,
+  installSyncPublicKey: installProjectSyncPublicKey,
   runSshCheck,
   isLikelySshAuthFailure,
   runSsh,
   runLocalCommand,
   resolveCloudflaredBinary,
-  normalizeWorkspaceSshHostAlias,
-  normalizeWorkspaceSshConfigPath,
-  workspaceSshConfigBlockMarkers,
-  removeWorkspaceSshConfigBlock,
-  emitWorkspaceFileCatHumanContent,
+  normalizeProjectSshHostAlias,
+  normalizeProjectSshConfigPath,
+  projectSshConfigBlockMarkers,
+  removeProjectSshConfigBlock,
+  emitProjectFileCatHumanContent,
   waitForProjectPlacement,
   normalizeSyncKeyBasePath,
   syncKeyPublicPath,
   readSyncPublicKey,
-  resolveWorkspaceSshTarget,
+  resolveProjectSshTarget,
   runReflectSyncCli,
   parseCreatedForwardId,
   listReflectForwards,
   reflectSyncHomeDir,
   reflectSyncSessionDbPath,
   formatReflectForwardRow,
-  forwardsForWorkspace,
+  forwardsForProject,
   terminateReflectForwards,
   readAllStdin,
   buildCodexSessionConfig,
-  workspaceCodexExecData,
+  projectCodexExecData: workspaceCodexExecData,
   streamCodexHumanMessage,
-  workspaceCodexAuthStatusData,
+  projectCodexAuthStatusData: workspaceCodexAuthStatusData,
   durationToMs,
-  workspaceCodexDeviceAuthStartData,
-  workspaceCodexDeviceAuthStatusData,
-  workspaceCodexDeviceAuthCancelData,
-  workspaceCodexAuthUploadFileData,
+  projectCodexDeviceAuthStartData: workspaceCodexDeviceAuthStartData,
+  projectCodexDeviceAuthStatusData: workspaceCodexDeviceAuthStatusData,
+  projectCodexDeviceAuthCancelData: workspaceCodexDeviceAuthCancelData,
+  projectCodexAuthUploadFileData: workspaceCodexAuthUploadFileData,
   normalizeUserSearchName,
   resolveAccountByIdentifier,
   serializeInviteRow,
@@ -1931,37 +2002,37 @@ const workspaceCommandDeps = {
   isDaemonTransportError,
   emitError,
   cliDebug,
-  workspaceFileListData,
-  workspaceFileCatData,
+  projectFileListData: workspaceFileListData,
+  projectFileCatData: workspaceFileCatData,
   readFileLocal,
   asObject,
-  workspaceFilePutData,
+  projectFilePutData: workspaceFilePutData,
   mkdirLocal,
   writeFileLocal,
-  workspaceFileGetData,
-  workspaceFileRmData,
-  workspaceFileMkdirData,
-  workspaceFileRgData,
-  workspaceFileFdData,
+  projectFileGetData: workspaceFileGetData,
+  projectFileRmData: workspaceFileRmData,
+  projectFileMkdirData: workspaceFileMkdirData,
+  projectFileRgData: workspaceFileRgData,
+  projectFileFdData: workspaceFileFdData,
   contextForGlobals,
-  runWorkspaceFileCheckBench,
+  runProjectFileCheckBench: runWorkspaceFileCheckBench,
   printArrayTable,
-  runWorkspaceFileCheck,
+  runProjectFileCheck: runWorkspaceFileCheck,
   closeCommandContext,
   resolveProxyUrl,
-  resolveWorkspaceProjectApi,
+  resolveProjectProjectApi,
   parsePositiveInteger,
   isRedirect,
   extractCookie,
   fetchWithTimeout,
   buildCookieHeader,
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
-} satisfies WorkspaceCommandDeps;
+} satisfies ProjectCommandDeps;
 
-registerWorkspaceCommand(program, workspaceCommandDeps);
+registerProjectCommand(program, projectCommandDeps);
 const opCommandDeps = {
   withContext,
-  resolveWorkspace,
+  resolveProject,
   resolveHost,
   parseLroScopeType,
   serializeLroSummary,
@@ -1996,8 +2067,8 @@ const devCommandDeps = {
   runLocalCommand,
   withContext,
   resolveHost,
-  resolveWorkspaceFromArgOrContext,
-  resolveWorkspaceProjectApi,
+  resolveProjectFromArgOrContext,
+  resolveProjectProjectApi,
   waitForLro,
 } satisfies DevCommandDeps;
 
@@ -2046,7 +2117,7 @@ const browserCommandDeps = {
   saveAuthConfig,
   selectedProfileName,
   globalsFrom,
-  resolveWorkspace,
+  resolveProject,
   createBrowserSessionClient,
 } satisfies BrowserCommandDeps;
 
@@ -2058,7 +2129,7 @@ const hostCommandDeps = {
   resolveHost,
   normalizeHostProviderValue,
   summarizeHostCatalogEntries,
-  emitWorkspaceFileCatHumanContent,
+  emitProjectFileCatHumanContent,
   parseHostSoftwareArtifactsOption,
   parseHostSoftwareChannelsOption,
   waitForLro,
@@ -2071,7 +2142,7 @@ const hostCommandDeps = {
   HOST_CREATE_DISK_TYPES,
   HOST_CREATE_STORAGE_MODES,
   waitForHostCreateReady,
-  resolveWorkspace,
+  resolveProject,
 } satisfies HostCommandDeps;
 
 registerHostCommand(program, hostCommandDeps);

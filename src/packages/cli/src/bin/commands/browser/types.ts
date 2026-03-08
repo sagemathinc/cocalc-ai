@@ -237,9 +237,9 @@ export type BrowserCommandDeps = {
     env?: NodeJS.ProcessEnv,
   ) => string;
   globalsFrom: (command: unknown) => BrowserGlobals;
-  resolveWorkspace: (
+  resolveProject: (
     ctx: BrowserCommandContext,
-    workspace: string,
+    project: string,
   ) => Promise<{
     project_id: string;
     title?: string;
@@ -466,9 +466,9 @@ export type BrowserActionRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   resolveTargetProjectId: (opts: {
-    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    deps: Pick<BrowserCommandDeps, "resolveProject">;
     ctx: BrowserCommandContext;
-    workspace?: string;
+    project?: string;
     projectId?: string;
     sessionInfo: BrowserSessionInfo;
   }) => Promise<string>;
@@ -515,9 +515,9 @@ export type BrowserHarnessRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   resolveTargetProjectId: (opts: {
-    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    deps: Pick<BrowserCommandDeps, "resolveProject">;
     ctx: BrowserCommandContext;
-    workspace?: string;
+    project?: string;
     projectId?: string;
     sessionInfo: BrowserSessionInfo;
   }) => Promise<string>;
@@ -550,9 +550,9 @@ export type BrowserInspectRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   resolveTargetProjectId: (opts: {
-    deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
+    deps: Pick<BrowserCommandDeps, "resolveProject">;
     ctx: BrowserCommandContext;
-    workspace?: string;
+    project?: string;
     projectId?: string;
     sessionInfo: BrowserSessionInfo;
   }) => Promise<string>;

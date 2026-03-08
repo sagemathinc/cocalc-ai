@@ -71,19 +71,19 @@ This CLI connects to a hub over websocket/conat and supports:
 If `--hub-password` is provided without an account id, the CLI tries to auto-select
 an admin account for smoke-test workflows.
 
-`workspace file ...` commands connect directly to the target project-host and use
+`project file ...` commands connect directly to the target project-host and use
 short-lived host tokens kept in-process (no on-disk token cache). All
-`workspace file` subcommands are daemon-enabled and auto-start the daemon unless
+`project file` subcommands are daemon-enabled and auto-start the daemon unless
 `--no-daemon` is set, which keeps routed host connections warm for lower latency.
-These file commands do not require the workspace to be running.
-`workspace sync forward ...` uses `reflect-sync` for SSH forward sessions.
-Use `workspace file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
-against the current workspace context or `--workspace`.
-Use `workspace file check --bench --bench-runs <n>` to run repeated checks with
+These file commands do not require the project to be running.
+`project sync forward ...` uses `reflect-sync` for SSH forward sessions.
+Use `project file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
+against the current project context or `--project`.
+Use `project file check --bench --bench-runs <n>` to run repeated checks with
 per-run and per-step timing summaries.
-`workspace codex ...` uses routed project-host APIs so codex device-auth and
-workspace codex execution run in the same project-host containerized path as the UI.
-`workspace codex exec --stream` prints progress events to stderr; `--jsonl`
+`project codex ...` uses routed project-host APIs so codex device-auth and
+project codex execution run in the same project-host containerized path as the UI.
+`project codex exec --stream` prints progress events to stderr; `--jsonl`
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
 
@@ -151,46 +151,46 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `daemon start`
 - `daemon status`
 - `daemon stop`
-- `workspace create`
-- `workspace rename`
-- `workspace use`
-- `workspace unuse`
-- `workspace list`
-- `workspace start --wait`
-- `workspace stop`
-- `workspace restart --wait`
-- `workspace exec`
-- `workspace ssh`
-- `workspace ssh --check`
-- `workspace ssh --check --require-auth`
-- `workspace move --host --wait`
-- `workspace copy-path --wait`
-- `workspace sync key ensure`
-- `workspace sync key show`
-- `workspace sync key install`
-- `workspace sync forward create`
-- `workspace sync forward list`
-- `workspace sync forward terminate`
-- `workspace file list`
-- `workspace file cat`
-- `workspace file put`
-- `workspace file get`
-- `workspace file rm`
-- `workspace file mkdir`
-- `workspace file rg`
-- `workspace file fd`
-- `workspace file check`
-- `workspace codex exec`
-- `workspace codex auth status`
-- `workspace codex auth subscription login`
-- `workspace codex auth subscription status`
-- `workspace codex auth subscription cancel`
-- `workspace codex auth subscription upload`
-- `workspace codex auth api-key status`
-- `workspace codex auth api-key set`
-- `workspace codex auth api-key delete`
-- `workspace snapshot create`
-- `workspace snapshot list`
+- `project create`
+- `project rename`
+- `project use`
+- `project unuse`
+- `project list`
+- `project start --wait`
+- `project stop`
+- `project restart --wait`
+- `project exec`
+- `project ssh`
+- `project ssh --check`
+- `project ssh --check --require-auth`
+- `project move --host --wait`
+- `project copy-path --wait`
+- `project sync key ensure`
+- `project sync key show`
+- `project sync key install`
+- `project sync forward create`
+- `project sync forward list`
+- `project sync forward terminate`
+- `project file list`
+- `project file cat`
+- `project file put`
+- `project file get`
+- `project file rm`
+- `project file mkdir`
+- `project file rg`
+- `project file fd`
+- `project file check`
+- `project codex exec`
+- `project codex auth status`
+- `project codex auth subscription login`
+- `project codex auth subscription status`
+- `project codex auth subscription cancel`
+- `project codex auth subscription upload`
+- `project codex auth api-key status`
+- `project codex auth api-key set`
+- `project codex auth api-key delete`
+- `project snapshot create`
+- `project snapshot list`
 - `host resolve-connection`
 - `host issue-http-token`
 - `admin search`
@@ -198,8 +198,8 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `admin user issue-auth-token`
 - `org token create`
 - `org token expire`
-- `workspace proxy url`
-- `workspace proxy curl`
+- `project proxy url`
+- `project proxy curl`
 - `op list`
 - `op get`
 - `op wait`

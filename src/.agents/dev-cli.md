@@ -1,6 +1,6 @@
 # CoCalc Dev CLI Wishlist
 
-This document tracks the highest-value developer-mode CLI improvements for working on CoCalc Lite, Launchpad, project-hosts, workspaces, frontend bundles, and public app routing.
+This document tracks the highest-value developer-mode CLI improvements for working on CoCalc Lite, Launchpad, project-hosts, projects, frontend bundles, and public app routing.
 
 The main theme is reducing ambiguity:
 
@@ -40,7 +40,7 @@ That same product decision should apply in CoCalc proper:
 
 Initial narrow scope:
 
-1. `cocalc ws app forward ...`
+1. `cocalc project app forward ...`
    - a curated SSH port forward for an app or raw port
    - later optionally mediated by the local CoCalc daemon
 2. `cocalc sync ...`
@@ -77,7 +77,7 @@ We need three different identities, not one overloaded "version":
 3. Surface active build ids in runtime status:
    - host rows
    - hub runtime info
-   - workspace/runtime info
+   - project/runtime info
    - frontend/browser session metadata
 4. Switch dev CLI reporting to prefer build ids over package versions wherever possible.
 
@@ -116,14 +116,14 @@ One command should:
 
 This removes the current friction around manually rebuilding, upgrading, and verifying which bundle is active.
 
-### `cocalc dev sync project --workspace <id>`
+### `cocalc dev sync project --project <id>`
 
 One command should:
 
 - rebuild the project-side software/runtime layer
-- push or activate it for the target workspace
+- push or activate it for the target project
 - restart only what is necessary
-- confirm the workspace is now using the new version
+- confirm the project is now using the new version
 
 This is especially important when debugging managed apps, since restarting only the hub is often not enough.
 
@@ -136,13 +136,13 @@ This should answer "what code is actually running right now?" and include:
 - local git commit / branch / dirty state
 - hub bundle version and live path
 - project-host bundle version and live path
-- workspace/project runtime version
+- project runtime version
 - frontend asset build id / hash
 
 Ideally it should also clearly flag mismatches, e.g.:
 
 - local code changed but hub still old
-- hub updated but workspace still old
+- hub updated but project still old
 - frontend rebuilt locally but browser still serving stale assets
 
 ## 3. Topology-Aware Restart Commands
@@ -152,7 +152,7 @@ Ideally it should also clearly flag mismatches, e.g.:
 ```bash
 cocalc dev restart hub --wait
 cocalc dev restart project-host <host-id> --wait
-cocalc dev restart workspace <workspace-id> --wait
+cocalc dev restart project <project-id> --wait
 ```
 
 These should:
@@ -185,7 +185,7 @@ This should show the full path a request takes through the system, e.g.:
 - Cloudflare hostname / tunnel / subdomain
 - hub rewrite behavior
 - project-host target
-- workspace id
+- project id
 - app id
 - effective base path
 - HTTP port / upstream target
@@ -199,7 +199,7 @@ This is particularly valuable for debugging public apps, `proxy` vs `port`, and 
 ```bash
 cocalc dev logs hub --grep public-app
 cocalc dev logs project-host <host-id> --grep websocket
-cocalc dev logs workspace <workspace-id> --app jupyterlab
+cocalc dev logs project <project-id> --app jupyterlab
 ```
 
 The CLI should support:
@@ -217,9 +217,9 @@ The last point matters because raw JSON-serialized Node Buffers are painful to u
 ### Examples
 
 ```bash
-cocalc dev smoke app-public --workspace <id> --app code-server
-cocalc dev smoke app-public --workspace <id> --app jupyterlab
-cocalc dev smoke app-static --workspace <id>
+cocalc dev smoke app-public --project <id> --app code-server
+cocalc dev smoke app-public --project <id> --app jupyterlab
+cocalc dev smoke app-static --project <id>
 ```
 
 These should exercise real workflows, not just API calls.  Ideally they include:
@@ -232,7 +232,7 @@ These should exercise real workflows, not just API calls.  Ideally they include:
 
 ## 8. App Inspection
 
-### `cocalc ws app inspect --workspace <id> <app-id>`
+### `cocalc project app inspect --project <id> <app-id>`
 
 This should display the effective app state in one place:
 
@@ -254,14 +254,14 @@ Dev deploy commands should help answer:
 
 - which packages changed
 - which components need rebuild vs restart
-- whether the target host/workspace is still running stale code
+- whether the target host/project is still running stale code
 
 For example, after editing code the CLI should be able to say:
 
 - this change requires frontend rebuild
 - this change requires hub restart
 - this change requires project-host upgrade
-- this workspace still has old project runtime code
+- this project still has old project runtime code
 
 ## 10. Browser Debugging Integration
 
@@ -279,7 +279,7 @@ This would be very useful for app routing and public-app debugging.
 
 ## 11. Public App Diagnose Command
 
-### `cocalc ws app diagnose-public --workspace <id> <app-id>`
+### `cocalc project app diagnose-public --project <id> <app-id>`
 
 This should run a deep public-app sanity check and report:
 
@@ -288,7 +288,7 @@ This should run a deep public-app sanity check and report:
 - Cloudflare target
 - hub rewrite
 - project-host auth handoff
-- workspace app state
+- project app state
 - final HTTP probe
 - final websocket probe
 
@@ -311,8 +311,8 @@ Developer-mode commands should aim for:
 2. `cocalc dev runtime versions`
 3. `cocalc dev trace-url`
 4. `cocalc dev logs ...`
-5. `cocalc ws app inspect`
-6. `cocalc ws app diagnose-public`
+5. `cocalc project app inspect`
+6. `cocalc project app diagnose-public`
 7. richer `cocalc dev smoke ...`
 8. `cocalc dev browser-check`
 

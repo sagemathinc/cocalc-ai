@@ -49,7 +49,7 @@ export function registerBrowserObservabilityCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option("--lines <n>", "number of events per fetch", "200")
@@ -185,7 +185,7 @@ export function registerBrowserObservabilityCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option("--lines <n>", "number of events per fetch", "200")
@@ -320,7 +320,7 @@ export function registerBrowserObservabilityCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option("--lines <n>", "number of events per fetch", "200")
@@ -517,7 +517,7 @@ export function registerBrowserObservabilityCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .action(

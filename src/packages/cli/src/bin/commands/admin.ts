@@ -89,7 +89,7 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
     .option("--last-name <lastName>", "last name")
     .option("--name <name>", "full name shorthand (split into first/last)")
     .option("--tag <tag...>", "optional account tags")
-    .option("--no-first-project", "do not create/start an initial workspace")
+    .option("--no-first-project", "do not create/start an initial project")
     .action(
       async (
         opts: {

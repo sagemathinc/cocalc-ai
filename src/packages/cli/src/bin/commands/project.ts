@@ -1,0 +1,119 @@
+/**
+ * Project command composition layer.
+ *
+ * This file owns shared dependency typing and registers each project
+ * subcommand module (basic, ops, sync, codex, collaborators, files, lifecycle).
+ */
+import { Command } from "commander";
+import { registerProjectSyncCommands } from "./workspace/sync";
+import { registerProjectCodexCommands } from "./workspace/codex";
+import { registerProjectCollabCommands } from "./workspace/collab";
+import { registerProjectFileCommands } from "./workspace/file";
+import { registerProjectLifecycleCommands } from "./workspace/lifecycle";
+import { registerProjectOpsCommands } from "./workspace/ops";
+import { registerProjectBasicCommands } from "./workspace/basic";
+import { registerProjectAppCommands } from "./workspace/app";
+
+export type ProjectCommandDeps = {
+  withContext: any;
+  resolveHost: any;
+  queryProjects: any;
+  projectState: any;
+  toIso: any;
+  resolveProjectFromArgOrContext: any;
+  resolveProject: any;
+  saveProjectContext: any;
+  projectContextPath: any;
+  clearProjectContext: any;
+  isValidUUID: any;
+  confirmHardProjectDelete: any;
+  waitForLro: any;
+  waitForProjectNotRunning: any;
+  resolveProjectSshConnection: any;
+  ensureSyncKeyPair: any;
+  installSyncPublicKey: any;
+  runSshCheck: any;
+  isLikelySshAuthFailure: any;
+  runSsh: any;
+  runLocalCommand: any;
+  resolveCloudflaredBinary: any;
+  normalizeProjectSshHostAlias: any;
+  normalizeProjectSshConfigPath: any;
+  projectSshConfigBlockMarkers: any;
+  removeProjectSshConfigBlock: any;
+  emitProjectFileCatHumanContent: any;
+  waitForProjectPlacement: any;
+  normalizeSyncKeyBasePath: any;
+  syncKeyPublicPath: any;
+  readSyncPublicKey: any;
+  resolveProjectSshTarget: any;
+  runReflectSyncCli: any;
+  parseCreatedForwardId: any;
+  listReflectForwards: any;
+  reflectSyncHomeDir: any;
+  reflectSyncSessionDbPath: any;
+  formatReflectForwardRow: any;
+  forwardsForProject: any;
+  terminateReflectForwards: any;
+  readAllStdin: any;
+  buildCodexSessionConfig: any;
+  projectCodexExecData: any;
+  streamCodexHumanMessage: any;
+  projectCodexAuthStatusData: any;
+  durationToMs: any;
+  projectCodexDeviceAuthStartData: any;
+  projectCodexDeviceAuthStatusData: any;
+  projectCodexDeviceAuthCancelData: any;
+  projectCodexAuthUploadFileData: any;
+  normalizeUserSearchName: any;
+  resolveAccountByIdentifier: any;
+  serializeInviteRow: any;
+  compactInviteRow: any;
+  globalsFrom: any;
+  shouldUseDaemonForFileOps: any;
+  runDaemonRequestFromCommand: any;
+  emitSuccess: any;
+  isDaemonTransportError: any;
+  emitError: any;
+  cliDebug: any;
+  projectFileListData: any;
+  projectFileCatData: any;
+  readFileLocal: any;
+  asObject: any;
+  projectFilePutData: any;
+  mkdirLocal: any;
+  writeFileLocal: any;
+  projectFileGetData: any;
+  projectFileRmData: any;
+  projectFileMkdirData: any;
+  projectFileRgData: any;
+  projectFileFdData: any;
+  contextForGlobals: any;
+  runProjectFileCheckBench: any;
+  printArrayTable: any;
+  runProjectFileCheck: any;
+  closeCommandContext: any;
+  resolveProxyUrl: any;
+  parsePositiveInteger: any;
+  isRedirect: any;
+  extractCookie: any;
+  fetchWithTimeout: any;
+  buildCookieHeader: any;
+  PROJECT_HOST_HTTP_AUTH_QUERY_PARAM: string;
+  resolveProjectProjectApi: any;
+};
+
+export function registerProjectCommand(program: Command, deps: ProjectCommandDeps): Command {
+  const project = program.command("project").description("project operations");
+
+  registerProjectBasicCommands(project, deps);
+  registerProjectOpsCommands(project, deps);
+  registerProjectSyncCommands(project, deps);
+  registerProjectCodexCommands(project, deps);
+  registerProjectCollabCommands(project, deps);
+  registerProjectFileCommands(project, deps);
+  registerProjectLifecycleCommands(project, deps);
+  registerProjectAppCommands(project, deps);
+
+  return project;
+}

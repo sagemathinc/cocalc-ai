@@ -110,10 +110,10 @@ export function registerBrowserActionCommands({
   action
     .command("click <selector>")
     .description("click an element by CSS selector")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -121,7 +121,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -143,7 +143,7 @@ export function registerBrowserActionCommands({
       async (
         selector: string,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -161,12 +161,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -176,7 +176,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -243,10 +243,10 @@ export function registerBrowserActionCommands({
     .description(
       "click at coordinates (useful for canvas/plotly); supports screenshot metadata mapping",
     )
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -254,7 +254,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -291,7 +291,7 @@ export function registerBrowserActionCommands({
         x: string,
         y: string,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -313,12 +313,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -328,7 +328,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -409,10 +409,10 @@ export function registerBrowserActionCommands({
     .description(
       "drag from one coordinate to another (useful for plotly/canvas interactions)",
     )
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -420,7 +420,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -459,7 +459,7 @@ export function registerBrowserActionCommands({
         x2: string,
         y2: string,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -481,12 +481,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -496,7 +496,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -572,10 +572,10 @@ export function registerBrowserActionCommands({
   action
     .command("type <selector> <text...>")
     .description("type text into an input/textarea/contenteditable target")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -583,7 +583,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -603,7 +603,7 @@ export function registerBrowserActionCommands({
         selector: string,
         text: string[],
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -621,12 +621,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -636,7 +636,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -686,10 +686,10 @@ export function registerBrowserActionCommands({
   action
     .command("press <key>")
     .description("dispatch a key press on target selector (or active element)")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -697,7 +697,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -718,7 +718,7 @@ export function registerBrowserActionCommands({
       async (
         key: string,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -738,12 +738,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -753,7 +753,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -804,10 +804,10 @@ export function registerBrowserActionCommands({
   action
     .command("wait-for-selector <selector>")
     .description("wait for selector state transition")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -815,7 +815,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -841,7 +841,7 @@ export function registerBrowserActionCommands({
       async (
         selector: string,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -861,12 +861,12 @@ export function registerBrowserActionCommands({
             const profileSelection = loadProfileSelection(deps, command);
             const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
             const browserHint = browserHintFromOption(opts.browser) ?? "";
-            const workspaceHint = `${opts.workspace ?? ""}`.trim();
+            const projectHint = `${opts.project ?? ""}`.trim();
             const sessionInfo = await chooseBrowserSession({
               ctx,
               browserHint,
               fallbackBrowserId: profileSelection.browser_id,
-              requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+              requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
               sessionProjectId:
                 `${opts.sessionProjectId ?? ""}`.trim() ||
                 `${projectIdHint ?? ""}`.trim() ||
@@ -876,7 +876,7 @@ export function registerBrowserActionCommands({
             const project_id = await resolveTargetProjectId({
               deps,
               ctx,
-              workspace: workspaceHint,
+              project: projectHint,
               projectId: projectIdHint,
               sessionInfo,
             });
@@ -933,10 +933,10 @@ export function registerBrowserActionCommands({
   action
     .command("wait-for-url [pattern]")
     .description("wait for URL match by exact URL, substring, or regex")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -944,7 +944,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -968,7 +968,7 @@ export function registerBrowserActionCommands({
       async (
         pattern: string | undefined,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -987,12 +987,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -1002,7 +1002,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -1056,10 +1056,10 @@ export function registerBrowserActionCommands({
   action
     .command("reload")
     .description("reload the targeted browser session page")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -1067,7 +1067,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -1082,7 +1082,7 @@ export function registerBrowserActionCommands({
     .action(
       async (
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -1097,12 +1097,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -1112,7 +1112,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -1162,10 +1162,10 @@ export function registerBrowserActionCommands({
   action
     .command("navigate <url>")
     .description("navigate browser session to a URL")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -1173,7 +1173,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -1190,7 +1190,7 @@ export function registerBrowserActionCommands({
       async (
         url: string,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -1206,12 +1206,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -1221,7 +1221,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -1267,10 +1267,10 @@ export function registerBrowserActionCommands({
   action
     .command("scroll-by <dy> [dx]")
     .description("scroll viewport by delta values")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -1278,7 +1278,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -1292,7 +1292,7 @@ export function registerBrowserActionCommands({
         dy: string,
         dx: string | undefined,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -1307,12 +1307,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -1322,7 +1322,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -1367,10 +1367,10 @@ export function registerBrowserActionCommands({
     .description(
       "scroll to selector (recommended) or explicit top/left coordinates",
     )
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -1378,7 +1378,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -1412,7 +1412,7 @@ export function registerBrowserActionCommands({
     .action(
       async (
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -1434,12 +1434,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -1449,7 +1449,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });
@@ -1515,10 +1515,10 @@ export function registerBrowserActionCommands({
       "execute multiple typed actions in one call using a JSON file (array or {actions, continue_on_error})",
     )
     .requiredOption("--file <path>", "JSON file describing action batch")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -1526,7 +1526,7 @@ export function registerBrowserActionCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -1546,7 +1546,7 @@ export function registerBrowserActionCommands({
       async (
         opts: {
           file?: string;
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -1591,12 +1591,12 @@ export function registerBrowserActionCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: workspaceHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -1606,7 +1606,7 @@ export function registerBrowserActionCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });

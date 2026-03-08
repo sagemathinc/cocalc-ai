@@ -9,7 +9,7 @@ import {
   type ChatExportOptions,
 } from "@cocalc/export";
 
-export type ExportWorkspaceIdentity = {
+export type ExportProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;

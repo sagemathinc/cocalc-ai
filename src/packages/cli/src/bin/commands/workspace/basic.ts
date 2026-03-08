@@ -1,38 +1,38 @@
 /**
- * Basic workspace lifecycle and metadata commands.
+ * Basic project lifecycle and metadata commands.
  *
  * Includes list/get/context management plus create/start/stop/restart/delete.
- * This is the "core admin surface" for direct workspace operations.
+ * This is the "core admin surface" for direct project operations.
  */
 import { Command } from "commander";
 
-import type { WorkspaceCommandDeps } from "../workspace";
+import type { ProjectCommandDeps } from "../project";
 
-export function registerWorkspaceBasicCommands(
-  workspace: Command,
-  deps: WorkspaceCommandDeps,
+export function registerProjectBasicCommands(
+  project: Command,
+  deps: ProjectCommandDeps,
 ): void {
   const {
     withContext,
     resolveHost,
     queryProjects,
-    workspaceState,
+    projectState,
     toIso,
-    resolveWorkspaceFromArgOrContext,
-    resolveWorkspace,
-    saveWorkspaceContext,
-    workspaceContextPath,
-    clearWorkspaceContext,
+    resolveProjectFromArgOrContext,
+    resolveProject,
+    saveProjectContext,
+    projectContextPath,
+    clearProjectContext,
     isValidUUID,
-    confirmHardWorkspaceDelete,
+    confirmHardProjectDelete,
     waitForLro,
-    waitForWorkspaceNotRunning,
+    waitForProjectNotRunning,
     runLocalCommand,
   } = deps;
 
-workspace
+project
   .command("list")
-  .description("list workspaces")
+  .description("list projects")
   .option("--host <host>", "filter by host id or name")
   .option("--prefix <prefix>", "filter title by prefix")
   .option("--limit <n>", "max rows", "100")
@@ -41,11 +41,11 @@ workspace
       opts: { host?: string; prefix?: string; limit?: string },
       command: Command,
     ) => {
-      await withContext(command, "workspace list", async (ctx) => {
+      await withContext(command, "project list", async (ctx) => {
         const hostId = opts.host ? (await resolveHost(ctx, opts.host)).id : null;
         const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
         const prefix = opts.prefix?.trim() || "";
-        // Deleted workspaces are still returned by projects_all; overfetch so we can
+        // Deleted projects are still returned by projects_all; overfetch so we can
         // filter locally and still satisfy requested limits.
         const fetchLimit = Math.min(10000, Math.max(limitNum * 10, 200));
         const rows = await queryProjects({
@@ -58,64 +58,64 @@ workspace
           ? rows.filter((row) => row.title.toLowerCase().startsWith(normalizedPrefix))
           : rows;
         return filtered.slice(0, limitNum).map((row) => ({
-          workspace_id: row.project_id,
+          project_id: row.project_id,
           title: row.title,
           host_id: row.host_id,
-          state: workspaceState(row.state),
+          state: projectState(row.state),
           last_edited: toIso(row.last_edited),
         }));
       });
     },
   );
 
-workspace
+project
   .command("get")
-  .description("get one workspace by id or name (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
-  .action(async (opts: { workspace?: string }, command: Command) => {
-    await withContext(command, "workspace get", async (ctx) => {
-      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+  .description("get one project by id or name (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
+  .action(async (opts: { project?: string }, command: Command) => {
+    await withContext(command, "project get", async (ctx) => {
+      const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
       return {
-        workspace_id: ws.project_id,
+        project_id: ws.project_id,
         title: ws.title,
         host_id: ws.host_id,
-        state: workspaceState(ws.state),
+        state: projectState(ws.state),
         last_edited: toIso(ws.last_edited),
       };
     });
   });
 
-workspace
+project
   .command("create [name]")
-  .description("create a workspace")
+  .description("create a project")
   .option("--host <host>", "host id or name")
   .action(async (name: string | undefined, opts: { host?: string }, command: Command) => {
-    await withContext(command, "workspace create", async (ctx) => {
+    await withContext(command, "project create", async (ctx) => {
       const host = opts.host ? await resolveHost(ctx, opts.host) : null;
-      const workspaceId = await ctx.hub.projects.createProject({
-        title: name ?? "New Workspace",
+      const projectId = await ctx.hub.projects.createProject({
+        title: name ?? "New Project",
         host_id: host?.id,
         start: false,
       });
       return {
-        workspace_id: workspaceId,
-        title: name ?? "New Workspace",
+        project_id: projectId,
+        title: name ?? "New Project",
         host_id: host?.id ?? null,
       };
     });
   });
 
-workspace
+project
   .command("rename <title>")
-  .description("rename a workspace (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
-  .action(async (title: string, opts: { workspace?: string }, command: Command) => {
-    await withContext(command, "workspace rename", async (ctx) => {
+  .description("rename a project (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
+  .action(async (title: string, opts: { project?: string }, command: Command) => {
+    await withContext(command, "project rename", async (ctx) => {
       const nextTitle = title.trim();
       if (!nextTitle) {
         throw new Error("title must be non-empty");
       }
-      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+      const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
       await ctx.hub.db.userQuery({
         query: {
           projects: [{ project_id: ws.project_id, title: nextTitle }],
@@ -123,49 +123,49 @@ workspace
         options: [],
       });
       return {
-        workspace_id: ws.project_id,
+        project_id: ws.project_id,
         title: nextTitle,
       };
     });
   });
 
-workspace
+project
   .command("use")
-  .description("set default workspace for this directory")
-  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
-  .action(async (opts: { workspace: string }, command: Command) => {
-    await withContext(command, "workspace use", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, opts.workspace);
-      saveWorkspaceContext({
-        workspace_id: ws.project_id,
+  .description("set default project for this directory")
+  .requiredOption("-w, --project <project>", "project id or name")
+  .action(async (opts: { project: string }, command: Command) => {
+    await withContext(command, "project use", async (ctx) => {
+      const ws = await resolveProject(ctx, opts.project);
+      saveProjectContext({
+        project_id: ws.project_id,
         title: ws.title,
       });
       return {
-        context_path: workspaceContextPath(),
-        workspace_id: ws.project_id,
+        context_path: projectContextPath(),
+        project_id: ws.project_id,
         title: ws.title,
       };
     });
   });
 
-workspace
+project
   .command("unuse")
-  .description("clear default workspace for this directory")
+  .description("clear default project for this directory")
   .action(async (command: Command) => {
-    await runLocalCommand(command, "workspace unuse", async () => {
-      const removed = clearWorkspaceContext();
+    await runLocalCommand(command, "project unuse", async () => {
+      const removed = clearProjectContext();
       return {
-        context_path: workspaceContextPath(),
+        context_path: projectContextPath(),
         removed,
       };
     });
   });
 
-workspace
+project
   .command("delete")
-  .description("delete a workspace (soft by default; permanent with --hard)")
-  .requiredOption("-w, --workspace <project_id>", "workspace project_id (UUID)")
-  .option("--hard", "permanently delete workspace data and metadata")
+  .description("delete a project (soft by default; permanent with --hard)")
+  .requiredOption("-w, --project <project_id>", "project project_id (UUID)")
+  .option("--hard", "permanently delete project data and metadata")
   .option(
     "--backup-retention-days <days>",
     "when --hard, keep backups this many days before purge (default: 7)",
@@ -177,7 +177,7 @@ workspace
   .action(
     async (
       opts: {
-        workspace: string;
+        project: string;
         hard?: boolean;
         backupRetentionDays?: string;
         purgeBackupsNow?: boolean;
@@ -186,18 +186,18 @@ workspace
       },
       command: Command,
     ) => {
-    await withContext(command, "workspace delete", async (ctx) => {
-      const projectId = `${opts.workspace ?? ""}`.trim();
+    await withContext(command, "project delete", async (ctx) => {
+      const projectId = `${opts.project ?? ""}`.trim();
       if (!isValidUUID(projectId)) {
-        throw new Error("--workspace must be a workspace project_id UUID");
+        throw new Error("--project must be a project project_id UUID");
       }
-      const ws = await resolveWorkspace(ctx, projectId);
+      const ws = await resolveProject(ctx, projectId);
       if (!opts.hard) {
         await ctx.hub.projects.deleteProject({
           project_id: ws.project_id,
         });
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           status: "deleted",
           mode: "soft",
         };
@@ -211,8 +211,8 @@ workspace
       const purgeBackupsNow = !!opts.purgeBackupsNow || backupRetentionDays === 0;
 
       if (!opts.yes) {
-        await confirmHardWorkspaceDelete({
-          workspace_id: ws.project_id,
+        await confirmHardProjectDelete({
+          project_id: ws.project_id,
           title: ws.title,
           backupRetentionDays,
           purgeBackupsNow,
@@ -226,7 +226,7 @@ workspace
       });
       if (!opts.wait) {
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           op_id: op.op_id,
           status: "queued",
           mode: "hard",
@@ -249,7 +249,7 @@ workspace
         );
       }
       return {
-        workspace_id: ws.project_id,
+        project_id: ws.project_id,
         op_id: op.op_id,
         status: summary.status,
         mode: "hard",
@@ -260,36 +260,36 @@ workspace
     },
   );
 
-workspace
+project
   .command("undelete")
-  .description("undelete a workspace")
-  .requiredOption("-w, --workspace <project_id>", "workspace project_id (UUID)")
-  .action(async (opts: { workspace: string }, command: Command) => {
-    await withContext(command, "workspace undelete", async (ctx) => {
-      const projectId = `${opts.workspace ?? ""}`.trim();
+  .description("undelete a project")
+  .requiredOption("-w, --project <project_id>", "project project_id (UUID)")
+  .action(async (opts: { project: string }, command: Command) => {
+    await withContext(command, "project undelete", async (ctx) => {
+      const projectId = `${opts.project ?? ""}`.trim();
       if (!isValidUUID(projectId)) {
-        throw new Error("--workspace must be a workspace project_id UUID");
+        throw new Error("--project must be a project project_id UUID");
       }
       await ctx.hub.projects.setProjectDeleted({
         project_id: projectId,
         deleted: false,
       });
       return {
-        workspace_id: projectId,
+        project_id: projectId,
         status: "active",
         mode: "soft",
       };
     });
   });
 
-workspace
+project
   .command("start")
-  .description("start a workspace (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("start a project (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
   .option("--wait", "wait for completion")
-  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
-    await withContext(command, "workspace start", async (ctx) => {
-      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+  .action(async (opts: { project?: string; wait?: boolean }, command: Command) => {
+    await withContext(command, "project start", async (ctx) => {
+      const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
       const op = await ctx.hub.projects.start({
         project_id: ws.project_id,
         wait: false,
@@ -307,63 +307,63 @@ workspace
           throw new Error(`start failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
         }
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           op_id: op.op_id,
           status: summary.status,
         };
       }
 
       return {
-        workspace_id: ws.project_id,
+        project_id: ws.project_id,
         op_id: op.op_id,
         status: "queued",
       };
     });
   });
 
-workspace
+project
   .command("stop")
-  .description("stop a workspace (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
-  .option("--wait", "wait until the workspace is not running")
-  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
-    await withContext(command, "workspace stop", async (ctx) => {
-      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+  .description("stop a project (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
+  .option("--wait", "wait until the project is not running")
+  .action(async (opts: { project?: string; wait?: boolean }, command: Command) => {
+    await withContext(command, "project stop", async (ctx) => {
+      const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
       await ctx.hub.projects.stop({
         project_id: ws.project_id,
       });
 
       if (opts.wait) {
-        const wait = await waitForWorkspaceNotRunning(ctx, ws.project_id, {
+        const wait = await waitForProjectNotRunning(ctx, ws.project_id, {
           timeoutMs: ctx.timeoutMs,
           pollMs: ctx.pollMs,
         });
         if (!wait.ok) {
           throw new Error(
-            `timeout waiting for workspace to stop (workspace=${ws.project_id}, last_state=${wait.state || "running"})`,
+            `timeout waiting for project to stop (project=${ws.project_id}, last_state=${wait.state || "running"})`,
           );
         }
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           status: wait.state || "stopped",
         };
       }
 
       return {
-        workspace_id: ws.project_id,
+        project_id: ws.project_id,
         status: "stop_requested",
       };
     });
   });
 
-workspace
+project
   .command("restart")
-  .description("restart a workspace (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("restart a project (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
   .option("--wait", "wait for restart completion")
-  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
-    await withContext(command, "workspace restart", async (ctx) => {
-      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+  .action(async (opts: { project?: string; wait?: boolean }, command: Command) => {
+    await withContext(command, "project restart", async (ctx) => {
+      const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
       await ctx.hub.projects.stop({
         project_id: ws.project_id,
       });
@@ -389,34 +389,34 @@ workspace
           );
         }
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           op_id: op.op_id,
           status: summary.status,
         };
       }
 
       return {
-        workspace_id: ws.project_id,
+        project_id: ws.project_id,
         op_id: op.op_id,
         status: "queued",
       };
     });
   });
 
-workspace
+project
   .command("exec [command...]")
-  .description("execute a command in a workspace (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("execute a command in a project (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
   .option("--timeout <seconds>", "command timeout seconds", "60")
-  .option("--path <path>", "working path inside workspace")
+  .option("--path <path>", "working path inside project")
   .option("--bash", "treat command as a bash command string")
   .action(
     async (
       commandArgs: string[],
-      opts: { workspace?: string; timeout?: string; path?: string; bash?: boolean },
+      opts: { project?: string; timeout?: string; path?: string; bash?: boolean },
       command: Command,
     ) => {
-      await withContext(command, "workspace exec", async (ctx) => {
+      await withContext(command, "project exec", async (ctx) => {
         const execArgs = Array.isArray(commandArgs)
           ? commandArgs
           : commandArgs
@@ -425,7 +425,7 @@ workspace
         if (!execArgs.length) {
           throw new Error("command is required");
         }
-        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+        const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
         const timeout = Number(opts.timeout ?? "60");
         const [first, ...rest] = execArgs;
         const execOpts = opts.bash
@@ -459,7 +459,7 @@ workspace
         }
 
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           ...result,
         };
       });

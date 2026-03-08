@@ -67,7 +67,7 @@ export function registerBrowserSessionCommands({
     .option("--active-only", "include only active sessions")
     .option(
       "--project-id <id>",
-      "filter to sessions targeting this active/open workspace/project id",
+      "filter to sessions targeting this active/open project id",
     )
     .option(
       "--max-age-ms <ms>",
@@ -178,10 +178,10 @@ export function registerBrowserSessionCommands({
     )
     .option("--api-url <url>", "CoCalc API/base URL (defaults to active CLI context)")
     .option("--target-url <url>", "exact URL to open in spawned Chromium session")
-    .option("-w, --workspace <workspace>", "workspace id or name to open")
+    .option("--project <project>", "project id or name to open")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--session-name <name>",
@@ -222,7 +222,7 @@ export function registerBrowserSessionCommands({
         opts: {
           apiUrl?: string;
           targetUrl?: string;
-          workspace?: string;
+          project?: string;
           projectId?: string;
           sessionName?: string;
           spawnId?: string;
@@ -258,12 +258,12 @@ export function registerBrowserSessionCommands({
             stopRunning: false,
             removeStateFiles: true,
           });
-          const projectHint = `${opts.projectId ?? opts.workspace ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const projectHint = `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const project_id = !projectHint
             ? undefined
             : isValidUUID(projectHint)
               ? projectHint
-              : (await deps.resolveWorkspace(ctx, projectHint)).project_id;
+              : (await deps.resolveProject(ctx, projectHint)).project_id;
           const spawnId = `${opts.spawnId ?? ""}`.trim() || randomSpawnId();
           const stateFile = spawnStateFile(spawnId);
           const existing = readSpawnState(stateFile);

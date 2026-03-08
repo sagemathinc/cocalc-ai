@@ -2,14 +2,14 @@ import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 
-export type TimeTravelWorkspaceIdentity = {
+export type TimeTravelProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;
 };
 
 export type TimeTravelDocumentBindingOptions = {
-  workspaceIdentifier?: string;
+  projectIdentifier?: string;
   path: string;
   cwd?: string;
 };
@@ -83,24 +83,24 @@ type SyncDocLike = {
   close(): void | Promise<void>;
 };
 
-type WithWorkspaceTimeTravelSession<Ctx, Workspace extends TimeTravelWorkspaceIdentity> = <T>(
+type WithProjectTimeTravelSession<Ctx, Project extends TimeTravelProjectIdentity> = <T>(
   ctx: Ctx,
   options: TimeTravelDocumentBindingOptions,
   fn: (args: {
-    workspace: Workspace;
+    project: Project;
     session: SyncDocLike;
     path: string;
     doctype: TimeTravelDocumentDoctype;
   }) => Promise<T>,
 ) => Promise<T>;
 
-export interface BoundTimeTravelDocument<Workspace extends TimeTravelWorkspaceIdentity> {
-  readonly workspaceIdentifier?: string;
+export interface BoundTimeTravelDocument<Project extends TimeTravelProjectIdentity> {
+  readonly projectIdentifier?: string;
   readonly path: string;
   readonly cwd?: string;
 
   listVersions(): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     doctype: TimeTravelDocumentDoctype;
     hasFullHistory: boolean;
@@ -108,7 +108,7 @@ export interface BoundTimeTravelDocument<Workspace extends TimeTravelWorkspaceId
   }>;
 
   loadMoreHistory(): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     doctype: TimeTravelDocumentDoctype;
     hasFullHistory: boolean;
@@ -116,7 +116,7 @@ export interface BoundTimeTravelDocument<Workspace extends TimeTravelWorkspaceId
   }>;
 
   readVersion(versionId: string): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     doctype: TimeTravelDocumentDoctype;
     version: TimeTravelVersionRecord;
@@ -124,7 +124,7 @@ export interface BoundTimeTravelDocument<Workspace extends TimeTravelWorkspaceId
   }>;
 
   readLive(): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     doctype: TimeTravelDocumentDoctype;
     text: string;
@@ -133,7 +133,7 @@ export interface BoundTimeTravelDocument<Workspace extends TimeTravelWorkspaceId
 
   withSession<T>(
     fn: (args: {
-      workspace: Workspace;
+      project: Project;
       session: SyncDocLike;
       path: string;
       doctype: TimeTravelDocumentDoctype;
@@ -141,11 +141,11 @@ export interface BoundTimeTravelDocument<Workspace extends TimeTravelWorkspaceId
   ): Promise<T>;
 }
 
-export interface TimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceIdentity> {
+export interface TimeTravelApi<Ctx, Project extends TimeTravelProjectIdentity> {
   bindDocument(
     ctx: Ctx,
     options: TimeTravelDocumentBindingOptions,
-  ): BoundTimeTravelDocument<Workspace>;
+  ): BoundTimeTravelDocument<Project>;
 }
 
 function toIsoOrNull(value: number | undefined): string | null {
@@ -200,36 +200,36 @@ function listVersionRecords(session: SyncDocLike): TimeTravelVersionRecord[] {
   return versions.map((id, index) => versionRecord(session, id, index));
 }
 
-export function createTimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceIdentity>({
-  withWorkspaceTimeTravelSession,
+export function createTimeTravelApi<Ctx, Project extends TimeTravelProjectIdentity>({
+  withProjectTimeTravelSession,
 }: {
-  withWorkspaceTimeTravelSession: WithWorkspaceTimeTravelSession<Ctx, Workspace>;
-}): TimeTravelApi<Ctx, Workspace> {
+  withProjectTimeTravelSession: WithProjectTimeTravelSession<Ctx, Project>;
+}): TimeTravelApi<Ctx, Project> {
   function bindDocument(
     ctx: Ctx,
     options: TimeTravelDocumentBindingOptions,
-  ): BoundTimeTravelDocument<Workspace> {
+  ): BoundTimeTravelDocument<Project> {
     const binding = {
-      workspaceIdentifier: options.workspaceIdentifier,
+      projectIdentifier: options.projectIdentifier,
       path: options.path,
       cwd: options.cwd,
     } as const;
 
     const withSession = async <T>(
       fn: (args: {
-        workspace: Workspace;
+        project: Project;
         session: SyncDocLike;
         path: string;
         doctype: TimeTravelDocumentDoctype;
       }) => Promise<T>,
     ): Promise<T> =>
-      await withWorkspaceTimeTravelSession(ctx, binding, fn);
+      await withProjectTimeTravelSession(ctx, binding, fn);
 
     return {
       ...binding,
       async listVersions() {
-        return await withSession(async ({ workspace, session, path, doctype }) => ({
-          workspace,
+        return await withSession(async ({ project, session, path, doctype }) => ({
+          project,
           path,
           doctype,
           hasFullHistory: session.hasFullHistory(),
@@ -237,10 +237,10 @@ export function createTimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceId
         }));
       },
       async loadMoreHistory() {
-        return await withSession(async ({ workspace, session, path, doctype }) => {
+        return await withSession(async ({ project, session, path, doctype }) => {
           await session.loadMoreHistory();
           return {
-            workspace,
+            project,
             path,
             doctype,
             hasFullHistory: session.hasFullHistory(),
@@ -249,7 +249,7 @@ export function createTimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceId
         });
       },
       async readVersion(versionId: string) {
-        return await withSession(async ({ workspace, session, path, doctype }) => {
+        return await withSession(async ({ project, session, path, doctype }) => {
           const versions = session.versions();
           const index = versions.indexOf(versionId);
           if (index === -1 || !session.hasVersion(versionId)) {
@@ -257,7 +257,7 @@ export function createTimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceId
           }
           const doc = session.version(versionId);
           return {
-            workspace,
+            project,
             path,
             doctype,
             version: versionRecord(session, versionId, index),
@@ -266,8 +266,8 @@ export function createTimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceId
         });
       },
       async readLive() {
-        return await withSession(async ({ workspace, session, path, doctype }) => ({
-          workspace,
+        return await withSession(async ({ project, session, path, doctype }) => ({
+          project,
           path,
           doctype,
           text: session.to_str(),
@@ -276,7 +276,7 @@ export function createTimeTravelApi<Ctx, Workspace extends TimeTravelWorkspaceId
       },
       async withSession<T>(
         fn: (args: {
-          workspace: Workspace;
+          project: Project;
           session: SyncDocLike;
           path: string;
           doctype: TimeTravelDocumentDoctype;
@@ -366,22 +366,22 @@ export async function openTimeTravelSyncDoc({
 
 export function createLiveTimeTravelBinder<
   Ctx,
-  Workspace extends TimeTravelWorkspaceIdentity,
+  Project extends TimeTravelProjectIdentity,
 >({
-  resolveWorkspaceConatClient,
+  resolveProjectConatClient,
   openTimeoutMs = 15_000,
   leaseMs = 30_000,
 }: {
-  resolveWorkspaceConatClient: (
+  resolveProjectConatClient: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ workspace: Workspace; client: ConatClient }>;
+  ) => Promise<{ project: Project; client: ConatClient }>;
   openTimeoutMs?: number;
   leaseMs?: number;
-}): TimeTravelApi<Ctx, Workspace> {
+}): TimeTravelApi<Ctx, Project> {
   type Entry = {
-    workspace: Workspace;
+    project: Project;
     session: SyncDocLike;
     path: string;
     doctype: TimeTravelDocumentDoctype;
@@ -402,17 +402,17 @@ export function createLiveTimeTravelBinder<
     },
   });
 
-  const withWorkspaceTimeTravelSession: WithWorkspaceTimeTravelSession<
+  const withProjectTimeTravelSession: WithProjectTimeTravelSession<
     Ctx,
-    Workspace
+    Project
   > = async (ctx, options, fn) => {
-    const { workspace, client } = await resolveWorkspaceConatClient(
+    const { project, client } = await resolveProjectConatClient(
       ctx,
-      options.workspaceIdentifier,
+      options.projectIdentifier,
       options.cwd,
     );
     const path = normalizeDocumentPath(options.path);
-    const key = JSON.stringify({ project_id: workspace.project_id, path });
+    const key = JSON.stringify({ project_id: project.project_id, path });
     const release = await leases.acquire(key);
     try {
       let entryPromise = sessionPromises.get(key);
@@ -420,13 +420,13 @@ export function createLiveTimeTravelBinder<
         const created = (async () => {
           const opened = await openTimeTravelSyncDoc({
             client,
-            projectId: workspace.project_id,
+            projectId: project.project_id,
             path,
             persistent: true,
             fileUseInterval: 0,
             openTimeoutMs,
           });
-          return { workspace, ...opened };
+          return { project, ...opened };
         })();
         sessionPromises.set(key, created);
         entryPromise = created;
@@ -446,5 +446,5 @@ export function createLiveTimeTravelBinder<
     }
   };
 
-  return createTimeTravelApi({ withWorkspaceTimeTravelSession });
+  return createTimeTravelApi({ withProjectTimeTravelSession });
 }

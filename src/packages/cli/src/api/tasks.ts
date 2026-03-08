@@ -12,28 +12,28 @@ import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
   openCurrentProjectConnection,
-  type CurrentProjectWorkspaceIdentity,
+  type CurrentProjectIdentity,
 } from "./current-project";
 
-type WorkspaceIdentity = {
+type ProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;
 };
 
 type TasksDocumentBindingOptions = {
-  workspaceIdentifier?: string;
+  projectIdentifier?: string;
   path: string;
   cwd?: string;
 };
 
-type WithWorkspaceTasksSession<Ctx, Workspace extends WorkspaceIdentity> = <T>(
+type WithProjectTasksSession<Ctx, Project extends ProjectIdentity> = <T>(
   ctx: Ctx,
   options: TasksDocumentBindingOptions & {
     readOnly?: boolean;
   },
   fn: (args: {
-    workspace: Workspace;
+    project: Project;
     session: TasksSession;
     path: string;
   }) => Promise<T>,
@@ -47,32 +47,32 @@ export interface OpenTasksApiOptions {
   sessionOpenTimeoutMs?: number;
 }
 
-export interface OpenedTasksApi extends TasksApi<undefined, WorkspaceIdentity> {
-  readonly workspace: WorkspaceIdentity;
+export interface OpenedTasksApi extends TasksApi<undefined, ProjectIdentity> {
+  readonly project: ProjectIdentity;
   readonly apiBaseUrl: string;
   close(): Promise<void>;
 }
 
-export interface BoundTasksDocument<Workspace extends WorkspaceIdentity> {
-  readonly workspaceIdentifier?: string;
+export interface BoundTasksDocument<Project extends ProjectIdentity> {
+  readonly projectIdentifier?: string;
   readonly path: string;
   readonly cwd?: string;
 
   getSnapshot(query?: TaskQuery): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     tasks: TaskRecord[];
     revision?: string | number | null;
   }>;
 
   getTask(taskId: string): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     task?: TaskRecord;
   }>;
 
   setDone(taskId: string, done: boolean): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     changedTaskIds: readonly string[];
     revision?: string | number | null;
@@ -80,7 +80,7 @@ export interface BoundTasksDocument<Workspace extends WorkspaceIdentity> {
   }>;
 
   appendToDescription(taskId: string, text: string): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     changedTaskIds: readonly string[];
     revision?: string | number | null;
@@ -88,7 +88,7 @@ export interface BoundTasksDocument<Workspace extends WorkspaceIdentity> {
   }>;
 
   updateTask(taskId: string, changes: Partial<TaskMutableFields>): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     changedTaskIds: readonly string[];
     revision?: string | number | null;
@@ -96,54 +96,54 @@ export interface BoundTasksDocument<Workspace extends WorkspaceIdentity> {
   }>;
 
   createTask(input?: TaskCreateInput): Promise<{
-    workspace: Workspace;
+    project: Project;
     path: string;
     task: TaskRecord;
   }>;
 
   withSession<T>(
     fn: (args: {
-      workspace: Workspace;
+      project: Project;
       session: TasksSession;
       path: string;
     }) => Promise<T>,
   ): Promise<T>;
 }
 
-export interface TasksApi<Ctx, Workspace extends WorkspaceIdentity> {
+export interface TasksApi<Ctx, Project extends ProjectIdentity> {
   bindDocument(
     ctx: Ctx,
     options: TasksDocumentBindingOptions,
-  ): BoundTasksDocument<Workspace>;
+  ): BoundTasksDocument<Project>;
 }
 
-export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
-  withWorkspaceTasksSession,
+export function createTasksApi<Ctx, Project extends ProjectIdentity>({
+  withProjectTasksSession,
 }: {
-  withWorkspaceTasksSession: WithWorkspaceTasksSession<Ctx, Workspace>;
-}): TasksApi<Ctx, Workspace> {
+  withProjectTasksSession: WithProjectTasksSession<Ctx, Project>;
+}): TasksApi<Ctx, Project> {
   function bindDocument(
     ctx: Ctx,
     options: TasksDocumentBindingOptions,
-  ): BoundTasksDocument<Workspace> {
+  ): BoundTasksDocument<Project> {
     const binding = {
-      workspaceIdentifier: options.workspaceIdentifier,
+      projectIdentifier: options.projectIdentifier,
       path: options.path,
       cwd: options.cwd,
     } as const;
 
     const withSession = async <T>(
       fn: (args: {
-        workspace: Workspace;
+        project: Project;
         session: TasksSession;
         path: string;
       }) => Promise<T>,
       readOnly?: boolean,
     ): Promise<T> =>
-      await withWorkspaceTasksSession(
+      await withProjectTasksSession(
         ctx,
         {
-          workspaceIdentifier: binding.workspaceIdentifier,
+          projectIdentifier: binding.projectIdentifier,
           path: binding.path,
           cwd: binding.cwd,
           ...(readOnly ? { readOnly: true } : {}),
@@ -155,10 +155,10 @@ export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
       ...binding,
       async getSnapshot(query?: TaskQuery) {
         return await withSession(
-          async ({ workspace, session, path }) => {
+          async ({ project, session, path }) => {
             const snapshot = await session.getSnapshot(query);
             return {
-              workspace,
+              project,
               path,
               tasks: [...snapshot.tasks],
               revision: snapshot.revision ?? null,
@@ -169,8 +169,8 @@ export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
       },
       async getTask(taskId: string) {
         return await withSession(
-          async ({ workspace, session, path }) => ({
-            workspace,
+          async ({ project, session, path }) => ({
+            project,
             path,
             task: await session.getTask(taskId),
           }),
@@ -178,10 +178,10 @@ export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
         );
       },
       async setDone(taskId: string, done: boolean) {
-        return await withSession(async ({ workspace, session, path }) => {
+        return await withSession(async ({ project, session, path }) => {
           const result = await session.setDone(taskId, done);
           return {
-            workspace,
+            project,
             path,
             changedTaskIds: result.changedTaskIds,
             revision: result.revision ?? null,
@@ -190,10 +190,10 @@ export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
         });
       },
       async appendToDescription(taskId: string, text: string) {
-        return await withSession(async ({ workspace, session, path }) => {
+        return await withSession(async ({ project, session, path }) => {
           const result = await session.appendToDescription(taskId, text);
           return {
-            workspace,
+            project,
             path,
             changedTaskIds: result.changedTaskIds,
             revision: result.revision ?? null,
@@ -202,10 +202,10 @@ export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
         });
       },
       async updateTask(taskId: string, changes: Partial<TaskMutableFields>) {
-        return await withSession(async ({ workspace, session, path }) => {
+        return await withSession(async ({ project, session, path }) => {
           const result = await session.updateTask(taskId, changes);
           return {
-            workspace,
+            project,
             path,
             changedTaskIds: result.changedTaskIds,
             revision: result.revision ?? null,
@@ -214,15 +214,15 @@ export function createTasksApi<Ctx, Workspace extends WorkspaceIdentity>({
         });
       },
       async createTask(input?: TaskCreateInput) {
-        return await withSession(async ({ workspace, session, path }) => ({
-          workspace,
+        return await withSession(async ({ project, session, path }) => ({
+          project,
           path,
           task: await session.createTask(input),
         }));
       },
       async withSession<T>(
         fn: (args: {
-          workspace: Workspace;
+          project: Project;
           session: TasksSession;
           path: string;
         }) => Promise<T>,
@@ -252,13 +252,13 @@ function normalizeTasksPath(path: string): string {
 export async function openTasksApi(
   options: OpenTasksApiOptions = {},
 ): Promise<OpenedTasksApi> {
-  const { apiBaseUrl, projectId, client, workspace } =
+  const { apiBaseUrl, projectId, client, project } =
     await openCurrentProjectConnection(options);
 
   const sessionPromises = new Map<
     string,
     Promise<{
-      workspace: CurrentProjectWorkspaceIdentity;
+      project: CurrentProjectIdentity;
       session: TasksSession;
       path: string;
     }>
@@ -279,9 +279,9 @@ export async function openTasksApi(
     },
   });
 
-  const withWorkspaceTasksSession: WithWorkspaceTasksSession<
+  const withProjectTasksSession: WithProjectTasksSession<
     undefined,
-    WorkspaceIdentity
+    ProjectIdentity
   > = async (ctx, docOptions, fn) => {
     void ctx;
     if (closed) {
@@ -308,7 +308,7 @@ export async function openTasksApi(
           } satisfies OpenTasksSessionOptions & {
             client: ConatClient;
           });
-          return { workspace, session, path };
+          return { project, session, path };
         })();
         sessionPromises.set(key, created);
         entryPromise = created;
@@ -328,13 +328,13 @@ export async function openTasksApi(
     }
   };
 
-  const api = createTasksApi<undefined, WorkspaceIdentity>({
-    withWorkspaceTasksSession,
+  const api = createTasksApi<undefined, ProjectIdentity>({
+    withProjectTasksSession,
   });
 
   return {
     ...api,
-    workspace,
+    project,
     apiBaseUrl,
     async close() {
       if (closed) return;

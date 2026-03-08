@@ -10,8 +10,8 @@ TODO:
 - [ ] make sure to delete the whole "CURRENTLY NOT USED" thing in db-schema/projects.ts
 - [ ] browser automation policy hardening: see `browser-automation-policy.md`
 - [x] implement "host stop".
-- [ ] Workspaces: name versus title.  Right now we're using the workspace title (which can have any characters in it and is easy to change at any time) for naming things, which isn't great.  There's also a "name" field associated to a workspace, which is much more constrained.  We should accept that for "-w" and also change the whole UI to strongly suggest choosing a name when making a workspace.
-- [ ] When making a workspace or host, show the corresponding cocalc cli command, like GCP does.   See http://localhost:7000/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/build/cocalc-lite4/lite4.chat#chat=1771453636305
+- [ ] Projects: name versus title.  Right now we're using the project title (which can have any characters in it and is easy to change at any time) for naming things, which isn't great.  There's also a "name" field associated to a project, which is much more constrained.  We should accept that for "-w" and also change the whole UI to strongly suggest choosing a name when making a project.
+- [ ] When making a project or host, show the corresponding cocalc cli command, like GCP does.   See http://localhost:7000/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/build/cocalc-lite4/lite4.chat#chat=1771453636305
 - [ ] We really need some good documentation for all this... in a form that is extremely AI Agent friendly(!).  E.g., it's so important to point out that this is genuine full ssh, and fully supports port forwarding, X11 forwarding.  It's not just a half-broken "ssh gateway", but the real deal. 
 - [ ] client and server versioning...
 - [x] rewrite all the code in the cli to benefit from typescript for the cocalc api -- http://localhost:7000/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/build/cocalc-lite4/lite4.chat#chat=1771572607303 
@@ -140,9 +140,9 @@ Requested improvement:
 ## Goals
 
 - Provide a single, scriptable CLI for CoCalc Launchpad and related products.
-- Use user-facing terminology: `workspace` (with alias `ws`) instead of `project`.
+- Use user-facing terminology: `project` instead of `workspace`.
 - Cover both major control-plane entities:
-  - workspaces
+  - projects
   - hosts
 - Match the practical ergonomics of Sprites CLI (auth, list/create/use, exec/console, proxy URL workflows).
 - Make CoCalc AI-agent-friendly by exposing stable, scriptable primitives for files, search, notebooks, and browser-session automation.
@@ -160,16 +160,15 @@ Requested improvement:
 ## Product Naming and Command Identity
 
 - Binary name: `cocalc`
-- Primary noun: `workspace`
-- Alias: `ws`
+- Primary noun: `project`
 - Keep internal code references to "project" in adapters only.
 
 Examples:
 
 ```bash
-cocalc workspace list
-cocalc ws create my-notebook
-cocalc ws exec my-notebook -- uname -a
+cocalc project list
+cocalc project create my-notebook
+cocalc project exec my-notebook -- uname -a
 ```
 
 ## CLI Design Principles
@@ -246,7 +245,7 @@ Suggested env vars:
 
 Local directory context files:
 
-- `.cocalc-workspace` (active workspace id/name for current directory)
+- `.cocalc-project` (active project id/name for current directory)
 - `.cocalc-org` (optional org affinity)
 
 ## Authentication Model
@@ -282,84 +281,84 @@ This preserves single-file SEA reliability while leaving room for OS-native stor
 
 ## Top-Level Command Surface (Full Plan)
 
-### 1) Workspace lifecycle (`workspace` / `ws`)
+### 1) Project lifecycle (`project`)
 
 ```bash
-cocalc workspace create [name] [--host <host>] [--json]
-cocalc workspace list [--prefix <name>] [--state <state>] [--json]
-cocalc workspace get <workspace>
-cocalc workspace use <workspace>
-cocalc workspace unuse
-cocalc workspace rename <workspace> <new-name>
-cocalc workspace delete <workspace> [--force]
-cocalc workspace start <workspace> [--wait]
-cocalc workspace stop <workspace> [--wait]
-cocalc workspace restart <workspace> [--wait]
+cocalc project create [name] [--host <host>] [--json]
+cocalc project list [--prefix <name>] [--state <state>] [--json]
+cocalc project get <project>
+cocalc project use <project>
+cocalc project unuse
+cocalc project rename <project> <new-name>
+cocalc project delete <project> [--force]
+cocalc project start <project> [--wait]
+cocalc project stop <project> [--wait]
+cocalc project restart <project> [--wait]
 ```
 
 Notes:
 
-- `<workspace>` accepts id or name.
-- `use` writes local `.cocalc-workspace`.
+- `<project>` accepts id or name.
+- `use` writes local `.cocalc-project`.
 
-### 2) Workspace access and execution
+### 2) Project access and execution
 
 ```bash
-cocalc workspace exec <workspace> -- <cmd...>
-cocalc workspace ssh <workspace> [ssh-args...]
-cocalc workspace console <workspace>
-cocalc workspace terminal <workspace>
-cocalc workspace sync up <workspace> --local <dir> --remote <path> [--watch]
-cocalc workspace sync down <workspace> --remote <path> --local <dir>
-cocalc workspace sync bidir <workspace> --local <dir> --remote <path> [--watch]
+cocalc project exec <project> -- <cmd...>
+cocalc project ssh <project> [ssh-args...]
+cocalc project console <project>
+cocalc project terminal <project>
+cocalc project sync up <project> --local <dir> --remote <path> [--watch]
+cocalc project sync down <project> --remote <path> --local <dir>
+cocalc project sync bidir <project> --local <dir> --remote <path> [--watch]
 ```
 
 Notes:
 
-- `workspace sync` is planned to use `reflect-sync` under the hood for fast SSH-based incremental sync.
+- `project sync` is planned to use `reflect-sync` under the hood for fast SSH-based incremental sync.
 
-### 3) Workspace file operations
+### 3) Project file operations
 
 ```bash
-cocalc workspace file list <workspace> [path]
-cocalc workspace file cat <workspace> <path>
-cocalc workspace file put <workspace> <src> <dest>
-cocalc workspace file get <workspace> <path> <local-dest>
-cocalc workspace file rm <workspace> <path>
-cocalc workspace file rg <workspace> <pattern> [path] [-- <rg-args...>]
-cocalc workspace file fd <workspace> [pattern] [path] [-- <fd-args...>]
+cocalc project file list <project> [path]
+cocalc project file cat <project> <path>
+cocalc project file put <project> <src> <dest>
+cocalc project file get <project> <path> <local-dest>
+cocalc project file rm <project> <path>
+cocalc project file rg <project> <pattern> [path] [-- <rg-args...>]
+cocalc project file fd <project> [pattern] [path] [-- <fd-args...>]
 ```
 
 Notes:
 
-- Workspace file operations should work even when the workspace is stopped, whenever possible, by routing through project-host file services instead of requiring runtime startup.
+- Project file operations should work even when the project is stopped, whenever possible, by routing through project-host file services instead of requiring runtime startup.
 - `rg`/`fd` support is explicitly included for AI-agent productivity.
 
-### 4) Workspace transfer and placement
+### 4) Project transfer and placement
 
 ```bash
-cocalc workspace move <workspace> --host <host> [--wait]
-cocalc workspace copy-path \
-  --src-workspace <ws> --src <path> \
-  --dest-workspace <ws> --dest <path> [--wait]
-cocalc workspace placement <workspace>
+cocalc project move <project> --host <host> [--wait]
+cocalc project copy-path \
+  --src-project <project> --src <path> \
+  --dest-project <project> --dest <path> [--wait]
+cocalc project placement <project>
 ```
 
-### 5) Workspace snapshots (fast btrfs) and backups (durable rustic)
+### 5) Project snapshots (fast btrfs) and backups (durable rustic)
 
 ```bash
-cocalc workspace snapshot create <workspace>
-cocalc workspace snapshot list <workspace>
-cocalc workspace snapshot info <workspace> <snapshot>
-cocalc workspace snapshot delete <workspace> <snapshot>
-cocalc workspace snapshot restore-path <workspace> --snapshot <id> --path <src> [--dest <dest>] [--wait]
-cocalc workspace snapshot restore-all <workspace> --snapshot <id> [--wait]
+cocalc project snapshot create <project>
+cocalc project snapshot list <project>
+cocalc project snapshot info <project> <snapshot>
+cocalc project snapshot delete <project> <snapshot>
+cocalc project snapshot restore-path <project> --snapshot <id> --path <src> [--dest <dest>] [--wait]
+cocalc project snapshot restore-all <project> --snapshot <id> [--wait]
 
-cocalc workspace backup create <workspace> [--wait]
-cocalc workspace backup list <workspace>
-cocalc workspace backup files <workspace> --backup <id> [path]
-cocalc workspace backup restore-path <workspace> --backup <id> --path <src> [--dest <dest>] [--wait]
-cocalc workspace backup restore-all <workspace> --backup <id> [--wait]
+cocalc project backup create <project> [--wait]
+cocalc project backup list <project>
+cocalc project backup files <project> --backup <id> [path]
+cocalc project backup restore-path <project> --backup <id> --path <src> [--dest <dest>] [--wait]
+cocalc project backup restore-all <project> --backup <id> [--wait]
 ```
 
 Notes:
@@ -369,12 +368,12 @@ Notes:
 - Current backend capability is path restore; `restore-all` is intentionally included in the interface plan as a target capability to implement.
 - Optional compatibility aliases can be provided later: `checkpoint` -> `snapshot`.
 
-### 6) Workspace HTTP proxy / app URL workflows
+### 6) Project HTTP proxy / app URL workflows
 
 ```bash
-cocalc workspace proxy url <workspace> --port <port> [--host <host>] [--open]
-cocalc workspace proxy token issue <workspace> --host <host> [--ttl <seconds>]
-cocalc workspace proxy curl <workspace> --port <port> [--host <host>] [--path <path>]
+cocalc project proxy url <project> --port <port> [--host <host>] [--open]
+cocalc project proxy token issue <project> --host <host> [--ttl <seconds>]
+cocalc project proxy curl <project> --port <port> [--host <host>] [--path <path>]
 ```
 
 Rationale:
@@ -397,13 +396,13 @@ cocalc host software upgrade <host> [--target all|project-host|project]
 cocalc host connector upgrade <host> [--version <v>]
 cocalc host logs <host> [--follow]
 cocalc host resolve-connection <host>
-cocalc host issue-http-token --host <host> [--workspace <workspace>] [--ttl <seconds>]
+cocalc host issue-http-token --host <host> [--project <project>] [--ttl <seconds>]
 ```
 
 ### 8) Long-running operations (`op`)
 
 ```bash
-cocalc op list [--scope workspace|host] [--id <id>]
+cocalc op list [--scope project|host] [--id <id>]
 cocalc op get <op-id>
 cocalc op wait <op-id> [--timeout 5m]
 cocalc op cancel <op-id>
@@ -425,12 +424,12 @@ cocalc version
 cocalc browser session list
 cocalc browser use <session-id>
 cocalc browser files
-cocalc browser open <workspace> <path...>
-cocalc browser close <workspace> <path...>
+cocalc browser open <project> <path...>
+cocalc browser close <project> <path...>
 cocalc browser exec-api
-cocalc browser exec <workspace> [code...]
-cocalc browser exec <workspace> --file <script.js>
-cocalc browser exec <workspace> --stdin
+cocalc browser exec <project> [code...]
+cocalc browser exec <project> --file <script.js>
+cocalc browser exec <project> --stdin
 cocalc browser exec --async --wait ...
 cocalc browser exec-get <exec-id>
 cocalc browser exec-wait <exec-id>
@@ -492,11 +491,11 @@ CLI implication:
 
 `api.session`
 
-- `getInfo()` browser/session/workspace context metadata
-- `listOpenWorkspaces()`
-- `listOpenFiles({ workspaceId? })`
-- `focusWorkspace(workspaceId)`
-- `focusFile(workspaceId, path)`
+- `getInfo()` browser/session/project context metadata
+- `listOpenProjects()`
+- `listOpenFiles({ projectId? })`
+- `focusProject(projectId)`
+- `focusFile(projectId, path)`
 
 `api.files`
 
@@ -521,7 +520,7 @@ CLI implication:
   - `mkdir`, `rm`, `rename`, `copyFile`, `cp`, `move`
   - `watch`, `find`, `fd`, `ripgrep`, `dust`
 - Important behavior:
-  - Works even when workspace runtime is not running (through file service backend).
+  - Works even when project runtime is not running (through file service backend).
   - Supports `Buffer` payloads for binary workflows.
   - Includes resource-limited, argument-whitelisted command wrappers for safety.
 - Return normalization guidance:
@@ -580,7 +579,7 @@ Notes:
 - Expose provider-specific helpers underneath it, rather than four disconnected top-level APIs.
 - This matches how users think ("history of this file"), while still allowing explicit source control.
 
-`api.bash` (workspace command execution with async/streaming control)
+`api.bash` (project command execution with async/streaming control)
 
 - Expose a focused bash execution API in browser exec for composability inside larger scripts.
 - Back it directly by the existing execute-code contract in [src/packages/util/types/execute-code.ts](./src/packages/util/types/execute-code.ts).
@@ -633,13 +632,13 @@ Notes:
 - `findFiles(glob, opts)`
 - `findSymbols(query, opts)` where available
 
-`api.workspace`
+`api.project`
 
-- `start(workspaceId?)`
-- `stop(workspaceId?)`
-- `restart(workspaceId?)`
-- `setTitle(workspaceId, title)`
-- `openInNewTab(workspaceId, path?)`
+- `start(projectId?)`
+- `stop(projectId?)`
+- `restart(projectId?)`
+- `setTitle(projectId, title)`
+- `openInNewTab(projectId, path?)`
 
 #### 11.2 What users ask vs required primitives
 
@@ -659,7 +658,7 @@ Notes:
 
 - Needs `api.fs.find/fd` + notebook conversion helpers + `api.fs.writeFile`.
 
-"Run workspace-level transformations in the middle of a browser script"
+"Run project-level transformations in the middle of a browser script"
 
 - Needs `api.bash.run/start/get/await` + `api.fs` + `api.editor`/`api.notebook`.
 
@@ -671,7 +670,7 @@ Notes:
 
 - Needs `api.session.listOpenFiles` + `api.editor.close`.
 
-"Fix this workspace and show me what changed"
+"Fix this project and show me what changed"
 
 - Needs `api.search`, `api.files`, `api.terminal.exec` (or backend tools), `api.ui.modal/notify`.
 
@@ -698,7 +697,7 @@ Policy levels:
 - `read`: metadata + text reads
 - `write`: file/editor/notebook edits
 - `exec`: terminal command execution
-- `bash_exec`: workspace bash command execution
+- `bash_exec`: project bash command execution
 - `destructive`: deletes/resets/kernel restarts
 - `ui_prompt`: user-facing modal/confirm interactions
 
@@ -722,7 +721,7 @@ Execution flow:
 
 - Preflight permission plan from script (or dynamic prompts).
 - Per-call approval where policy requires it.
-- Every mutating call logged with timestamp, actor, workspace, args summary.
+- Every mutating call logged with timestamp, actor, project, args summary.
 - Support dry-run for destructive families when feasible.
 
 #### 11.3.1 Browser action surface expansion (implemented)
@@ -769,8 +768,8 @@ Current practical guidance for notebook/virtualized UIs:
 #### 11.4 Data contracts and ergonomics
 
 - Paths are absolute everywhere.
-- IDs are stable (`workspace_id`, `cell.id`, `thread.id`, etc.).
-- Internal compatibility note: browser API can map `workspace_id` to backend `project_id` in adapters.
+- IDs are stable (`project_id`, `cell.id`, `thread.id`, etc.).
+- Internal compatibility note: browser API can map `project_id` to backend `project_id` in adapters.
 - Optional output simplification knobs:
   - notebook outputs: `raw|summary|text`
   - terminal output: bounded windows
@@ -872,7 +871,7 @@ api.extensions = {
     manifest: ExtensionManifest;
     bundle_js: string;
     replace?: boolean;
-    scope?: "session" | "user" | "workspace";
+    scope?: "session" | "user" | "project";
   }): Promise<{ ok: true; id: string; version: string }>;
   enable(id: string): Promise<{ ok: true }>;
   disable(id: string): Promise<{ ok: true }>;
@@ -935,14 +934,14 @@ Persistence and sharing:
 - Scope options:
   - `session`: current browser session only
   - `user`: persists for user account
-  - `workspace`: stored in workspace config (shareable with collaborators)
-- Initial implementation can support `session` first, then `user`, then `workspace`.
+  - `project`: stored in project config (shareable with collaborators)
+- Initial implementation can support `session` first, then `user`, then `project`.
 
 Suggested CLI surface:
 
 ```bash
 cocalc browser ext list
-cocalc browser ext install --manifest ./ext.json --bundle ./ext.js [--scope session|user|workspace]
+cocalc browser ext install --manifest ./ext.json --bundle ./ext.js [--scope session|user|project]
 cocalc browser ext enable <id>
 cocalc browser ext disable <id>
 cocalc browser ext uninstall <id>
@@ -969,11 +968,11 @@ Success metrics:
 ### 12) Notebook operations (future standalone commands)
 
 ```bash
-cocalc workspace jupyter --path <ipynb> run <cell-id...>
-cocalc workspace jupyter --path <ipynb> add --after <cell-id> [--type code|markdown] [--source <text>]
-cocalc workspace jupyter --path <ipynb> delete <cell-id...>
-cocalc workspace jupyter --path <ipynb> move <cell-id> --before <cell-id>
-cocalc workspace jupyter --path <ipynb> list-cells
+cocalc project jupyter --path <ipynb> run <cell-id...>
+cocalc project jupyter --path <ipynb> add --after <cell-id> [--type code|markdown] [--source <text>]
+cocalc project jupyter --path <ipynb> delete <cell-id...>
+cocalc project jupyter --path <ipynb> move <cell-id> --before <cell-id>
+cocalc project jupyter --path <ipynb> list-cells
 ```
 
 Notes:
@@ -984,13 +983,13 @@ Notes:
 ### 13) Chatroom operations (future standalone commands)
 
 ```bash
-cocalc workspace chatroom --path <chat-path> thread list
-cocalc workspace chatroom --path <chat-path> thread create --title <title> [--type codex|general]
-cocalc workspace chatroom --path <chat-path> thread pin <thread-title-or-id>
-cocalc workspace chatroom --path <chat-path> thread unpin <thread-title-or-id>
+cocalc project chatroom --path <chat-path> thread list
+cocalc project chatroom --path <chat-path> thread create --title <title> [--type codex|general]
+cocalc project chatroom --path <chat-path> thread pin <thread-title-or-id>
+cocalc project chatroom --path <chat-path> thread unpin <thread-title-or-id>
 
-cocalc workspace chatroom --path <chat-path> message list [--thread <thread>] [--limit <n>]
-cocalc workspace chatroom --path <chat-path> message delete --older-than 7d [--thread <thread>] [--yes]
+cocalc project chatroom --path <chat-path> message list [--thread <thread>] [--limit <n>]
+cocalc project chatroom --path <chat-path> message delete --older-than 7d [--thread <thread>] [--yes]
 ```
 
 Notes:
@@ -1027,25 +1026,25 @@ Rationale:
 
 High-level parity mapping:
 
-- `sprite create` -> `cocalc workspace create`
-- `sprite list` -> `cocalc workspace list`
-- `sprite use` -> `cocalc workspace use`
-- `sprite exec` -> `cocalc workspace exec`
-- `sprite console` -> `cocalc workspace console`
-- `sprite proxy` / `sprite url` -> `cocalc workspace proxy ...`
-- `sprite checkpoint ...` -> `cocalc workspace snapshot ...`
-- `sprite restore` -> `cocalc workspace backup restore-path` / `snapshot restore-path` (with `restore-all` planned)
+- `sprite create` -> `cocalc project create`
+- `sprite list` -> `cocalc project list`
+- `sprite use` -> `cocalc project use`
+- `sprite exec` -> `cocalc project exec`
+- `sprite console` -> `cocalc project console`
+- `sprite proxy` / `sprite url` -> `cocalc project proxy ...`
+- `sprite checkpoint ...` -> `cocalc project snapshot ...`
+- `sprite restore` -> `cocalc project backup restore-path` / `snapshot restore-path` (with `restore-all` planned)
 - `sprite org/auth` -> `cocalc auth ...` and `cocalc org ...` (if needed)
 
 CoCalc-specific extension:
 
 - Explicit first-class `host` command tree
-- Explicit workspace placement/move/copy workflows across hosts
+- Explicit project placement/move/copy workflows across hosts
 
 ## Command Grammar and Naming Rules
 
 - Noun-first: `cocalc <noun> <verb> ...`
-- Keep `workspace` and `ws` equivalent.
+- Use `project` consistently.
 - Avoid ambiguous synonyms at launch.
 - Resource identifiers:
   - accept id or exact name
@@ -1058,8 +1057,8 @@ CoCalc-specific extension:
 ```json
 {
   "ok": true,
-  "command": "workspace start",
-  "data": {"workspace_id": "...", "op_id": "...", "status": "..."},
+  "command": "project start",
+  "data": {"project_id": "...", "op_id": "...", "status": "..."},
   "meta": {"api": "...", "org": "...", "duration_ms": 1234}
 }
 ```
@@ -1069,7 +1068,7 @@ CoCalc-specific extension:
 ```json
 {
   "ok": false,
-  "command": "workspace start",
+  "command": "project start",
   "error": {
     "code": "permission_denied",
     "message": "...",
@@ -1099,10 +1098,10 @@ src/packages/cli/
       wait.ts
     commands/
       auth.ts
-      workspace.ts
-      workspace-files.ts
-      workspace-snapshots.ts
-      workspace-backups.ts
+      project.ts
+      project-files.ts
+      project-snapshots.ts
+      project-backups.ts
       host.ts
       op.ts
       browser.ts
@@ -1132,7 +1131,7 @@ Dependency constraints:
 - CLI command adapters must import and use typed request/response contracts from Conat/hub APIs where available.
 - No untyped stringly-typed JSON plumbing in command handlers unless explicitly wrapped and validated.
 - Add compile-time checks in CLI package build to fail on API signature drift.
-- Add a small `contracts` layer in [src/packages/cli](./src/packages/cli) to isolate naming translation (`workspace` CLI <-> `project` backend).
+- Add a small `contracts` layer in [src/packages/cli](./src/packages/cli) to isolate naming translation (`project` CLI <-> `project` backend).
 
 ## API Adapter Strategy
 
@@ -1144,29 +1143,29 @@ For your proxy smoke use-case, existing APIs appear sufficient:
 
 - resolve host connection URL
 - issue project-host HTTP auth token
-- compose `/{workspace_id}/proxy/{port}/`
+- compose `/{project_id}/proxy/{port}/`
 
 ## Minimal MVP for Smoke Tests (First Implementation Slice)
 
 Implement only these first:
 
-1. `cocalc workspace create`
-2. `cocalc workspace start --wait`
-3. `cocalc workspace exec`
-4. `cocalc workspace ssh`
-5. `cocalc workspace move --host --wait`
-6. `cocalc workspace copy-path --wait`
-7. `cocalc workspace snapshot create`
-8. `cocalc workspace snapshot list`
+1. `cocalc project create`
+2. `cocalc project start --wait`
+3. `cocalc project exec`
+4. `cocalc project ssh`
+5. `cocalc project move --host --wait`
+6. `cocalc project copy-path --wait`
+7. `cocalc project snapshot create`
+8. `cocalc project snapshot list`
 9. `cocalc host resolve-connection`
 10. `cocalc host issue-http-token`
-11. `cocalc workspace proxy url`
-12. `cocalc workspace proxy curl`
+11. `cocalc project proxy url`
+12. `cocalc project proxy curl`
 
 This subset is enough to cleanly express the current smoke flows:
 
 - two-host move verification
-- cross-workspace copy verification
+- cross-project copy verification
 - HTTP proxy deny/allow checks with token bootstrap
 - SSH and exec checks via one CLI surface
 - snapshot smoke checks with fast btrfs semantics
@@ -1174,26 +1173,26 @@ This subset is enough to cleanly express the current smoke flows:
 ## Example Smoke Script Flow (Future)
 
 ```bash
-WS1=$(cocalc ws create smoke-a --json | jq -r '.data.workspace_id')
-WS2=$(cocalc ws create smoke-b --json | jq -r '.data.workspace_id')
+WS1=$(cocalc project create smoke-a --json | jq -r '.data.project_id')
+WS2=$(cocalc project create smoke-b --json | jq -r '.data.project_id')
 
-cocalc ws start "$WS1" --wait
-cocalc ws start "$WS2" --wait
+cocalc project start "$WS1" --wait
+cocalc project start "$WS2" --wait
 
-cocalc ws exec "$WS1" -- bash -lc 'mkdir -p smoke && echo hello > smoke/a.txt'
+cocalc project exec "$WS1" -- bash -lc 'mkdir -p smoke && echo hello > smoke/a.txt'
 
-cocalc ws move "$WS1" --host "$HOST2" --wait
+cocalc project move "$WS1" --host "$HOST2" --wait
 
-cocalc ws copy-path \
-  --src-workspace "$WS1" --src smoke/a.txt \
-  --dest-workspace "$WS2" --dest smoke/copied.txt --wait
+cocalc project copy-path \
+  --src-project "$WS1" --src smoke/a.txt \
+  --dest-project "$WS2" --dest smoke/copied.txt --wait
 
-cocalc ws exec "$WS2" -- cat smoke/copied.txt
+cocalc project exec "$WS2" -- cat smoke/copied.txt
 
-URL=$(cocalc ws proxy url "$WS1" --port 8000 --json | jq -r '.data.url')
-TOKEN=$(cocalc host issue-http-token --host "$HOST2" --workspace "$WS1" --json | jq -r '.data.token')
-cocalc ws proxy curl "$WS1" --port 8000 --expect denied
-cocalc ws proxy curl "$WS1" --port 8000 --token "$TOKEN" --expect ok
+URL=$(cocalc project proxy url "$WS1" --port 8000 --json | jq -r '.data.url')
+TOKEN=$(cocalc host issue-http-token --host "$HOST2" --project "$WS1" --json | jq -r '.data.token')
+cocalc project proxy curl "$WS1" --port 8000 --expect denied
+cocalc project proxy curl "$WS1" --port 8000 --token "$TOKEN" --expect ok
 ```
 
 ## Rollout Phases
@@ -1214,14 +1213,14 @@ Phase 2 (polish and broader parity):
 
 - profile/org UX polish
 - optional keyring backend
-- workspace sync commands backed by `reflect-sync`
+- project sync commands backed by `reflect-sync`
 - browser session, Jupyter, and chatroom command families
 - autocompletion (bash/zsh/fish)
 - improved table output and paging
 
 ## Risks and Mitigations
 
-- Risk: command naming drift between code (`project`) and UX (`workspace`)
+- Risk: command naming drift between code (`project`) and UX (`project`)
   - Mitigation: adapter layer and strict naming tests on CLI help output.
 - Risk: SEA bundle regressions from dynamic module patterns
   - Mitigation: single static entry, minimal dependencies, SEA integration tests.
@@ -1232,7 +1231,7 @@ Phase 2 (polish and broader parity):
 
 Proceed with `src/packages/cli` and implement Phase 0 only first.
 
-This gives immediate value for smoke tests while preserving a coherent long-term command model aligned with Sprites-style workflows and CoCalc’s host/workspace architecture.
+This gives immediate value for smoke tests while preserving a coherent long-term command model aligned with Sprites-style workflows and CoCalc’s host/project architecture.
 
 ## Browser Exec: Prod Sandbox (QuickJS-WASM)
 

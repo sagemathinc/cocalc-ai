@@ -2,7 +2,7 @@
 Browser session/profile/target resolution helpers.
 
 These helpers centralize browser-id selection, profile persistence, and
-workspace/project targeting logic used by browser command registrars.
+project targeting logic used by browser command registrars.
 */
 
 import type { Command } from "commander";
@@ -115,37 +115,37 @@ export function sessionTargetContext(
 export async function resolveTargetProjectId({
   deps,
   ctx,
-  workspace,
+  project,
   projectId,
   sessionInfo,
 }: {
-  deps: Pick<BrowserCommandDeps, "resolveWorkspace">;
-  ctx: Parameters<BrowserCommandDeps["resolveWorkspace"]>[0];
-  workspace?: string;
+  deps: Pick<BrowserCommandDeps, "resolveProject">;
+  ctx: Parameters<BrowserCommandDeps["resolveProject"]>[0];
+  project?: string;
   projectId?: string;
   sessionInfo: BrowserSessionInfo;
 }): Promise<string> {
   const projectIdHint = `${projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-  const workspaceHint = `${workspace ?? ""}`.trim();
+  const projectHint = `${project ?? ""}`.trim();
   if (projectIdHint) {
     return isValidUUID(projectIdHint)
       ? projectIdHint
-      : (await deps.resolveWorkspace(ctx, projectIdHint)).project_id;
+      : (await deps.resolveProject(ctx, projectIdHint)).project_id;
   }
-  if (workspaceHint) {
-    return (await deps.resolveWorkspace(ctx, workspaceHint)).project_id;
+  if (projectHint) {
+    return (await deps.resolveProject(ctx, projectHint)).project_id;
   }
   const activeProjectId = `${sessionInfo.active_project_id ?? ""}`.trim();
   if (activeProjectId) {
-    return (await deps.resolveWorkspace(ctx, activeProjectId)).project_id;
+    return (await deps.resolveProject(ctx, activeProjectId)).project_id;
   }
   if (sessionInfo.open_projects?.length === 1 && sessionInfo.open_projects[0]?.project_id) {
     return (
-      await deps.resolveWorkspace(ctx, sessionInfo.open_projects[0].project_id)
+      await deps.resolveProject(ctx, sessionInfo.open_projects[0].project_id)
     ).project_id;
   }
   throw new Error(
-    "workspace/project is required; pass --project-id, -w/--workspace, or focus a workspace tab in the target browser session",
+    "project is required; pass --project-id, --project, or focus a project tab in the target browser session",
   );
 }
 

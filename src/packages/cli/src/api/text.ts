@@ -5,21 +5,21 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
   defaultApiBaseUrl,
   openCurrentProjectConnection,
-  type CurrentProjectWorkspaceIdentity,
+  type CurrentProjectIdentity,
 } from "./current-project";
 import {
   resolveTextDocumentAssociation,
   type TextDocumentAssociation,
 } from "./text-associations";
 
-export type TextWorkspaceIdentity = {
+export type TextProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;
 };
 
 export type TextDocumentBindingOptions = {
-  workspaceIdentifier?: string;
+  projectIdentifier?: string;
   path: string;
   cwd?: string;
 };
@@ -33,8 +33,8 @@ export type TextReplaceOptions = TextWriteOptions & {
   all?: boolean;
 };
 
-export type TextDocumentInfo<Workspace extends TextWorkspaceIdentity> = {
-  workspace: Workspace;
+export type TextDocumentInfo<Project extends TextProjectIdentity> = {
+  project: Project;
   path: string;
   association: TextDocumentAssociation;
   textLength: number;
@@ -53,41 +53,41 @@ type SyncStringLike = {
   hash_of_live_version(): number | undefined;
 };
 
-type WithWorkspaceTextSession<Ctx, Workspace extends TextWorkspaceIdentity> = <T>(
+type WithProjectTextSession<Ctx, Project extends TextProjectIdentity> = <T>(
   ctx: Ctx,
   options: TextDocumentBindingOptions,
   fn: (args: {
-    workspace: Workspace;
+    project: Project;
     session: SyncStringLike;
     path: string;
     association: TextDocumentAssociation;
   }) => Promise<T>,
 ) => Promise<T>;
 
-export interface BoundTextDocument<Workspace extends TextWorkspaceIdentity> {
-  readonly workspaceIdentifier?: string;
+export interface BoundTextDocument<Project extends TextProjectIdentity> {
+  readonly projectIdentifier?: string;
   readonly path: string;
   readonly cwd?: string;
 
   getAssociation(): TextDocumentAssociation;
-  getInfo(): Promise<TextDocumentInfo<Workspace>>;
-  read(): Promise<TextDocumentInfo<Workspace> & { text: string }>;
+  getInfo(): Promise<TextDocumentInfo<Project>>;
+  read(): Promise<TextDocumentInfo<Project> & { text: string }>;
   write(
     text: string,
     options?: TextWriteOptions,
-  ): Promise<TextDocumentInfo<Workspace>>;
+  ): Promise<TextDocumentInfo<Project>>;
   append(
     text: string,
     options?: TextWriteOptions,
-  ): Promise<TextDocumentInfo<Workspace>>;
+  ): Promise<TextDocumentInfo<Project>>;
   replace(
     search: string,
     replacement: string,
     options?: TextReplaceOptions,
-  ): Promise<TextDocumentInfo<Workspace> & { replaceCount: number }>;
+  ): Promise<TextDocumentInfo<Project> & { replaceCount: number }>;
   withSession<T>(
     fn: (args: {
-      workspace: Workspace;
+      project: Project;
       session: SyncStringLike;
       path: string;
       association: TextDocumentAssociation;
@@ -95,12 +95,12 @@ export interface BoundTextDocument<Workspace extends TextWorkspaceIdentity> {
   ): Promise<T>;
 }
 
-export interface TextApi<Ctx, Workspace extends TextWorkspaceIdentity> {
+export interface TextApi<Ctx, Project extends TextProjectIdentity> {
   association(options: TextDocumentBindingOptions): TextDocumentAssociation;
   bindDocument(
     ctx: Ctx,
     options: TextDocumentBindingOptions,
-  ): BoundTextDocument<Workspace>;
+  ): BoundTextDocument<Project>;
 }
 
 export interface OpenTextApiOptions {
@@ -111,8 +111,8 @@ export interface OpenTextApiOptions {
   sessionOpenTimeoutMs?: number;
 }
 
-export interface OpenedTextApi extends TextApi<undefined, TextWorkspaceIdentity> {
-  readonly workspace: TextWorkspaceIdentity;
+export interface OpenedTextApi extends TextApi<undefined, TextProjectIdentity> {
+  readonly project: TextProjectIdentity;
   readonly apiBaseUrl: string;
   close(): Promise<void>;
 }
@@ -131,15 +131,15 @@ function normalizeTextPath(path: string): string {
   return resolvePath(process.env.HOME?.trim() || process.cwd(), trimmed);
 }
 
-function currentTextInfo<Workspace extends TextWorkspaceIdentity>(
-  workspace: Workspace,
+function currentTextInfo<Project extends TextProjectIdentity>(
+  project: Project,
   path: string,
   session: SyncStringLike,
   association: TextDocumentAssociation,
-): TextDocumentInfo<Workspace> {
+): TextDocumentInfo<Project> {
   const text = session.to_str();
   return {
-    workspace,
+    project,
     path,
     association,
     textLength: text.length,
@@ -201,11 +201,11 @@ function replaceString(
   };
 }
 
-export function createTextApi<Ctx, Workspace extends TextWorkspaceIdentity>({
-  withWorkspaceTextSession,
+export function createTextApi<Ctx, Project extends TextProjectIdentity>({
+  withProjectTextSession,
 }: {
-  withWorkspaceTextSession: WithWorkspaceTextSession<Ctx, Workspace>;
-}): TextApi<Ctx, Workspace> {
+  withProjectTextSession: WithProjectTextSession<Ctx, Project>;
+}): TextApi<Ctx, Project> {
   function association(options: TextDocumentBindingOptions): TextDocumentAssociation {
     return resolveTextDocumentAssociation(normalizeTextPath(options.path));
   }
@@ -213,9 +213,9 @@ export function createTextApi<Ctx, Workspace extends TextWorkspaceIdentity>({
   function bindDocument(
     ctx: Ctx,
     options: TextDocumentBindingOptions,
-  ): BoundTextDocument<Workspace> {
+  ): BoundTextDocument<Project> {
     const binding = {
-      workspaceIdentifier: options.workspaceIdentifier,
+      projectIdentifier: options.projectIdentifier,
       path: options.path,
       cwd: options.cwd,
     } as const;
@@ -223,13 +223,13 @@ export function createTextApi<Ctx, Workspace extends TextWorkspaceIdentity>({
 
     const withSession = async <T>(
       fn: (args: {
-        workspace: Workspace;
+        project: Project;
         session: SyncStringLike;
         path: string;
         association: TextDocumentAssociation;
       }) => Promise<T>,
     ): Promise<T> =>
-      await withWorkspaceTextSession(ctx, binding, fn);
+      await withProjectTextSession(ctx, binding, fn);
 
     return {
       ...binding,
@@ -237,36 +237,36 @@ export function createTextApi<Ctx, Workspace extends TextWorkspaceIdentity>({
         return resolvedAssociation;
       },
       async getInfo() {
-        return await withSession(async ({ workspace, session, path, association }) =>
-          currentTextInfo(workspace, path, session, association),
+        return await withSession(async ({ project, session, path, association }) =>
+          currentTextInfo(project, path, session, association),
         );
       },
       async read() {
-        return await withSession(async ({ workspace, session, path, association }) => ({
-          ...currentTextInfo(workspace, path, session, association),
+        return await withSession(async ({ project, session, path, association }) => ({
+          ...currentTextInfo(project, path, session, association),
           text: session.to_str(),
         }));
       },
       async write(text: string, writeOptions?: TextWriteOptions) {
-        return await withSession(async ({ workspace, session, path, association }) => {
-          const before = currentTextInfo(workspace, path, session, association);
+        return await withSession(async ({ project, session, path, association }) => {
+          const before = currentTextInfo(project, path, session, association);
           assertTextWriteExpectation(before, writeOptions);
           if (session.to_str() !== text) {
             session.from_str(text);
             await session.save();
           }
-          return currentTextInfo(workspace, path, session, association);
+          return currentTextInfo(project, path, session, association);
         });
       },
       async append(text: string, writeOptions?: TextWriteOptions) {
-        return await withSession(async ({ workspace, session, path, association }) => {
-          const before = currentTextInfo(workspace, path, session, association);
+        return await withSession(async ({ project, session, path, association }) => {
+          const before = currentTextInfo(project, path, session, association);
           assertTextWriteExpectation(before, writeOptions);
           if (text) {
             session.from_str(session.to_str() + text);
             await session.save();
           }
-          return currentTextInfo(workspace, path, session, association);
+          return currentTextInfo(project, path, session, association);
         });
       },
       async replace(
@@ -274,8 +274,8 @@ export function createTextApi<Ctx, Workspace extends TextWorkspaceIdentity>({
         replacement: string,
         replaceOptions?: TextReplaceOptions,
       ) {
-        return await withSession(async ({ workspace, session, path, association }) => {
-          const before = currentTextInfo(workspace, path, session, association);
+        return await withSession(async ({ project, session, path, association }) => {
+          const before = currentTextInfo(project, path, session, association);
           assertTextWriteExpectation(before, replaceOptions);
           const next = replaceString(
             session.to_str(),
@@ -288,14 +288,14 @@ export function createTextApi<Ctx, Workspace extends TextWorkspaceIdentity>({
             await session.save();
           }
           return {
-            ...currentTextInfo(workspace, path, session, association),
+            ...currentTextInfo(project, path, session, association),
             replaceCount: next.replaceCount,
           };
         });
       },
       async withSession<T>(
         fn: (args: {
-          workspace: Workspace;
+          project: Project;
           session: SyncStringLike;
           path: string;
           association: TextDocumentAssociation;
@@ -368,21 +368,21 @@ export async function openLiveTextSession({
   };
 }
 
-export function createLiveTextBinder<Ctx, Workspace extends TextWorkspaceIdentity>({
-  resolveWorkspaceConatClient,
+export function createLiveTextBinder<Ctx, Project extends TextProjectIdentity>({
+  resolveProjectConatClient,
   openTimeoutMs = DEFAULT_SESSION_OPEN_TIMEOUT_MS,
   leaseMs = DEFAULT_SESSION_LEASE_MS,
 }: {
-  resolveWorkspaceConatClient: (
+  resolveProjectConatClient: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ workspace: Workspace; client: ConatClient }>;
+  ) => Promise<{ project: Project; client: ConatClient }>;
   openTimeoutMs?: number;
   leaseMs?: number;
-}): TextApi<Ctx, Workspace> {
+}): TextApi<Ctx, Project> {
   type Entry = {
-    workspace: Workspace;
+    project: Project;
     session: SyncStringLike;
     path: string;
     association: TextDocumentAssociation;
@@ -403,15 +403,15 @@ export function createLiveTextBinder<Ctx, Workspace extends TextWorkspaceIdentit
     },
   });
 
-  const withWorkspaceTextSession: WithWorkspaceTextSession<Ctx, Workspace> =
+  const withProjectTextSession: WithProjectTextSession<Ctx, Project> =
     async (ctx, options, fn) => {
-      const { workspace, client } = await resolveWorkspaceConatClient(
+      const { project, client } = await resolveProjectConatClient(
         ctx,
-        options.workspaceIdentifier,
+        options.projectIdentifier,
         options.cwd,
       );
       const path = normalizeTextPath(options.path);
-      const key = JSON.stringify({ project_id: workspace.project_id, path });
+      const key = JSON.stringify({ project_id: project.project_id, path });
       const release = await leases.acquire(key);
       try {
         let entryPromise = sessionPromises.get(key);
@@ -419,13 +419,13 @@ export function createLiveTextBinder<Ctx, Workspace extends TextWorkspaceIdentit
           const created = (async () => {
             const opened = await openLiveTextSession({
               client,
-              projectId: workspace.project_id,
+              projectId: project.project_id,
               path,
               persistent: true,
               fileUseInterval: 0,
               openTimeoutMs,
             });
-            return { workspace, ...opened };
+            return { project, ...opened };
           })();
           sessionPromises.set(key, created);
           entryPromise = created;
@@ -445,7 +445,7 @@ export function createLiveTextBinder<Ctx, Workspace extends TextWorkspaceIdentit
       }
     };
 
-  return createTextApi({ withWorkspaceTextSession });
+  return createTextApi({ withProjectTextSession });
 }
 
 export async function openTextApi(
@@ -455,13 +455,13 @@ export async function openTextApi(
     apiBaseUrl = defaultApiBaseUrl(),
     projectId,
     client,
-    workspace,
+    project,
   } = await openCurrentProjectConnection(options);
 
   const sessionPromises = new Map<
     string,
     Promise<{
-      workspace: CurrentProjectWorkspaceIdentity;
+      project: CurrentProjectIdentity;
       session: SyncStringLike;
       path: string;
       association: TextDocumentAssociation;
@@ -483,9 +483,9 @@ export async function openTextApi(
     },
   });
 
-  const withWorkspaceTextSession: WithWorkspaceTextSession<
+  const withProjectTextSession: WithProjectTextSession<
     undefined,
-    CurrentProjectWorkspaceIdentity
+    CurrentProjectIdentity
   > = async (ctx, docOptions, fn) => {
     void ctx;
     if (closed) {
@@ -507,7 +507,7 @@ export async function openTextApi(
             openTimeoutMs:
               options.sessionOpenTimeoutMs ?? DEFAULT_SESSION_OPEN_TIMEOUT_MS,
           });
-          return { workspace, ...opened };
+          return { project, ...opened };
         })();
         sessionPromises.set(key, created);
         entryPromise = created;
@@ -527,13 +527,13 @@ export async function openTextApi(
     }
   };
 
-  const api = createTextApi<undefined, CurrentProjectWorkspaceIdentity>({
-    withWorkspaceTextSession,
+  const api = createTextApi<undefined, CurrentProjectIdentity>({
+    withProjectTextSession,
   });
 
   return {
     ...api,
-    workspace,
+    project,
     apiBaseUrl,
     async close() {
       if (closed) return;

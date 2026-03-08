@@ -1,12 +1,12 @@
 /**
- * Workspace app server lifecycle commands.
+ * Project app server lifecycle commands.
  *
  * Phase 0 intentionally keeps this JSON-first and deterministic for agent flows.
  */
 import { dirname } from "node:path";
 import { Command } from "commander";
 
-import type { WorkspaceCommandDeps } from "../workspace";
+import type { ProjectCommandDeps } from "../project";
 
 type PortableAppSpec = Record<string, any> & { id: string };
 
@@ -14,13 +14,13 @@ type PortableAppSpecBundle = {
   version: 1;
   kind: "cocalc-app-spec-bundle";
   exported_at: string;
-  workspace_id: string;
+  project_id: string;
   apps: PortableAppSpec[];
   skipped?: Array<{ id: string; path?: string; error: string }>;
 };
 
 type AppForwardCommandResult = {
-  workspace_id: string;
+  project_id: string;
   app_id: string;
   title: string | null;
   kind: "service" | "static";
@@ -73,9 +73,9 @@ function buildSshCommand(args: string[]): string {
 
 async function resolveAppForwardCommand(
   ctx: any,
-  deps: WorkspaceCommandDeps,
+  deps: ProjectCommandDeps,
   opts: {
-    workspace?: string;
+    project?: string;
     appId: string;
     direct?: boolean;
     localPort?: string;
@@ -86,13 +86,13 @@ async function resolveAppForwardCommand(
   },
 ): Promise<AppForwardCommandResult> {
   const {
-    resolveWorkspaceProjectApi,
-    resolveWorkspaceSshConnection,
+    resolveProjectProjectApi,
+    resolveProjectSshConnection,
     ensureSyncKeyPair,
     installSyncPublicKey,
     durationToMs,
   } = deps;
-  const { workspace: ws, api } = await resolveWorkspaceProjectApi(ctx, opts.workspace);
+  const { project: ws, api } = await resolveProjectProjectApi(ctx, opts.project);
   const spec = await api.apps.getAppSpec(opts.appId);
   if (spec.kind !== "service") {
     throw new Error(
@@ -112,7 +112,7 @@ async function resolveAppForwardCommand(
   const remotePort = status.port!;
   const localPort = parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
   const localHost = `${opts.localHost ?? "127.0.0.1"}`.trim() || "127.0.0.1";
-  const route = await resolveWorkspaceSshConnection(ctx, ws.project_id, {
+  const route = await resolveProjectSshConnection(ctx, ws.project_id, {
     direct: !!opts.direct,
   });
 
@@ -122,7 +122,7 @@ async function resolveAppForwardCommand(
     keyInfo = await ensureSyncKeyPair(opts.keyPath);
     keyInstall = await installSyncPublicKey({
       ctx,
-      workspaceIdentifier: ws.project_id,
+      projectIdentifier: ws.project_id,
       publicKey: keyInfo.public_key,
     });
   }
@@ -148,7 +148,7 @@ async function resolveAppForwardCommand(
   if (route.transport !== "direct") {
     const cloudflareHostname = route.cloudflare_hostname;
     if (!cloudflareHostname) {
-      throw new Error("workspace ssh route is missing cloudflare hostname");
+      throw new Error("project ssh route is missing cloudflare hostname");
     }
     const cloudflared =
       `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() || "cloudflared";
@@ -158,7 +158,7 @@ async function resolveAppForwardCommand(
     sshServer = `${cloudflareHostname}:443`;
   } else {
     if (!route.ssh_host) {
-      throw new Error("workspace ssh route is missing host endpoint");
+      throw new Error("project ssh route is missing host endpoint");
     }
     if (route.ssh_port != null) {
       sshArgs.push("-p", String(route.ssh_port));
@@ -169,7 +169,7 @@ async function resolveAppForwardCommand(
 
   const localUrl = `http://${localHost === "0.0.0.0" ? "127.0.0.1" : localHost}:${localPort}`;
   return {
-    workspace_id: ws.project_id,
+    project_id: ws.project_id,
     app_id: opts.appId,
     title: status.title ?? spec.title ?? null,
     kind: spec.kind,
@@ -211,7 +211,7 @@ function asPortableSpec(spec: unknown, context: string): PortableAppSpec {
 }
 
 function createPortableBundle(
-  workspaceId: string,
+  projectId: string,
   apps: PortableAppSpec[],
   skipped?: Array<{ id: string; path?: string; error: string }>,
 ): PortableAppSpecBundle {
@@ -219,7 +219,7 @@ function createPortableBundle(
     version: 1,
     kind: "cocalc-app-spec-bundle",
     exported_at: new Date().toISOString(),
-    workspace_id: workspaceId,
+    project_id: projectId,
     apps,
     skipped: skipped?.length ? skipped : undefined,
   };
@@ -228,7 +228,7 @@ function createPortableBundle(
 function parseImportPayload(input: unknown): {
   format: "single" | "bundle";
   specs: PortableAppSpec[];
-  source_workspace_id?: string;
+  source_project_id?: string;
 } {
   if (input == null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("import payload must be a JSON object");
@@ -238,9 +238,9 @@ function parseImportPayload(input: unknown): {
     return {
       format: "bundle",
       specs: obj.apps.map((spec, idx) => asPortableSpec(spec, `apps[${idx}]`)),
-      source_workspace_id:
-        typeof obj.workspace_id === "string" && obj.workspace_id.trim()
-          ? obj.workspace_id.trim()
+      source_project_id:
+        typeof obj.project_id === "string" && obj.project_id.trim()
+          ? obj.project_id.trim()
           : undefined,
     };
   }
@@ -252,8 +252,8 @@ function parseImportPayload(input: unknown): {
 
 async function readJsonFileOrStdin(
   path: string,
-  readFileLocal: WorkspaceCommandDeps["readFileLocal"],
-  readAllStdin: WorkspaceCommandDeps["readAllStdin"],
+  readFileLocal: ProjectCommandDeps["readFileLocal"],
+  readAllStdin: ProjectCommandDeps["readAllStdin"],
 ): Promise<unknown> {
   const raw =
     path === "-" ? await readAllStdin() : await readFileLocal(path, "utf8");
@@ -267,21 +267,21 @@ async function readJsonFileOrStdin(
 async function writeJsonFile(
   path: string,
   value: unknown,
-  mkdirLocal: WorkspaceCommandDeps["mkdirLocal"],
-  writeFileLocal: WorkspaceCommandDeps["writeFileLocal"],
+  mkdirLocal: ProjectCommandDeps["mkdirLocal"],
+  writeFileLocal: ProjectCommandDeps["writeFileLocal"],
 ): Promise<void> {
   await mkdirLocal(dirname(path), { recursive: true });
   await writeFileLocal(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-export function registerWorkspaceAppCommands(
-  workspace: Command,
-  deps: WorkspaceCommandDeps,
+export function registerProjectAppCommands(
+  project: Command,
+  deps: ProjectCommandDeps,
 ): void {
   const {
     withContext,
-    resolveWorkspaceProjectApi,
-    resolveWorkspaceFromArgOrContext,
+    resolveProjectProjectApi,
+    resolveProjectFromArgOrContext,
     readFileLocal,
     readAllStdin,
     mkdirLocal,
@@ -289,23 +289,23 @@ export function registerWorkspaceAppCommands(
     runSsh,
   } = deps;
 
-  const app = workspace
+  const app = project
     .command("app")
-    .description("workspace app server specs and lifecycle");
+    .description("project app server specs and lifecycle");
 
   app
     .command("list")
     .description("list app specs with runtime status")
-    .option("-w, --workspace <workspace>", "workspace id or name")
-    .action(async (opts: { workspace?: string }, command: Command) => {
-      await withContext(command, "workspace app list", async (ctx) => {
-        const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+    .option("-w, --project <project>", "project id or name")
+    .action(async (opts: { project?: string }, command: Command) => {
+      await withContext(command, "project app list", async (ctx) => {
+        const { project: ws, api } = await resolveProjectProjectApi(
           ctx,
-          opts.workspace,
+          opts.project,
         );
         const rows = await api.apps.listAppStatuses();
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           items: rows,
         };
       });
@@ -314,21 +314,21 @@ export function registerWorkspaceAppCommands(
   app
     .command("get <appId>")
     .description("get one app spec")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string },
+        opts: { project?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app get", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app get", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const spec = await api.apps.getAppSpec(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: spec.id,
             spec,
           };
@@ -339,18 +339,18 @@ export function registerWorkspaceAppCommands(
   app
     .command("metrics [appId]")
     .description("show app traffic and usage metrics")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--minutes <n>", "history window in minutes", "60")
     .action(
       async (
         appId: string | undefined,
-        opts: { workspace?: string; minutes?: string },
+        opts: { project?: string; minutes?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app metrics", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app metrics", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const minutes = parsePositiveIntOrThrow(
             opts.minutes,
@@ -359,14 +359,14 @@ export function registerWorkspaceAppCommands(
           if (appId) {
             const item = await api.apps.appMetrics(appId, { minutes });
             return {
-              workspace_id: ws.project_id,
+              project_id: ws.project_id,
               minutes,
               item,
             };
           }
           const items = await api.apps.listAppMetrics({ minutes });
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             minutes,
             items,
           };
@@ -377,7 +377,7 @@ export function registerWorkspaceAppCommands(
   app
     .command("forward <appId>")
     .description("run a private local SSH tunnel to a managed service app")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
     .option("--local-port <port>", "local port to bind (default: same as app port)")
     .option("--local-host <host>", "local bind host", "127.0.0.1")
@@ -385,13 +385,13 @@ export function registerWorkspaceAppCommands(
     .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
     .option(
       "--no-install-key",
-      "skip automatic local ssh key ensure + workspace authorized_keys install",
+      "skip automatic local ssh key ensure + project authorized_keys install",
     )
     .action(
       async (
         appId: string,
         opts: {
-          workspace?: string;
+          project?: string;
           direct?: boolean;
           localPort?: string;
           localHost?: string;
@@ -401,7 +401,7 @@ export function registerWorkspaceAppCommands(
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app forward", async (ctx) => {
+        await withContext(command, "project app forward", async (ctx) => {
           const resolved = await resolveAppForwardCommand(ctx, deps, {
             ...opts,
             appId,
@@ -426,7 +426,7 @@ export function registerWorkspaceAppCommands(
   app
     .command("forward-command <appId>", { hidden: true })
     .description("print a local SSH port-forward command for a managed service app")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
     .option("--local-port <port>", "local port to bind (default: same as app port)")
     .option("--local-host <host>", "local bind host", "127.0.0.1")
@@ -434,13 +434,13 @@ export function registerWorkspaceAppCommands(
     .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
     .option(
       "--no-install-key",
-      "skip automatic local ssh key ensure + workspace authorized_keys install",
+      "skip automatic local ssh key ensure + project authorized_keys install",
     )
     .action(
       async (
         appId: string,
         opts: {
-          workspace?: string;
+          project?: string;
           direct?: boolean;
           localPort?: string;
           localHost?: string;
@@ -450,7 +450,7 @@ export function registerWorkspaceAppCommands(
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app forward-command", async (ctx) => {
+        await withContext(command, "project app forward-command", async (ctx) => {
           const resolved = await resolveAppForwardCommand(ctx, deps, {
             ...opts,
             appId,
@@ -463,30 +463,30 @@ export function registerWorkspaceAppCommands(
   app
     .command("export <appId>")
     .description("export one app spec as JSON")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--file <path>", "write JSON to a local file instead of stdout")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string; file?: string },
+        opts: { project?: string; file?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app export", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app export", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const spec = asPortableSpec(await api.apps.getAppSpec(appId), "spec");
           if (!opts.file) {
             return {
-              workspace_id: ws.project_id,
+              project_id: ws.project_id,
               app_id: spec.id,
               spec,
             };
           }
           await writeJsonFile(opts.file, spec, mkdirLocal, writeFileLocal);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: spec.id,
             file: opts.file,
             exported: true,
@@ -498,17 +498,17 @@ export function registerWorkspaceAppCommands(
   app
     .command("export-all")
     .description("export all app specs as one JSON bundle")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--file <path>", "write JSON bundle to a local file instead of stdout")
     .action(
       async (
-        opts: { workspace?: string; file?: string },
+        opts: { project?: string; file?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app export-all", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app export-all", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const rows = await api.apps.listAppSpecs();
           const apps: PortableAppSpec[] = [];
@@ -530,7 +530,7 @@ export function registerWorkspaceAppCommands(
           }
           await writeJsonFile(opts.file, bundle, mkdirLocal, writeFileLocal);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             file: opts.file,
             exported: apps.length,
             skipped,
@@ -542,24 +542,24 @@ export function registerWorkspaceAppCommands(
   app
     .command("import")
     .description("import one app spec or an app bundle from local JSON")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .requiredOption("--file <path>", "local JSON file path, or '-' for stdin")
     .action(
       async (
-        opts: { workspace?: string; file: string },
+        opts: { project?: string; file: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app import", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app import", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const parsed = await readJsonFileOrStdin(
             opts.file,
             readFileLocal,
             readAllStdin,
           );
-          const { format, specs, source_workspace_id } = parseImportPayload(parsed);
+          const { format, specs, source_project_id } = parseImportPayload(parsed);
           const imported: Array<{
             app_id: string;
             path: string;
@@ -574,8 +574,8 @@ export function registerWorkspaceAppCommands(
             });
           }
           return {
-            workspace_id: ws.project_id,
-            source_workspace_id,
+            project_id: ws.project_id,
+            source_project_id,
             import_format: format,
             imported_count: imported.length,
             imported,
@@ -586,29 +586,29 @@ export function registerWorkspaceAppCommands(
 
   app
     .command("clone <appId>")
-    .description("copy one app spec from one workspace to another")
-    .requiredOption("--from-workspace <workspace>", "source workspace id or name")
-    .requiredOption("--to-workspace <workspace>", "destination workspace id or name")
+    .description("copy one app spec from one project to another")
+    .requiredOption("--from-project <project>", "source project id or name")
+    .requiredOption("--to-project <project>", "destination project id or name")
     .action(
       async (
         appId: string,
-        opts: { fromWorkspace: string; toWorkspace: string },
+        opts: { fromProject: string; toProject: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app clone", async (ctx) => {
-          const { workspace: fromWs, api: fromApi } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app clone", async (ctx) => {
+          const { project: fromWs, api: fromApi } = await resolveProjectProjectApi(
             ctx,
-            opts.fromWorkspace,
+            opts.fromProject,
           );
-          const { workspace: toWs, api: toApi } = await resolveWorkspaceProjectApi(
+          const { project: toWs, api: toApi } = await resolveProjectProjectApi(
             ctx,
-            opts.toWorkspace,
+            opts.toProject,
           );
           const spec = asPortableSpec(await fromApi.apps.getAppSpec(appId), "spec");
           const saved = await toApi.apps.upsertAppSpec(spec);
           return {
-            source_workspace_id: fromWs.project_id,
-            destination_workspace_id: toWs.project_id,
+            source_project_id: fromWs.project_id,
+            destination_project_id: toWs.project_id,
             app_id: saved.id,
             path: saved.path,
             spec: saved.spec,
@@ -619,22 +619,22 @@ export function registerWorkspaceAppCommands(
 
   app
     .command("clone-all")
-    .description("copy all app specs from one workspace to another")
-    .requiredOption("--from-workspace <workspace>", "source workspace id or name")
-    .requiredOption("--to-workspace <workspace>", "destination workspace id or name")
+    .description("copy all app specs from one project to another")
+    .requiredOption("--from-project <project>", "source project id or name")
+    .requiredOption("--to-project <project>", "destination project id or name")
     .action(
       async (
-        opts: { fromWorkspace: string; toWorkspace: string },
+        opts: { fromProject: string; toProject: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app clone-all", async (ctx) => {
-          const { workspace: fromWs, api: fromApi } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app clone-all", async (ctx) => {
+          const { project: fromWs, api: fromApi } = await resolveProjectProjectApi(
             ctx,
-            opts.fromWorkspace,
+            opts.fromProject,
           );
-          const { workspace: toWs, api: toApi } = await resolveWorkspaceProjectApi(
+          const { project: toWs, api: toApi } = await resolveProjectProjectApi(
             ctx,
-            opts.toWorkspace,
+            opts.toProject,
           );
           const rows = await fromApi.apps.listAppSpecs();
           const cloned: Array<{
@@ -658,8 +658,8 @@ export function registerWorkspaceAppCommands(
             });
           }
           return {
-            source_workspace_id: fromWs.project_id,
-            destination_workspace_id: toWs.project_id,
+            source_project_id: fromWs.project_id,
+            destination_project_id: toWs.project_id,
             cloned_count: cloned.length,
             cloned,
             skipped,
@@ -671,17 +671,17 @@ export function registerWorkspaceAppCommands(
   app
     .command("upsert")
     .description("create/update app spec from a local JSON file")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .requiredOption("--file <path>", "local path to JSON app spec")
     .action(
       async (
-        opts: { workspace?: string; file: string },
+        opts: { project?: string; file: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app upsert", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app upsert", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const raw = await readFileLocal(opts.file, "utf8");
           let parsed: unknown;
@@ -694,7 +694,7 @@ export function registerWorkspaceAppCommands(
           }
           const saved = await api.apps.upsertAppSpec(parsed);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: saved.id,
             path: saved.path,
             spec: saved.spec,
@@ -706,21 +706,21 @@ export function registerWorkspaceAppCommands(
   app
     .command("delete <appId>")
     .description("delete app spec")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string },
+        opts: { project?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app delete", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app delete", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const result = await api.apps.deleteApp(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             ...result,
           };
         });
@@ -730,19 +730,19 @@ export function registerWorkspaceAppCommands(
   app
     .command("start <appId>")
     .description("start app process")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--wait", "wait for running+ready state")
     .option("--timeout <duration>", "wait timeout (e.g. 30s, 2m)")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string; wait?: boolean; timeout?: string },
+        opts: { project?: string; wait?: boolean; timeout?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app start", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app start", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           if (opts.wait) {
             const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
@@ -751,13 +751,13 @@ export function registerWorkspaceAppCommands(
               interval: 500,
             });
             return {
-              workspace_id: ws.project_id,
+              project_id: ws.project_id,
               ...status,
             };
           }
           const status = await api.apps.startApp(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             ...status,
           };
         });
@@ -767,22 +767,22 @@ export function registerWorkspaceAppCommands(
   app
     .command("stop <appId>")
     .description("stop app process")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string },
+        opts: { project?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app stop", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app stop", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           await api.apps.stopApp(appId);
           const status = await api.apps.statusApp(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             ...status,
           };
         });
@@ -792,19 +792,19 @@ export function registerWorkspaceAppCommands(
   app
     .command("restart <appId>")
     .description("restart app process")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--wait", "wait for running+ready state")
     .option("--timeout <duration>", "wait timeout (e.g. 30s, 2m)")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string; wait?: boolean; timeout?: string },
+        opts: { project?: string; wait?: boolean; timeout?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app restart", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app restart", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           await api.apps.stopApp(appId);
           const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
@@ -812,7 +812,7 @@ export function registerWorkspaceAppCommands(
             ? await api.apps.ensureRunning(appId, { timeout, interval: 500 })
             : await api.apps.startApp(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             ...status,
           };
         });
@@ -822,17 +822,17 @@ export function registerWorkspaceAppCommands(
   app
     .command("status <appId>")
     .description("get app runtime status")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string },
+        opts: { project?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app status", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app status", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const status = await api.apps.statusApp(appId);
           const stdout = Buffer.isBuffer(status.stdout)
@@ -842,7 +842,7 @@ export function registerWorkspaceAppCommands(
             ? status.stderr.toString("utf8")
             : status.stderr;
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             ...status,
             stdout,
             stderr,
@@ -854,18 +854,18 @@ export function registerWorkspaceAppCommands(
   app
     .command("logs <appId>")
     .description("show captured app stdout/stderr")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--tail <lines>", "tail lines per stream", "200")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string; tail?: string },
+        opts: { project?: string; tail?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app logs", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app logs", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const data = await api.apps.appLogs(appId);
           const tail = parsePositiveIntOrThrow(opts.tail, "--tail") ?? 200;
@@ -876,7 +876,7 @@ export function registerWorkspaceAppCommands(
               .join("\n")
               .trim();
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: appId,
             state: data.state,
             stdout: takeTail(data.stdout ?? ""),
@@ -889,22 +889,22 @@ export function registerWorkspaceAppCommands(
   app
     .command("detect")
     .description("detect listening ports that could be proxied as app servers")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--include-managed", "include already managed app ports")
     .option("--limit <n>", "maximum rows to return", "200")
     .action(
       async (
         opts: {
-          workspace?: string;
+          project?: string;
           includeManaged?: boolean;
           limit?: string;
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app detect", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app detect", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const limit = parsePositiveIntOrThrow(opts.limit, "--limit") ?? 200;
           const items = await api.apps.detectApps({
@@ -912,7 +912,7 @@ export function registerWorkspaceAppCommands(
             limit,
           });
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             count: items.length,
             items,
           };
@@ -923,7 +923,7 @@ export function registerWorkspaceAppCommands(
   app
     .command("audit <appId>")
     .description("audit app public-readiness for agent and operator workflows")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option(
       "--public-readiness",
       "run public-readiness audit mode (currently the default and only mode)",
@@ -933,22 +933,22 @@ export function registerWorkspaceAppCommands(
       async (
         appId: string,
         opts: {
-          workspace?: string;
+          project?: string;
           publicReadiness?: boolean;
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app audit", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app audit", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           if (opts.publicReadiness === false) {
             throw new Error("only --public-readiness mode is supported");
           }
           const audit = await api.apps.auditAppPublicReadiness(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             mode: "public-readiness",
             ...audit,
           };
@@ -959,7 +959,7 @@ export function registerWorkspaceAppCommands(
   app
     .command("expose <appId>")
     .description("enable public app access with required TTL")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .requiredOption("--ttl <duration>", "public exposure TTL (e.g. 10m, 2h)")
     .option(
       "--front-auth <mode>",
@@ -979,7 +979,7 @@ export function registerWorkspaceAppCommands(
       async (
         appId: string,
         opts: {
-          workspace?: string;
+          project?: string;
           ttl: string;
           frontAuth?: "token" | "none";
           randomSubdomain?: boolean;
@@ -987,10 +987,10 @@ export function registerWorkspaceAppCommands(
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app expose", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app expose", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const spec = await api.apps.getAppSpec(appId);
           const ttlMs = deps.durationToMs(opts.ttl);
@@ -1013,7 +1013,7 @@ export function registerWorkspaceAppCommands(
             url.searchParams.set("cocalc_app_token", exposure.token);
           }
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: appId,
             ttl_s,
             relative_url: relative,
@@ -1028,21 +1028,21 @@ export function registerWorkspaceAppCommands(
   app
     .command("unexpose <appId>")
     .description("disable public app access")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .action(
       async (
         appId: string,
-        opts: { workspace?: string },
+        opts: { project?: string },
         command: Command,
       ) => {
-        await withContext(command, "workspace app unexpose", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app unexpose", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const status = await api.apps.unexposeApp(appId);
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: appId,
             exposure: status.exposure,
             state: status.state,
@@ -1054,23 +1054,23 @@ export function registerWorkspaceAppCommands(
   app
     .command("ensure-running <appId>")
     .description("start app and wait until ready")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .option("--timeout <duration>", "wait timeout (e.g. 30s, 2m)")
     .option("--interval-ms <ms>", "poll interval in milliseconds", "500")
     .action(
       async (
         appId: string,
         opts: {
-          workspace?: string;
+          project?: string;
           timeout?: string;
           intervalMs?: string;
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app ensure-running", async (ctx) => {
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+        await withContext(command, "project app ensure-running", async (ctx) => {
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
           const interval = parsePositiveIntOrThrow(opts.intervalMs, "--interval-ms") ?? 500;
@@ -1079,7 +1079,7 @@ export function registerWorkspaceAppCommands(
             interval,
           });
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             ...status,
           };
         });
@@ -1089,7 +1089,7 @@ export function registerWorkspaceAppCommands(
   app
     .command("wait <appId>")
     .description("wait for app runtime state")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("-w, --project <project>", "project id or name")
     .requiredOption("--state <state>", "running or stopped")
     .option("--timeout <duration>", "wait timeout (e.g. 30s, 2m)")
     .option("--interval-ms <ms>", "poll interval in milliseconds", "500")
@@ -1097,21 +1097,21 @@ export function registerWorkspaceAppCommands(
       async (
         appId: string,
         opts: {
-          workspace?: string;
+          project?: string;
           state: string;
           timeout?: string;
           intervalMs?: string;
         },
         command: Command,
       ) => {
-        await withContext(command, "workspace app wait", async (ctx) => {
+        await withContext(command, "project app wait", async (ctx) => {
           const desired = `${opts.state}`.trim().toLowerCase();
           if (desired !== "running" && desired !== "stopped") {
             throw new Error("--state must be running or stopped");
           }
-          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+          const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
-            opts.workspace,
+            opts.project,
           );
           const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
           const interval = parsePositiveIntOrThrow(opts.intervalMs, "--interval-ms") ?? 500;
@@ -1120,7 +1120,7 @@ export function registerWorkspaceAppCommands(
             interval,
           });
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             app_id: appId,
             state: desired,
             reached: ok,
@@ -1133,7 +1133,7 @@ export function registerWorkspaceAppCommands(
     .command("open-mode-help")
     .description("explain service proxy open modes: proxy vs port")
     .action(async (_opts: Record<string, never>, command: Command) => {
-      await withContext(command, "workspace app open-mode-help", async () => {
+      await withContext(command, "project app open-mode-help", async () => {
         return {
           modes: [
             {
@@ -1163,10 +1163,10 @@ export function registerWorkspaceAppCommands(
     .command("bootstrap-example")
     .description("emit example JSON app spec")
     .action(async (_opts: Record<string, never>, command: Command) => {
-      await withContext(command, "workspace app bootstrap-example", async (ctx) => {
-        const ws = await resolveWorkspaceFromArgOrContext(ctx);
+      await withContext(command, "project app bootstrap-example", async (ctx) => {
+        const ws = await resolveProjectFromArgOrContext(ctx);
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           example: {
             version: 1,
             id: "my-app",

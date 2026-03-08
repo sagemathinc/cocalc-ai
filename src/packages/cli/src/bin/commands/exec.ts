@@ -54,25 +54,25 @@ export interface TasksDocument {
     limit?: number;
     sort?: { column: "Custom" | "Due" | "Changed"; dir: "asc" | "desc" };
   }): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     tasks: TaskRecord[];
     revision?: string | number | null;
   }>;
   getTask(taskId: string): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     task?: TaskRecord;
   }>;
   setDone(taskId: string, done: boolean): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     changedTaskIds: readonly string[];
     revision?: string | number | null;
     task?: TaskRecord;
   }>;
   appendToDescription(taskId: string, text: string): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     changedTaskIds: readonly string[];
     revision?: string | number | null;
@@ -90,7 +90,7 @@ export interface TasksDocument {
       hideBody: boolean;
     }>,
   ): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     changedTaskIds: readonly string[];
     revision?: string | number | null;
@@ -105,7 +105,7 @@ export interface TasksDocument {
     deleted: boolean;
     hideBody: boolean;
   }>): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     task: TaskRecord;
   }>;
@@ -120,7 +120,7 @@ export interface TextDocumentAssociation {
 }
 
 export interface TextDocumentInfo {
-  workspace: { project_id: string; title: string; host_id: string | null };
+  project: { project_id: string; title: string; host_id: string | null };
   path: string;
   association: TextDocumentAssociation;
   textLength: number;
@@ -173,28 +173,28 @@ export interface TimeTravelVersionRecord {
 export interface TimeTravelDocument {
   readonly path: string;
   listVersions(): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     doctype: "syncstring" | "syncdb" | "immer";
     hasFullHistory: boolean;
     versions: TimeTravelVersionRecord[];
   }>;
   loadMoreHistory(): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     doctype: "syncstring" | "syncdb" | "immer";
     hasFullHistory: boolean;
     versions: TimeTravelVersionRecord[];
   }>;
   readVersion(versionId: string): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     doctype: "syncstring" | "syncdb" | "immer";
     version: TimeTravelVersionRecord;
     text: string;
   }>;
   readLive(): Promise<{
-    workspace: { project_id: string; title: string; host_id: string | null };
+    project: { project_id: string; title: string; host_id: string | null };
     path: string;
     doctype: "syncstring" | "syncdb" | "immer";
     text: string;
@@ -232,7 +232,7 @@ export interface BackendExecApi {
      */
     open(options: {
       path: string;
-      workspaceIdentifier?: string;
+      projectIdentifier?: string;
       cwd?: string;
     }): TasksDocument;
   };
@@ -251,7 +251,7 @@ export interface BackendExecApi {
      */
     open(options: {
       path: string;
-      workspaceIdentifier?: string;
+      projectIdentifier?: string;
       cwd?: string;
     }): TextDocument;
   };
@@ -263,7 +263,7 @@ export interface BackendExecApi {
      */
     open(options: {
       path: string;
-      workspaceIdentifier?: string;
+      projectIdentifier?: string;
       cwd?: string;
     }): TimeTravelDocument;
   };
@@ -345,7 +345,7 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
     tasks: {
       open(options: {
         path: string;
-        workspaceIdentifier?: string;
+        projectIdentifier?: string;
         cwd?: string;
       }) {
         return deps.tasksApi.bindDocument(ctx, options);
@@ -357,7 +357,7 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
       },
       open(options: {
         path: string;
-        workspaceIdentifier?: string;
+        projectIdentifier?: string;
         cwd?: string;
       }) {
         return deps.textApi.bindDocument(ctx, options);
@@ -366,7 +366,7 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
     timetravel: {
       open(options: {
         path: string;
-        workspaceIdentifier?: string;
+        projectIdentifier?: string;
         cwd?: string;
       }) {
         return deps.timeTravelApi.bindDocument(ctx, options);

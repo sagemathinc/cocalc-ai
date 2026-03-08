@@ -641,10 +641,10 @@ export function registerBrowserHarnessCommands({
     .command("run")
     .description("run a JSON harness plan and write a structured report")
     .requiredOption("--plan <path>", "JSON harness plan file path (or '-' for stdin)")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -652,7 +652,7 @@ export function registerBrowserHarnessCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option(
@@ -719,7 +719,7 @@ export function registerBrowserHarnessCommands({
       async (
         opts: {
           plan: string;
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -749,7 +749,7 @@ export function registerBrowserHarnessCommands({
           const profileSelection = loadProfileSelection(deps, command);
           const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const workspaceHint = `${opts.workspace ?? ""}`.trim();
+          const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
@@ -808,7 +808,7 @@ export function registerBrowserHarnessCommands({
           const project_id = await resolveTargetProjectId({
             deps,
             ctx,
-            workspace: workspaceHint,
+            project: projectHint,
             projectId: projectIdHint,
             sessionInfo,
           });

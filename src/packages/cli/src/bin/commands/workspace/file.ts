@@ -1,5 +1,5 @@
 /**
- * Workspace file transfer and inspection commands.
+ * Project file transfer and inspection commands.
  *
  * Handles list/cat/put/get/rm/mkdir plus search and benchmarks, with support
  * for both direct hub calls and daemon-transported file operations.
@@ -7,14 +7,14 @@
 import { dirname } from "node:path";
 import { Command } from "commander";
 
-import type { WorkspaceCommandDeps } from "../workspace";
+import type { ProjectCommandDeps } from "../project";
 
 type GlobalOptions = any;
 type CommandContext = any;
 
-export function registerWorkspaceFileCommands(
-  workspace: Command,
-  deps: WorkspaceCommandDeps,
+export function registerProjectFileCommands(
+  project: Command,
+  deps: ProjectCommandDeps,
 ): void {
   const {
     withContext,
@@ -25,46 +25,46 @@ export function registerWorkspaceFileCommands(
     isDaemonTransportError,
     emitError,
     cliDebug,
-    workspaceFileListData,
-    workspaceFileCatData,
-    emitWorkspaceFileCatHumanContent,
+    projectFileListData,
+    projectFileCatData,
+    emitProjectFileCatHumanContent,
     readFileLocal,
     asObject,
-    workspaceFilePutData,
+    projectFilePutData,
     mkdirLocal,
     writeFileLocal,
-    workspaceFileGetData,
-    workspaceFileRmData,
-    workspaceFileMkdirData,
-    workspaceFileRgData,
-    workspaceFileFdData,
+    projectFileGetData,
+    projectFileRmData,
+    projectFileMkdirData,
+    projectFileRgData,
+    projectFileFdData,
     contextForGlobals,
-    runWorkspaceFileCheckBench,
+    runProjectFileCheckBench,
     printArrayTable,
-    runWorkspaceFileCheck,
+    runProjectFileCheck,
     closeCommandContext,
     parsePositiveInteger,
   } = deps;
 
-const file = workspace.command("file").description("workspace file operations");
+const file = project.command("file").description("project file operations");
 
 file
   .command("list [path]")
-  .description("list files in a workspace directory")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("list files in a project directory")
+  .option("-w, --project <project>", "project id or name")
   .action(
     async (
       path: string | undefined,
-      opts: { workspace?: string },
+      opts: { project?: string },
       command: Command,
     ) => {
       const globals = globalsFrom(command);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.list",
+            action: "project.file.list",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               path,
             },
           });
@@ -77,25 +77,25 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file list",
+            "project file list",
             response.data,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file list", err);
+            emitError({ globals }, "project file list", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file list daemon unavailable; falling back to direct mode", {
+          cliDebug("project file list daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file list", async (ctx) => {
-        return await workspaceFileListData({
+      await withContext(command, "project file list", async (ctx) => {
+        return await projectFileListData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
       });
@@ -104,21 +104,21 @@ file
 
 file
   .command("cat <path>")
-  .description("print a text file from a workspace")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("print a text file from a project")
+  .option("-w, --project <project>", "project id or name")
   .action(
     async (
       path: string,
-      opts: { workspace?: string },
+      opts: { project?: string },
       command: Command,
     ) => {
       const globals = globalsFrom(command);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.cat",
+            action: "project.file.cat",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               path,
             },
           });
@@ -128,7 +128,7 @@ file
           const data = asObject(response.data);
           const content = typeof data.content === "string" ? data.content : "";
           if (!globals.json && globals.output !== "json") {
-            emitWorkspaceFileCatHumanContent(content);
+            emitProjectFileCatHumanContent(content);
             return;
           }
           emitSuccess(
@@ -137,30 +137,30 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file cat",
+            "project file cat",
             data,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file cat", err);
+            emitError({ globals }, "project file cat", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file cat daemon unavailable; falling back to direct mode", {
+          cliDebug("project file cat daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file cat", async (ctx) => {
-        const data = await workspaceFileCatData({
+      await withContext(command, "project file cat", async (ctx) => {
+        const data = await projectFileCatData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const content = String(data.content ?? "");
         if (!ctx.globals.json && ctx.globals.output !== "json") {
-          emitWorkspaceFileCatHumanContent(content);
+          emitProjectFileCatHumanContent(content);
           return null;
         }
         return data;
@@ -170,14 +170,14 @@ file
 
 file
   .command("put <src> <dest>")
-  .description("upload a local file to a workspace path")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("upload a local file to a project path")
+  .option("-w, --project <project>", "project id or name")
   .option("--no-parents", "do not create destination parent directories")
   .action(
     async (
       src: string,
       dest: string,
-      opts: { workspace?: string; parents?: boolean },
+      opts: { project?: string; parents?: boolean },
       command: Command,
     ) => {
       const globals = globalsFrom(command);
@@ -185,9 +185,9 @@ file
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.put",
+            action: "project.file.put",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               dest,
               parents: opts.parents !== false,
               content_base64: data.toString("base64"),
@@ -205,25 +205,25 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file put",
+            "project file put",
             result,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file put", err);
+            emitError({ globals }, "project file put", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file put daemon unavailable; falling back to direct mode", {
+          cliDebug("project file put daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file put", async (ctx) => {
-        const result = await workspaceFilePutData({
+      await withContext(command, "project file put", async (ctx) => {
+        const result = await projectFilePutData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           dest,
           data,
           parents: opts.parents !== false,
@@ -238,23 +238,23 @@ file
 
 file
   .command("get <src> <dest>")
-  .description("download a workspace file to a local path")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("download a project file to a local path")
+  .option("-w, --project <project>", "project id or name")
   .option("--no-parents", "do not create destination parent directories")
   .action(
     async (
       src: string,
       dest: string,
-      opts: { workspace?: string; parents?: boolean },
+      opts: { project?: string; parents?: boolean },
       command: Command,
     ) => {
       const globals = globalsFrom(command);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.get",
+            action: "project.file.get",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               src,
             },
           });
@@ -274,9 +274,9 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file get",
+            "project file get",
             {
-              workspace_id: data.workspace_id ?? null,
+              project_id: data.project_id ?? null,
               src,
               dest,
               bytes: buffer.length,
@@ -286,19 +286,19 @@ file
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file get", err);
+            emitError({ globals }, "project file get", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file get daemon unavailable; falling back to direct mode", {
+          cliDebug("project file get daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file get", async (ctx) => {
-        const data = await workspaceFileGetData({
+      await withContext(command, "project file get", async (ctx) => {
+        const data = await projectFileGetData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           src,
         });
         const encoded = typeof data.content_base64 === "string" ? data.content_base64 : "";
@@ -308,7 +308,7 @@ file
         }
         await writeFileLocal(dest, buffer);
         return {
-          workspace_id: data.workspace_id ?? null,
+          project_id: data.project_id ?? null,
           src,
           dest,
           bytes: buffer.length,
@@ -320,23 +320,23 @@ file
 
 file
   .command("rm <path>")
-  .description("remove a path in a workspace")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("remove a path in a project")
+  .option("-w, --project <project>", "project id or name")
   .option("-r, --recursive", "remove directories recursively")
   .option("-f, --force", "do not fail if path is missing")
   .action(
     async (
       path: string,
-      opts: { workspace?: string; recursive?: boolean; force?: boolean },
+      opts: { project?: string; recursive?: boolean; force?: boolean },
       command: Command,
     ) => {
       const globals = globalsFrom(command);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.rm",
+            action: "project.file.rm",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               path,
               recursive: !!opts.recursive,
               force: !!opts.force,
@@ -351,25 +351,25 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file rm",
+            "project file rm",
             response.data,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file rm", err);
+            emitError({ globals }, "project file rm", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file rm daemon unavailable; falling back to direct mode", {
+          cliDebug("project file rm daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file rm", async (ctx) => {
-        return await workspaceFileRmData({
+      await withContext(command, "project file rm", async (ctx) => {
+        return await projectFileRmData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
           recursive: !!opts.recursive,
           force: !!opts.force,
@@ -380,22 +380,22 @@ file
 
 file
   .command("mkdir <path>")
-  .description("create a directory in a workspace")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("create a directory in a project")
+  .option("-w, --project <project>", "project id or name")
   .option("--no-parents", "do not create parent directories")
   .action(
     async (
       path: string,
-      opts: { workspace?: string; parents?: boolean },
+      opts: { project?: string; parents?: boolean },
       command: Command,
     ) => {
       const globals = globalsFrom(command);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.mkdir",
+            action: "project.file.mkdir",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               path,
               parents: opts.parents !== false,
             },
@@ -409,25 +409,25 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file mkdir",
+            "project file mkdir",
             response.data,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file mkdir", err);
+            emitError({ globals }, "project file mkdir", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file mkdir daemon unavailable; falling back to direct mode", {
+          cliDebug("project file mkdir daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file mkdir", async (ctx) => {
-        return await workspaceFileMkdirData({
+      await withContext(command, "project file mkdir", async (ctx) => {
+        return await projectFileMkdirData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
           parents: opts.parents !== false,
         });
@@ -437,8 +437,8 @@ file
 
 file
   .command("rg <pattern> [path]")
-  .description("search workspace files using ripgrep")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("search project files using ripgrep")
+  .option("-w, --project <project>", "project id or name")
   .option("--timeout <seconds>", "ripgrep timeout seconds", "30")
   .option("--max-bytes <bytes>", "max combined output bytes", "20000000")
   .option("--rg-option <arg>", "additional ripgrep option (repeatable)", (value, prev: string[] = []) => [...prev, value], [])
@@ -447,7 +447,7 @@ file
       pattern: string,
       path: string | undefined,
       opts: {
-        workspace?: string;
+        project?: string;
         timeout?: string;
         maxBytes?: string;
         rgOption?: string[];
@@ -460,9 +460,9 @@ file
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.rg",
+            action: "project.file.rg",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               pattern,
               path,
               timeout_ms: timeoutMs,
@@ -489,25 +489,25 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file rg",
+            "project file rg",
             data,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file rg", err);
+            emitError({ globals }, "project file rg", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file rg daemon unavailable; falling back to direct mode", {
+          cliDebug("project file rg daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file rg", async (ctx) => {
-        const data = await workspaceFileRgData({
+      await withContext(command, "project file rg", async (ctx) => {
+        const data = await projectFileRgData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           pattern,
           path,
           timeoutMs,
@@ -533,8 +533,8 @@ file
 
 file
   .command("fd [pattern] [path]")
-  .description("find files in a workspace using fd")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("find files in a project using fd")
+  .option("-w, --project <project>", "project id or name")
   .option("--timeout <seconds>", "fd timeout seconds", "30")
   .option("--max-bytes <bytes>", "max combined output bytes", "20000000")
   .option("--fd-option <arg>", "additional fd option (repeatable)", (value, prev: string[] = []) => [...prev, value], [])
@@ -543,7 +543,7 @@ file
       pattern: string | undefined,
       path: string | undefined,
       opts: {
-        workspace?: string;
+        project?: string;
         timeout?: string;
         maxBytes?: string;
         fdOption?: string[];
@@ -556,9 +556,9 @@ file
       if (shouldUseDaemonForFileOps(globals)) {
         try {
           const response = await runDaemonRequestFromCommand(command, {
-            action: "workspace.file.fd",
+            action: "project.file.fd",
             payload: {
-              workspace: opts.workspace,
+              project: opts.project,
               pattern,
               path,
               timeout_ms: timeoutMs,
@@ -585,25 +585,25 @@ file
               apiBaseUrl: response.meta?.api ?? undefined,
               accountId: response.meta?.account_id ?? undefined,
             },
-            "workspace file fd",
+            "project file fd",
             data,
           );
           return;
         } catch (err) {
           if (!isDaemonTransportError(err)) {
-            emitError({ globals }, "workspace file fd", err);
+            emitError({ globals }, "project file fd", err);
             process.exitCode = 1;
             return;
           }
-          cliDebug("workspace file fd daemon unavailable; falling back to direct mode", {
+          cliDebug("project file fd daemon unavailable; falling back to direct mode", {
             err: err instanceof Error ? err.message : `${err}`,
           });
         }
       }
-      await withContext(command, "workspace file fd", async (ctx) => {
-        const data = await workspaceFileFdData({
+      await withContext(command, "project file fd", async (ctx) => {
+        const data = await projectFileFdData({
           ctx,
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           pattern,
           path,
           timeoutMs,
@@ -629,18 +629,18 @@ file
 
 file
   .command("check")
-  .description("run sanity checks for workspace file operations")
-  .option("-w, --workspace <workspace>", "workspace id or name")
-  .option("--path-prefix <path>", "temporary workspace path prefix", ".cocalc-cli-check")
+  .description("run sanity checks for project file operations")
+  .option("-w, --project <project>", "project id or name")
+  .option("--path-prefix <path>", "temporary project path prefix", ".cocalc-cli-check")
   .option("--timeout <seconds>", "timeout seconds for rg/fd checks", "30")
   .option("--max-bytes <bytes>", "max combined output bytes for rg/fd checks", "20000000")
-  .option("--keep", "keep temporary check files in the workspace")
+  .option("--keep", "keep temporary check files in the project")
   .option("--bench", "run repeated checks and include timing benchmark summaries")
   .option("--bench-runs <n>", "number of benchmark runs when --bench is used", "3")
   .action(
     async (
       opts: {
-        workspace?: string;
+        project?: string;
         pathPrefix?: string;
         timeout?: string;
         maxBytes?: string;
@@ -659,9 +659,9 @@ file
         const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
         if (opts.bench) {
           const benchRuns = parsePositiveInteger(opts.benchRuns, 3, "--bench-runs");
-          const report = await runWorkspaceFileCheckBench({
+          const report = await runProjectFileCheckBench({
             ctx,
-            workspaceIdentifier: opts.workspace,
+            projectIdentifier: opts.project,
             pathPrefix: opts.pathPrefix,
             timeoutMs,
             maxBytes,
@@ -669,7 +669,7 @@ file
             runs: benchRuns,
           });
           if (ctx.globals.json || ctx.globals.output === "json") {
-            emitSuccess(ctx, "workspace file check", report);
+            emitSuccess(ctx, "project file check", report);
           } else if (!ctx.globals.quiet) {
             printArrayTable(report.run_results.map((x) => ({ ...x })));
             printArrayTable(report.step_stats.map((x) => ({ ...x })));
@@ -679,15 +679,15 @@ file
             console.log(
               `timing_ms: avg=${report.avg_duration_ms} min=${report.min_duration_ms} max=${report.max_duration_ms} total=${report.total_duration_ms}`,
             );
-            console.log(`workspace_id: ${report.workspace_id}`);
+            console.log(`project_id: ${report.project_id}`);
           }
           if (!report.ok) {
             process.exitCode = 1;
           }
         } else {
-          const report = await runWorkspaceFileCheck({
+          const report = await runProjectFileCheck({
             ctx,
-            workspaceIdentifier: opts.workspace,
+            projectIdentifier: opts.project,
             pathPrefix: opts.pathPrefix,
             timeoutMs,
             maxBytes,
@@ -695,13 +695,13 @@ file
           });
 
           if (ctx.globals.json || ctx.globals.output === "json") {
-            emitSuccess(ctx, "workspace file check", report);
+            emitSuccess(ctx, "project file check", report);
           } else if (!ctx.globals.quiet) {
             printArrayTable(report.results.map((x) => ({ ...x })));
             console.log(
               `summary: ${report.passed}/${report.total} passed (${report.failed} failed, ${report.skipped} skipped)`,
             );
-            console.log(`workspace_id: ${report.workspace_id}`);
+            console.log(`project_id: ${report.project_id}`);
             console.log(`temp_path: ${report.temp_path}${report.kept ? " (kept)" : ""}`);
           }
 
@@ -712,7 +712,7 @@ file
       } catch (error) {
         emitError(
           { globals, apiBaseUrl: ctx?.apiBaseUrl, accountId: ctx?.accountId },
-          "workspace file check",
+          "project file check",
           error,
         );
         process.exitCode = 1;

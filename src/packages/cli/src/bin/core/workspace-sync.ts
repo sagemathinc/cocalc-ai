@@ -1,8 +1,8 @@
 /**
- * Workspace SSH/sync backend primitives.
+ * Project SSH/sync backend primitives.
  *
- * This module provides sync-key lifecycle, workspace SSH route resolution, and
- * reflect-sync forward helpers shared by host/workspace command handlers.
+ * This module provides sync-key lifecycle, project SSH route resolution, and
+ * reflect-sync forward helpers shared by host/project command handlers.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -24,22 +24,22 @@ export type SyncKeyInfo = {
   created: boolean;
 };
 
-type WorkspaceLike = {
+type ProjectLike = {
   project_id: string;
   title: string;
   host_id: string | null;
 };
 
-export type WorkspaceSshTarget<Workspace extends WorkspaceLike = WorkspaceLike> = {
-  workspace: Workspace;
+export type ProjectSshTarget<Project extends ProjectLike = ProjectLike> = {
+  project: Project;
   ssh_server: string;
   ssh_host: string;
   ssh_port: number | null;
   ssh_target: string;
 };
 
-export type WorkspaceSshRoute<Workspace extends WorkspaceLike = WorkspaceLike> = {
-  workspace: Workspace;
+export type ProjectSshRoute<Project extends ProjectLike = ProjectLike> = {
+  project: Project;
   host_id: string;
   transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
   ssh_username: string;
@@ -49,7 +49,7 @@ export type WorkspaceSshRoute<Workspace extends WorkspaceLike = WorkspaceLike> =
   ssh_port: number | null;
 };
 
-function isCloudflareWorkspaceSshTransport(
+function isCloudflareProjectSshTransport(
   transport: WorkspaceSshConnectionInfo["transport"],
 ): transport is "cloudflare-tcp" | "cloudflare-access-tcp" {
   return transport === "cloudflare-tcp" || transport === "cloudflare-access-tcp";
@@ -72,17 +72,17 @@ export type ReflectForwardRecord = {
   ssh_args?: string | null;
 };
 
-type WorkspaceSyncOpsDeps<Ctx, Workspace extends WorkspaceLike> = {
-  resolveWorkspaceFilesystem: (
+type ProjectSyncOpsDeps<Ctx, Project extends ProjectLike> = {
+  resolveProjectFilesystem: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ workspace: Workspace; fs: any }>;
-  resolveWorkspaceFromArgOrContext: (
+  ) => Promise<{ project: Project; fs: any }>;
+  resolveProjectFromArgOrContext: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<Workspace>;
+  ) => Promise<Project>;
   parseSshServer: (value: string) => { host: string; port?: number | null };
   authConfigPath: () => string;
   resolveModule: (specifier: string) => string;
@@ -122,19 +122,19 @@ function syncKeyPublicPath(basePath: string): string {
   return `${basePath}.pub`;
 }
 
-function defaultWorkspaceSshConfigPath(): string {
+function defaultProjectSshConfigPath(): string {
   return join(homedir(), ".ssh", "config");
 }
 
-function normalizeWorkspaceSshConfigPath(input?: string): string {
+function normalizeProjectSshConfigPath(input?: string): string {
   const raw = `${input ?? ""}`.trim();
   if (!raw) {
-    return defaultWorkspaceSshConfigPath();
+    return defaultProjectSshConfigPath();
   }
   return expandUserPath(raw);
 }
 
-function normalizeWorkspaceSshHostAlias(input: string): string {
+function normalizeProjectSshHostAlias(input: string): string {
   const alias = input.trim();
   if (!alias) {
     throw new Error("ssh config host alias cannot be empty");
@@ -157,21 +157,21 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function workspaceSshConfigBlockMarkers(alias: string): {
+function projectSshConfigBlockMarkers(alias: string): {
   start: string;
   end: string;
 } {
   return {
-    start: `# >>> cocalc ws ssh ${alias} >>>`,
-    end: `# <<< cocalc ws ssh ${alias} <<<`,
+    start: `# >>> cocalc project ssh ${alias} >>>`,
+    end: `# <<< cocalc project ssh ${alias} <<<`,
   };
 }
 
-function removeWorkspaceSshConfigBlock(
+function removeProjectSshConfigBlock(
   content: string,
   alias: string,
 ): { content: string; removed: boolean } {
-  const { start, end } = workspaceSshConfigBlockMarkers(alias);
+  const { start, end } = projectSshConfigBlockMarkers(alias);
   const pattern = new RegExp(
     `(?:^|\\n)${escapeRegExp(start)}\\n[\\s\\S]*?\\n${escapeRegExp(end)}(?:\\n|$)`,
     "g",
@@ -235,22 +235,22 @@ function parseCreatedForwardId(output: string): number | null {
   return value;
 }
 
-function forwardsForWorkspace(
+function forwardsForProject(
   rows: ReflectForwardRecord[],
-  workspaceId: string,
+  projectId: string,
 ): ReflectForwardRecord[] {
-  const prefix = `${workspaceId}@`;
+  const prefix = `${projectId}@`;
   return rows.filter((row) => `${row.ssh_host ?? ""}`.startsWith(prefix));
 }
 
 function formatReflectForwardRow(row: ReflectForwardRecord): Record<string, unknown> {
   const sshHost = `${row.ssh_host ?? ""}`;
-  const workspaceId = sshHost.includes("@") ? sshHost.split("@")[0] : null;
+  const projectId = sshHost.includes("@") ? sshHost.split("@")[0] : null;
   const target = row.ssh_port ? `${sshHost}:${row.ssh_port}` : sshHost;
   return {
     id: row.id,
     name: row.name ?? null,
-    workspace_id: workspaceId,
+    project_id: projectId,
     direction: row.direction ?? null,
     target,
     local: `${row.local_host}:${row.local_port}`,
@@ -262,12 +262,12 @@ function formatReflectForwardRow(row: ReflectForwardRecord): Record<string, unkn
   };
 }
 
-export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
-  deps: WorkspaceSyncOpsDeps<Ctx, Workspace>,
+export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
+  deps: ProjectSyncOpsDeps<Ctx, Project>,
 ) {
   const {
-    resolveWorkspaceFilesystem,
-    resolveWorkspaceFromArgOrContext,
+    resolveProjectFilesystem,
+    resolveProjectFromArgOrContext,
     parseSshServer,
     authConfigPath,
     resolveModule,
@@ -322,12 +322,12 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
 
   async function installSyncPublicKey({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     publicKey,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     publicKey: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
@@ -336,7 +336,7 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
       throw new Error("public key is empty");
     }
 
-    const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+    const { project, fs } = await resolveProjectFilesystem(ctx, projectIdentifier, cwd);
     const sshDir = ".ssh";
     const authorizedKeysPath = ".ssh/authorized_keys";
     await fs.mkdir(sshDir, { recursive: true });
@@ -356,8 +356,8 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
       .filter(Boolean);
     if (existingKeys.includes(trimmedKey)) {
       return {
-        workspace_id: workspace.project_id,
-        workspace_title: workspace.title,
+        project_id: project.project_id,
+        project_title: project.title,
         path: authorizedKeysPath,
         installed: false,
         already_present: true,
@@ -369,34 +369,34 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
     const next = `${prefix}${trimmedKey}\n`;
     await fs.writeFile(authorizedKeysPath, Buffer.from(next, "utf8"));
     return {
-      workspace_id: workspace.project_id,
-      workspace_title: workspace.title,
+      project_id: project.project_id,
+      project_title: project.title,
       path: authorizedKeysPath,
       installed: true,
       already_present: false,
     };
   }
 
-  async function resolveWorkspaceSshTarget(
+  async function resolveProjectSshTarget(
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd = process.cwd(),
-  ): Promise<WorkspaceSshTarget<Workspace>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-    if (!workspace.host_id) {
-      throw new Error("workspace has no assigned host");
+  ): Promise<ProjectSshTarget<Project>> {
+    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    if (!project.host_id) {
+      throw new Error("project has no assigned host");
     }
     const connection = await (ctx as any).hub.hosts.resolveHostConnection({
-      host_id: workspace.host_id,
+      host_id: project.host_id,
     });
     if (!connection.ssh_server) {
       throw new Error("host has no ssh server endpoint");
     }
     const parsed = parseSshServer(connection.ssh_server);
-    const sshHost = `${workspace.project_id}@${parsed.host}`;
+    const sshHost = `${project.project_id}@${parsed.host}`;
     const sshTarget = parsed.port != null ? `${sshHost}:${parsed.port}` : sshHost;
     return {
-      workspace,
+      project,
       ssh_server: connection.ssh_server,
       ssh_host: sshHost,
       ssh_port: parsed.port ?? null,
@@ -404,9 +404,9 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
     };
   }
 
-  async function resolveWorkspaceSshConnection(
+  async function resolveProjectSshConnection(
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     {
       cwd = process.cwd(),
       direct = false,
@@ -414,24 +414,24 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
       cwd?: string;
       direct?: boolean;
     } = {},
-  ): Promise<WorkspaceSshRoute<Workspace>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-    if (!workspace.host_id) {
-      throw new Error("workspace has no assigned host");
+  ): Promise<ProjectSshRoute<Project>> {
+    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    if (!project.host_id) {
+      throw new Error("project has no assigned host");
     }
-    const connection = (await (ctx as any).hub.projects.resolveWorkspaceSshConnection({
-      project_id: workspace.project_id,
+    const connection = (await (ctx as any).hub.projects.resolveProjectSshConnection({
+      project_id: project.project_id,
       direct,
     })) as WorkspaceSshConnectionInfo;
     const sshUsername =
-      `${connection.ssh_username ?? workspace.project_id}`.trim() || workspace.project_id;
-    if (isCloudflareWorkspaceSshTransport(connection.transport)) {
+      `${connection.ssh_username ?? project.project_id}`.trim() || project.project_id;
+    if (isCloudflareProjectSshTransport(connection.transport)) {
       const hostname = `${connection.cloudflare_hostname ?? ""}`.trim();
       if (!hostname) {
-        throw new Error("workspace ssh route returned no cloudflare hostname");
+        throw new Error("project ssh route returned no cloudflare hostname");
       }
       return {
-        workspace,
+        project,
         host_id: connection.host_id,
         transport: "cloudflare-tcp",
         ssh_username: sshUsername,
@@ -447,7 +447,7 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
     }
     const parsed = parseSshServer(sshServer);
     return {
-      workspace,
+      project,
       host_id: connection.host_id,
       transport: "direct",
       ssh_username: sshUsername,
@@ -544,20 +544,20 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
     expandUserPath,
     normalizeSyncKeyBasePath,
     syncKeyPublicPath,
-    normalizeWorkspaceSshConfigPath,
-    normalizeWorkspaceSshHostAlias,
-    workspaceSshConfigBlockMarkers,
-    removeWorkspaceSshConfigBlock,
+    normalizeProjectSshConfigPath,
+    normalizeProjectSshHostAlias,
+    projectSshConfigBlockMarkers,
+    removeProjectSshConfigBlock,
     readSyncPublicKey,
     ensureSyncKeyPair,
     installSyncPublicKey,
-    resolveWorkspaceSshTarget,
-    resolveWorkspaceSshConnection,
+    resolveProjectSshTarget,
+    resolveProjectSshConnection,
     runCommandCapture,
     runReflectSyncCli,
     listReflectForwards,
     parseCreatedForwardId,
-    forwardsForWorkspace,
+    forwardsForProject,
     formatReflectForwardRow,
     terminateReflectForwards,
     reflectSyncHomeDir: () => reflectSyncHomeDir(authConfigPath()),

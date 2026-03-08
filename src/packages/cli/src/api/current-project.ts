@@ -15,7 +15,7 @@ type LiteConnectionInfo = {
   agent_token?: string;
 };
 
-export type CurrentProjectWorkspaceIdentity = {
+export type CurrentProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;
@@ -175,7 +175,7 @@ export async function openCurrentProjectConnection(
   bearer: string;
   projectId: string;
   client: ConatClient;
-  workspace: CurrentProjectWorkspaceIdentity;
+  project: CurrentProjectIdentity;
 }> {
   const apiBaseUrl = options.apiBaseUrl
     ? normalizeUrl(options.apiBaseUrl)
@@ -203,7 +203,7 @@ export async function openCurrentProjectConnection(
     bearer,
     projectId,
     client,
-    workspace: {
+    project: {
       project_id: projectId,
       title: projectId,
       host_id: null,

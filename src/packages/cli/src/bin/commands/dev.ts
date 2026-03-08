@@ -7,8 +7,8 @@ export type DevCommandDeps = {
   runLocalCommand: any;
   withContext: any;
   resolveHost: any;
-  resolveWorkspaceFromArgOrContext: any;
-  resolveWorkspaceProjectApi: any;
+  resolveProjectFromArgOrContext: any;
+  resolveProjectProjectApi: any;
   waitForLro: any;
 };
 
@@ -197,7 +197,7 @@ function normalizePathPrefix(value: string): string {
   return withLeading.replace(/\/+$/, "") || "/";
 }
 
-function tryParseWorkspaceProxyPath(pathname: string): {
+function tryParseProjectProxyPath(pathname: string): {
   project_id: string;
   mode: "proxy" | "port";
   port: number;
@@ -213,7 +213,7 @@ function tryParseWorkspaceProxyPath(pathname: string): {
   };
 }
 
-function tryParseWorkspaceAppPath(pathname: string): {
+function tryParseProjectAppPath(pathname: string): {
   project_id: string;
   app_id: string;
 } | null {
@@ -227,14 +227,14 @@ function tryParseWorkspaceAppPath(pathname: string): {
 
 function resolveUpgradeTarget(opts: {
   host?: string;
-  workspace?: string;
-}): { hostIdentifier?: string; workspaceIdentifier?: string } {
+  project?: string;
+}): { hostIdentifier?: string; projectIdentifier?: string } {
   const hostIdentifier = `${opts.host ?? ""}`.trim() || undefined;
-  const workspaceIdentifier = `${opts.workspace ?? ""}`.trim() || undefined;
-  if (!hostIdentifier && !workspaceIdentifier) {
-    throw new Error("specify either --host or --workspace");
+  const projectIdentifier = `${opts.project ?? ""}`.trim() || undefined;
+  if (!hostIdentifier && !projectIdentifier) {
+    throw new Error("specify either --host or --project");
   }
-  return { hostIdentifier, workspaceIdentifier };
+  return { hostIdentifier, projectIdentifier };
 }
 
 function buildCommandSummary(command: string, args: string[]): string {
@@ -272,8 +272,8 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
     runLocalCommand,
     withContext,
     resolveHost,
-    resolveWorkspaceFromArgOrContext,
-    resolveWorkspaceProjectApi,
+    resolveProjectFromArgOrContext,
+    resolveProjectProjectApi,
     waitForLro,
   } = deps;
 
@@ -331,7 +331,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
     .command("project-host")
     .description("build the local project-host bundle and roll it out to a host")
     .option("--host <host>", "host id or name")
-    .option("-w, --workspace <workspace>", "workspace id or name (to infer the host)")
+    .option("--project <project>", "project id or name (to infer the host)")
     .option("--channel <channel>", "software channel: latest or staging", "latest")
     .option("--version <version>", "explicit version override")
     .option("--no-build", "skip local bundle build")
@@ -340,7 +340,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
       async (
         opts: {
           host?: string;
-          workspace?: string;
+          project?: string;
           channel?: string;
           version?: string;
           build?: boolean;
@@ -358,12 +358,12 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             "bundle-linux.tar.xz",
           );
           const target = resolveUpgradeTarget(opts);
-          const workspace = target.workspaceIdentifier
-            ? await resolveWorkspaceFromArgOrContext(ctx, target.workspaceIdentifier)
+          const project = target.projectIdentifier
+            ? await resolveProjectFromArgOrContext(ctx, target.projectIdentifier)
             : undefined;
           const host = await resolveHost(
             ctx,
-            target.hostIdentifier ?? `${workspace?.host_id ?? ""}`,
+            target.hostIdentifier ?? `${project?.host_id ?? ""}`,
           );
           const steps: Record<string, unknown>[] = [];
 
@@ -396,7 +396,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           if (opts.wait === false) {
             return {
               host_id: host.id,
-              workspace_id: workspace?.project_id ?? null,
+              project_id: project?.project_id ?? null,
               queued: true,
               op_id: op.op_id,
               target: targetSpec,
@@ -422,7 +422,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           const refreshed = await resolveHost(ctx, host.id);
           return {
             host_id: host.id,
-            workspace_id: workspace?.project_id ?? null,
+            project_id: project?.project_id ?? null,
             op_id: op.op_id,
             status: summary.status,
             target: targetSpec,
@@ -435,24 +435,24 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
 
   sync
     .command("project")
-    .description("build the local project bundle and roll it out to a workspace host")
+    .description("build the local project bundle and roll it out to a project host")
     .option("--host <host>", "host id or name")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option("--channel <channel>", "software channel: latest or staging", "latest")
     .option("--version <version>", "explicit version override")
     .option("--no-build", "skip local bundle build")
     .option("--no-wait", "queue the rollout without waiting")
-    .option("--no-restart-workspace", "do not restart the target workspace after rollout")
+    .option("--no-restart-project", "do not restart the target project after rollout")
     .action(
       async (
         opts: {
           host?: string;
-          workspace?: string;
+          project?: string;
           channel?: string;
           version?: string;
           build?: boolean;
           wait?: boolean;
-          restartWorkspace?: boolean;
+          restartProject?: boolean;
         },
         command: Command,
       ) => {
@@ -466,12 +466,12 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             "bundle-linux.tar.xz",
           );
           const target = resolveUpgradeTarget(opts);
-          const workspace = target.workspaceIdentifier
-            ? await resolveWorkspaceFromArgOrContext(ctx, target.workspaceIdentifier)
+          const project = target.projectIdentifier
+            ? await resolveProjectFromArgOrContext(ctx, target.projectIdentifier)
             : undefined;
           const host = await resolveHost(
             ctx,
-            target.hostIdentifier ?? `${workspace?.host_id ?? ""}`,
+            target.hostIdentifier ?? `${project?.host_id ?? ""}`,
           );
           const steps: Record<string, unknown>[] = [];
 
@@ -504,13 +504,13 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           if (opts.wait === false) {
             return {
               host_id: host.id,
-              workspace_id: workspace?.project_id ?? null,
+              project_id: project?.project_id ?? null,
               queued: true,
               op_id: op.op_id,
               target: targetSpec,
               note:
-                workspace && opts.restartWorkspace !== false
-                  ? "workspace restart is skipped when --no-wait is used"
+                project && opts.restartProject !== false
+                  ? "project restart is skipped when --no-wait is used"
                   : null,
               steps,
             };
@@ -532,12 +532,12 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           }
 
           let restartResult: Record<string, unknown> | null = null;
-          if (workspace && opts.restartWorkspace !== false) {
+          if (project && opts.restartProject !== false) {
             await ctx.hub.projects.stop({
-              project_id: workspace.project_id,
+              project_id: project.project_id,
             });
             const restart = await ctx.hub.projects.start({
-              project_id: workspace.project_id,
+              project_id: project.project_id,
               wait: false,
             });
             const restartSummary = await waitForLro(ctx, restart.op_id, {
@@ -546,12 +546,12 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             });
             if (restartSummary.timedOut) {
               throw new Error(
-                `workspace restart timed out after project rollout (op=${restart.op_id}, last_status=${restartSummary.status})`,
+                `project restart timed out after project rollout (op=${restart.op_id}, last_status=${restartSummary.status})`,
               );
             }
             if (restartSummary.status !== "succeeded") {
               throw new Error(
-                `workspace restart failed after project rollout: status=${restartSummary.status} error=${restartSummary.error ?? "unknown"}`,
+                `project restart failed after project rollout: status=${restartSummary.status} error=${restartSummary.error ?? "unknown"}`,
               );
             }
             restartResult = {
@@ -563,12 +563,12 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           const refreshed = await resolveHost(ctx, host.id);
           return {
             host_id: host.id,
-            workspace_id: workspace?.project_id ?? null,
+            project_id: project?.project_id ?? null,
             op_id: op.op_id,
             status: summary.status,
             target: targetSpec,
             deployed_project_bundle_version: refreshed.project_bundle_version ?? null,
-            workspace_restart: restartResult,
+            project_restart: restartResult,
             steps,
           };
         });
@@ -581,10 +581,10 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
     .command("versions")
     .description("show local build artifacts and live runtime versions")
     .option("--host <host>", "host id or name")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .action(
       async (
-        opts: { host?: string; workspace?: string },
+        opts: { host?: string; project?: string },
         command: Command,
       ) => {
         await withContext(command, "dev runtime versions", async (ctx) => {
@@ -607,7 +607,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             remote.customize_version = null;
           }
 
-          let workspace:
+          let project:
             | {
                 project_id: string;
                 title: string;
@@ -615,11 +615,11 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                 state?: unknown;
               }
             | undefined;
-          if (opts.workspace?.trim()) {
-            const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace.trim());
-            workspace = ws;
-            remote.workspace = {
-              workspace_id: ws.project_id,
+          if (opts.project?.trim()) {
+            const ws = await resolveProjectFromArgOrContext(ctx, opts.project.trim());
+            project = ws;
+            remote.project = {
+              project_id: ws.project_id,
               title: ws.title,
               host_id: ws.host_id,
               state: ws.state ?? null,
@@ -627,7 +627,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           }
 
           const hostIdentifier =
-            `${opts.host ?? ""}`.trim() || `${workspace?.host_id ?? ""}`.trim() || undefined;
+            `${opts.host ?? ""}`.trim() || `${project?.host_id ?? ""}`.trim() || undefined;
           if (hostIdentifier) {
             const host = await resolveHost(ctx, hostIdentifier);
             const connection = await ctx.hub.hosts.resolveHostConnection({
@@ -688,8 +688,8 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
         if ((publicTrace as any)?.matched) {
           const projectId = `${(publicTrace as any).project_id ?? ""}`.trim();
           const appId = `${(publicTrace as any).app_id ?? ""}`.trim();
-          const ws = await resolveWorkspaceFromArgOrContext(ctx, projectId);
-          const { api } = await resolveWorkspaceProjectApi(ctx, projectId);
+          const ws = await resolveProjectFromArgOrContext(ctx, projectId);
+          const { api } = await resolveProjectProjectApi(ctx, projectId);
           const spec = await api.apps.getAppSpec(appId);
           const status = await api.apps.statusApp(appId);
           const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
@@ -703,8 +703,8 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             ...result,
             kind: "public-app-subdomain",
             public_app: publicTrace,
-            workspace: {
-              workspace_id: ws.project_id,
+            project: {
+              project_id: ws.project_id,
               title: ws.title,
               host_id: ws.host_id,
             },
@@ -759,8 +759,8 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                 connect_url: connection?.connect_url ?? null,
               },
               {
-                layer: "workspace-app",
-                workspace_id: ws.project_id,
+                layer: "project-app",
+                project_id: ws.project_id,
                 app_id: spec.id,
                 port: status.port ?? null,
                 ready: status.ready ?? null,
@@ -769,18 +769,18 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           };
         }
 
-        const appPath = tryParseWorkspaceAppPath(pathname);
+        const appPath = tryParseProjectAppPath(pathname);
         if (appPath) {
-          const ws = await resolveWorkspaceFromArgOrContext(ctx, appPath.project_id);
-          const { api } = await resolveWorkspaceProjectApi(ctx, appPath.project_id);
+          const ws = await resolveProjectFromArgOrContext(ctx, appPath.project_id);
+          const { api } = await resolveProjectProjectApi(ctx, appPath.project_id);
           const spec = await api.apps.getAppSpec(appPath.app_id);
           const status = await api.apps.statusApp(appPath.app_id);
           const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
           return {
             ...result,
-            kind: "workspace-app-path",
-            workspace: {
-              workspace_id: ws.project_id,
+            kind: "project-app-path",
+            project: {
+              project_id: ws.project_id,
               title: ws.title,
               host_id: ws.host_id,
             },
@@ -803,18 +803,18 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           };
         }
 
-        const proxyPath = tryParseWorkspaceProxyPath(pathname);
+        const proxyPath = tryParseProjectProxyPath(pathname);
         if (proxyPath) {
-          const ws = await resolveWorkspaceFromArgOrContext(ctx, proxyPath.project_id);
-          const { api } = await resolveWorkspaceProjectApi(ctx, proxyPath.project_id);
+          const ws = await resolveProjectFromArgOrContext(ctx, proxyPath.project_id);
+          const { api } = await resolveProjectProjectApi(ctx, proxyPath.project_id);
           const statuses = await api.apps.listAppStatuses();
           const candidates = statuses.filter((item) => item.port === proxyPath.port);
           const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
           return {
             ...result,
-            kind: "workspace-port-path",
-            workspace: {
-              workspace_id: ws.project_id,
+            kind: "project-port-path",
+            project: {
+              project_id: ws.project_id,
               title: ws.title,
               host_id: ws.host_id,
             },

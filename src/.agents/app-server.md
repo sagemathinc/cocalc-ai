@@ -24,7 +24,7 @@ This should replace ad hoc per-app special cases over time.
 3. Wake-on-demand for service apps is implemented.
 4. Public expose/unexpose plumbing is implemented with TTL, random subdomain support, and optional front token auth.
 5. Metered-egress warnings/policy hints (notably GCP) are implemented.
-6. CLI surface for `workspace app` lifecycle is implemented and agent-usable in JSON mode.
+6. CLI surface for `project app` lifecycle is implemented and agent-usable in JSON mode.
 7. Public-readiness audit command/prompt path is implemented (backend + CLI).
 8. Live Launchpad GCP smoke for service app flow passes end-to-end (create/start/expose/public probe/recover/unexpose/cleanup).
 9. The main user-facing app surface now uses `Apps` / `Managed Applications`, with duplicate launcher UI removed from `+New`, the `+New` flyout, and the old top-row launcher area.
@@ -37,7 +37,7 @@ This should replace ad hoc per-app special cases over time.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
 3. The Apps page is coherent enough for real use now, but still needs visual/product polish, broader template coverage, and better advanced workflow presentation.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
-5. App portability is partially implemented/planned: project clone should already carry app specs because they live in the workspace filesystem, and explicit CLI export/import/clone flows are being added; dedicated frontend download/upload UX is still pending.
+5. App portability is partially implemented/planned: project clone should already carry app specs because they live in the project filesystem, and explicit CLI export/import/clone flows are being added; dedicated frontend download/upload UX is still pending.
 
 ### Not Done
 
@@ -52,7 +52,7 @@ This should replace ad hoc per-app special cases over time.
 3. Agent-usable via deterministic CLI.
 4. Works with low-traffic, high-state scientific workloads.
 5. Compatible with existing JupyterLab/code-server/Pluto workflows.
-6. Expand CoCalc value from "private compute workspace" to "workspace + deployable services."
+6. Expand CoCalc value from "private compute project" to "project + deployable services."
 
 ## 3. Non-Goals (for first pass)
 
@@ -96,10 +96,10 @@ Requirements:
 
 1. Export one app or all apps as JSON so users can download/share a config bundle.
 2. Import one app spec or a multi-app bundle into another project.
-3. Support direct app-spec clone between workspaces in the CLI so agents do not have to round-trip through local files.
+3. Support direct app-spec clone between projects in the CLI so agents do not have to round-trip through local files.
 4. Preserve only declarative app specs; do not clone runtime state, process state, logs, or public-exposure leases/tokens.
 5. Make it clear that "clone project" is different from "clone app spec":
-   - full project clone should already carry app specs automatically because the workspace filesystem clone includes `.local/share/cocalc/apps`,
+   - full project clone should already carry app specs automatically because the project filesystem clone includes `.local/share/cocalc/apps`,
    - runtime state and exposure metadata should still be re-created on first use in the destination environment.
 
 Proposed portable bundle shape:
@@ -109,7 +109,7 @@ Proposed portable bundle shape:
   "version": 1,
   "kind": "cocalc-app-spec-bundle",
   "exported_at": "2026-03-07T00:00:00.000Z",
-  "workspace_id": "source-workspace-id",
+  "project_id": "source-project-id",
   "apps": [{ "...": "normalized app specs" }]
 }
 ```
@@ -117,11 +117,11 @@ Proposed portable bundle shape:
 CLI/UI implications:
 
 1. CLI:
-   - `cocalc workspace app export <app-id>`
-   - `cocalc workspace app export-all`
-   - `cocalc workspace app import --file ...`
-   - `cocalc workspace app clone <app-id> --from-workspace ... --to-workspace ...`
-   - `cocalc workspace app clone-all --from-workspace ... --to-workspace ...`
+   - `cocalc project app export <app-id>`
+   - `cocalc project app export-all`
+   - `cocalc project app import --file ...`
+   - `cocalc project app clone <app-id> --from-project ... --to-project ...`
+   - `cocalc project app clone-all --from-project ... --to-project ...`
 2. Frontend:
    - download one app config or an all-app bundle,
    - upload/import a saved bundle,
@@ -221,7 +221,7 @@ Examples:
    - runtime: managed database plus a management UI,
    - integration: CoCalc can surface project-aware actions that jump directly into the database UI.
 4. Chromium:
-   - runtime: native/X11 app inside the workspace,
+   - runtime: native/X11 app inside the project,
    - integration: CoCalc launches it in a safer sandboxed remote environment rather than on the user's own machine.
 
 Possible future integration block in app specs:
@@ -275,7 +275,7 @@ Public exposure is explicit and reversible.
 
 ### 7.4 Static Serving
 
-1. Allow serving static paths from workspace via project-host.
+1. Allow serving static paths from project via project-host.
 2. Respect safe path constraints.
 3. Optional aggressive caching headers for CDN cost control.
 
@@ -428,27 +428,27 @@ Template catalog should be broader, but structured:
 
 ## 11. CLI Plan (Agent-First)
 
-Introduce `cocalc workspace app` command group with JSON-first output.
+Introduce `cocalc project app` command group with JSON-first output.
 
 Core commands:
 
-1. `cocalc workspace app list --json`
-2. `cocalc workspace app get <app-id> --json`
-3. `cocalc workspace app upsert --file spec.yaml --json`
-4. `cocalc workspace app delete <app-id> --json`
-5. `cocalc workspace app start <app-id> --wait --json`
-6. `cocalc workspace app stop <app-id> --json`
-7. `cocalc workspace app restart <app-id> --wait --json`
-8. `cocalc workspace app logs <app-id> --tail 200`
-9. `cocalc workspace app expose <app-id> --public --ttl 24h --json`
-10. `cocalc workspace app unexpose <app-id> --json`
-11. `cocalc workspace app ensure-running <app-id> --json`
-12. `cocalc workspace app detect --json`
-13. `cocalc workspace app audit <app-id> --public-readiness --json`
-14. `cocalc workspace app export <app-id> --json`
-15. `cocalc workspace app export-all --json`
-16. `cocalc workspace app import --file app.json --json`
-17. `cocalc workspace app clone <app-id> --from-workspace <src> --to-workspace <dst> --json`
+1. `cocalc project app list --json`
+2. `cocalc project app get <app-id> --json`
+3. `cocalc project app upsert --file spec.yaml --json`
+4. `cocalc project app delete <app-id> --json`
+5. `cocalc project app start <app-id> --wait --json`
+6. `cocalc project app stop <app-id> --json`
+7. `cocalc project app restart <app-id> --wait --json`
+8. `cocalc project app logs <app-id> --tail 200`
+9. `cocalc project app expose <app-id> --public --ttl 24h --json`
+10. `cocalc project app unexpose <app-id> --json`
+11. `cocalc project app ensure-running <app-id> --json`
+12. `cocalc project app detect --json`
+13. `cocalc project app audit <app-id> --public-readiness --json`
+14. `cocalc project app export <app-id> --json`
+15. `cocalc project app export-all --json`
+16. `cocalc project app import --file app.json --json`
+17. `cocalc project app clone <app-id> --from-project <src> --to-project <dst> --json`
 
 Agent-critical behavior:
 
@@ -506,12 +506,12 @@ This SSH-based fallback should also support native GUI applications, especially:
 1. simple X11 test apps such as `xclock`,
 2. legacy scientific visualization tools with no serious web counterpart,
 3. desktop-style editors such as Zed or similar tools that are better launched locally than proxied through a browser.
-4. a full web browser such as chromium -- it can be useful having it run directly inside the workspace
+4. a full web browser such as chromium -- it can be useful having it run directly inside the project
 
 Conceptually, this is a second app-launch mode:
 
 1. managed web app:
-   - start service in workspace,
+   - start service in project,
    - expose through CoCalc proxy/public URL machinery.
 2. managed native app:
    - start through SSH/X11 workflow,
@@ -561,7 +561,7 @@ Preferred flow:
 
 Approval dialog should include:
 
-1. workspace/project identity,
+1. project identity,
 2. remote target details,
 3. local port or local application being launched,
 4. expected duration/persistence,
@@ -573,7 +573,7 @@ Security model:
 2. examples:
    - "forward remote port 8787 to local 127.0.0.1:8877",
    - "launch `xclock` over approved SSH/X11 session",
-3. every action should be attributable to a signed-in user and a specific project/workspace,
+3. every action should be attributable to a signed-in user and a specific project,
 4. there should be a local audit trail and one-click stop/revoke path,
 5. copy/paste bootstrap remains the low-trust fallback when daemon pairing is unavailable.
 
@@ -593,15 +593,15 @@ This makes the system feel dramatically smoother while keeping the right securit
 
 CLI shape (proposed):
 
-1. `cocalc workspace app ssh-forward <app-id> --local-port 8888 [--remote-port auto] --json`
-   - ensures workspace/project runtime is reachable for SSH,
+1. `cocalc project app ssh-forward <app-id> --local-port 8888 [--remote-port auto] --json`
+   - ensures project runtime is reachable for SSH,
    - resolves app target port (or accepts explicit),
    - outputs ready-to-run local command and connection metadata.
-2. `cocalc workspace app ssh-forward-command <app-id> --local-port 8888`
+2. `cocalc project app ssh-forward-command <app-id> --local-port 8888`
    - prints a single copy/paste command for local laptop execution.
-3. `cocalc workspace app ssh-forward stop <session-id>`
+3. `cocalc project app ssh-forward stop <session-id>`
    - optional if we manage background local helpers from CLI wrappers.
-4. `cocalc workspace app launch-native <app-id> --json`
+4. `cocalc project app launch-native <app-id> --json`
    - returns a generated local bootstrap command instead of a URL,
    - includes platform/prerequisite metadata so UI and agent can explain what will happen.
 
@@ -656,8 +656,8 @@ Scope:
 
 Command shape:
 
-1. `cocalc ws app forward-command <app-id> [--local-port 0]`
-2. `cocalc ws app forward-command --workspace <id> <app-id>`
+1. `cocalc project app forward-command <app-id> [--local-port 0]`
+2. `cocalc project app forward-command --project <id> <app-id>`
 
 Behavior:
 
@@ -685,9 +685,9 @@ Goal:
 
 Command shape:
 
-1. `cocalc ws app forward <app-id> [--local-port 0]`
-2. `cocalc ws app forward status`
-3. `cocalc ws app forward stop <session-id|app-id>`
+1. `cocalc project app forward <app-id> [--local-port 0]`
+2. `cocalc project app forward status`
+3. `cocalc project app forward stop <session-id|app-id>`
 
 Behavior:
 
@@ -751,8 +751,8 @@ Goal:
 
 Command shape:
 
-1. `cocalc ws app launch-native <app-id>`
-2. later optionally `cocalc ws app launch-native --daemon`
+1. `cocalc project app launch-native <app-id>`
+2. later optionally `cocalc project app launch-native --daemon`
 
 Behavior:
 
@@ -904,7 +904,7 @@ Existing components to reuse where possible:
 
 1. New app specs can be created declaratively and launched without custom code edits.
 2. Private URL access is authenticated and secure by default.
-3. `cocalc workspace app ...` commands fully cover lifecycle in JSON mode.
+3. `cocalc project app ...` commands fully cover lifecycle in JSON mode.
 4. Base path support works for at least JupyterLab, code-server, and one custom app.
 5. Wake-on-demand works for stopped app and returns usable URL after startup.
 6. Public exposure is explicit, revocable, and TTL-bound.
@@ -945,7 +945,7 @@ Existing components to reuse where possible:
 19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 20. `[partial]` Add app portability workflows:
    - explicit CLI export/import/clone,
-   - document that full project clone already carries app specs because they live in the workspace filesystem,
+   - document that full project clone already carries app specs because they live in the project filesystem,
    - frontend download/upload/"copy to another project" UX still pending.
 21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
 
@@ -1067,9 +1067,9 @@ responsibility inside the project itself.
 
 Add something like:
 
-- `cocalc ws app metrics <app-id>`
-- `cocalc ws app metrics --all`
-- `cocalc ws app metrics <app-id> --window 24h`
+- `cocalc project app metrics <app-id>`
+- `cocalc project app metrics --all`
+- `cocalc project app metrics <app-id> --window 24h`
 
 Return stable JSON suitable for agents and admin tooling.
 

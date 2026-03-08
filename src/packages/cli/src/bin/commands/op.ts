@@ -2,7 +2,7 @@ import { Command } from "commander";
 
 export type OpCommandDeps = {
   withContext: any;
-  resolveWorkspace: any;
+  resolveProject: any;
   resolveHost: any;
   parseLroScopeType: any;
   serializeLroSummary: any;
@@ -12,7 +12,7 @@ export type OpCommandDeps = {
 export function registerOpCommand(program: Command, deps: OpCommandDeps): Command {
   const {
     withContext,
-    resolveWorkspace,
+    resolveProject,
     resolveHost,
     parseLroScopeType,
     serializeLroSummary,
@@ -26,27 +26,27 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
     .description("list operations for a scope")
     .option("--scope-type <type>", "scope type: project|account|host|hub")
     .option("--scope-id <id>", "scope id")
-    .option("--workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option("--host <host>", "host id or name")
     .option("--include-completed", "include completed operations")
     .option("--limit <n>", "max rows", "100")
     .action(async (opts: any, command: Command) => {
       await withContext(command, "op list", async (ctx: any) => {
         const haveExplicitScope = !!opts.scopeType || !!opts.scopeId;
-        const haveWorkspace = !!opts.workspace;
+        const haveProject = !!opts.project;
         const haveHost = !!opts.host;
-        const scopeModes = Number(haveExplicitScope) + Number(haveWorkspace) + Number(haveHost);
+        const scopeModes = Number(haveExplicitScope) + Number(haveProject) + Number(haveHost);
         if (scopeModes > 1) {
           throw new Error(
-            "use only one scope selector: (--scope-type + --scope-id) OR --workspace OR --host",
+            "use only one scope selector: (--scope-type + --scope-id) OR --project OR --host",
           );
         }
 
         let scope_type: any;
         let scope_id: string;
 
-        if (haveWorkspace) {
-          const ws = await resolveWorkspace(ctx, opts.workspace);
+        if (haveProject) {
+          const ws = await resolveProject(ctx, opts.project);
           scope_type = "project";
           scope_id = ws.project_id;
         } else if (haveHost) {

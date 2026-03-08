@@ -1,5 +1,5 @@
 /**
- * Workspace operational access commands.
+ * Project operational access commands.
  *
  * Covers ssh connectivity, local ssh config integration, runtime log streaming,
  * and endpoint/proxy checks needed for debugging and operator workflows.
@@ -8,43 +8,43 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Command } from "commander";
 
-import type { WorkspaceCommandDeps } from "../workspace";
+import type { ProjectCommandDeps } from "../project";
 
 type SyncKeyInfo = any;
-type WorkspaceRuntimeLogRow = any;
+type ProjectRuntimeLogRow = any;
 
-export function registerWorkspaceOpsCommands(
-  workspace: Command,
-  deps: WorkspaceCommandDeps,
+export function registerProjectOpsCommands(
+  project: Command,
+  deps: ProjectCommandDeps,
 ): void {
   const {
     withContext,
-    resolveWorkspaceSshConnection,
+    resolveProjectSshConnection,
     ensureSyncKeyPair,
     installSyncPublicKey,
     runSshCheck,
     isLikelySshAuthFailure,
     runSsh,
     resolveCloudflaredBinary,
-    normalizeWorkspaceSshHostAlias,
-    normalizeWorkspaceSshConfigPath,
-    workspaceSshConfigBlockMarkers,
-    removeWorkspaceSshConfigBlock,
+    normalizeProjectSshHostAlias,
+    normalizeProjectSshConfigPath,
+    projectSshConfigBlockMarkers,
+    removeProjectSshConfigBlock,
     runLocalCommand,
-    resolveWorkspaceFromArgOrContext,
-    emitWorkspaceFileCatHumanContent,
+    resolveProjectFromArgOrContext,
+    emitProjectFileCatHumanContent,
     resolveHost,
     waitForLro,
     waitForProjectPlacement,
-    resolveWorkspace,
+    resolveProject,
   } = deps;
 
-workspace
+project
   .command("ssh [sshArgs...]")
   .description(
-    "connect to a workspace over ssh (defaults to context); pass remote command after '--'",
+    "connect to a project over ssh (defaults to context); pass remote command after '--'",
   )
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("-w, --project <project>", "project id or name")
   .option(
     "--direct",
     "bypass the Cloudflare ssh hostname and connect to the host ssh endpoint directly",
@@ -54,7 +54,7 @@ workspace
   .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
   .option(
     "--no-install-key",
-    "skip automatic local ssh key ensure + workspace authorized_keys install",
+    "skip automatic local ssh key ensure + project authorized_keys install",
   )
   .allowUnknownOption(true)
   .allowExcessArguments(true)
@@ -62,7 +62,7 @@ workspace
     async (
       sshArgs: string[],
       opts: {
-        workspace?: string;
+        project?: string;
         direct?: boolean;
         check?: boolean;
         requireAuth?: boolean;
@@ -71,11 +71,11 @@ workspace
       },
       command: Command,
     ) => {
-      await withContext(command, "workspace ssh", async (ctx) => {
+      await withContext(command, "project ssh", async (ctx) => {
         if (opts.check && sshArgs.length > 0) {
           throw new Error("--check does not accept ssh arguments");
         }
-        const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
+        const route = await resolveProjectSshConnection(ctx, opts.project, {
           direct: !!opts.direct,
         });
 
@@ -85,7 +85,7 @@ workspace
           keyInfo = await ensureSyncKeyPair(opts.keyPath);
           keyInstall = await installSyncPublicKey({
             ctx,
-            workspaceIdentifier: route.workspace.project_id,
+            projectIdentifier: route.project.project_id,
             publicKey: keyInfo.public_key,
           });
         }
@@ -98,7 +98,7 @@ workspace
         if (route.transport !== "direct") {
           const cloudflareHostname = route.cloudflare_hostname;
           if (!cloudflareHostname) {
-            throw new Error("workspace ssh route is missing cloudflare hostname");
+            throw new Error("project ssh route is missing cloudflare hostname");
           }
           const cloudflared =
             opts.check
@@ -111,7 +111,7 @@ workspace
           sshServer = `${cloudflareHostname}:443`;
         } else {
           if (!route.ssh_host) {
-            throw new Error("workspace ssh route is missing host endpoint");
+            throw new Error("project ssh route is missing host endpoint");
           }
           if (route.ssh_port != null) {
             baseArgs.push("-p", String(route.ssh_port));
@@ -141,7 +141,7 @@ workspace
           if (result.code !== 0) {
             if (!opts.requireAuth && isLikelySshAuthFailure(result.stderr)) {
               return {
-                workspace_id: route.workspace.project_id,
+                project_id: route.project.project_id,
                 ssh_transport: route.transport,
                 ssh_server: sshServer,
                 checked: true,
@@ -158,7 +158,7 @@ workspace
             throw new Error(`ssh check failed (exit ${result.code})${suffix}`);
           }
           return {
-            workspace_id: route.workspace.project_id,
+            project_id: route.project.project_id,
             ssh_transport: route.transport,
             ssh_server: sshServer,
             checked: true,
@@ -182,7 +182,7 @@ workspace
           return null;
         }
         return {
-          workspace_id: route.workspace.project_id,
+          project_id: route.project.project_id,
           ssh_transport: route.transport,
           ssh_server: sshServer,
           exit_code: code,
@@ -197,21 +197,21 @@ workspace
     },
   );
 
-workspace
+project
   .command("ssh-info")
-  .description("print ssh connection info for a workspace (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("print ssh connection info for a project (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
   .option(
     "--direct",
     "bypass the Cloudflare ssh hostname and show the direct host ssh endpoint",
   )
   .action(
     async (
-      opts: { workspace?: string; direct?: boolean },
+      opts: { project?: string; direct?: boolean },
       command: Command,
     ) => {
-      await withContext(command, "workspace ssh-info", async (ctx) => {
-        const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
+      await withContext(command, "project ssh-info", async (ctx) => {
+        const route = await resolveProjectSshConnection(ctx, opts.project, {
           direct: !!opts.direct,
         });
         const baseArgs: string[] = [];
@@ -219,7 +219,7 @@ workspace
         if (route.transport !== "direct") {
           const cloudflareHostname = route.cloudflare_hostname;
           if (!cloudflareHostname) {
-            throw new Error("workspace ssh route is missing cloudflare hostname");
+            throw new Error("project ssh route is missing cloudflare hostname");
           }
           const cloudflared = `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
             "cloudflared";
@@ -229,7 +229,7 @@ workspace
           sshServer = `${cloudflareHostname}:443`;
         } else {
           if (!route.ssh_host) {
-            throw new Error("workspace ssh route is missing host endpoint");
+            throw new Error("project ssh route is missing host endpoint");
           }
           if (route.ssh_port != null) {
             baseArgs.push("-p", String(route.ssh_port));
@@ -238,7 +238,7 @@ workspace
         }
         const commandLine = `ssh ${baseArgs.map((x) => (x.includes(" ") ? JSON.stringify(x) : x)).join(" ")}`;
         return {
-          workspace_id: route.workspace.project_id,
+          project_id: route.project.project_id,
           ssh_transport: route.transport,
           ssh_server: sshServer,
           command: commandLine,
@@ -247,28 +247,28 @@ workspace
     },
   );
 
-const workspaceSshConfig = workspace
+const projectSshConfig = project
   .command("ssh-config")
-  .description("manage local OpenSSH config entries for workspace ssh");
+  .description("manage local OpenSSH config entries for project ssh");
 
-workspaceSshConfig
+projectSshConfig
   .command("add")
   .description(
-    "add/update a managed ~/.ssh/config entry for workspace ssh (Host defaults to exactly -w value)",
+    "add/update a managed ~/.ssh/config entry for project ssh (Host defaults to exactly -w value)",
   )
-  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .requiredOption("-w, --project <project>", "project id or name")
   .option("--alias <alias>", "Host alias in ssh config (defaults to exactly -w value)")
   .option("--config <path>", "ssh config path (default: ~/.ssh/config)")
   .option("--direct", "write direct-host ssh route instead of Cloudflare route")
   .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
   .option(
     "--no-install-key",
-    "skip automatic local ssh key ensure + workspace authorized_keys install",
+    "skip automatic local ssh key ensure + project authorized_keys install",
   )
   .action(
     async (
       opts: {
-        workspace: string;
+        project: string;
         alias?: string;
         config?: string;
         direct?: boolean;
@@ -277,12 +277,12 @@ workspaceSshConfig
       },
       command: Command,
     ) => {
-      await withContext(command, "workspace ssh-config add", async (ctx) => {
-        const alias = normalizeWorkspaceSshHostAlias(opts.alias ?? opts.workspace);
-        const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
+      await withContext(command, "project ssh-config add", async (ctx) => {
+        const alias = normalizeProjectSshHostAlias(opts.alias ?? opts.project);
+        const route = await resolveProjectSshConnection(ctx, opts.project, {
           direct: !!opts.direct,
         });
-        const configPath = normalizeWorkspaceSshConfigPath(opts.config);
+        const configPath = normalizeProjectSshConfigPath(opts.config);
 
         let keyInfo: SyncKeyInfo | null = null;
         let keyInstall: Record<string, unknown> | null = null;
@@ -290,7 +290,7 @@ workspaceSshConfig
           keyInfo = await ensureSyncKeyPair(opts.keyPath);
           keyInstall = await installSyncPublicKey({
             ctx,
-            workspaceIdentifier: route.workspace.project_id,
+            projectIdentifier: route.project.project_id,
             publicKey: keyInfo.public_key,
           });
         }
@@ -300,7 +300,7 @@ workspaceSshConfig
             ? `${route.cloudflare_hostname ?? ""}`.trim()
             : `${route.ssh_host ?? ""}`.trim();
         if (!hostName) {
-          throw new Error("workspace ssh route is missing host endpoint");
+          throw new Error("project ssh route is missing host endpoint");
         }
 
         const lines = [
@@ -319,18 +319,18 @@ workspaceSshConfig
           lines.push(`  IdentityFile ${keyInfo.private_key_path}`);
           lines.push("  IdentitiesOnly yes");
         }
-        const markers = workspaceSshConfigBlockMarkers(alias);
+        const markers = projectSshConfigBlockMarkers(alias);
         const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
 
         mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
         const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
-        const stripped = removeWorkspaceSshConfigBlock(existing, alias).content.trimEnd();
+        const stripped = removeProjectSshConfigBlock(existing, alias).content.trimEnd();
         const next = stripped ? `${stripped}\n\n${block}` : block;
         writeFileSync(configPath, next, { encoding: "utf8", mode: 0o600 });
 
         return {
-          workspace_id: route.workspace.project_id,
-          workspace_title: route.workspace.title,
+          project_id: route.project.project_id,
+          project_title: route.project.title,
           alias,
           config_path: configPath,
           ssh_transport: route.transport,
@@ -350,24 +350,24 @@ workspaceSshConfig
     },
   );
 
-workspaceSshConfig
+projectSshConfig
   .command("remove")
-  .description("remove a managed workspace ssh entry from ~/.ssh/config")
-  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .description("remove a managed project ssh entry from ~/.ssh/config")
+  .requiredOption("-w, --project <project>", "project id or name")
   .option("--alias <alias>", "Host alias in ssh config (defaults to exactly -w value)")
   .option("--config <path>", "ssh config path (default: ~/.ssh/config)")
   .action(
     async (
       opts: {
-        workspace: string;
+        project: string;
         alias?: string;
         config?: string;
       },
       command: Command,
     ) => {
-      await runLocalCommand(command, "workspace ssh-config remove", async () => {
-        const alias = normalizeWorkspaceSshHostAlias(opts.alias ?? opts.workspace);
-        const configPath = normalizeWorkspaceSshConfigPath(opts.config);
+      await runLocalCommand(command, "project ssh-config remove", async () => {
+        const alias = normalizeProjectSshHostAlias(opts.alias ?? opts.project);
+        const configPath = normalizeProjectSshConfigPath(opts.config);
         if (!existsSync(configPath)) {
           return {
             alias,
@@ -376,7 +376,7 @@ workspaceSshConfig
           };
         }
         const existing = readFileSync(configPath, "utf8");
-        const stripped = removeWorkspaceSshConfigBlock(existing, alias);
+        const stripped = removeProjectSshConfigBlock(existing, alias);
         if (!stripped.removed) {
           return {
             alias,
@@ -397,18 +397,18 @@ workspaceSshConfig
     },
   );
 
-workspace
+project
   .command("logs")
-  .description("show workspace runtime logs from project-host (prints nothing if not running)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("show project runtime logs from project-host (prints nothing if not running)")
+  .option("-w, --project <project>", "project id or name")
   .option("--tail <n>", "number of log lines", "200")
   .action(
     async (
-      opts: { workspace?: string; tail?: string },
+      opts: { project?: string; tail?: string },
       command: Command,
     ) => {
-      await withContext(command, "workspace logs", async (ctx) => {
-        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+      await withContext(command, "project logs", async (ctx) => {
+        const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
         const tail = Number(opts.tail ?? "200");
         if (!Number.isFinite(tail) || tail <= 0) {
           throw new Error("--tail must be a positive integer");
@@ -416,10 +416,10 @@ workspace
         const log = (await ctx.hub.projects.getRuntimeLog({
           project_id: ws.project_id,
           lines: Math.floor(tail),
-        })) as WorkspaceRuntimeLogRow;
+        })) as ProjectRuntimeLogRow;
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (log.text) {
-            emitWorkspaceFileCatHumanContent(log.text);
+            emitProjectFileCatHumanContent(log.text);
           }
           return null;
         }
@@ -428,16 +428,16 @@ workspace
     },
   );
 
-workspace
+project
   .command("move")
-  .description("move a workspace to another host (defaults to context)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .description("move a project to another host (defaults to context)")
+  .option("-w, --project <project>", "project id or name")
   .requiredOption("--host <host>", "destination host id or name")
   .option("--wait", "wait for completion")
   .action(
-    async (opts: { workspace?: string; host: string; wait?: boolean }, command: Command) => {
-      await withContext(command, "workspace move", async (ctx) => {
-        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+    async (opts: { project?: string; host: string; wait?: boolean }, command: Command) => {
+      await withContext(command, "project move", async (ctx) => {
+        const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
         const host = await resolveHost(ctx, opts.host);
         const op = await ctx.hub.projects.moveProject({
           project_id: ws.project_id,
@@ -446,7 +446,7 @@ workspace
 
         if (!opts.wait) {
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             dest_host_id: host.id,
             op_id: op.op_id,
             status: "queued",
@@ -460,7 +460,7 @@ workspace
 
         if (!summary.timedOut && summary.status === "succeeded") {
           return {
-            workspace_id: ws.project_id,
+            project_id: ws.project_id,
             dest_host_id: host.id,
             op_id: op.op_id,
             status: summary.status,
@@ -484,7 +484,7 @@ workspace
         }
 
         return {
-          workspace_id: ws.project_id,
+          project_id: ws.project_id,
           dest_host_id: host.id,
           op_id: op.op_id,
           status: summary.status,
@@ -495,28 +495,28 @@ workspace
     },
   );
 
-workspace
+project
   .command("copy-path")
-  .description("copy a path between workspaces")
-  .requiredOption("--src-workspace <workspace>", "source workspace")
+  .description("copy a path between projects")
+  .requiredOption("--src-project <project>", "source project")
   .requiredOption("--src <path>", "source path")
-  .requiredOption("--dest-workspace <workspace>", "destination workspace")
+  .requiredOption("--dest-project <project>", "destination project")
   .requiredOption("--dest <path>", "destination path")
   .option("--wait", "wait for completion")
   .action(
     async (
       opts: {
-        srcWorkspace: string;
+        srcProject: string;
         src: string;
-        destWorkspace: string;
+        destProject: string;
         dest: string;
         wait?: boolean;
       },
       command: Command,
     ) => {
-      await withContext(command, "workspace copy-path", async (ctx) => {
-        const srcWs = await resolveWorkspace(ctx, opts.srcWorkspace);
-        const destWs = await resolveWorkspace(ctx, opts.destWorkspace);
+      await withContext(command, "project copy-path", async (ctx) => {
+        const srcWs = await resolveProject(ctx, opts.srcProject);
+        const destWs = await resolveProject(ctx, opts.destProject);
         const op = await ctx.hub.projects.copyPathBetweenProjects({
           src: { project_id: srcWs.project_id, path: opts.src },
           dest: { project_id: destWs.project_id, path: opts.dest },
@@ -524,9 +524,9 @@ workspace
 
         if (!opts.wait) {
           return {
-            src_workspace_id: srcWs.project_id,
+            src_project_id: srcWs.project_id,
             src_path: opts.src,
-            dest_workspace_id: destWs.project_id,
+            dest_project_id: destWs.project_id,
             dest_path: opts.dest,
             op_id: op.op_id,
             status: "queued",
@@ -545,9 +545,9 @@ workspace
         }
 
         return {
-          src_workspace_id: srcWs.project_id,
+          src_project_id: srcWs.project_id,
           src_path: opts.src,
-          dest_workspace_id: destWs.project_id,
+          dest_project_id: destWs.project_id,
           dest_path: opts.dest,
           op_id: op.op_id,
           status: summary.status,

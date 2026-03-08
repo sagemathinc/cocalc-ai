@@ -14,7 +14,7 @@ export type HostCommandDeps = {
   resolveHost: any;
   normalizeHostProviderValue: any;
   summarizeHostCatalogEntries: any;
-  emitWorkspaceFileCatHumanContent: any;
+  emitProjectFileCatHumanContent: any;
   parseHostSoftwareArtifactsOption: any;
   parseHostSoftwareChannelsOption: any;
   waitForLro: any;
@@ -27,7 +27,7 @@ export type HostCommandDeps = {
   HOST_CREATE_DISK_TYPES: any;
   HOST_CREATE_STORAGE_MODES: any;
   waitForHostCreateReady: any;
-  resolveWorkspace: any;
+  resolveProject: any;
 };
 
 export function registerHostCommand(program: Command, deps: HostCommandDeps): Command {
@@ -37,7 +37,7 @@ export function registerHostCommand(program: Command, deps: HostCommandDeps): Co
     resolveHost,
     normalizeHostProviderValue,
     summarizeHostCatalogEntries,
-    emitWorkspaceFileCatHumanContent,
+    emitProjectFileCatHumanContent,
     parseHostSoftwareArtifactsOption,
     parseHostSoftwareChannelsOption,
     waitForLro,
@@ -50,7 +50,7 @@ export function registerHostCommand(program: Command, deps: HostCommandDeps): Co
     HOST_CREATE_DISK_TYPES,
     HOST_CREATE_STORAGE_MODES,
     waitForHostCreateReady,
-    resolveWorkspace,
+    resolveProject,
   } = deps;
 const host = program.command("host").description("host operations");
 
@@ -181,7 +181,7 @@ host
           lines: Math.floor(lines),
         })) as HostRuntimeLogRow;
         if (!ctx.globals.json && ctx.globals.output !== "json") {
-          emitWorkspaceFileCatHumanContent(log.text ?? "");
+          emitProjectFileCatHumanContent(log.text ?? "");
           return null;
         }
         return log;
@@ -772,12 +772,12 @@ host
 
 host
   .command("drain <host>")
-  .description("move all workspaces off a host (or unassign with --force)")
+  .description("move all projects off a host (or unassign with --force)")
   .option("--dest-host <host>", "destination host id or name (default: auto-select)")
-  .option("--force", "force drain by setting host_id=null on assigned workspaces")
+  .option("--force", "force drain by setting host_id=null on assigned projects")
   .option(
     "--parallel <n>",
-    "number of workspace moves to run concurrently (default: 10; non-admin max: 15)",
+    "number of project moves to run concurrently (default: 10; non-admin max: 15)",
   )
   .option(
     "--allow-offline",
@@ -915,16 +915,16 @@ host
   .command("issue-http-token")
   .description("issue a project-host HTTP auth token")
   .requiredOption("--host <host>", "host id or name")
-  .option("--workspace <workspace>", "workspace id or name")
+  .option("--project <project>", "project id or name")
   .option("--ttl <seconds>", "token TTL in seconds")
   .action(
     async (
-      opts: { host: string; workspace?: string; ttl?: string },
+      opts: { host: string; project?: string; ttl?: string },
       command: Command,
     ) => {
       await withContext(command, "host issue-http-token", async (ctx) => {
         const h = await resolveHost(ctx, opts.host);
-        const ws = opts.workspace ? await resolveWorkspace(ctx, opts.workspace) : null;
+        const ws = opts.project ? await resolveProject(ctx, opts.project) : null;
         const ttl = opts.ttl ? Number(opts.ttl) : undefined;
         const token = await ctx.hub.hosts.issueProjectHostAuthToken({
           host_id: h.id,
@@ -933,7 +933,7 @@ host
         });
         return {
           host_id: token.host_id,
-          workspace_id: ws?.project_id ?? null,
+          project_id: ws?.project_id ?? null,
           token: token.token,
           expires_at: token.expires_at,
         };

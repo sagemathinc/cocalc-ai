@@ -15,7 +15,7 @@ export type TasksCommandDeps = {
 };
 
 type TasksListCliOptions = {
-  workspace?: string;
+  project?: string;
   includeDone?: boolean;
   includeDeleted?: boolean;
   search?: string;
@@ -25,24 +25,24 @@ type TasksListCliOptions = {
 };
 
 type TasksGetCliOptions = {
-  workspace?: string;
+  project?: string;
   taskId?: string;
 };
 
 type TasksSetDoneCliOptions = {
-  workspace?: string;
+  project?: string;
   taskId?: string;
   done?: string;
 };
 
 type TasksAppendCliOptions = {
-  workspace?: string;
+  project?: string;
   taskId?: string;
   text?: string;
 };
 
 type TasksUpdateCliOptions = {
-  workspace?: string;
+  project?: string;
   taskId?: string;
   desc?: string;
   due?: string;
@@ -53,7 +53,7 @@ type TasksUpdateCliOptions = {
 };
 
 type TasksAddCliOptions = {
-  workspace?: string;
+  project?: string;
   desc?: string;
   due?: string;
   color?: string;
@@ -203,10 +203,10 @@ These commands operate against the live sync session for a .tasks document.
 - They are intended as the fast path for focused task edits by humans and agents.
 - They complement export/import: use export/import for bulk transformations, and tasks commands for targeted edits.
 
-Paths are workspace-relative. If --workspace is omitted, the command uses:
+Paths may be absolute or project-relative. Relative paths resolve against $HOME. If --project is omitted, the command uses:
 
 1. COCALC_PROJECT_ID, if set
-2. the current workspace context from 'cocalc ws use'
+2. the current project context from 'cocalc project use'
 `,
     );
 
@@ -214,8 +214,8 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .command("list <path>")
     .description("list tasks from a live .tasks document")
     .option(
-      "--workspace <workspace>",
-      "workspace id/title (defaults to COCALC_PROJECT_ID or current workspace context)",
+      "--project <project>",
+      "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
     .option("--include-done", "include done tasks")
     .option("--include-deleted", "include deleted tasks")
@@ -226,7 +226,7 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .action(async (path: string, opts: TasksListCliOptions, command: Command) => {
       await deps.withContext(command, "tasks list", async (ctx) => {
         const doc = deps.tasksApi.bindDocument(ctx, {
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const query: TaskQuery = {
@@ -246,13 +246,13 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .description("fetch one task by id from a live .tasks document")
     .requiredOption("--task-id <taskId>", "task id")
     .option(
-      "--workspace <workspace>",
-      "workspace id/title (defaults to COCALC_PROJECT_ID or current workspace context)",
+      "--project <project>",
+      "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
     .action(async (path: string, opts: TasksGetCliOptions, command: Command) => {
       await deps.withContext(command, "tasks get", async (ctx) => {
         const doc = deps.tasksApi.bindDocument(ctx, {
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const result = await doc.getTask(requireTaskId(opts.taskId));
@@ -260,7 +260,7 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
           throw new Error(`Task '${requireTaskId(opts.taskId)}' not found`);
         }
         return {
-          workspace_id: result.workspace.project_id,
+          project_id: result.project.project_id,
           path: result.path,
           task: compactTaskRecord(result.task),
         };
@@ -273,19 +273,19 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .requiredOption("--task-id <taskId>", "task id")
     .option("--done <bool>", "true or false", "true")
     .option(
-      "--workspace <workspace>",
-      "workspace id/title (defaults to COCALC_PROJECT_ID or current workspace context)",
+      "--project <project>",
+      "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
     .action(async (path: string, opts: TasksSetDoneCliOptions, command: Command) => {
       await deps.withContext(command, "tasks set-done", async (ctx) => {
         const taskId = requireTaskId(opts.taskId);
         const doc = deps.tasksApi.bindDocument(ctx, {
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const result = await doc.setDone(taskId, parseOptionalBoolean(opts.done) ?? true);
         return {
-          workspace_id: result.workspace.project_id,
+          project_id: result.project.project_id,
           path: result.path,
           task_id: taskId,
           changed_task_ids: result.changedTaskIds,
@@ -303,8 +303,8 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .requiredOption("--task-id <taskId>", "task id")
     .requiredOption("--text <text>", "markdown text to append")
     .option(
-      "--workspace <workspace>",
-      "workspace id/title (defaults to COCALC_PROJECT_ID or current workspace context)",
+      "--project <project>",
+      "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
     .action(async (path: string, opts: TasksAppendCliOptions, command: Command) => {
       await deps.withContext(command, "tasks append", async (ctx) => {
@@ -314,12 +314,12 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
           throw new Error("--text is required");
         }
         const doc = deps.tasksApi.bindDocument(ctx, {
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const result = await doc.appendToDescription(taskId, text);
         return {
-          workspace_id: result.workspace.project_id,
+          project_id: result.project.project_id,
           path: result.path,
           task_id: taskId,
           changed_task_ids: result.changedTaskIds,
@@ -343,8 +343,8 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .option("--hide-body <bool>", "set hideBody true/false")
     .option("--deleted <bool>", "set deleted true/false")
     .option(
-      "--workspace <workspace>",
-      "workspace id/title (defaults to COCALC_PROJECT_ID or current workspace context)",
+      "--project <project>",
+      "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
     .action(async (path: string, opts: TasksUpdateCliOptions, command: Command) => {
       await deps.withContext(command, "tasks update", async (ctx) => {
@@ -352,12 +352,12 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
         const changes = buildUpdateChanges(opts);
         assertHasUpdates(changes);
         const doc = deps.tasksApi.bindDocument(ctx, {
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const result = await doc.updateTask(taskId, changes);
         return {
-          workspace_id: result.workspace.project_id,
+          project_id: result.project.project_id,
           path: result.path,
           task_id: taskId,
           changed_task_ids: result.changedTaskIds,
@@ -381,18 +381,18 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .option("--done <bool>", "set done true/false")
     .option("--deleted <bool>", "set deleted true/false")
     .option(
-      "--workspace <workspace>",
-      "workspace id/title (defaults to COCALC_PROJECT_ID or current workspace context)",
+      "--project <project>",
+      "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
     .action(async (path: string, opts: TasksAddCliOptions, command: Command) => {
       await deps.withContext(command, "tasks add", async (ctx) => {
         const doc = deps.tasksApi.bindDocument(ctx, {
-          workspaceIdentifier: opts.workspace,
+          projectIdentifier: opts.project,
           path,
         });
         const result = await doc.createTask(buildCreateInput(opts));
         return {
-          workspace_id: result.workspace.project_id,
+          project_id: result.project.project_id,
           path: result.path,
           task: compactTaskRecord(result.task),
         };

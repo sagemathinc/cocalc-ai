@@ -526,7 +526,7 @@ export function registerBrowserInspectCommands({
     ctx: BrowserCommandContext;
     command: Command;
     opts: {
-      workspace?: string;
+      project?: string;
       projectId?: string;
       browser?: string;
       sessionProjectId?: string;
@@ -540,7 +540,7 @@ export function registerBrowserInspectCommands({
     const profileSelection = loadProfileSelection(deps, command);
     const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
     const browserHint = browserHintFromOption(opts.browser) ?? "";
-    const workspaceHint = `${opts.workspace ?? ""}`.trim();
+    const projectHint = `${opts.project ?? ""}`.trim();
     const sessionInfo = await chooseBrowserSession({
       ctx,
       browserHint,
@@ -555,7 +555,7 @@ export function registerBrowserInspectCommands({
     const project_id = await resolveTargetProjectId({
       deps,
       ctx,
-      workspace: workspaceHint,
+      project: projectHint,
       projectId: projectIdHint,
       sessionInfo,
     });
@@ -585,10 +585,10 @@ export function registerBrowserInspectCommands({
   inspect
     .command("slate")
     .description("discover mounted Slate editors and identify active/focused editor")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -596,7 +596,7 @@ export function registerBrowserInspectCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option("--posture <dev|prod>", "browser automation posture")
@@ -607,7 +607,7 @@ export function registerBrowserInspectCommands({
     .action(
       async (
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -659,10 +659,10 @@ export function registerBrowserInspectCommands({
   inspect
     .command("react-roots")
     .description("summarize mounted React roots and component samples")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -670,7 +670,7 @@ export function registerBrowserInspectCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option("--posture <dev|prod>", "browser automation posture")
@@ -682,7 +682,7 @@ export function registerBrowserInspectCommands({
     .action(
       async (
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
@@ -743,10 +743,10 @@ export function registerBrowserInspectCommands({
   inspect
     .command("redux [slice]")
     .description("safe Redux store/slice dump with depth and size limits")
-    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
-      "workspace/project id (overrides --workspace); defaults to COCALC_PROJECT_ID when set",
+      "project id (overrides --project); defaults to COCALC_PROJECT_ID when set",
     )
     .option(
       "--browser <id>",
@@ -754,7 +754,7 @@ export function registerBrowserInspectCommands({
     )
     .option(
       "--session-project-id <id>",
-      "prefer browser sessions with this active/open workspace/project id",
+      "prefer browser sessions with this active/open project id",
     )
     .option("--active-only", "only target active (non-stale) sessions")
     .option("--posture <dev|prod>", "browser automation posture")
@@ -768,7 +768,7 @@ export function registerBrowserInspectCommands({
       async (
         slice: string | undefined,
         opts: {
-          workspace?: string;
+          project?: string;
           projectId?: string;
           browser?: string;
           sessionProjectId?: string;
