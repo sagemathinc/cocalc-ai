@@ -10,6 +10,7 @@ import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import {
   PROJECT_HOST_HTTP_AUTH_COOKIE_NAME,
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
+  PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
 } from "@cocalc/conat/auth/project-host-http";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
@@ -23,7 +24,6 @@ const collaboratorCache = new TTL<string, boolean>({
   ttl: 30_000,
 });
 const logger = getLogger("project-host:http-proxy-auth");
-const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME = "cocalc_project_host_http_session";
 const PROJECT_HOST_HTTP_AUTH_CONTEXT = Symbol(
   "cocalc-project-host-http-auth-context",
 );
@@ -86,6 +86,10 @@ function getAuthContext(
   req: IncomingMessage,
 ): AuthorizedAccountContext | undefined {
   return (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT];
+}
+
+function projectCookiePath(project_id: string): string {
+  return `/${project_id}`;
 }
 
 function appendSetCookie(res: ServerResponse, cookie: string): void {
@@ -337,18 +341,23 @@ export function createProjectHostHttpProxyAuth({
     return verifySessionToken(token);
   };
 
-  const clearSessionCookie = (res: ServerResponse) => {
+  const clearSessionCookie = (res: ServerResponse, project_id: string) => {
     appendSetCookie(
       res,
-      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=; Path=${projectCookiePath(project_id)}; HttpOnly; SameSite=Lax; Max-Age=0`,
     );
   };
 
-  const setSessionCookie = (req: IncomingMessage, res: ServerResponse, account_id: string) => {
+  const setSessionCookie = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    account_id: string,
+    project_id: string,
+  ) => {
     const sessionToken = createSessionToken({ account_id });
     const attrs = [
       `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${encodeURIComponent(sessionToken)}`,
-      "Path=/",
+      `Path=${projectCookiePath(project_id)}`,
       "HttpOnly",
       "SameSite=Lax",
       `Max-Age=${HTTP_SESSION_TTL_SECONDS}`,
@@ -401,7 +410,7 @@ export function createProjectHostHttpProxyAuth({
           issued_at_s: accountFromSession.iat_s,
         });
       } catch (err) {
-        clearSessionCookie(res);
+        clearSessionCookie(res, project_id);
         throw err;
       }
       authorizeAccountForProject({
@@ -439,7 +448,7 @@ export function createProjectHostHttpProxyAuth({
       account_id,
       issued_at_s: claims.iat,
     });
-    setSessionCookie(req, res, account_id);
+    setSessionCookie(req, res, account_id, project_id);
     if (fromQuery) {
       // Clean the browser URL and avoid forwarding a bearer query parameter.
       const cleaned = urlWithoutQueryToken(req);

@@ -817,8 +817,8 @@ These are the remaining items that matter most to calling A1.4 effectively finis
 3. do a focused XSS/origin-isolation audit for managed apps:
    - verify which CoCalc cookies or bearer mechanisms can ever reach private app requests,
    - verify which cookies are stripped before upstream proxying,
-   - strip project-host auth/session cookies before forwarding traffic upstream to the managed app,
-   - scope the project-host session cookie as narrowly as possible instead of using a broad path,
+   - done: strip project-host auth/session cookies before forwarding traffic upstream to the managed app,
+   - done: scope the project-host session cookie as narrowly as possible instead of using a broad path,
    - audit project-host session-cookie scope/path/domain behavior,
    - determine whether additional per-project/per-app origin isolation is required for private apps,
    - harden static HTML serving assumptions accordingly.
