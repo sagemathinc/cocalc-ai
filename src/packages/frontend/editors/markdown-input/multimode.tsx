@@ -2,16 +2,14 @@
 Edit with either plain text input **or** WYSIWYG slate-based input.
 */
 
-import { Popover, Radio } from "antd";
 import { fromJS } from "immutable";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { COLORS } from "@cocalc/util/theme";
 import { MarkdownTextAdapter, SlateRichTextAdapter } from "./adapters";
 import { BLURED_STYLE, FOCUSED_STYLE } from "./component";
+import { MarkdownInputModeSwitch } from "./mode-switch";
 import { useMultimodeModeState } from "./use-multimode-mode-state";
 import { useMultimodeSelection } from "./use-multimode-selection";
 import type {
@@ -112,8 +110,6 @@ export default function MultiMarkdownInput({
       onModeChange,
     });
 
-  const [editBarPopover, setEditBarPopover] = useState<boolean>(false);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -165,36 +161,6 @@ export default function MultiMarkdownInput({
       richTextControlRef: slateControlRef,
     });
 
-  function toggleEditBarPopover() {
-    setEditBarPopover(!editBarPopover);
-  }
-
-  function renderEditBarEllipsis() {
-    return (
-      <span style={{ fontWeight: 400 }}>
-        {"\u22EF"}
-        <Popover
-          open={isFocusedFrame && isVisible && editBarPopover}
-          content={
-            <div style={{ display: "flex" }}>
-              {editBar2.current}
-              <Icon
-                onClick={() => setEditBarPopover(false)}
-                name="times"
-                style={{
-                  color: COLORS.GRAY_M,
-                  marginTop: "5px",
-                }}
-              />
-            </div>
-          }
-        />
-      </span>
-    );
-  }
-
-  const showModeSwitch = !fixedMode && !hideModeSwitch;
-
   return (
     <div
       style={{
@@ -211,73 +177,19 @@ export default function MultiMarkdownInput({
             }),
       }}
     >
-      <div
-        onMouseDown={beginModeSwitchInteraction}
-        onMouseUp={endModeSwitchInteraction}
-        onTouchStart={beginModeSwitchInteraction}
-        onTouchEnd={endModeSwitchInteraction}
-        onTouchCancel={endModeSwitchInteraction}
-      >
-        {showModeSwitch && (
-          <div
-            style={{
-              background: "white",
-              color: COLORS.GRAY_M,
-              ...(mode == "editor" || hideHelp
-                ? {
-                    float: "right",
-                    position: "relative",
-                    zIndex: 1,
-                  }
-                : { float: "right" }),
-              ...modeSwitchStyle,
-            }}
-          >
-            <Radio.Group
-              options={[
-                ...(overflowEllipsis && mode == "editor"
-                  ? [
-                      {
-                        label: renderEditBarEllipsis(),
-                        value: "menu",
-                        style: {
-                          backgroundColor: editBarPopover
-                            ? COLORS.GRAY_L
-                            : "white",
-                          paddingLeft: 10,
-                          paddingRight: 10,
-                        },
-                      },
-                    ]
-                  : []),
-                // fontWeight is needed to undo a stupid conflict with bootstrap css, which will go away when we get rid of that ancient nonsense.
-                {
-                  label: <span style={{ fontWeight: 400 }}>Rich Text</span>,
-                  value: "editor",
-                },
-                {
-                  label: <span style={{ fontWeight: 400 }}>Markdown</span>,
-                  value: "markdown",
-                },
-              ]}
-              onChange={(e) => {
-                const mode = e.target.value;
-                if (mode === "menu") {
-                  toggleEditBarPopover();
-                } else {
-                  setMode(mode as Mode);
-                }
-                queueMicrotask(endModeSwitchInteraction);
-              }}
-              value={mode}
-              optionType="button"
-              size="small"
-              buttonStyle="solid"
-              style={{ display: "block" }}
-            />
-          </div>
-        )}
-      </div>
+      <MarkdownInputModeSwitch
+        mode={mode}
+        isFocusedFrame={isFocusedFrame}
+        isVisible={isVisible}
+        hideHelp={hideHelp}
+        hidden={!!fixedMode || !!hideModeSwitch}
+        overflowEllipsis={overflowEllipsis}
+        style={modeSwitchStyle}
+        editBarContentRef={editBar2}
+        onSelectMode={setMode}
+        onInteractionStart={beginModeSwitchInteraction}
+        onInteractionEnd={endModeSwitchInteraction}
+      />
       {mode === "markdown" ? (
         <MarkdownTextAdapter
           editorDivRef={editorDivRef}
