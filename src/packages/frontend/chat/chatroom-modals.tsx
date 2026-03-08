@@ -284,6 +284,7 @@ export function ChatRoomModals({
   };
 
   const openForkModal = useCallback((threadKey: string, label: string, isAI: boolean) => {
+    setForkName(getDefaultForkName(label));
     setForkThread({ key: threadKey, label, isAI });
   }, []);
 
@@ -306,9 +307,10 @@ export function ChatRoomModals({
         title,
         sourceTitle: forkThread.label,
         isAI: forkThread.isAI,
+        selectNewThread: false,
       });
-      antdMessage.success("Chat forked.");
       closeForkModal();
+      antdMessage.success("Chat forked.");
     } catch (err) {
       console.error("failed to fork chat", err);
       antdMessage.error("Failed to fork chat.");
@@ -348,14 +350,6 @@ export function ChatRoomModals({
       }),
     );
   }, [exportRequest, path]);
-
-  useEffect(() => {
-    if (!forkThread) return;
-    const name = forkThread.label?.trim()
-      ? `Fork of ${forkThread.label.trim()}`
-      : "Fork of chat";
-    setForkName(name);
-  }, [forkThread]);
 
   const codexModelOptions = DEFAULT_CODEX_MODELS.map((model) => ({
     value: model.name,
@@ -715,6 +709,10 @@ export function ChatRoomModals({
       </Modal>
     </>
   );
+}
+
+export function getDefaultForkName(label?: string): string {
+  return label?.trim() ? `Fork of ${label.trim()}` : "Fork of chat";
 }
 
 function getReasoningForModel({
