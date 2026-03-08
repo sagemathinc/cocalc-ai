@@ -13,7 +13,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "pnpm exec tsc --build",
+    "build": "pnpm exec tsc --build --force",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "depcheck": "pnpm -w exec depcheck \"$PWD\""
   },

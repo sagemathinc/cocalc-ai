@@ -532,6 +532,9 @@ importers:
 
   frontend:
     dependencies:
+      '@cocalc/app-tasks':
+        specifier: workspace:*
+        version: link:../apps/tasks
       '@jitl/quickjs-wasmfile-release-asyncify':
         specifier: 0.32.0
         version: 0.32.0
@@ -551,9 +554,6 @@ importers:
       '@ant-design/icons':
         specifier: ^6.0.0
         version: 6.1.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
-      '@cocalc/app-tasks':
-        specifier: workspace:*
-        version: link:../apps/tasks
       '@cocalc/assets':
         specifier: workspace:*
         version: link:../assets

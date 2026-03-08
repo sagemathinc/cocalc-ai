@@ -39,7 +39,6 @@
     "@ant-design/colors": "^6.0.0",
     "@ant-design/compatible": "^5.1.1",
     "@ant-design/icons": "^6.0.0",
-    "@cocalc/app-tasks": "workspace:*",
     "@cocalc/assets": "workspace:*",
     "@cocalc/cdn": "workspace:*",
     "@cocalc/chat": "workspace:*",
@@ -206,6 +205,7 @@
     "url": "https://github.com/sagemathinc/cocalc/issues"
   },
   "dependencies": {
+    "@cocalc/app-tasks": "workspace:*",
     "@jitl/quickjs-wasmfile-release-asyncify": "0.32.0",
     "immer": "^11.1.0",
     "quickjs-emscripten-core": "0.32.0"
