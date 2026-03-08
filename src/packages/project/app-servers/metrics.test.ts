@@ -197,4 +197,61 @@ describe("managed app metrics", () => {
       await deleteApp(id);
     }
   });
+
+  test("records managed app metrics for direct /proxy routes", async () => {
+    jest.resetModules();
+    const { project_id, secretToken } = await import("@cocalc/project/data");
+    const { startProxyServer } = await import("@cocalc/project/servers/proxy/proxy");
+    const { appMetrics, deleteApp, ensureRunning, upsertAppSpec } = await import(
+      "./control"
+    );
+
+    expect(secretToken).toBeTruthy();
+
+    const id = appId("metrics-proxy");
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      command: { exec: process.execPath, args: ["-e", SERVICE_SCRIPT] },
+      network: { listen_host: "127.0.0.1", protocol: "http" },
+      proxy: {
+        base_path: `/apps/${id}`,
+        strip_prefix: true,
+        websocket: false,
+        open_mode: "proxy",
+      },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 15 },
+    });
+
+    const server = await startProxyServer({ port: 0, host: "127.0.0.1" });
+    const address = server.address();
+    const proxyPort =
+      address && typeof address === "object" ? address.port : undefined;
+    expect(proxyPort).toBeGreaterThan(0);
+
+    try {
+      const status = await ensureRunning(id, { timeout: 10_000, interval: 100 });
+      expect(status.port).toBeGreaterThan(0);
+
+      const viaProxy = await httpGet(
+        `http://127.0.0.1:${proxyPort}/${project_id}/proxy/${status.port}/`,
+        {
+          [PROJECT_PROXY_AUTH_HEADER]: secretToken,
+        },
+      );
+      expect(viaProxy.statusCode).toBe(200);
+      expect(viaProxy.body).toContain("metrics-ok");
+
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+      const summary = await appMetrics(id, { minutes: 60 });
+      expect(summary.totals.requests).toBe(1);
+      expect(summary.totals.private_requests).toBe(1);
+      expect(summary.totals.bytes_sent).toBeGreaterThan(0);
+      expect(summary.last_hit_ms).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await deleteApp(id);
+    }
+  });
 });

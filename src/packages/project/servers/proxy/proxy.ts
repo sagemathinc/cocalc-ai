@@ -519,6 +519,16 @@ function createProxyResolver({
     if (mServer) {
       const port = Number(mServer[1]);
       const rest = mServer[2] || "/";
+      const managedApp = await managedServiceAppForPort(port);
+      if (managedApp) {
+        (req as any)[APP_METRICS_CONTEXT] = {
+          app_id: managedApp.app_id,
+          kind: managedApp.kind,
+          exposure_mode: getExposureMode(req),
+          request_started_ms: Date.now(),
+          bytes_received: getRequestBytes(req),
+        } satisfies AppMetricsContext;
+      }
       // Rewrite path by mutating req.url before proxying
       req.url = rest;
       return { port, host };
