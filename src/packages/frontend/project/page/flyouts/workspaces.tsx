@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Empty,
-  Form,
   Input,
   Modal,
   Popconfirm,
@@ -19,7 +18,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ColorPicker } from "@cocalc/frontend/colorpicker";
 import { Icon, TimeAgo, type IconName } from "@cocalc/frontend/components";
@@ -109,32 +108,20 @@ function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDr
   };
 }
 
-async function validateRootPath(
-  fs: any,
-  rootPath: string,
-): Promise<string | null> {
+async function validateRootPath(rootPath: string): Promise<string | null> {
   const trimmed = `${rootPath ?? ""}`.trim();
   if (!trimmed.startsWith("/")) {
     return "Workspace path must be absolute.";
   }
-  if (typeof fs?.stat !== "function") return null;
-  try {
-    const stat = await fs.stat(trimmed);
-    if (stat?.isdir === true || stat?.isDirectory?.() === true) return null;
-    if (stat?.isdir === false) return "Workspace path must be a directory.";
-    return null;
-  } catch (err) {
-    return `${err}`;
-  }
+  return null;
 }
 
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
-  const { actions, active_project_tab, workspaces } = useProjectContext();
+  const { active_project_tab, workspaces } = useProjectContext();
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs") ?? "/";
   const [editing, setEditing] = useState<EditorDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
-  const [form] = Form.useForm<EditorDraft>();
   const isFlyout = layout === "flyout";
 
   const defaultRootPath = useMemo(() => {
@@ -158,12 +145,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     return items;
   }, [workspaces.records]);
 
-  useEffect(() => {
-    if (editing) {
-      form.setFieldsValue(editing);
-    }
-  }, [editing, form]);
-
   function openCreate(): void {
     const draft = makeDraft(null, defaultRootPath);
     setEditing(draft);
@@ -175,14 +156,21 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     setError("");
   }
 
+  function patchEditing(patch: Partial<EditorDraft>): void {
+    setEditing((current) => (current ? { ...current, ...patch } : current));
+  }
+
   async function onSave(): Promise<void> {
     if (!editing) return;
     setSaving(true);
     setError("");
     try {
-      const values = await form.validateFields();
-      const fs = actions?.fs?.();
-      const validationError = await validateRootPath(fs, values.root_path);
+      const values = editing;
+      if (!values.title.trim()) {
+        setError("A workspace title is required.");
+        return;
+      }
+      const validationError = await validateRootPath(values.root_path);
       if (validationError) {
         setError(validationError);
         return;
@@ -202,7 +190,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           chat_path: values.chat_path.trim() || null,
         });
       } else {
-        const created = workspaces.createWorkspace({
+        workspaces.createWorkspace({
           root_path: values.root_path,
           title: values.title,
           description: values.description,
@@ -214,9 +202,10 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           chat_path: values.chat_path.trim() || null,
           source: "manual",
         } satisfies WorkspaceCreateInput);
-        workspaces.touchWorkspace(created.workspace_id);
       }
       setEditing(null);
+    } catch (err) {
+      setError(`${err}`);
     } finally {
       setSaving(false);
     }
@@ -375,41 +364,78 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       >
         <Space direction="vertical" style={{ width: "100%" }} size={12}>
           {error ? <Alert type="error" showIcon message={error} /> : null}
-          <Form form={form} layout="vertical" initialValues={editing ?? undefined}>
-            <Form.Item
-              label="Directory path"
-              name="root_path"
-              rules={[{ required: true, message: "A workspace directory is required." }]}
-            >
-              <Input autoFocus />
-            </Form.Item>
-            <Form.Item label="Title" name="title" rules={[{ required: true }]}> 
-              <Input />
-            </Form.Item>
-            <Form.Item label="Description" name="description">
-              <Input.TextArea rows={3} />
-            </Form.Item>
-            <Form.Item label="Icon" name="icon">
-              <Input placeholder="e.g. folder-open, code, book" />
-            </Form.Item>
-            <div style={{ display: "flex", gap: 16 }}>
-              <Form.Item label="Color" name="color" style={{ flex: 1 }}>
-                <ColorPicker />
-              </Form.Item>
-              <Form.Item label="Accent color" name="accent_color" style={{ flex: 1 }}>
-                <ColorPicker />
-              </Form.Item>
+          <div>
+            <Typography.Text strong>Directory path</Typography.Text>
+            <Input
+              autoFocus
+              value={editing?.root_path ?? ""}
+              onChange={(e) => patchEditing({ root_path: e.target.value })}
+            />
+          </div>
+          <div>
+            <Typography.Text strong>Title</Typography.Text>
+            <Input
+              value={editing?.title ?? ""}
+              onChange={(e) => patchEditing({ title: e.target.value })}
+            />
+          </div>
+          <div>
+            <Typography.Text strong>Description</Typography.Text>
+            <Input.TextArea
+              rows={3}
+              value={editing?.description ?? ""}
+              onChange={(e) => patchEditing({ description: e.target.value })}
+            />
+          </div>
+          <div>
+            <Typography.Text strong>Icon</Typography.Text>
+            <Input
+              placeholder="e.g. folder-open, code, book"
+              value={editing?.icon ?? ""}
+              onChange={(e) => patchEditing({ icon: e.target.value })}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>Color</Typography.Text>
+              <ColorPicker
+                color={editing?.color ?? undefined}
+                onChange={(color) => patchEditing({ color })}
+              />
             </div>
-            <Form.Item label="Image blob hash" name="image_blob">
-              <Input placeholder="optional blob hash" />
-            </Form.Item>
-            <Form.Item label="Canonical chat path" name="chat_path">
-              <Input placeholder="optional for later agent routing" />
-            </Form.Item>
-            <Form.Item label="Pinned" name="pinned" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-          </Form>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>Accent color</Typography.Text>
+              <ColorPicker
+                color={editing?.accent_color ?? undefined}
+                onChange={(color) => patchEditing({ accent_color: color })}
+              />
+            </div>
+          </div>
+          <div>
+            <Typography.Text strong>Image blob hash</Typography.Text>
+            <Input
+              placeholder="optional blob hash"
+              value={editing?.image_blob ?? ""}
+              onChange={(e) => patchEditing({ image_blob: e.target.value })}
+            />
+          </div>
+          <div>
+            <Typography.Text strong>Canonical chat path</Typography.Text>
+            <Input
+              placeholder="optional for later agent routing"
+              value={editing?.chat_path ?? ""}
+              onChange={(e) => patchEditing({ chat_path: e.target.value })}
+            />
+          </div>
+          <div>
+            <Typography.Text strong>Pinned</Typography.Text>
+            <div style={{ marginTop: 8 }}>
+              <Switch
+                checked={editing?.pinned ?? false}
+                onChange={(pinned) => patchEditing({ pinned })}
+              />
+            </div>
+          </div>
         </Space>
       </Modal>
     </div>
