@@ -18,7 +18,6 @@ import {
   Typography,
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
-import { IS_MOBILE } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { ComponentProps } from "react";
 import {
@@ -71,9 +70,6 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
 }));
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
-const EDITOR_HISTORY_GROUP_MS = 250;
-const MAX_EDITOR_HISTORY_ENTRIES = 200;
-
 type GitShowFile = {
   path: string;
   lines: string[];
@@ -664,125 +660,20 @@ type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
   historyId: string;
 };
 
-type MarkdownHistoryMode = "markdown" | "editor";
-
-type EditorHistoryEntry = {
-  value: string;
-  at: number;
-};
-
 export function MarkdownHistoryInput({
-  historyId,
-  value,
-  onChange,
-  defaultMode,
-  fixedMode,
-  onModeChange,
+  historyId: _historyId,
   saveDebounceMs = 0,
   ...props
 }: MarkdownHistoryInputProps) {
-  const [activeMode, setActiveMode] = useState<MarkdownHistoryMode>(
-    fixedMode ?? defaultMode ?? (IS_MOBILE ? "markdown" : "editor"),
-  );
-  const historyRef = useRef<EditorHistoryEntry[]>([
-    { value: `${value ?? ""}`, at: Date.now() },
-  ]);
-  const historyIndexRef = useRef<number>(0);
-  const applyingHistoryRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    historyRef.current = [{ value: `${value ?? ""}`, at: Date.now() }];
-    historyIndexRef.current = 0;
-    applyingHistoryRef.current = false;
-  }, [historyId]);
-
-  useEffect(() => {
-    if (fixedMode != null) {
-      setActiveMode(fixedMode);
-    }
-  }, [fixedMode]);
-
-  useEffect(() => {
-    if (applyingHistoryRef.current) return;
-    const current = historyRef.current[historyIndexRef.current]?.value ?? "";
-    const next = `${value ?? ""}`;
-    if (next === current) return;
-    historyRef.current = [{ value: next, at: Date.now() }];
-    historyIndexRef.current = 0;
-  }, [value]);
-
-  const emitChange = (next: string) => {
-    onChange?.(next);
-  };
-
-  const applyHistoryValue = (next: string) => {
-    applyingHistoryRef.current = true;
-    emitChange(next);
-    applyingHistoryRef.current = false;
-  };
-
   return (
     <MarkdownInput
       {...props}
-      defaultMode={defaultMode}
-      fixedMode={fixedMode}
       saveDebounceMs={saveDebounceMs}
-      value={value}
-      onChange={(next) => {
-        const normalized = `${next ?? ""}`;
-        emitChange(normalized);
-        if (applyingHistoryRef.current) return;
-        const history = historyRef.current;
-        const idx = historyIndexRef.current;
-        const current = history[idx]?.value ?? "";
-        if (normalized === current) {
-          history[idx] = {
-            ...(history[idx] ?? { value: normalized, at: Date.now() }),
-            at: Date.now(),
-          };
-          return;
-        }
-        const now = Date.now();
-        const trimmed = history.slice(0, idx + 1);
-        const last = trimmed[trimmed.length - 1];
-        if (last && now - last.at <= EDITOR_HISTORY_GROUP_MS) {
-          trimmed[trimmed.length - 1] = { value: normalized, at: now };
-        } else {
-          trimmed.push({ value: normalized, at: now });
-        }
-        if (trimmed.length > MAX_EDITOR_HISTORY_ENTRIES) {
-          trimmed.splice(0, trimmed.length - MAX_EDITOR_HISTORY_ENTRIES);
-        }
-        historyRef.current = trimmed;
-        historyIndexRef.current = trimmed.length - 1;
-      }}
-      onUndo={() => {
-        const idx = historyIndexRef.current;
-        if (idx <= 0) return;
-        historyIndexRef.current = idx - 1;
-        const next = historyRef.current[historyIndexRef.current]?.value ?? "";
-        applyHistoryValue(next);
-      }}
-      onRedo={() => {
-        const history = historyRef.current;
-        const idx = historyIndexRef.current;
-        if (idx >= history.length - 1) return;
-        historyIndexRef.current = idx + 1;
-        const next = history[historyIndexRef.current]?.value ?? "";
-        applyHistoryValue(next);
-      }}
-      onModeChange={(nextMode) => {
-        setActiveMode(nextMode);
-        onModeChange?.(nextMode);
-      }}
       // Git review editors need immediate parent sync so local undo/redo never
-      // races against a stale debounced value flush.
-      //
-      // They also need self-contained undo/redo, but the two
-      // backends get there differently: CodeMirror should keep its native
-      // local history, while embedded Slate must route through this wrapper.
-      undoMode={activeMode === "editor" ? "external" : "local"}
-      redoMode={activeMode === "editor" ? "external" : "local"}
+      // races against a stale debounced value flush, and undo/redo should stay
+      // local to the embedded editor in both backends.
+      undoMode="local"
+      redoMode="local"
     />
   );
 }

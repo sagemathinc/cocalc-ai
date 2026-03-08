@@ -238,6 +238,8 @@ export function SlateRichTextAdapter({
 }: SlateRichTextAdapterProps) {
   const hasFixedHeight = height != null && height !== "auto";
   const maxHeight = hasFixedHeight ? height : MAX_INPUT_HEIGHT;
+  const useLocalRichTextHistory =
+    undoMode === "local" || redoMode === "local";
 
   const externalUndo = resolveUndoHandler({ mode: undoMode, handler: onUndo });
   const externalRedo = resolveUndoHandler({ mode: redoMode, handler: onRedo });
@@ -323,6 +325,7 @@ export function SlateRichTextAdapter({
         controlRef={controlRef}
         preserveBlankLines={preserveBlankLines}
         externalMultilinePasteAsCodeBlock={externalMultilinePasteAsCodeBlock}
+        localHistory={useLocalRichTextHistory}
       />
     </div>
   );

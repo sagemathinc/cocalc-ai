@@ -93,8 +93,8 @@ interface Props {
   autoFocus?: boolean;
   cmOptions?: { [key: string]: any }; // if given, use this for CodeMirror options, taking precedence over anything derived from other inputs, e.g., lineNumbers, above and account settings.
   selectionRef?: MutableRefObject<SelectionController | null>;
-  onUndo?: () => void; // user requests undo -- if given, codemirror's internal undo is not used
-  onRedo?: () => void; // user requests redo
+  onUndo?: () => void; // user requests undo; local/external routing depends on undoMode
+  onRedo?: () => void; // user requests redo; local/external routing depends on redoMode
   undoMode?: "auto" | "local" | "external";
   redoMode?: "auto" | "local" | "external";
   onSave?: () => void; // user requests save
