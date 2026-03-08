@@ -6,6 +6,7 @@ PORT=30000 pnpm app
 
 import startProjectServices from "@cocalc/project/conat";
 import { cleanup } from "@cocalc/project/project-setup";
+import { existsSync, writeFileSync } from "node:fs";
 import {
   init as createConatServer,
   type ConatServer,
@@ -27,6 +28,7 @@ import { initWatchdog, closeWatchdog } from "./watchdog";
 import {
   account_id,
   conatPassword,
+  conatPasswordPath,
   setConatPassword,
 } from "@cocalc/backend/data";
 import { getAuthToken } from "./auth-token";
@@ -72,6 +74,19 @@ function restoreEnv(env: Record<string, string>) {
   }
 }
 
+function persistConatPassword(password: string): void {
+  if (!password) return;
+  try {
+    if (!existsSync(conatPasswordPath)) {
+      writeFileSync(conatPasswordPath, `${password}\n`, {
+        mode: 0o600,
+      });
+    }
+  } catch (err) {
+    logger.warn("failed to persist lite conat password", err);
+  }
+}
+
 function conat(opts?): Client {
   if (conatServer == null) {
     throw Error("not initialized");
@@ -102,6 +117,7 @@ export async function main(opts?: {
   if (!conatPassword) {
     setConatPassword(await secureRandomString(24));
   }
+  persistConatPassword(conatPassword);
 
   logger.debug("start http server");
   const { httpServer, app, port, isHttps, hostname } = await initHttpServer({

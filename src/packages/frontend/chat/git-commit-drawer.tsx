@@ -2117,16 +2117,15 @@ export function GitCommitDrawer({
     if (includeSummary) {
       prompt = trimmed
         ? [
-            "Please commit all tracked changes in the current repository.",
-            "Do not include untracked files.",
+            "Please commit changes in the current repository.",
             `Use this exact first line for the commit message: "${trimmed}"`,
             "Then include a detailed explanatory body.",
           ].join("\n")
-        : "Please commit all tracked changes with a concise first line and a detailed explanatory body. Do not include untracked files.";
+        : "Please commit changes with a concise first line and a detailed explanatory body.";
     } else {
       prompt = trimmed
-        ? `Please commit all tracked changes with this exact commit message:\n${trimmed}\nDo not include untracked files.`
-        : "Please commit all tracked changes. Do not include untracked files.";
+        ? `Please commit changes with this exact commit message:\n${trimmed}`
+        : "Please commit changes.";
     }
     setHeadCommitBusy(true);
     setHeadCommitError("");

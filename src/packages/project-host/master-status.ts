@@ -79,6 +79,10 @@ export function getMasterConatClient(): Client | undefined {
   return masterClient;
 }
 
+export function setMasterConatClient(client: Client | undefined): void {
+  masterClient = client;
+}
+
 export async function reportProjectStateToMaster(
   project_id: string,
   state: HostProjectStatus["state"],

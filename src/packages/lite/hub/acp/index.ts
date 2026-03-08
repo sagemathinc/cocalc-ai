@@ -89,6 +89,7 @@ import {
   enqueueAcpJob,
   listQueuedAcpJobs,
   listQueuedAcpJobsForThread,
+  listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
@@ -97,6 +98,7 @@ import {
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
+import { ensureAcpWorkerRunning, startAcpWorkerSupervisor } from "./worker-manager";
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
@@ -121,6 +123,7 @@ const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
+let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -158,6 +161,11 @@ const ACP_LOG_PERSIST_SLOW_MS = envNumber(
 const ACP_BLOB_MATERIALIZE_SLOW_MS = envNumber(
   "COCALC_ACP_BLOB_MATERIALIZE_SLOW_MS",
   250,
+);
+const ACP_WORKER_POLL_MS = envNumber("COCALC_ACP_WORKER_POLL_MS", 1000);
+const ACP_WORKER_IDLE_EXIT_MS = envNumber(
+  "COCALC_ACP_WORKER_IDLE_EXIT_MS",
+  5000,
 );
 
 function envNumber(name: string, fallback: number): number {
@@ -2639,6 +2647,75 @@ export async function recoverOrphanedAcpTurns(
   return recovered;
 }
 
+function initializeAcpRuntime(client: ConatClient): void {
+  // IMPORTANT: initialize sqlite with the same path used by the embedding
+  // process before any ACP queue/lease tables are touched. Otherwise ACP can
+  // accidentally lock the sqlite module onto a fallback cwd-relative file or a
+  // Lite-only default that differs from project-host.
+  const sqliteFilename =
+    `${process.env.COCALC_LITE_SQLITE_FILENAME ?? ""}`.trim() ||
+    path.join(data, "hub.db");
+  initDatabase({ filename: sqliteFilename });
+  conatClient = client;
+  blobStore = getBlobstore(client);
+}
+
+export function configureAcpDetachedWorkerRunning(
+  ensureRunning:
+    | typeof ensureAcpWorkerRunning
+    | undefined,
+): void {
+  ensureDetachedWorkerRunning = ensureRunning ?? ensureAcpWorkerRunning;
+}
+
+export async function runDetachedAcpQueueWorker(
+  client: ConatClient,
+  options: {
+    idleExitMs?: number | null;
+    restartReason?: string;
+  } = {},
+): Promise<void> {
+  initializeAcpRuntime(client);
+  if (typeof (client as any)?.waitUntilSignedIn === "function") {
+    await (client as any).waitUntilSignedIn({ timeout: 5000 });
+  }
+  const idleExitMs =
+    options.idleExitMs === undefined ? ACP_WORKER_IDLE_EXIT_MS : options.idleExitMs;
+  const restartReason = options.restartReason ?? "worker restart";
+  logger.warn("starting ACP queue worker", {
+    instance: ACP_INSTANCE_ID,
+    pid: process.pid,
+    poll_ms: ACP_WORKER_POLL_MS,
+    idle_exit_ms: idleExitMs,
+  });
+  await recoverOrphanedAcpTurns(client);
+  markRunningAcpJobsInterrupted(restartReason);
+  let idleSince = 0;
+  while (true) {
+    kickAllQueuedAcpJobs();
+    const hasWork =
+      listQueuedAcpJobs().length > 0 ||
+      listRunningAcpJobs().length > 0;
+    if (hasWork) {
+      idleSince = 0;
+    } else if (!idleSince) {
+      idleSince = Date.now();
+    } else if (
+      idleExitMs != null &&
+      idleExitMs >= 0 &&
+      Date.now() - idleSince >= idleExitMs
+    ) {
+      logger.warn("stopping ACP queue worker after idle timeout", {
+        instance: ACP_INSTANCE_ID,
+        pid: process.pid,
+        idle_ms: Date.now() - idleSince,
+      });
+      return;
+    }
+    await sleep(ACP_WORKER_POLL_MS);
+  }
+}
+
 type ExecutorAdapters = {
   workspaceRoot: string;
   fileAdapter: FileAdapter;
@@ -3763,7 +3840,7 @@ async function enqueueChatAcpTurn({
         : "queued",
   });
   await stream(null);
-  kickQueuedAcpJobsForThread(row);
+  await ensureDetachedWorkerRunning({ force: true });
 }
 
 async function handleAcpControlRequest(
@@ -3834,7 +3911,7 @@ async function handleAcpControlRequest(
         err,
       });
     }
-    kickQueuedAcpJobsForThread(row);
+    await ensureDetachedWorkerRunning({ force: true });
     return { ok: true, state: "queued" };
   }
   throw new Error(`unsupported ACP control action: ${request.action}`);
@@ -3853,18 +3930,18 @@ export async function evaluate({
   await executeAcpRequest({ ...request, stream });
 }
 
-export async function init(client: ConatClient): Promise<void> {
+export async function init(
+  client: ConatClient,
+  options: {
+    manageDetachedWorker?: boolean;
+  } = {},
+): Promise<void> {
   logger.debug(
     "initializing ACP conat server",
     "preferContainerExecutor =",
     preferContainerExecutor(),
   );
-  // IMPORTANT: initialize sqlite with the same hub.db path used by hub api,
-  // before any ACP queue/lease tables are touched. Otherwise ACP can
-  // accidentally lock the sqlite module onto a fallback cwd-relative file.
-  const sqliteFilename = path.join(data, "hub.db");
-  initDatabase({ filename: sqliteFilename });
-  conatClient = client;
+  initializeAcpRuntime(client);
   process.once("exit", () => {
     for (const agent of agents.values()) {
       agent
@@ -3875,9 +3952,6 @@ export async function init(client: ConatClient): Promise<void> {
         .finally(() => undefined);
     }
   });
-  blobStore = getBlobstore(client);
-  await recoverOrphanedAcpTurns(client);
-  markRunningAcpJobsInterrupted("server restart");
   await initConatAcp(
     {
       evaluate,
@@ -3887,7 +3961,10 @@ export async function init(client: ConatClient): Promise<void> {
     },
     client,
   );
-  kickAllQueuedAcpJobs();
+  if (options.manageDetachedWorker !== false) {
+    startAcpWorkerSupervisor();
+    await ensureDetachedWorkerRunning();
+  }
 }
 
 type BlobReference = {

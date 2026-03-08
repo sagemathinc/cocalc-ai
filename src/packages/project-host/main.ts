@@ -43,7 +43,10 @@ import { wireProjectsApi } from "./hub/projects";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
-import { init as initAcp } from "@cocalc/lite/hub/acp";
+import {
+  configureAcpDetachedWorkerRunning,
+  init as initAcp,
+} from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
@@ -71,6 +74,12 @@ import {
 } from "@cocalc/backend/network/policy";
 import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 import { isValidUUID } from "@cocalc/util/misc";
+import { main as runAcpWorkerMain } from "./acp-worker";
+import {
+  configureProjectHostAcpWorkerLauncher,
+  ensureProjectHostAcpWorkerRunning,
+  startProjectHostAcpWorkerSupervisor,
+} from "./hub/acp/worker-manager";
 
 const logger = getLogger("project-host:main");
 const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
@@ -225,6 +234,7 @@ async function waitForProjectHttpPort(project_id: string): Promise<number> {
 export async function main(
   _config: ProjectHostConfig = {},
 ): Promise<ProjectHostContext> {
+  configureProjectHostAcpWorkerLauncher({ entryPoint: __filename });
   const runnerId = process.env.PROJECT_RUNNER_NAME || "project-host";
   const host = _config.host ?? process.env.HOST ?? "127.0.0.1";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));
@@ -304,7 +314,8 @@ export async function main(
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
-  await initAcp(conatClient);
+  configureAcpDetachedWorkerRunning(ensureProjectHostAcpWorkerRunning);
+  await initAcp(conatClient, { manageDetachedWorker: false });
 
   // Minimal local persistence so DKV/state works (no external hub needed).
   const persistServer = createPersistServer({ client: conatClient });
@@ -454,6 +465,8 @@ export async function main(
   }
 
   const stopCopyWorker = startCopyWorker();
+  startProjectHostAcpWorkerSupervisor();
+  await ensureProjectHostAcpWorkerRunning();
 
   logger.info("project-host ready");
 
@@ -479,16 +492,23 @@ export async function main(
 
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
-  try {
-    if (handleDaemonCli(process.argv.slice(2))) {
-      process.exit(0);
+  if (`${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1") {
+    runAcpWorkerMain().catch((err) => {
+      console.error("project-host ACP worker failed:", err);
+      process.exitCode = 1;
+    });
+  } else {
+    try {
+      if (handleDaemonCli(process.argv.slice(2))) {
+        process.exit(0);
+      }
+    } catch (err) {
+      console.error(`${err}`);
+      process.exit(1);
     }
-  } catch (err) {
-    console.error(`${err}`);
-    process.exit(1);
+    main().catch((err) => {
+      console.error("project-host failed to start:", err);
+      process.exitCode = 1;
+    });
   }
-  main().catch((err) => {
-    console.error("project-host failed to start:", err);
-    process.exitCode = 1;
-  });
 }

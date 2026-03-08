@@ -2,6 +2,11 @@ import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import { getDatabase } from "./database";
 
 const TABLE = "acp_jobs";
+const THREAD_QUEUE_ORDER = `
+priority DESC,
+CASE WHEN priority > 0 THEN updated_at END DESC,
+created_at ASC
+`;
 
 export type AcpJobState =
   | "queued"
@@ -186,6 +191,18 @@ export function listQueuedAcpJobs(): AcpJobRow[] {
     .all() as AcpJobRow[];
 }
 
+export function listRunningAcpJobs(): AcpJobRow[] {
+  ensureInit();
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE state = 'running'
+       ORDER BY started_at ASC, created_at ASC`,
+    )
+    .all() as AcpJobRow[];
+}
+
 export function listQueuedAcpJobsForThread({
   project_id,
   path,
@@ -204,7 +221,7 @@ export function listQueuedAcpJobsForThread({
          AND path = ?
          AND thread_id = ?
          AND state = 'queued'
-       ORDER BY priority DESC, updated_at DESC, created_at ASC`,
+       ORDER BY ${THREAD_QUEUE_ORDER}`,
     )
     .all(project_id, path, thread_id) as AcpJobRow[];
 }
@@ -227,7 +244,7 @@ export function claimNextQueuedAcpJobForThread({
          AND path = ?
          AND thread_id = ?
          AND state = 'queued'
-       ORDER BY priority DESC, updated_at DESC, created_at ASC
+       ORDER BY ${THREAD_QUEUE_ORDER}
        LIMIT 1`,
     )
     .get(project_id, path, thread_id) as AcpJobRow | undefined;

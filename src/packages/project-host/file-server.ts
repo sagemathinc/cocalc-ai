@@ -322,6 +322,16 @@ export function getMountPoint(): string {
   return fs.opts.mount;
 }
 
+function resolveProjectMountRoot(): string {
+  if (fs != null) {
+    return fs.opts.mount;
+  }
+  if (fileServerMountpoint) {
+    return fileServerMountpoint;
+  }
+  return join(data, "btrfs", "mnt");
+}
+
 export function getFileServerRuntimeStatus():
   | {
       mount: string;
@@ -358,7 +368,7 @@ function getFileSync() {
 }
 
 function projectMountpoint(project_id: string): string {
-  return join(getMountPoint(), volName(project_id));
+  return join(resolveProjectMountRoot(), volName(project_id));
 }
 
 export function getScratchMountpoint(project_id: string): string {
@@ -578,6 +588,55 @@ function projectHostPath(
     throw Error(`path escapes project root: ${containerPath}`);
   }
   return { hostPath: joined, base };
+}
+
+export function configureProjectHostAcpContainerFileIO(): void {
+  setContainerFileIO({
+    mountPoint: projectMountpoint,
+    readFile: async (project_id: string, p: string) => {
+      const { hostPath, base } = projectHostPath(project_id, p);
+      const fd = await nodeOpen(
+        hostPath,
+        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+      );
+      try {
+        // TOCTOU mitigation: re-resolve via /proc/self/fd/<fd> AFTER open with
+        // O_NOFOLLOW. If a user flips the path to a symlink between path
+        // resolution and open, O_NOFOLLOW blocks the follow; if they flip it
+        // after open, realpath on the FD confirms we're still under the
+        // project root. This protects against symlink races into host paths.
+        const real = await nodeRealpath(`/proc/self/fd/${fd.fd}`);
+        if (!real.startsWith(base)) {
+          throw Error(`resolved path escapes project root: ${real}`);
+        }
+        return await nodeReadFile(fd, "utf8");
+      } finally {
+        await fd.close();
+      }
+    },
+    writeFile: async (project_id: string, p: string, content: string) => {
+      const { hostPath, base } = projectHostPath(project_id, p);
+      const fd = await nodeOpen(
+        hostPath,
+        fsConstants.O_CREAT |
+          fsConstants.O_TRUNC |
+          fsConstants.O_WRONLY |
+          fsConstants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        // Same TOCTOU guard as read: confirm the opened FD still resolves
+        // inside the project root before writing.
+        const real = await nodeRealpath(`/proc/self/fd/${fd.fd}`);
+        if (!real.startsWith(base)) {
+          throw Error(`resolved path escapes project root: ${real}`);
+        }
+        await nodeWriteFile(fd, content, "utf8");
+      } finally {
+        await fd.close();
+      }
+    },
+  });
 }
 
 async function mount({
@@ -1930,55 +1989,11 @@ export async function initFileServer({
   });
   logger.debug("initFileServer: fs successfully initialized");
 
-  // Expose fast in-host file I/O for ACP/container executor when running inside
-  // project-host. Paths are expected to be relative to /root inside the
-  // project container.
-  setContainerFileIO({
-    mountPoint: projectMountpoint,
-    readFile: async (project_id: string, p: string) => {
-      const { hostPath, base } = projectHostPath(project_id, p);
-      const fd = await nodeOpen(
-        hostPath,
-        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
-      );
-      try {
-        // TOCTOU mitigation: re-resolve via /proc/self/fd/<fd> AFTER open with
-        // O_NOFOLLOW. If a user flips the path to a symlink between path
-        // resolution and open, O_NOFOLLOW blocks the follow; if they flip it
-        // after open, realpath on the FD confirms we're still under the
-        // project root. This protects against symlink races into host paths.
-        const real = await nodeRealpath(`/proc/self/fd/${fd.fd}`);
-        if (!real.startsWith(base)) {
-          throw Error(`resolved path escapes project root: ${real}`);
-        }
-        return await nodeReadFile(fd, "utf8");
-      } finally {
-        await fd.close();
-      }
-    },
-    writeFile: async (project_id: string, p: string, content: string) => {
-      const { hostPath, base } = projectHostPath(project_id, p);
-      const fd = await nodeOpen(
-        hostPath,
-        fsConstants.O_CREAT |
-          fsConstants.O_TRUNC |
-          fsConstants.O_WRONLY |
-          fsConstants.O_NOFOLLOW,
-        0o600,
-      );
-      try {
-        // Same TOCTOU guard as read: confirm the opened FD still resolves
-        // inside the project root before writing.
-        const real = await nodeRealpath(`/proc/self/fd/${fd.fd}`);
-        if (!real.startsWith(base)) {
-          throw Error(`resolved path escapes project root: ${real}`);
-        }
-        await nodeWriteFile(fd, content, "utf8");
-      } finally {
-        await fd.close();
-      }
-    },
-  });
+  // Expose fast in-host file I/O for ACP/container executor when running
+  // inside project-host. The detached ACP worker also calls this directly so
+  // file reads/writes keep working while the main project-host process is
+  // restarting.
+  configureProjectHostAcpContainerFileIO();
 
   let ssh: any = { close: () => {}, projectProxyHandlers: [] };
   if (enableSsh) {
