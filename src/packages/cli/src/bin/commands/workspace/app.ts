@@ -26,7 +26,7 @@ type AppForwardCommandResult = {
   kind: "service" | "static";
   state: string;
   ready: boolean | null;
-  ssh_transport: "cloudflare-access-tcp" | "direct";
+  ssh_transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
   ssh_server: string | null;
   remote_port: number;
   local_host: string;
@@ -34,7 +34,6 @@ type AppForwardCommandResult = {
   local_url: string;
   command: string;
   ssh_args: string[];
-  cloudflare_access_login: string | null;
   key_created: boolean;
   key_path: string | null;
   key_installed: boolean;
@@ -146,8 +145,7 @@ async function resolveAppForwardCommand(
 
   let sshServer = route.ssh_server;
   let sshTarget: string;
-  let cloudflareLoginHint: string | null = null;
-  if (route.transport === "cloudflare-access-tcp") {
+  if (route.transport !== "direct") {
     const cloudflareHostname = route.cloudflare_hostname;
     if (!cloudflareHostname) {
       throw new Error("workspace ssh route is missing cloudflare hostname");
@@ -158,7 +156,6 @@ async function resolveAppForwardCommand(
     sshArgs.push("-o", `ProxyCommand=${proxyCommand}`);
     sshTarget = `${route.ssh_username}@${cloudflareHostname}`;
     sshServer = `${cloudflareHostname}:443`;
-    cloudflareLoginHint = `cloudflared access login https://${cloudflareHostname}`;
   } else {
     if (!route.ssh_host) {
       throw new Error("workspace ssh route is missing host endpoint");
@@ -186,7 +183,6 @@ async function resolveAppForwardCommand(
     local_url: localUrl,
     command: buildSshCommand(sshArgs),
     ssh_args: sshArgs,
-    cloudflare_access_login: cloudflareLoginHint,
     key_created: keyInfo?.created ?? false,
     key_path: keyInfo?.private_key_path ?? null,
     key_installed: keyInstall ? Boolean((keyInstall as any).installed) : false,
@@ -382,7 +378,7 @@ export function registerWorkspaceAppCommands(
     .command("forward <appId>")
     .description("run a private local SSH tunnel to a managed service app")
     .option("-w, --workspace <workspace>", "workspace id or name")
-    .option("--direct", "bypass Cloudflare Access and use the direct host ssh endpoint")
+    .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
     .option("--local-port <port>", "local port to bind (default: same as app port)")
     .option("--local-host <host>", "local bind host", "127.0.0.1")
     .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
@@ -414,11 +410,6 @@ export function registerWorkspaceAppCommands(
             console.log(
               `Forwarding ${resolved.title ?? appId} to ${resolved.local_url}. Press Ctrl-C to stop.`,
             );
-            if (resolved.cloudflare_access_login) {
-              console.log(
-                `If SSH fails with Cloudflare Access auth errors, run: ${resolved.cloudflare_access_login}`,
-              );
-            }
           }
           const code = await runSsh(resolved.ssh_args);
           if (code !== 0) {
@@ -436,7 +427,7 @@ export function registerWorkspaceAppCommands(
     .command("forward-command <appId>", { hidden: true })
     .description("print a local SSH port-forward command for a managed service app")
     .option("-w, --workspace <workspace>", "workspace id or name")
-    .option("--direct", "bypass Cloudflare Access and use the direct host ssh endpoint")
+    .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
     .option("--local-port <port>", "local port to bind (default: same as app port)")
     .option("--local-host <host>", "local bind host", "127.0.0.1")
     .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
