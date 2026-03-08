@@ -123,6 +123,7 @@ import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import { registerExportCommand, type ExportCommandDeps } from "./commands/export";
 import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
 import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
+import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
 import { createTasksApi } from "../api/tasks";
 import {
   registerBrowserCommand,
@@ -2004,6 +2005,13 @@ const tasksCommandDeps = {
 } satisfies TasksCommandDeps;
 
 registerTasksCommand(program, tasksCommandDeps);
+
+const execCommandDeps = {
+  withContext,
+  tasksApi,
+} satisfies ExecCommandDeps;
+
+registerExecCommand(program, execCommandDeps);
 
 const browserCommandDeps = {
   withContext,

@@ -1,0 +1,210 @@
+import { readFile } from "node:fs/promises";
+import { Command } from "commander";
+
+import type { TasksApi } from "../../api/tasks";
+
+export type ExecCommandDeps = {
+  withContext: any;
+  tasksApi: TasksApi<any, any>;
+};
+
+const BACKEND_EXEC_API_DECLARATION = `/**
+ * CoCalc backend exec API.
+ *
+ * Current implemented namespaces:
+ * - api.tasks
+ *
+ * Return only JSON-serializable values from scripts.
+ */
+
+export interface TaskRecord {
+  task_id: string;
+  done?: boolean;
+  deleted?: boolean;
+  desc?: string;
+  due_date?: number;
+  last_edited?: number;
+  color?: string;
+  hideBody?: boolean;
+}
+
+export interface TasksDocument {
+  readonly path: string;
+  getSnapshot(query?: {
+    includeDone?: boolean;
+    includeDeleted?: boolean;
+    search?: string;
+    limit?: number;
+    sort?: { column: "Custom" | "Due" | "Changed"; dir: "asc" | "desc" };
+  }): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    tasks: TaskRecord[];
+    revision?: string | number | null;
+  }>;
+  getTask(taskId: string): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    task?: TaskRecord;
+  }>;
+  setDone(taskId: string, done: boolean): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    changedTaskIds: readonly string[];
+    revision?: string | number | null;
+    task?: TaskRecord;
+  }>;
+  appendToDescription(taskId: string, text: string): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    changedTaskIds: readonly string[];
+    revision?: string | number | null;
+    task?: TaskRecord;
+  }>;
+  updateTask(
+    taskId: string,
+    changes: Partial<{
+      desc: string;
+      due_date: number;
+      color: string;
+      position: number;
+      done: boolean;
+      deleted: boolean;
+      hideBody: boolean;
+    }>,
+  ): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    changedTaskIds: readonly string[];
+    revision?: string | number | null;
+    task?: TaskRecord;
+  }>;
+  createTask(input?: Partial<{
+    desc: string;
+    due_date: number;
+    color: string;
+    position: number;
+    done: boolean;
+    deleted: boolean;
+    hideBody: boolean;
+  }>): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    task: TaskRecord;
+  }>;
+}
+
+export interface BackendExecApi {
+  tasks: {
+    open(options: {
+      path: string;
+      workspaceIdentifier?: string;
+      cwd?: string;
+    }): TasksDocument;
+  };
+}
+
+declare const api: BackendExecApi;
+export default api;
+`;
+
+async function readExecScriptFromStdin(): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
+}
+
+function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
+  return {
+    tasks: {
+      open(options: {
+        path: string;
+        workspaceIdentifier?: string;
+        cwd?: string;
+      }) {
+        return deps.tasksApi.bindDocument(ctx, options);
+      },
+    },
+  };
+}
+
+type ExecCliOptions = {
+  file?: string;
+  stdin?: boolean;
+};
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...args: string[]
+) => (...fnArgs: any[]) => Promise<any>;
+
+export function registerExecCommand(program: Command, deps: ExecCommandDeps): Command {
+  program
+    .command("exec-api")
+    .description("print the TypeScript declaration for the backend exec API")
+    .action(() => {
+      process.stdout.write(BACKEND_EXEC_API_DECLARATION);
+      if (!BACKEND_EXEC_API_DECLARATION.endsWith("\n")) {
+        process.stdout.write("\n");
+      }
+    });
+
+  program
+    .command("exec [code...]")
+    .description(
+      "execute javascript in the backend CoCalc runtime with a typed api object; provide code inline, with --file, or with --stdin",
+    )
+    .option(
+      "--file <path>",
+      "read javascript from a file path (use '-' to read from stdin)",
+    )
+    .option("--stdin", "read javascript from stdin")
+    .action(async (code: string[], opts: ExecCliOptions, command: Command) => {
+      await deps.withContext(command, "exec", async (ctx) => {
+        const inlineScript = (code ?? []).join(" ").trim();
+        const filePath = `${opts.file ?? ""}`.trim();
+        const readFromStdin = !!opts.stdin || filePath === "-";
+        const readFromFile = filePath.length > 0 && filePath !== "-";
+        const sourceCount =
+          (inlineScript.length > 0 ? 1 : 0) +
+          (readFromFile ? 1 : 0) +
+          (readFromStdin ? 1 : 0);
+        if (sourceCount === 0) {
+          throw new Error(
+            "javascript code must be provided inline, with --file <path>, or with --stdin",
+          );
+        }
+        if (sourceCount > 1) {
+          throw new Error(
+            "choose exactly one script source: inline code, --file <path>, or --stdin",
+          );
+        }
+        const script = readFromFile
+          ? await readFile(filePath, "utf8")
+          : readFromStdin
+            ? await readExecScriptFromStdin()
+            : inlineScript;
+        if (!script.trim()) {
+          throw new Error("javascript code must be specified");
+        }
+
+        const api = createBackendExecApi(ctx, deps);
+        const runner = new AsyncFunction(
+          "api",
+          `"use strict";\n${script}\n`,
+        );
+        const result = await runner(api);
+        return {
+          ok: true,
+          result: result ?? null,
+        };
+      });
+    });
+
+  return program;
+}
