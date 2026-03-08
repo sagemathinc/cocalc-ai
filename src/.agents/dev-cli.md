@@ -16,6 +16,41 @@ The main theme is reducing ambiguity:
 2. Show what code and bundle version is actually running.
 3. Trace a public app URL end-to-end.
 
+## Related Local Bridge Roadmap
+
+There is a closely related category of local-machine features that should reuse
+existing work instead of being reimplemented from scratch:
+
+- SSH port forwarding for managed apps and native/X11 launches
+- lightweight bidirectional file sync between a local directory and a project
+
+The right implementation substrate is likely
+[`reflect-sync`](/home/wstein/build/reflect-sync), which already has robust
+port-forward lifecycle management, daemon support, and limited bidirectional
+sync.  There is also already precedent in
+[`src/packages/plus`](/home/wstein/build/cocalc-lite/src/packages/plus), where
+CoCalc Plus exposes a UI on top of a small curated subset of `reflect-sync`
+instead of all of its raw options.
+
+That same product decision should apply in CoCalc proper:
+
+- do **not** expose the full `reflect-sync` surface area
+- do expose a small opinionated subset that is easy to explain and support
+- keep the daemon-mediated UX and lifecycle management
+
+Initial narrow scope:
+
+1. `cocalc ws app forward ...`
+   - a curated SSH port forward for an app or raw port
+   - later optionally mediated by the local CoCalc daemon
+2. `cocalc sync ...`
+   - a simple bidirectional sync command for a local directory and a project
+   - conservative defaults, explicit conflict behavior, and no attempt to
+     surface every advanced `reflect-sync` knob
+
+This is out of scope for the current app-server project, but it is important
+context because the same local daemon / SSH plumbing will likely be shared.
+
 ## Build Identity Plan
 
 We need three different identities, not one overloaded "version":
