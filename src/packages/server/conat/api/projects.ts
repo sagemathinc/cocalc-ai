@@ -361,6 +361,22 @@ export async function resolveWorkspaceSshConnection({
   };
 }
 
+export async function resolveProjectSshConnection({
+  account_id,
+  project_id,
+  direct,
+}: {
+  account_id?: string;
+  project_id: string;
+  direct?: boolean;
+}): Promise<WorkspaceSshConnectionInfo> {
+  return await resolveWorkspaceSshConnection({
+    account_id,
+    project_id,
+    direct,
+  });
+}
+
 export async function start({
   account_id,
   project_id,

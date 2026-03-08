@@ -148,7 +148,7 @@ export async function init({
   exitOnFail = true,
   hostKeyPath,
 }: {
-  getSshdPort: (target: SshTarget) => number | null;
+  getSshdPort: (target: SshTarget) => Promise<number | null> | number | null;
   getAuthorizedKeys: (target: SshTarget) => Promise<string>;
   port?: number;
   proxyHandlers?: boolean;

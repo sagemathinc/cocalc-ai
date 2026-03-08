@@ -259,6 +259,7 @@ export const projects = {
   exec: authFirstRequireAccount,
   getRuntimeLog: authFirstRequireAccount,
   resolveWorkspaceSshConnection: authFirstRequireAccount,
+  resolveProjectSshConnection: authFirstRequireAccount,
 
   createBackup: authFirstRequireAccount,
   deleteBackup: authFirstRequireAccount,
@@ -491,6 +492,12 @@ export interface Projects {
   }) => Promise<ProjectRuntimeLog>;
 
   resolveWorkspaceSshConnection: (opts: {
+    account_id?: string;
+    project_id: string;
+    direct?: boolean;
+  }) => Promise<WorkspaceSshConnectionInfo>;
+
+  resolveProjectSshConnection: (opts: {
     account_id?: string;
     project_id: string;
     direct?: boolean;

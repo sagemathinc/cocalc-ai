@@ -26,6 +26,7 @@ import {
   type Sync,
 } from "@cocalc/conat/files/file-server";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
+import { hubApi } from "@cocalc/lite/hub/api";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -93,12 +94,103 @@ const BACKUP_MAX_PARALLEL = Math.max(
   1,
   Math.min(100, envToInt("COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL", 10)),
 );
+const SSH_WAKE_TIMEOUT_MS = Math.max(
+  5_000,
+  envToInt("COCALC_PROJECT_HOST_SSH_WAKE_TIMEOUT_MS", 120_000),
+);
+const SSH_WAKE_POLL_MS = Math.max(
+  100,
+  envToInt("COCALC_PROJECT_HOST_SSH_WAKE_POLL_MS", 500),
+);
 let backupInFlight = 0;
 const backupWaiters: Array<() => void> = [];
 const backupProjectTails = new Map<string, Promise<void>>();
+const sshWakeInFlight = new Map<string, Promise<number | null>>();
 
 function volName(project_id: string) {
   return `project-${project_id}`;
+}
+
+function normalizePositivePort(value: unknown): number | null {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+async function waitForProjectSshPort(
+  project_id: string,
+  timeoutMs = SSH_WAKE_TIMEOUT_MS,
+  pollMs = SSH_WAKE_POLL_MS,
+): Promise<number | null> {
+  const started = Date.now();
+  while (Date.now() - started <= timeoutMs) {
+    const port = normalizePositivePort(getProject(project_id)?.ssh_port);
+    if (port != null) {
+      return port;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return null;
+}
+
+async function ensureProjectSshWake(project_id: string): Promise<number | null> {
+  const existingPort = normalizePositivePort(getProject(project_id)?.ssh_port);
+  if (existingPort != null) {
+    return existingPort;
+  }
+  const existing = sshWakeInFlight.get(project_id);
+  if (existing) {
+    return await existing;
+  }
+  const task = (async () => {
+    const row = getProject(project_id);
+    if (!row) {
+      return null;
+    }
+    const currentPort = normalizePositivePort(row.ssh_port);
+    if (currentPort != null) {
+      return currentPort;
+    }
+
+    const hostId = getLocalHostId();
+    if (!hubApi.projects?.start) {
+      logger.debug("ssh wake skipped: local project start unavailable", {
+        project_id,
+        host_id: hostId ?? null,
+      });
+      return await waitForProjectSshPort(project_id, 5_000, SSH_WAKE_POLL_MS);
+    }
+
+    if (row.state !== "starting") {
+      try {
+        logger.debug("ssh wake start requested", {
+          project_id,
+          host_id: hostId,
+          state: row.state,
+        });
+        await hubApi.projects.start({ project_id });
+      } catch (err) {
+        logger.warn("ssh wake start project failed", {
+          project_id,
+          host_id: hostId,
+          err: `${err}`,
+        });
+      }
+    }
+
+    const port = await waitForProjectSshPort(project_id);
+    if (port == null) {
+      logger.warn("ssh wake timed out waiting for ssh port", { project_id });
+    } else {
+      logger.debug("ssh wake project ready", { project_id, ssh_port: port });
+    }
+    return port;
+  })().finally(() => {
+    if (sshWakeInFlight.get(project_id) === task) {
+      sshWakeInFlight.delete(project_id);
+    }
+  });
+  sshWakeInFlight.set(project_id, task);
+  return await task;
 }
 
 async function acquireBackupSlot(): Promise<void> {
@@ -2012,9 +2104,14 @@ export async function initFileServer({
     await writeFile(hostKeyPath, sshpiperdKey.privateKey, { mode: 0o600 });
     await chmod(hostKeyPath, 0o600);
     logger.debug("initFileServer: ssh configured");
-    const getSshdPort = (target: SshTarget): number | null => {
-      const row = getProject(target.project_id);
-      return row?.ssh_port ?? null;
+    const getSshdPort = async (target: SshTarget): Promise<number | null> => {
+      const existingPort = normalizePositivePort(
+        getProject(target.project_id)?.ssh_port,
+      );
+      if (existingPort != null) {
+        return existingPort;
+      }
+      return await ensureProjectSshWake(target.project_id);
     };
 
     const getAuthorizedKeys = async (target: SshTarget): Promise<string> => {
