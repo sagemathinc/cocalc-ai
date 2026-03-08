@@ -92,6 +92,29 @@ interface PortableAppSpecBundle {
   skipped?: Array<{ id: string; path?: string; error: string }>;
 }
 
+const APP_SECURITY_MARKDOWN = `
+### Security model
+
+- Private managed apps use a **same-project trust model**.
+- Opening a private app is similar to running project code from a notebook, terminal, or other project file.
+- A private app is **not** an internal sandbox against other code in the same project.
+
+### What CoCalc is designed to protect
+
+- Public apps are exposed on separate public hostnames.
+- Project-host session cookies are scoped to the current project instead of the whole host.
+- Project-host auth/session cookies and bootstrap bearer headers are stripped before traffic is proxied upstream to the app.
+- Private apps in one project cannot fetch private apps in another project on the same host.
+
+### What this means in practice
+
+- Do **not** open untrusted private apps in projects that contain sensitive files or secrets.
+- Use **Expose** if an app should be reachable by other people on its own public hostname.
+- Use **Audit with Codex** before exposing an app publicly if you want an extra review pass.
+
+More detail: \`docs/security/private-app-trust-model.md\`
+`;
+
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
   return new Error(`${err}`);
@@ -495,6 +518,7 @@ export function AppServerPanel({
     stdout: string;
     stderr: string;
   } | null>(null);
+  const [securityOpen, setSecurityOpen] = useState<boolean>(false);
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
@@ -1528,6 +1552,7 @@ export function AppServerPanel({
             <Button onClick={() => setCreatorOpen((open) => !open)}>
               {creatorOpen ? "Hide new app form" : "New app"}
             </Button>
+            <Button onClick={() => setSecurityOpen(true)}>Security?</Button>
             <Button onClick={() => void refresh()} disabled={loading}>
               Refresh
             </Button>
@@ -2268,6 +2293,19 @@ export function AppServerPanel({
           </Space>
         </div>
       ) : null}
+      <Modal
+        open={securityOpen}
+        onCancel={() => setSecurityOpen(false)}
+        title="Managed app security"
+        width={760}
+        footer={[
+          <Button key="close" onClick={() => setSecurityOpen(false)}>
+            Close
+          </Button>,
+        ]}
+      >
+        <StaticMarkdown value={APP_SECURITY_MARKDOWN} />
+      </Modal>
       <Modal
         open={editSpecOpen}
         onCancel={closeEditSpecModal}
