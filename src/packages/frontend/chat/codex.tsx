@@ -508,7 +508,7 @@ export function CodexConfigButton({
             <CodexCredentialsPanel
               embedded
               hidePanelChrome
-              defaultWorkspaceId={projectId}
+              defaultProjectId={projectId}
             />
             <Divider style={{ margin: "8px 0" }} />
             <LiteAISettings onSaved={refreshPaymentSource} showTitle />
@@ -517,7 +517,7 @@ export function CodexConfigButton({
           <CodexCredentialsPanel
             embedded
             hidePanelChrome
-            defaultWorkspaceId={projectId}
+            defaultProjectId={projectId}
           />
         )}
       </Modal>

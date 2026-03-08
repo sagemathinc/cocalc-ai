@@ -55,14 +55,14 @@ import {
   queryProjects as queryProjectsCore,
   resolveAccountByIdentifier as resolveAccountByIdentifierCore,
   resolveHost as resolveHostCore,
-  resolveWorkspace as resolveWorkspaceCore,
-  resolveWorkspaceFromArgOrContext as resolveWorkspaceFromArgOrContextCore,
-  workspaceState as workspaceStateCore,
-} from "./core/workspace-resolve";
-import { createWorkspaceFileOps } from "./core/workspace-file";
-import { createWorkspaceCodexOps } from "./core/workspace-codex";
-import { createProjectSyncOps as createWorkspaceSyncOps } from "./core/workspace-sync";
-import { createWorkspaceTasksOps } from "./core/workspace-tasks";
+  resolveProject as resolveProjectCore,
+  resolveProjectFromArgOrContext as resolveProjectFromArgOrContextCore,
+  projectState as projectStateCore,
+} from "./core/project-resolve";
+import { createProjectFileOps } from "./core/project-file";
+import { createProjectCodexOps } from "./core/project-codex";
+import { createProjectSyncOps as createProjectSyncOps } from "./core/project-sync";
+import { createProjectTasksOps } from "./core/project-tasks";
 import {
   commandExists,
   isLikelySshAuthFailure,
@@ -182,7 +182,7 @@ type CommandContext = {
   remote: RemoteConnection;
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
-  workspaceCache: Map<string, { expiresAt: number; workspace: WorkspaceRow }>;
+  projectCache: Map<string, { expiresAt: number; workspace: ProjectRow }>;
   hostConnectionCache: Map<string, { expiresAt: number; connection: HostConnectionInfo }>;
 };
 
@@ -196,7 +196,7 @@ type RoutedProjectHostClientState = {
   tokenInFlight?: Promise<string>;
 };
 
-type WorkspaceRow = {
+type ProjectRow = {
   project_id: string;
   title: string;
   host_id: string | null;
@@ -254,31 +254,31 @@ function parseLroScopeType(value: string): LroScopeType {
   );
 }
 
-type WorkspaceContextRecord = {
+type ProjectContextRecord = {
   workspace_id?: string;
   project_id?: string;
   title?: string;
   set_at?: string;
 };
 
-function workspaceContextPath(cwd = process.cwd()): string {
+function projectContextPath(cwd = process.cwd()): string {
   return join(cwd, WORKSPACE_CONTEXT_FILENAME);
 }
 
-function saveWorkspaceContext(context: WorkspaceContextRecord, cwd = process.cwd()): void {
+function saveProjectContext(context: ProjectContextRecord, cwd = process.cwd()): void {
   const project_id = `${context.project_id ?? context.workspace_id ?? ""}`.trim();
   if (!isValidUUID(project_id)) {
     throw new Error("project context requires a valid project_id UUID");
   }
   writeFileSync(
-    workspaceContextPath(cwd),
+    projectContextPath(cwd),
     `${JSON.stringify({ project_id, title: context.title, set_at: new Date().toISOString() }, null, 2)}\n`,
     "utf8",
   );
 }
 
-function readWorkspaceContext(cwd = process.cwd()): WorkspaceContextRecord | undefined {
-  const path = workspaceContextPath(cwd);
+function readProjectContext(cwd = process.cwd()): ProjectContextRecord | undefined {
+  const path = projectContextPath(cwd);
   if (!existsSync(path)) return undefined;
   const raw = readFileSync(path, "utf8").trim();
   if (!raw) return undefined;
@@ -317,7 +317,7 @@ function readWorkspaceContext(cwd = process.cwd()): WorkspaceContextRecord | und
 }
 
 function clearWorkspaceContext(cwd = process.cwd()): boolean {
-  const path = workspaceContextPath(cwd);
+  const path = projectContextPath(cwd);
   if (!existsSync(path)) return false;
   unlinkSync(path);
   return true;
@@ -947,7 +947,7 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
     remote,
     hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
-    workspaceCache: new Map(),
+    projectCache: new Map(),
     hostConnectionCache: new Map(),
   };
   ctx.hub = createHubApiForContext(ctx);
@@ -1050,8 +1050,8 @@ function serializeLroSummary(summary: HubLroSummary): Record<string, unknown> {
   };
 }
 
-function workspaceState(value: WorkspaceRow["state"]): string {
-  return workspaceStateCore(value);
+function projectState(value: ProjectRow["state"]): string {
+  return projectStateCore(value);
 }
 
 async function queryProjects({
@@ -1066,8 +1066,8 @@ async function queryProjects({
   title?: string;
   host_id?: string | null;
   limit: number;
-}): Promise<WorkspaceRow[]> {
-  return await queryProjectsCore<WorkspaceRow>({
+}): Promise<ProjectRow[]> {
+  return await queryProjectsCore<ProjectRow>({
     ctx,
     project_id,
     title,
@@ -1076,42 +1076,27 @@ async function queryProjects({
   });
 }
 
-async function resolveWorkspace(ctx: CommandContext, identifier: string): Promise<WorkspaceRow> {
-  return await resolveWorkspaceCore<WorkspaceRow>(
+async function resolveProject(ctx: CommandContext, identifier: string): Promise<ProjectRow> {
+  return await resolveProjectCore<ProjectRow>(
     ctx,
     identifier,
     WORKSPACE_CACHE_TTL_MS,
   );
 }
 
-async function resolveWorkspaceFromArgOrContext(
-  ctx: CommandContext,
-  identifier?: string,
-  cwd = process.cwd(),
-): Promise<WorkspaceRow> {
-  return await resolveWorkspaceFromArgOrContextCore<WorkspaceRow>({
-    ctx,
-    identifier,
-    cwd,
-    workspaceCacheTtlMs: WORKSPACE_CACHE_TTL_MS,
-    readWorkspaceContext,
-    workspaceContextPath,
-  });
-}
-
-async function resolveProject(
-  ctx: CommandContext,
-  identifier: string,
-): Promise<WorkspaceRow> {
-  return await resolveWorkspace(ctx, identifier);
-}
-
 async function resolveProjectFromArgOrContext(
   ctx: CommandContext,
   identifier?: string,
   cwd = process.cwd(),
-): Promise<WorkspaceRow> {
-  return await resolveWorkspaceFromArgOrContext(ctx, identifier, cwd);
+): Promise<ProjectRow> {
+  return await resolveProjectFromArgOrContextCore<ProjectRow>({
+    ctx,
+    identifier,
+    cwd,
+    projectCacheTtlMs: WORKSPACE_CACHE_TTL_MS,
+    readProjectContext,
+    projectContextPath,
+  });
 }
 
 function normalizeUserSearchName(row: UserSearchResult): string {
@@ -1263,7 +1248,7 @@ function closeRoutedProjectHostClient(
 
 async function getOrCreateRoutedProjectHostClient(
   ctx: CommandContext,
-  workspace: WorkspaceRow,
+  workspace: ProjectRow,
   allowTokenRetry = true,
 ): Promise<RoutedProjectHostClientState> {
   const host_id = workspace.host_id;
@@ -1371,43 +1356,30 @@ async function getOrCreateRoutedProjectHostClient(
   return state;
 }
 
-async function resolveWorkspaceFilesystem(
+async function resolveProjectFilesystem(
   ctx: CommandContext,
-  workspaceIdentifier?: string,
+  projectIdentifier?: string,
   cwd = process.cwd(),
-): Promise<{ workspace: WorkspaceRow; fs: FilesystemClient }> {
-  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+): Promise<{ project: ProjectRow; fs: FilesystemClient }> {
+  const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
     throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
   }
   const fs = fsClient({
     client: routed.client,
-    subject: fsSubject({ project_id: workspace.project_id }),
+    subject: fsSubject({ project_id: project.project_id }),
     timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
   });
-  return { workspace, fs };
+  return { project, fs };
 }
 
-async function resolveProjectFilesystem(
+async function resolveProjectApi(
   ctx: CommandContext,
   projectIdentifier?: string,
   cwd = process.cwd(),
-): Promise<{ project: WorkspaceRow; fs: FilesystemClient }> {
-  const { workspace, fs } = await resolveWorkspaceFilesystem(
-    ctx,
-    projectIdentifier,
-    cwd,
-  );
-  return { project: workspace, fs };
-}
-
-async function resolveWorkspaceProjectApi(
-  ctx: CommandContext,
-  workspaceIdentifier?: string,
-  cwd = process.cwd(),
-): Promise<{ workspace: WorkspaceRow; api: ProjectApi }> {
-  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+): Promise<{ workspace: ProjectRow; api: ProjectApi }> {
+  const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
   const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
   if (!routed.client) {
     throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
@@ -1424,8 +1396,8 @@ async function resolveProjectProjectApi(
   ctx: CommandContext,
   projectIdentifier?: string,
   cwd = process.cwd(),
-): Promise<{ project: WorkspaceRow; api: ProjectApi }> {
-  const { workspace, api } = await resolveWorkspaceProjectApi(
+): Promise<{ project: ProjectRow; api: ProjectApi }> {
+  const { workspace, api } = await resolveProjectApi(
     ctx,
     projectIdentifier,
     cwd,
@@ -1433,16 +1405,16 @@ async function resolveProjectProjectApi(
   return { project: workspace, api };
 }
 
-async function resolveWorkspaceConatClient(
+async function resolveProjectConatClient(
   ctx: CommandContext,
-  workspaceIdentifier?: string,
+  projectIdentifier?: string,
   cwd = process.cwd(),
-): Promise<{ workspace: WorkspaceRow; client: ConatClient }> {
-  const explicitIdentifier = `${workspaceIdentifier ?? ""}`.trim();
+): Promise<{ project: ProjectRow; client: ConatClient }> {
+  const explicitIdentifier = `${projectIdentifier ?? ""}`.trim();
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   if (!explicitIdentifier && isValidUUID(envProjectId)) {
     return {
-      workspace: {
+      project: {
         project_id: envProjectId,
         title: envProjectId,
         host_id: null,
@@ -1450,48 +1422,35 @@ async function resolveWorkspaceConatClient(
       client: ctx.remote.client,
     };
   }
-  const workspace = await resolveWorkspaceFromArgOrContext(
+  const project = await resolveProjectFromArgOrContext(
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     cwd,
   );
-  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
     throw new Error(
       `internal error: routed client missing for host ${routed.host_id}`,
     );
   }
-  return { workspace, client: routed.client };
-}
-
-async function resolveProjectConatClient(
-  ctx: CommandContext,
-  projectIdentifier?: string,
-  cwd = process.cwd(),
-): Promise<{ project: WorkspaceRow; client: ConatClient }> {
-  const { workspace, client } = await resolveWorkspaceConatClient(
-    ctx,
-    projectIdentifier,
-    cwd,
-  );
-  return { project: workspace, client };
+  return { project, client: routed.client };
 }
 
 const {
-  workspaceFileListData,
-  workspaceFileCatData,
-  workspaceFilePutData,
-  workspaceFileGetData,
-  workspaceFileRmData,
-  workspaceFileMkdirData,
-  workspaceFileRgData,
-  workspaceFileFdData,
-  runWorkspaceFileCheck,
-  runWorkspaceFileCheckBench,
+  projectFileListData,
+  projectFileCatData,
+  projectFilePutData,
+  projectFileGetData,
+  projectFileRmData,
+  projectFileMkdirData,
+  projectFileRgData,
+  projectFileFdData,
+  runProjectFileCheck,
+  runProjectFileCheckBench,
   parsePositiveInteger,
-} = createWorkspaceFileOps<CommandContext>({
-  resolveWorkspaceFilesystem,
-  resolveWorkspaceFromArgOrContext,
+} = createProjectFileOps<CommandContext>({
+  resolveProjectFilesystem,
+  resolveProjectFromArgOrContext,
   asUtf8,
   normalizeProcessExitCode,
   normalizeBoolean,
@@ -1500,15 +1459,15 @@ const {
 const {
   readAllStdin,
   buildCodexSessionConfig,
-  workspaceCodexExecData,
+  projectCodexExecData,
   streamCodexHumanMessage,
-  workspaceCodexAuthStatusData,
-  workspaceCodexDeviceAuthStartData,
-  workspaceCodexDeviceAuthStatusData,
-  workspaceCodexDeviceAuthCancelData,
-  workspaceCodexAuthUploadFileData,
-} = createWorkspaceCodexOps<CommandContext, WorkspaceRow>({
-  resolveWorkspaceFromArgOrContext,
+  projectCodexAuthStatusData,
+  projectCodexDeviceAuthStartData,
+  projectCodexDeviceAuthStatusData,
+  projectCodexDeviceAuthCancelData,
+  projectCodexAuthUploadFileData,
+} = createProjectCodexOps<CommandContext, ProjectRow>({
+  resolveProjectFromArgOrContext,
   getOrCreateRoutedProjectHostClient,
   projectHostHubCallAccount,
   toIso,
@@ -1536,7 +1495,7 @@ const {
   terminateReflectForwards,
   reflectSyncHomeDir,
   reflectSyncSessionDbPath,
-} = createWorkspaceSyncOps<CommandContext, WorkspaceRow>({
+} = createProjectSyncOps<CommandContext, ProjectRow>({
   resolveProjectFilesystem,
   resolveProjectFromArgOrContext,
   parseSshServer,
@@ -1544,36 +1503,40 @@ const {
   resolveModule: (specifier) => requireCjs.resolve(specifier),
 });
 
-const { withWorkspaceTasksSession } = createWorkspaceTasksOps<
+const { withProjectTasksSession: withProjectTasksSessionCore } = createProjectTasksOps<
   CommandContext,
-  WorkspaceRow
+  ProjectRow
 >({
-  resolveWorkspaceConatClient,
+  resolveProjectConatClient,
 });
 
 async function withProjectTasksSession<T>(
   ctx: CommandContext,
-  options: Parameters<typeof withWorkspaceTasksSession>[1],
+  options: Parameters<typeof withProjectTasksSessionCore>[1],
   fn: (args: {
-    project: WorkspaceRow;
+    project: ProjectRow;
     session: any;
     path: string;
   }) => Promise<T>,
 ): Promise<T> {
-  return await withWorkspaceTasksSession(ctx, options, async ({ workspace, session, path }) => {
-    return await fn({ project: workspace, session, path });
-  });
+  return await withProjectTasksSessionCore(
+    ctx,
+    options,
+    async ({ project, session, path }) => {
+      return await fn({ project, session, path });
+    },
+  );
 }
 
-const tasksApi = createTasksApi<CommandContext, WorkspaceRow>({
+const tasksApi = createTasksApi<CommandContext, ProjectRow>({
   withProjectTasksSession,
 });
 
-const textApi = createLiveTextBinder<CommandContext, WorkspaceRow>({
+const textApi = createLiveTextBinder<CommandContext, ProjectRow>({
   resolveProjectConatClient,
 });
 
-const timeTravelApi = createLiveTimeTravelBinder<CommandContext, WorkspaceRow>({
+const timeTravelApi = createLiveTimeTravelBinder<CommandContext, ProjectRow>({
   resolveProjectConatClient,
 });
 
@@ -1589,7 +1552,7 @@ const importApi = createImportApi<CommandContext>();
 
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
-  workspace: WorkspaceRow,
+  workspace: ProjectRow,
   name: string,
   args: any[] = [],
   timeout?: number,
@@ -1716,7 +1679,7 @@ async function waitForWorkspaceNotRunning(
     pollMs,
     getState: async (id) => {
       const rows = await queryProjects({ ctx, project_id: id, limit: 1 });
-      return workspaceState(rows[0]?.state);
+      return projectState(rows[0]?.state);
     },
   });
 }
@@ -1786,12 +1749,12 @@ async function fetchWithTimeout(
 
 async function resolveProxyUrl({
   ctx,
-  workspaceIdentifier,
+  projectIdentifier,
   port,
   hostIdentifier,
 }: {
   ctx: CommandContext;
-  workspaceIdentifier: string;
+  projectIdentifier: string;
   port: number;
   hostIdentifier?: string;
 }): Promise<{
@@ -1800,7 +1763,7 @@ async function resolveProxyUrl({
   url: string;
   local_proxy: boolean;
 }> {
-  const workspace = await resolveWorkspace(ctx, workspaceIdentifier);
+  const workspace = await resolveProject(ctx, projectIdentifier);
   const host = hostIdentifier
     ? await resolveHost(ctx, hostIdentifier)
     : workspace.host_id
@@ -1841,18 +1804,18 @@ const { serveDaemon, runDaemonRequestFromCommand } =
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
-    daemonContextMeta: (ctx) => ({
+  daemonContextMeta: (ctx) => ({
       api: ctx.apiBaseUrl,
       account_id: ctx.accountId,
     }),
-    workspaceFileListData,
-    workspaceFileCatData,
-    workspaceFilePutData,
-    workspaceFileGetData,
-    workspaceFileRmData,
-    workspaceFileMkdirData,
-    workspaceFileRgData,
-    workspaceFileFdData,
+    projectFileListData,
+    projectFileCatData,
+    projectFilePutData,
+    projectFileGetData,
+    projectFileRmData,
+    projectFileMkdirData,
+    projectFileRgData,
+    projectFileFdData,
   });
 
 function shouldUseDaemonForFileOps(globals: GlobalOptions): boolean {
@@ -1955,12 +1918,12 @@ const projectCommandDeps = {
   withContext,
   resolveHost,
   queryProjects,
-  projectState: workspaceState,
+  projectState: projectState,
   toIso,
   resolveProjectFromArgOrContext,
   resolveProject,
-  saveProjectContext: saveWorkspaceContext,
-  projectContextPath: workspaceContextPath,
+  saveProjectContext: saveProjectContext,
+  projectContextPath: projectContextPath,
   clearProjectContext: clearWorkspaceContext,
   isValidUUID,
   confirmHardProjectDelete: confirmHardWorkspaceDelete,
@@ -1994,14 +1957,14 @@ const projectCommandDeps = {
   terminateReflectForwards,
   readAllStdin,
   buildCodexSessionConfig,
-  projectCodexExecData: workspaceCodexExecData,
+  projectCodexExecData,
   streamCodexHumanMessage,
-  projectCodexAuthStatusData: workspaceCodexAuthStatusData,
+  projectCodexAuthStatusData,
   durationToMs,
-  projectCodexDeviceAuthStartData: workspaceCodexDeviceAuthStartData,
-  projectCodexDeviceAuthStatusData: workspaceCodexDeviceAuthStatusData,
-  projectCodexDeviceAuthCancelData: workspaceCodexDeviceAuthCancelData,
-  projectCodexAuthUploadFileData: workspaceCodexAuthUploadFileData,
+  projectCodexDeviceAuthStartData,
+  projectCodexDeviceAuthStatusData,
+  projectCodexDeviceAuthCancelData,
+  projectCodexAuthUploadFileData,
   normalizeUserSearchName,
   resolveAccountByIdentifier,
   serializeInviteRow,
@@ -2013,22 +1976,22 @@ const projectCommandDeps = {
   isDaemonTransportError,
   emitError,
   cliDebug,
-  projectFileListData: workspaceFileListData,
-  projectFileCatData: workspaceFileCatData,
+  projectFileListData,
+  projectFileCatData,
   readFileLocal,
   asObject,
-  projectFilePutData: workspaceFilePutData,
+  projectFilePutData,
   mkdirLocal,
   writeFileLocal,
-  projectFileGetData: workspaceFileGetData,
-  projectFileRmData: workspaceFileRmData,
-  projectFileMkdirData: workspaceFileMkdirData,
-  projectFileRgData: workspaceFileRgData,
-  projectFileFdData: workspaceFileFdData,
+  projectFileGetData,
+  projectFileRmData,
+  projectFileMkdirData,
+  projectFileRgData,
+  projectFileFdData,
   contextForGlobals,
-  runProjectFileCheckBench: runWorkspaceFileCheckBench,
+  runProjectFileCheckBench,
   printArrayTable,
-  runProjectFileCheck: runWorkspaceFileCheck,
+  runProjectFileCheck,
   closeCommandContext,
   resolveProxyUrl,
   resolveProjectProjectApi,

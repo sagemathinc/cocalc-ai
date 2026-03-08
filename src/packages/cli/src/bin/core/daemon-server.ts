@@ -32,14 +32,14 @@ type DaemonServerDeps<Ctx> = {
   closeCommandContext: (ctx: Ctx | undefined) => void;
   globalsFrom: (command: unknown) => any;
   daemonContextMeta: (ctx: Ctx) => { api: string; account_id: string };
-  workspaceFileListData: (args: any) => Promise<any>;
-  workspaceFileCatData: (args: any) => Promise<any>;
-  workspaceFilePutData: (args: any) => Promise<any>;
-  workspaceFileGetData: (args: any) => Promise<any>;
-  workspaceFileRmData: (args: any) => Promise<any>;
-  workspaceFileMkdirData: (args: any) => Promise<any>;
-  workspaceFileRgData: (args: any) => Promise<any>;
-  workspaceFileFdData: (args: any) => Promise<any>;
+  projectFileListData: (args: any) => Promise<any>;
+  projectFileCatData: (args: any) => Promise<any>;
+  projectFilePutData: (args: any) => Promise<any>;
+  projectFileGetData: (args: any) => Promise<any>;
+  projectFileRmData: (args: any) => Promise<any>;
+  projectFileMkdirData: (args: any) => Promise<any>;
+  projectFileRgData: (args: any) => Promise<any>;
+  projectFileFdData: (args: any) => Promise<any>;
 };
 
 export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
@@ -49,14 +49,14 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     closeCommandContext,
     globalsFrom,
     daemonContextMeta,
-    workspaceFileListData,
-    workspaceFileCatData,
-    workspaceFilePutData,
-    workspaceFileGetData,
-    workspaceFileRmData,
-    workspaceFileMkdirData,
-    workspaceFileRgData,
-    workspaceFileFdData,
+    projectFileListData,
+    projectFileCatData,
+    projectFilePutData,
+    projectFileGetData,
+    projectFileRmData,
+    projectFileMkdirData,
+    projectFileRgData,
+    projectFileFdData,
   } = deps;
 
   async function getDaemonContext(
@@ -115,15 +115,15 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             process.exit(0);
           }, 10);
           return { id: request.id, ok: true, data: { status: "shutting_down" }, meta };
-        case "workspace.file.list": {
+        case "project.file.list": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileListData({
+          const data = await projectFileListData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
             cwd,
@@ -138,19 +138,19 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.cat": {
+        case "project.file.cat": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const path = typeof request.payload?.path === "string" ? request.payload.path : "";
           if (!path) {
-            throw new Error("workspace file cat requires path");
+            throw new Error("project file cat requires path");
           }
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileCatData({
+          const data = await projectFileCatData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             path,
             cwd,
@@ -165,7 +165,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.put": {
+        case "project.file.put": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const dest = typeof request.payload?.dest === "string" ? request.payload.dest : "";
@@ -174,15 +174,15 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
               ? request.payload.content_base64
               : "";
           if (!dest) {
-            throw new Error("workspace file put requires dest");
+            throw new Error("project file put requires dest");
           }
           const data = Buffer.from(contentBase64, "base64");
           const ctx = await getDaemonContext(state, globals);
-          const result = await workspaceFilePutData({
+          const result = await projectFilePutData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             dest,
             data,
@@ -199,19 +199,19 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.get": {
+        case "project.file.get": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const src = typeof request.payload?.src === "string" ? request.payload.src : "";
           if (!src) {
-            throw new Error("workspace file get requires src");
+            throw new Error("project file get requires src");
           }
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileGetData({
+          const data = await projectFileGetData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             src,
             cwd,
@@ -226,19 +226,19 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.rm": {
+        case "project.file.rm": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const path = typeof request.payload?.path === "string" ? request.payload.path : "";
           if (!path) {
-            throw new Error("workspace file rm requires path");
+            throw new Error("project file rm requires path");
           }
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileRmData({
+          const data = await projectFileRmData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             path,
             recursive: request.payload?.recursive === true,
@@ -255,19 +255,19 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.mkdir": {
+        case "project.file.mkdir": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const path = typeof request.payload?.path === "string" ? request.payload.path : "";
           if (!path) {
-            throw new Error("workspace file mkdir requires path");
+            throw new Error("project file mkdir requires path");
           }
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileMkdirData({
+          const data = await projectFileMkdirData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             path,
             parents: request.payload?.parents !== false,
@@ -283,13 +283,13 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.rg": {
+        case "project.file.rg": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const pattern =
             typeof request.payload?.pattern === "string" ? request.payload.pattern : "";
           if (!pattern) {
-            throw new Error("workspace file rg requires pattern");
+            throw new Error("project file rg requires pattern");
           }
           const timeoutMs =
             Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
@@ -301,11 +301,11 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             ? request.payload?.rg_options.filter((x): x is string => typeof x === "string")
             : undefined;
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileRgData({
+          const data = await projectFileRgData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             pattern,
             path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
@@ -324,7 +324,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             },
           };
         }
-        case "workspace.file.fd": {
+        case "project.file.fd": {
           const globals = request.globals ?? {};
           const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
           const timeoutMs =
@@ -337,11 +337,11 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             ? request.payload?.fd_options.filter((x): x is string => typeof x === "string")
             : undefined;
           const ctx = await getDaemonContext(state, globals);
-          const data = await workspaceFileFdData({
+          const data = await projectFileFdData({
             ctx,
-            workspaceIdentifier:
-              typeof request.payload?.workspace === "string"
-                ? request.payload.workspace
+            projectIdentifier:
+              typeof request.payload?.project === "string"
+                ? request.payload.project
                 : undefined,
             pattern:
               typeof request.payload?.pattern === "string"

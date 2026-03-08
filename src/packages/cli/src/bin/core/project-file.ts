@@ -7,27 +7,27 @@
  */
 import { dirname } from "node:path";
 
-export type WorkspaceFileCheckResult = {
+export type ProjectFileCheckResult = {
   step: string;
   status: "ok" | "fail" | "skip";
   duration_ms: number;
   detail: string;
 };
 
-export type WorkspaceFileCheckReport = {
+export type ProjectFileCheckReport = {
   ok: boolean;
-  workspace_id: string;
-  workspace_title: string;
+  project_id: string;
+  project_title: string;
   temp_path: string;
   kept: boolean;
   total: number;
   passed: number;
   failed: number;
   skipped: number;
-  results: WorkspaceFileCheckResult[];
+  results: ProjectFileCheckResult[];
 };
 
-export type WorkspaceFileCheckBenchRun = {
+export type ProjectFileCheckBenchRun = {
   run: number;
   ok: boolean;
   duration_ms: number;
@@ -38,7 +38,7 @@ export type WorkspaceFileCheckBenchRun = {
   first_failure: string | null;
 };
 
-export type WorkspaceFileCheckBenchStepStat = {
+export type ProjectFileCheckBenchStepStat = {
   step: string;
   runs: number;
   ok: number;
@@ -49,10 +49,10 @@ export type WorkspaceFileCheckBenchStepStat = {
   max_ms: number;
 };
 
-export type WorkspaceFileCheckBenchReport = {
+export type ProjectFileCheckBenchReport = {
   ok: boolean;
-  workspace_id: string;
-  workspace_title: string;
+  project_id: string;
+  project_title: string;
   runs: number;
   ok_runs: number;
   failed_runs: number;
@@ -60,16 +60,16 @@ export type WorkspaceFileCheckBenchReport = {
   avg_duration_ms: number;
   min_duration_ms: number;
   max_duration_ms: number;
-  run_results: WorkspaceFileCheckBenchRun[];
-  step_stats: WorkspaceFileCheckBenchStepStat[];
+  run_results: ProjectFileCheckBenchRun[];
+  step_stats: ProjectFileCheckBenchStepStat[];
 };
 
-type WorkspaceIdentity = {
+type ProjectIdentity = {
   project_id: string;
   title: string;
 };
 
-type WorkspaceFilesystem = {
+type ProjectFilesystem = {
   getListing: (path: string) => Promise<any>;
   readFile: (path: string, encoding?: string) => Promise<any>;
   writeFile: (path: string, data: Buffer) => Promise<void>;
@@ -97,17 +97,17 @@ type WorkspaceFilesystem = {
   ) => Promise<any>;
 };
 
-export type WorkspaceFileOpsDeps<Ctx> = {
-  resolveWorkspaceFilesystem: (
+export type ProjectFileOpsDeps<Ctx> = {
+  resolveProjectFilesystem: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ workspace: WorkspaceIdentity; fs: WorkspaceFilesystem }>;
-  resolveWorkspaceFromArgOrContext: (
+  ) => Promise<{ project: ProjectIdentity; fs: ProjectFilesystem }>;
+  resolveProjectFromArgOrContext: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<WorkspaceIdentity>;
+  ) => Promise<ProjectIdentity>;
   asUtf8: (value: unknown) => string;
   normalizeProcessExitCode: (
     raw: unknown,
@@ -117,14 +117,14 @@ export type WorkspaceFileOpsDeps<Ctx> = {
   normalizeBoolean: (value: unknown) => boolean;
 };
 
-function normalizeWorkspacePathPrefix(value: string | undefined): string {
+function normalizeProjectPathPrefix(value: string | undefined): string {
   const raw = `${value ?? ""}`.trim();
   if (!raw) return ".cocalc-cli-check";
   const trimmed = raw.replace(/^\/+/, "").replace(/\/+$/, "");
   return trimmed || ".cocalc-cli-check";
 }
 
-function joinWorkspacePath(...parts: string[]): string {
+function joinProjectPath(...parts: string[]): string {
   const normalized = parts
     .map((x) => `${x}`.trim())
     .filter(Boolean)
@@ -133,7 +133,7 @@ function joinWorkspacePath(...parts: string[]): string {
   return normalized.join("/");
 }
 
-function assertWorkspaceCheck(condition: unknown, message: string): void {
+function assertProjectCheck(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
 }
 
@@ -150,29 +150,29 @@ export function parsePositiveInteger(
   return parsed;
 }
 
-export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
+export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
   const {
-    resolveWorkspaceFilesystem,
-    resolveWorkspaceFromArgOrContext,
+    resolveProjectFilesystem,
+    resolveProjectFromArgOrContext,
     asUtf8,
     normalizeProcessExitCode,
     normalizeBoolean,
   } = deps;
 
-  async function workspaceFileListData({
+  async function projectFileListData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path?: string;
     cwd?: string;
   }): Promise<Array<Record<string, unknown>>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     const targetPath = path?.trim() || ".";
@@ -182,7 +182,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     return names.map((name) => {
       const info: any = files[name] ?? {};
       return {
-        workspace_id: workspace.project_id,
+        project_id: project.project_id,
         path: targetPath,
         name,
         is_dir: !!info.isDir,
@@ -192,49 +192,49 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     });
   }
 
-  async function workspaceFileCatData({
+  async function projectFileCatData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     const content = String(await fs.readFile(path, "utf8"));
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       path,
       content,
       bytes: Buffer.byteLength(content),
     };
   }
 
-  async function workspaceFilePutData({
+  async function projectFilePutData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     dest,
     data,
     parents,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     dest: string;
     data: Buffer;
     parents: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     if (parents) {
@@ -242,33 +242,33 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     }
     await fs.writeFile(dest, data);
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       dest,
       bytes: data.length,
       status: "uploaded",
     };
   }
 
-  async function workspaceFileGetData({
+  async function projectFileGetData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     src,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     src: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     const data = await fs.readFile(src);
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       src,
       bytes: buffer.length,
       content_base64: buffer.toString("base64"),
@@ -276,24 +276,24 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     };
   }
 
-  async function workspaceFileRmData({
+  async function projectFileRmData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     recursive,
     force,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     recursive: boolean;
     force: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     await fs.rm(path, {
@@ -301,7 +301,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
       force,
     });
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       path,
       recursive,
       force,
@@ -309,36 +309,36 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     };
   }
 
-  async function workspaceFileMkdirData({
+  async function projectFileMkdirData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     parents,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     parents: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     await fs.mkdir(path, { recursive: parents });
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       path,
       parents,
       status: "created",
     };
   }
 
-  async function workspaceFileRgData({
+  async function projectFileRgData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     pattern,
     path,
     timeoutMs,
@@ -347,7 +347,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     pattern: string;
     path?: string;
     timeoutMs: number;
@@ -355,9 +355,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     options?: string[];
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     const result = await fs.ripgrep(path?.trim() || ".", pattern, {
@@ -369,7 +369,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     const stderr = asUtf8((result as any)?.stderr);
     const exit_code = normalizeProcessExitCode((result as any)?.code, stdout, stderr);
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       path: path?.trim() || ".",
       pattern,
       stdout,
@@ -379,9 +379,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     };
   }
 
-  async function workspaceFileFdData({
+  async function projectFileFdData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     pattern,
     path,
     timeoutMs,
@@ -390,7 +390,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     pattern?: string;
     path?: string;
     timeoutMs: number;
@@ -398,9 +398,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     options?: string[];
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const { workspace, fs } = await resolveWorkspaceFilesystem(
+    const { project, fs } = await resolveProjectFilesystem(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       cwd,
     );
     const result = await fs.fd(path?.trim() || ".", {
@@ -413,7 +413,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     const stderr = asUtf8((result as any)?.stderr);
     const exit_code = normalizeProcessExitCode((result as any)?.code, stdout, stderr);
     return {
-      workspace_id: workspace.project_id,
+      project_id: project.project_id,
       path: path?.trim() || ".",
       pattern: pattern?.trim() || null,
       stdout,
@@ -423,30 +423,30 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     };
   }
 
-  async function runWorkspaceFileCheck({
+  async function runProjectFileCheck({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     pathPrefix,
     timeoutMs,
     maxBytes,
     keep,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     pathPrefix?: string;
     timeoutMs: number;
     maxBytes: number;
     keep: boolean;
-  }): Promise<WorkspaceFileCheckReport> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier);
-    const prefix = normalizeWorkspacePathPrefix(pathPrefix);
+  }): Promise<ProjectFileCheckReport> {
+    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier);
+    const prefix = normalizeProjectPathPrefix(pathPrefix);
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const tempPath = joinWorkspacePath(prefix, runId);
+    const tempPath = joinProjectPath(prefix, runId);
     const fileName = "probe.txt";
-    const filePath = joinWorkspacePath(tempPath, fileName);
+    const filePath = joinProjectPath(tempPath, fileName);
     const marker = `cocalc-cli-check-${runId}`;
     const content = `${marker}\n`;
-    const results: WorkspaceFileCheckResult[] = [];
+    const results: ProjectFileCheckResult[] = [];
 
     const record = async <T>(
       step: string,
@@ -477,9 +477,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "mkdir",
       async () =>
-        await workspaceFileMkdirData({
+        await projectFileMkdirData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           path: tempPath,
           parents: true,
         }),
@@ -489,9 +489,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "put",
       async () =>
-        await workspaceFilePutData({
+        await projectFilePutData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           dest: filePath,
           data: Buffer.from(content),
           parents: true,
@@ -502,12 +502,12 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "list",
       async () => {
-        const rows = await workspaceFileListData({
+        const rows = await projectFileListData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           path: tempPath,
         });
-        assertWorkspaceCheck(
+        assertProjectCheck(
           rows.some((row) => `${row.name ?? ""}` === fileName),
           `expected '${fileName}' in directory listing`,
         );
@@ -519,12 +519,12 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "cat",
       async () => {
-        const data = await workspaceFileCatData({
+        const data = await projectFileCatData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           path: filePath,
         });
-        assertWorkspaceCheck(`${data.content ?? ""}` === content, "cat content mismatch");
+        assertProjectCheck(`${data.content ?? ""}` === content, "cat content mismatch");
         return data;
       },
       () => `read ${filePath}`,
@@ -533,15 +533,15 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "get",
       async () => {
-        const data = await workspaceFileGetData({
+        const data = await projectFileGetData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           src: filePath,
         });
         const decoded = Buffer.from(`${data.content_base64 ?? ""}`, "base64").toString(
           "utf8",
         );
-        assertWorkspaceCheck(decoded === content, "get content mismatch");
+        assertProjectCheck(decoded === content, "get content mismatch");
         return data;
       },
       () => `downloaded ${filePath}`,
@@ -550,20 +550,20 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "rg",
       async () => {
-        const data = await workspaceFileRgData({
+        const data = await projectFileRgData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           pattern: marker,
           path: tempPath,
           timeoutMs,
           maxBytes,
           options: ["-F"],
         });
-        assertWorkspaceCheck(
+        assertProjectCheck(
           Number(data.exit_code ?? 1) === 0,
           `rg exit_code=${data.exit_code ?? "unknown"}`,
         );
-        assertWorkspaceCheck(
+        assertProjectCheck(
           `${data.stdout ?? ""}`.includes(fileName),
           `rg output missing '${fileName}'`,
         );
@@ -575,19 +575,19 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     await record(
       "fd",
       async () => {
-        const data = await workspaceFileFdData({
+        const data = await projectFileFdData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           pattern: fileName,
           path: tempPath,
           timeoutMs,
           maxBytes,
         });
-        assertWorkspaceCheck(
+        assertProjectCheck(
           Number(data.exit_code ?? 1) === 0,
           `fd exit_code=${data.exit_code ?? "unknown"}`,
         );
-        assertWorkspaceCheck(
+        assertProjectCheck(
           `${data.stdout ?? ""}`.includes(fileName),
           `fd output missing '${fileName}'`,
         );
@@ -607,9 +607,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
       await record(
         "rm",
         async () =>
-          await workspaceFileRmData({
+          await projectFileRmData({
             ctx,
-            workspaceIdentifier: workspace.project_id,
+            projectIdentifier: project.project_id,
             path: tempPath,
             recursive: true,
             force: true,
@@ -621,9 +621,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     if (!keep) {
       // Best-effort cleanup if rm check failed earlier.
       try {
-        await workspaceFileRmData({
+        await projectFileRmData({
           ctx,
-          workspaceIdentifier: workspace.project_id,
+          projectIdentifier: project.project_id,
           path: tempPath,
           recursive: true,
           force: true,
@@ -638,8 +638,8 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     const skipped = results.filter((x) => x.status === "skip").length;
     return {
       ok: failed === 0,
-      workspace_id: workspace.project_id,
-      workspace_title: workspace.title,
+      project_id: project.project_id,
+      project_title: project.title,
       temp_path: tempPath,
       kept: keep,
       total: results.length,
@@ -650,9 +650,9 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     };
   }
 
-  async function runWorkspaceFileCheckBench({
+  async function runProjectFileCheckBench({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     pathPrefix,
     timeoutMs,
     maxBytes,
@@ -660,14 +660,14 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     runs,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     pathPrefix?: string;
     timeoutMs: number;
     maxBytes: number;
     keep: boolean;
     runs: number;
-  }): Promise<WorkspaceFileCheckBenchReport> {
-    const runResults: WorkspaceFileCheckBenchRun[] = [];
+  }): Promise<ProjectFileCheckBenchReport> {
+    const runResults: ProjectFileCheckBenchRun[] = [];
     const stepStats = new Map<
       string,
       {
@@ -686,17 +686,17 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
 
     for (let run = 1; run <= runs; run++) {
       const started = Date.now();
-      const report = await runWorkspaceFileCheck({
+      const report = await runProjectFileCheck({
         ctx,
-        workspaceIdentifier,
+        projectIdentifier,
         pathPrefix,
         timeoutMs,
         maxBytes,
         keep,
       });
       const durationMs = Date.now() - started;
-      workspaceId = report.workspace_id;
-      workspaceTitle = report.workspace_title;
+      workspaceId = report.project_id;
+      workspaceTitle = report.project_title;
 
       const firstFailure = report.results.find((x) => x.status === "fail");
       runResults.push({
@@ -741,7 +741,7 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
     const maxDurationMs =
       runResults.length > 0 ? Math.max(...runResults.map((x) => x.duration_ms)) : 0;
 
-    const aggregatedSteps: WorkspaceFileCheckBenchStepStat[] = Array.from(stepStats.entries())
+    const aggregatedSteps: ProjectFileCheckBenchStepStat[] = Array.from(stepStats.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([step, stats]) => ({
         step,
@@ -756,8 +756,8 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
 
     return {
       ok: failedRuns === 0,
-      workspace_id: workspaceId,
-      workspace_title: workspaceTitle,
+      project_id: workspaceId,
+      project_title: workspaceTitle,
       runs: runResults.length,
       ok_runs: okRuns,
       failed_runs: failedRuns,
@@ -771,16 +771,16 @@ export function createWorkspaceFileOps<Ctx>(deps: WorkspaceFileOpsDeps<Ctx>) {
   }
 
   return {
-    workspaceFileListData,
-    workspaceFileCatData,
-    workspaceFilePutData,
-    workspaceFileGetData,
-    workspaceFileRmData,
-    workspaceFileMkdirData,
-    workspaceFileRgData,
-    workspaceFileFdData,
-    runWorkspaceFileCheck,
-    runWorkspaceFileCheckBench,
+    projectFileListData,
+    projectFileCatData,
+    projectFilePutData,
+    projectFileGetData,
+    projectFileRmData,
+    projectFileMkdirData,
+    projectFileRgData,
+    projectFileFdData,
+    runProjectFileCheck,
+    runProjectFileCheckBench,
     parsePositiveInteger,
   };
 }

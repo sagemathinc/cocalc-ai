@@ -16,14 +16,14 @@ export const DAEMON_RPC_TIMEOUT_MS = 30_000;
 export type DaemonAction =
   | "ping"
   | "shutdown"
-  | "workspace.file.list"
-  | "workspace.file.cat"
-  | "workspace.file.put"
-  | "workspace.file.get"
-  | "workspace.file.rm"
-  | "workspace.file.mkdir"
-  | "workspace.file.rg"
-  | "workspace.file.fd";
+  | "project.file.list"
+  | "project.file.cat"
+  | "project.file.put"
+  | "project.file.get"
+  | "project.file.rm"
+  | "project.file.mkdir"
+  | "project.file.rg"
+  | "project.file.fd";
 
 export type DaemonRequest = {
   id: string;

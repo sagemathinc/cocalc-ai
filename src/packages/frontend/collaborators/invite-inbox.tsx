@@ -193,7 +193,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
             last: invite.inviter_last_name,
             account_id: invite.inviter_account_id,
           });
-          const workspace = `${invite.project_title ?? invite.project_id}`;
+          const project = `${invite.project_title ?? invite.project_id}`;
           return (
             <Card
               key={invite.invite_id}
@@ -204,7 +204,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
               <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
                 <div>
                   <div>
-                    <strong>{workspace}</strong>
+                    <strong>{project}</strong>
                   </div>
                   <div>
                     From <strong>{inviter}</strong>
@@ -294,7 +294,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
             last: invite.invitee_last_name,
             account_id: invite.invitee_account_id,
           });
-          const workspace = `${invite.project_title ?? invite.project_id}`;
+          const project = `${invite.project_title ?? invite.project_id}`;
           return (
             <Card
               key={invite.invite_id}
@@ -305,7 +305,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
               <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
                 <div>
                   <div>
-                    <strong>{workspace}</strong>
+                    <strong>{project}</strong>
                   </div>
                   <div>
                     To <strong>{invitee}</strong>

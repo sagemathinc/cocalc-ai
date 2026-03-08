@@ -11,29 +11,29 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 
-type WorkspaceIdentity = {
+type ProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;
 };
 
-type WorkspaceTasksOpsDeps<Ctx, Workspace extends WorkspaceIdentity> = {
-  resolveWorkspaceConatClient: (
+type ProjectTasksOpsDeps<Ctx, Workspace extends ProjectIdentity> = {
+  resolveProjectConatClient: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ workspace: Workspace; client: ConatClient }>;
+  ) => Promise<{ project: Workspace; client: ConatClient }>;
 };
 
-type SessionEntry<Workspace extends WorkspaceIdentity> = {
-  workspace: Workspace;
+type SessionEntry<Workspace extends ProjectIdentity> = {
+  project: Workspace;
   session: TasksSession;
 };
 
 const LIVE_TASKS_SESSION_OPEN_TIMEOUT_MS = 15_000;
 
-type AcquireWorkspaceTasksSessionOptions = OpenTasksSessionOptions & {
-  workspaceIdentifier?: string;
+type AcquireProjectTasksSessionOptions = OpenTasksSessionOptions & {
+  projectIdentifier?: string;
   cwd?: string;
 };
 
@@ -49,7 +49,7 @@ function sessionCacheKey(opts: {
   });
 }
 
-function normalizeWorkspaceIdentifier(input?: string): string | undefined {
+function normalizeProjectIdentifier(input?: string): string | undefined {
   const explicit = `${input ?? ""}`.trim();
   if (explicit) return explicit;
   return undefined;
@@ -83,10 +83,10 @@ function compactTaskRows(tasks: readonly TaskRecord[]): Array<Record<string, unk
   return tasks.map(compactTaskRecord);
 }
 
-export function createWorkspaceTasksOps<
+export function createProjectTasksOps<
   Ctx,
-  Workspace extends WorkspaceIdentity,
->(deps: WorkspaceTasksOpsDeps<Ctx, Workspace>) {
+  Workspace extends ProjectIdentity,
+>(deps: ProjectTasksOpsDeps<Ctx, Workspace>) {
   const sessionPromises = new Map<string, Promise<SessionEntry<Workspace>>>();
   const sessionLeases = new RefcountLeaseManager<string>({
     delayMs: 30_000,
@@ -105,19 +105,19 @@ export function createWorkspaceTasksOps<
 
   async function getOrCreateSessionEntry(
     ctx: Ctx,
-    options: AcquireWorkspaceTasksSessionOptions,
+    options: AcquireProjectTasksSessionOptions,
   ): Promise<SessionEntry<Workspace>> {
-    const workspaceIdentifier = normalizeWorkspaceIdentifier(
-      options.workspaceIdentifier,
+    const projectIdentifier = normalizeProjectIdentifier(
+      options.projectIdentifier,
     );
     const path = normalizeTasksPath(options.path);
-    const { workspace, client } = await deps.resolveWorkspaceConatClient(
+    const { project, client } = await deps.resolveProjectConatClient(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       options.cwd,
     );
     const key = sessionCacheKey({
-      project_id: workspace.project_id,
+      project_id: project.project_id,
       path,
       readOnly: options.readOnly,
     });
@@ -129,12 +129,12 @@ export function createWorkspaceTasksOps<
     const sessionPromise = (async () => {
       const session = await openSyncDBTasksSession({
         client,
-        projectId: workspace.project_id,
+        projectId: project.project_id,
         path,
         readOnly: options.readOnly,
         openTimeoutMs: LIVE_TASKS_SESSION_OPEN_TIMEOUT_MS,
       });
-      return { workspace, session };
+      return { project, session };
     })();
 
     sessionPromises.set(key, sessionPromise);
@@ -148,26 +148,26 @@ export function createWorkspaceTasksOps<
     }
   }
 
-  async function acquireWorkspaceTasksSession(
+  async function acquireProjectTasksSession(
     ctx: Ctx,
-    options: AcquireWorkspaceTasksSessionOptions,
+    options: AcquireProjectTasksSessionOptions,
   ): Promise<{
-    workspace: Workspace;
+    project: Workspace;
     session: TasksSession;
     path: string;
     release: () => Promise<void>;
   }> {
-    const workspaceIdentifier = normalizeWorkspaceIdentifier(
-      options.workspaceIdentifier,
+    const projectIdentifier = normalizeProjectIdentifier(
+      options.projectIdentifier,
     );
-    const { workspace } = await deps.resolveWorkspaceConatClient(
+    const { project } = await deps.resolveProjectConatClient(
       ctx,
-      workspaceIdentifier,
+      projectIdentifier,
       options.cwd,
     );
     const path = normalizeTasksPath(options.path);
     const key = sessionCacheKey({
-      project_id: workspace.project_id,
+      project_id: project.project_id,
       path,
       readOnly: options.readOnly,
     });
@@ -175,11 +175,11 @@ export function createWorkspaceTasksOps<
     try {
       const entry = await getOrCreateSessionEntry(ctx, {
         ...options,
-        workspaceIdentifier,
+        projectIdentifier,
         path,
       });
       return {
-        workspace: entry.workspace,
+        project: entry.project,
         session: entry.session,
         path,
         release,
@@ -190,40 +190,40 @@ export function createWorkspaceTasksOps<
     }
   }
 
-  async function withWorkspaceTasksSession<T>(
+  async function withProjectTasksSession<T>(
     ctx: Ctx,
-    options: AcquireWorkspaceTasksSessionOptions,
+    options: AcquireProjectTasksSessionOptions,
     fn: (args: {
-      workspace: Workspace;
+      project: Workspace;
       session: TasksSession;
       path: string;
     }) => Promise<T>,
   ): Promise<T> {
-    const { workspace, session, path, release } =
-      await acquireWorkspaceTasksSession(ctx, options);
+    const { project, session, path, release } =
+      await acquireProjectTasksSession(ctx, options);
     try {
-      return await fn({ workspace, session, path });
+      return await fn({ project, session, path });
     } finally {
       await release();
     }
   }
 
-  async function workspaceTasksListData({
+  async function projectTasksListData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     query,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     query?: TaskQuery;
     cwd?: string;
   }): Promise<Array<Record<string, unknown>>> {
-    return await withWorkspaceTasksSession(
+    return await withProjectTasksSession(
       ctx,
-      { workspaceIdentifier, path, cwd, readOnly: true },
+      { projectIdentifier, path, cwd, readOnly: true },
       async ({ session }) => {
         const snapshot = await session.getSnapshot(query);
         return compactTaskRows(snapshot.tasks);
@@ -231,29 +231,29 @@ export function createWorkspaceTasksOps<
     );
   }
 
-  async function workspaceTasksGetData({
+  async function projectTasksGetData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     taskId,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     taskId: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withWorkspaceTasksSession(
+    return await withProjectTasksSession(
       ctx,
-      { workspaceIdentifier, path, cwd, readOnly: true },
-      async ({ workspace, session, path }) => {
+      { projectIdentifier, path, cwd, readOnly: true },
+      async ({ project, session, path }) => {
         const task = await session.getTask(taskId);
         if (!task) {
           throw new Error(`Task '${taskId}' not found`);
         }
         return {
-          workspace_id: workspace.project_id,
+          project_id: project.project_id,
           path,
           task: compactTaskRecord(task),
         };
@@ -261,29 +261,29 @@ export function createWorkspaceTasksOps<
     );
   }
 
-  async function workspaceTasksSetDoneData({
+  async function projectTasksSetDoneData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     taskId,
     done,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     taskId: string;
     done: boolean;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withWorkspaceTasksSession(
+    return await withProjectTasksSession(
       ctx,
-      { workspaceIdentifier, path, cwd },
-      async ({ workspace, session, path }) => {
+      { projectIdentifier, path, cwd },
+      async ({ project, session, path }) => {
         const result = await session.setDone(taskId, done);
         const task = await session.getTask(taskId);
         return {
-          workspace_id: workspace.project_id,
+          project_id: project.project_id,
           path,
           task_id: taskId,
           changed_task_ids: result.changedTaskIds,
@@ -294,29 +294,29 @@ export function createWorkspaceTasksOps<
     );
   }
 
-  async function workspaceTasksAppendData({
+  async function projectTasksAppendData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     taskId,
     text,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     taskId: string;
     text: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withWorkspaceTasksSession(
+    return await withProjectTasksSession(
       ctx,
-      { workspaceIdentifier, path, cwd },
-      async ({ workspace, session, path }) => {
+      { projectIdentifier, path, cwd },
+      async ({ project, session, path }) => {
         const result = await session.appendToDescription(taskId, text);
         const task = await session.getTask(taskId);
         return {
-          workspace_id: workspace.project_id,
+          project_id: project.project_id,
           path,
           task_id: taskId,
           changed_task_ids: result.changedTaskIds,
@@ -327,29 +327,29 @@ export function createWorkspaceTasksOps<
     );
   }
 
-  async function workspaceTasksUpdateData({
+  async function projectTasksUpdateData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     taskId,
     changes,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     taskId: string;
     changes: Partial<TaskMutableFields>;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withWorkspaceTasksSession(
+    return await withProjectTasksSession(
       ctx,
-      { workspaceIdentifier, path, cwd },
-      async ({ workspace, session, path }) => {
+      { projectIdentifier, path, cwd },
+      async ({ project, session, path }) => {
         const result = await session.updateTask(taskId, changes);
         const task = await session.getTask(taskId);
         return {
-          workspace_id: workspace.project_id,
+          project_id: project.project_id,
           path,
           task_id: taskId,
           changed_task_ids: result.changedTaskIds,
@@ -360,26 +360,26 @@ export function createWorkspaceTasksOps<
     );
   }
 
-  async function workspaceTasksAddData({
+  async function projectTasksAddData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     path,
     input,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     path: string;
     input?: TaskCreateInput;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withWorkspaceTasksSession(
+    return await withProjectTasksSession(
       ctx,
-      { workspaceIdentifier, path, cwd },
-      async ({ workspace, session, path }) => {
+      { projectIdentifier, path, cwd },
+      async ({ project, session, path }) => {
         const task = await session.createTask(input);
         return {
-          workspace_id: workspace.project_id,
+          project_id: project.project_id,
           path,
           task: compactTaskRecord(task),
         };
@@ -388,13 +388,13 @@ export function createWorkspaceTasksOps<
   }
 
   return {
-    acquireWorkspaceTasksSession,
-    withWorkspaceTasksSession,
-    workspaceTasksListData,
-    workspaceTasksGetData,
-    workspaceTasksSetDoneData,
-    workspaceTasksAppendData,
-    workspaceTasksUpdateData,
-    workspaceTasksAddData,
+    acquireProjectTasksSession,
+    withProjectTasksSession,
+    projectTasksListData,
+    projectTasksGetData,
+    projectTasksSetDoneData,
+    projectTasksAppendData,
+    projectTasksUpdateData,
+    projectTasksAddData,
   };
 }

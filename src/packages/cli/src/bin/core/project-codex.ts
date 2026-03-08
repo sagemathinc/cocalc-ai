@@ -14,7 +14,7 @@ import type {
   CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 
-type WorkspaceIdentity = {
+type ProjectIdentity = {
   project_id: string;
   title: string;
   host_id: string | null;
@@ -31,8 +31,8 @@ type RoutedClientState = {
   };
 };
 
-type WorkspaceCodexExecResult = {
-  workspace_id: string;
+type ProjectCodexExecResult = {
+  project_id: string;
   session_id: string | null;
   thread_id: string | null;
   final_response: string;
@@ -43,7 +43,7 @@ type WorkspaceCodexExecResult = {
   duration_ms: number;
 };
 
-type WorkspaceCodexDeviceAuthStatus = {
+type ProjectCodexDeviceAuthStatus = {
   id: string;
   state: "pending" | "completed" | "failed" | "canceled";
   verificationUrl?: string;
@@ -56,10 +56,10 @@ type WorkspaceCodexDeviceAuthStatus = {
   error?: string;
 };
 
-export type WorkspaceCodexOpsDeps<Ctx, Workspace extends WorkspaceIdentity> = {
-  resolveWorkspaceFromArgOrContext: (
+export type ProjectCodexOpsDeps<Ctx, Workspace extends ProjectIdentity> = {
+  resolveProjectFromArgOrContext: (
     ctx: Ctx,
-    workspaceIdentifier?: string,
+    projectIdentifier?: string,
     cwd?: string,
   ) => Promise<Workspace>;
   getOrCreateRoutedProjectHostClient: (
@@ -111,12 +111,12 @@ function parseCodexSessionMode(value?: string): CodexSessionMode | undefined {
 }
 
 function summarizeCodexDeviceAuth(
-  workspace: WorkspaceIdentity,
-  status: WorkspaceCodexDeviceAuthStatus,
+  workspace: ProjectIdentity,
+  status: ProjectCodexDeviceAuthStatus,
 ): Record<string, unknown> {
   return {
-    workspace_id: workspace.project_id,
-    workspace_title: workspace.title,
+    project_id: workspace.project_id,
+    project_title: workspace.title,
     auth_id: status.id,
     state: status.state,
     verification_url: status.verificationUrl ?? null,
@@ -130,11 +130,11 @@ function summarizeCodexDeviceAuth(
   };
 }
 
-export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity>(
-  deps: WorkspaceCodexOpsDeps<Ctx, Workspace>,
+export function createProjectCodexOps<Ctx, Workspace extends ProjectIdentity>(
+  deps: ProjectCodexOpsDeps<Ctx, Workspace>,
 ) {
   const {
-    resolveWorkspaceFromArgOrContext,
+    resolveProjectFromArgOrContext,
     getOrCreateRoutedProjectHostClient,
     projectHostHubCallAccount,
     toIso,
@@ -174,9 +174,9 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     return Object.keys(config).length ? config : undefined;
   }
 
-  async function workspaceCodexExecData({
+  async function projectCodexExecData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     prompt,
     sessionId,
     config,
@@ -184,14 +184,14 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     prompt: string;
     sessionId?: string;
     config?: CodexSessionConfig;
     onMessage?: (message: AcpStreamMessage) => Promise<void> | void;
     cwd?: string;
-  }): Promise<WorkspaceCodexExecResult> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  }): Promise<ProjectCodexExecResult> {
+    const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
     const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
     if (!routed.client) {
       throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
@@ -268,7 +268,7 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     }
 
     return {
-      workspace_id: workspace.project_id,
+      project_id: workspace.project_id,
       session_id: sessionId?.trim() || null,
       thread_id: threadId,
       final_response: finalResponse,
@@ -333,16 +333,16 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     }
   }
 
-  async function workspaceCodexAuthStatusData({
+  async function projectCodexAuthStatusData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+    const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
     const [paymentSource, keyStatus, subscriptionCreds] = (await Promise.all([
       (ctx as any).hub.system.getCodexPaymentSource({ project_id: workspace.project_id }),
       (ctx as any).hub.system.getOpenAiApiKeyStatus({ project_id: workspace.project_id }),
@@ -354,8 +354,8 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     ])) as [any, any, any[]];
 
     return {
-      workspace_id: workspace.project_id,
-      workspace_title: workspace.title,
+      project_id: workspace.project_id,
+      project_title: workspace.title,
       payment_source: paymentSource?.source ?? "none",
       has_subscription: !!paymentSource?.hasSubscription,
       has_workspace_api_key: !!paymentSource?.hasProjectApiKey,
@@ -365,30 +365,30 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
       account_api_key_configured: !!keyStatus?.account,
       account_api_key_updated: toIso(keyStatus?.account?.updated),
       account_api_key_last_used: toIso(keyStatus?.account?.last_used),
-      workspace_api_key_configured: !!keyStatus?.project,
-      workspace_api_key_updated: toIso(keyStatus?.project?.updated),
-      workspace_api_key_last_used: toIso(keyStatus?.project?.last_used),
+      project_api_key_configured: !!keyStatus?.project,
+      project_api_key_updated: toIso(keyStatus?.project?.updated),
+      project_api_key_last_used: toIso(keyStatus?.project?.last_used),
       subscription_credentials_count: Array.isArray(subscriptionCreds)
         ? subscriptionCreds.length
         : 0,
     };
   }
 
-  async function workspaceCodexDeviceAuthStartData({
+  async function projectCodexDeviceAuthStartData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     wait,
     pollMs,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     wait: boolean;
     pollMs: number;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-    let status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+    const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    let status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
       ctx,
       workspace,
       "projects.codexDeviceAuthStart",
@@ -402,7 +402,7 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
           throw new Error(`timeout waiting for codex device auth completion (id=${status.id})`);
         }
         await new Promise((resolve) => setTimeout(resolve, pollMs));
-        status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+        status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
           ctx,
           workspace,
           "projects.codexDeviceAuthStatus",
@@ -414,19 +414,19 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     return summarizeCodexDeviceAuth(workspace, status);
   }
 
-  async function workspaceCodexDeviceAuthStatusData({
+  async function projectCodexDeviceAuthStatusData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     id,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     id: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-    const status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+    const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
       ctx,
       workspace,
       "projects.codexDeviceAuthStatus",
@@ -435,25 +435,25 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     return summarizeCodexDeviceAuth(workspace, status);
   }
 
-  async function workspaceCodexDeviceAuthCancelData({
+  async function projectCodexDeviceAuthCancelData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     id,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     id: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+    const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
     const canceled = await projectHostHubCallAccount<{ id: string; canceled: boolean }>(
       ctx,
       workspace,
       "projects.codexDeviceAuthCancel",
       [{ project_id: workspace.project_id, id }],
     );
-    const status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+    const status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
       ctx,
       workspace,
       "projects.codexDeviceAuthStatus",
@@ -465,18 +465,18 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
     };
   }
 
-  async function workspaceCodexAuthUploadFileData({
+  async function projectCodexAuthUploadFileData({
     ctx,
-    workspaceIdentifier,
+    projectIdentifier,
     localPath,
     cwd,
   }: {
     ctx: Ctx;
-    workspaceIdentifier?: string;
+    projectIdentifier?: string;
     localPath: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+    const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
     const content = await readFileLocal(localPath, "utf8");
     const uploaded = await projectHostHubCallAccount<{
       ok: true;
@@ -491,8 +491,8 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
       },
     ]);
     return {
-      workspace_id: workspace.project_id,
-      workspace_title: workspace.title,
+      project_id: workspace.project_id,
+      project_title: workspace.title,
       uploaded: uploaded.ok,
       bytes: uploaded.bytes,
       codex_home: uploaded.codexHome,
@@ -503,12 +503,12 @@ export function createWorkspaceCodexOps<Ctx, Workspace extends WorkspaceIdentity
   return {
     readAllStdin,
     buildCodexSessionConfig,
-    workspaceCodexExecData,
+    projectCodexExecData,
     streamCodexHumanMessage,
-    workspaceCodexAuthStatusData,
-    workspaceCodexDeviceAuthStartData,
-    workspaceCodexDeviceAuthStatusData,
-    workspaceCodexDeviceAuthCancelData,
-    workspaceCodexAuthUploadFileData,
+    projectCodexAuthStatusData,
+    projectCodexDeviceAuthStartData,
+    projectCodexDeviceAuthStatusData,
+    projectCodexDeviceAuthCancelData,
+    projectCodexAuthUploadFileData,
   };
 }

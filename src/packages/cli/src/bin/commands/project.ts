@@ -5,14 +5,14 @@
  * subcommand module (basic, ops, sync, codex, collaborators, files, lifecycle).
  */
 import { Command } from "commander";
-import { registerProjectSyncCommands } from "./workspace/sync";
-import { registerProjectCodexCommands } from "./workspace/codex";
-import { registerProjectCollabCommands } from "./workspace/collab";
-import { registerProjectFileCommands } from "./workspace/file";
-import { registerProjectLifecycleCommands } from "./workspace/lifecycle";
-import { registerProjectOpsCommands } from "./workspace/ops";
-import { registerProjectBasicCommands } from "./workspace/basic";
-import { registerProjectAppCommands } from "./workspace/app";
+import { registerProjectSyncCommands } from "./project/sync";
+import { registerProjectCodexCommands } from "./project/codex";
+import { registerProjectCollabCommands } from "./project/collab";
+import { registerProjectFileCommands } from "./project/file";
+import { registerProjectLifecycleCommands } from "./project/lifecycle";
+import { registerProjectOpsCommands } from "./project/ops";
+import { registerProjectBasicCommands } from "./project/basic";
+import { registerProjectAppCommands } from "./project/app";
 
 export type ProjectCommandDeps = {
   withContext: any;

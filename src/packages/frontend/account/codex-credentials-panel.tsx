@@ -61,7 +61,7 @@ export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
 
 export interface CodexCredentialsPanelProps {
   embedded?: boolean;
-  defaultWorkspaceId?: string;
+  defaultProjectId?: string;
   hidePanelChrome?: boolean;
 }
 
@@ -95,15 +95,15 @@ const DEVICE_AUTH_ALERT_TYPE: Record<
 
 function CodexCredentialsPanelBody({
   embedded = false,
-  defaultWorkspaceId = "",
+  defaultProjectId = "",
   hidePanelChrome = false,
 }: CodexCredentialsPanelProps = {}) {
   const projectMap = useTypedRedux("projects", "project_map");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
-  const [workspaceId, setWorkspaceId] = useState<string>(
-    defaultWorkspaceId ?? "",
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(
+    defaultProjectId ?? "",
   );
   const [paymentSource, setPaymentSource] = useState<
     CodexPaymentSourceInfo | undefined
@@ -112,7 +112,7 @@ function CodexCredentialsPanelBody({
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
   const [revokingId, setRevokingId] = useState<string>("");
   const [accountApiKey, setAccountApiKey] = useState<string>("");
-  const [workspaceApiKey, setWorkspaceApiKey] = useState<string>("");
+  const [projectApiKey, setProjectApiKey] = useState<string>("");
   const [savingScope, setSavingScope] = useState<"" | "account" | "project">(
     "",
   );
@@ -134,7 +134,7 @@ function CodexCredentialsPanelBody({
 
   const refresh = () => setRefreshToken((x) => x + 1);
 
-  const recentWorkspaceId = useMemo(() => {
+  const recentProjectId = useMemo(() => {
     if (!projectMap) return "";
     try {
       const projects = (projectMap as any).valueSeq().toJS() as any[];
@@ -146,18 +146,18 @@ function CodexCredentialsPanelBody({
     }
   }, [projectMap]);
 
-  const authWorkspaceId = workspaceId.trim() || recentWorkspaceId;
+  const authProjectId = selectedProjectId.trim() || recentProjectId;
 
   useEffect(() => {
-    setWorkspaceId(defaultWorkspaceId ?? "");
-  }, [defaultWorkspaceId]);
+    setSelectedProjectId(defaultProjectId ?? "");
+  }, [defaultProjectId]);
 
   useAsyncEffect(
     async (isMounted) => {
       setLoading(true);
       setError("");
       try {
-        const project_id = workspaceId.trim() || undefined;
+        const project_id = selectedProjectId.trim() || undefined;
         let payment: CodexPaymentSourceInfo;
         let list: ExternalCredentialInfo[] = [];
         let keyStatus: any = {};
@@ -198,7 +198,7 @@ function CodexCredentialsPanelBody({
         if (isMounted()) setLoading(false);
       }
     },
-    [refreshToken, workspaceId],
+    [refreshToken, selectedProjectId],
   );
 
   const columns = useMemo(
@@ -288,13 +288,13 @@ function CodexCredentialsPanelBody({
   };
 
   const refreshDeviceAuth = async (id?: string) => {
-    if (!authWorkspaceId) return;
+    if (!authProjectId) return;
     const authId = id ?? deviceAuth?.id;
     if (!authId) return;
     try {
       const status =
         await webapp_client.conat_client.hub.projects.codexDeviceAuthStatus({
-          project_id: authWorkspaceId,
+          project_id: authProjectId,
           id: authId,
         });
       setDeviceAuth(status as DeviceAuthStatus);
@@ -307,7 +307,7 @@ function CodexCredentialsPanelBody({
   };
 
   const startDeviceAuth = async () => {
-    if (!authWorkspaceId) {
+    if (!authProjectId) {
       setDeviceAuthError(
         "No project available. Create or open a project, then retry.",
       );
@@ -318,7 +318,7 @@ function CodexCredentialsPanelBody({
     try {
       const status =
         await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
-          project_id: authWorkspaceId,
+          project_id: authProjectId,
         });
       setDeviceAuth(status as DeviceAuthStatus);
       refresh();
@@ -330,12 +330,12 @@ function CodexCredentialsPanelBody({
   };
 
   const cancelDeviceAuth = async () => {
-    if (!authWorkspaceId || !deviceAuth?.id) return;
+    if (!authProjectId || !deviceAuth?.id) return;
     setDeviceAuthActionPending(true);
     setDeviceAuthError("");
     try {
       await webapp_client.conat_client.hub.projects.codexDeviceAuthCancel({
-        project_id: authWorkspaceId,
+        project_id: authProjectId,
         id: deviceAuth.id,
       });
       await refreshDeviceAuth(deviceAuth.id);
@@ -347,7 +347,7 @@ function CodexCredentialsPanelBody({
   };
 
   const uploadAuthFile = async (file: File) => {
-    if (!authWorkspaceId) {
+    if (!authProjectId) {
       setDeviceAuthError(
         "No project available. Create or open a project, then retry.",
       );
@@ -359,7 +359,7 @@ function CodexCredentialsPanelBody({
       const content = await file.text();
       const result =
         await webapp_client.conat_client.hub.projects.codexUploadAuthFile({
-          project_id: authWorkspaceId,
+          project_id: authProjectId,
           filename: file.name,
           content,
         });
@@ -379,14 +379,14 @@ function CodexCredentialsPanelBody({
   };
 
   useEffect(() => {
-    if (!authWorkspaceId || deviceAuth?.state !== "pending" || !deviceAuth.id) {
+    if (!authProjectId || deviceAuth?.state !== "pending" || !deviceAuth.id) {
       return;
     }
     const timer = setInterval(() => {
       void refreshDeviceAuth(deviceAuth.id);
     }, 1500);
     return () => clearInterval(timer);
-  }, [authWorkspaceId, deviceAuth?.id, deviceAuth?.state]);
+  }, [authProjectId, deviceAuth?.id, deviceAuth?.state]);
 
   const content = (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -462,7 +462,7 @@ function CodexCredentialsPanelBody({
                   Use device login, or upload local <Text code>~/.codex/auth.json</Text>{" "}
                   as a fallback.
                 </Text>
-                {!authWorkspaceId ? (
+                {!authProjectId ? (
                   <Alert
                     type="warning"
                     showIcon
@@ -471,8 +471,8 @@ function CodexCredentialsPanelBody({
                   />
                 ) : (
                   <Text type="secondary">
-                    Using project: <Text code>{authWorkspaceId}</Text>
-                    {!workspaceId.trim() ? " (most recently edited)" : ""}
+                    Using project: <Text code>{authProjectId}</Text>
+                    {!selectedProjectId.trim() ? " (most recently edited)" : ""}
                   </Text>
                 )}
                 <Space wrap>
@@ -480,14 +480,14 @@ function CodexCredentialsPanelBody({
                     type="primary"
                     onClick={() => void startDeviceAuth()}
                     loading={deviceAuthActionPending}
-                    disabled={!authWorkspaceId || deviceAuth?.state === "pending"}
+                    disabled={!authProjectId || deviceAuth?.state === "pending"}
                   >
                     Start device login
                   </Button>
                   <Button
                     onClick={() => void refreshDeviceAuth()}
                     disabled={
-                      !authWorkspaceId || !deviceAuth?.id || deviceAuthActionPending
+                      !authProjectId || !deviceAuth?.id || deviceAuthActionPending
                     }
                   >
                     Refresh status
@@ -497,7 +497,7 @@ function CodexCredentialsPanelBody({
                     onClick={() => void cancelDeviceAuth()}
                     loading={deviceAuthActionPending}
                     disabled={
-                      !authWorkspaceId ||
+                      !authProjectId ||
                       !deviceAuth?.id ||
                       deviceAuth?.state !== "pending"
                     }
@@ -507,7 +507,7 @@ function CodexCredentialsPanelBody({
                   <Button
                     onClick={() => authFileInputRef.current?.click()}
                     loading={authFileUploadPending}
-                    disabled={!authWorkspaceId || deviceAuthActionPending}
+                    disabled={!authProjectId || deviceAuthActionPending}
                   >
                     Upload local auth.json
                   </Button>
@@ -670,8 +670,10 @@ function CodexCredentialsPanelBody({
                   </div>
                   <Space wrap style={{ width: "100%" }}>
                     <SelectProject
-                      value={workspaceId}
-                      onChange={(project_id) => setWorkspaceId(project_id ?? "")}
+                      value={selectedProjectId}
+                      onChange={(project_id) =>
+                        setSelectedProjectId(project_id ?? "")
+                      }
                       style={{ width: 360, maxWidth: "100%" }}
                     />
                     <Button onClick={refresh}>Refresh</Button>
@@ -769,7 +771,7 @@ function CodexCredentialsPanelBody({
                     Project OpenAI API key
                   </div>
                   <div style={{ marginTop: 8, marginBottom: 8 }}>
-                    {!workspaceId.trim() ? (
+                    {!selectedProjectId.trim() ? (
                       <Tag>Select a project above</Tag>
                     ) : apiKeyStatus?.project ? (
                       <Space wrap>
@@ -792,24 +794,24 @@ function CodexCredentialsPanelBody({
                   </div>
                   <Space wrap>
                     <Password
-                      value={workspaceApiKey}
-                      onChange={(e) => setWorkspaceApiKey(e.target.value)}
+                      value={projectApiKey}
+                      onChange={(e) => setProjectApiKey(e.target.value)}
                       placeholder="sk-..."
                       visibilityToggle
                       style={{ width: 360, maxWidth: "100%" }}
-                      disabled={!workspaceId.trim()}
+                      disabled={!selectedProjectId.trim()}
                     />
                     <Button
                       type="primary"
                       loading={savingScope === "project"}
-                      disabled={!workspaceId.trim()}
+                      disabled={!selectedProjectId.trim()}
                       onClick={async () => {
-                        const key = workspaceApiKey.trim();
+                        const key = projectApiKey.trim();
                         if (!key) {
                           setError("Project API key cannot be empty.");
                           return;
                         }
-                        if (!workspaceId.trim()) {
+                        if (!selectedProjectId.trim()) {
                           setError("Select a project first.");
                           return;
                         }
@@ -817,10 +819,10 @@ function CodexCredentialsPanelBody({
                         setError("");
                         try {
                           await (webapp_client.conat_client.hub.system as any).setOpenAiApiKey({
-                            project_id: workspaceId,
+                            project_id: selectedProjectId,
                             api_key: key,
                           });
-                          setWorkspaceApiKey("");
+                          setProjectApiKey("");
                           refresh();
                         } catch (err) {
                           setError(`${err}`);
@@ -836,12 +838,12 @@ function CodexCredentialsPanelBody({
                       okText="Delete"
                       okButtonProps={{ danger: true }}
                       onConfirm={async () => {
-                        if (!workspaceId.trim()) return;
+                        if (!selectedProjectId.trim()) return;
                         setDeletingScope("project");
                         setError("");
                         try {
                           await (webapp_client.conat_client.hub.system as any).deleteOpenAiApiKey({
-                            project_id: workspaceId,
+                            project_id: selectedProjectId,
                           });
                           refresh();
                         } catch (err) {
@@ -854,7 +856,7 @@ function CodexCredentialsPanelBody({
                       <Button
                         danger
                         loading={deletingScope === "project"}
-                        disabled={!workspaceId.trim() || !apiKeyStatus?.project}
+                        disabled={!selectedProjectId.trim() || !apiKeyStatus?.project}
                       >
                         Delete project key
                       </Button>

@@ -2,7 +2,7 @@ import type { HubApi } from "@cocalc/conat/hub/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 
-export type WorkspaceLike = {
+export type ProjectLike = {
   project_id: string;
   title: string;
   host_id: string | null;
@@ -16,12 +16,12 @@ export type HostLike = {
   name: string;
 };
 
-export type WorkspaceCacheContext<W extends WorkspaceLike = WorkspaceLike> = {
-  workspaceCache: Map<string, { expiresAt: number; workspace: W }>;
+export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
+  projectCache: Map<string, { expiresAt: number; workspace: W }>;
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
 
-function workspaceCacheKey(identifier: string): string {
+function projectCacheKey(identifier: string): string {
   const value = identifier.trim();
   if (isValidUUID(value)) {
     return `id:${value.toLowerCase()}`;
@@ -29,42 +29,42 @@ function workspaceCacheKey(identifier: string): string {
   return `title:${value}`;
 }
 
-function getCachedWorkspace<W extends WorkspaceLike>(
-  ctx: WorkspaceCacheContext<W>,
+function getCachedProject<W extends ProjectLike>(
+  ctx: ProjectCacheContext<W>,
   identifier: string,
 ): W | undefined {
-  const key = workspaceCacheKey(identifier);
-  const cached = ctx.workspaceCache.get(key);
+  const key = projectCacheKey(identifier);
+  const cached = ctx.projectCache.get(key);
   if (!cached) return undefined;
   if (Date.now() >= cached.expiresAt) {
-    ctx.workspaceCache.delete(key);
+    ctx.projectCache.delete(key);
     return undefined;
   }
   return cached.workspace;
 }
 
-function setCachedWorkspace<W extends WorkspaceLike>(
-  ctx: WorkspaceCacheContext<W>,
+function setCachedProject<W extends ProjectLike>(
+  ctx: ProjectCacheContext<W>,
   workspace: W,
-  workspaceCacheTtlMs: number,
+  projectCacheTtlMs: number,
 ): void {
-  const expiresAt = Date.now() + workspaceCacheTtlMs;
-  ctx.workspaceCache.set(workspaceCacheKey(workspace.project_id), { workspace, expiresAt });
+  const expiresAt = Date.now() + projectCacheTtlMs;
+  ctx.projectCache.set(projectCacheKey(workspace.project_id), { workspace, expiresAt });
   if (workspace.title) {
-    ctx.workspaceCache.set(workspaceCacheKey(workspace.title), { workspace, expiresAt });
+    ctx.projectCache.set(projectCacheKey(workspace.title), { workspace, expiresAt });
   }
 }
 
-export function workspaceState(value: WorkspaceLike["state"]): string {
+export function projectState(value: ProjectLike["state"]): string {
   return typeof value?.state === "string" ? value.state : "";
 }
 
-function isDeleted(value: WorkspaceLike["deleted"]): boolean {
+function isDeleted(value: ProjectLike["deleted"]): boolean {
   return value != null && value !== false;
 }
 
 export async function userQueryTable<T>(
-  ctx: WorkspaceCacheContext,
+  ctx: ProjectCacheContext,
   table: string,
   row: Record<string, unknown>,
   options: any[] = [],
@@ -80,14 +80,14 @@ export async function userQueryTable<T>(
   return Array.isArray(rows) ? rows : [];
 }
 
-export async function queryProjects<W extends WorkspaceLike = WorkspaceLike>({
+export async function queryProjects<W extends ProjectLike = ProjectLike>({
   ctx,
   project_id,
   title,
   host_id,
   limit,
 }: {
-  ctx: WorkspaceCacheContext<W>;
+  ctx: ProjectCacheContext<W>;
   project_id?: string;
   title?: string;
   host_id?: string | null;
@@ -116,12 +116,12 @@ export async function queryProjects<W extends WorkspaceLike = WorkspaceLike>({
   return rows.filter((x) => !isDeleted(x.deleted));
 }
 
-export async function resolveWorkspace<W extends WorkspaceLike = WorkspaceLike>(
-  ctx: WorkspaceCacheContext<W>,
+export async function resolveProject<W extends ProjectLike = ProjectLike>(
+  ctx: ProjectCacheContext<W>,
   identifier: string,
-  workspaceCacheTtlMs: number,
+  projectCacheTtlMs: number,
 ): Promise<W> {
-  const cached = getCachedWorkspace(ctx, identifier);
+  const cached = getCachedProject(ctx, identifier);
   if (cached) {
     return cached;
   }
@@ -133,7 +133,7 @@ export async function resolveWorkspace<W extends WorkspaceLike = WorkspaceLike>(
       limit: 3,
     });
     if (rows[0]) {
-      setCachedWorkspace(ctx, rows[0], workspaceCacheTtlMs);
+      setCachedProject(ctx, rows[0], projectCacheTtlMs);
       return rows[0];
     }
   }
@@ -151,37 +151,37 @@ export async function resolveWorkspace<W extends WorkspaceLike = WorkspaceLike>(
       `project name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
     );
   }
-  setCachedWorkspace(ctx, rows[0], workspaceCacheTtlMs);
+  setCachedProject(ctx, rows[0], projectCacheTtlMs);
   return rows[0];
 }
 
-export async function resolveWorkspaceFromArgOrContext<W extends WorkspaceLike = WorkspaceLike>({
+export async function resolveProjectFromArgOrContext<W extends ProjectLike = ProjectLike>({
   ctx,
   identifier,
   cwd,
-  workspaceCacheTtlMs,
-  readWorkspaceContext,
-  workspaceContextPath,
+  projectCacheTtlMs,
+  readProjectContext,
+  projectContextPath,
 }: {
-  ctx: WorkspaceCacheContext<W>;
+  ctx: ProjectCacheContext<W>;
   identifier?: string;
   cwd?: string;
-  workspaceCacheTtlMs: number;
-  readWorkspaceContext: (cwd?: string) => { workspace_id?: string; title?: string } | undefined;
-  workspaceContextPath: (cwd?: string) => string;
+  projectCacheTtlMs: number;
+  readProjectContext: (cwd?: string) => { project_id?: string; title?: string } | undefined;
+  projectContextPath: (cwd?: string) => string;
 }): Promise<W> {
   const value = identifier?.trim();
   if (value) {
-    return await resolveWorkspace(ctx, value, workspaceCacheTtlMs);
+    return await resolveProject(ctx, value, projectCacheTtlMs);
   }
   const currentDir = cwd;
-  const context = readWorkspaceContext(currentDir);
-  if (!context?.workspace_id) {
+  const context = readProjectContext(currentDir);
+  if (!context?.project_id) {
     throw new Error(
-      `missing --project and no project context is set at ${workspaceContextPath(currentDir)}; run 'cocalc project use --project <project>'`,
+      `missing --project and no project context is set at ${projectContextPath(currentDir)}; run 'cocalc project use --project <project>'`,
     );
   }
-  return await resolveWorkspace(ctx, context.workspace_id, workspaceCacheTtlMs);
+  return await resolveProject(ctx, context.project_id, projectCacheTtlMs);
 }
 
 export function normalizeUserSearchName(row: UserSearchResult): string {
@@ -192,7 +192,7 @@ export function normalizeUserSearchName(row: UserSearchResult): string {
 }
 
 export async function resolveAccountByIdentifier(
-  ctx: WorkspaceCacheContext,
+  ctx: ProjectCacheContext,
   identifier: string,
 ): Promise<UserSearchResult> {
   const value = `${identifier ?? ""}`.trim();
@@ -237,7 +237,7 @@ export async function resolveAccountByIdentifier(
 }
 
 export async function resolveHost<H extends HostLike = HostLike>(
-  ctx: WorkspaceCacheContext,
+  ctx: ProjectCacheContext,
   identifier: string,
 ): Promise<H> {
   const hosts = (await ctx.hub.hosts.listHosts({
@@ -267,7 +267,7 @@ export async function resolveHost<H extends HostLike = HostLike>(
 }
 
 export async function listHosts<H extends HostLike = HostLike>(
-  ctx: WorkspaceCacheContext,
+  ctx: ProjectCacheContext,
   opts: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean } = {},
 ): Promise<H[]> {
   const hosts = (await ctx.hub.hosts.listHosts({
