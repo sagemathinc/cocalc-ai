@@ -5,9 +5,6 @@
 
 // Component that allows WYSIWYG editing of markdown.
 
-const EXPENSIVE_DEBUG = false;
-// const EXPENSIVE_DEBUG = (window as any).cc != null && true; // EXTRA SLOW -- turn off before release!
-
 import { delay } from "awaiting";
 import { Map } from "immutable";
 import { debounce, isEqual, throttle } from "lodash";
@@ -2178,40 +2175,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           );
           // set to beginning of document -- better than crashing.
           resetSelection(editor);
-        }
-
-      //       if ((window as any).cc?.slate != null) {
-      //         (window as any).cc.slate.eval = (s) => console.log(eval(s));
-      //       }
-
-        if (EXPENSIVE_DEBUG) {
-          const stringify = require("json-stable-stringify");
-          // We use JSON rather than isEqual here, since {foo:undefined}
-          // is not equal to {}, but they JSON the same, and this is
-          // fine for our purposes.
-          if (stringify(editor.children) != stringify(nextEditorValue)) {
-            // NOTE -- this does not 100% mean things are wrong.  One case where
-            // this is expected behavior is if you put the cursor at the end of the
-            // document, say right after a horizontal rule,  and then edit at the
-            // beginning of the document in another browser.  The discrepancy
-            // is because a "fake paragraph" is placed at the end of the browser
-            // so your cursor has somewhere to go while you wait and type; however,
-            // that space is not really part of the markdown document, and it goes
-            // away when you move your cursor out of that space.
-            console.warn(
-              "**WARNING:  slateDiff might not have properly transformed editor, though this may be fine. See window.diffBug **",
-            );
-            (window as any).diffBug = {
-              previousEditorValue,
-              nextEditorValue,
-              editorValue: editor.children,
-              stringify,
-              slateDiff,
-              applyOperations,
-              markdown_to_slate,
-              value,
-            };
-          }
         }
       });
     };

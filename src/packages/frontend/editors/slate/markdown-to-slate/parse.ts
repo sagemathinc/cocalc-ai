@@ -82,8 +82,8 @@ export function markdown_to_slate(
   The reason is that any time normalization results in a change from the
   source markdown document, then every single update to the document
   keeps redoing exactly that extra update! This leads to extensive problems.
-  If you suspect this, enable EXPENSIVE_DEBUG in ./editable-markdown.tsx
-  and edit a document, watching the console.log.
+  If you suspect this, inspect the Slate debug logging around upstream
+  sync while editing a document.
 
   I've tried to make it so the parser here is always normalized. However,
   there always seem to be really subtle edge cases.  Also, in the long run
