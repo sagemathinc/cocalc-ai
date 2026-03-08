@@ -686,3 +686,33 @@ That means future work should prefer:
 3. smaller adapter boundaries
 4. stronger test harnesses
 5. explicit contracts over convenience props that only work sometimes
+
+## Known Bugs:
+
+Here are two bugs from my todo list involving the multimode editor.  
+
+BUG 1: Another quality improvement is that the UI just doesn't look "perfect", especially in Markdown mode.   There's a few things that are just "off" regarding boarders, buttons, etc.
+
+For example:
+
+step 1: use the chat input (a multimode editor that is manually resizable) in markdown mode.
+step 2: make the markdown editor have about 10 lines of height and type some input.
+step 3: shrink the editor by dragging the size control handle down.
+step 4: It is now NOT possible to scroll or in any way sse the top 4 lines of the input. It is completely impossible to get to them without resizing the editor to be large again.
+
+![](/blobs/paste-0.8516988443441011?uuid=c539981c-efbe-44cc-bf6c-85a3685253a7)
+
+Here notice that the Markdown swithc is not visible:
+
+![](/blobs/paste-0.653684441447944?uuid=efe6206d-9725-4350-a8b0-431354318242)
+
+BUG 2:  This in on my todo list, but I actually observed it just now while writing this very meesage: " I was just composing a message in the chat composer in markdown mode and got feedback, i.e. a block of stuff I just wrote got doubled.
+
+```
+The `"event":"chat-thread-config" .` should also be where we store info about the messaging being archived so that can be immeddiately shown to the user, and tn to the user, and hey ca
+```
+
+This happens constantly, making this completely and totally unusable.
+"
+
+This is with the composer in chat in markdown mode.     The Rich text mode is now completely rock solid: text/cursors are nerver mangled, repeated, randomly moved around.  However, in markdown mode, text is mangled, etc., at least with the chat composer. 
