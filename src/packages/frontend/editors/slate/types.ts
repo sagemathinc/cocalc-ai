@@ -7,10 +7,13 @@ import { ReactEditor } from "./slate-react";
 export interface SlateEditor extends ReactEditor {
   ignoreNextOnChange?: boolean;
   syncCausedUpdate?: boolean;
+  localHistoryEnabled?: boolean;
   saveValue: (force?) => void;
   applyingOperations?: boolean;
   lastSelection?: Range;
   curSelection?: Range;
+  undo?: () => void;
+  redo?: () => void;
   selectionIsCollapsed: () => boolean;
   inverseSearch: (boolean?) => Promise<void>;
   hasUnsavedChanges: () => boolean;

@@ -367,6 +367,7 @@ describe("MultiMarkdownInput wrapper contract", () => {
 
     expect(latestEditableProps.actions.undo).toBeUndefined();
     expect(latestEditableProps.actions.redo).toBeUndefined();
+    expect(latestEditableProps.localHistory).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "markdown" }));
 

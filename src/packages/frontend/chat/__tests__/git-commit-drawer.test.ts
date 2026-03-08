@@ -77,7 +77,7 @@ describe("git commit drawer merge commit formatting", () => {
     ]);
   });
 
-  it("uses backend-appropriate undo ownership for git review note/comment editors", () => {
+  it("keeps undo and redo local for git review note/comment editors", () => {
     render(
       React.createElement(MarkdownHistoryInput, {
         historyId: "git-inline-draft:file.ts:1",
@@ -88,71 +88,25 @@ describe("git commit drawer merge commit formatting", () => {
 
     expect(latestMarkdownInputProps).toBeTruthy();
     expect(latestMarkdownInputProps.saveDebounceMs).toBe(0);
-    expect(latestMarkdownInputProps.undoMode).toBe("external");
-    expect(latestMarkdownInputProps.redoMode).toBe("external");
+    expect(latestMarkdownInputProps.undoMode).toBe("local");
+    expect(latestMarkdownInputProps.redoMode).toBe("local");
+  });
+
+  it("preserves onModeChange forwarding for git review note/comment editors", () => {
+    const onModeChange = jest.fn();
+
+    render(
+      React.createElement(MarkdownHistoryInput, {
+        historyId: "git-inline-draft:file.ts:1",
+        value: "hello",
+        onChange: () => {},
+        onModeChange,
+      }),
+    );
 
     act(() => {
       latestMarkdownInputProps.onModeChange("markdown");
     });
-    expect(latestMarkdownInputProps.undoMode).toBe("local");
-    expect(latestMarkdownInputProps.redoMode).toBe("local");
-
-    act(() => {
-      latestMarkdownInputProps.onModeChange("editor");
-    });
-    expect(latestMarkdownInputProps.undoMode).toBe("external");
-    expect(latestMarkdownInputProps.redoMode).toBe("external");
-  });
-
-  it("replays wrapper-owned history through undo and redo", () => {
-    const dateNow = jest.spyOn(Date, "now");
-    let now = 1_000;
-    dateNow.mockImplementation(() => now);
-
-    function Harness() {
-      const [value, setValue] = React.useState("hello");
-      return React.createElement(MarkdownHistoryInput, {
-        historyId: "git-inline-draft:file.ts:1",
-        value,
-        onChange: setValue,
-      });
-    }
-
-    render(React.createElement(Harness));
-    expect(latestMarkdownInputProps.value).toBe("hello");
-
-    now += 1_000;
-    act(() => {
-      latestMarkdownInputProps.onChange("hello world");
-    });
-    expect(latestMarkdownInputProps.value).toBe("hello world");
-
-    now += 1_000;
-    act(() => {
-      latestMarkdownInputProps.onChange("bye");
-    });
-    expect(latestMarkdownInputProps.value).toBe("bye");
-
-    act(() => {
-      latestMarkdownInputProps.onUndo();
-    });
-    expect(latestMarkdownInputProps.value).toBe("hello world");
-
-    act(() => {
-      latestMarkdownInputProps.onUndo();
-    });
-    expect(latestMarkdownInputProps.value).toBe("hello");
-
-    act(() => {
-      latestMarkdownInputProps.onRedo();
-    });
-    expect(latestMarkdownInputProps.value).toBe("hello world");
-
-    act(() => {
-      latestMarkdownInputProps.onRedo();
-    });
-    expect(latestMarkdownInputProps.value).toBe("bye");
-
-    dateNow.mockRestore();
+    expect(onModeChange).toHaveBeenCalledWith("markdown");
   });
 });

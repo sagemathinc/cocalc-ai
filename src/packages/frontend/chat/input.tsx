@@ -58,13 +58,6 @@ export interface ChatInputControl {
   focus: () => boolean;
 }
 
-type HistoryEntry = {
-  value: string;
-  cursor?: { line: number; ch: number };
-  at: number;
-};
-
-const HISTORY_GROUP_MS = 250;
 const CHAT_INPUT_SAVE_DEBOUNCE_MS = 120;
 
 function markdownEndPosition(value: string): { line: number; ch: number } {
@@ -108,11 +101,6 @@ export default function ChatInput({
   const currentInputRef = useRef<string>(propsInput ?? "");
   const previousPropsInputRef = useRef<string>(propsInput ?? "");
   const sentEchoGuardRef = useRef<SentEchoGuard>(null);
-  const historyRef = useRef<HistoryEntry[]>([
-    { value: propsInput ?? "", at: Date.now() },
-  ]);
-  const historyIndexRef = useRef<number>(0);
-  const applyingHistoryRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -141,8 +129,6 @@ export default function ChatInput({
     const next = propsInput ?? "";
     if (next !== input) {
       setInput(next);
-      historyRef.current = [{ value: next, at: Date.now() }];
-      historyIndexRef.current = 0;
     }
   }, [propsInput, input]);
 
@@ -206,19 +192,6 @@ export default function ChatInput({
   }
 
   const hasInput = (input ?? "").trim().length > 0;
-
-  const applyHistoryValue = (entry: HistoryEntry) => {
-    applyingHistoryRef.current = true;
-    const value = entry.value;
-    setInput(value);
-    onChange(value, sessionToken);
-    savePresence(value);
-    const pos = entry.cursor ?? markdownEndPosition(value);
-    setTimeout(() => {
-      controlRef.current?.setSelectionFromMarkdownPosition?.(pos);
-    }, 0);
-    applyingHistoryRef.current = false;
-  };
 
   const focusInput = useCallback((): boolean => {
     const control = controlRef.current;
@@ -309,15 +282,6 @@ export default function ChatInput({
           sentEchoGuardRef.current = null;
         }
         if (value === input) {
-          if (!applyingHistoryRef.current) {
-            const history = historyRef.current;
-            const idx = historyIndexRef.current;
-            const current = history[idx];
-            if (current) {
-              current.cursor = controlRef.current?.getMarkdownPositionForSelection?.();
-              current.at = Date.now();
-            }
-          }
           savePresence(value);
           return;
         }
@@ -325,34 +289,6 @@ export default function ChatInput({
         sentEchoGuardRef.current = null;
         onChange(value, sessionToken);
         savePresence(value);
-        if (applyingHistoryRef.current) return;
-        const history = historyRef.current;
-        const idx = historyIndexRef.current;
-        const current = history[idx]?.value ?? "";
-        if (current === value) {
-          history[idx] = {
-            ...(history[idx] ?? { value: current, at: Date.now() }),
-            cursor: controlRef.current?.getMarkdownPositionForSelection?.(),
-            at: Date.now(),
-          };
-          return;
-        }
-        const now = Date.now();
-        const cursor = controlRef.current?.getMarkdownPositionForSelection?.();
-        const trimmed = history.slice(0, idx + 1);
-        const last = trimmed[trimmed.length - 1];
-        // Group nearby edits into one undo step, rather than per-character.
-        if (last && now - last.at <= HISTORY_GROUP_MS) {
-          trimmed[trimmed.length - 1] = { value, cursor, at: now };
-        } else {
-          trimmed.push({ value, cursor, at: now });
-        }
-        const maxEntries = 200;
-        if (trimmed.length > maxEntries) {
-          trimmed.splice(0, trimmed.length - maxEntries);
-        }
-        historyRef.current = trimmed;
-        historyIndexRef.current = trimmed.length - 1;
       }}
       onShiftEnter={(value) => {
         if (!mountedRef.current) return;
@@ -364,29 +300,8 @@ export default function ChatInput({
         publishNotComposing();
         on_send(value);
       }}
-      onUndo={() => {
-        const idx = historyIndexRef.current;
-        if (idx <= 0) return;
-        historyIndexRef.current = idx - 1;
-        applyHistoryValue(
-          historyRef.current[historyIndexRef.current] ?? {
-            value: "",
-            at: Date.now(),
-          },
-        );
-      }}
-      onRedo={() => {
-        const history = historyRef.current;
-        const idx = historyIndexRef.current;
-        if (idx >= history.length - 1) return;
-        historyIndexRef.current = idx + 1;
-        applyHistoryValue(
-          history[idx + 1] ?? {
-            value: "",
-            at: Date.now(),
-          },
-        );
-      }}
+      undoMode="local"
+      redoMode="local"
       height={height}
       autoGrowMaxHeight={autoGrowMaxHeight}
       placeholder={getPlaceholder()}

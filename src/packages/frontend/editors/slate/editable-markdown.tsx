@@ -58,6 +58,7 @@ import {
   Transforms,
   createEditor,
 } from "slate";
+import { HistoryEditor as SlateHistoryEditor, withHistory } from "slate-history";
 import { resetSelection } from "./control";
 import * as control from "./control";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
@@ -307,6 +308,7 @@ interface Props {
   preserveBlankLines?: boolean;
   disableBlockEditor?: boolean;
   externalMultilinePasteAsCodeBlock?: boolean;
+  localHistory?: boolean;
   onSlateChange?: (
     value: Descendant[],
     opts: { onlySelectionOps: boolean; syncCausedUpdate: boolean },
@@ -360,6 +362,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
     externalMultilinePasteAsCodeBlock = false,
+    localHistory = false,
     onSlateChange,
     jupyterGapCursor,
     setJupyterGapCursor,
@@ -402,19 +405,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const blurMergeTimerRef = useRef<number | null>(null);
 
   const editor = useMemo(() => {
+    const baseEditor = localHistory
+      ? withHistory(withReact(createEditor()))
+      : withReact(createEditor());
     const ed = withSelectionSafety(
       withNonfatalRange(
         withInsertBreakHack(
           withNormalize(
             withAutoFormat(
               withIsInline(
-                withIsVoid(withCodeLineInsertBreak(withReact(createEditor()))),
+                withIsVoid(withCodeLineInsertBreak(baseEditor)),
               ),
             ),
           ),
         ),
       ),
     ) as SlateEditor;
+    ed.localHistoryEnabled = localHistory;
     actions.registerSlateEditor?.(id, ed);
 
     ed.getSourceValue = (fragment?) => {
@@ -577,7 +584,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     (ed as any).__uploadGeneration = uploadGeneration;
 
     return ed as SlateEditor;
-  }, []);
+  }, [localHistory]);
 
   useEffect(() => {
     editor.preserveBlankLines = preserveBlankLines;
@@ -2028,18 +2035,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-    Editor.withoutNormalizing(editor, () => {
-      try {
-        if (!ReactEditor.isUsingWindowing(editor)) {
-          const operationsLength = operations?.length ?? 0;
-          logSlateDebug("external-set-editor", {
-            strategy: shouldDirectSet ? "direct" : "diff",
-            operations: operationsLength,
-            focused: isMergeFocused(),
-            current: editor.getMarkdownValue(),
-            next: normalizedValue,
-          });
-        }
+    const applyExternalValue = () => {
+      Editor.withoutNormalizing(editor, () => {
+        try {
+          if (!ReactEditor.isUsingWindowing(editor)) {
+            const operationsLength = operations?.length ?? 0;
+            logSlateDebug("external-set-editor", {
+              strategy: shouldDirectSet ? "direct" : "diff",
+              operations: operationsLength,
+              focused: isMergeFocused(),
+              current: editor.getMarkdownValue(),
+              next: normalizedValue,
+            });
+          }
         //const t = new Date();
 
         let blockPatchApplied = false;
@@ -2145,67 +2153,77 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           }
           // console.log("time to set via diff", new Date() - t);
         }
-      } finally {
-        // In all cases, now that we have transformed editor into the new value
-        // let's save the fact that we haven't changed anything yet and we
-        // know the markdown state with zero changes.  This is important, so
-        // we don't save out a change if we don't explicitly make one.
-        editor.resetHasUnsavedChanges();
-        editor.markdownValue = normalizedValue;
-      }
-
-      try {
-        if (editor.selection != null) {
-          editor.selection = ensureRange(editor, editor.selection);
-          // console.log("setEditorToValue: restore selection", editor.selection);
-          const { anchor, focus } = editor.selection;
-          Editor.node(editor, anchor);
-          Editor.node(editor, focus);
+        } finally {
+          // In all cases, now that we have transformed editor into the new value
+          // let's save the fact that we haven't changed anything yet and we
+          // know the markdown state with zero changes.  This is important, so
+          // we don't save out a change if we don't explicitly make one.
+          editor.resetHasUnsavedChanges();
+          editor.markdownValue = normalizedValue;
         }
-      } catch (err) {
-        // TODO!
-        console.warn(
-          "slate - invalid selection after upstream patch. Resetting selection.",
-          err,
-        );
-        // set to beginning of document -- better than crashing.
-        resetSelection(editor);
-      }
+
+        try {
+          if (editor.selection != null) {
+            editor.selection = ensureRange(editor, editor.selection);
+            // console.log("setEditorToValue: restore selection", editor.selection);
+            const { anchor, focus } = editor.selection;
+            Editor.node(editor, anchor);
+            Editor.node(editor, focus);
+          }
+        } catch (err) {
+          // TODO!
+          console.warn(
+            "slate - invalid selection after upstream patch. Resetting selection.",
+            err,
+          );
+          // set to beginning of document -- better than crashing.
+          resetSelection(editor);
+        }
 
       //       if ((window as any).cc?.slate != null) {
       //         (window as any).cc.slate.eval = (s) => console.log(eval(s));
       //       }
 
-      if (EXPENSIVE_DEBUG) {
-        const stringify = require("json-stable-stringify");
-        // We use JSON rather than isEqual here, since {foo:undefined}
-        // is not equal to {}, but they JSON the same, and this is
-        // fine for our purposes.
-        if (stringify(editor.children) != stringify(nextEditorValue)) {
-          // NOTE -- this does not 100% mean things are wrong.  One case where
-          // this is expected behavior is if you put the cursor at the end of the
-          // document, say right after a horizontal rule,  and then edit at the
-          // beginning of the document in another browser.  The discrepancy
-          // is because a "fake paragraph" is placed at the end of the browser
-          // so your cursor has somewhere to go while you wait and type; however,
-          // that space is not really part of the markdown document, and it goes
-          // away when you move your cursor out of that space.
-          console.warn(
-            "**WARNING:  slateDiff might not have properly transformed editor, though this may be fine. See window.diffBug **",
-          );
-          (window as any).diffBug = {
-            previousEditorValue,
-            nextEditorValue,
-            editorValue: editor.children,
-            stringify,
-            slateDiff,
-            applyOperations,
-            markdown_to_slate,
-            value,
-          };
+        if (EXPENSIVE_DEBUG) {
+          const stringify = require("json-stable-stringify");
+          // We use JSON rather than isEqual here, since {foo:undefined}
+          // is not equal to {}, but they JSON the same, and this is
+          // fine for our purposes.
+          if (stringify(editor.children) != stringify(nextEditorValue)) {
+            // NOTE -- this does not 100% mean things are wrong.  One case where
+            // this is expected behavior is if you put the cursor at the end of the
+            // document, say right after a horizontal rule,  and then edit at the
+            // beginning of the document in another browser.  The discrepancy
+            // is because a "fake paragraph" is placed at the end of the browser
+            // so your cursor has somewhere to go while you wait and type; however,
+            // that space is not really part of the markdown document, and it goes
+            // away when you move your cursor out of that space.
+            console.warn(
+              "**WARNING:  slateDiff might not have properly transformed editor, though this may be fine. See window.diffBug **",
+            );
+            (window as any).diffBug = {
+              previousEditorValue,
+              nextEditorValue,
+              editorValue: editor.children,
+              stringify,
+              slateDiff,
+              applyOperations,
+              markdown_to_slate,
+              value,
+            };
+          }
         }
-      }
-    });
+      });
+    };
+
+    if (localHistory) {
+      SlateHistoryEditor.withoutSaving(
+        editor as unknown as SlateHistoryEditor,
+        applyExternalValue,
+      );
+    } else {
+      applyExternalValue();
+    }
   };
 
   if ((window as any).cc != null) {
