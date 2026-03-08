@@ -127,6 +127,7 @@ import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
 import { createExportApi } from "../api/export";
 import { createImportApi } from "../api/import";
 import { createTasksApi } from "../api/tasks";
+import { createLiveTextBinder } from "../api/text";
 import { createLiveTimeTravelBinder } from "../api/timetravel";
 import {
   registerBrowserCommand,
@@ -1488,6 +1489,10 @@ const tasksApi = createTasksApi<CommandContext, WorkspaceRow>({
   withWorkspaceTasksSession,
 });
 
+const textApi = createLiveTextBinder<CommandContext, WorkspaceRow>({
+  resolveWorkspaceConatClient,
+});
+
 const timeTravelApi = createLiveTimeTravelBinder<CommandContext, WorkspaceRow>({
   resolveWorkspaceConatClient,
 });
@@ -2026,6 +2031,7 @@ registerTasksCommand(program, tasksCommandDeps);
 const execCommandDeps = {
   withContext,
   tasksApi,
+  textApi,
   timeTravelApi,
   exportApi,
   importApi,

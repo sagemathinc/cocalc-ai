@@ -4,11 +4,13 @@ import { Command } from "commander";
 import type { ExportApi } from "../../api/export";
 import type { ImportApi } from "../../api/import";
 import type { TasksApi } from "../../api/tasks";
+import type { TextApi } from "../../api/text";
 import type { TimeTravelApi } from "../../api/timetravel";
 
 export type ExecCommandDeps = {
   withContext: any;
   tasksApi: TasksApi<any, any>;
+  textApi: TextApi<any, any>;
   timeTravelApi: TimeTravelApi<any, any>;
   exportApi: ExportApi<any>;
   importApi: ImportApi<any>;
@@ -19,9 +21,8 @@ const BACKEND_EXEC_API_DECLARATION = `/**
  *
  * Current implemented namespaces:
  * - api.tasks
+ * - api.text
  * - api.timetravel
-- api.export
-- api.import
  * - api.export
  * - api.import
  *
@@ -110,6 +111,56 @@ export interface TasksDocument {
   }>;
 }
 
+export interface TextDocumentAssociation {
+  basename: string;
+  extension: string | null;
+  doctype: "syncstring" | "syncdb" | "immer";
+  supportsTextApi: boolean;
+  editorHint: string | null;
+  mode: string | null;
+  icon: string | null;
+  name: string;
+}
+
+export interface TextDocumentInfo {
+  workspace: { project_id: string; title: string; host_id: string | null };
+  path: string;
+  association: TextDocumentAssociation;
+  textLength: number;
+  latestVersionId: string | null;
+  hash: number | null;
+}
+
+export interface TextDocument {
+  readonly path: string;
+  getAssociation(): TextDocumentAssociation;
+  getInfo(): Promise<TextDocumentInfo>;
+  read(): Promise<TextDocumentInfo & { text: string }>;
+  write(
+    text: string,
+    options?: {
+      expectedLatestVersionId?: string | null;
+      expectedHash?: number | null;
+    },
+  ): Promise<TextDocumentInfo>;
+  append(
+    text: string,
+    options?: {
+      expectedLatestVersionId?: string | null;
+      expectedHash?: number | null;
+    },
+  ): Promise<TextDocumentInfo>;
+  replace(
+    search: string,
+    replacement: string,
+    options?: {
+      all?: boolean;
+      expectedLatestVersionId?: string | null;
+      expectedHash?: number | null;
+    },
+  ): Promise<TextDocumentInfo & { replaceCount: number }>;
+}
+
 export interface TimeTravelVersionRecord {
   id: string;
   index: number;
@@ -187,6 +238,25 @@ export interface BackendExecApi {
       workspaceIdentifier?: string;
       cwd?: string;
     }): TasksDocument;
+  };
+  text: {
+    /**
+     * Resolve backend-safe file-association metadata for a path.
+     */
+    association(options: {
+      path: string;
+      cwd?: string;
+    }): TextDocumentAssociation;
+    /**
+     * Open a live collaborative string document.
+     *
+     * This uses the sync/service path, not a direct filesystem read.
+     */
+    open(options: {
+      path: string;
+      workspaceIdentifier?: string;
+      cwd?: string;
+    }): TextDocument;
   };
   timetravel: {
     /**
@@ -284,6 +354,18 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
         return deps.tasksApi.bindDocument(ctx, options);
       },
     },
+    text: {
+      association(options: { path: string; cwd?: string }) {
+        return deps.textApi.association(options);
+      },
+      open(options: {
+        path: string;
+        workspaceIdentifier?: string;
+        cwd?: string;
+      }) {
+        return deps.textApi.bindDocument(ctx, options);
+      },
+    },
     timetravel: {
       open(options: {
         path: string;
@@ -345,22 +427,26 @@ export function registerExecCommand(program: Command, deps: ExecCommandDeps): Co
       `
 Current implemented namespaces:
 - api.tasks
+- api.text
 - api.timetravel
 
 Important:
+- api.text.open({ path }) uses the live collaborative sync/session path.
+- api.text.association({ path }) gives backend-safe editor/mode hints.
 - api.tasks.open({ path }) uses the live collaborative sync/session path.
 - api.export.* writes archive bundles locally where the backend runtime runs.
 - api.import.tasks merges a tasks bundle back into a local .tasks file.
-- It does not read the on-disk .tasks file directly.
+- Live namespaces do not read document state from disk directly.
 - Return JSON-serializable values from your script.
 
 Example:
   cocalc --json exec '
-    const doc = api.tasks.open({ path: "scratch/project/a.tasks" });
-    const snapshot = await doc.getSnapshot();
-    const exportResult = await api.export.tasks({ path: "scratch/project/a.tasks" });
-    const importResult = await api.import.tasks({ sourcePath: exportResult.outputPath, dryRun: true });
-    return { count: snapshot.tasks.length, exportPath: exportResult.outputPath, importDryRun: importResult.conflict_count };
+    const doc = api.text.open({ path: "scratch/project/notes.md" });
+    const before = await doc.read();
+    const after = await doc.append("\\n\\nUpdated from backend exec.", {
+      expectedLatestVersionId: before.latestVersionId,
+    });
+    return { mode: before.association.mode, textLength: after.textLength };
   '
 `,
     )
