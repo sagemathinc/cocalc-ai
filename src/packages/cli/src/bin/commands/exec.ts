@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 
 import type { ExportApi } from "../../api/export";
+import type { ImportApi } from "../../api/import";
 import type { TasksApi } from "../../api/tasks";
 import type { TimeTravelApi } from "../../api/timetravel";
 
@@ -10,6 +11,7 @@ export type ExecCommandDeps = {
   tasksApi: TasksApi<any, any>;
   timeTravelApi: TimeTravelApi<any, any>;
   exportApi: ExportApi<any>;
+  importApi: ImportApi<any>;
 };
 
 const BACKEND_EXEC_API_DECLARATION = `/**
@@ -19,7 +21,9 @@ const BACKEND_EXEC_API_DECLARATION = `/**
  * - api.tasks
  * - api.timetravel
 - api.export
+- api.import
  * - api.export
+ * - api.import
  *
  * Return only JSON-serializable values from scripts.
  *
@@ -159,6 +163,18 @@ export interface ExportSummary {
   manifest: Record<string, unknown>;
 }
 
+export interface TaskImportResult {
+  target_path: string;
+  created: number;
+  updated: number;
+  unchanged: number;
+  preserved: number;
+  conflict_count: number;
+  conflicts: Array<{ task_id: string; reason: string; fields?: string[] }>;
+  task_count: number;
+  dry_run: boolean;
+}
+
 export interface BackendExecApi {
   tasks: {
     /**
@@ -230,6 +246,15 @@ export interface BackendExecApi {
       cwd?: string;
     }): Promise<ExportSummary>;
   };
+  import: {
+    /** Import a tasks bundle or extracted export directory locally where the backend runtime runs. */
+    tasks(options: {
+      sourcePath: string;
+      targetPath?: string;
+      dryRun?: boolean;
+      cwd?: string;
+    }): Promise<TaskImportResult>;
+  };
 }
 
 declare const api: BackendExecApi;
@@ -282,6 +307,11 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
         return await deps.exportApi.slides(ctx, options);
       },
     },
+    import: {
+      async tasks(options: any) {
+        return await deps.importApi.tasks(ctx, options);
+      },
+    },
   };
 }
 
@@ -320,6 +350,7 @@ Current implemented namespaces:
 Important:
 - api.tasks.open({ path }) uses the live collaborative sync/session path.
 - api.export.* writes archive bundles locally where the backend runtime runs.
+- api.import.tasks merges a tasks bundle back into a local .tasks file.
 - It does not read the on-disk .tasks file directly.
 - Return JSON-serializable values from your script.
 
@@ -328,7 +359,8 @@ Example:
     const doc = api.tasks.open({ path: "scratch/project/a.tasks" });
     const snapshot = await doc.getSnapshot();
     const exportResult = await api.export.tasks({ path: "scratch/project/a.tasks" });
-    return { count: snapshot.tasks.length, exportPath: exportResult.outputPath };
+    const importResult = await api.import.tasks({ sourcePath: exportResult.outputPath, dryRun: true });
+    return { count: snapshot.tasks.length, exportPath: exportResult.outputPath, importDryRun: importResult.conflict_count };
   '
 `,
     )
