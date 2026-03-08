@@ -11,10 +11,18 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { SyncOutlined } from "@ant-design/icons";
+import {
+  CodeOutlined,
+  QuestionCircleOutlined,
+  SyncOutlined,
+} from "@ant-design/icons";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
-import type { Host } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostSoftwareArtifact,
+  HostSoftwareAvailableVersion,
+} from "@cocalc/conat/hub/api/hosts";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
@@ -39,10 +47,26 @@ type HostDrawerViewModel = {
   onEdit: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
   onUpgradeFromHub?: (host: Host) => void;
+  onUpgradeArtifact?: (opts: {
+    host: Host;
+    artifact: HostSoftwareArtifact;
+    useHubSource?: boolean;
+  }) => void | Promise<void>;
   canUpgrade?: boolean;
   onCancelOp?: (op_id: string) => void;
   hostLog: HostLogEntry[];
   loadingLog: boolean;
+  softwareVersions?: {
+    loading: boolean;
+    configured: Partial<
+      Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>
+    >;
+    configuredError?: string;
+    hub: Partial<Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>>;
+    hubError?: string;
+    refresh: () => Promise<void>;
+    hubSourceBaseUrl?: string;
+  };
   selfHost?: {
     connectorMap: Map<
       string,
@@ -93,6 +117,27 @@ const SPEC_LABELS: Record<keyof HostConfigSpec, string> = {
 const DRAWER_SIZE_STORAGE_KEY = "cocalc:hosts:drawerWidth";
 const MIN_DRAWER_WIDTH = 360;
 const MAX_DRAWER_WIDTH = 960;
+const SOFTWARE_ARTIFACTS: Array<{
+  artifact: HostSoftwareArtifact;
+  label: string;
+  runningLabel: string;
+}> = [
+  {
+    artifact: "project-host",
+    label: "Project host",
+    runningLabel: "Host runtime",
+  },
+  {
+    artifact: "project",
+    label: "Project bundle",
+    runningLabel: "New workspaces",
+  },
+  {
+    artifact: "tools",
+    label: "Tools",
+    runningLabel: "Tool archive",
+  },
+];
 
 function clampDrawerWidth(width: number): number {
   return Math.min(MAX_DRAWER_WIDTH, Math.max(MIN_DRAWER_WIDTH, width));
@@ -121,6 +166,80 @@ function persistDrawerWidth(width: number) {
     DRAWER_SIZE_STORAGE_KEY,
     String(clampDrawerWidth(width)),
   );
+}
+
+function runningVersion(
+  host: Host,
+  artifact: HostSoftwareArtifact,
+): string | undefined {
+  if (artifact === "project-host") return host.version;
+  if (artifact === "project") return host.project_bundle_version;
+  return host.tools_version;
+}
+
+function runningBuildId(
+  host: Host,
+  artifact: HostSoftwareArtifact,
+): string | undefined {
+  if (artifact === "project-host") return host.project_host_build_id;
+  if (artifact === "project") return host.project_bundle_build_id;
+  return undefined;
+}
+
+function artifactStatusTag({
+  running,
+  latest,
+  error,
+}: {
+  running?: string;
+  latest?: string;
+  error?: string;
+}) {
+  if (error) {
+    return <Tag color="red">source error</Tag>;
+  }
+  if (!latest) {
+    return <Tag>unknown</Tag>;
+  }
+  if (!running) {
+    return <Tag color="default">not reported</Tag>;
+  }
+  if (running === latest) {
+    return <Tag color="green">up to date</Tag>;
+  }
+  return <Tag color="orange">update available</Tag>;
+}
+
+function upgradeTitle({
+  label,
+  source,
+}: {
+  label: string;
+  source: string;
+}) {
+  return (
+    <div>
+      <div>
+        Upgrade {label.toLowerCase()} from {source}?
+      </div>
+      <UpgradeConfirmContent />
+    </div>
+  );
+}
+
+function cliCommandsForArtifact({
+  host,
+  artifact,
+}: {
+  host: Host;
+  artifact: HostSoftwareArtifact;
+}): string[] {
+  return [
+    `cocalc host versions --artifact ${artifact}`,
+    `cocalc host versions --artifact ${artifact} --hub-source`,
+    `cocalc host upgrade ${host.id} --artifact ${artifact} --channel latest`,
+    `cocalc host upgrade ${host.id} --artifact ${artifact} --channel latest --hub-source`,
+  ];
 }
 
 const normalizeSpecValue = (
@@ -169,6 +288,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     readDrawerWidth,
   );
   const [showProjects, setShowProjects] = React.useState(false);
+  const [expandedArtifacts, setExpandedArtifacts] = React.useState<
+    Partial<Record<HostSoftwareArtifact, boolean>>
+  >({});
   const handleResize = React.useCallback((next: number) => {
     const clamped = clampDrawerWidth(next);
     setDrawerWidth(clamped);
@@ -184,10 +306,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onEdit,
     onUpgrade,
     onUpgradeFromHub,
+    onUpgradeArtifact,
     canUpgrade,
     onCancelOp,
     hostLog,
     loadingLog,
+    softwareVersions,
     selfHost,
   } = vm;
   const isSelfHost = host?.machine?.cloud === "self-host";
@@ -253,9 +377,21 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const showUpgradeProgress =
     activeOp?.summary?.kind === "host-upgrade-software" ||
     activeOp?.kind === "host-upgrade-software";
-  const upgradeConfirmContent = (
-    <div>
-      <div>Upgrade host software to latest?</div>
+  const upgradeConfirmContent = upgradeTitle({
+    label: "all software",
+    source: "the configured source",
+  });
+  const upgradeFromHubConfirmContent = upgradeTitle({
+    label: "all software",
+    source: "this hub source",
+  });
+  const softwareHelp = (
+    <div style={{ maxWidth: 420 }}>
+      <div style={{ marginBottom: 8 }}>
+        This section compares the versions currently reported by the host with
+        the newest versions available from the configured software source and
+        from this site&apos;s <code>/software</code> endpoint.
+      </div>
       <UpgradeConfirmContent />
     </div>
   );
@@ -276,8 +412,30 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     isSelfHost &&
     !host.deleted &&
     host.status !== "deprovisioned";
+  const softwareSummary = React.useMemo(() => {
+    if (!host) {
+      return { upToDate: 0, updatesAvailable: 0, unknown: 0 };
+    }
+    let upToDate = 0;
+    let updatesAvailable = 0;
+    let unknown = 0;
+    for (const { artifact } of SOFTWARE_ARTIFACTS) {
+      const running = runningVersion(host, artifact);
+      const latest = softwareVersions?.configured?.[artifact]?.version;
+      const error = softwareVersions?.configured?.[artifact]?.error;
+      if (!running || !latest || error) {
+        unknown += 1;
+      } else if (running === latest) {
+        upToDate += 1;
+      } else {
+        updatesAvailable += 1;
+      }
+    }
+    return { upToDate, updatesAvailable, unknown };
+  }, [host, softwareVersions]);
   React.useEffect(() => {
     setShowProjects(false);
+    setExpandedArtifacts({});
   }, [host?.id]);
   return (
     <Drawer
@@ -408,53 +566,260 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           </Space>
           {(host.version ||
             host.project_bundle_version ||
-            host.tools_version) && (
-            <Space orientation="vertical" size="small">
-              <Typography.Text strong>Software</Typography.Text>
+            host.tools_version ||
+            softwareVersions) && (
+            <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+              <Space wrap align="center">
+                <Typography.Text strong>Runtime software</Typography.Text>
+                <Popover content={softwareHelp} trigger="click">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<QuestionCircleOutlined />}
+                  />
+                </Popover>
+                {softwareVersions && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<SyncOutlined spin={softwareVersions.loading} />}
+                    onClick={() => {
+                      softwareVersions.refresh().catch((err) => {
+                        console.error("failed to refresh host software versions", err);
+                      });
+                    }}
+                  >
+                    Refresh
+                  </Button>
+                )}
+              </Space>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {[
-                  host.version ? `Host ${host.version}` : null,
-                  host.project_bundle_version
-                    ? `Workspace ${host.project_bundle_version}`
-                    : null,
-                  host.tools_version ? `Tools ${host.tools_version}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" | ")}
+                Configured source: server default software base URL.
+                {softwareVersions?.hubSourceBaseUrl
+                  ? ` Hub source: ${softwareVersions.hubSourceBaseUrl}`
+                  : " Hub source: this site's /software endpoint."}
               </Typography.Text>
+              <Space wrap size={[8, 8]}>
+                <Tag color="green">{softwareSummary.upToDate} up to date</Tag>
+                <Tag color="orange">
+                  {softwareSummary.updatesAvailable} updates available
+                </Tag>
+                {softwareSummary.unknown > 0 && (
+                  <Tag>{softwareSummary.unknown} unknown</Tag>
+                )}
+              </Space>
+              {softwareVersions?.configuredError && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Configured source lookup failed"
+                  description={softwareVersions.configuredError}
+                />
+              )}
+              {softwareVersions?.hubError && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="Hub source lookup failed"
+                  description={softwareVersions.hubError}
+                />
+              )}
+              <Space
+                orientation="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                {SOFTWARE_ARTIFACTS.map(({ artifact, label, runningLabel }) => {
+                  const running = runningVersion(host, artifact);
+                  const buildId = runningBuildId(host, artifact);
+                  const configured = softwareVersions?.configured?.[artifact];
+                  const hubVersion = softwareVersions?.hub?.[artifact];
+                  const commands = cliCommandsForArtifact({ host, artifact });
+                  const expanded = !!expandedArtifacts[artifact];
+                  return (
+                    <Card
+                      key={artifact}
+                      size="small"
+                      bodyStyle={{ padding: "12px" }}
+                    >
+                      <Space
+                        orientation="vertical"
+                        size="small"
+                        style={{ width: "100%" }}
+                      >
+                        <Space wrap align="center">
+                          <Typography.Text strong>{label}</Typography.Text>
+                          {artifactStatusTag({
+                            running,
+                            latest: configured?.version,
+                            error: configured?.error,
+                          })}
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {runningLabel}
+                          </Typography.Text>
+                        </Space>
+                        <Space
+                          wrap
+                          align="center"
+                          style={{ justifyContent: "space-between", width: "100%" }}
+                        >
+                          <Typography.Text type="secondary">
+                            running <code>{running ?? "n/a"}</code> | latest available{" "}
+                            <code>{configured?.version ?? "unknown"}</code>
+                          </Typography.Text>
+                          <Space wrap>
+                            {canUpgrade &&
+                              !host.deleted &&
+                              onUpgradeArtifact && (
+                                <Popconfirm
+                                  title={upgradeTitle({
+                                    label,
+                                    source: "the configured source",
+                                  })}
+                                  okText="Upgrade"
+                                  cancelText="Cancel"
+                                  onConfirm={() =>
+                                    onUpgradeArtifact({
+                                      host,
+                                      artifact,
+                                    })
+                                  }
+                                  disabled={hostOpActive || host.status !== "running"}
+                                >
+                                  <Button
+                                    size="small"
+                                    disabled={hostOpActive || host.status !== "running"}
+                                  >
+                                    Upgrade
+                                  </Button>
+                                </Popconfirm>
+                              )}
+                            <Button
+                              size="small"
+                              type="link"
+                              onClick={() =>
+                                setExpandedArtifacts((prev) => ({
+                                  ...prev,
+                                  [artifact]: !prev[artifact],
+                                }))
+                              }
+                            >
+                              {expanded ? "Hide details" : "Details"}
+                            </Button>
+                          </Space>
+                        </Space>
+                        {expanded && (
+                          <Space
+                            orientation="vertical"
+                            size="small"
+                            style={{ width: "100%" }}
+                          >
+                            {buildId && (
+                              <Typography.Text copyable={{ text: buildId }}>
+                                Build ID: <code>{buildId}</code>
+                              </Typography.Text>
+                            )}
+                            <Typography.Text>
+                              Latest hub source:{" "}
+                              <code>{hubVersion?.version ?? "unknown"}</code>{" "}
+                              {artifactStatusTag({
+                                running,
+                                latest: hubVersion?.version,
+                                error: hubVersion?.error,
+                              })}
+                            </Typography.Text>
+                            <Space wrap>
+                              {canUpgrade &&
+                                !host.deleted &&
+                                onUpgradeArtifact && (
+                                  <Popconfirm
+                                    title={upgradeTitle({
+                                      label,
+                                      source: "this hub source",
+                                    })}
+                                    okText="Upgrade"
+                                    cancelText="Cancel"
+                                    onConfirm={() =>
+                                      onUpgradeArtifact({
+                                        host,
+                                        artifact,
+                                        useHubSource: true,
+                                      })
+                                    }
+                                    disabled={hostOpActive || host.status !== "running"}
+                                  >
+                                    <Button
+                                      size="small"
+                                      disabled={hostOpActive || host.status !== "running"}
+                                    >
+                                      Upgrade from hub
+                                    </Button>
+                                  </Popconfirm>
+                                )}
+                              <Popover
+                                trigger="click"
+                                title={`${label} CLI`}
+                                content={
+                                  <div style={{ maxWidth: 520 }}>
+                                    {commands.map((command) => (
+                                      <Typography.Paragraph
+                                        key={command}
+                                        copyable={{ text: command }}
+                                        style={{ marginBottom: 8 }}
+                                      >
+                                        <code>{command}</code>
+                                      </Typography.Paragraph>
+                                    ))}
+                                  </div>
+                                }
+                              >
+                                <Button size="small" type="text" icon={<CodeOutlined />}>
+                                  CLI
+                                </Button>
+                              </Popover>
+                            </Space>
+                          </Space>
+                        )}
+                      </Space>
+                    </Card>
+                  );
+                })}
+              </Space>
+              <Space wrap>
+                {canUpgrade && host && !host.deleted && onUpgrade && (
+                  <Popconfirm
+                    title={upgradeConfirmContent}
+                    okText="Upgrade"
+                    cancelText="Cancel"
+                    onConfirm={() => onUpgrade(host)}
+                    disabled={hostOpActive || host.status !== "running"}
+                  >
+                    <Button
+                      size="small"
+                      disabled={hostOpActive || host.status !== "running"}
+                    >
+                      Upgrade all
+                    </Button>
+                  </Popconfirm>
+                )}
+                {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
+                  <Popconfirm
+                    title={upgradeFromHubConfirmContent}
+                    okText="Upgrade"
+                    cancelText="Cancel"
+                    onConfirm={() => onUpgradeFromHub(host)}
+                    disabled={hostOpActive || host.status !== "running"}
+                  >
+                    <Button
+                      size="small"
+                      disabled={hostOpActive || host.status !== "running"}
+                    >
+                      Upgrade all from hub
+                    </Button>
+                  </Popconfirm>
+                )}
+              </Space>
             </Space>
-          )}
-          {canUpgrade && host && !host.deleted && onUpgrade && (
-            <Popconfirm
-              title={upgradeConfirmContent}
-              okText="Upgrade"
-              cancelText="Cancel"
-              onConfirm={() => onUpgrade(host)}
-              disabled={hostOpActive || host.status !== "running"}
-            >
-              <Button
-                size="small"
-                disabled={hostOpActive || host.status !== "running"}
-              >
-                Upgrade software
-              </Button>
-            </Popconfirm>
-          )}
-          {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
-            <Popconfirm
-              title={upgradeConfirmContent}
-              okText="Upgrade"
-              cancelText="Cancel"
-              onConfirm={() => onUpgradeFromHub(host)}
-              disabled={hostOpActive || host.status !== "running"}
-            >
-              <Button
-                size="small"
-                disabled={hostOpActive || host.status !== "running"}
-              >
-                Upgrade from hub source
-              </Button>
-            </Popconfirm>
           )}
           {showConnectorWarning && selfHost && (
             <Alert

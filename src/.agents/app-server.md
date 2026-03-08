@@ -37,6 +37,7 @@ This should replace ad hoc per-app special cases over time.
 2. Cost guardrails are currently warning/policy-hint driven; deeper throttling/limits tuning remains.
 3. The Apps page is coherent enough for real use now, but still needs visual/product polish, broader template coverage, and better advanced workflow presentation.
 4. Static refresh jobs are implemented in an activity-driven first slice (run on first/stale hit with timeout + logs), but sandbox-ephemeral execution mode and richer scheduling policies are still pending.
+5. App portability is partially implemented/planned: project clone should already carry app specs because they live in the workspace filesystem, and explicit CLI export/import/clone flows are being added; dedicated frontend download/upload UX is still pending.
 
 ### Not Done
 
@@ -85,7 +86,46 @@ Rationale:
 
 Optional compatibility:
 
-1. Provide explicit `app export/import` CLI for migration and backup.
+1. Provide explicit `app export/import/clone` CLI for migration, backup, and agent workflows.
+
+### 5.1.1 Portability, Import/Export, and Clone
+
+App specs should be easy to move around without copying runtime state.
+
+Requirements:
+
+1. Export one app or all apps as JSON so users can download/share a config bundle.
+2. Import one app spec or a multi-app bundle into another project.
+3. Support direct app-spec clone between workspaces in the CLI so agents do not have to round-trip through local files.
+4. Preserve only declarative app specs; do not clone runtime state, process state, logs, or public-exposure leases/tokens.
+5. Make it clear that "clone project" is different from "clone app spec":
+   - full project clone should already carry app specs automatically because the workspace filesystem clone includes `.local/share/cocalc/apps`,
+   - runtime state and exposure metadata should still be re-created on first use in the destination environment.
+
+Proposed portable bundle shape:
+
+```json
+{
+  "version": 1,
+  "kind": "cocalc-app-spec-bundle",
+  "exported_at": "2026-03-07T00:00:00.000Z",
+  "workspace_id": "source-workspace-id",
+  "apps": [{ "...": "normalized app specs" }]
+}
+```
+
+CLI/UI implications:
+
+1. CLI:
+   - `cocalc workspace app export <app-id>`
+   - `cocalc workspace app export-all`
+   - `cocalc workspace app import --file ...`
+   - `cocalc workspace app clone <app-id> --from-workspace ... --to-workspace ...`
+   - `cocalc workspace app clone-all --from-workspace ... --to-workspace ...`
+2. Frontend:
+   - download one app config or an all-app bundle,
+   - upload/import a saved bundle,
+   - eventually "Copy to another project" for direct in-product clone.
 
 ### 5.2 Runtime State
 
@@ -405,6 +445,10 @@ Core commands:
 11. `cocalc workspace app ensure-running <app-id> --json`
 12. `cocalc workspace app detect --json`
 13. `cocalc workspace app audit <app-id> --public-readiness --json`
+14. `cocalc workspace app export <app-id> --json`
+15. `cocalc workspace app export-all --json`
+16. `cocalc workspace app import --file app.json --json`
+17. `cocalc workspace app clone <app-id> --from-workspace <src> --to-workspace <dst> --json`
 
 Agent-critical behavior:
 
@@ -741,6 +785,10 @@ Existing components to reuse where possible:
 17. `[todo]` Add "Install with agent" from app presets and app rows (with suggested install prompts and post-install verification/start).
 18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
+20. `[partial]` Add app portability workflows:
+   - explicit CLI export/import/clone,
+   - document that full project clone already carries app specs because they live in the workspace filesystem,
+   - frontend download/upload/"copy to another project" UX still pending.
 
 ## 19.1 Next Execution Order
 
@@ -769,11 +817,14 @@ These are the remaining items that matter most to calling A1.4 effectively finis
 3. do a focused XSS/origin-isolation audit for managed apps:
    - verify which CoCalc cookies or bearer mechanisms can ever reach private app requests,
    - verify which cookies are stripped before upstream proxying,
-   - strip project-host auth/session cookies before forwarding traffic upstream to the managed app,
-   - scope the project-host session cookie as narrowly as possible instead of using a broad path,
-   - audit project-host session-cookie scope/path/domain behavior,
-   - determine whether additional per-project/per-app origin isolation is required for private apps,
-   - harden static HTML serving assumptions accordingly.
+   - done: strip project-host bootstrap bearer auth header after validation so it is not proxied upstream,
+   - done: strip project-host auth/session cookies before forwarding traffic upstream to the managed app,
+   - done: scope the project-host session cookie as narrowly as possible instead of using a broad path,
+   - done: validate live that the project-host session cookie is scoped to `/${project_id}` and that a private app in project A cannot fetch a private app in project B on the same host,
+   - done: add regression coverage for project-host session-cookie scope and project-host `/customize` payload trimming,
+   - done: trim project-host `/customize` so it no longer exposes `account_id`,
+   - done: explicitly choose the same-project trust model for private apps and document it in `docs/security/private-app-trust-model.md`,
+   - next: harden static HTML serving assumptions accordingly.
 4. change Cloudflare public-app routing so traffic bypasses the central hub and goes directly to the target project-host:
    - the current implementation points public app hostnames at the same Cloudflare/site target as the main site and then relies on hub-side hostname rewrite + proxying,
    - this is a blocker because it adds unnecessary latency and, on metered providers such as GCP, can double backhaul traffic and create unacceptable egress cost,
@@ -790,6 +841,7 @@ These improve the product substantially, but do not need to block first public r
 3. deeper host-aware egress guardrails beyond warnings/policy hints.
 4. richer static refresh policy options and sandbox-ephemeral execution.
 5. iframe/embed polish and better "open in full tab" fallback behavior.
+6. frontend import/export/"copy to another project" workflows for app configs.
 
 ### Longer-term platform work
 

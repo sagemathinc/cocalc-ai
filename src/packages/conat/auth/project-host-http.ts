@@ -5,3 +5,5 @@
 export const PROJECT_HOST_HTTP_AUTH_QUERY_PARAM = "cocalc_project_host_token";
 export const PROJECT_HOST_HTTP_AUTH_COOKIE_NAME =
   "cocalc_project_host_http_bearer";
+export const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME =
+  "cocalc_project_host_http_session";

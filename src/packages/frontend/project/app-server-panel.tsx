@@ -3,8 +3,22 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Checkbox, Divider, Input, Modal, Popconfirm, Select, Space, Spin, Tag } from "antd";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Collapse,
+  Dropdown,
+  Empty,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Spin,
+  Tag,
+} from "antd";
 import type {
   AppSpec,
   AppPublicReadinessAudit,
@@ -53,6 +67,9 @@ interface AppServerPreset {
   staticRefreshTimeout?: string;
   staticRefreshOnHit?: boolean;
   note?: string;
+  installCommand?: string;
+  installHint?: string;
+  installAgentPrompt?: string;
 }
 
 interface StartupFailureDetails {
@@ -61,11 +78,111 @@ interface StartupFailureDetails {
   errorMessage: string;
   stdoutTail?: string;
   stderrTail?: string;
+  installCommand?: string;
+  installHint?: string;
+  installAgentPrompt?: string;
 }
+
+interface PortableAppSpecBundle {
+  version: 1;
+  kind: "cocalc-app-spec-bundle";
+  exported_at: string;
+  workspace_id: string;
+  apps: AppSpec[];
+  skipped?: Array<{ id: string; path?: string; error: string }>;
+}
+
+const APP_SECURITY_MARKDOWN = `
+### Security model
+
+- Private managed apps use a **same-project trust model**.
+- Opening a private app is similar to running project code from a notebook, terminal, or other project file.
+- A private app is **not** an internal sandbox against other code in the same project.
+
+### What CoCalc is designed to protect
+
+- Public apps are exposed on separate public hostnames.
+- Project-host session cookies are scoped to the current project instead of the whole host.
+- Project-host auth/session cookies and bootstrap bearer headers are stripped before traffic is proxied upstream to the app.
+- Private apps in one project cannot fetch private apps in another project on the same host.
+
+### What this means in practice
+
+- Do **not** open untrusted private apps in projects that contain sensitive files or secrets.
+- Use **Expose** if an app should be reachable by other people on its own public hostname.
+- Use **Audit with Codex** before exposing an app publicly if you want an extra review pass.
+
+More detail: \`docs/security/private-app-trust-model.md\`
+`;
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
   return new Error(`${err}`);
+}
+
+function asPortableSpec(input: unknown, context: string): AppSpec {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`${context} must be a JSON object`);
+  }
+  const id = `${(input as any).id ?? ""}`.trim();
+  if (!id) {
+    throw new Error(`${context}.id must be a non-empty string`);
+  }
+  return input as AppSpec;
+}
+
+function createPortableBundle(
+  projectId: string,
+  apps: AppSpec[],
+  skipped?: Array<{ id: string; path?: string; error: string }>,
+): PortableAppSpecBundle {
+  return {
+    version: 1,
+    kind: "cocalc-app-spec-bundle",
+    exported_at: new Date().toISOString(),
+    workspace_id: projectId,
+    apps,
+    skipped: skipped?.length ? skipped : undefined,
+  };
+}
+
+function parseImportPayload(input: unknown): {
+  format: "single" | "bundle";
+  apps: AppSpec[];
+  sourceWorkspaceId?: string;
+} {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Import file must contain a JSON object.");
+  }
+  const obj = input as Record<string, any>;
+  if (Array.isArray(obj.apps)) {
+    return {
+      format: "bundle",
+      apps: obj.apps.map((spec, idx) => asPortableSpec(spec, `apps[${idx}]`)),
+      sourceWorkspaceId:
+        typeof obj.workspace_id === "string" && obj.workspace_id.trim()
+          ? obj.workspace_id.trim()
+          : undefined,
+    };
+  }
+  return {
+    format: "single",
+    apps: [asPortableSpec(obj, "spec")],
+  };
+}
+
+function downloadJsonFile(filename: string, value: unknown): void {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function defaultBasePath(appId: string): string {
@@ -179,6 +296,38 @@ function buildPublicUrlFromExposure(
   return hostname ? `https://${hostname}` : undefined;
 }
 
+function normalizeCommand(exec?: string, args?: string[]): string {
+  return exec ? [exec, ...(args ?? [])].join(" ").trim() : "";
+}
+
+function matchPresetForSpec(
+  spec: AppSpec | undefined,
+  presets: AppServerPreset[],
+): AppServerPreset | undefined {
+  if (!spec) return;
+  const byId = presets.find((preset) => preset.id === spec.id);
+  if (byId) return byId;
+  if (spec.kind === "service") {
+    const command = normalizeCommand(spec.command?.exec, spec.command?.args);
+    return presets.find(
+      (preset) =>
+        preset.kind === "service" &&
+        normalizeCommand("bash", ["-lc", preset.command ?? ""]) === command,
+    );
+  }
+  if (spec.kind === "static") {
+    return presets.find(
+      (preset) =>
+        preset.kind === "static" &&
+        `${preset.staticIndex ?? ""}`.trim() ===
+          `${spec.static?.index ?? ""}`.trim() &&
+        `${preset.staticRefreshCommand ?? ""}`.trim() ===
+          `${spec.static?.refresh?.command?.args?.[1] ?? ""}`.trim(),
+    );
+  }
+  return;
+}
+
 function isPositiveIntegerText(value: string): boolean {
   const text = `${value ?? ""}`.trim();
   if (!text) return false;
@@ -197,6 +346,11 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       preferredPort: "6002",
       serviceOpenMode: "port",
       healthPath: "/lab",
+      installCommand: "apt-get update && apt-get install -y jupyterlab jupyter",
+      installHint:
+        "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
+      installAgentPrompt:
+        "Install JupyterLab in the current workspace so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
       command:
         "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
     },
@@ -208,6 +362,11 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       title: "code-server",
       preferredPort: "6004",
       serviceOpenMode: "proxy",
+      installCommand: "curl -fsSL https://code-server.dev/install.sh | sh",
+      installHint:
+        "code-server is not installed in this workspace image yet. The upstream installer works well on most Linux systems.",
+      installAgentPrompt:
+        "Install code-server in the current workspace so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
       command:
         "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
     },
@@ -219,6 +378,11 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       title: "Pluto",
       preferredPort: "6005",
       serviceOpenMode: "proxy",
+      installCommand: "julia -e 'using Pkg; Pkg.add(\"Pluto\")'",
+      installHint:
+        "Pluto needs Julia plus the Pluto package in this workspace environment.",
+      installAgentPrompt:
+        "Install Pluto for the current workspace so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
       command:
         "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
     },
@@ -230,6 +394,10 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       title: "RStudio Server",
       preferredPort: "6006",
       serviceOpenMode: "proxy",
+      installHint:
+        "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
+      installAgentPrompt:
+        "Set up RStudio Server (rserver) in the current Linux workspace or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
       command:
         "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
     },
@@ -350,6 +518,7 @@ export function AppServerPanel({
     stdout: string;
     stderr: string;
   } | null>(null);
+  const [securityOpen, setSecurityOpen] = useState<boolean>(false);
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
@@ -368,11 +537,30 @@ export function AppServerPanel({
   const [publicAppPolicy, setPublicAppPolicy] = useState<
     PublicAppPolicy | undefined
   >(undefined);
+  const [transferBusy, setTransferBusy] = useState<boolean>(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
+  const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
     [presets, presetKey],
   );
+  const installedTemplateMap = useMemo(
+    () =>
+      Object.fromEntries(
+        installedTemplates.map((item) => [item.key, item] as const),
+      ) as Record<string, InstalledAppTemplate | undefined>,
+    [installedTemplates],
+  );
+  const activePresetTemplate = activePreset
+    ? installedTemplateMap[activePreset.key]
+    : undefined;
+  const unavailableActivePreset =
+    activePreset && activePresetTemplate && !activePresetTemplate.available
+      ? activePreset
+      : undefined;
 
   const canSaveForm = useMemo(() => {
     const id = `${appId ?? ""}`.trim();
@@ -435,6 +623,33 @@ export function AppServerPanel({
     });
   }, [rowFilter, rowSearch, rows, specById, startupFailures]);
 
+  const summaryCounts = useMemo(() => {
+    const running = rows.filter((row) => row.state === "running").length;
+    const exposed = rows.filter((row) => isPublicExposure(row)).length;
+    const attention = rows.filter(
+      (row) =>
+        !!row.error ||
+        !!startupFailures[row.id] ||
+        (row.warnings?.length ?? 0) > 0,
+    ).length;
+    return {
+      total: rows.length,
+      running,
+      stopped: Math.max(0, rows.length - running),
+      exposed,
+      attention,
+    };
+  }, [rows, startupFailures]);
+
+  const quickPresetKeys = useMemo(
+    () => ["jupyterlab", "code-server", "pluto", "rstudio", "python-hello", "static-hello"],
+    [],
+  );
+  const quickPresets = useMemo(
+    () => presets.filter((preset) => quickPresetKeys.includes(preset.key)),
+    [presets, quickPresetKeys],
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function loadPublicAppPolicy() {
@@ -496,6 +711,17 @@ export function AppServerPanel({
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (creatorInitialized || loading) return;
+    setCreatorOpen(rows.length === 0);
+    setCreatorInitialized(true);
+  }, [creatorInitialized, loading, rows.length]);
+
+  useEffect(() => {
+    if (detectingInstalledTemplates || installedTemplates.length > 0) return;
+    void onDetectInstalledTemplates();
+  }, [detectingInstalledTemplates, installedTemplates.length]);
+
   function applyPreset(nextKey: string) {
     const preset = presets.find((x) => x.key === nextKey);
     if (!preset) return;
@@ -525,6 +751,91 @@ export function AppServerPanel({
       setStartNow(false);
       setOpenWhenReady(false);
     }
+  }
+
+  function toggleRowExpanded(id: string) {
+    setExpandedRows((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  }
+
+  async function sendAgentPrompt(prompt: string, tag: string) {
+    const text = `${prompt ?? ""}`.trim();
+    if (!text) return;
+    try {
+      setSubmittingToAgent(true);
+      const sent = await submitNavigatorPromptToCurrentThread({
+        project_id,
+        prompt: text,
+        tag,
+        forceCodex: true,
+        openFloating: true,
+      });
+      if (!sent) {
+        dispatchNavigatorPromptIntent({
+          prompt: text,
+          tag,
+          forceCodex: true,
+        });
+      }
+    } finally {
+      setSubmittingToAgent(false);
+    }
+  }
+
+  async function resolveInstalledTemplateMap(): Promise<
+    Record<string, InstalledAppTemplate | undefined>
+  > {
+    if (installedTemplates.length > 0) return installedTemplateMap;
+    const next = await api.apps.detectInstalledTemplates();
+    setInstalledTemplates(next);
+    return Object.fromEntries(
+      next.map((item) => [item.key, item] as const),
+    ) as Record<string, InstalledAppTemplate | undefined>;
+  }
+
+  async function getMissingInstallForSpec(spec: AppSpec | undefined): Promise<
+    | {
+        preset: AppServerPreset;
+        template?: InstalledAppTemplate;
+      }
+    | undefined
+  > {
+    const preset = matchPresetForSpec(spec, presets);
+    if (!preset || preset.kind !== "service") return;
+    const map = await resolveInstalledTemplateMap();
+    const template = map[preset.key];
+    if (!template?.available) {
+      return { preset, template };
+    }
+    return;
+  }
+
+  function reportMissingInstall({
+    appId,
+    action,
+    preset,
+    template,
+  }: {
+    appId: string;
+    action: "start" | "start-after-save";
+    preset: AppServerPreset;
+    template?: InstalledAppTemplate;
+  }) {
+    const details = `${template?.details ?? ""}`.trim();
+    const message = `${preset.label} is not installed in this workspace yet. Install it, then start this app again.`;
+    setStartupFailures((prev) => ({
+      ...prev,
+      [appId]: {
+        appId,
+        action,
+        errorMessage: details ? `${message} (${details})` : message,
+        installCommand: preset.installCommand,
+        installHint: preset.installHint,
+        installAgentPrompt: preset.installAgentPrompt,
+      },
+    }));
   }
 
   async function openStatus(status: ManagedAppStatus) {
@@ -697,7 +1008,21 @@ export function AppServerPanel({
       createdId = id;
       let status = await api.apps.statusApp(id);
       if (startNow && spec.kind === "service") {
-        status = await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
+        const missingInstall = await getMissingInstallForSpec(spec);
+        if (missingInstall) {
+          await refresh();
+          reportMissingInstall({
+            appId: id,
+            action: "start-after-save",
+            preset: missingInstall.preset,
+            template: missingInstall.template,
+          });
+          return;
+        }
+        status = await api.apps.ensureRunning(id, {
+          timeout: 90_000,
+          interval: 1000,
+        });
       }
       await refresh();
       if (openWhenReady && status.state === "running") {
@@ -724,6 +1049,18 @@ export function AppServerPanel({
       setSubmitting(true);
       setError(undefined);
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
+      const spec = specById[id] ?? (await api.apps.getAppSpec(id));
+      setSpecById((prev) => ({ ...prev, [id]: spec }));
+      const missingInstall = await getMissingInstallForSpec(spec);
+      if (missingInstall) {
+        reportMissingInstall({
+          appId: id,
+          action: "start",
+          preset: missingInstall.preset,
+          template: missingInstall.template,
+        });
+        return;
+      }
       await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
       await refresh();
     } catch (err) {
@@ -815,36 +1152,12 @@ export function AppServerPanel({
       setError(undefined);
       const next = await api.apps.auditAppPublicReadiness(id);
       setAudit(next);
-      await sendAuditToAgent(next.agent_prompt);
+      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit");
     } catch (err) {
       setError(normalizeError(err));
     } finally {
       setSubmitting(false);
       setRowAction(null);
-    }
-  }
-
-  async function sendAuditToAgent(prompt: string) {
-    const text = `${prompt ?? ""}`.trim();
-    if (!text) return;
-    try {
-      setSubmittingToAgent(true);
-      const sent = await submitNavigatorPromptToCurrentThread({
-        project_id,
-        prompt: text,
-        tag: "intent:app-server-audit",
-        forceCodex: true,
-        openFloating: true,
-      });
-      if (!sent) {
-        dispatchNavigatorPromptIntent({
-          prompt: text,
-          tag: "intent:app-server-audit",
-          forceCodex: true,
-        });
-      }
-    } finally {
-      setSubmittingToAgent(false);
     }
   }
 
@@ -886,6 +1199,18 @@ export function AppServerPanel({
       for (const id of ids) {
         setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
         try {
+          const spec = specById[id] ?? (await api.apps.getAppSpec(id));
+          setSpecById((prev) => ({ ...prev, [id]: spec }));
+          const missingInstall = await getMissingInstallForSpec(spec);
+          if (missingInstall) {
+            reportMissingInstall({
+              appId: id,
+              action: "start",
+              preset: missingInstall.preset,
+              template: missingInstall.template,
+            });
+            continue;
+          }
           await api.apps.ensureRunning(id, { timeout: 90_000, interval: 1000 });
         } catch (err) {
           await reportStartupFailure({ appId: id, action: "start", err });
@@ -911,6 +1236,91 @@ export function AppServerPanel({
       setError(normalizeError(err));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onExport(id: string) {
+    try {
+      setTransferBusy(true);
+      setError(undefined);
+      let spec = specById[id];
+      if (!spec) {
+        spec = await api.apps.getAppSpec(id);
+        setSpecById((prev) => ({ ...prev, [id]: spec }));
+      }
+      downloadJsonFile(`${id}.app.json`, spec);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function onExportAll() {
+    try {
+      setTransferBusy(true);
+      setError(undefined);
+      const records = await api.apps.listAppSpecs();
+      const apps: AppSpec[] = [];
+      const skipped: Array<{ id: string; path?: string; error: string }> = [];
+      for (const row of records) {
+        if (row.spec) {
+          apps.push(row.spec);
+        } else {
+          skipped.push({
+            id: row.id,
+            path: row.path,
+            error: row.error ?? "spec unavailable",
+          });
+        }
+      }
+      downloadJsonFile(
+        `${project_id}-managed-apps.json`,
+        createPortableBundle(project_id, apps, skipped),
+      );
+      if (skipped.length > 0) {
+        Modal.warning({
+          title: "Exported with skipped invalid app specs",
+          content: `Exported ${apps.length} app(s). Skipped ${skipped.length} invalid spec file(s).`,
+        });
+      }
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function onImportFile(file: File) {
+    try {
+      setTransferBusy(true);
+      setError(undefined);
+      const raw = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        throw new Error(`Failed to parse ${file.name} as JSON: ${err}`);
+      }
+      const { format, apps, sourceWorkspaceId } = parseImportPayload(parsed);
+      for (const spec of apps) {
+        await api.apps.upsertAppSpec(spec);
+      }
+      await refresh();
+      Modal.success({
+        title: `Imported ${apps.length} app${apps.length === 1 ? "" : "s"}`,
+        content:
+          format === "bundle" && sourceWorkspaceId
+            ? `Imported from workspace ${sourceWorkspaceId}.`
+            : undefined,
+      });
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setTransferBusy(false);
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
     }
   }
 
@@ -954,6 +1364,48 @@ export function AppServerPanel({
       setEditSpecError(`${normalizeError(err).message}`);
     } finally {
       setEditSpecLoading(false);
+    }
+  }
+
+  function onRowMenuAction(
+    row: ManagedAppStatus,
+    action:
+      | "expose"
+      | "unexpose"
+      | "audit"
+      | "logs"
+      | "export"
+      | "edit"
+      | "delete",
+  ) {
+    switch (action) {
+      case "expose":
+        void onExpose(row.id);
+        return;
+      case "unexpose":
+        void onUnexpose(row.id);
+        return;
+      case "audit":
+        void onAuditWithAgent(row.id);
+        return;
+      case "logs":
+        void onLogs(row.id);
+        return;
+      case "export":
+        void onExport(row.id);
+        return;
+      case "edit":
+        void onEditSpec(row.id);
+        return;
+      case "delete":
+        Modal.confirm({
+          title: "Delete app spec?",
+          content: `Delete '${row.id}' and its managed status.`,
+          okText: "Delete",
+          okButtonProps: { danger: true },
+          onOk: async () => onDelete(row.id),
+        });
+        return;
     }
   }
 
@@ -1060,212 +1512,377 @@ export function AppServerPanel({
   }
 
   return (
-    <div>
-      <Paragraph style={{ color: "#666", marginBottom: "8px" }}>
-        Create and manage applications for this workspace, including private
-        service apps and static apps.
-      </Paragraph>
+    <div style={{ display: "grid", gap: "12px" }}>
+      <div>
+        <div style={{ fontSize: "20px", fontWeight: 700, marginBottom: "4px" }}>
+          Managed Applications
+        </div>
+        <Paragraph style={{ color: "#666", marginBottom: 0 }}>
+          Run, expose, and troubleshoot workspace apps without mixing this page
+          with normal file-creation workflows.
+        </Paragraph>
+      </div>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          void onImportFile(file);
+        }}
+      />
       <ShowError error={error} setError={() => setError(undefined)} />
-      <Space direction="vertical" style={{ width: "100%" }} size={8}>
-        <Select
-          value={presetKey || undefined}
-          placeholder="Preset (optional)"
-          allowClear
-          onClear={() => setPresetKey("")}
-          onChange={(value) => applyPreset(value)}
-          options={presets.map((preset) => ({
-            value: preset.key,
-            label: preset.label,
-          }))}
-        />
-        {activePreset?.note ? (
-          <Alert type="info" showIcon message={activePreset.note} />
-        ) : null}
-        <Space.Compact style={{ width: "100%" }}>
-          <Select<AppKind>
-            value={kind}
-            style={{ width: "130px" }}
-            options={[
-              { label: "Service", value: "service" },
-              { label: "Static", value: "static" },
-            ]}
-            onChange={(value) => setKind(value)}
-          />
-          <Input
-            value={appId}
-            placeholder="app-id (e.g. streamlit-demo)"
-            onChange={(e) => {
-              const next = e.target.value;
-              const previousDefault = defaultBasePath(appId);
-              setAppId(next);
-              if (!basePath || basePath === previousDefault) {
-                setBasePath(defaultBasePath(next));
-              }
-            }}
-          />
-        </Space.Compact>
-        <Input
-          value={title}
-          placeholder="Title (optional)"
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <Input
-          value={basePath}
-          placeholder={`/apps/${appId || "my-app"}`}
-          onChange={(e) => setBasePath(e.target.value)}
-        />
-        {kind === "service" ? (
-          <>
-            <Input
-              value={command}
-              placeholder="Command (runs as: bash -lc ...)"
-              onChange={(e) => setCommand(e.target.value)}
-            />
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={port}
-                placeholder="Preferred port (optional)"
-                onChange={(e) => setPort(e.target.value)}
-              />
-              <Input
-                value={healthPath}
-                placeholder="Health path (optional, e.g. /health)"
-                onChange={(e) => setHealthPath(e.target.value)}
-              />
-              <Select<AppServiceOpenMode>
-                value={serviceOpenMode}
-                style={{ width: "170px" }}
-                options={[
-                  { label: "Open: /proxy", value: "proxy" },
-                  { label: "Open: /port", value: "port" },
-                ]}
-                onChange={(value) => setServiceOpenMode(value)}
-              />
-            </Space.Compact>
-            <Paragraph style={{ color: "#666", margin: 0, fontSize: "12px" }}>
-              Open mode: <code>/proxy</code> strips your app base path before
-              forwarding; <code>/port</code> keeps the raw port-style URL path.
-              Use <code>/port</code> for apps that do not proxy cleanly behind
-              stripped base paths.
-            </Paragraph>
-          </>
-        ) : (
-          <>
-            <Input
-              value={staticRoot}
-              placeholder="Static root path (e.g. /home/user/project/site)"
-              onChange={(e) => setStaticRoot(e.target.value)}
-            />
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={staticIndex}
-                placeholder="Index file (optional)"
-                onChange={(e) => setStaticIndex(e.target.value)}
-              />
-              <Input
-                value={staticCacheControl}
-                placeholder="Cache-Control (optional)"
-                onChange={(e) => setStaticCacheControl(e.target.value)}
-              />
-            </Space.Compact>
-            <Input
-              value={staticRefreshCommand}
-              placeholder="Refresh command (optional, runs on first/stale hit)"
-              onChange={(e) => setStaticRefreshCommand(e.target.value)}
-            />
-            <Space.Compact style={{ width: "100%" }}>
-              <Input
-                value={staticRefreshStaleAfter}
-                placeholder="Refresh stale-after seconds (default 3600)"
-                onChange={(e) => setStaticRefreshStaleAfter(e.target.value)}
-              />
-              <Input
-                value={staticRefreshTimeout}
-                placeholder="Refresh timeout seconds (default 120)"
-                onChange={(e) => setStaticRefreshTimeout(e.target.value)}
-              />
-            </Space.Compact>
-            <Checkbox
-              checked={staticRefreshOnHit}
-              onChange={(e) => setStaticRefreshOnHit(e.target.checked)}
+      <Card size="small" style={{ background: "#fafafa", borderColor: "#efefef" }}>
+        <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
+          <Space wrap>
+            <Tag color="blue">apps {summaryCounts.total}</Tag>
+            <Tag color={summaryCounts.running > 0 ? "green" : "default"}>
+              running {summaryCounts.running}
+            </Tag>
+            <Tag color={summaryCounts.exposed > 0 ? "gold" : "default"}>
+              public {summaryCounts.exposed}
+            </Tag>
+            <Tag color={summaryCounts.attention > 0 ? "red" : "default"}>
+              attention {summaryCounts.attention}
+            </Tag>
+          </Space>
+          <Space wrap>
+            <Button onClick={() => setCreatorOpen((open) => !open)}>
+              {creatorOpen ? "Hide new app form" : "New app"}
+            </Button>
+            <Button onClick={() => setSecurityOpen(true)}>Security?</Button>
+            <Button onClick={() => void refresh()} disabled={loading}>
+              Refresh
+            </Button>
+            <Button onClick={() => void onExportAll()} loading={transferBusy}>
+              Export all
+            </Button>
+            <Button
+              onClick={() => importInputRef.current?.click()}
+              disabled={transferBusy}
             >
-              Trigger refresh on hit when stale
-            </Checkbox>
-          </>
-        )}
-        <Space wrap>
-          <Checkbox checked={startNow} onChange={(e) => setStartNow(e.target.checked)}>
-            Start after save
-          </Checkbox>
-          <Checkbox
-            checked={openWhenReady}
-            onChange={(e) => setOpenWhenReady(e.target.checked)}
-          >
-            Open when ready
-          </Checkbox>
-          <Button
-            type="primary"
-            loading={formSubmitting}
-            disabled={!canSaveForm}
-            onClick={() => void onCreate()}
-          >
-            Save app
-          </Button>
-          <Button onClick={() => void refresh()} disabled={loading}>
-            Refresh
-          </Button>
-          <Button onClick={() => void onDetect()} loading={detecting}>
-            Detect running HTTP apps
-          </Button>
-          <Button
-            onClick={() => void onDetectInstalledTemplates()}
-            loading={detectingInstalledTemplates}
-          >
-            Detect installed templates
-          </Button>
+              Import JSON
+            </Button>
+            <Button onClick={() => void onDetect()} loading={detecting}>
+              Detect running HTTP apps
+            </Button>
+            <Button
+              onClick={() => void onDetectInstalledTemplates()}
+              loading={detectingInstalledTemplates}
+            >
+              Detect installed templates
+            </Button>
+          </Space>
         </Space>
-        <Divider style={{ margin: "8px 0" }} />
-        <div style={{ fontWeight: 600 }}>Public expose defaults</div>
-        <Space.Compact style={{ width: "100%" }}>
-          <Input
-            value={exposeTtlHours}
-            onChange={(e) => setExposeTtlHours(e.target.value)}
-            placeholder="TTL hours (e.g. 24)"
-          />
-          <Select<"none" | "token">
-            value={exposeAuthFront}
-            style={{ width: "140px" }}
-            options={[
-              { label: "No front auth", value: "none" },
-              { label: "Token gate", value: "token" },
-            ]}
-            onChange={(value) => setExposeAuthFront(value)}
-          />
-        </Space.Compact>
-        <Space wrap>
-          <Checkbox
-            checked={exposeRandomSubdomain}
-            onChange={(e) => setExposeRandomSubdomain(e.target.checked)}
-          >
-            Random subdomain
-          </Checkbox>
-          {!exposeRandomSubdomain ? (
-            <Input
-              value={exposeSubdomainLabel}
-              onChange={(e) => setExposeSubdomainLabel(e.target.value)}
-              placeholder="subdomain label (optional)"
-              style={{ width: "220px" }}
+      </Card>
+      <Card
+        size="small"
+        title="Create a managed application"
+        extra={
+          <Button type="link" onClick={() => setCreatorOpen((open) => !open)}>
+            {creatorOpen ? "Collapse" : "Expand"}
+          </Button>
+        }
+      >
+        {!creatorOpen ? (
+          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+            <Paragraph style={{ color: "#666", marginBottom: 0 }}>
+              Start from a preset or expand the full form when you need custom
+              commands and proxy settings.
+            </Paragraph>
+            <Space wrap>
+              {quickPresets.map((preset) => (
+                <Button
+                  key={preset.key}
+                  onClick={() => {
+                    applyPreset(preset.key);
+                    setCreatorOpen(true);
+                  }}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </Space>
+          </Space>
+        ) : (
+          <Space direction="vertical" style={{ width: "100%" }} size={10}>
+            <Select
+              value={presetKey || undefined}
+              placeholder="Preset (optional)"
+              allowClear
+              style={{ width: "100%", minWidth: "320px" }}
+              onClear={() => setPresetKey("")}
+              onChange={(value) => applyPreset(value)}
+              options={presets.map((preset) => ({
+                value: preset.key,
+                label: preset.label,
+              }))}
             />
-          ) : null}
-        </Space>
-      </Space>
-      <Divider style={{ margin: "14px 0" }} />
+            {activePreset?.note ? (
+              <Alert type="info" showIcon message={activePreset.note} />
+            ) : null}
+            {unavailableActivePreset && activePresetTemplate ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={`${unavailableActivePreset.label} is not installed yet`}
+                description={
+                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    <div>
+                      {unavailableActivePreset.installHint ??
+                        "Install this runtime in the workspace before trying to start the app."}
+                    </div>
+                    {activePresetTemplate.details ? (
+                      <div style={{ opacity: 0.8 }}>
+                        Detected state: {activePresetTemplate.details}
+                      </div>
+                    ) : null}
+                    {unavailableActivePreset.installCommand ? (
+                      <div
+                        style={{
+                          fontFamily: "monospace",
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
+                          padding: "8px",
+                          background: "#fafafa",
+                          border: "1px solid #eee",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        {unavailableActivePreset.installCommand}
+                      </div>
+                    ) : null}
+                    {unavailableActivePreset.installAgentPrompt ? (
+                      <div>
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            void sendAgentPrompt(
+                              unavailableActivePreset.installAgentPrompt ?? "",
+                              "intent:app-server-install",
+                            )
+                          }
+                          loading={submittingToAgent}
+                        >
+                          Install with agent
+                        </Button>
+                      </div>
+                    ) : null}
+                  </Space>
+                }
+              />
+            ) : null}
+            <Collapse
+              defaultActiveKey={["basics", kind === "service" ? "runtime" : "static"]}
+              items={[
+                {
+                  key: "basics",
+                  label: "Basics",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                      <Space.Compact style={{ width: "100%" }}>
+                        <Select<AppKind>
+                          value={kind}
+                          style={{ width: "130px" }}
+                          options={[
+                            { label: "Service", value: "service" },
+                            { label: "Static", value: "static" },
+                          ]}
+                          onChange={(value) => setKind(value)}
+                        />
+                        <Input
+                          value={appId}
+                          placeholder="app-id (e.g. streamlit-demo)"
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            const previousDefault = defaultBasePath(appId);
+                            setAppId(next);
+                            if (!basePath || basePath === previousDefault) {
+                              setBasePath(defaultBasePath(next));
+                            }
+                          }}
+                        />
+                      </Space.Compact>
+                      <Input
+                        value={title}
+                        placeholder="Title (optional)"
+                        onChange={(e) => setTitle(e.target.value)}
+                      />
+                      <Input
+                        value={basePath}
+                        placeholder={`/apps/${appId || "my-app"}`}
+                        onChange={(e) => setBasePath(e.target.value)}
+                      />
+                    </Space>
+                  ),
+                },
+                kind === "service"
+                  ? {
+                      key: "runtime",
+                      label: "Runtime and proxy",
+                      children: (
+                        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                          <Input
+                            value={command}
+                            placeholder="Command (runs as: bash -lc ...)"
+                            onChange={(e) => setCommand(e.target.value)}
+                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={port}
+                              placeholder="Preferred port (optional)"
+                              onChange={(e) => setPort(e.target.value)}
+                            />
+                            <Input
+                              value={healthPath}
+                              placeholder="Health path (optional, e.g. /health)"
+                              onChange={(e) => setHealthPath(e.target.value)}
+                            />
+                            <Select<AppServiceOpenMode>
+                              value={serviceOpenMode}
+                              style={{ width: "170px" }}
+                              options={[
+                                { label: "Open: /proxy", value: "proxy" },
+                                { label: "Open: /port", value: "port" },
+                              ]}
+                              onChange={(value) => setServiceOpenMode(value)}
+                            />
+                          </Space.Compact>
+                          <Paragraph style={{ color: "#666", margin: 0, fontSize: "12px" }}>
+                            Open mode: <code>/proxy</code> strips your app base
+                            path before forwarding; <code>/port</code> keeps the
+                            raw port-style URL path. Use <code>/port</code> for
+                            apps that do not proxy cleanly behind stripped base
+                            paths.
+                          </Paragraph>
+                        </Space>
+                      ),
+                    }
+                  : {
+                      key: "static",
+                      label: "Static content and refresh",
+                      children: (
+                        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                          <Input
+                            value={staticRoot}
+                            placeholder="Static root path (e.g. /home/user/project/site)"
+                            onChange={(e) => setStaticRoot(e.target.value)}
+                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={staticIndex}
+                              placeholder="Index file (optional)"
+                              onChange={(e) => setStaticIndex(e.target.value)}
+                            />
+                            <Input
+                              value={staticCacheControl}
+                              placeholder="Cache-Control (optional)"
+                              onChange={(e) => setStaticCacheControl(e.target.value)}
+                            />
+                          </Space.Compact>
+                          <Input
+                            value={staticRefreshCommand}
+                            placeholder="Refresh command (optional, runs on first/stale hit)"
+                            onChange={(e) => setStaticRefreshCommand(e.target.value)}
+                          />
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input
+                              value={staticRefreshStaleAfter}
+                              placeholder="Refresh stale-after seconds (default 3600)"
+                              onChange={(e) => setStaticRefreshStaleAfter(e.target.value)}
+                            />
+                            <Input
+                              value={staticRefreshTimeout}
+                              placeholder="Refresh timeout seconds (default 120)"
+                              onChange={(e) => setStaticRefreshTimeout(e.target.value)}
+                            />
+                          </Space.Compact>
+                          <Checkbox
+                            checked={staticRefreshOnHit}
+                            onChange={(e) => setStaticRefreshOnHit(e.target.checked)}
+                          >
+                            Trigger refresh on hit when stale
+                          </Checkbox>
+                        </Space>
+                      ),
+                    },
+                {
+                  key: "launch",
+                  label: "Launch and public defaults",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                      <Space wrap>
+                        <Checkbox
+                          checked={startNow}
+                          onChange={(e) => setStartNow(e.target.checked)}
+                        >
+                          Start after save
+                        </Checkbox>
+                        <Checkbox
+                          checked={openWhenReady}
+                          onChange={(e) => setOpenWhenReady(e.target.checked)}
+                        >
+                          Open when ready
+                        </Checkbox>
+                      </Space>
+                      <div style={{ fontWeight: 600, fontSize: "12px", color: "#666" }}>
+                        Public expose defaults
+                      </div>
+                      <Space.Compact style={{ width: "100%" }}>
+                        <Input
+                          value={exposeTtlHours}
+                          onChange={(e) => setExposeTtlHours(e.target.value)}
+                          placeholder="TTL hours (e.g. 24)"
+                        />
+                        <Select<"none" | "token">
+                          value={exposeAuthFront}
+                          style={{ width: "140px" }}
+                          options={[
+                            { label: "No front auth", value: "none" },
+                            { label: "Token gate", value: "token" },
+                          ]}
+                          onChange={(value) => setExposeAuthFront(value)}
+                        />
+                      </Space.Compact>
+                      <Space wrap>
+                        <Checkbox
+                          checked={exposeRandomSubdomain}
+                          onChange={(e) => setExposeRandomSubdomain(e.target.checked)}
+                        >
+                          Random subdomain
+                        </Checkbox>
+                        {!exposeRandomSubdomain ? (
+                          <Input
+                            value={exposeSubdomainLabel}
+                            onChange={(e) => setExposeSubdomainLabel(e.target.value)}
+                            placeholder="subdomain label (optional)"
+                            style={{ width: "220px" }}
+                          />
+                        ) : null}
+                      </Space>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+            <Space wrap>
+              <Button
+                type="primary"
+                loading={formSubmitting}
+                disabled={!canSaveForm}
+                onClick={() => void onCreate()}
+              >
+                Save app
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </Card>
       {installedTemplates.length > 0 ? (
-        <>
-          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
-            Installed templates
-          </div>
-          <Space wrap style={{ width: "100%", marginBottom: "12px" }}>
+        <Card size="small" title={`Installed templates (${installedTemplates.length})`}>
+          <Space wrap style={{ width: "100%" }}>
             {installedTemplates.map((item) => (
               <Tag
                 key={item.key}
@@ -1279,15 +1896,11 @@ export function AppServerPanel({
               </Tag>
             ))}
           </Space>
-          <Divider style={{ margin: "14px 0" }} />
-        </>
+        </Card>
       ) : null}
       {detected.length > 0 ? (
-        <>
-          <div style={{ fontWeight: 600, marginBottom: "8px" }}>
-            Detected running HTTP apps
-          </div>
-          <Space direction="vertical" style={{ width: "100%", marginBottom: "12px" }}>
+        <Card size="small" title={`Detected running HTTP apps (${detected.length})`}>
+          <Space direction="vertical" style={{ width: "100%" }}>
             {detected.map((item) => (
               <div
                 key={`${item.port}-${item.hosts.join(",")}`}
@@ -1311,7 +1924,10 @@ export function AppServerPanel({
                   <Space wrap>
                     <Button
                       size="small"
-                      onClick={() => useDetectedPort(item.port)}
+                      onClick={() => {
+                        useDetectedPort(item.port);
+                        setCreatorOpen(true);
+                      }}
                     >
                       Use in form
                     </Button>
@@ -1320,63 +1936,96 @@ export function AppServerPanel({
               </div>
             ))}
           </Space>
-          <Divider style={{ margin: "14px 0" }} />
-        </>
+        </Card>
       ) : null}
-      <div style={{ fontWeight: 600, marginBottom: "8px" }}>Managed Applications</div>
-      {loading ? <Spin /> : null}
-      {!loading && rows.length === 0 ? (
-        <Alert type="info" showIcon message="No managed app servers yet." />
-      ) : null}
-      {!loading && rows.length > 0 ? (
-        <Space
-          wrap
-          style={{ width: "100%", justifyContent: "space-between", marginBottom: "10px" }}
-        >
-          <Space wrap>
-            <Input
-              value={rowSearch}
-              placeholder="Filter apps"
-              onChange={(e) => setRowSearch(e.target.value)}
-              style={{ width: "220px" }}
-              allowClear
-            />
-            <Select<AppStatusFilter>
-              value={rowFilter}
-              style={{ width: "150px" }}
-              onChange={(value) => setRowFilter(value)}
-              options={[
-                { value: "all", label: "All" },
-                { value: "running", label: "Running" },
-                { value: "stopped", label: "Stopped" },
-                { value: "error", label: "Needs attention" },
-                { value: "public", label: "Public" },
-              ]}
-            />
+      <Card size="small" title={`Managed Applications (${summaryCounts.total})`}>
+        {loading ? <Spin /> : null}
+        {!loading && rows.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="No managed applications yet."
+          />
+        ) : null}
+        {!loading && rows.length > 0 ? (
+          <Space
+            wrap
+            style={{ width: "100%", justifyContent: "space-between", marginBottom: "10px" }}
+          >
+            <Space wrap>
+              <Input
+                value={rowSearch}
+                placeholder="Filter apps"
+                onChange={(e) => setRowSearch(e.target.value)}
+                style={{ width: "220px" }}
+                allowClear
+              />
+              <Select<AppStatusFilter>
+                value={rowFilter}
+                style={{ width: "150px" }}
+                onChange={(value) => setRowFilter(value)}
+                options={[
+                  { value: "all", label: "All" },
+                  { value: "running", label: "Running" },
+                  { value: "stopped", label: "Stopped" },
+                  { value: "error", label: "Needs attention" },
+                  { value: "public", label: "Public" },
+                ]}
+              />
+            </Space>
+            <Space wrap>
+              <Button
+                onClick={() => void onStartMany(startableRows.map((row) => row.id))}
+                disabled={submitting || startableRows.length === 0}
+              >
+                Start all stopped ({startableRows.length})
+              </Button>
+              <Button
+                onClick={() => void onStopMany(stoppableRows.map((row) => row.id))}
+                disabled={submitting || stoppableRows.length === 0}
+              >
+                Stop all running ({stoppableRows.length})
+              </Button>
+            </Space>
           </Space>
-          <Space wrap>
-            <Button
-              onClick={() => void onStartMany(startableRows.map((row) => row.id))}
-              disabled={submitting || startableRows.length === 0}
-            >
-              Start all stopped ({startableRows.length})
-            </Button>
-            <Button
-              onClick={() => void onStopMany(stoppableRows.map((row) => row.id))}
-              disabled={submitting || stoppableRows.length === 0}
-            >
-              Stop all running ({stoppableRows.length})
-            </Button>
-          </Space>
-        </Space>
-      ) : null}
-      <Space direction="vertical" style={{ width: "100%" }}>
+        ) : null}
+        <Space direction="vertical" style={{ width: "100%" }}>
         {filteredRows.map((row) => {
           const isRunning = row.state === "running";
           const isPublic = isPublicExposure(row);
           const spec = specById[row.id];
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
+          const isExpanded = !!expandedRows[row.id] || !!startupFailure;
+          const rowMenuItems = [
+            {
+              key: isPublic ? "unexpose" : "expose",
+              label: isPublic ? "Unexpose" : "Expose",
+            },
+            {
+              key: "audit",
+              label: "Audit with Codex",
+            },
+            {
+              key: "logs",
+              label: "Logs",
+            },
+            {
+              key: "export",
+              label: "Export",
+            },
+            {
+              key: "edit",
+              label: "Edit spec",
+            },
+            {
+              type: "divider" as const,
+            },
+            {
+              key: "delete",
+              label: "Delete",
+              danger: true,
+            },
+          ];
           return (
             <div
               key={row.id}
@@ -1403,6 +2052,9 @@ export function AppServerPanel({
                   </div>
                 </div>
                 <Space wrap>
+                  <Button size="small" onClick={() => toggleRowExpanded(row.id)}>
+                    {isExpanded ? "Hide details" : "Details"}
+                  </Button>
                   <Button
                     size="small"
                     onClick={() => void openStatus(row)}
@@ -1426,69 +2078,41 @@ export function AppServerPanel({
                   >
                     Stop
                   </Button>
-                  <Popconfirm
-                    title="Delete app spec?"
-                    description={`Delete '${row.id}' and its managed status.`}
-                    okText="Delete"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => void onDelete(row.id)}
+                  <Dropdown
+                    trigger={["click"]}
+                    menu={{
+                      items: rowMenuItems,
+                      onClick: ({ key }) =>
+                        onRowMenuAction(
+                          row,
+                          key as
+                            | "expose"
+                            | "unexpose"
+                            | "audit"
+                            | "logs"
+                            | "export"
+                            | "edit"
+                            | "delete",
+                        ),
+                    }}
                   >
-                    <Button size="small" danger disabled={submitting}>
-                      Delete
-                    </Button>
-                  </Popconfirm>
-                  {isPublic ? (
                     <Button
                       size="small"
-                      onClick={() => void onUnexpose(row.id)}
                       loading={
                         submitting &&
                         rowAction?.appId === row.id &&
-                        rowAction.action === "unexpose"
+                        (rowAction.action === "expose" ||
+                          rowAction.action === "unexpose" ||
+                          rowAction.action === "audit")
                       }
+                      disabled={submitting || transferBusy}
                     >
-                      Unexpose
+                      Actions
                     </Button>
-                  ) : (
-                    <Button
-                      size="small"
-                      onClick={() => void onExpose(row.id)}
-                      loading={
-                        submitting &&
-                        rowAction?.appId === row.id &&
-                        rowAction.action === "expose"
-                      }
-                    >
-                      Expose
-                    </Button>
-                  )}
-                  <Button
-                    size="small"
-                    onClick={() => void onAuditWithAgent(row.id)}
-                    loading={
-                      submitting &&
-                      rowAction?.appId === row.id &&
-                      rowAction.action === "audit"
-                    }
-                  >
-                    Audit with Codex
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onLogs(row.id)}
-                  >
-                    Logs
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onEditSpec(row.id)}
-                    disabled={submitting}
-                  >
-                    Edit spec
-                  </Button>
+                  </Dropdown>
                 </Space>
               </div>
-              {specSummary.length > 0 ? (
+              {isExpanded && specSummary.length > 0 ? (
                 <div
                   style={{
                     marginTop: "8px",
@@ -1504,7 +2128,7 @@ export function AppServerPanel({
                   ))}
                 </div>
               ) : null}
-              {isPublic ? (
+              {isExpanded && isPublic ? (
                 <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
                   {buildPublicUrlFromExposure(row, publicAppPolicy) ? (
                     <>
@@ -1536,7 +2160,7 @@ export function AppServerPanel({
                   ) : null}
                 </div>
               ) : null}
-              {row.warnings?.length ? (
+              {isExpanded && row.warnings?.length ? (
                 <Alert
                   style={{ marginTop: "8px" }}
                   type="warning"
@@ -1544,7 +2168,7 @@ export function AppServerPanel({
                   message={row.warnings.join(" ")}
                 />
               ) : null}
-              {startupFailure ? (
+              {isExpanded && startupFailure ? (
                 <Alert
                   style={{ marginTop: "8px" }}
                   type="error"
@@ -1560,10 +2184,42 @@ export function AppServerPanel({
                   description={
                     <div style={{ display: "grid", gap: "8px" }}>
                       <div>{startupFailure.errorMessage}</div>
+                      {startupFailure.installHint ? (
+                        <div style={{ opacity: 0.85 }}>{startupFailure.installHint}</div>
+                      ) : null}
+                      {startupFailure.installCommand ? (
+                        <div
+                          style={{
+                            fontFamily: "monospace",
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                            padding: "8px",
+                            background: "#fafafa",
+                            border: "1px solid #eee",
+                            borderRadius: "6px",
+                          }}
+                        >
+                          {startupFailure.installCommand}
+                        </div>
+                      ) : null}
                       <Space wrap>
                         <Button size="small" onClick={() => void onLogs(row.id)}>
                           View full logs
                         </Button>
+                        {startupFailure.installAgentPrompt ? (
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              void sendAgentPrompt(
+                                startupFailure.installAgentPrompt ?? "",
+                                "intent:app-server-install",
+                              )
+                            }
+                            loading={submittingToAgent}
+                          >
+                            Install with agent
+                          </Button>
+                        ) : null}
                       </Space>
                       {startupFailure.stderrTail ? (
                         renderLogTailBlock({
@@ -1586,7 +2242,8 @@ export function AppServerPanel({
             </div>
           );
         })}
-      </Space>
+        </Space>
+      </Card>
       {audit ? (
         <div
           style={{
@@ -1627,13 +2284,28 @@ export function AppServerPanel({
               size="small"
               type="primary"
               loading={submittingToAgent}
-              onClick={() => void sendAuditToAgent(audit.agent_prompt)}
+              onClick={() =>
+                void sendAgentPrompt(audit.agent_prompt, "intent:app-server-audit")
+              }
             >
               Send to Codex
             </Button>
           </Space>
         </div>
       ) : null}
+      <Modal
+        open={securityOpen}
+        onCancel={() => setSecurityOpen(false)}
+        title="Managed app security"
+        width={760}
+        footer={[
+          <Button key="close" onClick={() => setSecurityOpen(false)}>
+            Close
+          </Button>,
+        ]}
+      >
+        <StaticMarkdown value={APP_SECURITY_MARKDOWN} />
+      </Modal>
       <Modal
         open={editSpecOpen}
         onCancel={closeEditSpecModal}
