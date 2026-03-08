@@ -35,11 +35,20 @@ import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
 import { secretToken } from "@cocalc/project/data";
-import { resolveAppProxyTarget } from "@cocalc/project/app-servers/control";
+import { resolveAppProxyTarget } from "../../app-servers/control";
+import {
+  recordAppHttpMetric,
+  recordAppWebsocketClosed,
+  recordAppWebsocketOpened,
+} from "../../app-servers/metrics";
 import {
   PROJECT_PROXY_AUTH_HEADER,
   getSingleHeaderValue,
 } from "@cocalc/backend/auth/project-proxy-auth";
+import {
+  APP_PROXY_EXPOSURE_HEADER,
+  type AppProxyExposureMode,
+} from "@cocalc/backend/auth/app-proxy";
 import listen from "@cocalc/backend/misc/async-server-listen";
 
 const logger = getLogger("project:servers:proxy");
@@ -69,10 +78,104 @@ type StaticResolvedFile = {
   stat: { size: number; mtimeMs: number };
 };
 
+type AppMetricsContext = {
+  app_id: string;
+  kind: "service" | "static";
+  exposure_mode: AppProxyExposureMode;
+  request_started_ms: number;
+  bytes_received: number;
+};
+
+const APP_METRICS_CONTEXT = Symbol("cocalc-app-metrics-context");
+
 interface StartOptions {
   base_url?: string;
   port?: number; // default to COCALC_PROXY_PORT or 80 for root, or 8080 for non-root
   host?: string; // default to COCALC_PROXY_HOST or 127.0.0.1
+}
+
+function getExposureMode(
+  req: http.IncomingMessage,
+): AppProxyExposureMode {
+  return req.headers[APP_PROXY_EXPOSURE_HEADER] === "public"
+    ? "public"
+    : "private";
+}
+
+function getRequestBytes(req: http.IncomingMessage): number {
+  const header = req.headers["content-length"];
+  const raw = Array.isArray(header) ? header[0] : header;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function byteLengthOfChunk(
+  chunk: unknown,
+  encoding?: BufferEncoding,
+): number {
+  if (chunk == null) return 0;
+  if (Buffer.isBuffer(chunk)) return chunk.length;
+  if (typeof chunk === "string") return Buffer.byteLength(chunk, encoding);
+  if (ArrayBuffer.isView(chunk)) return chunk.byteLength;
+  if (chunk instanceof ArrayBuffer) return chunk.byteLength;
+  return 0;
+}
+
+function observeHttpResponse({
+  req,
+  res,
+}: {
+  req: http.IncomingMessage;
+  res: http.ServerResponse;
+}): void {
+  const context = (req as any)[APP_METRICS_CONTEXT] as
+    | AppMetricsContext
+    | undefined;
+  if (!context) return;
+  if (context.kind !== "static") return;
+  delete (req as any)[APP_METRICS_CONTEXT];
+  let bytesSent = 0;
+  const originalWrite = res.write.bind(res);
+  const originalEnd = res.end.bind(res);
+  let finished = false;
+
+  (res.write as any) = (
+    chunk: any,
+    encoding?: BufferEncoding | ((err?: Error | null) => void),
+    callback?: (err?: Error | null) => void,
+  ) => {
+    const actualEncoding =
+      typeof encoding === "string" ? encoding : undefined;
+    bytesSent += byteLengthOfChunk(chunk, actualEncoding);
+    return originalWrite(chunk, encoding as any, callback);
+  };
+
+  (res.end as any) = (
+    chunk?: any,
+    encoding?: BufferEncoding | (() => void),
+    callback?: () => void,
+  ) => {
+    const actualEncoding =
+      typeof encoding === "string" ? encoding : undefined;
+    bytesSent += byteLengthOfChunk(chunk, actualEncoding);
+    return originalEnd(chunk, encoding as any, callback);
+  };
+
+  const finalize = () => {
+    if (finished) return;
+    finished = true;
+    recordAppHttpMetric({
+      app_id: context.app_id,
+      exposure_mode: context.exposure_mode,
+      status_code: res.statusCode || 0,
+      bytes_sent: bytesSent,
+      bytes_received: context.bytes_received,
+      duration_ms: Date.now() - context.request_started_ms,
+    });
+  };
+
+  res.once("finish", finalize);
+  res.once("close", finalize);
 }
 
 export async function startProxyServer({
@@ -108,6 +211,7 @@ export async function startProxyServer({
           res.end("Forbidden\n");
           return;
         }
+        observeHttpResponse({ req, res });
         proxy.web(req, res, { target, prependPath: false });
       } catch {
         // Not matched — 404 so it's obvious when a wrong base is used.
@@ -128,6 +232,13 @@ export async function startProxyServer({
           socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
           socket.destroy();
           return;
+        }
+        const context = (req as any)[APP_METRICS_CONTEXT] as
+          | AppMetricsContext
+          | undefined;
+        if (context) {
+          recordAppWebsocketOpened({ app_id: context.app_id });
+          socket.once("close", () => recordAppWebsocketClosed(context.app_id));
         }
         proxy.ws(req, socket, head, {
           target,
@@ -178,6 +289,7 @@ export function attachProxyServer({
           res.end("Forbidden\n");
           return;
         }
+        observeHttpResponse({ req, res });
         proxy.web(req, res, { target, prependPath: false });
       } catch {
         return next();
@@ -197,6 +309,13 @@ export function attachProxyServer({
             socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
             socket.destroy();
             return;
+          }
+          const context = (req as any)[APP_METRICS_CONTEXT] as
+            | AppMetricsContext
+            | undefined;
+          if (context) {
+            recordAppWebsocketOpened({ app_id: context.app_id });
+            socket.once("close", () => recordAppWebsocketClosed(context.app_id));
           }
           proxy.ws(req, socket, head, {
             target,
@@ -393,12 +512,25 @@ function createProxyResolver({
       return { port, host };
     }
 
-    const appTarget = await resolveAppProxyTarget({ base, url });
+    const appTarget = await resolveAppProxyTarget({
+      base,
+      url,
+      exposureMode: getExposureMode(req),
+    });
     if (appTarget) {
+      const metricsContext: AppMetricsContext = {
+        app_id: appTarget.app_id,
+        kind: appTarget.kind,
+        exposure_mode: getExposureMode(req),
+        request_started_ms: Date.now(),
+        bytes_received: getRequestBytes(req),
+      };
       if (appTarget.kind === "static") {
         if (!res) {
           throw Error("static apps do not support websocket upgrades");
         }
+        (req as any)[APP_METRICS_CONTEXT] = metricsContext;
+        observeHttpResponse({ req, res });
         await writeStaticResponse({
           req,
           res,
@@ -409,6 +541,7 @@ function createProxyResolver({
         });
         return undefined;
       }
+      (req as any)[APP_METRICS_CONTEXT] = metricsContext;
       req.url = appTarget.rewritePath;
       return { port: appTarget.port, host };
     }
@@ -440,6 +573,38 @@ function createProxyResolver({
 
   proxy.on("proxyReq", (proxyReq) => {
     proxyReq.setHeader("X-Proxy-By", "cocalc-lite-proxy");
+    proxyReq.removeHeader(APP_PROXY_EXPOSURE_HEADER);
+  });
+
+  proxy.on("proxyReqWs", (proxyReq) => {
+    proxyReq.removeHeader(APP_PROXY_EXPOSURE_HEADER);
+  });
+
+  proxy.on("proxyRes", (proxyRes, req) => {
+    const context = (req as any)[APP_METRICS_CONTEXT] as
+      | AppMetricsContext
+      | undefined;
+    if (!context || context.kind !== "service") return;
+    delete (req as any)[APP_METRICS_CONTEXT];
+    let bytesSent = 0;
+    let finished = false;
+    const finalize = () => {
+      if (finished) return;
+      finished = true;
+      recordAppHttpMetric({
+        app_id: context.app_id,
+        exposure_mode: context.exposure_mode,
+        status_code: proxyRes.statusCode || 0,
+        bytes_sent: bytesSent,
+        bytes_received: context.bytes_received,
+        duration_ms: Date.now() - context.request_started_ms,
+      });
+    };
+    proxyRes.on("data", (chunk: Buffer) => {
+      bytesSent += chunk.length;
+    });
+    proxyRes.once("end", finalize);
+    proxyRes.once("close", finalize);
   });
 
   return { proxy, getTarget };

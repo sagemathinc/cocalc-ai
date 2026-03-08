@@ -170,6 +170,44 @@ export function registerWorkspaceAppCommands(
     );
 
   app
+    .command("metrics [appId]")
+    .description("show app traffic and usage metrics")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--minutes <n>", "history window in minutes", "60")
+    .action(
+      async (
+        appId: string | undefined,
+        opts: { workspace?: string; minutes?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app metrics", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const minutes = parsePositiveIntOrThrow(
+            opts.minutes,
+            "minutes",
+          ) ?? 60;
+          if (appId) {
+            const item = await api.apps.appMetrics(appId, { minutes });
+            return {
+              workspace_id: ws.project_id,
+              minutes,
+              item,
+            };
+          }
+          const items = await api.apps.listAppMetrics({ minutes });
+          return {
+            workspace_id: ws.project_id,
+            minutes,
+            items,
+          };
+        });
+      },
+    );
+
+  app
     .command("export <appId>")
     .description("export one app spec as JSON")
     .option("-w, --workspace <workspace>", "workspace id or name")

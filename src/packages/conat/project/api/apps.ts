@@ -16,6 +16,8 @@ export const apps = {
   exposeApp: true,
   unexposeApp: true,
   appLogs: true,
+  appMetrics: true,
+  listAppMetrics: true,
   detectApps: true,
   detectInstalledTemplates: true,
   auditAppPublicReadiness: true,
@@ -118,6 +120,43 @@ export interface AppPublicReadinessAudit {
   agent_prompt: string;
 }
 
+export interface AppMetricsBucket {
+  minute_start_ms: number;
+  requests: number;
+  bytes_sent: number;
+  bytes_received: number;
+  public_requests: number;
+  private_requests: number;
+  websocket_upgrades: number;
+}
+
+export interface AppMetricsSummary {
+  app_id: string;
+  active_websockets: number;
+  last_hit_ms?: number;
+  totals: {
+    requests: number;
+    bytes_sent: number;
+    bytes_received: number;
+    public_requests: number;
+    private_requests: number;
+    public_bytes_sent: number;
+    private_bytes_sent: number;
+    status_2xx: number;
+    status_3xx: number;
+    status_4xx: number;
+    status_5xx: number;
+    websocket_upgrades: number;
+    wake_count: number;
+    latency_count: number;
+    latency_sum_ms: number;
+    latency_max_ms: number;
+    p50_ms?: number;
+    p95_ms?: number;
+  };
+  history: AppMetricsBucket[];
+}
+
 export interface Apps {
   start: (name: string) => Promise<NamedServerStatus>;
 
@@ -165,6 +204,13 @@ export interface Apps {
     stdout: string;
     stderr: string;
   }>;
+  appMetrics: (
+    id: string,
+    opts?: { minutes?: number },
+  ) => Promise<AppMetricsSummary>;
+  listAppMetrics: (
+    opts?: { minutes?: number },
+  ) => Promise<AppMetricsSummary[]>;
 
   detectApps: (opts?: {
     include_managed?: boolean;

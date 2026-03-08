@@ -33,6 +33,12 @@ import {
   listAppExposureStates,
   unexposeApp as unexposeAppState,
 } from "./state";
+import {
+  deleteAppMetrics,
+  getAppMetrics as getAppMetricsState,
+  listAppMetrics as listAppMetricsState,
+  recordAppWake,
+} from "./metrics";
 
 const logger = getLogger("app-servers:control");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -129,6 +135,19 @@ export interface AppPublicReadinessAudit {
   checks: AppAuditCheck[];
   suggested_actions: string[];
   agent_prompt: string;
+}
+
+export async function appMetrics(
+  id: string,
+  opts?: { minutes?: number },
+) {
+  return getAppMetricsState(id, opts);
+}
+
+export async function listMetrics(
+  opts?: { minutes?: number },
+) {
+  return listAppMetricsState(opts);
 }
 
 export type AppProxyTarget =
@@ -929,6 +948,7 @@ export async function deleteApp(id: string): Promise<{ id: string; deleted: bool
     await unexposeAppState(id);
   }
   const result = await deleteAppSpec(id);
+  deleteAppMetrics(id);
   invalidateRouteCache();
   return result;
 }
@@ -952,9 +972,11 @@ async function specsForRouting(): Promise<AppSpec[]> {
 export async function resolveAppProxyTarget({
   base,
   url,
+  exposureMode: _exposureMode = "private",
 }: {
   base: string;
   url: string;
+  exposureMode?: "private" | "public";
 }): Promise<AppProxyTarget | undefined> {
   const specs = await specsForRouting();
   const parsed = new URL(url, "http://project.local");
@@ -990,9 +1012,19 @@ export async function resolveAppProxyTarget({
       1_000,
       (serviceSpec.wake.startup_timeout_s || 120) * 1000,
     );
+    const current =
+      serviceSpec.wake.enabled || children[serviceSpec.id]
+        ? await statusApp(serviceSpec.id)
+        : undefined;
+    if (serviceSpec.wake.enabled && current?.state !== "running") {
+      recordAppWake(serviceSpec.id);
+    }
     const status = serviceSpec.wake.enabled
-      ? await ensureRunning(serviceSpec.id, { timeout: startupTimeout, interval: 500 })
-      : await statusApp(serviceSpec.id);
+      ? await ensureRunning(serviceSpec.id, {
+          timeout: startupTimeout,
+          interval: 500,
+        })
+      : (current ?? (await statusApp(serviceSpec.id)));
     if (status.state !== "running" || !status.port) {
       throw new Error(`app '${serviceSpec.id}' is not running`);
     }

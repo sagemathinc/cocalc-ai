@@ -20,6 +20,8 @@ export {
   exposeApp,
   unexposeApp,
   appLogs,
+  appMetrics,
+  listMetrics as listAppMetrics,
   detectApps,
   detectInstalledTemplates,
   auditAppPublicReadiness,
