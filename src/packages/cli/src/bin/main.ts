@@ -124,6 +124,7 @@ import { registerExportCommand, type ExportCommandDeps } from "./commands/export
 import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
 import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
 import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
+import { createExportApi } from "../api/export";
 import { createTasksApi } from "../api/tasks";
 import { createLiveTimeTravelBinder } from "../api/timetravel";
 import {
@@ -1490,6 +1491,14 @@ const timeTravelApi = createLiveTimeTravelBinder<CommandContext, WorkspaceRow>({
   resolveWorkspaceConatClient,
 });
 
+const exportApi = createExportApi<CommandContext>({
+  getDefaults: (ctx) => ({
+    apiBaseUrl: ctx.apiBaseUrl,
+    bearer: ctx.globals.bearer,
+    projectId: process.env.COCALC_PROJECT_ID,
+  }),
+});
+
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
   workspace: WorkspaceRow,
@@ -2015,6 +2024,7 @@ const execCommandDeps = {
   withContext,
   tasksApi,
   timeTravelApi,
+  exportApi,
 } satisfies ExecCommandDeps;
 
 registerExecCommand(program, execCommandDeps);

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 
+import type { ExportApi } from "../../api/export";
 import type { TasksApi } from "../../api/tasks";
 import type { TimeTravelApi } from "../../api/timetravel";
 
@@ -8,6 +9,7 @@ export type ExecCommandDeps = {
   withContext: any;
   tasksApi: TasksApi<any, any>;
   timeTravelApi: TimeTravelApi<any, any>;
+  exportApi: ExportApi<any>;
 };
 
 const BACKEND_EXEC_API_DECLARATION = `/**
@@ -16,6 +18,8 @@ const BACKEND_EXEC_API_DECLARATION = `/**
  * Current implemented namespaces:
  * - api.tasks
  * - api.timetravel
+- api.export
+ * - api.export
  *
  * Return only JSON-serializable values from scripts.
  *
@@ -146,6 +150,15 @@ export interface TimeTravelDocument {
   }>;
 }
 
+export interface ExportSummary {
+  kind: string;
+  outputPath: string;
+  bytes: number;
+  assetCount: number;
+  rootDir?: string;
+  manifest: Record<string, unknown>;
+}
+
 export interface BackendExecApi {
   tasks: {
     /**
@@ -170,6 +183,52 @@ export interface BackendExecApi {
       workspaceIdentifier?: string;
       cwd?: string;
     }): TimeTravelDocument;
+  };
+  export: {
+    /** Export a chat archive locally where the backend runtime runs. */
+    chat(options: {
+      path: string;
+      out?: string;
+      scope?: "current-thread" | "all-non-archived-threads" | "all-threads";
+      threadId?: string;
+      projectId?: string;
+      offloadDbPath?: string;
+      includeBlobs?: boolean;
+      blobBaseUrl?: string;
+      blobBearerToken?: string;
+      zipLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+      cwd?: string;
+    }): Promise<ExportSummary>;
+    /** Export a tasks archive locally where the backend runtime runs. */
+    tasks(options: {
+      path: string;
+      out?: string;
+      includeBlobs?: boolean;
+      blobBaseUrl?: string;
+      blobBearerToken?: string;
+      zipLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+      cwd?: string;
+    }): Promise<ExportSummary>;
+    /** Export a whiteboard archive locally where the backend runtime runs. */
+    board(options: {
+      path: string;
+      out?: string;
+      includeBlobs?: boolean;
+      blobBaseUrl?: string;
+      blobBearerToken?: string;
+      zipLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+      cwd?: string;
+    }): Promise<ExportSummary>;
+    /** Export a slides archive locally where the backend runtime runs. */
+    slides(options: {
+      path: string;
+      out?: string;
+      includeBlobs?: boolean;
+      blobBaseUrl?: string;
+      blobBearerToken?: string;
+      zipLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+      cwd?: string;
+    }): Promise<ExportSummary>;
   };
 }
 
@@ -209,6 +268,20 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
         return deps.timeTravelApi.bindDocument(ctx, options);
       },
     },
+    export: {
+      async chat(options: any) {
+        return await deps.exportApi.chat(ctx, options);
+      },
+      async tasks(options: any) {
+        return await deps.exportApi.tasks(ctx, options);
+      },
+      async board(options: any) {
+        return await deps.exportApi.board(ctx, options);
+      },
+      async slides(options: any) {
+        return await deps.exportApi.slides(ctx, options);
+      },
+    },
   };
 }
 
@@ -246,6 +319,7 @@ Current implemented namespaces:
 
 Important:
 - api.tasks.open({ path }) uses the live collaborative sync/session path.
+- api.export.* writes archive bundles locally where the backend runtime runs.
 - It does not read the on-disk .tasks file directly.
 - Return JSON-serializable values from your script.
 
@@ -253,7 +327,8 @@ Example:
   cocalc --json exec '
     const doc = api.tasks.open({ path: "scratch/project/a.tasks" });
     const snapshot = await doc.getSnapshot();
-    return { count: snapshot.tasks.length };
+    const exportResult = await api.export.tasks({ path: "scratch/project/a.tasks" });
+    return { count: snapshot.tasks.length, exportPath: exportResult.outputPath };
   '
 `,
     )

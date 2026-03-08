@@ -40,6 +40,10 @@
     "./api/timetravel": {
       "types": "./dist/api/timetravel.d.ts",
       "default": "./dist/api/timetravel.js"
+    },
+    "./api/export": {
+      "types": "./dist/api/export.d.ts",
+      "default": "./dist/api/export.js"
     }
   },
   "author": "SageMath, Inc.",
