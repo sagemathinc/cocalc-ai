@@ -94,6 +94,7 @@ export interface InstalledAppTemplate {
   key: string;
   label: string;
   available: boolean;
+  status?: "available" | "missing" | "unknown";
   details?: string;
 }
 

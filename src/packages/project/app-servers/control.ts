@@ -111,6 +111,7 @@ export interface InstalledAppTemplate {
   key: string;
   label: string;
   available: boolean;
+  status?: "available" | "missing" | "unknown";
   details?: string;
 }
 
@@ -367,11 +368,15 @@ async function detectHttpPorts(
 
 async function runAvailabilityCheck({
   cmd,
-  timeoutMs = 4000,
+  timeoutMs = 12000,
 }: {
   cmd: string;
   timeoutMs?: number;
-}): Promise<{ available: boolean; details?: string }> {
+}): Promise<{
+  available: boolean;
+  status: "available" | "missing" | "unknown";
+  details?: string;
+}> {
   return await new Promise((resolve) => {
     const child = spawn("bash", ["-lc", cmd], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -383,7 +388,11 @@ async function runAvailabilityCheck({
       child.kill("SIGKILL");
       if (!settled) {
         settled = true;
-        resolve({ available: false, details: "timeout" });
+        resolve({
+          available: false,
+          status: "unknown",
+          details: "install check timed out",
+        });
       }
     }, timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -392,7 +401,7 @@ async function runAvailabilityCheck({
       clearTimeout(timer);
       if (settled) return;
       settled = true;
-      resolve({ available: false, details: `${err}` });
+      resolve({ available: false, status: "unknown", details: `${err}` });
     });
     child.once("close", (code) => {
       clearTimeout(timer);
@@ -401,6 +410,7 @@ async function runAvailabilityCheck({
       const text = Buffer.concat([...stdout, ...stderr]).toString("utf8").trim();
       resolve({
         available: code === 0,
+        status: code === 0 ? "available" : "missing",
         details: text ? text.split(/\r?\n/)[0].slice(0, 160) : undefined,
       });
     });
@@ -1224,54 +1234,56 @@ export async function detectInstalledTemplates(): Promise<InstalledAppTemplate[]
     {
       key: "jupyterlab",
       label: "JupyterLab",
-      cmd: "command -v jupyter >/dev/null 2>&1 && jupyter lab --version",
+      cmd: "if command -v jupyter-lab >/dev/null 2>&1; then command -v jupyter-lab; elif command -v jupyter >/dev/null 2>&1; then command -v jupyter; else exit 1; fi",
       available: false,
     },
     {
       key: "code-server",
       label: "code-server",
-      cmd: "command -v code-server >/dev/null 2>&1 && code-server --version",
+      cmd: "command -v code-server",
       available: false,
     },
     {
       key: "pluto",
       label: "Pluto",
-      cmd: "command -v julia >/dev/null 2>&1 && julia -e 'import Pluto; print(\"Pluto available\")'",
+      cmd: "command -v julia >/dev/null 2>&1 && julia -e 'path = Base.find_package(\"Pluto\"); if path === nothing; exit(1); end; println(path)'",
       available: false,
     },
     {
       key: "rstudio",
       label: "RStudio / rserver",
-      cmd: "command -v rserver >/dev/null 2>&1 && rserver --version",
+      cmd: "command -v rserver",
       available: false,
     },
     {
       key: "python-hello",
       label: "Python runtime",
-      cmd: "command -v python3 >/dev/null 2>&1 && python3 --version",
+      cmd: "command -v python3",
       available: false,
     },
     {
       key: "node-hello",
       label: "Node.js runtime",
-      cmd: "command -v node >/dev/null 2>&1 && node --version",
+      cmd: "command -v node",
       available: false,
     },
     {
       key: "static-hello",
       label: "Static site hosting",
       available: true,
+      status: "available",
       details: "built in",
     },
   ];
   return await Promise.all(
-    checks.map(async ({ key, label, cmd, available, details }) => {
-      if (!cmd) return { key, label, available, details };
+    checks.map(async ({ key, label, cmd, available, status, details }) => {
+      if (!cmd) return { key, label, available, status, details };
       const result = await runAvailabilityCheck({ cmd });
       return {
         key,
         label,
         available: result.available,
+        status: result.status,
         details: result.details,
       };
     }),

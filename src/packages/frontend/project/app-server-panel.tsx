@@ -691,7 +691,10 @@ export function AppServerPanel({
     ? installedTemplateMap[activePreset.key]
     : undefined;
   const unavailableActivePreset =
-    activePreset && activePresetTemplate && !activePresetTemplate.available
+    activePreset &&
+    activePresetTemplate &&
+    activePresetTemplate.status !== "unknown" &&
+    !activePresetTemplate.available
       ? activePreset
       : undefined;
 
@@ -943,6 +946,9 @@ export function AppServerPanel({
     if (!preset || preset.kind !== "service") return;
     const map = await resolveInstalledTemplateMap();
     const template = map[preset.key];
+    if (template && template.status === "unknown") {
+      return;
+    }
     if (!template?.available) {
       return { preset, template };
     }
@@ -2023,7 +2029,13 @@ export function AppServerPanel({
             {installedTemplates.map((item) => (
               <Tag
                 key={item.key}
-                color={item.available ? "green" : "default"}
+                color={
+                  item.available
+                    ? "green"
+                    : item.status === "unknown"
+                      ? "gold"
+                      : "default"
+                }
                 style={{ paddingInline: "10px", marginInlineEnd: 0 }}
               >
                 {item.label}
