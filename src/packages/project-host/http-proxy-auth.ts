@@ -12,6 +12,10 @@ import {
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
   PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
 } from "@cocalc/conat/auth/project-host-http";
+import {
+  buildProjectHostSessionCookie,
+  projectCookiePath,
+} from "./http-proxy-cookies";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
@@ -86,10 +90,6 @@ function getAuthContext(
   req: IncomingMessage,
 ): AuthorizedAccountContext | undefined {
   return (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT];
-}
-
-function projectCookiePath(project_id: string): string {
-  return `/${project_id}`;
 }
 
 function appendSetCookie(res: ServerResponse, cookie: string): void {
@@ -178,13 +178,6 @@ function verifySessionToken(
   if (!Number.isFinite(exp)) return;
   if (exp < Math.floor(now_ms / 1000)) return;
   return { account_id, iat_s: iat, exp_s: exp };
-}
-
-function isSecureRequest(req: IncomingMessage): boolean {
-  const xfProto = `${req.headers["x-forwarded-proto"] ?? ""}`.toLowerCase();
-  if (xfProto.includes("https")) return true;
-  // @ts-ignore node IncomingMessage.socket may have encrypted in tls mode.
-  return !!req.socket?.encrypted;
 }
 
 function readBearerToken(
@@ -355,17 +348,10 @@ export function createProjectHostHttpProxyAuth({
     project_id: string,
   ) => {
     const sessionToken = createSessionToken({ account_id });
-    const attrs = [
-      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${encodeURIComponent(sessionToken)}`,
-      `Path=${projectCookiePath(project_id)}`,
-      "HttpOnly",
-      "SameSite=Lax",
-      `Max-Age=${HTTP_SESSION_TTL_SECONDS}`,
-    ];
-    if (isSecureRequest(req)) {
-      attrs.push("Secure");
-    }
-    appendSetCookie(res, attrs.join("; "));
+    appendSetCookie(
+      res,
+      buildProjectHostSessionCookie({ req, sessionToken, project_id }),
+    );
   };
 
   const authorizeAccountForProject = ({

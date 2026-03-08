@@ -820,9 +820,11 @@ These are the remaining items that matter most to calling A1.4 effectively finis
    - done: strip project-host bootstrap bearer auth header after validation so it is not proxied upstream,
    - done: strip project-host auth/session cookies before forwarding traffic upstream to the managed app,
    - done: scope the project-host session cookie as narrowly as possible instead of using a broad path,
-   - audit project-host session-cookie scope/path/domain behavior,
-   - determine whether additional per-project/per-app origin isolation is required for private apps,
-   - harden static HTML serving assumptions accordingly.
+   - done: validate live that the project-host session cookie is scoped to `/${project_id}` and that a private app in project A cannot fetch a private app in project B on the same host,
+   - done: add regression coverage for project-host session-cookie scope and project-host `/customize` payload trimming,
+   - done: trim project-host `/customize` so it no longer exposes `account_id`,
+   - next: determine whether additional per-project/per-app origin isolation is required for private apps beyond the current cookie/header isolation model,
+   - next: harden static HTML serving assumptions accordingly.
 4. change Cloudflare public-app routing so traffic bypasses the central hub and goes directly to the target project-host:
    - the current implementation points public app hostnames at the same Cloudflare/site target as the main site and then relies on hub-side hostname rewrite + proxying,
    - this is a blocker because it adds unnecessary latency and, on metered providers such as GCP, can double backhaul traffic and create unacceptable egress cost,
