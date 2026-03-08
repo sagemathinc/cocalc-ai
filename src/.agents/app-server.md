@@ -823,7 +823,7 @@ These are the remaining items that matter most to calling A1.4 effectively finis
    - done: validate live that the project-host session cookie is scoped to `/${project_id}` and that a private app in project A cannot fetch a private app in project B on the same host,
    - done: add regression coverage for project-host session-cookie scope and project-host `/customize` payload trimming,
    - done: trim project-host `/customize` so it no longer exposes `account_id`,
-   - next: determine whether additional per-project/per-app origin isolation is required for private apps beyond the current cookie/header isolation model,
+   - done: explicitly choose the same-project trust model for private apps and document it in `docs/security/private-app-trust-model.md`,
    - next: harden static HTML serving assumptions accordingly.
 4. change Cloudflare public-app routing so traffic bypasses the central hub and goes directly to the target project-host:
    - the current implementation points public app hostnames at the same Cloudflare/site target as the main site and then relies on hub-side hostname rewrite + proxying,
