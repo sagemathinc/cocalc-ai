@@ -79,18 +79,17 @@ Example:
 cocalc --json exec '
   const tt = api.timetravel.open({ path: "scratch/project/a.md" });
   let history = await tt.listVersions();
-  while (!history.hasFullHistory) history = await tt.loadMoreHistory();
   for (const version of [...history.versions].sort((a, b) => b.index - a.index)) {
     const snapshot = await tt.readVersion(version.id);
     if ((snapshot.text ?? "").includes("secret")) {
       return { version, text: snapshot.text };
     }
   }
-  return null;
+  return { found: false, loaded: history.versions.length, hasFullHistory: history.hasFullHistory };
 '
 ```
 
-Use this when the user is asking about older versions, lost content, or document evolution.
+Do not load the full history by default. Start with the versions already available, search those, and only call `loadMoreHistory()` if the user actually needs deeper history or the first pass does not find what they asked for.
 
 ### Export And Import From Backend Exec
 
