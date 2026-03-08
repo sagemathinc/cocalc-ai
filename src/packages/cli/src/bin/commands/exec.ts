@@ -116,10 +116,7 @@ export interface TextDocumentAssociation {
   extension: string | null;
   doctype: "syncstring" | "syncdb" | "immer";
   supportsTextApi: boolean;
-  editorHint: string | null;
-  mode: string | null;
-  icon: string | null;
-  name: string;
+  label: string;
 }
 
 export interface TextDocumentInfo {
@@ -432,7 +429,7 @@ Current implemented namespaces:
 
 Important:
 - api.text.open({ path }) uses the live collaborative sync/session path.
-- api.text.association({ path }) gives backend-safe editor/mode hints.
+- api.text.association({ path }) gives backend-safe document association metadata.
 - api.tasks.open({ path }) uses the live collaborative sync/session path.
 - api.export.* writes archive bundles locally where the backend runtime runs.
 - api.import.tasks merges a tasks bundle back into a local .tasks file.
@@ -446,7 +443,7 @@ Example:
     const after = await doc.append("\\n\\nUpdated from backend exec.", {
       expectedLatestVersionId: before.latestVersionId,
     });
-    return { mode: before.association.mode, textLength: after.textLength };
+    return { doctype: before.association.doctype, textLength: after.textLength };
   '
 `,
     )
