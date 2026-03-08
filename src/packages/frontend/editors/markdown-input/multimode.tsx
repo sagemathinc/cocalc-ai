@@ -94,6 +94,12 @@ export default function MultiMarkdownInput({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+  const internalGetValueRef = useRef<() => string>(() => `${value ?? ""}`);
+  useEffect(() => {
+    if (getValueRef != null) {
+      getValueRef.current = () => internalGetValueRef.current();
+    }
+  }, [getValueRef]);
   const activeCacheIdRef = useRef<string | undefined>(cacheId);
   const mountedRef = useRef<boolean>(true);
 
@@ -146,18 +152,33 @@ export default function MultiMarkdownInput({
     return true;
   }
 
+  function syncLiveValueBeforeModeSwitch() {
+    const liveValue = internalGetValueRef.current?.();
+    if (liveValue != null && liveValue !== value) {
+      onChangeRef.current?.(liveValue);
+    }
+  }
+
   const cursorsMap = useMemo(() => {
     return cursors == null ? undefined : fromJS(cursors);
   }, [cursors]);
 
-  const { selectionRef, rememberPendingSelection, getMarkdownPositionForSelection } =
-    useMultimodeSelection({
-      cacheId,
-      mode,
-      getCachedSelection,
-      saveCachedSelection,
-      richTextControlRef: slateControlRef,
-    });
+  const {
+    selectionRef,
+    rememberPendingSelection,
+    captureModeSwitchSelection,
+    clearModeSwitchSelection,
+    rememberSelectionForModeSwitch,
+    getMarkdownPositionForSelection,
+    notifyMarkdownSelectionReady,
+    notifyRichTextSelectionReady,
+  } = useMultimodeSelection({
+    cacheId,
+    mode,
+    getCachedSelection,
+    saveCachedSelection,
+    richTextControlRef: slateControlRef,
+  });
 
   return (
     <div
@@ -184,9 +205,21 @@ export default function MultiMarkdownInput({
         overflowEllipsis={overflowEllipsis}
         style={modeSwitchStyle}
         editBarContentRef={editBar2}
-        onSelectMode={setMode}
-        onInteractionStart={beginModeSwitchInteraction}
-        onInteractionEnd={endModeSwitchInteraction}
+        onSelectMode={(nextMode) => {
+          if (nextMode !== mode) {
+            syncLiveValueBeforeModeSwitch();
+            rememberSelectionForModeSwitch(nextMode);
+            setMode(nextMode);
+          }
+        }}
+        onInteractionStart={() => {
+          captureModeSwitchSelection();
+          beginModeSwitchInteraction();
+        }}
+        onInteractionEnd={() => {
+          clearModeSwitchSelection();
+          endModeSwitchInteraction();
+        }}
       />
       {mode === "markdown" ? (
         <MarkdownTextAdapter
@@ -198,7 +231,7 @@ export default function MultiMarkdownInput({
             onChangeRef.current?.(value);
           }}
           saveDebounceMs={saveDebounceMs}
-          getValueRef={getValueRef}
+          getValueRef={internalGetValueRef}
           project_id={project_id}
           path={path}
           enableUpload={enableUpload}
@@ -232,6 +265,7 @@ export default function MultiMarkdownInput({
             handleMarkdownBlur();
           }}
           onFocus={onFocus}
+          onSelectionReady={notifyMarkdownSelectionReady}
           onSave={onSave}
           onUndo={onUndo}
           onRedo={onRedo}
@@ -258,7 +292,7 @@ export default function MultiMarkdownInput({
           minimal={minimal}
           height={height}
           saveDebounceMs={saveDebounceMs}
-          getValueRef={getValueRef}
+          getValueRef={internalGetValueRef}
           onChange={(value) => {
             if (!isActiveCallback("editor")) return;
             onChangeRef.current?.(value);
@@ -287,6 +321,7 @@ export default function MultiMarkdownInput({
           autoFocus={focused}
           onFocus={handleRichTextFocus}
           onBlur={handleRichTextBlur}
+          onSelectionReady={notifyRichTextSelectionReady}
           onCursorTop={onCursorTop}
           onCursorBottom={onCursorBottom}
           isFocused={isFocused}

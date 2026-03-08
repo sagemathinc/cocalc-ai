@@ -28,6 +28,19 @@ async function expectComposerInput(page, value: string) {
     .toBe(value);
 }
 
+async function expectComposerInputAfterSwitch(page, previous: string, inserted: string) {
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getInput?.() ?? null);
+    })
+    .not.toBe(previous);
+
+  const next = await page.evaluate(() => window.__chatComposerTest?.getInput?.() ?? null);
+  expect(typeof next).toBe("string");
+  expect(next).toContain(inserted);
+  expect(next?.length).toBe(previous.length + inserted.length);
+}
+
 async function expectHarnessHealthy(page) {
   await expect
     .poll(async () => {
@@ -64,6 +77,12 @@ async function clickSendButton(page) {
   await expect(send).toBeVisible();
   await expect(send).toBeEnabled();
   await send.click();
+}
+
+async function switchComposerMode(page, label: "Rich Text" | "Markdown") {
+  const button = page.locator(".ant-radio-button-wrapper").filter({ hasText: label }).first();
+  await expect(button).toBeVisible();
+  await button.click();
 }
 
 test("new-thread shift+enter send clears and stays cleared", async ({ page }) => {
@@ -148,6 +167,22 @@ test("composer mode: shift+enter sends and clears without blur", async ({ page }
       return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
     })
     .toBeGreaterThan(0);
+  await expectHarnessHealthy(page);
+});
+
+test("composer mode: switching from markdown to rich text keeps typing live", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=markdown");
+  await waitForHarness(page);
+
+  await typeInCodeMirror(page, "ab");
+  await expectComposerInput(page, "ab");
+
+  await switchComposerMode(page, "Rich Text");
+  await page.keyboard.type("c");
+
+  await expectComposerInputAfterSwitch(page, "ab", "c");
   await expectHarnessHealthy(page);
 });
 
@@ -258,6 +293,20 @@ test("composer editor mode: follow-up after first send shows Send and clears on 
 
   await page.waitForTimeout(2500);
   await expectComposerInput(page, "");
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: switching to markdown keeps typing live", async ({ page }) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await typeInSlate(page, "ab");
+  await expectComposerInput(page, "ab");
+
+  await switchComposerMode(page, "Markdown");
+  await page.keyboard.type("c");
+
+  await expectComposerInputAfterSwitch(page, "ab", "c");
   await expectHarnessHealthy(page);
 });
 

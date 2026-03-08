@@ -41,6 +41,7 @@ interface MarkdownTextAdapterProps {
   hideHelp?: boolean;
   onBlur?: (value: string) => void;
   onFocus?: () => void;
+  onSelectionReady?: () => void;
   onSave?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
@@ -86,6 +87,7 @@ export function MarkdownTextAdapter({
   hideHelp,
   onBlur,
   onFocus,
+  onSelectionReady,
   onSave,
   onUndo,
   onRedo,
@@ -131,6 +133,7 @@ export function MarkdownTextAdapter({
       hideHelp={hideHelp}
       onBlur={onBlur}
       onFocus={onFocus}
+      onSelectionReady={onSelectionReady}
       onSave={onSave}
       onUndo={onUndo}
       onRedo={onRedo}
@@ -173,6 +176,7 @@ interface SlateRichTextAdapterProps {
   autoFocus: boolean;
   onFocus?: () => void;
   onBlur?: () => void;
+  onSelectionReady?: () => void;
   onCursorTop?: () => void;
   onCursorBottom?: () => void;
   isFocused?: boolean;
@@ -214,6 +218,7 @@ export function SlateRichTextAdapter({
   autoFocus,
   onFocus,
   onBlur,
+  onSelectionReady,
   onCursorTop,
   onCursorBottom,
   isFocused,
@@ -303,6 +308,7 @@ export function SlateRichTextAdapter({
         autoFocus={autoFocus}
         onFocus={onFocus}
         onBlur={onBlur}
+        onSelectionReady={onSelectionReady}
         hideSearch
         onCursorTop={onCursorTop}
         onCursorBottom={onCursorBottom}

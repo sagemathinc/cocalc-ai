@@ -52,6 +52,30 @@ describe("markdown-input selection utilities", () => {
     expect(apply).toHaveBeenCalledTimes(1);
   });
 
+  it("applies pending selection as soon as readiness is signaled", () => {
+    let readyListener: (() => void) | undefined;
+    const isReady = jest.fn(() => false);
+    const apply = jest.fn(() => true);
+
+    retrySelectionApply({
+      apply,
+      isReady,
+      delayMs: 10,
+      subscribeReady: (callback) => {
+        readyListener = callback;
+        return () => {
+          readyListener = undefined;
+        };
+      },
+    });
+
+    expect(apply).not.toHaveBeenCalled();
+
+    isReady.mockReturnValue(true);
+    readyListener?.();
+    expect(apply).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels pending selection retries cleanly", () => {
     const apply = jest.fn(() => false);
 
@@ -116,6 +140,34 @@ describe("markdown-input selection utilities", () => {
     expect(setSelection).not.toHaveBeenCalled();
 
     jest.advanceTimersByTime(10);
+    expect(setSelection).toHaveBeenCalledWith("saved-selection");
+  });
+
+  it("restores cached selection when readiness is signaled", () => {
+    let readyListener: (() => void) | undefined;
+    const setSelection = jest.fn();
+    const isSelectionReady = jest.fn(() => false);
+
+    restoreSelectionWithRetry({
+      getController: () => ({
+        setSelection,
+        getSelection: () => null,
+        isSelectionReady,
+      }),
+      selection: "saved-selection",
+      delayMs: 10,
+      subscribeReady: (callback) => {
+        readyListener = callback;
+        return () => {
+          readyListener = undefined;
+        };
+      },
+    });
+
+    expect(setSelection).not.toHaveBeenCalled();
+
+    isSelectionReady.mockReturnValue(true);
+    readyListener?.();
     expect(setSelection).toHaveBeenCalledWith("saved-selection");
   });
 });
