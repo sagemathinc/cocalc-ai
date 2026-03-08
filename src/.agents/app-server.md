@@ -789,6 +789,7 @@ Existing components to reuse where possible:
    - explicit CLI export/import/clone,
    - document that full project clone already carries app specs because they live in the workspace filesystem,
    - frontend download/upload/"copy to another project" UX still pending.
+21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
 
 ## 19.1 Next Execution Order
 
@@ -842,6 +843,108 @@ These improve the product substantially, but do not need to block first public r
 4. richer static refresh policy options and sandbox-ephemeral execution.
 5. iframe/embed polish and better "open in full tab" fallback behavior.
 6. frontend import/export/"copy to another project" workflows for app configs.
+7. scoped per-app metrics and simple usage/history UI.
+
+## 19.3 MVP Metrics Plan
+
+The goal is not full observability. The goal is enough app-level traffic and
+runtime visibility for users and operators to understand whether an app is
+being used, whether it is consuming bandwidth, and whether wake/public traffic
+behavior matches expectations.
+
+### Scope
+
+Implement metrics only at the managed-app proxy layer, primarily in
+project-host. Do not attempt to introspect application internals.
+
+### Collection Point
+
+Collect metrics in the project-host proxy path, since that now sees:
+
+- private managed app traffic,
+- direct public app traffic,
+- websocket upgrades,
+- wake-on-demand traffic transitions.
+
+This avoids per-app instrumentation and measures the actual traffic shape that
+matters for operator cost and user experience.
+
+### First Metrics to Capture
+
+Per `(project_id, app_id)` and split by `private` vs `public` mode:
+
+- request count,
+- response status buckets (`2xx`, `3xx`, `4xx`, `5xx`),
+- bytes sent,
+- bytes received,
+- latency aggregates (`count`, `sum`, rough `p50` / `p95` friendly buckets),
+- websocket upgrade count,
+- active websocket count,
+- last hit timestamp,
+- wake-on-demand count.
+
+### Storage Model
+
+- keep hot counters in memory on project-host,
+- flush aggregated rows to project-host sqlite periodically,
+- store rollups at a coarse interval (e.g. minute buckets plus rolling totals),
+- avoid one-row-per-request storage.
+
+This should be enough for trend views, operator summaries, and cost warnings
+without turning sqlite into a request log.
+
+### Privacy / Safety Constraints
+
+Do **not** store by default:
+
+- full URLs or query strings,
+- request/response bodies,
+- arbitrary headers,
+- high-cardinality per-path metrics.
+
+The MVP should be aggregate-only. App-level deep introspection is the user's
+responsibility inside the project itself.
+
+### CLI Surface
+
+Add something like:
+
+- `cocalc ws app metrics <app-id>`
+- `cocalc ws app metrics --all`
+- `cocalc ws app metrics <app-id> --window 24h`
+
+Return stable JSON suitable for agents and admin tooling.
+
+### UI Surface
+
+On the Apps page, show compact usage facts for each app or in row details:
+
+- last hit,
+- requests in recent window,
+- egress in recent window,
+- active websocket count,
+- wake count.
+
+Also add a very small history plot using the same direct-SVG style already used
+elsewhere in CoCalc frontend for process history. Nothing fancy is needed; a
+simple sparkline/bar history for requests or bytes over time is enough.
+
+### Admin / Cost Use
+
+Use the same metrics stream for:
+
+- metered-egress warnings on hosts like GCP,
+- identifying unexpectedly hot public apps,
+- helping explain wake/sleep behavior,
+- future throttling or membership policy decisions.
+
+### Explicit Non-Goals for MVP
+
+- Prometheus-scale observability,
+- tracing across hub/project-host/app layers,
+- per-route analytics,
+- request log search,
+- app-internal profiling.
 
 ### Longer-term platform work
 
