@@ -41,6 +41,14 @@ jest.mock("@cocalc/frontend/components/sortable-tabs", () => ({
   useSortable: () => ({ active: null }),
 }));
 
+jest.mock("../context", () => ({
+  useProjectContext: () => ({
+    workspaces: {
+      filterPaths: (paths: string[]) => [...paths],
+    },
+  }),
+}));
+
 jest.mock("./file-tab", () => ({
   FileTab: ({ label }: any) => <span>{label}</span>,
 }));

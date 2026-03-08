@@ -118,7 +118,8 @@ interface Props {
 export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
   const { wrap, flyoutWidth } = props;
   const { formatIntl } = useAppContext();
-  const { project_id, flipTabs, manageStarredFiles } = useProjectContext();
+  const { project_id, flipTabs, manageStarredFiles, workspaces } =
+    useProjectContext();
   const flipTab = flipTabs[0];
   const flipTabPrevious = usePrevious(flipTab);
   const actions = useActions({ project_id });
@@ -179,9 +180,10 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
     const allFiles = uniq([
       ...starred.filter((path) => {
         if (!showStarred) return false;
+        if (!workspaces.matchesPath(path)) return false;
         return !path.endsWith("/");
       }),
-      ...openFiles.toJS(),
+      ...workspaces.filterPaths(openFiles.toJS()),
     ]);
 
     const filteredFiles = allFiles.filter((path) => doesMatch(path, false));
@@ -211,7 +213,11 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
     // in folder mode, show starred directories
     if (mode === "folder" || mode === "type") {
       const starredFolders = starred.filter(
-        (path) => showStarred && path.endsWith("/") && doesMatch(path, true),
+        (path) =>
+          showStarred &&
+          path.endsWith("/") &&
+          workspaces.matchesPath(path) &&
+          doesMatch(path, true),
       );
 
       if (mode === "folder") {

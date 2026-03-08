@@ -15,7 +15,7 @@ import { useIntl } from "react-intl";
 import { CSS, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useAppContext from "@cocalc/frontend/app/use-context";
 import { ChatIndicator } from "@cocalc/frontend/chat/chat-indicator";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import track from "@cocalc/frontend/user-tracking";
@@ -113,6 +113,7 @@ export function VerticalFixedTabs({
     actions,
     project_id,
     active_project_tab: activeTab,
+    workspaces,
   } = useProjectContext();
   const { showActBarLabels } = useAppContext();
   const active_flyout = useTypedRedux({ project_id }, "flyout");
@@ -219,6 +220,15 @@ export function VerticalFixedTabs({
       : condensed
         ? "8px" // margin for condensed mode
         : "12px"; // margin for normal mode
+    const iconName: IconName | undefined =
+      name === "workspaces"
+        ? ((workspaces.current?.theme.icon?.trim() as IconName | undefined) ||
+          undefined)
+        : undefined;
+    const themedIconStyle =
+      name === "workspaces" && workspaces.current?.theme.color
+        ? { color: workspaces.current.theme.color }
+        : undefined;
 
     const tab = (
       <FileTab
@@ -232,7 +242,9 @@ export function VerticalFixedTabs({
           fontSize: condensed ? "18px" : "24px",
           margin: "0",
           ...color,
+          ...themedIconStyle,
         }}
+        iconName={iconName}
         extraSpacing={spacing}
         flyout={name}
         condensed={condensed}

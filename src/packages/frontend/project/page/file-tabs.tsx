@@ -21,6 +21,7 @@ import { EDITOR_PREFIX, path_to_tab } from "@cocalc/util/misc";
 import { file_tab_labels } from "../file-tab-labels";
 import { FileTab } from "./file-tab";
 import { FILE_TAB_STRIP_ATTRIBUTE } from "./keyboard-navigation";
+import { useProjectContext } from "../context";
 
 const MIN_WIDTH = 48;
 
@@ -64,12 +65,17 @@ function keyToPath(s: string): string {
 
 export default function FileTabs({ openFiles, project_id, activeTab }) {
   const actions = useActions({ project_id });
+  const { workspaces } = useProjectContext();
   if (openFiles == null) {
     return null;
   }
   const paths: string[] = [];
   const keys: string[] = [];
-  openFiles.map((path) => {
+  const visibleOpenFiles = workspaces.filterPaths(
+    openFiles?.toJS?.() ?? openFiles,
+  );
+
+  visibleOpenFiles.map((path) => {
     if (path == null) {
       // see https://github.com/sagemathinc/cocalc/issues/3450
       // **This should never fail** so be loud if it does.

@@ -40,6 +40,7 @@ import {
   SearchFlyout,
   ServersFlyout,
   SettingsFlyout,
+  WorkspacesFlyout,
 } from "./flyouts";
 import { ActiveFlyout } from "./flyouts/active";
 import { shouldOpenFileInNewWindow } from "./utils";
@@ -48,6 +49,7 @@ import { ACTIVITY_BAR_KEY } from "./activity-bar-consts";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 export type FixedTab =
+  | "workspaces"
   | "active"
   | "agents"
   | "files"
@@ -83,6 +85,19 @@ type FixedTabs = {
 // Disabling them.  If anyone complaints or likes them, I can make them an option.
 
 export const FIXED_PROJECT_TABS: FixedTabs = {
+  workspaces: {
+    label: defineMessage({
+      id: "project.page.file-tab.workspaces.label",
+      defaultMessage: "Workspaces",
+    }),
+    flyoutTitle: defineMessage({
+      id: "project.page.flyout.workspaces.title",
+      defaultMessage: "Workspaces",
+    }),
+    icon: "folder-open",
+    flyout: WorkspacesFlyout,
+    noAnonymous: false,
+  },
   active: {
     label: labels.tabs,
     flyoutTitle: "File Tabs",
@@ -177,6 +192,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
 interface Props0 {
   project_id: string;
   label?: string;
+  iconName?: IconName;
   style?: CSSProperties;
   noPopover?: boolean;
   placement?;
@@ -372,7 +388,7 @@ export function FileTab(props: Readonly<Props>) {
   const icon =
     path != null
       ? (file_options(path)?.icon ?? "code-o")
-      : FIXED_PROJECT_TABS[name!].icon;
+      : (props.iconName ?? FIXED_PROJECT_TABS[name!].icon);
 
   const tags =
     status_alerts.length > 0 ? (

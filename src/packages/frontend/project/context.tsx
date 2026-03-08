@@ -37,6 +37,8 @@ import { Project } from "./settings/types";
 import { lite } from "@cocalc/frontend/lite";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
+import { useProjectWorkspaces } from "./workspaces/state";
+import type { ProjectWorkspaceState } from "./workspaces/types";
 
 export interface ProjectContextState {
   actions?: ProjectActions;
@@ -60,6 +62,7 @@ export interface ProjectContextState {
   project?: Project;
   setContentSize: (size: { width: number; height: number }) => void;
   status: ProjectStatus;
+  workspaces: ProjectWorkspaceState;
 }
 
 export const emptyProjectContext = {
@@ -92,6 +95,21 @@ export const emptyProjectContext = {
   project_id: "",
   setContentSize: () => {},
   status: INIT_PROJECT_STATE,
+  workspaces: {
+    records: [],
+    selection: { kind: "all" },
+    current: null,
+    filterPaths: (paths) => [...paths],
+    matchesPath: () => true,
+    resolveWorkspaceForPath: () => null,
+    setSelection: () => {},
+    createWorkspace: () => {
+      throw new Error("workspaces not initialized");
+    },
+    updateWorkspace: () => null,
+    deleteWorkspace: () => {},
+    touchWorkspace: () => {},
+  },
 } as ProjectContextState;
 
 export const ProjectContext: Context<ProjectContextState> =
@@ -112,6 +130,7 @@ export function useProjectContextProvider({
 }): ProjectContextState {
   const actions = useActions({ project_id });
   const { project, group, compute_image } = useProject(project_id);
+  const account_id = useTypedRedux("account", "account_id");
   const status: ProjectStatus = useProjectState(project_id);
   const hasInternet = useProjectHasInternetAccess(project_id) || lite;
   const hostId = project?.get("host_id") as string | undefined;
@@ -172,6 +191,7 @@ export function useProjectContextProvider({
   ]);
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  const workspaces = useProjectWorkspaces(account_id, project_id);
 
   return {
     actions,
@@ -192,5 +212,6 @@ export function useProjectContextProvider({
     project,
     setContentSize,
     status,
+    workspaces,
   };
 }

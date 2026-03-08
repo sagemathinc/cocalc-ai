@@ -908,6 +908,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         break;
 
+      case "workspaces":
+        if (opts.change_history) {
+          this.push_state("workspaces", "");
+        }
+        break;
+
       case "upgrades":
         if (opts.change_history) {
           this.push_state("upgrades", "");
@@ -3020,6 +3026,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "agents":
         this.set_active_tab("agents", { change_history: change_history });
+        break;
+
+      case "workspaces":
+        this.set_active_tab("workspaces", { change_history: change_history });
         break;
 
       case "apps":

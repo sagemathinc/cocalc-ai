@@ -39,6 +39,7 @@ import { ProjectNew } from "@cocalc/frontend/project/new";
 import { ProjectSearch } from "@cocalc/frontend/project/search/search";
 import { ProjectServers } from "@cocalc/frontend/project/servers";
 import { ProjectSettings } from "@cocalc/frontend/project/settings";
+import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspaces";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
@@ -185,6 +186,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
       return <ProjectCollaboratorsPage />;
     case "agents":
       return <AgentsPanel project_id={project_id} layout="page" />;
+    case "workspaces":
+      return <WorkspacesPanel project_id={project_id} layout="page" />;
     default:
       // check for "editor-[filename]"
       if (!tab_name.startsWith("editor-")) {
