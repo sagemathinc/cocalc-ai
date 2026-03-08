@@ -15,6 +15,11 @@ const BACKEND_EXEC_API_DECLARATION = `/**
  * - api.tasks
  *
  * Return only JSON-serializable values from scripts.
+ *
+ * Example:
+ *   const doc = api.tasks.open({ path: "scratch/project/a.tasks" });
+ *   const snapshot = await doc.getSnapshot();
+ *   return snapshot.tasks;
  */
 
 export interface TaskRecord {
@@ -96,6 +101,11 @@ export interface TasksDocument {
 
 export interface BackendExecApi {
   tasks: {
+    /**
+     * Open a live collaborative .tasks document.
+     *
+     * This uses the sync/service path, not a direct filesystem read.
+     */
     open(options: {
       path: string;
       workspaceIdentifier?: string;
@@ -159,6 +169,25 @@ export function registerExecCommand(program: Command, deps: ExecCommandDeps): Co
     .description(
       "execute javascript in the backend CoCalc runtime with a typed api object; provide code inline, with --file, or with --stdin",
     )
+    .addHelpText(
+      "after",
+      `
+Current implemented namespaces:
+- api.tasks
+
+Important:
+- api.tasks.open({ path }) uses the live collaborative sync/session path.
+- It does not read the on-disk .tasks file directly.
+- Return JSON-serializable values from your script.
+
+Example:
+  cocalc --json exec '
+    const doc = api.tasks.open({ path: "scratch/project/a.tasks" });
+    const snapshot = await doc.getSnapshot();
+    return { count: snapshot.tasks.length };
+  '
+`,
+    )
     .option(
       "--file <path>",
       "read javascript from a file path (use '-' to read from stdin)",
@@ -200,7 +229,6 @@ export function registerExecCommand(program: Command, deps: ExecCommandDeps): Co
         );
         const result = await runner(api);
         return {
-          ok: true,
           result: result ?? null,
         };
       });
