@@ -399,7 +399,12 @@ function CoCalcURL({ href, title, children, project_id }) {
           .
         </>
       );
-    } else if (target.startsWith("servers")) {
+    } else if (
+      target === "apps" ||
+      target.startsWith("apps/") ||
+      target === "servers" ||
+      target.startsWith("servers/")
+    ) {
       if (replaceChildren) {
         children = <>{SERVERS_TITLE}</>;
       }

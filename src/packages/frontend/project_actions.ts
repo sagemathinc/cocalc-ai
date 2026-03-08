@@ -873,7 +873,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "servers":
         if (opts.change_history) {
-          this.push_state("servers", "");
+          this.push_state("apps", "");
         }
         break;
 
@@ -2943,7 +2943,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     fragmentId?: FragmentId,
   ): Promise<void> => {
     const segments = target.split("/");
-    const main_segment = segments[0] as FixedTab | "project-home";
+    const main_segment = segments[0] as FixedTab | "project-home" | "apps";
     const hasScopedPathSource =
       (main_segment === "new" || main_segment === "search") &&
       segments[1] === "files";
@@ -3022,6 +3022,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         this.set_active_tab("agents", { change_history: change_history });
         break;
 
+      case "apps":
       case "servers":
         this.set_active_tab("servers", { change_history: change_history });
         break;
