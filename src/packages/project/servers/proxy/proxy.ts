@@ -35,7 +35,10 @@ import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
 import { secretToken } from "@cocalc/project/data";
-import { resolveAppProxyTarget } from "../../app-servers/control";
+import {
+  managedServiceAppForPort,
+  resolveAppProxyTarget,
+} from "../../app-servers/control";
 import {
   recordAppHttpMetric,
   recordAppWebsocketClosed,
@@ -132,8 +135,6 @@ function observeHttpResponse({
     | AppMetricsContext
     | undefined;
   if (!context) return;
-  if (context.kind !== "static") return;
-  delete (req as any)[APP_METRICS_CONTEXT];
   let bytesSent = 0;
   const originalWrite = res.write.bind(res);
   const originalEnd = res.end.bind(res);
@@ -164,6 +165,7 @@ function observeHttpResponse({
   const finalize = () => {
     if (finished) return;
     finished = true;
+    delete (req as any)[APP_METRICS_CONTEXT];
     recordAppHttpMetric({
       app_id: context.app_id,
       exposure_mode: context.exposure_mode,
@@ -501,6 +503,16 @@ function createProxyResolver({
     const mPort = portPattern.exec(url);
     if (mPort) {
       const port = Number(mPort[1]);
+      const managedApp = await managedServiceAppForPort(port);
+      if (managedApp) {
+        (req as any)[APP_METRICS_CONTEXT] = {
+          app_id: managedApp.app_id,
+          kind: managedApp.kind,
+          exposure_mode: getExposureMode(req),
+          request_started_ms: Date.now(),
+          bytes_received: getRequestBytes(req),
+        } satisfies AppMetricsContext;
+      }
       return { port, host };
     }
     const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
@@ -578,33 +590,6 @@ function createProxyResolver({
 
   proxy.on("proxyReqWs", (proxyReq) => {
     proxyReq.removeHeader(APP_PROXY_EXPOSURE_HEADER);
-  });
-
-  proxy.on("proxyRes", (proxyRes, req) => {
-    const context = (req as any)[APP_METRICS_CONTEXT] as
-      | AppMetricsContext
-      | undefined;
-    if (!context || context.kind !== "service") return;
-    delete (req as any)[APP_METRICS_CONTEXT];
-    let bytesSent = 0;
-    let finished = false;
-    const finalize = () => {
-      if (finished) return;
-      finished = true;
-      recordAppHttpMetric({
-        app_id: context.app_id,
-        exposure_mode: context.exposure_mode,
-        status_code: proxyRes.statusCode || 0,
-        bytes_sent: bytesSent,
-        bytes_received: context.bytes_received,
-        duration_ms: Date.now() - context.request_started_ms,
-      });
-    };
-    proxyRes.on("data", (chunk: Buffer) => {
-      bytesSent += chunk.length;
-    });
-    proxyRes.once("end", finalize);
-    proxyRes.once("close", finalize);
   });
 
   return { proxy, getTarget };

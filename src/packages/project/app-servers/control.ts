@@ -26,11 +26,14 @@ import {
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
 import {
+  appIdForRunningServicePort,
+  clearRunningServicePort,
   type AppExposureFrontAuth,
   type AppExposureState,
   exposeApp as exposeAppState,
   getAppExposureState,
   listAppExposureStates,
+  setRunningServicePort,
   unexposeApp as unexposeAppState,
 } from "./state";
 import {
@@ -500,6 +503,7 @@ function watchOutput(server: RunningApp): void {
   child.on("exit", (code, signal) => {
     server.exit = { code, signal };
     server.ready = false;
+    void clearRunningServicePort(server.id);
   });
 }
 
@@ -531,6 +535,7 @@ function clearChild(id: string): void {
   existing.child.stderr?.removeAllListeners();
   existing.child.removeAllListeners();
   delete children[id];
+  void clearRunningServicePort(id);
 }
 
 function getStaticRefreshState(id: string): StaticRefreshState {
@@ -771,6 +776,7 @@ export async function startApp(
     stderr: Buffer.alloc(0),
   };
   watchOutput(children[spec.id]);
+  await setRunningServicePort(spec.id, port);
 
   return await statusApp(spec.id);
 }
@@ -779,15 +785,20 @@ export async function stopApp(id: string): Promise<void> {
   const spec = await getAppSpec(id);
   const running = children[spec.id];
   if (!running || !isChildRunning(running.child)) {
+    await clearRunningServicePort(spec.id);
     return;
   }
   running.child.kill("SIGTERM");
   const exitedGracefully = await waitForChildExit(running.child, 1000);
-  if (exitedGracefully) return;
+  if (exitedGracefully) {
+    await clearRunningServicePort(spec.id);
+    return;
+  }
   if (isChildRunning(running.child)) {
     running.child.kill("SIGKILL");
     await waitForChildExit(running.child, 2000);
   }
+  await clearRunningServicePort(spec.id);
 }
 
 export async function statusApp(id: string): Promise<AppStatus> {
@@ -1046,6 +1057,13 @@ export async function resolveAppProxyTarget({
     };
   }
   return undefined;
+}
+
+export async function managedServiceAppForPort(
+  port: number,
+): Promise<{ app_id: string; kind: "service" } | undefined> {
+  const app_id = await appIdForRunningServicePort(port);
+  return app_id ? { app_id, kind: "service" } : undefined;
 }
 
 async function restartServiceForExposureMode(
