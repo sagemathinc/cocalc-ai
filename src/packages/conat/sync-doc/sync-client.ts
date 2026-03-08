@@ -46,15 +46,26 @@ export class SyncClient extends EventEmitter implements Client0 {
   };
 
   touch_project = async (project_id): Promise<void> => {
+    const client = this.client;
+    if (client == null || !client.isConnected()) {
+      return;
+    }
     try {
       await callHub({
-        client: this.client,
+        client,
         account_id: this.client_id(),
         name: "db.touch",
         args: [{ project_id, account_id: this.client_id() }],
       });
     } catch (err) {
-      if (err.code != 503) { // 503 when hub not running yet
+      const code = (err as any)?.code;
+      const message = err instanceof Error ? err.message : `${err ?? ""}`;
+      const disconnected =
+        !client.isConnected() ||
+        /socket has been disconnected|socket is disconnected|connection closed/i.test(
+          message,
+        );
+      if (!disconnected && code != 503) { // 503 when hub not running yet
         console.log("WARNING: issue touching project", { project_id }, err);
       }
     }
