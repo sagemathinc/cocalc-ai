@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -29,6 +30,7 @@ import type {
 } from "@cocalc/conat/project/api/apps";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   dispatchNavigatorPromptIntent,
@@ -323,32 +325,13 @@ function formatLatency(value?: number | null): string {
   return `${Math.round(n).toLocaleString()} ms`;
 }
 
-function formatRelativeTime(msAgo: number): string {
-  const seconds = Math.max(1, Math.round(msAgo / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
-
-function formatLastHit(last_hit_ms?: number): string {
-  if (!last_hit_ms) return "never";
-  const ts = new Date(last_hit_ms);
-  const delta = Date.now() - last_hit_ms;
-  if (!Number.isFinite(delta) || delta < 0) return ts.toLocaleString();
-  return `${formatRelativeTime(delta)} (${ts.toLocaleString()})`;
-}
-
 function MetricStat({
   label,
   value,
   subtle,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   subtle?: boolean;
 }) {
   return (
@@ -2321,7 +2304,13 @@ export function AppServerPanel({
                     >
                       <MetricStat
                         label="Last hit"
-                        value={formatLastHit(metrics.last_hit_ms)}
+                        value={
+                          metrics.last_hit_ms ? (
+                            <TimeAgo date={new Date(metrics.last_hit_ms)} />
+                          ) : (
+                            "never"
+                          )
+                        }
                       />
                       <MetricStat
                         label="Requests"
