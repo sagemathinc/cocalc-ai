@@ -13,8 +13,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
-function emptyStream() {
-  return (async function* () {})();
+function queuedAckStream(state: "queued" | "running" = "queued") {
+  return (async function* () {
+    yield { seq: 0, type: "status", state };
+  })();
 }
 
 class FakeAcpState {
@@ -28,6 +30,10 @@ class FakeAcpState {
   delete(key: string) {
     this.map.delete(key);
     return this;
+  }
+
+  get(key: string) {
+    return this.map.get(key);
   }
 }
 
@@ -45,7 +51,7 @@ describe("processAcpLLM", () => {
         fn();
         return 0 as any;
       }) as any);
-    mockStreamAcp.mockResolvedValue(emptyStream());
+    mockStreamAcp.mockResolvedValue(queuedAckStream());
 
     const acpState = new FakeAcpState();
     const store: any = {
@@ -123,7 +129,7 @@ describe("processAcpLLM", () => {
         fn();
         return 0 as any;
       }) as any);
-    mockStreamAcp.mockResolvedValue(emptyStream());
+    mockStreamAcp.mockResolvedValue(queuedAckStream());
 
     const acpState = new FakeAcpState();
     const store: any = {
@@ -202,7 +208,7 @@ describe("processAcpLLM", () => {
         fn();
         return 0 as any;
       }) as any);
-    mockStreamAcp.mockResolvedValue(emptyStream());
+    mockStreamAcp.mockResolvedValue(queuedAckStream());
 
     const acpState = new FakeAcpState();
     const store: any = {
@@ -274,5 +280,72 @@ describe("processAcpLLM", () => {
         allowWrite: true,
       }),
     );
+  });
+
+  it("keeps queued state on the submitted message after backend acknowledgement", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(4000);
+    jest
+      .spyOn(global, "setTimeout")
+      .mockImplementation(((fn: any) => {
+        fn();
+        return 0 as any;
+      }) as any);
+    mockStreamAcp.mockResolvedValue(queuedAckStream("queued"));
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const actions: any = {
+      syncdb: { commit: jest.fn() },
+      store,
+      chatStreams: new Set<string>(),
+      getAllMessages: () =>
+        new Map<string, any>([
+          [
+            "4000",
+            {
+              date: new Date(4000),
+              message_id: "root-msg-4",
+              thread_id: "thread-4",
+            },
+          ],
+        ]),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      getCodexConfig: jest.fn(() => undefined),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: new Date(4000),
+      message_id: "user-msg-4",
+      thread_id: "thread-4",
+      history: [
+        {
+          author_id: "user-1",
+          content: "queued turn",
+          date: new Date(4000).toISOString(),
+        },
+      ],
+    };
+
+    await processAcpLLM({
+      message,
+      model: "codex-agent",
+      input: "queued turn",
+      actions,
+    });
+
+    expect(acpState.get("message:user-msg-4")).toBe("queue");
   });
 });

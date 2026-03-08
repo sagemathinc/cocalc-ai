@@ -158,14 +158,21 @@ export function checkCommonPermissions({
 }
 
 export function extractProjectSubject(subject: string): string {
-  if (subject.startsWith("project.")) {
-    const project_id = subject.split(".")[1];
+  const parts = subject.split(".");
+  if (parts[0] === "project") {
+    const project_id = parts[1];
     if (isValidUUID(project_id)) {
       return project_id;
     }
     return "";
   }
-  const parts = subject.split(".");
+  if (parts[0] === "hub" && parts[1] === "project") {
+    const project_id = parts[2];
+    if (isValidUUID(project_id)) {
+      return project_id;
+    }
+    return "";
+  }
   const maybe = parts[1];
   if (maybe?.startsWith("project-")) {
     const project_id = maybe.slice("project-".length);

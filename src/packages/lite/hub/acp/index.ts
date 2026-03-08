@@ -18,6 +18,8 @@ import {
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
 import type {
+  AcpControlRequest,
+  AcpControlResponse,
   AcpRequest,
   AcpStreamPayload,
   AcpStreamMessage,
@@ -80,6 +82,18 @@ import {
   startAcpTurnLease,
   updateAcpTurnLeaseSessionId,
 } from "../sqlite/acp-turns";
+import {
+  cancelQueuedAcpJob,
+  claimNextQueuedAcpJobForThread,
+  decodeAcpJobRequest,
+  enqueueAcpJob,
+  listQueuedAcpJobs,
+  listQueuedAcpJobsForThread,
+  markRunningAcpJobsInterrupted,
+  reprioritizeAcpJobImmediate,
+  setAcpJobState,
+  type AcpJobRow,
+} from "../sqlite/acp-jobs";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
@@ -106,6 +120,7 @@ let blobStore: AKV | null = null;
 const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
+const pumpingAcpJobThreads = new Set<string>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -118,6 +133,7 @@ const LOOP_DEFAULT_MAX_WALL_TIME_MS = 30 * 60_000;
 const LOOP_DEFAULT_CHECK_IN_EVERY_TURNS = 0;
 const LOOP_DEFAULT_REPEATED_BLOCKER_LIMIT = 2;
 const LOOP_DEFAULT_SLEEP_MS = 0;
+const ACP_QUEUED_PROMPT_NOTE_THRESHOLD_MS = 1500;
 const ACP_CHAT_INTEGRITY_RECOMPUTE_MIN_MS = envNumber(
   "COCALC_ACP_CHAT_INTEGRITY_RECOMPUTE_MIN_MS",
   60_000,
@@ -153,6 +169,14 @@ function envNumber(name: string, fallback: number): number {
 
 function roundMs(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function formatQueuedDelay(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remain = seconds % 60;
+  return remain > 0 ? `${minutes}m ${remain}s` : `${minutes}m`;
 }
 
 type AcpMockRule = {
@@ -2239,6 +2263,23 @@ export class ChatStreamWriter {
     return this.interruptNotified === true;
   }
 
+  public getTerminalState():
+    | "completed"
+    | "error"
+    | "interrupted"
+    | undefined {
+    switch (this.finishedBy) {
+      case "error":
+        return "error";
+      case "interrupt":
+        return "interrupted";
+      case "summary":
+        return "completed";
+      default:
+        return undefined;
+    }
+  }
+
   public beginLoopIteration(): void {
     this.finished = false;
     this.finishedBy = undefined;
@@ -2888,12 +2929,16 @@ function buildCodexRuntimeEnv({
   return out;
 }
 
-export async function evaluate({
+type AcpExecutionResult = {
+  terminalState: "completed" | "error" | "interrupted";
+};
+
+async function executeAcpRequest({
   stream,
   ...request
 }: AcpRequest & {
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
-}): Promise<void> {
+}): Promise<AcpExecutionResult> {
   const reqId = randomUUID();
   const startedAt = Date.now();
   const { config } = request;
@@ -3029,6 +3074,7 @@ export async function evaluate({
     });
   };
 
+  let terminalState: AcpExecutionResult["terminalState"] = "completed";
   try {
     if (loopEnabled) {
       await persistLoopState();
@@ -3239,6 +3285,7 @@ export async function evaluate({
       continueLoop = true;
     }
   } finally {
+    terminalState = chatWriter?.getTerminalState() ?? terminalState;
     const elapsedMs = Date.now() - startedAt;
     logger.debug("evaluate: end", { reqId, elapsedMs });
     // TODO: we might not want to immediately close, since there is
@@ -3246,6 +3293,564 @@ export async function evaluate({
     chatWriter?.dispose();
     await cleanup();
   }
+  return { terminalState };
+}
+
+function acpJobThreadKey({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): string {
+  return `${project_id}:${path}:${thread_id}`;
+}
+
+function maybeDecorateQueuedPromptForJob({
+  prompt,
+  job,
+}: {
+  prompt: string;
+  job: Pick<AcpJobRow, "created_at" | "send_mode">;
+}): string {
+  if (job.send_mode === "immediate") return prompt;
+  const delayMs = Date.now() - job.created_at;
+  if (
+    !Number.isFinite(delayMs) ||
+    delayMs < ACP_QUEUED_PROMPT_NOTE_THRESHOLD_MS
+  ) {
+    return prompt;
+  }
+  return [
+    `System note: this message was queued for ${formatQueuedDelay(
+      delayMs,
+    )} while another turn was active, and is being sent automatically now.`,
+    "",
+    prompt,
+  ].join("\n");
+}
+
+async function withChatSyncDB<T>({
+  client,
+  project_id,
+  path,
+  fn,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  fn: (syncdb: SyncDB) => Promise<T>;
+}): Promise<T> {
+  const syncdb = await acquireChatSyncDB({
+    client,
+    project_id,
+    path,
+  });
+  try {
+    if (!syncdb.isReady()) {
+      await once(syncdb, "ready");
+    }
+    return await fn(syncdb);
+  } finally {
+    await releaseChatSyncDB(project_id, path);
+  }
+}
+
+function latestThreadMessageIdInSyncDB({
+  syncdb,
+  threadId,
+  excludeMessageId,
+}: {
+  syncdb: SyncDB;
+  threadId: string;
+  excludeMessageId?: string;
+}): string | undefined {
+  const rows = syncdbRowsMatching(syncdb, {
+    event: "chat",
+    thread_id: threadId,
+  });
+  let bestMessageId: string | undefined;
+  let bestDate = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    const messageId = `${syncdbField<string>(row, "message_id") ?? ""}`.trim();
+    if (!messageId || messageId === excludeMessageId) continue;
+    const date =
+      normalizeIsoDateString(syncdbField<string>(row, "date")) ??
+      `${syncdbField<string>(row, "date") ?? ""}`;
+    const parsed = Date.parse(date);
+    if (!Number.isFinite(parsed)) continue;
+    if (parsed >= bestDate) {
+      bestDate = parsed;
+      bestMessageId = messageId;
+    }
+  }
+  return bestMessageId;
+}
+
+function threadHasRunningState(syncdb: SyncDB, threadId: string): boolean {
+  const rows = syncdbRowsMatching(syncdb, {
+    event: THREAD_STATE_EVENT,
+    thread_id: threadId,
+  });
+  return rows.some((row) => syncdbField<string>(row, "state") === "running");
+}
+
+async function persistQueuedUserMessageProjection({
+  client,
+  project_id,
+  path,
+  thread_id,
+  user_message_id,
+  queued,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  user_message_id: string;
+  queued: boolean;
+}): Promise<"queued" | "running" | null> {
+  return await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      const waitingInLine = threadHasRunningState(syncdb, thread_id);
+      const projectedMessageState = queued
+        ? waitingInLine
+          ? "queued"
+          : "running"
+        : null;
+      const current = findChatRowByMessageId(syncdb, user_message_id);
+      if (current != null) {
+        const rowDate =
+          normalizeIsoDateString(syncdbField<string>(current, "date")) ??
+          undefined;
+        const rowSender = syncdbField<string>(current, "sender_id");
+        if (rowDate && rowSender) {
+          const update: Record<string, unknown> = {
+            event: "chat",
+            date: rowDate,
+            sender_id: rowSender,
+            message_id: user_message_id,
+            thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
+            acp_state: projectedMessageState,
+          };
+          const parentMessageId = syncdbField<string>(
+            current,
+            "parent_message_id",
+          );
+          if (parentMessageId) {
+            update.parent_message_id = parentMessageId;
+          }
+          syncdb.set(update);
+        }
+      }
+
+      if (!waitingInLine) {
+        const nextQueued = queued
+          ? user_message_id
+          : listQueuedAcpJobsForThread({
+              project_id,
+              path,
+              thread_id,
+            })[0]?.user_message_id;
+        replaceThreadScopedRow(
+          syncdb,
+          THREAD_STATE_EVENT,
+          thread_id,
+          buildThreadStateRecord({
+            thread_id,
+            state: nextQueued ? "queued" : "idle",
+            active_message_id: nextQueued,
+            updated_at: new Date().toISOString(),
+            schema_version: THREAD_STATE_SCHEMA_VERSION,
+          }),
+        );
+      }
+
+      syncdb.commit();
+      await syncdb.save();
+      return projectedMessageState;
+    },
+  });
+}
+
+async function prepareQueuedUserMessageForExecution({
+  client,
+  project_id,
+  path,
+  thread_id,
+  user_message_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  user_message_id: string;
+}): Promise<void> {
+  await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      const current = findChatRowByMessageId(syncdb, user_message_id);
+      if (current != null) {
+        const rowDate =
+          normalizeIsoDateString(syncdbField<string>(current, "date")) ??
+          undefined;
+        const rowSender = syncdbField<string>(current, "sender_id");
+        if (rowDate && rowSender) {
+          const latestParentMessageId = latestThreadMessageIdInSyncDB({
+            syncdb,
+            threadId: thread_id,
+            excludeMessageId: user_message_id,
+          });
+          const update: Record<string, unknown> = {
+            event: "chat",
+            date: rowDate,
+            sender_id: rowSender,
+            message_id: user_message_id,
+            thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
+            acp_state: null,
+          };
+          const currentParentMessageId = syncdbField<string>(
+            current,
+            "parent_message_id",
+          );
+          const effectiveParentMessageId =
+            latestParentMessageId ?? currentParentMessageId;
+          if (effectiveParentMessageId) {
+            update.parent_message_id = effectiveParentMessageId;
+          }
+          syncdb.set(update);
+          syncdb.commit();
+          await syncdb.save();
+        }
+      }
+    },
+  });
+}
+
+async function writeQueuedJobFailureToChat({
+  request,
+  error,
+}: {
+  request: AcpRequest;
+  error: string;
+}): Promise<void> {
+  if (!request.chat || !conatClient) return;
+  try {
+    const writer = new ChatStreamWriter({
+      metadata: request.chat,
+      client: conatClient,
+      approverAccountId: request.account_id,
+      sessionKey: request.session_id,
+      workspaceRoot: resolveWorkspaceRoot(request.config),
+      hostWorkspaceRoot: resolveWorkspaceRoot(request.config),
+    });
+    await writer.waitUntilReady();
+    if (writer.isClosed()) {
+      throw new Error(
+        `failed to initialize chat writer -- ${writer.syncdbError ?? "unknown"}`,
+      );
+    }
+    await writer.handle({ type: "error", error });
+    await writer.handle(null);
+  } catch (writerErr) {
+    logger.warn("failed to write queued acp job failure to chat", {
+      chat: request.chat,
+      error,
+      writerErr,
+    });
+  }
+}
+
+async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
+  const request = decodeAcpJobRequest(job);
+  const project_id = `${job.project_id}`.trim();
+  const path = `${job.path}`.trim();
+  const thread_id = `${job.thread_id}`.trim();
+  const user_message_id = `${job.user_message_id}`.trim();
+  if (!project_id || !path || !thread_id || !user_message_id) {
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error: "queued acp job missing required thread identity",
+    });
+    return;
+  }
+  if (!conatClient) {
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error: "conat client must be initialized",
+    });
+    return;
+  }
+  try {
+    await prepareQueuedUserMessageForExecution({
+      client: conatClient,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+    });
+  } catch (err) {
+    logger.warn("failed preparing queued acp user message for execution", {
+      job: job.op_id,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      err,
+    });
+  }
+
+  request.prompt = maybeDecorateQueuedPromptForJob({
+    prompt: request.prompt ?? "",
+    job,
+  });
+
+  try {
+    const result = await executeAcpRequest({
+      ...request,
+      stream: async () => {},
+    });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: result.terminalState,
+    });
+  } catch (err) {
+    const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
+    logger.warn("queued acp job execution failed", {
+      op_id: job.op_id,
+      err,
+    });
+    await writeQueuedJobFailureToChat({
+      request,
+      error: message,
+    });
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error: message,
+    });
+  }
+}
+
+async function pumpQueuedAcpJobsForThread({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): Promise<void> {
+  while (true) {
+    const job = claimNextQueuedAcpJobForThread({
+      project_id,
+      path,
+      thread_id,
+    });
+    if (!job) {
+      return;
+    }
+    await runQueuedAcpJob(job);
+  }
+}
+
+function kickQueuedAcpJobsForThread({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): void {
+  const key = acpJobThreadKey({ project_id, path, thread_id });
+  if (pumpingAcpJobThreads.has(key)) {
+    return;
+  }
+  pumpingAcpJobThreads.add(key);
+  void pumpQueuedAcpJobsForThread({
+    project_id,
+    path,
+    thread_id,
+  })
+    .catch((err) => {
+      logger.warn("queued acp thread pump failed", {
+        project_id,
+        path,
+        thread_id,
+        err,
+      });
+    })
+    .finally(() => {
+      pumpingAcpJobThreads.delete(key);
+      if (
+        listQueuedAcpJobsForThread({
+          project_id,
+          path,
+          thread_id,
+        }).length > 0
+      ) {
+        kickQueuedAcpJobsForThread({ project_id, path, thread_id });
+      }
+    });
+}
+
+function kickAllQueuedAcpJobs(): void {
+  const seen = new Set<string>();
+  for (const job of listQueuedAcpJobs()) {
+    const key = acpJobThreadKey(job);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kickQueuedAcpJobsForThread(job);
+  }
+}
+
+function resolveRunningInterruptKey({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): string {
+  const running = listRunningAcpTurnLeases().find(
+    (row) =>
+      row.project_id === project_id &&
+      row.path === path &&
+      row.thread_id === thread_id &&
+      row.state === "running",
+  );
+  return `${running?.session_id ?? thread_id}`.trim() || thread_id;
+}
+
+async function enqueueChatAcpTurn({
+  request,
+  stream,
+}: {
+  request: AcpRequest;
+  stream: (payload?: AcpStreamPayload | null) => Promise<void>;
+}): Promise<void> {
+  if (!request.chat) {
+    throw new Error("chat metadata is required to enqueue an ACP turn");
+  }
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  const row = enqueueAcpJob(request);
+  const projectedState = await persistQueuedUserMessageProjection({
+    client: conatClient,
+    project_id: row.project_id,
+    path: row.path,
+    thread_id: row.thread_id,
+    user_message_id: row.user_message_id,
+    queued: row.state === "queued",
+  });
+  await stream({
+    type: "status",
+    state:
+      row.state === "running" || projectedState === "running"
+        ? "running"
+        : "queued",
+  });
+  await stream(null);
+  kickQueuedAcpJobsForThread(row);
+}
+
+async function handleAcpControlRequest(
+  request: AcpControlRequest,
+): Promise<AcpControlResponse> {
+  const project_id = `${request.project_id ?? ""}`.trim();
+  const path = `${request.path ?? ""}`.trim();
+  const thread_id = `${request.thread_id ?? ""}`.trim();
+  const user_message_id = `${request.user_message_id ?? ""}`.trim();
+  if (!project_id || !path || !thread_id || !user_message_id) {
+    throw new Error("ACP control request is missing required fields");
+  }
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  if (request.action === "cancel") {
+    const row = cancelQueuedAcpJob({
+      project_id,
+      path,
+      user_message_id,
+    });
+    if (!row || row.state !== "canceled") {
+      return { ok: false, state: row?.state ?? "missing" };
+    }
+    await persistQueuedUserMessageProjection({
+      client: conatClient,
+      project_id,
+      path,
+      thread_id,
+      user_message_id,
+      queued: false,
+    });
+    return { ok: true, state: "canceled" };
+  }
+  if (request.action === "send_immediately") {
+    const row = reprioritizeAcpJobImmediate({
+      project_id,
+      path,
+      user_message_id,
+    });
+    if (!row || row.state !== "queued") {
+      return { ok: false, state: row?.state ?? "missing" };
+    }
+    const interruptKey = resolveRunningInterruptKey({
+      project_id,
+      path,
+      thread_id,
+    });
+    try {
+      await handleInterruptRequest({
+        project_id,
+        account_id: request.account_id,
+        threadId: interruptKey,
+        chat: {
+          project_id,
+          path,
+          thread_id,
+          message_date: "",
+          sender_id: "",
+        },
+      });
+    } catch (err) {
+      logger.debug("send-immediately did not interrupt an active turn", {
+        project_id,
+        path,
+        thread_id,
+        user_message_id,
+        err,
+      });
+    }
+    kickQueuedAcpJobsForThread(row);
+    return { ok: true, state: "queued" };
+  }
+  throw new Error(`unsupported ACP control action: ${request.action}`);
+}
+
+export async function evaluate({
+  stream,
+  ...request
+}: AcpRequest & {
+  stream: (payload?: AcpStreamPayload | null) => Promise<void>;
+}): Promise<void> {
+  if (request.chat) {
+    await enqueueChatAcpTurn({ request, stream });
+    return;
+  }
+  await executeAcpRequest({ ...request, stream });
 }
 
 export async function init(client: ConatClient): Promise<void> {
@@ -3272,14 +3877,17 @@ export async function init(client: ConatClient): Promise<void> {
   });
   blobStore = getBlobstore(client);
   await recoverOrphanedAcpTurns(client);
+  markRunningAcpJobsInterrupted("server restart");
   await initConatAcp(
     {
       evaluate,
       interrupt: handleInterruptRequest,
       forkSession: handleForkSessionRequest,
+      control: handleAcpControlRequest,
     },
     client,
   );
+  kickAllQueuedAcpJobs();
 }
 
 type BlobReference = {

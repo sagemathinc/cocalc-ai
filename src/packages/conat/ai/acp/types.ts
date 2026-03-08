@@ -102,6 +102,27 @@ export type AcpForkSessionRequest = {
   newSessionId?: string;
 };
 
+export type AcpControlRequest = {
+  project_id: string;
+  account_id: string;
+  path: string;
+  thread_id: string;
+  user_message_id: string;
+  action: "cancel" | "send_immediately";
+};
+
+export type AcpControlResponse = {
+  ok: boolean;
+  state?:
+    | "queued"
+    | "running"
+    | "completed"
+    | "error"
+    | "canceled"
+    | "interrupted"
+    | "missing";
+};
+
 export type AcpStreamUsage = {
   input_tokens?: number;
   output_tokens?: number;
@@ -158,7 +179,7 @@ export type AcpStreamEvent =
     };
 
 export type AcpStreamPayload =
-  | { type: "status"; state: "init" | "running" }
+  | { type: "status"; state: "init" | "queued" | "running" }
   | {
       type: "event";
       event: AcpStreamEvent;

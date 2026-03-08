@@ -219,7 +219,10 @@ export function computeAcpStateToRender({
   generating?: boolean;
   showViewerRunning?: boolean;
 }): string {
-  const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
+  const state =
+    acpState === "running" && latestThreadInterrupted
+      ? ""
+      : acpState;
   if (!state) return "";
   if (VIEWER_ONLY_STATES.has(state)) {
     return isViewersMessage ? state : "";
@@ -1792,11 +1795,11 @@ export default function Message({
 
   const handleCancelQueued = () => {
     if (!actions) return;
-    cancelQueuedAcpTurn({ actions, message });
+    void cancelQueuedAcpTurn({ actions, message });
   };
   const handleSendQueuedImmediately = () => {
     if (!actions) return;
-    sendQueuedAcpTurnImmediately({ actions, message });
+    void sendQueuedAcpTurnImmediately({ actions, message });
   };
 
   const acpStateToRender = useMemo(() => {
