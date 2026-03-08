@@ -12,7 +12,7 @@ then returns scoped credentials. This is intentionally minimal and familiar.
 - **Single admin toggle**: "Enable Managed Cloudflare".
 - **Zero user keys**: users never see Cloudflare creds.
 - **One bucket per account** (R2), one tunnel per hub.
-- **One DNS hostname** under `*.cocalc.ai` (generated, no custom domains) for their hub; additional DNS for each workspace host.
+- **One DNS hostname** under `*.cocalc.ai` (generated, no custom domains) for their hub; additional DNS for each project host.
 - **Hub‑managed health**: hub reports Ready/Degraded/Error.
 - **Disable**: stop tunnel + revoke keys; optional delayed bucket deletion.
 

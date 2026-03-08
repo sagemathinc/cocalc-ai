@@ -1163,7 +1163,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.terminal.scrollToBottom();
   };
 
-  // Terminals always connect to the workspace host.
+  // Terminals always connect to the project host.
 }
 
 async function touchPath(project_id: string, path: string): Promise<void> {

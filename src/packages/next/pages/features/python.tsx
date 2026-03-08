@@ -170,7 +170,7 @@ export default function Python({ customize }) {
           </Info.Heading>
 
           <Info
-            title="Collaborative workspaces"
+            title="Collaborative projects"
             icon="users"
             image={CollabRTC}
             anchor="a-collaboration"

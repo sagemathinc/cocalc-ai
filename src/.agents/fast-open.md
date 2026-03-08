@@ -4,7 +4,7 @@
 
 Planning - no code yet.  OK, moving on, I want to discuss a core performance problem in CoCalc, and see what _you_ think about it.
 
-As one navigates a workspace, it's very common of course to open and read files.  Sometimes you actually edit those files, run code in them (jupyter notebooks), type chat messages, etc.
+As one navigates a project, it's very common of course to open and read files.  Sometimes you actually edit those files, run code in them (jupyter notebooks), type chat messages, etc.
 
 PROBLEM: Right now in cocalc-plus (lite mode) it takes about 1 second to open a text file.   With Cocalc launchpad it typically takes 2 seconds the first time.
 

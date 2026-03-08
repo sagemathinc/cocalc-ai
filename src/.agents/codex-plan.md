@@ -356,4 +356,4 @@ Bring Codex agents into CoCalc chat so users can open a thread, point it at a wo
 - Flyout activity renderer: `packages/frontend/project/page/flyouts/*` (now support dimming extensions).
 - Settings UI: `packages/frontend/account/lite-ai-settings.tsx`, `/customize` logic in `packages/lite/hub/settings.ts`.
 
-Keep this summary handy when switching workspaces so the next session can pick up Codex integration without re-reading history.
+Keep this summary handy when switching projects so the next session can pick up Codex integration without re-reading history.

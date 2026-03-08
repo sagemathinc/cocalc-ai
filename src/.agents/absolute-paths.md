@@ -474,7 +474,7 @@ Mitigation:
     - Pending copy application now resolves destination paths with HOME/rootfs/scratch policy (same sandbox contract as file-server):
       - [src/packages/project-host/pending-copies.ts](./src/packages/project-host/pending-copies.ts)
       - [src/packages/project-host/file-server.ts](./src/packages/project-host/file-server.ts)
-    - Rootfs/scratch unmounted errors now explicitly tell users to start the workspace:
+    - Rootfs/scratch unmounted errors now explicitly tell users to start the project:
       - [src/packages/backend/sandbox/index.ts](./src/packages/backend/sandbox/index.ts)
       - [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts)
     - Added focused server unit tests for copy orchestration (same-host absolute, cross-host `/scratch` rejection, queued absolute and multi-source basename expansion):

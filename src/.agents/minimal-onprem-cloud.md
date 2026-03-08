@@ -432,7 +432,7 @@ Hub assigns two ports per host:
   - user configures Cloudflare API support for tunnels + DNS
   - hub creates/owns a local Cloudflare tunnel and exposes Launchpad
 - [ ] Fix remaining local-network gaps:
-  - [ ] provide clear SSH instructions for workspace access
-  - [ ] proxy apps (e.g., VSCode/Jupyter) running in a workspace
+  - [ ] provide clear SSH instructions for project access
+  - [ ] proxy apps (e.g., VSCode/Jupyter) running in a project
   - [ ] fix rustic backups (stop silent failures)
 - [ ] Further polish onboarding for new admins/users.

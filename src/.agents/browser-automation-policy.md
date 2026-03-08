@@ -52,7 +52,7 @@ Policy schema (`version: 1`):
 {
   "version": 1,
   "allow_raw_exec": true,
-  "allowed_project_ids": ["<workspace-uuid>"],
+  "allowed_project_ids": ["<project-uuid>"],
   "allowed_origins": ["https://example.cocalc.com"],
   "allowed_actions": ["click", "click_at", "drag", "type", "press", "wait_for_selector", "wait_for_url"]
 }

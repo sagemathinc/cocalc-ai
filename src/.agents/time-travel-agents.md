@@ -60,7 +60,7 @@ thread/session metadata to patch commits for UI linking.
 Introduce a small backend service that listens to Codex exec events and drives
 Patchflow commits:
 
-- Inputs: Codex exec event stream, project_id, workspace root, thread/session
+- Inputs: Codex exec event stream, project_id, project root, thread/session
   info.
 - Outputs: Patchflow commits with metadata linking to the chat turn.
 

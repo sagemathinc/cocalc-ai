@@ -11,7 +11,7 @@ Goal: Complete remove all code and functionality for the following:
 - [x] Sage worksheets: opening a sagews should convert it to ipynb automatically \(if ipynb doesn't exist already\), then open that. Nothing else.
 - [x] payg LLM purchases; we still must track usage and costs for throttling and analytic, but nothing regarding actual transactions/billing shown to users.
 - [x] the jupyter pool.
-- [x] replace "home base" terminology with "the workspace" \(final cleanup after compute server removal\)
+- [x] replace "home base" terminology with "the project" \(final cleanup after compute server removal; after the temporary workspace terminology experiment was reverted\)
 - [x] all code involving compute\_servers and cloud filesystems
 - [x] public jupyter api
 - [x] anonymous accounts / sign up
@@ -25,7 +25,7 @@ Goal: Complete remove all code and functionality for the following:
 - [x] payg project upgrades
 - [x] legacy upgrades \(from 2020 and earlier\)
 - [x] dedicated\_vms and dedicated\_disks
-- [x] rename: "Project" \-\-&gt; "Workspace" in frontend UI
+- [x] rename: "Workspace" \-\-&gt; "Project" in frontend UI
 
 ## (done) Remove Sage Worksheets (auto-convert to ipynb on open)
 
@@ -279,10 +279,10 @@ Scope: remove all compute server and cloud filesystem functionality. No migratio
 7. **Final audit.**  
    Ripgrep for site_license, licenses, and license_id across src and docs; confirm no references remain beyond software licenses.
 
-## \(done\) Rename: Project \-&gt; Workspace in frontend UI
+## \(done\) Rename: Workspace \-&gt; Project in frontend UI
 
 1. **Terminology helper + i18n keys.**  
-   Reuse labels.project and labels.projects, but update their values to "Workspace" and "Workspaces" in [src/packages/frontend/i18n/common.ts](./src/packages/frontend/i18n/common.ts), then propagate to locale files that mirror common labels.  
+   Reuse labels.project and labels.projects, with their values set to "Project" and "Projects" in [src/packages/frontend/i18n/common.ts](./src/packages/frontend/i18n/common.ts), then propagate to locale files that mirror common labels.  
    Prefer labels.project(s) anywhere a user-visible "Project" appears; only add new keys if a screen truly needs both terms at once.  
    For the Next/store/marketing app, introduce a tiny helper (e.g., a constants module in src/packages/next) that reads the same terminology so copy stays consistent.
 
@@ -292,20 +292,19 @@ Scope: remove all compute server and cloud filesystem functionality. No migratio
    Only update (a). Leave DB/API names intact.
 
 3. **Frontend app replacements (logged-in UI).**  
-   Replace user-visible "Project(s)" with labels.project(s) in navigation, project list, create-project flows, settings, sharing/invites, quotas, membership messaging, and modal copy.  
+   Replace user-visible "Workspace(s)" with labels.project(s) in navigation, project list, create-project flows, settings, sharing/invites, quotas, membership messaging, and modal copy.  
    Update hard-coded strings in components under [src/packages/frontend](./src/packages/frontend) to use labels.project(s) and keep pluralization consistent.
-   Ensure pluralization and possessives read naturally (e.g., "Workspace settings", "Open workspace", "Workspace ID").
+   Ensure pluralization and possessives read naturally (e.g., "Project settings", "Open project", "Project ID").
 
 4. **Store/marketing replacements (Next).**  
-   Update strings in [src/packages/next/pages](./src/packages/next/pages) and [src/packages/next/components](./src/packages/next/components) to use workspace terminology, including pricing, store, landing, and feature pages.  
+   Update strings in [src/packages/next/pages](./src/packages/next/pages) and [src/packages/next/components](./src/packages/next/components) to use project terminology, including pricing, store, landing, and feature pages.  
    Apply the shared helper (mirroring labels.project(s)) to keep copy consistent and reduce future churn.
 
 5. **Edge cases + exceptions.**  
    Keep technical identifiers and URLs (project_id, /projects routes, API names) unchanged.  
-   Decide on compound terms (e.g., "project host" -> "workspace host") and document those choices for consistent copy updates.  
-   Decision: use "workspace host(s)" in user-facing copy; keep internal `project-host` ids, `project_host` fields, and `/projects` routes/URL paths unchanged.
+   Decide on compound terms for host copy and document those choices for consistent updates.  
+   Decision: use "project host(s)" in user-facing copy; keep internal `project-host` ids, `project_host` fields, and `/projects` routes/URL paths unchanged.
 
 6. **QA + validation.**  
-   Run search for leftover user-facing "Project" in frontend/next files, leaving only technical identifiers.  
-   Spot-check key flows (create workspace, settings, share, membership modal, store pages) and run pnpm tsc --build for frontend/next.
-
+   Run search for leftover user-facing "Workspace" in frontend/next files, leaving only technical identifiers.  
+   Spot-check key flows (create project, settings, share, membership modal, store pages) and run pnpm tsc --build for frontend/next.

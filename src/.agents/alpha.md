@@ -128,7 +128,7 @@ These items lock down secure multi-user cloud behavior.
 
 ### A1.2 (done) Project-host selection only allows definitely running hosts
 
-**Task:** "project-host selection for workspace - only allow working definitely running hosts"
+**Task:** "project-host selection only allows definitely running hosts"
 
 **Done when:**
 
@@ -240,7 +240,7 @@ For lite mode, all assistant-style entry points should route into one coherent c
 
 Design:
 
-- Keep exactly one primary Navigator thread per lite workspace/session.
+- Keep exactly one primary Navigator thread per lite project/session.
 - Route assistant entry points into that thread as explicit intent messages.
 - Reuse the active thread unless the user explicitly starts a new session.
 - If a codex turn is in progress, queue a new intent and let user choose:
@@ -391,7 +391,7 @@ Done when:
 Use least privilege by default:
 
 - browser automation scope (read/write browser session state)
-- workspace/project scope (only selected workspace unless explicitly escalated)
+- project scope (only selected project unless explicitly escalated)
 - explicit TTL (short-lived bearer)
 
 Lite mode:
@@ -404,7 +404,7 @@ Launchpad mode:
 
 Done when:
 
-- Agent token cannot be reused for unrelated account/workspace operations.
+- Agent token cannot be reused for unrelated account/project operations.
 - Revocation/expiry behavior is deterministic and logged.
 
 ---
@@ -436,7 +436,7 @@ Ship a first-party skill available to Codex sessions that includes:
 - command cookbook for common browser tasks
 - safe patterns (`exec-api` inspect first, then `browser exec`)
 - fallback behavior when multiple browser sessions are active
-- examples for open/close tabs, summarize active workspace, apply small edits
+- examples for open/close tabs, summarize active project, apply small edits
 
 Done when:
 
@@ -587,7 +587,7 @@ Done when:
 4. Apply path preference
 
 - Prefer browser/RTC-aware edits (via CoCalc CLI browser exec) when target docs are open.
-- Fallback to workspace file edits + open/focus target file if RTC route is unavailable.
+- Fallback to project file edits + open/focus target file if RTC route is unavailable.
 - Avoid silent divergence between on-disk and in-memory state.
 
 5. Safety + audit

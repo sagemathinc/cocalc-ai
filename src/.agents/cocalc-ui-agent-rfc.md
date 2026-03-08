@@ -16,7 +16,7 @@ The immediate product strategy is:
 
 1. Reuse existing chat/Codex infrastructure everywhere possible.
 2. Replace one-off LLM UI features with agent intents routed into Codex sessions.
-3. Make sessions first-class in the workspace UI (global, contextual, and flyout).
+3. Make sessions first-class in the project UI (global, contextual, and flyout).
 4. Optimize for subscription-backed usage economics by prioritizing Codex-only flows.
 
 ## 2. Why This Reset
@@ -98,7 +98,7 @@ Examples:
 
 ### 7.3 Agents Flyout
 
-Add an "Agents" flyout listing recent sessions for this workspace/user, with status and resume actions.
+Add an "Agents" flyout listing recent sessions for this project/user, with status and resume actions.
 
 Use existing flyout patterns in:
 
@@ -254,7 +254,7 @@ Do not create a second planner/executor stack for navigator.
   - working directory display
   - clear/new/archive/open-thread actions
 - rich trace panel toggle for advanced users
-- "handoff to workspace agent" action
+- "handoff to project agent" action
 
 ### 13.3 Agents Flyout
 
@@ -271,7 +271,7 @@ Near-term:
 
 Future:
 
-- opt-in shared sessions per workspace
+- opt-in shared sessions per project
 - explicit ownership and visibility controls
 - immutable audit trail for shared sessions
 
