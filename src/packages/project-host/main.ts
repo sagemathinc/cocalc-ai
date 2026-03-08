@@ -35,6 +35,7 @@ import {
   getProjectPorts,
 } from "./sqlite/projects";
 import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
+import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
@@ -399,6 +400,7 @@ export async function main(
       }
       const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
       req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;
+      req.headers[APP_PROXY_EXPOSURE_HEADER] = publicAppHost ? "public" : "private";
       const http_port = await waitForProjectHttpPort(project_id);
       return { handled: true, target: { host: "127.0.0.1", port: http_port } };
     },

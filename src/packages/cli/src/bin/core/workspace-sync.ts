@@ -41,13 +41,19 @@ export type WorkspaceSshTarget<Workspace extends WorkspaceLike = WorkspaceLike> 
 export type WorkspaceSshRoute<Workspace extends WorkspaceLike = WorkspaceLike> = {
   workspace: Workspace;
   host_id: string;
-  transport: "cloudflare-access-tcp" | "direct";
+  transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
   ssh_username: string;
   ssh_server: string | null;
   cloudflare_hostname: string | null;
   ssh_host: string | null;
   ssh_port: number | null;
 };
+
+function isCloudflareWorkspaceSshTransport(
+  transport: WorkspaceSshConnectionInfo["transport"],
+): transport is "cloudflare-tcp" | "cloudflare-access-tcp" {
+  return transport === "cloudflare-tcp" || transport === "cloudflare-access-tcp";
+}
 
 export type ReflectForwardRecord = {
   id: number;
@@ -419,7 +425,7 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
     })) as WorkspaceSshConnectionInfo;
     const sshUsername =
       `${connection.ssh_username ?? workspace.project_id}`.trim() || workspace.project_id;
-    if (connection.transport === "cloudflare-access-tcp") {
+    if (isCloudflareWorkspaceSshTransport(connection.transport)) {
       const hostname = `${connection.cloudflare_hostname ?? ""}`.trim();
       if (!hostname) {
         throw new Error("workspace ssh route returned no cloudflare hostname");
@@ -427,7 +433,7 @@ export function createWorkspaceSyncOps<Ctx, Workspace extends WorkspaceLike>(
       return {
         workspace,
         host_id: connection.host_id,
-        transport: "cloudflare-access-tcp",
+        transport: "cloudflare-tcp",
         ssh_username: sshUsername,
         ssh_server: connection.ssh_server ?? null,
         cloudflare_hostname: hostname,

@@ -26,12 +26,14 @@ interface RuntimeStateV1 {
   version: 1;
   updated_at_ms: number;
   exposures: Record<string, AppExposureState>;
+  running_services: Record<string, { port: number }>;
 }
 
 const DEFAULT_STATE: RuntimeStateV1 = {
   version: 1,
   updated_at_ms: 0,
   exposures: {},
+  running_services: {},
 };
 
 function appsDir(): string {
@@ -99,9 +101,25 @@ function normalizeState(input: unknown): RuntimeStateV1 {
     obj.exposures && typeof obj.exposures === "object" && !Array.isArray(obj.exposures)
       ? (obj.exposures as Record<string, unknown>)
       : {};
+  const runningServicesIn =
+    obj.running_services &&
+    typeof obj.running_services === "object" &&
+    !Array.isArray(obj.running_services)
+      ? (obj.running_services as Record<string, unknown>)
+      : {};
   const exposures: Record<string, AppExposureState> = {};
+  const running_services: Record<string, { port: number }> = {};
   for (const [key, value] of Object.entries(exposuresIn)) {
     exposures[key] = normalizeExposureState(value);
+  }
+  for (const [key, value] of Object.entries(runningServicesIn)) {
+    const obj = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, any>)
+      : undefined;
+    const port = Number(obj?.port);
+    if (Number.isInteger(port) && port > 0) {
+      running_services[key] = { port };
+    }
   }
   return {
     version: 1,
@@ -109,6 +127,7 @@ function normalizeState(input: unknown): RuntimeStateV1 {
       ? Number(obj.updated_at_ms)
       : 0,
     exposures,
+    running_services,
   };
 }
 
@@ -129,7 +148,7 @@ async function readStateRaw(): Promise<RuntimeStateV1> {
 async function writeStateRaw(state: RuntimeStateV1): Promise<void> {
   await ensureAppsDir();
   const path = statePath();
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${randomBytes(6).toString("hex")}`;
   const payload = {
     ...state,
     version: 1,
@@ -180,6 +199,36 @@ export async function listAppExposureStates(): Promise<Record<string, AppExposur
     await writeStateRaw(state);
   }
   return state.exposures;
+}
+
+export async function setRunningServicePort(
+  app_id: string,
+  port: number,
+): Promise<void> {
+  const n = Number(port);
+  if (!Number.isInteger(n) || n <= 0) return;
+  const state = await readStateRaw();
+  state.running_services[app_id] = { port: n };
+  await writeStateRaw(state);
+}
+
+export async function clearRunningServicePort(app_id: string): Promise<void> {
+  const state = await readStateRaw();
+  if (!(app_id in state.running_services)) return;
+  delete state.running_services[app_id];
+  await writeStateRaw(state);
+}
+
+export async function appIdForRunningServicePort(
+  port: number,
+): Promise<string | undefined> {
+  const n = Number(port);
+  if (!Number.isInteger(n) || n <= 0) return;
+  const state = await readStateRaw();
+  for (const [app_id, value] of Object.entries(state.running_services)) {
+    if (value?.port === n) return app_id;
+  }
+  return;
 }
 
 export async function exposeApp({

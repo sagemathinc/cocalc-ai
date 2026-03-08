@@ -62,7 +62,7 @@ export function resolveCloudflaredBinary(): string {
     return "cloudflared";
   }
   throw new Error(
-    `cloudflared is required for workspace ssh via Cloudflare Access; install it (${cloudflaredInstallHint()}) or use --direct`,
+    `cloudflared is required for workspace ssh via the Cloudflare ssh hostname; install it (${cloudflaredInstallHint()}) or use --direct`,
   );
 }
 

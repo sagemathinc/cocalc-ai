@@ -342,7 +342,7 @@ export async function resolveWorkspaceSshConnection({
     return {
       workspace_id: project_id,
       host_id: row.host_id,
-      transport: "cloudflare-access-tcp",
+      transport: "cloudflare-tcp",
       ssh_username: project_id,
       ssh_server: null,
       cloudflare_hostname: cloudflareHostname,

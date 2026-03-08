@@ -45,7 +45,10 @@ workspace
     "connect to a workspace over ssh (defaults to context); pass remote command after '--'",
   )
   .option("-w, --workspace <workspace>", "workspace id or name")
-  .option("--direct", "bypass Cloudflare Access and connect to host ssh endpoint directly")
+  .option(
+    "--direct",
+    "bypass the Cloudflare ssh hostname and connect to the host ssh endpoint directly",
+  )
   .option("--check", "verify ssh connectivity/authentication non-interactively")
   .option("--require-auth", "with --check, require successful auth (not just reachable ssh endpoint)")
   .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
@@ -92,7 +95,7 @@ workspace
           baseArgs.push("-i", keyInfo.private_key_path, "-o", "IdentitiesOnly=yes");
         }
         let sshServer = route.ssh_server;
-        if (route.transport === "cloudflare-access-tcp") {
+        if (route.transport !== "direct") {
           const cloudflareHostname = route.cloudflare_hostname;
           if (!cloudflareHostname) {
             throw new Error("workspace ssh route is missing cloudflare hostname");
@@ -198,7 +201,10 @@ workspace
   .command("ssh-info")
   .description("print ssh connection info for a workspace (defaults to context)")
   .option("-w, --workspace <workspace>", "workspace id or name")
-  .option("--direct", "bypass Cloudflare Access and show direct host ssh endpoint")
+  .option(
+    "--direct",
+    "bypass the Cloudflare ssh hostname and show the direct host ssh endpoint",
+  )
   .action(
     async (
       opts: { workspace?: string; direct?: boolean },
@@ -210,7 +216,7 @@ workspace
         });
         const baseArgs: string[] = [];
         let sshServer = route.ssh_server;
-        if (route.transport === "cloudflare-access-tcp") {
+        if (route.transport !== "direct") {
           const cloudflareHostname = route.cloudflare_hostname;
           if (!cloudflareHostname) {
             throw new Error("workspace ssh route is missing cloudflare hostname");
@@ -290,7 +296,7 @@ workspaceSshConfig
         }
 
         const hostName =
-          route.transport === "cloudflare-access-tcp"
+          route.transport !== "direct"
             ? `${route.cloudflare_hostname ?? ""}`.trim()
             : `${route.ssh_host ?? ""}`.trim();
         if (!hostName) {
@@ -302,7 +308,7 @@ workspaceSshConfig
           `  HostName ${hostName}`,
           `  User ${route.ssh_username}`,
         ];
-        if (route.transport === "cloudflare-access-tcp") {
+        if (route.transport !== "direct") {
           const cloudflared = `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
             "cloudflared";
           lines.push(`  ProxyCommand ${cloudflared} access ssh --hostname %h`);
@@ -329,7 +335,7 @@ workspaceSshConfig
           config_path: configPath,
           ssh_transport: route.transport,
           ssh_server:
-            route.transport === "cloudflare-access-tcp"
+            route.transport !== "direct"
               ? `${hostName}:443`
               : route.ssh_server,
           key_created: keyInfo?.created ?? false,

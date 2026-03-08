@@ -264,6 +264,24 @@ function extractArtifactVersion(
   }
 }
 
+function buildAppPublicWildcardHostname({
+  dnsDomain,
+  suffix,
+}: {
+  dnsDomain?: string;
+  suffix?: string;
+}): string | undefined {
+  const raw = `${dnsDomain ?? ""}`.trim().toLowerCase();
+  if (!raw) return undefined;
+  const parts = raw.split(".").filter(Boolean);
+  if (!parts.length) return undefined;
+  const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
+  const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
+  const normalizedSuffix = `${suffix ?? ""}`.trim().toLowerCase() || "app";
+  const wildcardLabel = ["*", normalizedSuffix, prefix].filter(Boolean).join("-");
+  return `${wildcardLabel}.${root}`;
+}
+
 export type BootstrapScripts = {
   expectedOs: string;
   expectedArch: string;
@@ -578,16 +596,10 @@ export async function buildBootstrapScripts(
   }
   const serverSettings = await getServerSettings();
 
-  const appPublicWildcard = (() => {
-    const raw = `${serverSettings.project_hosts_dns ?? ""}`
-      .trim()
-      .toLowerCase();
-    if (!raw) return undefined;
-    const parts = raw.split(".").filter(Boolean);
-    if (!parts.length) return undefined;
-    const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
-    return `*.${root}`;
-  })();
+  const appPublicWildcard = buildAppPublicWildcardHostname({
+    dnsDomain: serverSettings.project_hosts_dns,
+    suffix: serverSettings.project_hosts_app_public_subdomain_suffix,
+  });
 
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
     if (tunnel && tunnelEnabled) {
@@ -791,6 +803,10 @@ BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
 BOOTSTRAP_TMP="$BOOTSTRAP_ROOT/tmp"
 
 mkdir -p "$BOOTSTRAP_DIR"
+BOOTSTRAP_ALREADY_DONE=0
+if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
+  BOOTSTRAP_ALREADY_DONE=1
+fi
 
 cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
 {
@@ -890,6 +906,12 @@ else
   echo "bootstrap: failed to download bootstrap.py"
   report_status "error" "bootstrap.py download failed"
   exit 1
+fi
+
+if [ "$BOOTSTRAP_ALREADY_DONE" = "1" ]; then
+  echo "bootstrap: already complete; reconciling cloudflared"
+  python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json" --only cloudflared || true
+  exit 0
 fi
 
 report_status "running"
@@ -1249,11 +1271,6 @@ else
   BOOTSTRAP_HOST="\${BOOTSTRAP_HOST%%:*}"
 fi
 ${caCertBlock}
-
-if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
-  echo "bootstrap: already complete; exiting"
-  exit 0
-fi
 
 if ! command -v curl >/dev/null 2>&1; then
   apt-get update -y

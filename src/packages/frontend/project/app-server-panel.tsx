@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -21,6 +22,7 @@ import {
 } from "antd";
 import type {
   AppSpec,
+  AppMetricsSummary,
   AppPublicReadinessAudit,
   DetectedAppPort,
   InstalledAppTemplate,
@@ -28,6 +30,7 @@ import type {
 } from "@cocalc/conat/project/api/apps";
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
   dispatchNavigatorPromptIntent,
@@ -296,6 +299,116 @@ function buildPublicUrlFromExposure(
   return hostname ? `https://${hostname}` : undefined;
 }
 
+function formatBytes(value?: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = n;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  const digits = size >= 10 || unit === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatCount(value?: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  return Math.round(n).toLocaleString();
+}
+
+function formatLatency(value?: number | null): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "n/a";
+  return `${Math.round(n).toLocaleString()} ms`;
+}
+
+function MetricStat({
+  label,
+  value,
+  subtle,
+}: {
+  label: string;
+  value: ReactNode;
+  subtle?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid #f0f0f0",
+        borderRadius: "8px",
+        padding: "8px 10px",
+        background: subtle ? "#fcfcfc" : "#fff",
+        minHeight: "58px",
+      }}
+    >
+      <div style={{ fontSize: "11px", opacity: 0.72, marginBottom: "3px" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "14px", fontWeight: 600, lineHeight: 1.25 }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function MetricsSparkline({
+  values,
+  width = 120,
+  height = 28,
+  color = "#1677ff",
+}: {
+  values: number[];
+  width?: number;
+  height?: number;
+  color?: string;
+}) {
+  if (!values.length || values.every((value) => value === 0)) {
+    return (
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+        <line
+          x1={0}
+          y1={height - 1}
+          x2={width}
+          y2={height - 1}
+          stroke="#d9d9d9"
+          strokeWidth="1"
+        />
+      </svg>
+    );
+  }
+  const max = Math.max(...values, 1);
+  const points = values
+    .map((value, idx) => {
+      const x = values.length === 1 ? width / 2 : (idx / (values.length - 1)) * width;
+      const y = height - (value / max) * (height - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <line
+        x1={0}
+        y1={height - 1}
+        x2={width}
+        y2={height - 1}
+        stroke="#d9d9d9"
+        strokeWidth="1"
+      />
+      <polyline
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+      />
+    </svg>
+  );
+}
+
 function normalizeCommand(exec?: string, args?: string[]): string {
   return exec ? [exec, ...(args ?? [])].join(" ").trim() : "";
 }
@@ -522,6 +635,12 @@ export function AppServerPanel({
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
+  const [metricsById, setMetricsById] = useState<
+    Record<string, AppMetricsSummary | undefined>
+  >({});
+  const [metricsRefreshing, setMetricsRefreshing] = useState<
+    Record<string, boolean | undefined>
+  >({});
   const [editSpecOpen, setEditSpecOpen] = useState<boolean>(false);
   const [editSpecLoading, setEditSpecLoading] = useState<boolean>(false);
   const [editSpecSaving, setEditSpecSaving] = useState<boolean>(false);
@@ -558,7 +677,10 @@ export function AppServerPanel({
     ? installedTemplateMap[activePreset.key]
     : undefined;
   const unavailableActivePreset =
-    activePreset && activePresetTemplate && !activePresetTemplate.available
+    activePreset &&
+    activePresetTemplate &&
+    activePresetTemplate.status !== "unknown" &&
+    !activePresetTemplate.available
       ? activePreset
       : undefined;
 
@@ -688,9 +810,10 @@ export function AppServerPanel({
       setLoading(true);
       setError(undefined);
       setStartupFailures({});
-      const [next, specRecords] = await Promise.all([
+      const [next, specRecords, metrics] = await Promise.all([
         api.apps.listAppStatuses(),
         api.apps.listAppSpecs(),
+        api.apps.listAppMetrics({ minutes: 60 }),
       ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
       const map: Record<string, AppSpec | undefined> = {};
@@ -700,6 +823,9 @@ export function AppServerPanel({
         }
       }
       setSpecById(map);
+      setMetricsById(
+        Object.fromEntries(metrics.map((item) => [item.app_id, item] as const)),
+      );
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -710,6 +836,21 @@ export function AppServerPanel({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const refreshMetricsForApp = useCallback(
+    async (appId: string) => {
+      try {
+        setMetricsRefreshing((prev) => ({ ...prev, [appId]: true }));
+        const next = await api.apps.appMetrics(appId, { minutes: 60 });
+        setMetricsById((prev) => ({ ...prev, [appId]: next }));
+      } catch (err) {
+        setError(normalizeError(err));
+      } finally {
+        setMetricsRefreshing((prev) => ({ ...prev, [appId]: undefined }));
+      }
+    },
+    [api],
+  );
 
   useEffect(() => {
     if (creatorInitialized || loading) return;
@@ -806,6 +947,9 @@ export function AppServerPanel({
     if (!preset || preset.kind !== "service") return;
     const map = await resolveInstalledTemplateMap();
     const template = map[preset.key];
+    if (template && template.status === "unknown") {
+      return;
+    }
     if (!template?.available) {
       return { preset, template };
     }
@@ -1886,7 +2030,13 @@ export function AppServerPanel({
             {installedTemplates.map((item) => (
               <Tag
                 key={item.key}
-                color={item.available ? "green" : "default"}
+                color={
+                  item.available
+                    ? "green"
+                    : item.status === "unknown"
+                      ? "gold"
+                      : "default"
+                }
                 style={{ paddingInline: "10px", marginInlineEnd: 0 }}
               >
                 {item.label}
@@ -1993,6 +2143,7 @@ export function AppServerPanel({
           const isRunning = row.state === "running";
           const isPublic = isPublicExposure(row);
           const spec = specById[row.id];
+          const metrics = metricsById[row.id];
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
           const isExpanded = !!expandedRows[row.id] || !!startupFailure;
@@ -2126,6 +2277,105 @@ export function AppServerPanel({
                   {specSummary.map((item) => (
                     <div key={`${row.id}-${item}`}>{item}</div>
                   ))}
+                </div>
+              ) : null}
+              {isExpanded ? (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    padding: "8px 10px",
+                    border: "1px solid #f0f0f0",
+                    borderRadius: "8px",
+                    background: "#fafafa",
+                    display: "grid",
+                    gap: "6px",
+                  }}
+                  >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "10px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <Space size={8} align="center">
+                      <div style={{ fontWeight: 600, fontSize: "12px" }}>
+                        Recent usage
+                      </div>
+                      <Button
+                        size="small"
+                        type="text"
+                        loading={!!metricsRefreshing[row.id]}
+                        onClick={() => void refreshMetricsForApp(row.id)}
+                      >
+                        Refresh
+                      </Button>
+                    </Space>
+                    <div style={{ display: "grid", justifyItems: "end", gap: "2px" }}>
+                      <MetricsSparkline
+                        values={metrics?.history.map((item) => item.requests) ?? []}
+                      />
+                      <div style={{ fontSize: "11px", opacity: 0.65 }}>
+                        request trend
+                      </div>
+                    </div>
+                  </div>
+                  {metrics && metrics.totals.requests > 0 ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
+                        gap: "8px",
+                      }}
+                    >
+                      <MetricStat
+                        label="Last hit"
+                        value={
+                          metrics.last_hit_ms ? (
+                            <TimeAgo date={new Date(metrics.last_hit_ms)} />
+                          ) : (
+                            "never"
+                          )
+                        }
+                      />
+                      <MetricStat
+                        label="Requests"
+                        value={formatCount(metrics.totals.requests)}
+                      />
+                      <MetricStat
+                        label="Bytes sent"
+                        value={formatBytes(metrics.totals.bytes_sent)}
+                      />
+                      <MetricStat
+                        label="Bytes received"
+                        value={formatBytes(metrics.totals.bytes_received)}
+                      />
+                      <MetricStat
+                        label="Active websockets"
+                        value={formatCount(metrics.active_websockets)}
+                      />
+                      <MetricStat
+                        label="Wake-ups"
+                        value={formatCount(metrics.totals.wake_count)}
+                      />
+                      <MetricStat
+                        label="Public / private"
+                        value={`${formatCount(metrics.totals.public_requests)} / ${formatCount(metrics.totals.private_requests)}`}
+                        subtle
+                      />
+                      <MetricStat
+                        label="Latency p50 / p95"
+                        value={`${formatLatency(metrics.totals.p50_ms)} / ${formatLatency(metrics.totals.p95_ms)}`}
+                        subtle
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "12px", opacity: 0.78 }}>
+                      No app traffic recorded yet.
+                    </div>
+                  )}
                 </div>
               ) : null}
               {isExpanded && isPublic ? (

@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 const SPEC_EXT = ".json";
 const APP_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,63})$/i;
+const SUPPORT_FILES = new Set(["runtime-state.json", "metrics-state.json"]);
 
 export type AppSpecKind = "service" | "static";
 export type AppServiceOpenMode = "proxy" | "port";
@@ -388,6 +389,7 @@ export async function listAppSpecs(): Promise<AppSpecRecord[]> {
   const records: AppSpecRecord[] = [];
   for (const name of names.sort()) {
     if (!name.endsWith(SPEC_EXT)) continue;
+    if (SUPPORT_FILES.has(name)) continue;
     const id = name.slice(0, -SPEC_EXT.length);
     const path = join(dir, name);
     try {

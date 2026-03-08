@@ -472,6 +472,7 @@ export class GcpProvider implements CloudProvider {
     }
     const client = new InstancesClient(credentials);
     await ensureSshMetadata(runtime, credentials, client);
+    await ensureStartupScriptMetadata(runtime, credentials, client);
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -497,6 +498,7 @@ export class GcpProvider implements CloudProvider {
           err: String(err),
         });
         await ensureSshMetadata(runtime, credentials, client);
+        await ensureStartupScriptMetadata(runtime, credentials, client);
         await new Promise((resolve) => setTimeout(resolve, 750));
       }
     }
@@ -816,6 +818,59 @@ async function ensureSshMetadata(
       const retryable = isFingerprintConflictError(err) && attempt < maxAttempts;
       if (!retryable) throw err;
       logger.warn("gcp.ensureSshMetadata retry after fingerprint conflict", {
+        instance_id: runtime.instance_id,
+        zone,
+        attempt,
+        err: String(err),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+}
+
+async function ensureStartupScriptMetadata(
+  runtime: HostRuntime,
+  credentials: { projectId: string; credentials: any },
+  client: InstancesClient,
+): Promise<void> {
+  const startupScript = `${runtime.metadata?.startup_script ?? ""}`;
+  if (!startupScript) return;
+  const zone = runtime.zone;
+  if (!zone) return;
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const [instance] = await client.get({
+        project: credentials.projectId,
+        zone,
+        instance: runtime.instance_id,
+      });
+      const fingerprint = instance?.metadata?.fingerprint;
+      if (!fingerprint) return;
+      const items = instance?.metadata?.items ?? [];
+      const current = items.find((item) => item.key === "startup-script");
+      if ((current?.value ?? "") === startupScript) return;
+      const nextItems = items.filter((item) => item.key !== "startup-script");
+      nextItems.push({ key: "startup-script", value: startupScript });
+      const [response] = await client.setMetadata({
+        project: credentials.projectId,
+        zone,
+        instance: runtime.instance_id,
+        metadataResource: {
+          fingerprint,
+          items: nextItems,
+        },
+      });
+      await waitUntilOperationComplete({
+        response,
+        zone,
+        credentials,
+      });
+      return;
+    } catch (err) {
+      const retryable = isFingerprintConflictError(err) && attempt < maxAttempts;
+      if (!retryable) throw err;
+      logger.warn("gcp.ensureStartupScriptMetadata retry after fingerprint conflict", {
         instance_id: runtime.instance_id,
         zone,
         attempt,

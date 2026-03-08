@@ -26,13 +26,22 @@ import {
   upsertAppSpec as upsertAppSpecRaw,
 } from "./specs";
 import {
+  appIdForRunningServicePort,
+  clearRunningServicePort,
   type AppExposureFrontAuth,
   type AppExposureState,
   exposeApp as exposeAppState,
   getAppExposureState,
   listAppExposureStates,
+  setRunningServicePort,
   unexposeApp as unexposeAppState,
 } from "./state";
+import {
+  deleteAppMetrics,
+  getAppMetrics as getAppMetricsState,
+  listAppMetrics as listAppMetricsState,
+  recordAppWake,
+} from "./metrics";
 
 const logger = getLogger("app-servers:control");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -105,6 +114,7 @@ export interface InstalledAppTemplate {
   key: string;
   label: string;
   available: boolean;
+  status?: "available" | "missing" | "unknown";
   details?: string;
 }
 
@@ -129,6 +139,19 @@ export interface AppPublicReadinessAudit {
   checks: AppAuditCheck[];
   suggested_actions: string[];
   agent_prompt: string;
+}
+
+export async function appMetrics(
+  id: string,
+  opts?: { minutes?: number },
+) {
+  return getAppMetricsState(id, opts);
+}
+
+export async function listMetrics(
+  opts?: { minutes?: number },
+) {
+  return listAppMetricsState(opts);
 }
 
 export type AppProxyTarget =
@@ -348,11 +371,15 @@ async function detectHttpPorts(
 
 async function runAvailabilityCheck({
   cmd,
-  timeoutMs = 4000,
+  timeoutMs = 12000,
 }: {
   cmd: string;
   timeoutMs?: number;
-}): Promise<{ available: boolean; details?: string }> {
+}): Promise<{
+  available: boolean;
+  status: "available" | "missing" | "unknown";
+  details?: string;
+}> {
   return await new Promise((resolve) => {
     const child = spawn("bash", ["-lc", cmd], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -364,7 +391,11 @@ async function runAvailabilityCheck({
       child.kill("SIGKILL");
       if (!settled) {
         settled = true;
-        resolve({ available: false, details: "timeout" });
+        resolve({
+          available: false,
+          status: "unknown",
+          details: "install check timed out",
+        });
       }
     }, timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -373,7 +404,7 @@ async function runAvailabilityCheck({
       clearTimeout(timer);
       if (settled) return;
       settled = true;
-      resolve({ available: false, details: `${err}` });
+      resolve({ available: false, status: "unknown", details: `${err}` });
     });
     child.once("close", (code) => {
       clearTimeout(timer);
@@ -382,6 +413,7 @@ async function runAvailabilityCheck({
       const text = Buffer.concat([...stdout, ...stderr]).toString("utf8").trim();
       resolve({
         available: code === 0,
+        status: code === 0 ? "available" : "missing",
         details: text ? text.split(/\r?\n/)[0].slice(0, 160) : undefined,
       });
     });
@@ -471,6 +503,7 @@ function watchOutput(server: RunningApp): void {
   child.on("exit", (code, signal) => {
     server.exit = { code, signal };
     server.ready = false;
+    void clearRunningServicePort(server.id);
   });
 }
 
@@ -502,6 +535,7 @@ function clearChild(id: string): void {
   existing.child.stderr?.removeAllListeners();
   existing.child.removeAllListeners();
   delete children[id];
+  void clearRunningServicePort(id);
 }
 
 function getStaticRefreshState(id: string): StaticRefreshState {
@@ -742,6 +776,7 @@ export async function startApp(
     stderr: Buffer.alloc(0),
   };
   watchOutput(children[spec.id]);
+  await setRunningServicePort(spec.id, port);
 
   return await statusApp(spec.id);
 }
@@ -750,15 +785,20 @@ export async function stopApp(id: string): Promise<void> {
   const spec = await getAppSpec(id);
   const running = children[spec.id];
   if (!running || !isChildRunning(running.child)) {
+    await clearRunningServicePort(spec.id);
     return;
   }
   running.child.kill("SIGTERM");
   const exitedGracefully = await waitForChildExit(running.child, 1000);
-  if (exitedGracefully) return;
+  if (exitedGracefully) {
+    await clearRunningServicePort(spec.id);
+    return;
+  }
   if (isChildRunning(running.child)) {
     running.child.kill("SIGKILL");
     await waitForChildExit(running.child, 2000);
   }
+  await clearRunningServicePort(spec.id);
 }
 
 export async function statusApp(id: string): Promise<AppStatus> {
@@ -929,6 +969,7 @@ export async function deleteApp(id: string): Promise<{ id: string; deleted: bool
     await unexposeAppState(id);
   }
   const result = await deleteAppSpec(id);
+  deleteAppMetrics(id);
   invalidateRouteCache();
   return result;
 }
@@ -952,9 +993,11 @@ async function specsForRouting(): Promise<AppSpec[]> {
 export async function resolveAppProxyTarget({
   base,
   url,
+  exposureMode: _exposureMode = "private",
 }: {
   base: string;
   url: string;
+  exposureMode?: "private" | "public";
 }): Promise<AppProxyTarget | undefined> {
   const specs = await specsForRouting();
   const parsed = new URL(url, "http://project.local");
@@ -990,9 +1033,19 @@ export async function resolveAppProxyTarget({
       1_000,
       (serviceSpec.wake.startup_timeout_s || 120) * 1000,
     );
+    const current =
+      serviceSpec.wake.enabled || children[serviceSpec.id]
+        ? await statusApp(serviceSpec.id)
+        : undefined;
+    if (serviceSpec.wake.enabled && current?.state !== "running") {
+      recordAppWake(serviceSpec.id);
+    }
     const status = serviceSpec.wake.enabled
-      ? await ensureRunning(serviceSpec.id, { timeout: startupTimeout, interval: 500 })
-      : await statusApp(serviceSpec.id);
+      ? await ensureRunning(serviceSpec.id, {
+          timeout: startupTimeout,
+          interval: 500,
+        })
+      : (current ?? (await statusApp(serviceSpec.id)));
     if (status.state !== "running" || !status.port) {
       throw new Error(`app '${serviceSpec.id}' is not running`);
     }
@@ -1004,6 +1057,13 @@ export async function resolveAppProxyTarget({
     };
   }
   return undefined;
+}
+
+export async function managedServiceAppForPort(
+  port: number,
+): Promise<{ app_id: string; kind: "service" } | undefined> {
+  const app_id = await appIdForRunningServicePort(port);
+  return app_id ? { app_id, kind: "service" } : undefined;
 }
 
 async function restartServiceForExposureMode(
@@ -1192,54 +1252,56 @@ export async function detectInstalledTemplates(): Promise<InstalledAppTemplate[]
     {
       key: "jupyterlab",
       label: "JupyterLab",
-      cmd: "command -v jupyter >/dev/null 2>&1 && jupyter lab --version",
+      cmd: "if command -v jupyter-lab >/dev/null 2>&1; then command -v jupyter-lab; elif command -v jupyter >/dev/null 2>&1; then command -v jupyter; else exit 1; fi",
       available: false,
     },
     {
       key: "code-server",
       label: "code-server",
-      cmd: "command -v code-server >/dev/null 2>&1 && code-server --version",
+      cmd: "command -v code-server",
       available: false,
     },
     {
       key: "pluto",
       label: "Pluto",
-      cmd: "command -v julia >/dev/null 2>&1 && julia -e 'import Pluto; print(\"Pluto available\")'",
+      cmd: "command -v julia >/dev/null 2>&1 && julia -e 'path = Base.find_package(\"Pluto\"); if path === nothing; exit(1); end; println(path)'",
       available: false,
     },
     {
       key: "rstudio",
       label: "RStudio / rserver",
-      cmd: "command -v rserver >/dev/null 2>&1 && rserver --version",
+      cmd: "command -v rserver",
       available: false,
     },
     {
       key: "python-hello",
       label: "Python runtime",
-      cmd: "command -v python3 >/dev/null 2>&1 && python3 --version",
+      cmd: "command -v python3",
       available: false,
     },
     {
       key: "node-hello",
       label: "Node.js runtime",
-      cmd: "command -v node >/dev/null 2>&1 && node --version",
+      cmd: "command -v node",
       available: false,
     },
     {
       key: "static-hello",
       label: "Static site hosting",
       available: true,
+      status: "available",
       details: "built in",
     },
   ];
   return await Promise.all(
-    checks.map(async ({ key, label, cmd, available, details }) => {
-      if (!cmd) return { key, label, available, details };
+    checks.map(async ({ key, label, cmd, available, status, details }) => {
+      if (!cmd) return { key, label, available, status, details };
       const result = await runAvailabilityCheck({ cmd });
       return {
         key,
         label,
         available: result.available,
+        status: result.status,
         details: result.details,
       };
     }),

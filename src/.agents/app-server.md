@@ -629,6 +629,164 @@ Security/ops constraints:
 4. Provide explicit stop/cleanup guidance for long-running forwards.
 5. Native launch helpers must remain thin wrappers around SSH/CLI setup and app launch, not arbitrary local installer scripts.
 
+### 13.3.3 Concrete Implementation Plan
+
+The right implementation strategy is CLI-first, using existing SSH plumbing and
+reusing a narrow subset of [`reflect-sync`](/home/wstein/build/reflect-sync)
+instead of inventing a fresh tunnel manager.
+
+There is already precedent in
+[`src/packages/plus`](/home/wstein/build/cocalc-lite/src/packages/plus),
+where CoCalc Plus exposes a small opinionated port-forward/sync UI on top of
+`reflect-sync` rather than surfacing its full raw option set.  We should do the
+same here.
+
+#### Phase 1: CLI `forward-command`
+
+Goal:
+
+1. generate a correct copy/paste SSH forward command for a managed app,
+2. prove the end-to-end path without yet depending on a local daemon.
+
+Scope:
+
+1. service apps only,
+2. no native/X11 launch yet,
+3. no automatic local background process management yet.
+
+Command shape:
+
+1. `cocalc ws app forward-command <app-id> [--local-port 0]`
+2. `cocalc ws app forward-command --workspace <id> <app-id>`
+
+Behavior:
+
+1. fetch app spec/status,
+2. ensure the app is running,
+3. resolve the actual target port,
+4. choose or print the local port,
+5. output a single command that forwards:
+   - local `127.0.0.1:<local-port>`
+   - to remote `127.0.0.1:<app-port>`
+   - through the existing CoCalc SSH path.
+
+Notes:
+
+1. any managed service app with a concrete port should be forwardable,
+2. this does not require changes to app specs,
+3. this is especially valuable for apps that fail under `proxy` and `port`.
+
+#### Phase 2: CLI `forward`
+
+Goal:
+
+1. let `cocalc-cli` actually establish and maintain the local tunnel,
+2. keep the feature testable without any frontend work.
+
+Command shape:
+
+1. `cocalc ws app forward <app-id> [--local-port 0]`
+2. `cocalc ws app forward status`
+3. `cocalc ws app forward stop <session-id|app-id>`
+
+Behavior:
+
+1. wrap a constrained `reflect-sync`-backed port forward,
+2. reuse existing SSH key/bootstrap logic,
+3. emit the local URL and session metadata,
+4. optionally keep the forward alive in the local CLI daemon.
+
+Important product constraint:
+
+1. do **not** expose the full `reflect-sync` CLI/API surface,
+2. do expose a curated app-oriented forward experience with conservative defaults.
+
+#### Phase 3: Apps Page Integration
+
+Goal:
+
+1. make SSH forwarding visible and usable from the Apps page,
+2. avoid forcing users to learn CLI syntax before the feature is useful.
+
+UI:
+
+1. add `Tunnel locally` to app actions,
+2. show a modal with:
+   - local URL,
+   - copyable CLI command,
+   - short explanation of when this is preferable to proxy/public URLs,
+   - trust note that the tunnel is private and user-scoped.
+
+Initial behavior:
+
+1. the modal may simply call `forward-command`,
+2. no daemon automation is required for the first pass.
+
+#### Phase 4: Daemon-Assisted Forwarding
+
+Goal:
+
+1. remove copy/paste friction,
+2. let the local daemon own the tunnel lifecycle.
+
+Behavior:
+
+1. Apps UI sends a typed request to the local daemon,
+2. daemon prompts for approval,
+3. daemon starts/stops the port forward,
+4. UI shows connected/disconnected state and local URL.
+
+Security constraints:
+
+1. typed capability request only,
+2. no arbitrary remote-to-local shell execution,
+3. approval remembered only within a limited project/session scope.
+
+#### Phase 5: Native/X11 Launch
+
+Goal:
+
+1. extend the same transport story to native GUI apps,
+2. keep Linux-first scope.
+
+Command shape:
+
+1. `cocalc ws app launch-native <app-id>`
+2. later optionally `cocalc ws app launch-native --daemon`
+
+Behavior:
+
+1. app spec declares a native launch command,
+2. CLI returns or performs an SSH/X11 bootstrap,
+3. same daemon approval model can be reused later.
+
+#### Testing Plan
+
+Phase 1 and 2:
+
+1. smoke test with a managed HTTP app that is known to proxy poorly,
+2. verify that the generated tunnel reaches the raw app successfully,
+3. verify wake-on-demand still works before the SSH session is established.
+
+Phase 3 and 4:
+
+1. browser test that the Apps page shows the correct command and local URL,
+2. daemon test that approval/deny paths behave correctly,
+3. ensure failed local tunnel setup produces actionable errors.
+
+Phase 5:
+
+1. Linux smoke test with `xclock`,
+2. then test a heavier native app such as `chromium` or `gimp`,
+3. explicitly document macOS/Windows as later or best-effort.
+
+#### Explicit Non-Goals for First Pass
+
+1. exposing every `reflect-sync` option,
+2. full general-purpose bidirectional sync UX in the Apps page,
+3. native app support on all desktop OS's immediately,
+4. background local automation without user approval.
+
 ## 14. Static Site Mode
 
 Support static hosting for large dataset-backed websites.
@@ -789,6 +947,7 @@ Existing components to reuse where possible:
    - explicit CLI export/import/clone,
    - document that full project clone already carries app specs because they live in the workspace filesystem,
    - frontend download/upload/"copy to another project" UX still pending.
+21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
 
 ## 19.1 Next Execution Order
 
@@ -842,6 +1001,108 @@ These improve the product substantially, but do not need to block first public r
 4. richer static refresh policy options and sandbox-ephemeral execution.
 5. iframe/embed polish and better "open in full tab" fallback behavior.
 6. frontend import/export/"copy to another project" workflows for app configs.
+7. scoped per-app metrics and simple usage/history UI.
+
+## 19.3 MVP Metrics Plan
+
+The goal is not full observability. The goal is enough app-level traffic and
+runtime visibility for users and operators to understand whether an app is
+being used, whether it is consuming bandwidth, and whether wake/public traffic
+behavior matches expectations.
+
+### Scope
+
+Implement metrics only at the managed-app proxy layer, primarily in
+project-host. Do not attempt to introspect application internals.
+
+### Collection Point
+
+Collect metrics in the project-host proxy path, since that now sees:
+
+- private managed app traffic,
+- direct public app traffic,
+- websocket upgrades,
+- wake-on-demand traffic transitions.
+
+This avoids per-app instrumentation and measures the actual traffic shape that
+matters for operator cost and user experience.
+
+### First Metrics to Capture
+
+Per `(project_id, app_id)` and split by `private` vs `public` mode:
+
+- request count,
+- response status buckets (`2xx`, `3xx`, `4xx`, `5xx`),
+- bytes sent,
+- bytes received,
+- latency aggregates (`count`, `sum`, rough `p50` / `p95` friendly buckets),
+- websocket upgrade count,
+- active websocket count,
+- last hit timestamp,
+- wake-on-demand count.
+
+### Storage Model
+
+- keep hot counters in memory on project-host,
+- flush aggregated rows to project-host sqlite periodically,
+- store rollups at a coarse interval (e.g. minute buckets plus rolling totals),
+- avoid one-row-per-request storage.
+
+This should be enough for trend views, operator summaries, and cost warnings
+without turning sqlite into a request log.
+
+### Privacy / Safety Constraints
+
+Do **not** store by default:
+
+- full URLs or query strings,
+- request/response bodies,
+- arbitrary headers,
+- high-cardinality per-path metrics.
+
+The MVP should be aggregate-only. App-level deep introspection is the user's
+responsibility inside the project itself.
+
+### CLI Surface
+
+Add something like:
+
+- `cocalc ws app metrics <app-id>`
+- `cocalc ws app metrics --all`
+- `cocalc ws app metrics <app-id> --window 24h`
+
+Return stable JSON suitable for agents and admin tooling.
+
+### UI Surface
+
+On the Apps page, show compact usage facts for each app or in row details:
+
+- last hit,
+- requests in recent window,
+- egress in recent window,
+- active websocket count,
+- wake count.
+
+Also add a very small history plot using the same direct-SVG style already used
+elsewhere in CoCalc frontend for process history. Nothing fancy is needed; a
+simple sparkline/bar history for requests or bytes over time is enough.
+
+### Admin / Cost Use
+
+Use the same metrics stream for:
+
+- metered-egress warnings on hosts like GCP,
+- identifying unexpectedly hot public apps,
+- helping explain wake/sleep behavior,
+- future throttling or membership policy decisions.
+
+### Explicit Non-Goals for MVP
+
+- Prometheus-scale observability,
+- tracing across hub/project-host/app layers,
+- per-route analytics,
+- request log search,
+- app-internal profiling.
 
 ### Longer-term platform work
 

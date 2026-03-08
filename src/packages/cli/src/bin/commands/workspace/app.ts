@@ -19,6 +19,28 @@ type PortableAppSpecBundle = {
   skipped?: Array<{ id: string; path?: string; error: string }>;
 };
 
+type AppForwardCommandResult = {
+  workspace_id: string;
+  app_id: string;
+  title: string | null;
+  kind: "service" | "static";
+  state: string;
+  ready: boolean | null;
+  ssh_transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
+  ssh_server: string | null;
+  remote_port: number;
+  local_host: string;
+  local_port: number;
+  local_url: string;
+  command: string;
+  ssh_args: string[];
+  key_created: boolean;
+  key_path: string | null;
+  key_installed: boolean;
+  key_already_present: boolean;
+  note: string;
+};
+
 function parsePositiveIntOrThrow(value: string | undefined, context: string): number | undefined {
   if (value == null || `${value}`.trim() === "") return undefined;
   const n = Number(value);
@@ -26,6 +48,150 @@ function parsePositiveIntOrThrow(value: string | undefined, context: string): nu
     throw new Error(`${context} must be a positive integer`);
   }
   return n;
+}
+
+function parseTcpPortOrThrow(
+  value: string | undefined,
+  context: string,
+): number | undefined {
+  const n = parsePositiveIntOrThrow(value, context);
+  if (n == null) return undefined;
+  if (n > 65535) {
+    throw new Error(`${context} must be between 1 and 65535`);
+  }
+  return n;
+}
+
+function shellQuoteArg(arg: string): string {
+  if (arg === "") return '""';
+  return /[^A-Za-z0-9_./:=@-]/.test(arg) ? JSON.stringify(arg) : arg;
+}
+
+function buildSshCommand(args: string[]): string {
+  return `ssh ${args.map(shellQuoteArg).join(" ")}`;
+}
+
+async function resolveAppForwardCommand(
+  ctx: any,
+  deps: WorkspaceCommandDeps,
+  opts: {
+    workspace?: string;
+    appId: string;
+    direct?: boolean;
+    localPort?: string;
+    localHost?: string;
+    timeout?: string;
+    keyPath?: string;
+    installKey?: boolean;
+  },
+): Promise<AppForwardCommandResult> {
+  const {
+    resolveWorkspaceProjectApi,
+    resolveWorkspaceSshConnection,
+    ensureSyncKeyPair,
+    installSyncPublicKey,
+    durationToMs,
+  } = deps;
+  const { workspace: ws, api } = await resolveWorkspaceProjectApi(ctx, opts.workspace);
+  const spec = await api.apps.getAppSpec(opts.appId);
+  if (spec.kind !== "service") {
+    throw new Error(
+      `app '${opts.appId}' is ${spec.kind}; only service apps with a TCP port support SSH forwarding`,
+    );
+  }
+  const timeout = opts.timeout ? durationToMs(opts.timeout) : undefined;
+  const status = await api.apps.ensureRunning(opts.appId, {
+    timeout,
+    interval: 500,
+  });
+  if (!Number.isInteger(status.port) || status.port! <= 0) {
+    throw new Error(
+      `app '${opts.appId}' is running without a concrete port; cannot generate SSH forward command`,
+    );
+  }
+  const remotePort = status.port!;
+  const localPort = parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
+  const localHost = `${opts.localHost ?? "127.0.0.1"}`.trim() || "127.0.0.1";
+  const route = await resolveWorkspaceSshConnection(ctx, ws.project_id, {
+    direct: !!opts.direct,
+  });
+
+  let keyInfo: any = null;
+  let keyInstall: Record<string, unknown> | null = null;
+  if (opts.installKey !== false) {
+    keyInfo = await ensureSyncKeyPair(opts.keyPath);
+    keyInstall = await installSyncPublicKey({
+      ctx,
+      workspaceIdentifier: ws.project_id,
+      publicKey: keyInfo.public_key,
+    });
+  }
+
+  const sshArgs: string[] = [
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=2",
+    "-L",
+    `${localHost}:${localPort}:127.0.0.1:${remotePort}`,
+  ];
+  if (keyInfo?.private_key_path) {
+    sshArgs.push("-i", keyInfo.private_key_path, "-o", "IdentitiesOnly=yes");
+  }
+
+  let sshServer = route.ssh_server;
+  let sshTarget: string;
+  if (route.transport !== "direct") {
+    const cloudflareHostname = route.cloudflare_hostname;
+    if (!cloudflareHostname) {
+      throw new Error("workspace ssh route is missing cloudflare hostname");
+    }
+    const cloudflared =
+      `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() || "cloudflared";
+    const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
+    sshArgs.push("-o", `ProxyCommand=${proxyCommand}`);
+    sshTarget = `${route.ssh_username}@${cloudflareHostname}`;
+    sshServer = `${cloudflareHostname}:443`;
+  } else {
+    if (!route.ssh_host) {
+      throw new Error("workspace ssh route is missing host endpoint");
+    }
+    if (route.ssh_port != null) {
+      sshArgs.push("-p", String(route.ssh_port));
+    }
+    sshTarget = `${route.ssh_username}@${route.ssh_host}`;
+  }
+  sshArgs.push(sshTarget, "-N");
+
+  const localUrl = `http://${localHost === "0.0.0.0" ? "127.0.0.1" : localHost}:${localPort}`;
+  return {
+    workspace_id: ws.project_id,
+    app_id: opts.appId,
+    title: status.title ?? spec.title ?? null,
+    kind: spec.kind,
+    state: status.state,
+    ready: status.ready ?? null,
+    ssh_transport: route.transport,
+    ssh_server: sshServer,
+    remote_port: remotePort,
+    local_host: localHost,
+    local_port: localPort,
+    local_url: localUrl,
+    command: buildSshCommand(sshArgs),
+    ssh_args: sshArgs,
+    key_created: keyInfo?.created ?? false,
+    key_path: keyInfo?.private_key_path ?? null,
+    key_installed: keyInstall ? Boolean((keyInstall as any).installed) : false,
+    key_already_present: keyInstall
+      ? Boolean((keyInstall as any).already_present)
+      : false,
+    note:
+      "Run this command on your local machine to create a private tunnel directly to the app port.",
+  };
 }
 
 function normalizePrefix(value: string): string {
@@ -120,6 +286,7 @@ export function registerWorkspaceAppCommands(
     readAllStdin,
     mkdirLocal,
     writeFileLocal,
+    runSsh,
   } = deps;
 
   const app = workspace
@@ -165,6 +332,130 @@ export function registerWorkspaceAppCommands(
             app_id: spec.id,
             spec,
           };
+        });
+      },
+    );
+
+  app
+    .command("metrics [appId]")
+    .description("show app traffic and usage metrics")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--minutes <n>", "history window in minutes", "60")
+    .action(
+      async (
+        appId: string | undefined,
+        opts: { workspace?: string; minutes?: string },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app metrics", async (ctx) => {
+          const { workspace: ws, api } = await resolveWorkspaceProjectApi(
+            ctx,
+            opts.workspace,
+          );
+          const minutes = parsePositiveIntOrThrow(
+            opts.minutes,
+            "minutes",
+          ) ?? 60;
+          if (appId) {
+            const item = await api.apps.appMetrics(appId, { minutes });
+            return {
+              workspace_id: ws.project_id,
+              minutes,
+              item,
+            };
+          }
+          const items = await api.apps.listAppMetrics({ minutes });
+          return {
+            workspace_id: ws.project_id,
+            minutes,
+            items,
+          };
+        });
+      },
+    );
+
+  app
+    .command("forward <appId>")
+    .description("run a private local SSH tunnel to a managed service app")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
+    .option("--local-port <port>", "local port to bind (default: same as app port)")
+    .option("--local-host <host>", "local bind host", "127.0.0.1")
+    .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
+    .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+    .option(
+      "--no-install-key",
+      "skip automatic local ssh key ensure + workspace authorized_keys install",
+    )
+    .action(
+      async (
+        appId: string,
+        opts: {
+          workspace?: string;
+          direct?: boolean;
+          localPort?: string;
+          localHost?: string;
+          timeout?: string;
+          keyPath?: string;
+          installKey?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app forward", async (ctx) => {
+          const resolved = await resolveAppForwardCommand(ctx, deps, {
+            ...opts,
+            appId,
+          });
+          if (!ctx.globals.json && ctx.globals.output !== "json") {
+            console.log(
+              `Forwarding ${resolved.title ?? appId} to ${resolved.local_url}. Press Ctrl-C to stop.`,
+            );
+          }
+          const code = await runSsh(resolved.ssh_args);
+          if (code !== 0) {
+            process.exitCode = code;
+          }
+          return {
+            ...resolved,
+            exit_code: code,
+          };
+        });
+      },
+    );
+
+  app
+    .command("forward-command <appId>", { hidden: true })
+    .description("print a local SSH port-forward command for a managed service app")
+    .option("-w, --workspace <workspace>", "workspace id or name")
+    .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
+    .option("--local-port <port>", "local port to bind (default: same as app port)")
+    .option("--local-host <host>", "local bind host", "127.0.0.1")
+    .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
+    .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+    .option(
+      "--no-install-key",
+      "skip automatic local ssh key ensure + workspace authorized_keys install",
+    )
+    .action(
+      async (
+        appId: string,
+        opts: {
+          workspace?: string;
+          direct?: boolean;
+          localPort?: string;
+          localHost?: string;
+          timeout?: string;
+          keyPath?: string;
+          installKey?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "workspace app forward-command", async (ctx) => {
+          const resolved = await resolveAppForwardCommand(ctx, deps, {
+            ...opts,
+            appId,
+          });
+          return resolved;
         });
       },
     );

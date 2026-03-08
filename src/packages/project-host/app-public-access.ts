@@ -11,6 +11,7 @@ import { getMountPoint } from "./file-server";
 
 const logger = getLogger("project-host:app-public-access");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
+const SUPPORT_FILES = new Set(["runtime-state.json", "metrics-state.json"]);
 
 interface AppSpec {
   id: string;
@@ -64,7 +65,7 @@ async function loadSpecs(project_id: string): Promise<AppSpec[]> {
   }
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
-    if (name === "runtime-state.json") continue;
+    if (SUPPORT_FILES.has(name)) continue;
     const path = join(dir, name);
     try {
       const raw = await readFile(path, "utf8");

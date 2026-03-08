@@ -613,7 +613,31 @@ async function handleStart(row: any) {
     const { entry, creds } = await getProviderContext(providerId, {
       region: row.region,
     });
-    await entry.provider.startHost(runtime, creds);
+    let runtimeForStart = runtime;
+    try {
+      const { baseUrl } = await resolveLaunchpadBootstrapUrl();
+      const token = await createProjectHostBootstrapToken(row.id);
+      const startupScript = await buildCloudInitStartupScript(
+        row,
+        token.token,
+        baseUrl,
+        undefined,
+      );
+      runtimeForStart = {
+        ...runtime,
+        metadata: {
+          ...(runtime.metadata ?? {}),
+          startup_script: startupScript,
+        },
+      };
+    } catch (err) {
+      logger.warn("handleStart: failed preparing startup script refresh", {
+        host_id: row.id,
+        provider: providerId,
+        err,
+      });
+    }
+    await entry.provider.startHost(runtimeForStart, creds);
     let statusAfterStart:
       | "running"
       | "starting"
@@ -819,6 +843,30 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     region: row.region,
   });
   const provider = entry.provider;
+  let runtimeForRestart = runtime;
+  try {
+    const { baseUrl } = await resolveLaunchpadBootstrapUrl();
+    const token = await createProjectHostBootstrapToken(row.id);
+    const startupScript = await buildCloudInitStartupScript(
+      row,
+      token.token,
+      baseUrl,
+      undefined,
+    );
+    runtimeForRestart = {
+      ...runtime,
+      metadata: {
+        ...(runtime.metadata ?? {}),
+        startup_script: startupScript,
+      },
+    };
+  } catch (err) {
+    logger.warn("handleRestart: failed preparing startup script refresh", {
+      host_id: row.id,
+      provider: providerId,
+      err,
+    });
+  }
   const observedAt = new Date();
   const nextMetadata = setRuntimeObservedAt(row.metadata ?? {}, observedAt);
   await updateHostRow(row.id, {
@@ -828,23 +876,23 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
   });
   if (mode === "hard") {
     if (provider.hardRestartHost) {
-      await provider.hardRestartHost(runtime, creds);
+      await provider.hardRestartHost(runtimeForRestart, creds);
     } else if (provider.restartHost) {
-      await provider.restartHost(runtime, creds);
+      await provider.restartHost(runtimeForRestart, creds);
     } else if (entry.capabilities.supportsStop) {
-      await provider.stopHost(runtime, creds);
-      await provider.startHost(runtime, creds);
+      await provider.stopHost(runtimeForRestart, creds);
+      await provider.startHost(runtimeForRestart, creds);
     } else {
       throw new Error("hard reboot not supported");
     }
   } else {
     if (provider.restartHost) {
-      await provider.restartHost(runtime, creds);
+      await provider.restartHost(runtimeForRestart, creds);
     } else if (entry.capabilities.supportsStop) {
-      await provider.stopHost(runtime, creds);
-      await provider.startHost(runtime, creds);
+      await provider.stopHost(runtimeForRestart, creds);
+      await provider.startHost(runtimeForRestart, creds);
     } else if (provider.hardRestartHost) {
-      await provider.hardRestartHost(runtime, creds);
+      await provider.hardRestartHost(runtimeForRestart, creds);
     } else {
       throw new Error("reboot not supported");
     }

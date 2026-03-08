@@ -59,7 +59,14 @@ export interface ProjectRuntimeLog {
   reason?: string;
 }
 
-export type WorkspaceSshTransport = "cloudflare-access-tcp" | "direct";
+// "cloudflare-access-tcp" is kept temporarily for compatibility with older
+// servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
+// may still use the `cloudflared access ssh` client shim, but it is not
+// modeled as an interactive Access login flow in CoCalc anymore.
+export type WorkspaceSshTransport =
+  | "cloudflare-tcp"
+  | "cloudflare-access-tcp"
+  | "direct";
 
 export interface WorkspaceSshConnectionInfo {
   workspace_id: string;
