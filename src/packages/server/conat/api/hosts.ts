@@ -3171,7 +3171,11 @@ export async function upgradeHostSoftware({
     row,
     account_id,
     input: { id: row.id, account_id, targets, base_url },
-    dedupe_key: `${HOST_UPGRADE_LRO_KIND}:${row.id}`,
+    dedupe_key: hostUpgradeDedupeKey({
+      hostId: row.id,
+      targets,
+      baseUrl: base_url,
+    }),
   });
 }
 
@@ -3304,6 +3308,44 @@ function normalizeSoftwareArtifacts(
     }
   }
   return out.length ? Array.from(new Set(out)) : defaults;
+}
+
+function normalizeHostUpgradeTargetsForDedupe(
+  targets: HostSoftwareUpgradeTarget[],
+): Array<{
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel | null;
+  version: string | null;
+}> {
+  return [...(targets ?? [])]
+    .map((target) => ({
+      artifact: canonicalizeSoftwareArtifact(target.artifact),
+      channel: target.version
+        ? null
+        : ((target.channel === "staging" ? "staging" : "latest") as HostSoftwareChannel),
+      version: target.version?.trim() || null,
+    }))
+    .sort((a, b) =>
+      `${a.artifact}:${a.channel ?? ""}:${a.version ?? ""}`.localeCompare(
+        `${b.artifact}:${b.channel ?? ""}:${b.version ?? ""}`,
+      ),
+    );
+}
+
+function hostUpgradeDedupeKey({
+  hostId,
+  targets,
+  baseUrl,
+}: {
+  hostId: string;
+  targets: HostSoftwareUpgradeTarget[];
+  baseUrl?: string;
+}): string {
+  const normalizedBaseUrl = `${baseUrl ?? ""}`.trim() || null;
+  return `${HOST_UPGRADE_LRO_KIND}:${hostId}:${JSON.stringify({
+    base_url: normalizedBaseUrl,
+    targets: normalizeHostUpgradeTargetsForDedupe(targets),
+  })}`;
 }
 
 async function fetchSoftwareManifest(url: string): Promise<any> {

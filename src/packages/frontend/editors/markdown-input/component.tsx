@@ -33,7 +33,8 @@ import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
 import { useMentionableUsers } from "./mentionable-users";
 import { submit_mentions } from "./mentions";
-import { EditorFunctions } from "./multimode";
+import { EditorFunctions, SelectionController } from "./types";
+import { resolveUndoHandler } from "./undo-policy";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 
@@ -90,12 +91,11 @@ interface Props {
   lineNumbers?: boolean;
   autoFocus?: boolean;
   cmOptions?: { [key: string]: any }; // if given, use this for CodeMirror options, taking precedence over anything derived from other inputs, e.g., lineNumbers, above and account settings.
-  selectionRef?: MutableRefObject<{
-    setSelection: Function;
-    getSelection: Function;
-  } | null>;
+  selectionRef?: MutableRefObject<SelectionController | null>;
   onUndo?: () => void; // user requests undo -- if given, codemirror's internal undo is not used
   onRedo?: () => void; // user requests redo
+  undoMode?: "auto" | "local" | "external";
+  redoMode?: "auto" | "local" | "external";
   onSave?: () => void; // user requests save
   onCursors?: (cursors: { x: number; y: number }[]) => void; // cursor location(s).
   cursors?: CursorsType;
@@ -143,6 +143,8 @@ export function MarkdownInput(props: Props) {
     onSave,
     onShiftEnter,
     onUndo,
+    redoMode,
+    undoMode,
     onUploadEnd,
     onUploadStart,
     path,
@@ -177,6 +179,8 @@ export function MarkdownInput(props: Props) {
   }, [editor_settings, cmOptions]);
 
   const defaultFontSize = useTypedRedux("account", "font_size");
+  const externalUndo = resolveUndoHandler({ mode: undoMode, handler: onUndo });
+  const externalRedo = resolveUndoHandler({ mode: redoMode, handler: onRedo });
 
   const dropzone_ref = useRef<Dropzone>(null);
   const upload_close_preview_ref = useRef<Function | null>(null);
@@ -426,18 +430,18 @@ export function MarkdownInput(props: Props) {
       });
     }
 
-    if (onUndo != null) {
+    if (externalUndo != null) {
       cm.current.undo = () => {
         if (cm.current == null) return;
         saveValue();
-        onUndo();
+        externalUndo();
       };
     }
-    if (onRedo != null) {
+    if (externalRedo != null) {
       cm.current.redo = () => {
         if (cm.current == null) return;
         saveValue();
-        onRedo();
+        externalRedo();
       };
     }
     if (onSave != null) {
@@ -547,6 +551,7 @@ export function MarkdownInput(props: Props) {
 
     if (selectionRef != null) {
       selectionRef.current = {
+        isSelectionReady: () => cm.current != null,
         setSelection: (selection: any) => {
           cm.current?.setSelections(selection);
         },

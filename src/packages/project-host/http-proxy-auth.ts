@@ -10,7 +10,12 @@ import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import {
   PROJECT_HOST_HTTP_AUTH_COOKIE_NAME,
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
+  PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
 } from "@cocalc/conat/auth/project-host-http";
+import {
+  buildProjectHostSessionCookie,
+  projectCookiePath,
+} from "./http-proxy-cookies";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
@@ -23,7 +28,6 @@ const collaboratorCache = new TTL<string, boolean>({
   ttl: 30_000,
 });
 const logger = getLogger("project-host:http-proxy-auth");
-const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME = "cocalc_project_host_http_session";
 const PROJECT_HOST_HTTP_AUTH_CONTEXT = Symbol(
   "cocalc-project-host-http-auth-context",
 );
@@ -176,38 +180,31 @@ function verifySessionToken(
   return { account_id, iat_s: iat, exp_s: exp };
 }
 
-function isSecureRequest(req: IncomingMessage): boolean {
-  const xfProto = `${req.headers["x-forwarded-proto"] ?? ""}`.toLowerCase();
-  if (xfProto.includes("https")) return true;
-  // @ts-ignore node IncomingMessage.socket may have encrypted in tls mode.
-  return !!req.socket?.encrypted;
-}
-
 function readBearerToken(
   req: IncomingMessage,
-): { token?: string; fromQuery: boolean } {
+): { token?: string; source?: "header" | "cookie" | "query" } {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string") {
     const m = authHeader.match(/^Bearer\s+(.+)$/i);
     if (m?.[1]) {
-      return { token: m[1].trim(), fromQuery: false };
+      return { token: m[1].trim(), source: "header" };
     }
   }
   const cookies = parseCookies(req.headers.cookie as string | undefined);
   const cookieToken = `${cookies[PROJECT_HOST_HTTP_AUTH_COOKIE_NAME] ?? ""}`.trim();
   if (cookieToken) {
-    return { token: cookieToken, fromQuery: false };
+    return { token: cookieToken, source: "cookie" };
   }
   try {
     const u = new URL(req.url ?? "/", "http://project-host.local");
     const queryToken = `${u.searchParams.get(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM) ?? ""}`.trim();
     if (queryToken) {
-      return { token: queryToken, fromQuery: true };
+      return { token: queryToken, source: "query" };
     }
   } catch {
     // ignore malformed URL and fall through.
   }
-  return { token: undefined, fromQuery: false };
+  return { token: undefined, source: undefined };
 }
 
 function stripQueryToken(req: IncomingMessage): void {
@@ -337,26 +334,24 @@ export function createProjectHostHttpProxyAuth({
     return verifySessionToken(token);
   };
 
-  const clearSessionCookie = (res: ServerResponse) => {
+  const clearSessionCookie = (res: ServerResponse, project_id: string) => {
     appendSetCookie(
       res,
-      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=; Path=${projectCookiePath(project_id)}; HttpOnly; SameSite=Lax; Max-Age=0`,
     );
   };
 
-  const setSessionCookie = (req: IncomingMessage, res: ServerResponse, account_id: string) => {
+  const setSessionCookie = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    account_id: string,
+    project_id: string,
+  ) => {
     const sessionToken = createSessionToken({ account_id });
-    const attrs = [
-      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${encodeURIComponent(sessionToken)}`,
-      "Path=/",
-      "HttpOnly",
-      "SameSite=Lax",
-      `Max-Age=${HTTP_SESSION_TTL_SECONDS}`,
-    ];
-    if (isSecureRequest(req)) {
-      attrs.push("Secure");
-    }
-    appendSetCookie(res, attrs.join("; "));
+    appendSetCookie(
+      res,
+      buildProjectHostSessionCookie({ req, sessionToken, project_id }),
+    );
   };
 
   const authorizeAccountForProject = ({
@@ -401,7 +396,7 @@ export function createProjectHostHttpProxyAuth({
           issued_at_s: accountFromSession.iat_s,
         });
       } catch (err) {
-        clearSessionCookie(res);
+        clearSessionCookie(res, project_id);
         throw err;
       }
       authorizeAccountForProject({
@@ -414,7 +409,7 @@ export function createProjectHostHttpProxyAuth({
       });
       return;
     }
-    const { token, fromQuery } = readBearerToken(req);
+    const { token, source } = readBearerToken(req);
     if (!token) {
       const allowedPublic = await authorizePublicAppPath({
         project_id,
@@ -439,8 +434,11 @@ export function createProjectHostHttpProxyAuth({
       account_id,
       issued_at_s: claims.iat,
     });
-    setSessionCookie(req, res, account_id);
-    if (fromQuery) {
+    if (source === "header") {
+      delete req.headers.authorization;
+    }
+    setSessionCookie(req, res, account_id, project_id);
+    if (source === "query") {
       // Clean the browser URL and avoid forwarding a bearer query parameter.
       const cleaned = urlWithoutQueryToken(req);
       if (cleaned && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
@@ -474,7 +472,7 @@ export function createProjectHostHttpProxyAuth({
       setAuthContext(req, context);
       return context;
     }
-    const { token } = readBearerToken(req);
+    const { token, source } = readBearerToken(req);
     if (!token) {
       const allowedPublic = await authorizePublicAppPath({
         project_id,
@@ -501,6 +499,9 @@ export function createProjectHostHttpProxyAuth({
       issued_at_s: claims.iat,
     };
     setAuthContext(req, context);
+    if (source === "header") {
+      delete req.headers.authorization;
+    }
     return context;
   };
 

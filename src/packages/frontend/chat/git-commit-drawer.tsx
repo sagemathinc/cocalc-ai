@@ -18,6 +18,7 @@ import {
   Typography,
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { ComponentProps } from "react";
 import {
@@ -183,6 +184,38 @@ async function runGitCommand({
     max_output: MAX_GIT_SHOW_OUTPUT_BYTES,
     timeout: 60,
   });
+}
+
+export function buildGitShowArgs({
+  isHeadSelected,
+  contextLines,
+  commit,
+}: {
+  isHeadSelected: boolean;
+  contextLines: number;
+  commit?: string;
+}): string[] {
+  if (isHeadSelected) {
+    return [
+      "-c",
+      "core.pager=cat",
+      "diff",
+      "--no-color",
+      "--patch",
+      `-U${contextLines}`,
+      "HEAD",
+    ];
+  }
+  return [
+    "-c",
+    "core.pager=cat",
+    "show",
+    "--no-color",
+    "--patch",
+    `-U${contextLines}`,
+    "--format=fuller",
+    `${commit ?? ""}`,
+  ];
 }
 
 function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
@@ -631,17 +664,26 @@ type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
   historyId: string;
 };
 
+type MarkdownHistoryMode = "markdown" | "editor";
+
 type EditorHistoryEntry = {
   value: string;
   at: number;
 };
 
-function MarkdownHistoryInput({
+export function MarkdownHistoryInput({
   historyId,
   value,
   onChange,
+  defaultMode,
+  fixedMode,
+  onModeChange,
+  saveDebounceMs = 0,
   ...props
 }: MarkdownHistoryInputProps) {
+  const [activeMode, setActiveMode] = useState<MarkdownHistoryMode>(
+    fixedMode ?? defaultMode ?? (IS_MOBILE ? "markdown" : "editor"),
+  );
   const historyRef = useRef<EditorHistoryEntry[]>([
     { value: `${value ?? ""}`, at: Date.now() },
   ]);
@@ -653,6 +695,12 @@ function MarkdownHistoryInput({
     historyIndexRef.current = 0;
     applyingHistoryRef.current = false;
   }, [historyId]);
+
+  useEffect(() => {
+    if (fixedMode != null) {
+      setActiveMode(fixedMode);
+    }
+  }, [fixedMode]);
 
   useEffect(() => {
     if (applyingHistoryRef.current) return;
@@ -676,6 +724,9 @@ function MarkdownHistoryInput({
   return (
     <MarkdownInput
       {...props}
+      defaultMode={defaultMode}
+      fixedMode={fixedMode}
+      saveDebounceMs={saveDebounceMs}
       value={value}
       onChange={(next) => {
         const normalized = `${next ?? ""}`;
@@ -720,6 +771,18 @@ function MarkdownHistoryInput({
         const next = history[historyIndexRef.current]?.value ?? "";
         applyHistoryValue(next);
       }}
+      onModeChange={(nextMode) => {
+        setActiveMode(nextMode);
+        onModeChange?.(nextMode);
+      }}
+      // Git review editors need immediate parent sync so local undo/redo never
+      // races against a stale debounced value flush.
+      //
+      // They also need self-contained undo/redo, but the two
+      // backends get there differently: CodeMirror should keep its native
+      // local history, while embedded Slate must route through this wrapper.
+      undoMode={activeMode === "editor" ? "external" : "local"}
+      redoMode={activeMode === "editor" ? "external" : "local"}
     />
   );
 }
@@ -1942,30 +2005,11 @@ export function GitCommitDrawer({
     setData(undefined);
     (async () => {
       try {
-        const args = isHeadSelected
-          ? [
-              "-c",
-              "core.pager=cat",
-              "diff",
-              "--no-color",
-              "--patch",
-              "--find-renames",
-              "--find-copies",
-              `-U${contextLines}`,
-              "HEAD",
-            ]
-          : [
-              "-c",
-              "core.pager=cat",
-              "show",
-              "--no-color",
-              "--patch",
-              "--find-renames",
-              "--find-copies",
-              `-U${contextLines}`,
-              "--format=fuller",
-              commit,
-            ];
+        const args = buildGitShowArgs({
+          isHeadSelected,
+          contextLines,
+          commit,
+        });
         const showResult = await runGitCommand({
           projectId,
           cwd: repoRoot || cwd,

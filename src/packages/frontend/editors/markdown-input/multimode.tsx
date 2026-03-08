@@ -2,153 +2,24 @@
 Edit with either plain text input **or** WYSIWYG slate-based input.
 */
 
-import { Popover, Radio } from "antd";
-import { Map as ImmutableMap, fromJS } from "immutable";
-import LRU from "lru-cache";
-import {
-  CSSProperties,
-  MutableRefObject,
-  ReactNode,
-  RefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
-import { Icon } from "@cocalc/frontend/components";
-import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
+import { fromJS } from "immutable";
+import { useEffect, useMemo, useRef } from "react";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
-import { COLORS } from "@cocalc/util/theme";
-import { BLURED_STYLE, FOCUSED_STYLE, MarkdownInput } from "./component";
+import { MarkdownTextAdapter, SlateRichTextAdapter } from "./adapters";
+import { BLURED_STYLE, FOCUSED_STYLE } from "./component";
+import { MarkdownInputModeSwitch } from "./mode-switch";
+import { useMultimodeFocusInteraction } from "./use-multimode-focus-interaction";
+import { useMultimodeModeState } from "./use-multimode-mode-state";
+import { useMultimodeSelection } from "./use-multimode-selection";
+import type {
+  Mode,
+  MultiMarkdownInputProps,
+} from "./types";
 
 // NOTE: on mobile there is very little suppport for "editor" = "slate", but
 // very good support for "markdown", hence the default below.
-
-export interface EditorFunctions {
-  set_cursor: (pos: { x?: number; y?: number }) => void;
-  get_cursor: () => { x: number; y: number };
-}
-
-interface MultimodeState {
-  mode?: Mode;
-  markdown?: any;
-  editor?: any;
-}
-
-const multimodeStateCache = new LRU<string, MultimodeState>({ max: 500 });
-
-const MIN_INPUT_HEIGHT = IS_MOBILE ? 44 : 38;
-const MAX_INPUT_HEIGHT = "50vh";
-
-// markdown uses codemirror
-// editor uses slate.  TODO: this should be "text", not "editor".  Oops.
-// UI equivalent:
-// editor = "Text" = Slate/wysiwyg
-// markdown = "Markdown"
-const Modes = ["markdown", "editor"] as const;
-export type Mode = (typeof Modes)[number];
-
-const LOCAL_STORAGE_KEY = "markdown-editor-mode";
-
-function getLocalStorageMode(): Mode | undefined {
-  const m = get_local_storage(LOCAL_STORAGE_KEY);
-  if (typeof m === "string" && Modes.includes(m as any)) {
-    return m as Mode;
-  }
-}
-
-interface Props {
-  cacheId?: string; // unique **within this file**; the project_id and path are automatically also used
-  value?: string;
-  defaultMode?: Mode; // defaults to editor or whatever was last used (as stored in localStorage)
-  fixedMode?: Mode; // only use this mode; no option to switch
-  onChange: (value: string) => void;
-
-  // use getValueRef to obtain a function getValueRef.current() that returns the current
-  // value of the editor *NOW*, without waiting for onChange. Even with saveDebounceMs=0,
-  // there is definitely no guarantee that onChange is always up to date, but definitely
-  // up to date values are required to implement realtime sync!
-  getValueRef?: MutableRefObject<() => string>;
-
-  onModeChange?: (mode: Mode) => void;
-  onShiftEnter?: (value: string) => void;
-  placeholder?: string;
-  fontSize?: number;
-  height?: string; // css height and also "auto" is fully supported.
-  autoGrow?: boolean; // enable dynamic growth (defaults off unless height === "auto")
-  autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
-  style?: CSSProperties;
-  modeSwitchStyle?: CSSProperties;
-  autoFocus?: boolean; // note - this is broken on safari for the slate editor, but works on chrome and firefox.
-  enableMentions?: boolean;
-  enableUpload?: boolean; // whether to enable upload of files via drag-n-drop or paste.  This is on by default! (Note: not possible to disable for slate editor mode anyways.)
-  onUploadStart?: () => void;
-  onUploadEnd?: () => void;
-  submitMentionsRef?: SubmitMentionsRef;
-  extraHelp?: ReactNode;
-  hideHelp?: boolean;
-  hideModeSwitch?: boolean;
-  // debounce how frequently get updates from onChange; if saveDebounceMs=0 get them on every change.  Default is the global SAVE_DEBOUNCE_MS const.
-  // can be a little more frequent in case of shift or alt enter, or blur.
-  saveDebounceMs?: number;
-  onBlur?: () => void;
-  onFocus?: () => void;
-  minimal?: boolean;
-  editBarStyle?: CSSProperties;
-
-  // onCursors is called when user cursor(s) move.  "editable" mode only supports a single
-  // cursor right now, but "markdown" mode supports multiple cursors.  An array is
-  // output in all cases.  In editable mode, the cursor is positioned where it would be
-  // in the plain text.
-  onCursors?: (cursors: { x: number; y: number }[]) => void;
-  // If cursors are given, then they get rendered in the editor.  This is a map
-  // from account_id to objects {x:number,y:number} that give the 0-based row and column
-  // in the plain markdown text, as of course output by onCursors above.
-  cursors?: ImmutableMap<string, any>;
-  noVfill?: boolean;
-  editorDivRef?: RefObject<HTMLDivElement>; // if in slate "editor" mode, this is the top-level div
-  cmOptions?: { [key: string]: any }; // used for codemirror options override above and account settings
-  // It is important to handle all of these, rather than trying to rely
-  // on some global keyboard shortcuts.  E.g., in vim mode codemirror,
-  // user types ":w" in their editor and whole document should save
-  // to disk...
-  onUndo?: () => void; // called when user requests to undo
-  onRedo?: () => void; // called when user requests redo
-  onSave?: () => void; // called when user requests to save document
-
-  compact?: boolean; // optimize for compact embedded usage.
-
-  // onCursorTop and onCursorBottom are called when the cursor is on top line and goes up,
-  // so that client could move to another editor (e.g., in Jupyter this is how you move out
-  // of a cell to an adjacent cell).
-  onCursorTop?: () => void;
-  onCursorBottom?: () => void;
-
-  // Declarative control of whether or not the editor is focused.  Only has an impact
-  // if it is explicitly set to true or false.
-  isFocused?: boolean;
-
-  registerEditor?: (editor: EditorFunctions) => void;
-  unregisterEditor?: () => void;
-
-  // refresh codemirror if this changes
-  refresh?: any;
-
-  // opt out of block editor even when it would normally be used
-  disableBlockEditor?: boolean;
-
-  overflowEllipsis?: boolean; // if true (the default!), show "..." button popping up all menu entries
-
-  dirtyRef?: MutableRefObject<boolean>; // a boolean react ref that gets set to true whenever document changes for any reason (client should explicitly set this back to false).
-
-  controlRef?: MutableRefObject<any>;
-  preserveBlankLines?: boolean;
-  slateExternalMultilinePasteAsCodeBlock?: boolean;
-}
 
 export default function MultiMarkdownInput({
   autoFocus,
@@ -186,6 +57,8 @@ export default function MultiMarkdownInput({
   onSave,
   onShiftEnter,
   onUndo,
+  redoMode,
+  undoMode,
   onUploadEnd,
   onUploadStart,
   overflowEllipsis = true,
@@ -201,7 +74,7 @@ export default function MultiMarkdownInput({
   preserveBlankLines = true,
   disableBlockEditor = true,
   slateExternalMultilinePasteAsCodeBlock = false,
-}: Props) {
+}: MultiMarkdownInputProps) {
   const {
     isFocused: isFocusedFrame,
     isVisible,
@@ -222,39 +95,35 @@ export default function MultiMarkdownInput({
     onChangeRef.current = onChange;
   }, [onChange]);
   const activeCacheIdRef = useRef<string | undefined>(cacheId);
-  const activeModeRef = useRef<Mode>("markdown");
   const mountedRef = useRef<boolean>(true);
 
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
   const isAutoGrow = autoGrow ?? height === "auto";
-  const hasFixedHeight = height != null && height !== "auto";
-  const autoGrowMaxHeightStyle =
-    autoGrowMaxHeight != null
-      ? `${Math.max(autoGrowMaxHeight, MIN_INPUT_HEIGHT)}px`
-      : MAX_INPUT_HEIGHT;
   const internalControlRef = useRef<any>(null);
   const slateControlRef = controlRef ?? internalControlRef;
-  const pendingModeSelectionRef = useRef<{
-    to: Mode;
-    pos: { line: number; ch: number };
-  } | null>(null);
-
-  const getKey = () => `${project_id}${path}:${cacheId}`;
-
-  function getCache() {
-    return cacheId == null ? undefined : multimodeStateCache.get(getKey());
-  }
-
-  const [mode, setMode0] = useState<Mode>(
-    fixedMode ??
-      getCache()?.mode ??
-      defaultMode ??
-      getLocalStorageMode() ??
-      (IS_MOBILE ? "markdown" : "editor"),
-  );
-
-  const [editBarPopover, setEditBarPopover] = useState<boolean>(false);
+  const { activeModeRef, mode, setMode, getCachedSelection, saveCachedSelection } =
+    useMultimodeModeState({
+      cacheId,
+      projectId: project_id,
+      path,
+      defaultMode,
+      fixedMode,
+      fallbackMode: IS_MOBILE ? "markdown" : "editor",
+      onModeChange,
+    });
+  const {
+    focused,
+    beginModeSwitchInteraction,
+    endModeSwitchInteraction,
+    handleMarkdownBlur,
+    handleRichTextFocus,
+    handleRichTextBlur,
+  } = useMultimodeFocusInteraction({
+    autoFocus,
+    onFocus,
+    onBlur,
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -263,10 +132,7 @@ export default function MultiMarkdownInput({
     };
   }, []);
 
-  // Keep active callback identity synchronous with render. If we wait for
-  // useEffect, stale editor callbacks can fire in-between and pass guards.
   activeCacheIdRef.current = cacheId;
-  activeModeRef.current = mode;
 
   function isActiveCallback(sourceMode: Mode): boolean {
     if (!mountedRef.current) {
@@ -280,142 +146,18 @@ export default function MultiMarkdownInput({
     return true;
   }
 
-  useEffect(() => {
-    onModeChange?.(mode);
-  }, []);
-
-  const setMode = (mode: Mode) => {
-    set_local_storage(LOCAL_STORAGE_KEY, mode);
-    setMode0(mode);
-    onModeChange?.(mode);
-    if (cacheId !== undefined) {
-      multimodeStateCache.set(`${project_id}${path}:${cacheId}`, {
-        ...getCache(),
-        mode,
-      });
-    }
-  };
-  const [focused, setFocused] = useState<boolean>(!!autoFocus);
-  const ignoreBlur = useRef<boolean>(false);
-
   const cursorsMap = useMemo(() => {
     return cursors == null ? undefined : fromJS(cursors);
   }, [cursors]);
 
-  const selectionRef = useRef<{
-    getSelection: Function;
-    setSelection: Function;
-  } | null>(null);
-
-  const applyMarkdownSelection = (pos: { line: number; ch: number }) => {
-    const selection = selectionRef.current;
-    if (selection?.setSelection == null) return false;
-    selection.setSelection([{ anchor: pos, head: pos }]);
-    return true;
-  };
-
-  useEffect(() => {
-    const pending = pendingModeSelectionRef.current;
-    if (!pending || pending.to !== mode) return;
-    if (mode === "editor") {
-      let attempts = 0;
-      const tryApply = () => {
-        attempts += 1;
-        const applied =
-          slateControlRef.current?.setSelectionFromMarkdownPosition?.(
-            pending.pos,
-          ) ?? false;
-        if (applied) {
-          pendingModeSelectionRef.current = null;
-          return;
-        }
-        if (attempts < 5) {
-          setTimeout(tryApply, 30);
-        }
-      };
-      tryApply();
-      return;
-    }
-    if (mode === "markdown") {
-      let attempts = 0;
-      const tryApply = () => {
-        attempts += 1;
-        if (applyMarkdownSelection(pending.pos)) {
-          pendingModeSelectionRef.current = null;
-          return;
-        }
-        if (attempts < 5) {
-          setTimeout(tryApply, 30);
-        }
-      };
-      tryApply();
-    }
-  }, [mode, slateControlRef]);
-
-  useEffect(() => {
-    if (cacheId == null) {
-      return;
-    }
-    const cache = getCache();
-    if (cache?.[mode] != null && selectionRef.current != null) {
-      // restore selection on mount.
-      try {
-        selectionRef.current.setSelection(cache?.[mode]);
-      } catch (_err) {
-        // it might just be that the document isn't initialized yet
-        setTimeout(() => {
-          try {
-            selectionRef.current?.setSelection(cache?.[mode]);
-          } catch (_err2) {
-            //  console.warn(_err2); // definitely don't need this.
-            // This is expected to fail, since the selection from last
-            // use will be invalid now if another user changed the
-            // document, etc., or you did in a different mode, possibly.
-          }
-        }, 100);
-      }
-    }
-    return () => {
-      if (selectionRef.current == null || cacheId == null) {
-        return;
-      }
-      const selection = selectionRef.current.getSelection();
-      multimodeStateCache.set(getKey(), {
-        ...getCache(),
-        [mode]: selection,
-      });
-    };
-  }, [mode]);
-
-  function toggleEditBarPopover() {
-    setEditBarPopover(!editBarPopover);
-  }
-
-  function renderEditBarEllipsis() {
-    return (
-      <span style={{ fontWeight: 400 }}>
-        {"\u22EF"}
-        <Popover
-          open={isFocusedFrame && isVisible && editBarPopover}
-          content={
-            <div style={{ display: "flex" }}>
-              {editBar2.current}
-              <Icon
-                onClick={() => setEditBarPopover(false)}
-                name="times"
-                style={{
-                  color: COLORS.GRAY_M,
-                  marginTop: "5px",
-                }}
-              />
-            </div>
-          }
-        />
-      </span>
-    );
-  }
-
-  const showModeSwitch = !fixedMode && !hideModeSwitch;
+  const { selectionRef, rememberPendingSelection, getMarkdownPositionForSelection } =
+    useMultimodeSelection({
+      cacheId,
+      mode,
+      getCachedSelection,
+      saveCachedSelection,
+      richTextControlRef: slateControlRef,
+    });
 
   return (
     <div
@@ -433,82 +175,22 @@ export default function MultiMarkdownInput({
             }),
       }}
     >
-      <div
-        onMouseDown={() => {
-          // Clicking the checkbox blurs the edit field, but
-          // this is the one case we do NOT want to trigger the
-          // onBlur callback, since that would make switching
-          // back and forth between edit modes impossible.
-          ignoreBlur.current = true;
-          setTimeout(() => (ignoreBlur.current = false), 100);
-        }}
-        onTouchStart={() => {
-          ignoreBlur.current = true;
-          setTimeout(() => (ignoreBlur.current = false), 100);
-        }}
-      >
-        {showModeSwitch && (
-          <div
-            style={{
-              background: "white",
-              color: COLORS.GRAY_M,
-              ...(mode == "editor" || hideHelp
-                ? {
-                    float: "right",
-                    position: "relative",
-                    zIndex: 1,
-                  }
-                : { float: "right" }),
-              ...modeSwitchStyle,
-            }}
-          >
-            <Radio.Group
-              options={[
-                ...(overflowEllipsis && mode == "editor"
-                  ? [
-                      {
-                        label: renderEditBarEllipsis(),
-                        value: "menu",
-                        style: {
-                          backgroundColor: editBarPopover
-                            ? COLORS.GRAY_L
-                            : "white",
-                          paddingLeft: 10,
-                          paddingRight: 10,
-                        },
-                      },
-                    ]
-                  : []),
-                // fontWeight is needed to undo a stupid conflict with bootstrap css, which will go away when we get rid of that ancient nonsense.
-                {
-                  label: <span style={{ fontWeight: 400 }}>Rich Text</span>,
-                  value: "editor",
-                },
-                {
-                  label: <span style={{ fontWeight: 400 }}>Markdown</span>,
-                  value: "markdown",
-                },
-              ]}
-              onChange={(e) => {
-                const mode = e.target.value;
-                if (mode === "menu") {
-                  toggleEditBarPopover();
-                } else {
-                  setMode(mode as Mode);
-                }
-              }}
-              value={mode}
-              optionType="button"
-              size="small"
-              buttonStyle="solid"
-              style={{ display: "block" }}
-            />
-          </div>
-        )}
-      </div>
+      <MarkdownInputModeSwitch
+        mode={mode}
+        isFocusedFrame={isFocusedFrame}
+        isVisible={isVisible}
+        hideHelp={hideHelp}
+        hidden={!!fixedMode || !!hideModeSwitch}
+        overflowEllipsis={overflowEllipsis}
+        style={modeSwitchStyle}
+        editBarContentRef={editBar2}
+        onSelectMode={setMode}
+        onInteractionStart={beginModeSwitchInteraction}
+        onInteractionEnd={endModeSwitchInteraction}
+      />
       {mode === "markdown" ? (
-        <MarkdownInput
-          divRef={editorDivRef}
+        <MarkdownTextAdapter
+          editorDivRef={editorDivRef}
           selectionRef={selectionRef}
           value={value}
           onChange={(value) => {
@@ -530,7 +212,7 @@ export default function MultiMarkdownInput({
           onAltEnter={(value, pos) => {
             onChangeRef.current?.(value);
             if (pos) {
-              pendingModeSelectionRef.current = { to: "editor", pos };
+              rememberPendingSelection("editor", pos);
             }
             setMode("editor");
           }}
@@ -547,14 +229,14 @@ export default function MultiMarkdownInput({
           hideHelp={hideHelp}
           onBlur={(value) => {
             onChangeRef.current?.(value);
-            if (!ignoreBlur.current) {
-              onBlur?.();
-            }
+            handleMarkdownBlur();
           }}
           onFocus={onFocus}
           onSave={onSave}
           onUndo={onUndo}
           onRedo={onRedo}
+          undoMode={undoMode}
+          redoMode={redoMode}
           onCursors={onCursors}
           cursors={cursorsMap}
           onCursorTop={onCursorTop}
@@ -568,113 +250,62 @@ export default function MultiMarkdownInput({
         />
       ) : undefined}
       {mode === "editor" ? (
-        <div
-          style={{
-            height: hasFixedHeight ? height : undefined,
-            minHeight: `${MIN_INPUT_HEIGHT}px`,
-            maxHeight: hasFixedHeight ? height : autoGrowMaxHeightStyle,
-            overflowY: "auto",
-            width: "100%",
-            fontSize: "14px" /* otherwise button bar can be skewed */,
-            ...style, // make it possible to override width, height, etc.  This of course allows for problems but is essential. E.g., we override width for chat input in a whiteboard.
+        <SlateRichTextAdapter
+          selectionRef={selectionRef}
+          editorDivRef={editorDivRef}
+          noVfill={noVfill}
+          value={value}
+          minimal={minimal}
+          height={height}
+          saveDebounceMs={saveDebounceMs}
+          getValueRef={getValueRef}
+          onChange={(value) => {
+            if (!isActiveCallback("editor")) return;
+            onChangeRef.current?.(value);
           }}
-          className={height != "auto" ? "smc-vfill" : undefined}
-        >
-          <EditableMarkdown
-            selectionRef={selectionRef}
-            divRef={editorDivRef}
-            noVfill={noVfill}
-            value={value}
-            is_current={true}
-            hidePath
-            disableWindowing={
-              true /* I tried making this false when height != 'auto', but then *clicking to set selection* doesn't work at least for task list.*/
+          onShiftEnter={(value) => {
+            if (!isActiveCallback("editor")) return;
+            onChangeRef.current?.(value);
+            onShiftEnterRef.current?.(value);
+          }}
+          onAltEnter={(value) => {
+            onChangeRef.current?.(value);
+            const pos = getMarkdownPositionForSelection();
+            if (pos) {
+              rememberPendingSelection("markdown", pos);
             }
-            style={
-              minimal
-                ? {
-                    background: undefined,
-                    backgroundColor: undefined,
-                  }
-                : undefined
-            }
-            pageStyle={
-              minimal
-                ? {
-                    background: undefined,
-                    padding: 0,
-                    minHeight: isAutoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
-                  }
-                : {
-                    padding: "5px 15px",
-                    minHeight: isAutoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
-                  }
-            }
-            minimal={minimal}
-            height={height}
-            editBarStyle={
-              {
-                paddingRight: "127px",
-                ...editBarStyle,
-              } /* this paddingRight is of course just a stupid temporary hack, since by default the mode switch is on top of it, which matters when cursor in a list or URL */
-            }
-            saveDebounceMs={saveDebounceMs}
-            getValueRef={getValueRef}
-            actions={{
-              set_value: (value) => {
-                if (!isActiveCallback("editor")) return;
-                onChangeRef.current?.(value);
-              },
-              shiftEnter: (value) => {
-                if (!isActiveCallback("editor")) return;
-                onChangeRef.current?.(value);
-                onShiftEnterRef.current?.(value);
-              },
-              altEnter: (value) => {
-                onChangeRef.current?.(value);
-                const pos =
-                  slateControlRef.current?.getMarkdownPositionForSelection?.();
-                if (pos) {
-                  pendingModeSelectionRef.current = { to: "markdown", pos };
-                }
-                setMode("markdown");
-              },
-              set_cursor_locs: onCursors,
-              undo: onUndo,
-              redo: onRedo,
-              save: onSave as any,
-            }}
-            cursors={cursorsMap}
-            font_size={fontSize}
-            autoFocus={focused}
-            onFocus={() => {
-              setFocused(true);
-              onFocus?.();
-            }}
-            onBlur={() => {
-              setFocused(false);
-              if (!ignoreBlur.current) {
-                onBlur?.();
-              }
-            }}
-            hideSearch
-            onCursorTop={onCursorTop}
-            onCursorBottom={onCursorBottom}
-            isFocused={isFocused}
-            registerEditor={registerEditor}
-            unregisterEditor={unregisterEditor}
-            disableBlockEditor={disableBlockEditor}
-            placeholder={placeholder ?? "Type text..."}
-            submitMentionsRef={submitMentionsRef}
-            editBar2={editBar2}
-            dirtyRef={dirtyRef}
-            controlRef={slateControlRef}
-            preserveBlankLines={preserveBlankLines}
-            externalMultilinePasteAsCodeBlock={
-              slateExternalMultilinePasteAsCodeBlock
-            }
-          />
-        </div>
+            setMode("markdown");
+          }}
+          onCursors={onCursors}
+          onUndo={onUndo}
+          onRedo={onRedo}
+          undoMode={undoMode}
+          redoMode={redoMode}
+          onSave={onSave}
+          cursors={cursorsMap}
+          fontSize={fontSize}
+          autoFocus={focused}
+          onFocus={handleRichTextFocus}
+          onBlur={handleRichTextBlur}
+          onCursorTop={onCursorTop}
+          onCursorBottom={onCursorBottom}
+          isFocused={isFocused}
+          registerEditor={registerEditor}
+          unregisterEditor={unregisterEditor}
+          disableBlockEditor={disableBlockEditor}
+          placeholder={placeholder}
+          submitMentionsRef={submitMentionsRef}
+          editBar2={editBar2}
+          dirtyRef={dirtyRef}
+          controlRef={slateControlRef}
+          preserveBlankLines={preserveBlankLines}
+          externalMultilinePasteAsCodeBlock={
+            slateExternalMultilinePasteAsCodeBlock
+          }
+          style={style}
+          editBarStyle={editBarStyle}
+          autoGrow={isAutoGrow}
+        />
       ) : undefined}
     </div>
   );

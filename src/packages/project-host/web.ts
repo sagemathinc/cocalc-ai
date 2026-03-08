@@ -1,7 +1,6 @@
 import express from "express";
 import getLogger from "@cocalc/backend/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
-import { account_id } from "@cocalc/backend/data";
 import compression from "compression";
 
 const logger = getLogger("project-host:web");
@@ -25,6 +24,19 @@ const DEFAULT_CONFIGURATION = {
   site_name: "CoCalc Project Host",
 };
 
+export function getProjectHostCustomizePayload() {
+  return {
+    configuration: {
+      ...DEFAULT_CONFIGURATION,
+    },
+    registration: false,
+    strategies: [],
+    software: null,
+    ollama: {},
+    custom_openai: {},
+  };
+}
+
 export async function initHttp({
   app,
   conatClient: _, // reserved for future use
@@ -35,17 +47,7 @@ export async function initHttp({
   app.use(compression());
 
   app.get("/customize", async (_req, res) => {
-    res.json({
-      configuration: {
-        ...DEFAULT_CONFIGURATION,
-        account_id,
-      },
-      registration: false,
-      strategies: [],
-      software: null,
-      ollama: {},
-      custom_openai: {},
-    });
+    res.json(getProjectHostCustomizePayload());
   });
 }
 

@@ -168,6 +168,37 @@ function normalizeCommandSpec(
   };
 }
 
+function normalizeLegacyJupyterLabServiceSpec(
+  spec: AppServiceSpec,
+): AppServiceSpec {
+  const command = [spec.command.exec, ...(spec.command.args ?? [])].join(" ").trim();
+  const looksLikeLegacyJupyterLab =
+    spec.id === "jupyterlab" &&
+    command.includes("jupyter lab") &&
+    !command.includes("APP_BASE_URL") &&
+    !command.includes("base_url=") &&
+    spec.proxy.open_mode !== "port";
+  if (!looksLikeLegacyJupyterLab) return spec;
+  return {
+    ...spec,
+    command: {
+      ...spec.command,
+      exec: "bash",
+      args: [
+        "-lc",
+        'base_url="${APP_BASE_URL/\\/proxy\\//\\/port\\/}"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url="${base_url}" --ServerApp.base_url="${base_url}" --ip=${HOST:-127.0.0.1} --port=${PORT}',
+      ],
+    },
+    proxy: {
+      ...spec.proxy,
+      strip_prefix: true,
+      open_mode: "port",
+      health_path: spec.proxy.health_path ?? "/lab",
+      readiness_timeout_s: 45,
+    },
+  };
+}
+
 function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
   const id = assertAppId(asString(input.id, "spec.id"));
   const title = asOptionalString(input.title);
@@ -208,7 +239,7 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
       asOptionalPositiveInt(wakeIn.startup_timeout_s, "spec.wake.startup_timeout_s") ?? 120,
   };
 
-  return {
+  return normalizeLegacyJupyterLabServiceSpec({
     version: 1,
     id,
     title,
@@ -217,7 +248,7 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
     network,
     proxy,
     wake,
-  };
+  });
 }
 
 function normalizeStaticSpec(input: Record<string, any>): AppStaticSpec {

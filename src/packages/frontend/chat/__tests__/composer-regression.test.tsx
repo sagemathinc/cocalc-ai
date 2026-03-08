@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { act, render } from "@testing-library/react";
-import ChatInput from "../input";
+import ChatInput, { ChatInputControl } from "../input";
 
 let lastMarkdownInputProps: any = null;
 
@@ -198,6 +198,85 @@ describe("ChatInput send lifecycle regressions", () => {
 
     expect(lastMarkdownInputProps.cacheId).toBe("draft-1");
     expect(lastMarkdownInputProps.value).toBe("");
+  });
+
+  it("exposes a focus control that delegates to the editor control ref", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
+    } as any;
+    const inputControlRef = { current: null } as {
+      current: ChatInputControl | null;
+    };
+    const focus = jest.fn(() => true);
+    const allowNextValueUpdateWhileFocused = jest.fn();
+
+    render(
+      <ChatInput
+        input="hello"
+        onChange={() => undefined}
+        on_send={() => undefined}
+        syncdb={syncdb}
+        date={0}
+        inputControlRef={inputControlRef}
+      />,
+    );
+
+    lastMarkdownInputProps.controlRef.current = {
+      focus,
+      allowNextValueUpdateWhileFocused,
+    };
+
+    expect(inputControlRef.current?.focus()).toBe(true);
+    expect(allowNextValueUpdateWhileFocused).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("refocuses after send once the session advances and the draft clears", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
+    } as any;
+    const focus = jest.fn(() => true);
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      const [session, setSession] = useState(1);
+      return (
+        <ChatInput
+          input={value}
+          onChange={setValue}
+          on_send={() => {
+            setSession((current) => current + 1);
+            setValue("");
+          }}
+          syncdb={syncdb}
+          date={0}
+          sessionToken={session}
+        />
+      );
+    }
+
+    render(<Harness />);
+    lastMarkdownInputProps.controlRef.current = {
+      focus,
+      allowNextValueUpdateWhileFocused: jest.fn(),
+    };
+
+    act(() => {
+      lastMarkdownInputProps.onChange("hello");
+    });
+    act(() => {
+      lastMarkdownInputProps.onShiftEnter("hello");
+    });
+    act(() => {
+      jest.runAllTimers();
+    });
+
+    expect(lastMarkdownInputProps.value).toBe("");
+    expect(focus).toHaveBeenCalled();
   });
 
 });
