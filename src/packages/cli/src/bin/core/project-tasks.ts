@@ -17,16 +17,16 @@ type ProjectIdentity = {
   host_id: string | null;
 };
 
-type ProjectTasksOpsDeps<Ctx, Workspace extends ProjectIdentity> = {
+type ProjectTasksOpsDeps<Ctx, Project extends ProjectIdentity> = {
   resolveProjectConatClient: (
     ctx: Ctx,
     projectIdentifier?: string,
     cwd?: string,
-  ) => Promise<{ project: Workspace; client: ConatClient }>;
+  ) => Promise<{ project: Project; client: ConatClient }>;
 };
 
-type SessionEntry<Workspace extends ProjectIdentity> = {
-  project: Workspace;
+type SessionEntry<Project extends ProjectIdentity> = {
+  project: Project;
   session: TasksSession;
 };
 
@@ -85,9 +85,9 @@ function compactTaskRows(tasks: readonly TaskRecord[]): Array<Record<string, unk
 
 export function createProjectTasksOps<
   Ctx,
-  Workspace extends ProjectIdentity,
->(deps: ProjectTasksOpsDeps<Ctx, Workspace>) {
-  const sessionPromises = new Map<string, Promise<SessionEntry<Workspace>>>();
+  Project extends ProjectIdentity,
+>(deps: ProjectTasksOpsDeps<Ctx, Project>) {
+  const sessionPromises = new Map<string, Promise<SessionEntry<Project>>>();
   const sessionLeases = new RefcountLeaseManager<string>({
     delayMs: 30_000,
     disposer: async (key) => {
@@ -106,7 +106,7 @@ export function createProjectTasksOps<
   async function getOrCreateSessionEntry(
     ctx: Ctx,
     options: AcquireProjectTasksSessionOptions,
-  ): Promise<SessionEntry<Workspace>> {
+  ): Promise<SessionEntry<Project>> {
     const projectIdentifier = normalizeProjectIdentifier(
       options.projectIdentifier,
     );
@@ -152,7 +152,7 @@ export function createProjectTasksOps<
     ctx: Ctx,
     options: AcquireProjectTasksSessionOptions,
   ): Promise<{
-    project: Workspace;
+    project: Project;
     session: TasksSession;
     path: string;
     release: () => Promise<void>;
@@ -194,7 +194,7 @@ export function createProjectTasksOps<
     ctx: Ctx,
     options: AcquireProjectTasksSessionOptions,
     fn: (args: {
-      project: Workspace;
+      project: Project;
       session: TasksSession;
       path: string;
     }) => Promise<T>,

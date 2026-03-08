@@ -69,7 +69,7 @@ const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
-  { value: "workspace-write", label: "Project write" },
+  { value: "workspace-write", label: "Workspace write" },
   { value: "full-access", label: "Full access" },
 ];
 

@@ -390,7 +390,7 @@ function ActivityRow({
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
               inlineCodeLinks={inlineCodeLinks}
-              inlineCodeWorkspaceRoot={basePath}
+              inlineCodeProjectRoot={basePath}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -412,7 +412,7 @@ function ActivityRow({
               value={entry.text}
               style={{ fontSize, marginTop: 4 }}
               inlineCodeLinks={inlineCodeLinks}
-              inlineCodeWorkspaceRoot={basePath}
+              inlineCodeProjectRoot={basePath}
             />
           ) : (
             <Text type="secondary" style={{ fontSize: secondarySize }}>

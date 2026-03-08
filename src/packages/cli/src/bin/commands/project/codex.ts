@@ -42,7 +42,7 @@ codex
   .option("--reasoning <level>", "reasoning level (low|medium|high|extra_high)")
   .option(
     "--session-mode <mode>",
-    "session mode (auto|read-only|project-write|full-access)",
+    "session mode (auto|read-only|workspace-write|full-access)",
   )
   .option("--workdir <path>", "working directory inside project")
   .action(

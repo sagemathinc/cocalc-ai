@@ -59,7 +59,7 @@ const MODE_OPTIONS: ModeOption[] = [
   },
   {
     value: "workspace-write",
-    label: "Project write",
+    label: "Workspace write",
     description:
       "Allow edits inside this project only (network access is allowed). System-wide changes are blocked.",
   },

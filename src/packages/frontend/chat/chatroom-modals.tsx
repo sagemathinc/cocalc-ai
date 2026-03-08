@@ -67,7 +67,7 @@ const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
   : "workspace-write";
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
-  { value: "workspace-write", label: "Project write" },
+  { value: "workspace-write", label: "Workspace write" },
   { value: "full-access", label: "Full access" },
 ];
 

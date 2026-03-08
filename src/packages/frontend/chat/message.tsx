@@ -1269,7 +1269,7 @@ export default function Message({
             inlineCodeLinks={
               Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
             }
-            inlineCodeWorkspaceRoot={activityBasePath}
+            inlineCodeProjectRoot={activityBasePath}
           />
         </div>
       </>
@@ -1307,7 +1307,7 @@ export default function Message({
               inlineCodeLinks={
                 Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
               }
-              inlineCodeWorkspaceRoot={activityBasePath}
+              inlineCodeProjectRoot={activityBasePath}
             />
           </div>
         </div>

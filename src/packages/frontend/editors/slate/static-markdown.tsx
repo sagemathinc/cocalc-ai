@@ -22,7 +22,7 @@ interface Props {
   style?: CSSProperties;
   className?: string;
   inlineCodeLinks?: InlineCodeLink[];
-  inlineCodeWorkspaceRoot?: string;
+  inlineCodeProjectRoot?: string;
   highlightQuery?: string;
 }
 
@@ -33,14 +33,14 @@ export default function StaticMarkdown({
   style,
   className,
   inlineCodeLinks,
-  inlineCodeWorkspaceRoot,
+  inlineCodeProjectRoot,
   highlightQuery,
 }: Props) {
   const [editor, setEditor] = useState<PartialSlateEditor>({
     children: applySearchHighlights(
       applyInlineCodeLinks(markdownToSlate(value), {
         inlineCodeLinks,
-        inlineCodeWorkspaceRoot,
+        inlineCodeProjectRoot,
       }),
       highlightQuery,
     ),
@@ -55,13 +55,13 @@ export default function StaticMarkdown({
         children: applySearchHighlights(
           applyInlineCodeLinks(markdownToSlate(value), {
             inlineCodeLinks,
-            inlineCodeWorkspaceRoot,
+            inlineCodeProjectRoot,
           }),
           highlightQuery,
         ),
       });
     }
-  }, [value, inlineCodeLinks, inlineCodeWorkspaceRoot, highlightQuery]);
+  }, [value, inlineCodeLinks, inlineCodeProjectRoot, highlightQuery]);
 
   if (editor == null) {
     return null;
@@ -148,15 +148,15 @@ function applyInlineCodeLinks(
   children: any[],
   {
     inlineCodeLinks,
-    inlineCodeWorkspaceRoot,
+    inlineCodeProjectRoot,
   }: {
     inlineCodeLinks?: InlineCodeLink[];
-    inlineCodeWorkspaceRoot?: string;
+    inlineCodeProjectRoot?: string;
   },
 ): any[] {
   const lookup = createInlineCodeLinkLookup(
     inlineCodeLinks,
-    inlineCodeWorkspaceRoot,
+    inlineCodeProjectRoot,
   );
   if (lookup.size === 0) return children;
   return transformInlineCodeNodes(children, lookup);
@@ -190,7 +190,7 @@ function transformInlineCodeNodes(
 
 function createInlineCodeLinkLookup(
   inlineCodeLinks?: InlineCodeLink[],
-  inlineCodeWorkspaceRoot?: string,
+  inlineCodeProjectRoot?: string,
 ): Map<string, { href: string; display: string; title: string }> {
   const lookup = new Map<
     string,
@@ -200,7 +200,7 @@ function createInlineCodeLinkLookup(
     const codeKey = normalizeInlineCodeKey(link?.code);
     const absPath = normalizeAbsolutePath(link?.abs_path);
     if (!codeKey || !absPath) continue;
-    const display = formatInlineCodeDisplay(link, inlineCodeWorkspaceRoot);
+    const display = formatInlineCodeDisplay(link, inlineCodeProjectRoot);
     const title = formatInlineCodeTitle(link);
     const href = buildInlineCodeHref({
       absPath,
@@ -260,7 +260,7 @@ function buildInlineCodeHref({
 
 function formatInlineCodeDisplay(
   link: InlineCodeLink,
-  inlineCodeWorkspaceRoot?: string,
+  inlineCodeProjectRoot?: string,
 ): string {
   const rawCode = typeof link.code === "string" ? link.code.trim() : "";
   if (rawCode.startsWith("/")) {
@@ -277,8 +277,8 @@ function formatInlineCodeDisplay(
   }
   const absPath = typeof link.abs_path === "string" ? link.abs_path.trim() : "";
   const workspaceRoot =
-    typeof inlineCodeWorkspaceRoot === "string"
-      ? inlineCodeWorkspaceRoot.trim()
+    typeof inlineCodeProjectRoot === "string"
+      ? inlineCodeProjectRoot.trim()
       : "";
   if (absPath && workspaceRoot) {
     const rel = relativePosix(workspaceRoot, absPath);

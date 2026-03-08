@@ -33,7 +33,7 @@ describe("StaticMarkdown inline code links", () => {
     render(
       <StaticMarkdown
         value={"Use `different/path.ts:3`."}
-        inlineCodeWorkspaceRoot="/some/other/root"
+        inlineCodeProjectRoot="/some/other/root"
         inlineCodeLinks={[
           {
             code: "different/path.ts:3",
@@ -54,7 +54,7 @@ describe("StaticMarkdown inline code links", () => {
     render(
       <StaticMarkdown
         value={"Open `/usr/bin/python3.13`."}
-        inlineCodeWorkspaceRoot="/tmp/x"
+        inlineCodeProjectRoot="/tmp/x"
         inlineCodeLinks={[
           {
             code: "/usr/bin/python3.13",
