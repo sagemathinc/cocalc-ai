@@ -638,6 +638,9 @@ export function AppServerPanel({
   const [metricsById, setMetricsById] = useState<
     Record<string, AppMetricsSummary | undefined>
   >({});
+  const [metricsRefreshing, setMetricsRefreshing] = useState<
+    Record<string, boolean | undefined>
+  >({});
   const [editSpecOpen, setEditSpecOpen] = useState<boolean>(false);
   const [editSpecLoading, setEditSpecLoading] = useState<boolean>(false);
   const [editSpecSaving, setEditSpecSaving] = useState<boolean>(false);
@@ -833,6 +836,21 @@ export function AppServerPanel({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const refreshMetricsForApp = useCallback(
+    async (appId: string) => {
+      try {
+        setMetricsRefreshing((prev) => ({ ...prev, [appId]: true }));
+        const next = await api.apps.appMetrics(appId, { minutes: 60 });
+        setMetricsById((prev) => ({ ...prev, [appId]: next }));
+      } catch (err) {
+        setError(normalizeError(err));
+      } finally {
+        setMetricsRefreshing((prev) => ({ ...prev, [appId]: undefined }));
+      }
+    },
+    [api],
+  );
 
   useEffect(() => {
     if (creatorInitialized || loading) return;
@@ -2261,7 +2279,7 @@ export function AppServerPanel({
                   ))}
                 </div>
               ) : null}
-              {isExpanded && metrics ? (
+              {isExpanded ? (
                 <div
                   style={{
                     marginTop: "8px",
@@ -2272,7 +2290,7 @@ export function AppServerPanel({
                     display: "grid",
                     gap: "6px",
                   }}
-                >
+                  >
                   <div
                     style={{
                       display: "flex",
@@ -2282,19 +2300,29 @@ export function AppServerPanel({
                       flexWrap: "wrap",
                     }}
                   >
-                    <div style={{ fontWeight: 600, fontSize: "12px" }}>
-                      Recent usage
-                    </div>
+                    <Space size={8} align="center">
+                      <div style={{ fontWeight: 600, fontSize: "12px" }}>
+                        Recent usage
+                      </div>
+                      <Button
+                        size="small"
+                        type="text"
+                        loading={!!metricsRefreshing[row.id]}
+                        onClick={() => void refreshMetricsForApp(row.id)}
+                      >
+                        Refresh
+                      </Button>
+                    </Space>
                     <div style={{ display: "grid", justifyItems: "end", gap: "2px" }}>
                       <MetricsSparkline
-                        values={metrics.history.map((item) => item.requests)}
+                        values={metrics?.history.map((item) => item.requests) ?? []}
                       />
                       <div style={{ fontSize: "11px", opacity: 0.65 }}>
                         request trend
                       </div>
                     </div>
                   </div>
-                  {metrics.totals.requests > 0 ? (
+                  {metrics && metrics.totals.requests > 0 ? (
                     <div
                       style={{
                         display: "grid",
