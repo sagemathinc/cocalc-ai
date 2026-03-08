@@ -77,7 +77,7 @@ describe("git commit drawer merge commit formatting", () => {
     ]);
   });
 
-  it("routes git review note/comment undo through wrapper-owned history", () => {
+  it("uses backend-appropriate undo ownership for git review note/comment editors", () => {
     render(
       React.createElement(MarkdownHistoryInput, {
         historyId: "git-inline-draft:file.ts:1",
@@ -87,6 +87,18 @@ describe("git commit drawer merge commit formatting", () => {
     );
 
     expect(latestMarkdownInputProps).toBeTruthy();
+    expect(latestMarkdownInputProps.undoMode).toBe("external");
+    expect(latestMarkdownInputProps.redoMode).toBe("external");
+
+    act(() => {
+      latestMarkdownInputProps.onModeChange("markdown");
+    });
+    expect(latestMarkdownInputProps.undoMode).toBe("local");
+    expect(latestMarkdownInputProps.redoMode).toBe("local");
+
+    act(() => {
+      latestMarkdownInputProps.onModeChange("editor");
+    });
     expect(latestMarkdownInputProps.undoMode).toBe("external");
     expect(latestMarkdownInputProps.redoMode).toBe("external");
   });

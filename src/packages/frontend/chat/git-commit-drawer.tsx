@@ -18,6 +18,7 @@ import {
   Typography,
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
+import { IS_MOBILE } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { ComponentProps } from "react";
 import {
@@ -663,6 +664,8 @@ type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
   historyId: string;
 };
 
+type MarkdownHistoryMode = "markdown" | "editor";
+
 type EditorHistoryEntry = {
   value: string;
   at: number;
@@ -672,8 +675,14 @@ export function MarkdownHistoryInput({
   historyId,
   value,
   onChange,
+  defaultMode,
+  fixedMode,
+  onModeChange,
   ...props
 }: MarkdownHistoryInputProps) {
+  const [activeMode, setActiveMode] = useState<MarkdownHistoryMode>(
+    fixedMode ?? defaultMode ?? (IS_MOBILE ? "markdown" : "editor"),
+  );
   const historyRef = useRef<EditorHistoryEntry[]>([
     { value: `${value ?? ""}`, at: Date.now() },
   ]);
@@ -685,6 +694,12 @@ export function MarkdownHistoryInput({
     historyIndexRef.current = 0;
     applyingHistoryRef.current = false;
   }, [historyId]);
+
+  useEffect(() => {
+    if (fixedMode != null) {
+      setActiveMode(fixedMode);
+    }
+  }, [fixedMode]);
 
   useEffect(() => {
     if (applyingHistoryRef.current) return;
@@ -708,6 +723,8 @@ export function MarkdownHistoryInput({
   return (
     <MarkdownInput
       {...props}
+      defaultMode={defaultMode}
+      fixedMode={fixedMode}
       value={value}
       onChange={(next) => {
         const normalized = `${next ?? ""}`;
@@ -752,11 +769,15 @@ export function MarkdownHistoryInput({
         const next = history[historyIndexRef.current]?.value ?? "";
         applyHistoryValue(next);
       }}
-      // Git review editors need self-contained undo/redo across both backends.
-      // CodeMirror has local history, but embedded Slate does not, so route
-      // both modes through this wrapper-owned history stack.
-      undoMode="external"
-      redoMode="external"
+      onModeChange={(nextMode) => {
+        setActiveMode(nextMode);
+        onModeChange?.(nextMode);
+      }}
+      // Git review editors need self-contained undo/redo, but the two
+      // backends get there differently: CodeMirror should keep its native
+      // local history, while embedded Slate must route through this wrapper.
+      undoMode={activeMode === "editor" ? "external" : "local"}
+      redoMode={activeMode === "editor" ? "external" : "local"}
     />
   );
 }
