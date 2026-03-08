@@ -697,14 +697,14 @@ export function FilesFlyout({
           style={{ padding: FLYOUT_PADDING, margin: 0 }}
           description={
             <>
-              This workspace is assigned to {assignedHostLabel}, which is
+              This project is assigned to {assignedHostLabel}, which is
               unavailable ({hostUnavailableReason}). You can wait, or move this
-              workspace to an available host.
+              project to an available host.
               <div style={{ marginTop: "8px" }}>
                 <MoveProject
                   project_id={project_id}
                   size="small"
-                  label="Move Workspace"
+                  label="Move Project"
                   showHostName={false}
                 />
               </div>

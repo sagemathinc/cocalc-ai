@@ -404,10 +404,10 @@ export const InviteInboxPanel: React.FC<Props> = ({
   }
 
   const title =
-    mode === "project" ? "Workspace Invitations" : "Invitation Inbox";
+    mode === "project" ? "Project Invitations" : "Invitation Inbox";
   const subtitle =
     mode === "project"
-      ? "Manage pending invitations for this workspace."
+      ? "Manage pending invitations for this project."
       : "Accept, decline, block, or revoke pending collaboration invitations. Pending invites expire automatically.";
 
   return (

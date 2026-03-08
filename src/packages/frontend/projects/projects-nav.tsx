@@ -144,7 +144,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     return (
       <>
         <div style={fontStyle}>
-          This workspace does not have access to the internet.
+          This project does not have access to the internet.
         </div>
         {mode === "popover" ? <hr /> : null}
       </>
@@ -166,7 +166,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
         />
         <hr />
         <div style={{ color: COLORS.GRAY }}>
-          Hint: Shift+click any workspace or file tab to open it in new window.
+          Hint: Shift+click any project or file tab to open it in new window.
         </div>
       </div>
     );
@@ -367,7 +367,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
     return (
       projectMap?.getIn([project_id, "title"]) ??
       publicProjectTitles?.get(project_id) ??
-      "Untitled workspace"
+      "Untitled project"
     );
   }
 
@@ -501,13 +501,13 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
     const groupedOptions = [
       ...(openOptions.length > 0
-        ? [{ label: "Open workspaces", options: openOptions }]
+        ? [{ label: "Open projects", options: openOptions }]
         : []),
       ...(starredOptions.length > 0
-        ? [{ label: "Starred workspaces", options: starredOptions }]
+        ? [{ label: "Starred projects", options: starredOptions }]
         : []),
       ...(recentOptions.length > 0
-        ? [{ label: "Recent workspaces", options: recentOptions }]
+        ? [{ label: "Recent projects", options: recentOptions }]
         : []),
     ];
 
@@ -583,7 +583,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
       >
         <Tooltip
           title={
-            mode === "tabs" ? "Switch to workspace list" : "Switch to tabs"
+            mode === "tabs" ? "Switch to project list" : "Switch to tabs"
           }
         >
           <Button
@@ -604,7 +604,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
             }
           }}
           style={{ minWidth: 260, maxWidth: 400 }}
-          placeholder="Switch workspace…"
+          placeholder="Switch project…"
           value={activeProjectId}
           showSearch
           optionLabelProp="label"
@@ -636,7 +636,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
                   ))
                 ) : (
                   <div style={{ padding: "8px 12px", color: "#888" }}>
-                    No workspaces found
+                    No projects found
                   </div>
                 )}
               </div>
@@ -646,7 +646,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
                   size="small"
                   onClick={() => actions.set_active_tab("projects")}
                 >
-                  All workspaces…
+                  All projects…
                 </Button>
               </div>
             </>
@@ -680,7 +680,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           <div style={{ padding: "0 8px", flex: "0 0 auto" }}>
             <Tooltip
               title={
-                mode === "tabs" ? "Switch to workspace list" : "Switch to tabs"
+                mode === "tabs" ? "Switch to project list" : "Switch to tabs"
               }
             >
               <Button

@@ -295,7 +295,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const sessionOptions = useMemo(() => {
     return sessions.map((record) => ({
       value: record.session_id,
-      label: `${ellipsizeLabel(record.title || "Agent session")} (workspace root)`,
+      label: `${ellipsizeLabel(record.title || "Agent session")} (project root)`,
     }));
   }, [sessions]);
 

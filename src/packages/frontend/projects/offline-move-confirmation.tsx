@@ -106,10 +106,10 @@ export function buildOfflineMoveConfirmationDialog(
 
   const riskMessage = (() => {
     if (noBackup && sourceDeprovisioned) {
-      return "No backup exists for this workspace. The source host is already deprovisioned, so this workspace will be empty after move.";
+      return "No backup exists for this project. The source host is already deprovisioned, so this project will be empty after move.";
     }
     if (noBackup) {
-      return "No backup exists for this workspace. Moving now cannot recover the latest data from the source host.";
+      return "No backup exists for this project. Moving now cannot recover the latest data from the source host.";
     }
     if (sourceDeprovisioned) {
       return "The latest available backup is older than the latest edit. Since the source host is already deprovisioned, newer edits are already unavailable. Moving restores the latest available backup.";
@@ -118,7 +118,7 @@ export function buildOfflineMoveConfirmationDialog(
   })();
 
   const okText = (() => {
-    if (noBackup && sourceDeprovisioned) return "Move and create empty workspace";
+    if (noBackup && sourceDeprovisioned) return "Move and create empty project";
     if (noBackup) return "Move and accept data-loss risk";
     if (sourceDeprovisioned) return "Move and restore available backup";
     return "Move using older backup";
@@ -126,7 +126,7 @@ export function buildOfflineMoveConfirmationDialog(
 
   const moveOutcome = (() => {
     if (noBackup) {
-      return "Workspace will be empty because there are no backups of it.";
+      return "Project will be empty because there are no backups of it.";
     }
     if (sourceDeprovisioned) {
       return "Destination host restores the latest available backup. Edits newer than that backup are already unavailable.";

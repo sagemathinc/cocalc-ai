@@ -17,7 +17,7 @@ export function DeleteSharedProjectPanel({ actions, settings, close }) {
       <Card
         title={intl.formatMessage({
           id: "course.delete-shared-project.no_shared_project",
-          defaultMessage: "No Shared Workspace",
+          defaultMessage: "No Shared Project",
         })}
       ></Card>
     );
@@ -30,7 +30,7 @@ export function DeleteSharedProjectPanel({ actions, settings, close }) {
           title={intl.formatMessage({
             id: "course.delete-shared-project.confirmation",
             defaultMessage:
-              "Are you sure you want to delete the shared workspace?",
+              "Are you sure you want to delete the shared project?",
           })}
           okText="Yes"
           cancelText="No"
@@ -48,9 +48,9 @@ export function DeleteSharedProjectPanel({ actions, settings, close }) {
     >
       <FormattedMessage
         id="course.delete-shared-project.message"
-        defaultMessage={`If you would like to delete the shared workspace that was created for this course,
+        defaultMessage={`If you would like to delete the shared project that was created for this course,
                         you may do so by clicking above.
-                        All students will be removed from the deleted shared workspace.`}
+                        All students will be removed from the deleted shared project.`}
       />
     </Card>
   );

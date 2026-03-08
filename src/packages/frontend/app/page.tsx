@@ -183,7 +183,7 @@ export const Page: React.FC = () => {
         icon={"server"}
         active_top_tab={active_top_tab}
         hide_label={!show_label}
-        tooltip="Manage your workspace hosts"
+        tooltip="Manage your project hosts"
       />
     );
   }

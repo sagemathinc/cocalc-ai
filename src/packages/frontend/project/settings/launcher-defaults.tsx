@@ -101,7 +101,7 @@ export function LauncherDefaults({ project_id, project }: Props) {
     <SettingBox title="Project Launcher Defaults" icon="rocket">
       <Paragraph style={{ marginBottom: "12px" }}>
         These are the default Quick Create buttons for everyone in this
-        workspace. Each user can still further customize their buttons on their
+        project. Each user can still further customize their buttons on their
         +New page.
       </Paragraph>
       <Space orientation="vertical" style={{ width: "100%" }}>
@@ -172,7 +172,7 @@ export function LauncherDefaults({ project_id, project }: Props) {
           },
           {
             key: "workspace",
-            title: "Workspace defaults",
+            title: "Project defaults",
             quickCreateAdd: projectDefaults.quickCreate,
             quickCreateRemove: projectDefaults.hiddenQuickCreate,
             appsAdd: projectDefaults.apps,

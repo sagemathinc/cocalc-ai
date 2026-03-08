@@ -12,10 +12,10 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const MOVE_PHASES = [
   { key: "validate", label: "Validate move request" },
-  { key: "stop-source", label: "Stop source workspace" },
+  { key: "stop-source", label: "Stop source project" },
   { key: "backup", label: "Prepare backup state" },
-  { key: "placement", label: "Update workspace placement" },
-  { key: "start-dest", label: "Start destination workspace" },
+  { key: "placement", label: "Update project placement" },
+  { key: "start-dest", label: "Start destination project" },
   { key: "cleanup", label: "Cleanup source host data" },
   { key: "done", label: "Move complete" },
 ] as const;
@@ -190,7 +190,7 @@ export default function MoveInProgress({
         <Alert
           showIcon
           type="error"
-          message="Workspace move failed"
+          message="Project move failed"
           description={moveLro.summary?.error ?? "The move operation failed."}
         />
       );
@@ -200,7 +200,7 @@ export default function MoveInProgress({
         <Alert
           showIcon
           type="warning"
-          message="Workspace move canceled"
+          message="Project move canceled"
           description="The move operation was canceled."
         />
       );
@@ -210,7 +210,7 @@ export default function MoveInProgress({
         <Alert
           showIcon
           type="error"
-          message="Workspace move expired"
+          message="Project move expired"
           description="The move operation expired before completion."
         />
       );
@@ -219,7 +219,7 @@ export default function MoveInProgress({
       <Alert
         showIcon
         type="info"
-        message="Moving workspace..."
+        message="Moving project..."
         description={
           <Space direction="vertical" size={8} style={{ width: "100%" }}>
             <div>{phaseText}</div>
@@ -319,7 +319,7 @@ export default function MoveInProgress({
             </Button>
             {canCancel ? (
               <Popconfirm
-                title="Cancel this workspace move?"
+                title="Cancel this project move?"
                 okText="Cancel move"
                 cancelText="Keep moving"
                 onConfirm={async () => {

@@ -243,7 +243,7 @@ export class ProjectClient {
     ) {
       execStream.emit(
         "error",
-        new Error("Workspace must be running to stream execution"),
+        new Error("Project must be running to stream execution"),
       );
       return;
     }

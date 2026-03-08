@@ -36,10 +36,10 @@ export function confirmHostStop({
     content: (
       <div>
         <Typography.Text type="secondary">
-          This will create backups for provisioned workspaces that need them.
+          This will create backups for provisioned projects that need them.
         </Typography.Text>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          When a host is off or deprovisioned, workspaces can still be used on
+          When a host is off or deprovisioned, projects can still be used on
           another host using the most recent backup.
         </Typography.Paragraph>
         {total > 0 && (
@@ -53,7 +53,7 @@ export function confirmHostStop({
         )}
         {risky > 0 && (
           <div style={{ marginTop: 10 }}>
-            <Typography.Text strong>At-risk workspaces</Typography.Text>
+            <Typography.Text strong>At-risk projects</Typography.Text>
             <div style={{ marginTop: 6 }}>
               <HostProjectsTable
                 host={host}
@@ -95,12 +95,12 @@ export function confirmHostDrain({
     content: (
       <div>
         <Typography.Text type="secondary">
-          Drain moves assigned workspaces off this host onto another running
+          Drain moves assigned projects off this host onto another running
           host selected automatically.
         </Typography.Text>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Enable force drain only as a last resort. It directly clears
-          workspace host assignment (`host_id=null`) without performing safe
+          project host assignment (`host_id=null`) without performing safe
           move operations.
         </Typography.Paragraph>
         {total > 0 && (
@@ -113,7 +113,7 @@ export function confirmHostDrain({
           </div>
         )}
         <div style={{ marginTop: 10 }}>
-          <Typography.Text strong>Assigned workspaces</Typography.Text>
+          <Typography.Text strong>Assigned projects</Typography.Text>
           <div style={{ marginTop: 6 }}>
             <HostProjectsTable
               host={host}
@@ -126,7 +126,7 @@ export function confirmHostDrain({
         </div>
         <div style={{ marginTop: 8 }}>
           <Checkbox onChange={(event) => (state.force = event.target.checked)}>
-            Force drain (set workspace host assignment to null)
+            Force drain (set project host assignment to null)
           </Checkbox>
         </div>
         <div style={{ marginTop: 8 }}>
@@ -211,11 +211,11 @@ export function confirmHostDeprovision({
           <div style={{ marginTop: 8 }}>
             <Typography.Text type="secondary">
               Host is off, so backups cannot run. Start this host if you want to
-              ensure {needs} provisioned workspace
+              ensure {needs} provisioned project
               {needs === 1 ? "" : "s"} are properly backed up.
             </Typography.Text>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              When a host is off or deprovisioned, workspaces can still be used
+              When a host is off or deprovisioned, projects can still be used
               on another host using the most recent backup.
             </Typography.Paragraph>
             {total > 0 && (
@@ -231,7 +231,7 @@ export function confirmHostDeprovision({
         )}
         {needs > 0 && (
           <div style={{ marginTop: 10 }}>
-            <Typography.Text strong>At-risk workspaces</Typography.Text>
+            <Typography.Text strong>At-risk projects</Typography.Text>
             <div style={{ marginTop: 6 }}>
               <HostProjectsTable
                 host={host}

@@ -130,7 +130,7 @@ const SOFTWARE_ARTIFACTS: Array<{
   {
     artifact: "project",
     label: "Project bundle",
-    runningLabel: "New workspaces",
+    runningLabel: "New projects",
   },
   {
     artifact: "tools",

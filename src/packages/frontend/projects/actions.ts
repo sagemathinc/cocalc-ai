@@ -829,8 +829,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
         const hostName = hostLabel(hostInfo as any, assignedHostId);
         const reason = hostState.reason ?? "Assigned host is unavailable.";
         const message =
-          `Cannot start workspace because ${hostName} is unavailable (${reason}). ` +
-          "Open Settings and move this workspace to an available host, or start the assigned host.";
+          `Cannot start project because ${hostName} is unavailable (${reason}). ` +
+          "Open Settings and move this project to an available host, or start the assigned host.";
         redux.getProjectActions(project_id)?.setState({ control_error: message });
         alert_message({ type: "error", message, timeout: 20 });
         return false;

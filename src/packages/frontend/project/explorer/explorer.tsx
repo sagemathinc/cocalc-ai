@@ -485,7 +485,7 @@ You can either wait for this host to become available again, or move this ${proj
           <MoveProject
             project_id={project_id}
             size="large"
-            label="Move Workspace"
+            label="Move Project"
             showHostName={false}
           />
         </Space.Compact>

@@ -49,7 +49,7 @@ const BACKUP_PHASES = [
   {
     key: "backups",
     label: "Backups",
-    description: "Creating required workspace backups",
+    description: "Creating required project backups",
   },
   BASE_PHASES[1],
   BASE_PHASES[2],
@@ -62,7 +62,7 @@ const DRAIN_PHASES = [
   {
     key: "draining",
     label: "Drain",
-    description: "Moving workspaces off this host",
+    description: "Moving projects off this host",
   },
   BASE_PHASES[2],
   BASE_PHASES[3],

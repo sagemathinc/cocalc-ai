@@ -43,7 +43,7 @@ function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
     case "subscription":
       return "ChatGPT plan";
     case "project-api-key":
-      return "Workspace API key";
+      return "Project API key";
     case "account-api-key":
       return "Account API key";
     case "site-api-key":
@@ -309,7 +309,7 @@ function CodexCredentialsPanelBody({
   const startDeviceAuth = async () => {
     if (!authWorkspaceId) {
       setDeviceAuthError(
-        "No workspace available. Create or open a workspace, then retry.",
+        "No project available. Create or open a project, then retry.",
       );
       return;
     }
@@ -349,7 +349,7 @@ function CodexCredentialsPanelBody({
   const uploadAuthFile = async (file: File) => {
     if (!authWorkspaceId) {
       setDeviceAuthError(
-        "No workspace available. Create or open a workspace, then retry.",
+        "No project available. Create or open a project, then retry.",
       );
       return;
     }
@@ -414,14 +414,14 @@ function CodexCredentialsPanelBody({
             ) : (
               <>
                 <Text type="secondary">
-                  Order: ChatGPT Plan, Workspace OpenAI API key, Account OpenAI API key, then Site OpenAI API key.
+                  Order: ChatGPT Plan, Project OpenAI API key, Account OpenAI API key, then Site OpenAI API key.
                 </Text>
                 <Space wrap>
                   <Tag color={paymentSource.hasSubscription ? "green" : "default"}>
                     ChatGPT plan
                   </Tag>
                   <Tag color={paymentSource.hasProjectApiKey ? "green" : "default"}>
-                    workspace key
+                    project key
                   </Tag>
                   <Tag color={paymentSource.hasAccountApiKey ? "green" : "default"}>
                     account key
@@ -466,12 +466,12 @@ function CodexCredentialsPanelBody({
                   <Alert
                     type="warning"
                     showIcon
-                    message="No workspace available"
-                    description="Create or open a workspace, then retry."
+                    message="No project available"
+                    description="Create or open a project, then retry."
                   />
                 ) : (
                   <Text type="secondary">
-                    Using workspace: <Text code>{authWorkspaceId}</Text>
+                    Using project: <Text code>{authWorkspaceId}</Text>
                     {!workspaceId.trim() ? " (most recently edited)" : ""}
                   </Text>
                 )}
@@ -666,7 +666,7 @@ function CodexCredentialsPanelBody({
               <Space direction="vertical" size="middle" style={{ width: "100%" }}>
                 <div style={{ maxWidth: 520 }}>
                   <div style={{ marginBottom: 6, fontWeight: 500 }}>
-                    Workspace (optional)
+                    Project (optional)
                   </div>
                   <Space wrap style={{ width: "100%" }}>
                     <SelectProject
@@ -766,11 +766,11 @@ function CodexCredentialsPanelBody({
 
                 <div>
                   <div style={{ marginBottom: 6, fontWeight: 500 }}>
-                    Workspace OpenAI API key
+                    Project OpenAI API key
                   </div>
                   <div style={{ marginTop: 8, marginBottom: 8 }}>
                     {!workspaceId.trim() ? (
-                      <Tag>Select a workspace above</Tag>
+                      <Tag>Select a project above</Tag>
                     ) : apiKeyStatus?.project ? (
                       <Space wrap>
                         <Tag color="green">Configured</Tag>
@@ -787,7 +787,7 @@ function CodexCredentialsPanelBody({
                         </Text>
                       </Space>
                     ) : (
-                      <Tag>Not configured for selected workspace</Tag>
+                      <Tag>Not configured for selected project</Tag>
                     )}
                   </div>
                   <Space wrap>
@@ -806,11 +806,11 @@ function CodexCredentialsPanelBody({
                       onClick={async () => {
                         const key = workspaceApiKey.trim();
                         if (!key) {
-                          setError("Workspace API key cannot be empty.");
+                          setError("Project API key cannot be empty.");
                           return;
                         }
                         if (!workspaceId.trim()) {
-                          setError("Select a workspace first.");
+                          setError("Select a project first.");
                           return;
                         }
                         setSavingScope("project");
@@ -829,10 +829,10 @@ function CodexCredentialsPanelBody({
                         }
                       }}
                     >
-                      Save workspace key
+                      Save project key
                     </Button>
                     <Popconfirm
-                      title="Delete workspace API key?"
+                      title="Delete project API key?"
                       okText="Delete"
                       okButtonProps={{ danger: true }}
                       onConfirm={async () => {
@@ -856,7 +856,7 @@ function CodexCredentialsPanelBody({
                         loading={deletingScope === "project"}
                         disabled={!workspaceId.trim() || !apiKeyStatus?.project}
                       >
-                        Delete workspace key
+                        Delete project key
                       </Button>
                     </Popconfirm>
                   </Space>

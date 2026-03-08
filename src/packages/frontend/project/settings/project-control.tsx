@@ -395,7 +395,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         {hostUnavailable && (
           <Paragraph style={{ color: COLORS.GRAY_D }}>
             {assignedHostLabel} is unavailable ({hostUnavailableReason}). Move
-            this workspace to an available host, or start the assigned host.
+            this project to an available host, or start the assigned host.
           </Paragraph>
         )}
         {render_idle_timeout_row()}

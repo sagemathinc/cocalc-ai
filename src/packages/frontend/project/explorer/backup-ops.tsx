@@ -39,7 +39,7 @@ const BACKUP_PHASES = [
   {
     key: "validate",
     label: "Validate",
-    description: "Validate workspace and backup parameters",
+    description: "Validate project and backup parameters",
   },
   {
     key: "backup",
@@ -222,9 +222,9 @@ function BackupOpTimeline({ op }: { op: BackupLroState }) {
         </Space>
         <div style={{ fontSize: "12px" }}>
           {summary?.input?.project_id ? (
-            <span>Workspace: {summary.input.project_id}</span>
+            <span>Project: {summary.input.project_id}</span>
           ) : (
-            <span>Workspace metadata unavailable.</span>
+            <span>Project metadata unavailable.</span>
           )}
           {tags.length > 0 ? (
             <>

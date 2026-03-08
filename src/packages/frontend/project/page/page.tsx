@@ -454,10 +454,10 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             <Alert
               showIcon
               type="warning"
-              message="Workspace host is not available"
-              description={`This workspace is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
+              message="Project host is not available"
+              description={`This project is assigned to ${assignedHostLabel}, which is unavailable (${hostUnavailableReason}).
 
-You can wait for this host to become available again, or move this workspace to another host.`}
+You can wait for this host to become available again, or move this project to another host.`}
             />
             <div style={{ marginTop: "12px" }}>
               <Space wrap>
@@ -483,7 +483,7 @@ You can wait for this host to become available again, or move this workspace to 
                 <MoveProject
                   project_id={project_id}
                   size="large"
-                  label="Move Workspace"
+                  label="Move Project"
                   showHostName={false}
                 />
               </Space>

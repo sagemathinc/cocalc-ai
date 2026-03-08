@@ -65,14 +65,14 @@ export const labels = defineMessages({
   // requires a literal defaultMessage (it does not handle variables).
   project: {
     id: "labels.workspace",
-    defaultMessage: "Workspace",
-    description: "Label for a single workspace, label on a button, title, etc.",
+    defaultMessage: "Project",
+    description: "Label for a single project, label on a button, title, etc.",
   },
   projects: {
     id: "labels.workspaces",
-    defaultMessage: "Workspaces",
+    defaultMessage: "Projects",
     description:
-      "Label for a collection of workspaces, label on a button, title, etc.",
+      "Label for a collection of projects, label on a button, title, etc.",
   },
   create: {
     id: "labels.create",
@@ -80,7 +80,7 @@ export const labels = defineMessages({
   },
   create_project: {
     id: "labels.create_project",
-    defaultMessage: "Create a Workspace",
+    defaultMessage: "Create a Project",
     description: "Label on dialog titles to create a project",
   },
   relative: {
@@ -871,7 +871,7 @@ export const labels = defineMessages({
   },
   project_status: {
     id: "labels.project_status",
-    defaultMessage: "Workspace Status",
+    defaultMessage: "Project Status",
   },
   you: {
     id: "labels.you",
@@ -1810,7 +1810,7 @@ export const course = defineMessages({
   },
   shared_project: {
     id: "course.shared_project",
-    defaultMessage: "Shared Workspace",
+    defaultMessage: "Shared Project",
   },
   student: {
     id: "course.student",
@@ -1844,15 +1844,15 @@ export const course = defineMessages({
   },
   create_shared_project: {
     id: "course.create_shared_project",
-    defaultMessage: "Create Shared Workspace",
+    defaultMessage: "Create Shared Project",
   },
   delete_shared_project: {
     id: "course.delete_shared_project",
-    defaultMessage: "Delete Shared Workspace",
+    defaultMessage: "Delete Shared Project",
   },
   reconfigure_all_projects: {
     id: "course.reconfigure_all_projects",
-    defaultMessage: "Reconfigure all Workspaces",
+    defaultMessage: "Reconfigure all Projects",
   },
   export_grades: {
     id: "course.export_grades",
@@ -1881,11 +1881,11 @@ export const course = defineMessages({
   },
   run_terminal_command_title: {
     id: "course.commands.terminal-command.label",
-    defaultMessage: "Run Terminal Command in all Student Workspaces",
+    defaultMessage: "Run Terminal Command in all Student Projects",
   },
   delete_student_projects: {
     id: "course.commands.delete-student-projects.title",
-    defaultMessage: "Delete all Student Workspaces",
+    defaultMessage: "Delete all Student Projects",
   },
   assign_button: {
     id: "course.assignments.assign.button",
@@ -1936,6 +1936,6 @@ export const course = defineMessages({
   },
   restrict_student_projects: {
     id: "course.commands.restrict-student-projects.label",
-    defaultMessage: "Restrict Student Workspaces",
+    defaultMessage: "Restrict Student Projects",
   },
 });

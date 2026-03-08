@@ -343,8 +343,8 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   function render_help_content() {
     const scopeDescription =
       info?.scope === "owned"
-        ? "In this view, the process list includes processes that were started by this workspace (and their descendants)."
-        : "In this view, the process list includes all visible processes in the workspace environment.";
+        ? "In this view, the process list includes processes that were started by this project (and their descendants)."
+        : "In this view, the process list includes all visible processes in the project environment.";
     return (
       <div style={{ maxWidth: "560px" }}>
         <p>
@@ -625,7 +625,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           >
             <div>
               This is the {projectLabelLower}'s own management process. Do not
-              terminate it! If it uses too much resources, use the workspace
+              terminate it! If it uses too much resources, use the project
               controls outside this page.
             </div>
           </Modal>

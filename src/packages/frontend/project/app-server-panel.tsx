@@ -463,7 +463,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       installHint:
         "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
       installAgentPrompt:
-        "Install JupyterLab in the current workspace so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
+        "Install JupyterLab in the current project so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
       command:
         "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
     },
@@ -477,9 +477,9 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       serviceOpenMode: "proxy",
       installCommand: "curl -fsSL https://code-server.dev/install.sh | sh",
       installHint:
-        "code-server is not installed in this workspace image yet. The upstream installer works well on most Linux systems.",
+        "code-server is not installed in this project image yet. The upstream installer works well on most Linux systems.",
       installAgentPrompt:
-        "Install code-server in the current workspace so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
+        "Install code-server in the current project so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
       command:
         "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
     },
@@ -493,9 +493,9 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       serviceOpenMode: "proxy",
       installCommand: "julia -e 'using Pkg; Pkg.add(\"Pluto\")'",
       installHint:
-        "Pluto needs Julia plus the Pluto package in this workspace environment.",
+        "Pluto needs Julia plus the Pluto package in this project environment.",
       installAgentPrompt:
-        "Install Pluto for the current workspace so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
+        "Install Pluto for the current project so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
       command:
         "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
     },
@@ -510,7 +510,7 @@ function appServerPresets(homeDirectory: string): AppServerPreset[] {
       installHint:
         "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
       installAgentPrompt:
-        "Set up RStudio Server (rserver) in the current Linux workspace or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
+        "Set up RStudio Server (rserver) in the current Linux project or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
       command:
         "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
     },
@@ -968,7 +968,7 @@ export function AppServerPanel({
     template?: InstalledAppTemplate;
   }) {
     const details = `${template?.details ?? ""}`.trim();
-    const message = `${preset.label} is not installed in this workspace yet. Install it, then start this app again.`;
+    const message = `${preset.label} is not installed in this project yet. Install it, then start this app again.`;
     setStartupFailures((prev) => ({
       ...prev,
       [appId]: {
@@ -1455,7 +1455,7 @@ export function AppServerPanel({
         title: `Imported ${apps.length} app${apps.length === 1 ? "" : "s"}`,
         content:
           format === "bundle" && sourceWorkspaceId
-            ? `Imported from workspace ${sourceWorkspaceId}.`
+            ? `Imported from project ${sourceWorkspaceId}.`
             : undefined,
       });
     } catch (err) {
@@ -1662,7 +1662,7 @@ export function AppServerPanel({
           Managed Applications
         </div>
         <Paragraph style={{ color: "#666", marginBottom: 0 }}>
-          Run, expose, and troubleshoot workspace apps without mixing this page
+          Run, expose, and troubleshoot project apps without mixing this page
           with normal file-creation workflows.
         </Paragraph>
       </div>
@@ -1776,7 +1776,7 @@ export function AppServerPanel({
                   <Space direction="vertical" size={8} style={{ width: "100%" }}>
                     <div>
                       {unavailableActivePreset.installHint ??
-                        "Install this runtime in the workspace before trying to start the app."}
+                        "Install this runtime in the project before trying to start the app."}
                     </div>
                     {activePresetTemplate.details ? (
                       <div style={{ opacity: 0.8 }}>

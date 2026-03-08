@@ -345,7 +345,7 @@ export function StartButton({
       <Alert
         banner={true}
         type="error"
-        title="Admin Workspace View"
+        title="Admin Project View"
         description={
           <>
             WARNING: You are viewing this project as an admin! (1) Some things
@@ -389,7 +389,7 @@ export function StartButton({
                 <MoveProject
                   project_id={project_id}
                   size="large"
-                  label="Move Workspace"
+                  label="Move Project"
                   showHostName={false}
                 />
               </div>
@@ -425,7 +425,7 @@ export function StartButton({
                 }}
               >
                 {assignedHostLabel} is unavailable ({hostUnavailableReason}). Open
-                Settings and move this workspace to an available host, or start
+                Settings and move this project to an available host, or start
                 the assigned host.
               </div>
             )}
@@ -451,7 +451,7 @@ function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
     moveLro.summary?.progress_summary?.phase ??
     moveLro.last_progress?.phase ??
     moveLro.last_progress?.message ??
-    "Moving workspace";
+    "Moving project";
   const progress = moveLro.last_progress?.progress;
   const percent =
     progress == null

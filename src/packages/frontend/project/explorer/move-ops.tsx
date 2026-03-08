@@ -22,10 +22,10 @@ import {
 const HIDE_STATUSES = new Set<LroStatus>(["succeeded"]);
 const MOVE_PHASES = [
   { key: "validate", label: "Validate move request" },
-  { key: "stop-source", label: "Stop source workspace" },
+  { key: "stop-source", label: "Stop source project" },
   { key: "backup", label: "Prepare backup state" },
-  { key: "placement", label: "Update workspace placement" },
-  { key: "start-dest", label: "Start destination workspace" },
+  { key: "placement", label: "Update project placement" },
+  { key: "start-dest", label: "Start destination project" },
   { key: "cleanup", label: "Cleanup source host data" },
   { key: "done", label: "Move complete" },
 ] as const;

@@ -11,7 +11,7 @@ const HELP_CONTENT = (
     </div>
     <div style={{ marginTop: 8 }}>
       This machine must run a recent Ubuntu Linux, sudo must work without a
-      password, and it should be used only as a CoCalc Workspace Host. GPUs,
+      password, and it should be used only as a CoCalc Project Host. GPUs,
       x86_64, and aarch64 (ARM) are supported.
     </div>
   </div>

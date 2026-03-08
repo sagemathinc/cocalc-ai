@@ -73,7 +73,7 @@ export default function MoveProject({
             {hostName}
           </span>
         ) : (
-          <span>{label ?? "Move Workspace"}</span>
+          <span>{label ?? "Move Project"}</span>
         )}
         {moving && <Spin />}
       </Button>

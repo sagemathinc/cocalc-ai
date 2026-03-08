@@ -294,7 +294,7 @@ export function MembershipTiers() {
   const projectLabel = intl.formatMessage(labels.project);
   const workspaceDefaultsLabel = intl.formatMessage(
     {
-      id: "admin.membership-tiers.workspace-defaults",
+      id: "admin.membership-tiers.project-defaults",
       defaultMessage: "{projectLabel} Defaults",
     },
     { projectLabel },

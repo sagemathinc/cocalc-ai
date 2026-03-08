@@ -120,10 +120,10 @@ export default function EditBackupSchedule() {
         >
           {showHelp && (
             <p>
-              Backups run automatically while you actively use the workspace.
+              Backups run automatically while you actively use the project.
               These settings control how many daily, weekly, and monthly backups
               are retained. Backups are deduplicated and stored outside the
-              workspace host, so they remain available even if the host changes.
+              project host, so they remain available even if the host changes.
             </p>
           )}
 

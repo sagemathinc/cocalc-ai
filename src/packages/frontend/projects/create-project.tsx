@@ -318,8 +318,8 @@ export function NewProjectCreator({
       >
         <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Pick the base OCI image for this workspace. You can always change it
-            later in workspace settings.
+            Pick the base OCI image for this project. You can always change it
+            later in project settings.
           </Paragraph>
           <Radio.Group
             value={rootfsMode}
@@ -376,7 +376,7 @@ export function NewProjectCreator({
           <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Select the OCI image that provides the base software environment for
-            this workspace.
+            this project.
           </Paragraph>
           <Space wrap>
             <Button onClick={openRootfsModal} disabled={saving}>

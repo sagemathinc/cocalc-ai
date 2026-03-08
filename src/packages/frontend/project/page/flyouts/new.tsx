@@ -679,7 +679,7 @@ export function NewFlyout({
           },
           {
             key: "project",
-            title: "Workspace defaults",
+            title: "Project defaults",
             quickCreateAdd: projectLauncherDefaults.quickCreate,
             quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
             appsAdd: projectLauncherDefaults.apps,
@@ -695,7 +695,7 @@ export function NewFlyout({
           },
           {
             key: "workspace-user",
-            title: "This workspace overrides",
+            title: "This project overrides",
             quickCreateAdd: userLauncherLayers.project.quickCreate,
             quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
             appsAdd: userLauncherLayers.project.apps,

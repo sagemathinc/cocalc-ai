@@ -47,7 +47,7 @@ export default function ProjectsPageTour({
         <div>
           Welcome to <SiteName />
           's {projectsLabel} Page! It gives you an overview about all your{" "}
-          workspaces, where you have access to.
+          projects, where you have access to.
         </div>
       ),
     },
@@ -60,7 +60,7 @@ export default function ProjectsPageTour({
       description: (
         <div>
           Click the "Create {projectLabel}" button to instantiate a new
-          workspace. You can specify the {projectLabelLower}'s title, and
+          project. You can specify the {projectLabelLower}'s title, and
           customize the image and license.
         </div>
       ),
@@ -77,7 +77,7 @@ export default function ProjectsPageTour({
           <p>
             The core of the {projectsLabelLower} page is the list of your{" "}
             {projectsLabelLower}. Each {projectLabelLower} is a separate
-            workspace containing files, data, and settings specific to that{" "}
+            project containing files, data, and settings specific to that{" "}
             {projectLabelLower}. By organizing your work into{" "}
             {projectsLabelLower}, you can easily collaborate with others, manage
             your files, and maintain different environments for various{" "}
@@ -130,7 +130,7 @@ export default function ProjectsPageTour({
         <>
           <p>
             Hidden and deleted {projectsLabelLower} in CoCalc allow you to
-            organized and efficient workspace by selectively displaying relevant
+            organized and efficient project by selectively displaying relevant
             {projectsLabelLower} and removing outdated ones. Utilize hidden{" "}
             {projectsLabelLower} to declutter your {projectLabelLower} list,
             while deleted {projectsLabelLower} help manage

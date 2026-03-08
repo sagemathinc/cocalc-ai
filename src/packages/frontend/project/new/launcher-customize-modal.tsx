@@ -356,7 +356,7 @@ export function LauncherCustomizeModal({
         <div style={{ marginBottom: "14px" }}>
           <Typography.Paragraph style={{ marginBottom: "6px" }}>
             Launcher items are merged additively in this order: built-in defaults, site
-            defaults, workspace defaults, account defaults, then workspace-user
+            defaults, project defaults, account defaults, then project-user
             overrides.
           </Typography.Paragraph>
           <Typography.Paragraph style={{ marginBottom: "10px" }}>

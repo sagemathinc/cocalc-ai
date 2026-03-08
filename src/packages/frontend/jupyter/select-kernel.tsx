@@ -407,7 +407,7 @@ export function KernelSelector({
             <Typography.Text type="secondary">
               {kernel == null
                 ? "No kernel selected."
-                : `Notebook kernel "${kernel}" is unavailable on this workspace.`}
+                : `Notebook kernel "${kernel}" is unavailable on this project.`}
             </Typography.Text>
             {kernel == null && (
               <div>
@@ -436,7 +436,7 @@ export function KernelSelector({
         msg = (
           <>
             Your notebook kernel <code>"{kernel}"</code> does not exist on{" "}
-            this workspace.
+            this project.
           </>
         );
       } else {

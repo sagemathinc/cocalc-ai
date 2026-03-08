@@ -1,5 +1,5 @@
-// SelectNewHost is a small, reusable block used when creating a workspace
-// (and elsewhere) to choose which host the new workspace should run on.
+// SelectNewHost is a small, reusable block used when creating a project
+// (and elsewhere) to choose which host the new project should run on.
 // It shows a compact summary of the current selection plus a button that
 // opens the HostPickerModal. Callers provide the current host (if any) and
 // get notified via onChange when the user picks or resets a host.

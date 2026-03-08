@@ -545,7 +545,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
               <Paragraph type="secondary" style={{ marginBottom: "8px" }}>
                 <FormattedMessage
                   id="account.other-settings.launcher_defaults.description"
-                  defaultMessage={`Set your personal default Quick Create buttons and Apps for all workspaces. You can still customize per-workspace from each +New page.`}
+                  defaultMessage={`Set your personal default Quick Create buttons and Apps for all projects. You can still customize per-project from each +New page.`}
                 />
               </Paragraph>
               <Space wrap size={[8, 8]} style={{ marginBottom: "6px" }}>

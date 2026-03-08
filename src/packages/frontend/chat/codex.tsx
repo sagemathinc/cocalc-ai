@@ -59,15 +59,15 @@ const MODE_OPTIONS: ModeOption[] = [
   },
   {
     value: "workspace-write",
-    label: "Workspace write",
+    label: "Project write",
     description:
-      "Allow edits inside this workspace only (network access is allowed). System-wide changes are blocked.",
+      "Allow edits inside this project only (network access is allowed). System-wide changes are blocked.",
   },
   {
     value: "full-access",
     label: "Full access",
     description:
-      "Run commands with network access and edit files outside this workspace. Extremely powerful—use with caution.",
+      "Run commands with network access and edit files outside this project. Extremely powerful—use with caution.",
     warning: true,
   },
 ];

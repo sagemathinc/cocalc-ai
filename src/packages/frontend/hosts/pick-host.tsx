@@ -267,9 +267,9 @@ export function HostPickerModal({
       )}
       <Typography.Paragraph type="secondary">
         {isCreate ? (
-          <>Pick a workspace host for this new workspace.</>
+          <>Pick a project host for this new project.</>
         ) : (
-          <>Pick a workspace host to move this workspace to.</>
+          <>Pick a project host to move this project to.</>
         )}
       </Typography.Paragraph>
       {!isCreate ? (
@@ -331,7 +331,7 @@ export function HostPickerModal({
           style={{ marginBottom: 12 }}
           message={
             isCreate
-              ? "No available host can be used for this new workspace."
+              ? "No available host can be used for this new project."
               : "No available destination host can be used for this move."
           }
           description="Try another region, start/provision a host, or adjust host permissions."

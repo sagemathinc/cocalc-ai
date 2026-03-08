@@ -3,7 +3,7 @@ import { register } from "./tables";
 register({
   name: "project_log",
 
-  title: "Workspace Logs",
+  title: "Project Logs",
 
   icon: "history",
 

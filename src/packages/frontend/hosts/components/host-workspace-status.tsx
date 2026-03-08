@@ -16,9 +16,9 @@ function formatWorkspaceStatus(host: Host, compact: boolean): string | null {
     return null;
   }
   if (compact) {
-    return `Workspaces ${assignedVal} assigned · ${provisionedVal} provisioned · ${runningVal} running`;
+    return `Projects ${assignedVal} assigned · ${provisionedVal} provisioned · ${runningVal} running`;
   }
-  return `Workspaces: ${assignedVal} assigned · ${provisionedVal} provisioned · ${runningVal} running`;
+  return `Projects: ${assignedVal} assigned · ${provisionedVal} provisioned · ${runningVal} running`;
 }
 
 export function HostWorkspaceStatus({

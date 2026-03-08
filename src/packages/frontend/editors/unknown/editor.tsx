@@ -178,7 +178,7 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
     const associationExt = resolveAssociationExt(ext);
     if (actions == null) {
       console.warn(
-        `Workspace Actions for ${project_id} not available – shouldn't happen.`,
+        `Project Actions for ${project_id} not available – shouldn't happen.`,
       );
       return;
     }
