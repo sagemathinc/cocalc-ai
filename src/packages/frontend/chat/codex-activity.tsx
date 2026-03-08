@@ -27,7 +27,6 @@ import {
 } from "./diff-prism";
 
 const VIRTUALIZE_THRESHOLD = 20;
-const TERMINAL_PREVIEW_OUTPUT_LINES = 5;
 
 const { Text } = Typography;
 type ActivityEntry =
@@ -1058,19 +1057,9 @@ function TerminalRow({
   const cwdPrompt = entry.cwd ? shortenPath(entry.cwd) : "~";
   const promptLine = `${cwdPrompt}$${commandLine ? " " + commandLine : ""}`;
   const outputText = stripAnsi(entry.output ?? "").trimEnd();
-  const outputLines = useMemo(
-    () => (outputText.length ? outputText.split("\n") : []),
-    [outputText],
-  );
-  const [showAllOutput, setShowAllOutput] = useState(false);
-  const visibleOutputLines =
-    showAllOutput || outputLines.length <= TERMINAL_PREVIEW_OUTPUT_LINES
-      ? outputLines
-      : outputLines.slice(0, TERMINAL_PREVIEW_OUTPUT_LINES);
-  const hiddenLineCount = Math.max(0, outputLines.length - visibleOutputLines.length);
   const lines = [promptLine];
-  if (visibleOutputLines.length) {
-    lines.push(visibleOutputLines.join("\n"));
+  if (outputText.length) {
+    lines.push(outputText);
   }
   if (entry.truncated) {
     lines.push("[output truncated]");
@@ -1102,18 +1091,6 @@ function TerminalRow({
           <Tag color="red" style={{ margin: 0 }}>
             Output truncated
           </Tag>
-        ) : null}
-        {hiddenLineCount > 0 ? (
-          <Button
-            size="small"
-            type="link"
-            style={{ padding: 0, height: "auto" }}
-            onClick={() => setShowAllOutput((v) => !v)}
-          >
-            {showAllOutput
-              ? "Show less"
-              : `Show all ${outputLines.length} ${plural(outputLines.length, "line")}`}
-          </Button>
         ) : null}
       </Space>
       <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 0 }} />
