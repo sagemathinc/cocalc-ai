@@ -4,16 +4,15 @@ Edit with either plain text input **or** WYSIWYG slate-based input.
 
 import { Popover, Radio } from "antd";
 import { fromJS } from "immutable";
-import LRU from "lru-cache";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { MarkdownTextAdapter, SlateRichTextAdapter } from "./adapters";
 import { BLURED_STYLE, FOCUSED_STYLE } from "./component";
+import { useMultimodeModeState } from "./use-multimode-mode-state";
 import { useMultimodeSelection } from "./use-multimode-selection";
 import type {
   Mode,
@@ -22,30 +21,6 @@ import type {
 
 // NOTE: on mobile there is very little suppport for "editor" = "slate", but
 // very good support for "markdown", hence the default below.
-
-interface MultimodeState {
-  mode?: Mode;
-  markdown?: any;
-  editor?: any;
-}
-
-const multimodeStateCache = new LRU<string, MultimodeState>({ max: 500 });
-
-// markdown uses codemirror
-// editor uses slate.  TODO: this should be "text", not "editor".  Oops.
-// UI equivalent:
-// editor = "Text" = Slate/wysiwyg
-// markdown = "Markdown"
-const Modes = ["markdown", "editor"] as const;
-
-const LOCAL_STORAGE_KEY = "markdown-editor-mode";
-
-function getLocalStorageMode(): Mode | undefined {
-  const m = get_local_storage(LOCAL_STORAGE_KEY);
-  if (typeof m === "string" && Modes.includes(m as any)) {
-    return m as Mode;
-  }
-}
 
 export default function MultiMarkdownInput({
   autoFocus,
@@ -119,8 +94,6 @@ export default function MultiMarkdownInput({
     onChangeRef.current = onChange;
   }, [onChange]);
   const activeCacheIdRef = useRef<string | undefined>(cacheId);
-  const activeModeRef = useRef<Mode>("markdown");
-  const reportedModeRef = useRef<Mode | null>(null);
   const mountedRef = useRef<boolean>(true);
 
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
@@ -128,20 +101,16 @@ export default function MultiMarkdownInput({
   const isAutoGrow = autoGrow ?? height === "auto";
   const internalControlRef = useRef<any>(null);
   const slateControlRef = controlRef ?? internalControlRef;
-
-  const getKey = () => `${project_id}${path}:${cacheId}`;
-
-  function getCache() {
-    return cacheId == null ? undefined : multimodeStateCache.get(getKey());
-  }
-
-  const [mode, setMode0] = useState<Mode>(
-    fixedMode ??
-      getCache()?.mode ??
-      defaultMode ??
-      getLocalStorageMode() ??
-      (IS_MOBILE ? "markdown" : "editor"),
-  );
+  const { activeModeRef, mode, setMode, getCachedSelection, saveCachedSelection } =
+    useMultimodeModeState({
+      cacheId,
+      projectId: project_id,
+      path,
+      defaultMode,
+      fixedMode,
+      fallbackMode: IS_MOBILE ? "markdown" : "editor",
+      onModeChange,
+    });
 
   const [editBarPopover, setEditBarPopover] = useState<boolean>(false);
 
@@ -152,10 +121,7 @@ export default function MultiMarkdownInput({
     };
   }, []);
 
-  // Keep active callback identity synchronous with render. If we wait for
-  // useEffect, stale editor callbacks can fire in-between and pass guards.
   activeCacheIdRef.current = cacheId;
-  activeModeRef.current = mode;
 
   function isActiveCallback(sourceMode: Mode): boolean {
     if (!mountedRef.current) {
@@ -169,27 +135,6 @@ export default function MultiMarkdownInput({
     return true;
   }
 
-  useEffect(() => {
-    if (reportedModeRef.current === mode) {
-      return;
-    }
-    reportedModeRef.current = mode;
-    onModeChange?.(mode);
-  }, [mode, onModeChange]);
-
-  const setMode = (nextMode: Mode) => {
-    if (activeModeRef.current === nextMode) {
-      return;
-    }
-    set_local_storage(LOCAL_STORAGE_KEY, nextMode);
-    setMode0(nextMode);
-    if (cacheId !== undefined) {
-      multimodeStateCache.set(`${project_id}${path}:${cacheId}`, {
-        ...getCache(),
-        mode: nextMode,
-      });
-    }
-  };
   const [focused, setFocused] = useState<boolean>(!!autoFocus);
   const internalInteractionRef = useRef<"mode-switch" | null>(null);
 
@@ -215,13 +160,8 @@ export default function MultiMarkdownInput({
     useMultimodeSelection({
       cacheId,
       mode,
-      getCachedSelection: () => getCache()?.[mode],
-      saveCachedSelection: (selection) => {
-        multimodeStateCache.set(getKey(), {
-          ...getCache(),
-          [mode]: selection,
-        });
-      },
+      getCachedSelection,
+      saveCachedSelection,
       richTextControlRef: slateControlRef,
     });
 
