@@ -24,8 +24,12 @@ export default async function callHub({
     const resp = await client.request(subject, data, { timeout });
     return resp.data;
   } catch (err) {
-    err.message = `${err.message} - callHub: subject='${subject}', name='${name}', code='${err.code}' `;
-    throw err;
+    const code = (err as any)?.code;
+    const error =
+      err instanceof Error ? err : new Error(typeof err === "string" ? err : `${err}`);
+    (error as any).code ??= code;
+    error.message = `${error.message} - callHub: subject='${subject}', name='${name}', code='${code}' `;
+    throw error;
   }
 }
 

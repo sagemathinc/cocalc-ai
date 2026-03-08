@@ -8,15 +8,18 @@ Edit description of a single task
 */
 
 import { Button } from "antd";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
-import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { TaskActions } from "./actions";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import ColorPicker from "@cocalc/frontend/components/color-picker";
 import { MAX_HEIGHT } from "./constants";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
+import {
+  createTasksHostServices,
+  defaultTasksMarkdownSurface,
+} from "./default-adapters";
 
 interface Props {
   actions: TaskActions;
@@ -33,6 +36,8 @@ export default function DescriptionEditor({
   font_size,
   color,
 }: Props) {
+  const host = useMemo(() => createTasksHostServices(actions), [actions]);
+  const { MarkdownEditor } = defaultTasksMarkdownSurface;
   const [localValue, setLocalValue] = useState(desc);
   const mergeHelperRef = useRef<SimpleInputMerge>(new SimpleInputMerge(desc));
   const commit0 = useCallback(() => {
@@ -44,9 +49,9 @@ export default function DescriptionEditor({
 
   const saveAndClose = useCallback(() => {
     commit0();
-    actions.enable_key_handler();
+    host.enableKeyHandler();
     actions.stop_editing_desc(task_id);
-  }, []);
+  }, [commit0, host, actions, task_id]);
 
   const getValueRef = useRef<() => string>(() => "");
 
@@ -68,7 +73,7 @@ export default function DescriptionEditor({
 
   return (
     <div>
-      <MarkdownInput
+      <MarkdownEditor
         saveDebounceMs={SAVE_DEBOUNCE_MS}
         cacheId={task_id}
         value={localValue}
@@ -79,7 +84,7 @@ export default function DescriptionEditor({
         getValueRef={getValueRef}
         fontSize={font_size}
         onShiftEnter={saveAndClose}
-        onFocus={actions.disable_key_handler}
+        onFocus={host.disableKeyHandler}
         enableUpload={true}
         enableMentions={true}
         height={MAX_HEIGHT}
@@ -87,15 +92,9 @@ export default function DescriptionEditor({
           "Enter a description.  Use markdown with LaTeX.  Evaluate code blocks."
         }
         autoFocus
-        onSave={() => {
-          actions.save();
-        }}
-        onUndo={() => {
-          actions.undo();
-        }}
-        onRedo={() => {
-          actions.redo();
-        }}
+        onSave={host.save}
+        onUndo={host.undo}
+        onRedo={host.redo}
         minimal
         disableBlockEditor
         modeSwitchStyle={{

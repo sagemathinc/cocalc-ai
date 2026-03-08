@@ -200,6 +200,7 @@ g-postgres
 g2
 g-lite
 g-*.sh
+codex-load.sh
 scratch
 patchflow
 *.pid

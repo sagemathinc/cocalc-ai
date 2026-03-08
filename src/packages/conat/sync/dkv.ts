@@ -832,6 +832,7 @@ export class DKV<T = any> extends EventEmitter {
           account_id,
           project_id,
           service: this.opts.service,
+          client: this.opts.client,
         });
         if (this.isClosed()) {
           return;

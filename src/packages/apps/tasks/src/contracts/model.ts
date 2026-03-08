@@ -8,7 +8,6 @@ export interface TaskRecord {
   last_edited?: number;
   color?: string;
   hideBody?: boolean;
-  [key: string]: unknown;
 }
 
 export type TaskMutableFields = Omit<TaskRecord, "task_id">;

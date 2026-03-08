@@ -32,9 +32,32 @@
     "package.json",
     "README.md"
   ],
+  "exports": {
+    "./api/tasks": {
+      "types": "./dist/api/tasks.d.ts",
+      "default": "./dist/api/tasks.js"
+    },
+    "./api/text": {
+      "types": "./dist/api/text.d.ts",
+      "default": "./dist/api/text.js"
+    },
+    "./api/timetravel": {
+      "types": "./dist/api/timetravel.d.ts",
+      "default": "./dist/api/timetravel.js"
+    },
+    "./api/export": {
+      "types": "./dist/api/export.d.ts",
+      "default": "./dist/api/export.js"
+    },
+    "./api/import": {
+      "types": "./dist/api/import.d.ts",
+      "default": "./dist/api/import.js"
+    }
+  },
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
+    "@cocalc/app-tasks": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/export": "workspace:*",
     "@cocalc/util": "workspace:*",

@@ -62,6 +62,7 @@ import {
 import { createWorkspaceFileOps } from "./core/workspace-file";
 import { createWorkspaceCodexOps } from "./core/workspace-codex";
 import { createWorkspaceSyncOps } from "./core/workspace-sync";
+import { createWorkspaceTasksOps } from "./core/workspace-tasks";
 import {
   commandExists,
   isLikelySshAuthFailure,
@@ -121,6 +122,13 @@ import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
 import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import { registerExportCommand, type ExportCommandDeps } from "./commands/export";
 import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
+import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
+import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
+import { createExportApi } from "../api/export";
+import { createImportApi } from "../api/import";
+import { createTasksApi } from "../api/tasks";
+import { createLiveTextBinder } from "../api/text";
+import { createLiveTimeTravelBinder } from "../api/timetravel";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -703,15 +711,14 @@ async function connectRemote({
   }
   const bearer = globals.bearer ?? process.env.COCALC_BEARER_TOKEN;
   const effectiveBearer = bearer ?? process.env.COCALC_AGENT_TOKEN;
-  if (effectiveBearer?.trim()) {
-    extraHeaders.Authorization = `Bearer ${effectiveBearer.trim()}`;
-  }
+  const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   cliDebug("connectRemote", {
     apiBaseUrl,
     timeoutMs,
     signInTimeoutMs,
     hasCookie: !!cookie,
     hasBearer: !!effectiveBearer?.trim(),
+    hasAgentProjectId: isValidUUID(agentProjectId),
     hasApiKey: !!(globals.apiKey ?? process.env.COCALC_API_KEY),
     hasHubPassword: hasHubPassword(globals),
   });
@@ -720,6 +727,17 @@ async function connectRemote({
     address: apiBaseUrl,
     noCache: true,
     ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
+    ...(effectiveBearer?.trim()
+      ? {
+          auth: async (cb) =>
+            cb({
+              bearer: effectiveBearer.trim(),
+              ...(isValidUUID(agentProjectId)
+                ? { project_id: agentProjectId }
+                : {}),
+            }),
+        }
+      : undefined),
   });
   // Ensure request/reply inbox subscriptions use the authenticated identity prefix
   // (_INBOX.account-..., _INBOX.project-..., etc.), which matches server policy.
@@ -1363,6 +1381,37 @@ async function resolveWorkspaceProjectApi(
   return { workspace, api };
 }
 
+async function resolveWorkspaceConatClient(
+  ctx: CommandContext,
+  workspaceIdentifier?: string,
+  cwd = process.cwd(),
+): Promise<{ workspace: WorkspaceRow; client: ConatClient }> {
+  const explicitIdentifier = `${workspaceIdentifier ?? ""}`.trim();
+  const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  if (!explicitIdentifier && isValidUUID(envProjectId)) {
+    return {
+      workspace: {
+        project_id: envProjectId,
+        title: envProjectId,
+        host_id: null,
+      },
+      client: ctx.remote.client,
+    };
+  }
+  const workspace = await resolveWorkspaceFromArgOrContext(
+    ctx,
+    workspaceIdentifier,
+    cwd,
+  );
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  if (!routed.client) {
+    throw new Error(
+      `internal error: routed client missing for host ${routed.host_id}`,
+    );
+  }
+  return { workspace, client: routed.client };
+}
+
 const {
   workspaceFileListData,
   workspaceFileCatData,
@@ -1429,6 +1478,34 @@ const {
   authConfigPath,
   resolveModule: (specifier) => requireCjs.resolve(specifier),
 });
+
+const {
+  withWorkspaceTasksSession,
+} = createWorkspaceTasksOps<CommandContext, WorkspaceRow>({
+  resolveWorkspaceConatClient,
+});
+
+const tasksApi = createTasksApi<CommandContext, WorkspaceRow>({
+  withWorkspaceTasksSession,
+});
+
+const textApi = createLiveTextBinder<CommandContext, WorkspaceRow>({
+  resolveWorkspaceConatClient,
+});
+
+const timeTravelApi = createLiveTimeTravelBinder<CommandContext, WorkspaceRow>({
+  resolveWorkspaceConatClient,
+});
+
+const exportApi = createExportApi<CommandContext>({
+  getDefaults: (ctx) => ({
+    apiBaseUrl: ctx.apiBaseUrl,
+    bearer: ctx.globals.bearer,
+    projectId: process.env.COCALC_PROJECT_ID,
+  }),
+});
+
+const importApi = createImportApi<CommandContext>();
 
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
@@ -1943,6 +2020,24 @@ const importCommandDeps = {
 } satisfies ImportCommandDeps;
 
 registerImportCommand(program, importCommandDeps);
+
+const tasksCommandDeps = {
+  withContext,
+  tasksApi,
+} satisfies TasksCommandDeps;
+
+registerTasksCommand(program, tasksCommandDeps);
+
+const execCommandDeps = {
+  withContext,
+  tasksApi,
+  textApi,
+  timeTravelApi,
+  exportApi,
+  importApi,
+} satisfies ExecCommandDeps;
+
+registerExecCommand(program, execCommandDeps);
 
 const browserCommandDeps = {
   withContext,

@@ -122,7 +122,8 @@ export function update_visible(
       if (id === current_task_id) {
         current_is_visible = true;
       }
-      v.push([task.get(sort_key) ?? sort_default, id]);
+      const sortValue = task.get(sort_key) as string | number | undefined;
+      v.push([sortValue ?? sort_default, id]);
     } else {
       visible = false; // not a tag of any currently visible task
     }

@@ -24,13 +24,17 @@ import { getAuthCookieName, parseCookies } from "./auth-token";
 import { isLoopbackHost } from "@cocalc/backend/network/policy";
 import { isValidUUID } from "@cocalc/util/misc";
 
-export const DEFAULT_AGENT_SCOPES = ["browser_session"] as const;
+export const DEFAULT_AGENT_SCOPES = [
+  "browser_session",
+  "project_session",
+] as const;
 
 type LiteAuthActor = "account" | "agent";
 
 type LiteConatUser = CoCalcUser & {
   auth_actor?: LiteAuthActor;
   auth_scopes?: string[];
+  auth_project_id?: string;
 };
 
 function parseBoolean(value: string | undefined): boolean {
@@ -57,6 +61,17 @@ function readBearerToken(socket): string | undefined {
   return undefined;
 }
 
+function readAgentProjectId(socket): string | undefined {
+  const value = socket?.handshake?.auth?.project_id;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!isValidUUID(trimmed)) {
+    throw new Error("invalid agent project_id");
+  }
+  return trimmed;
+}
+
 function safeEqualStr(a: string, b: string): boolean {
   if (!a || !b || a.length !== b.length) return false;
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -80,6 +95,17 @@ function isAgentScoped(user: LiteConatUser): boolean {
 
 function hasAgentScope(user: LiteConatUser, scope: string): boolean {
   return !!user.auth_scopes?.includes(scope);
+}
+
+function allowAgentProjectSubject({
+  project_id,
+  subject,
+}: {
+  project_id: string;
+  subject: string;
+}): boolean {
+  const targetProjectId = extractProjectSubject(subject);
+  return !!targetProjectId && targetProjectId === project_id;
 }
 
 function isAccountAllowed({
@@ -171,10 +197,15 @@ export function createLiteConatAuth({
 
     const bearer = readBearerToken(socket);
     if (AGENT_TOKEN && bearer && safeEqualStr(bearer, AGENT_TOKEN)) {
+      const requestedProjectId = readAgentProjectId(socket);
+      if (requestedProjectId && requestedProjectId !== project_id) {
+        throw new Error("agent token may only target the local lite project");
+      }
       return {
         account_id,
         auth_actor: "agent",
         auth_scopes: [...agent_scopes],
+        auth_project_id: requestedProjectId ?? project_id,
       } satisfies LiteConatUser;
     }
 
@@ -232,6 +263,16 @@ export function createLiteConatAuth({
       if (
         hasAgentScope(liteUser, "browser_session") &&
         allowAgentServiceSubject({ account_id: userId, subject })
+      ) {
+        return true;
+      }
+      if (
+        hasAgentScope(liteUser, "project_session") &&
+        liteUser.auth_project_id &&
+        allowAgentProjectSubject({
+          project_id: liteUser.auth_project_id,
+          subject,
+        })
       ) {
         return true;
       }

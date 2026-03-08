@@ -8,6 +8,7 @@ Task Actions
 */
 
 import { fromJS, Map } from "immutable";
+import type { TasksSession } from "@cocalc/app-tasks";
 import { throttle } from "lodash";
 import {
   close,
@@ -40,6 +41,7 @@ import type {
   Store as TaskStore,
 } from "@cocalc/frontend/frame-editors/task-editor/actions";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
+import { createFrontendTasksSession } from "./tasks-session";
 
 const LAST_EDITED_THRESH_S = 30;
 const TASKS_HELP_URL = "https://doc.cocalc.com/tasks.html";
@@ -47,6 +49,7 @@ const TASKS_HELP_URL = "https://doc.cocalc.com/tasks.html";
 export class TaskActions extends Actions<TaskState> {
   public syncdb: SyncDB;
   private project_id: string;
+  private tasksSession: TasksSession;
   private path: string;
   private truePath: string;
   public store: TaskStore;
@@ -70,6 +73,7 @@ export class TaskActions extends Actions<TaskState> {
     this.path = path;
     this.truePath = truePath;
     this.syncdb = syncdb;
+    this.tasksSession = createFrontendTasksSession(syncdb);
     this.store = store;
   }
 
@@ -314,6 +318,21 @@ export class TaskActions extends Actions<TaskState> {
     this.edit_desc(task_id);
   }
 
+  private resolveTaskId(task_id?: string): string | undefined {
+    if (task_id == null) {
+      task_id = this.getFrameData("current_task_id");
+    }
+    return task_id ?? undefined;
+  }
+
+  private runSessionMutation(op: () => Promise<void>): void {
+    if (this.is_closed) return;
+    void op().catch((err) => {
+      if (this.is_closed) return;
+      console.warn("Task mutation failed", err);
+    });
+  }
+
   public set_task(
     task_id?: string,
     obj?: object,
@@ -379,11 +398,15 @@ export class TaskActions extends Actions<TaskState> {
   }
 
   public delete_task(task_id: string): void {
-    this.set_task(task_id, { deleted: true });
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(task_id, { deleted: true });
+    });
   }
 
   public undelete_task(task_id: string): void {
-    this.set_task(task_id, { deleted: false });
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(task_id, { deleted: false });
+    });
   }
 
   public delete_current_task(): void {
@@ -495,30 +518,28 @@ export class TaskActions extends Actions<TaskState> {
   }
 
   public set_task_not_done(task_id: string | undefined): void {
-    if (task_id == null) {
-      task_id = this.getFrameData("current_task_id");
-    }
-    this.set_task(task_id, { done: false });
+    const resolved = this.resolveTaskId(task_id);
+    if (resolved == null) return;
+    this.runSessionMutation(async () => {
+      await this.tasksSession.setDone(resolved, false);
+    });
   }
 
   public set_task_done(task_id: string | undefined): void {
-    if (task_id == null) {
-      task_id = this.getFrameData("current_task_id");
-    }
-    this.set_task(task_id, { done: true });
+    const resolved = this.resolveTaskId(task_id);
+    if (resolved == null) return;
+    this.runSessionMutation(async () => {
+      await this.tasksSession.setDone(resolved, true);
+    });
   }
 
   public toggle_task_done(task_id: string | undefined): void {
-    if (task_id == null) {
-      task_id = this.getFrameData("current_task_id");
-    }
-    if (task_id != null) {
-      this.set_task(
-        task_id,
-        { done: !this.store.getIn(["tasks", task_id, "done"]) },
-        true,
-      );
-    }
+    const resolved = this.resolveTaskId(task_id);
+    if (resolved == null) return;
+    const done = !this.store.getIn(["tasks", resolved, "done"]);
+    this.runSessionMutation(async () => {
+      await this.tasksSession.setDone(resolved, !!done);
+    });
   }
 
   public stop_editing_due_date(task_id: string | undefined): void {
@@ -563,7 +584,11 @@ export class TaskActions extends Actions<TaskState> {
     task_id: string | undefined,
     date: number | undefined,
   ): void {
-    this.set_task(task_id, { due_date: date });
+    const resolved = this.resolveTaskId(task_id);
+    if (resolved == null) return;
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(resolved, { due_date: date });
+    });
   }
 
   public set_desc(
@@ -571,22 +596,36 @@ export class TaskActions extends Actions<TaskState> {
     desc: string,
     save: boolean = true,
   ): void {
-    this.set_task(task_id, { desc }, false, save);
+    const resolved = this.resolveTaskId(task_id);
+    if (resolved == null) return;
+    if (!save) {
+      this.set_task(resolved, { desc }, false, false);
+      return;
+    }
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(resolved, { desc });
+    });
   }
 
   public set_color(task_id: string, color: string, save: boolean = true): void {
-    this.set_task(task_id, { color }, false, save);
+    if (!save) {
+      this.set_task(task_id, { color }, false, false);
+      return;
+    }
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(task_id, { color });
+    });
   }
 
   public toggleHideBody(task_id: string | undefined): void {
-    if (task_id == null) {
-      task_id = this.getFrameData("current_task_id");
-    }
-    if (task_id == null) {
+    const resolved = this.resolveTaskId(task_id);
+    if (resolved == null) {
       return;
     }
-    const hideBody = !this.store.getIn(["tasks", task_id, "hideBody"]);
-    this.set_task(task_id, { hideBody });
+    const hideBody = !this.store.getIn(["tasks", resolved, "hideBody"]);
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(resolved, { hideBody: !!hideBody });
+    });
   }
 
   public show_deleted(): void {
@@ -606,10 +645,14 @@ export class TaskActions extends Actions<TaskState> {
   }
 
   public empty_trash(): void {
-    this.store.get("tasks")?.forEach((task: TaskMap, task_id: string) => {
-      if (task.get("deleted")) {
-        this.syncdb.delete({ task_id });
-      }
+    const taskIds = this.store
+      .get("tasks")
+      ?.filter((task: TaskMap) => task.get("deleted"))
+      ?.keySeq()
+      ?.toArray?.() ?? [];
+    if (taskIds.length === 0) return;
+    this.runSessionMutation(async () => {
+      await this.tasksSession.removeTasks(taskIds);
     });
   }
 
@@ -756,7 +799,9 @@ export class TaskActions extends Actions<TaskState> {
       return;
     }
     desc = toggle_checkbox(desc, index, checked);
-    this.set_desc(task_id, desc);
+    this.runSessionMutation(async () => {
+      await this.tasksSession.updateTask(task_id, { desc });
+    });
   }
 
   public hide(): void {

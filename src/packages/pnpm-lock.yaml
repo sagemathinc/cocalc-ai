@@ -149,6 +149,15 @@ importers:
         specifier: ^22.10.10
         version: 22.19.1
 
+  apps/tasks:
+    dependencies:
+      '@cocalc/conat':
+        specifier: workspace:*
+        version: link:../../conat
+      '@cocalc/sync':
+        specifier: workspace:*
+        version: link:../../sync
+
   assets:
     dependencies:
       jquery:
@@ -271,6 +280,9 @@ importers:
 
   cli:
     dependencies:
+      '@cocalc/app-tasks':
+        specifier: workspace:*
+        version: link:../apps/tasks
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat
@@ -539,6 +551,9 @@ importers:
       '@ant-design/icons':
         specifier: ^6.0.0
         version: 6.1.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      '@cocalc/app-tasks':
+        specifier: workspace:*
+        version: link:../apps/tasks
       '@cocalc/assets':
         specifier: workspace:*
         version: link:../assets
