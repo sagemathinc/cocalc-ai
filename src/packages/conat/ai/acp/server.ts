@@ -43,10 +43,6 @@ export function acpInterruptSubject(opts: {
   account_id?: string;
   project_id?: string;
 }): string {
-  console.log("acpInterruptSubject", {
-    opts,
-    subject: buildSubjectPrefix(opts),
-  });
   return `${buildSubjectPrefix(opts)}.interrupt`;
 }
 

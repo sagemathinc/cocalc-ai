@@ -3308,12 +3308,6 @@ function acpJobThreadKey({
   return `${project_id}:${path}:${thread_id}`;
 }
 
-function ackStateForJob(
-  row: Pick<AcpJobRow, "state">,
-): "queued" | "running" {
-  return row.state === "running" ? "running" : "queued";
-}
-
 function maybeDecorateQueuedPromptForJob({
   prompt,
   job,
@@ -3417,12 +3411,18 @@ async function persistQueuedUserMessageProjection({
   thread_id: string;
   user_message_id: string;
   queued: boolean;
-}): Promise<void> {
-  await withChatSyncDB({
+}): Promise<"queued" | "running" | null> {
+  return await withChatSyncDB({
     client,
     project_id,
     path,
     fn: async (syncdb) => {
+      const waitingInLine = threadHasRunningState(syncdb, thread_id);
+      const projectedMessageState = queued
+        ? waitingInLine
+          ? "queued"
+          : "running"
+        : null;
       const current = findChatRowByMessageId(syncdb, user_message_id);
       if (current != null) {
         const rowDate =
@@ -3436,7 +3436,7 @@ async function persistQueuedUserMessageProjection({
             sender_id: rowSender,
             message_id: user_message_id,
             thread_id: syncdbField<string>(current, "thread_id") ?? thread_id,
-            acp_state: queued ? "queued" : null,
+            acp_state: projectedMessageState,
           };
           const parentMessageId = syncdbField<string>(
             current,
@@ -3449,7 +3449,7 @@ async function persistQueuedUserMessageProjection({
         }
       }
 
-      if (!threadHasRunningState(syncdb, thread_id)) {
+      if (!waitingInLine) {
         const nextQueued = queued
           ? user_message_id
           : listQueuedAcpJobsForThread({
@@ -3473,6 +3473,7 @@ async function persistQueuedUserMessageProjection({
 
       syncdb.commit();
       await syncdb.save();
+      return projectedMessageState;
     },
   });
 }
@@ -3746,7 +3747,7 @@ async function enqueueChatAcpTurn({
     throw new Error("conat client must be initialized");
   }
   const row = enqueueAcpJob(request);
-  await persistQueuedUserMessageProjection({
+  const projectedState = await persistQueuedUserMessageProjection({
     client: conatClient,
     project_id: row.project_id,
     path: row.path,
@@ -3754,7 +3755,13 @@ async function enqueueChatAcpTurn({
     user_message_id: row.user_message_id,
     queued: row.state === "queued",
   });
-  await stream({ type: "status", state: ackStateForJob(row) });
+  await stream({
+    type: "status",
+    state:
+      row.state === "running" || projectedState === "running"
+        ? "running"
+        : "queued",
+  });
   await stream(null);
   kickQueuedAcpJobsForThread(row);
 }

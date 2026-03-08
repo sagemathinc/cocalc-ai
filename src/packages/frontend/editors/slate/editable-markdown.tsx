@@ -1669,18 +1669,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const isRunShortcut =
       e.key === "Enter" && (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey);
     const isFocused = ReactEditor.isFocused(editor);
-    if (isRunShortcut) {
-      // eslint-disable-next-line no-console
-      console.log("slate onKeyDown enter shortcut", {
-        key: e.key,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-        ctrlKey: e.ctrlKey,
-        metaKey: e.metaKey,
-        isFocused,
-        selection: editor.selection ?? null,
-      });
-    }
 
     if (!isFocused && !isRunShortcut) {
       // E.g., when typing into a codemirror editor embedded

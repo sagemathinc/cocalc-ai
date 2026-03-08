@@ -208,27 +208,21 @@ function extractFirstCommitMention(text: string): string | undefined {
 
 export function computeAcpStateToRender({
   acpState,
-  threadAcpState,
   latestThreadInterrupted,
   isViewersMessage,
   generating,
   showViewerRunning,
 }: {
   acpState?: string;
-  threadAcpState?: string;
   latestThreadInterrupted: boolean;
   isViewersMessage: boolean;
   generating?: boolean;
   showViewerRunning?: boolean;
 }): string {
-  const effectiveState =
-    acpState === "queue" && threadAcpState === "running"
-      ? "running"
-      : acpState;
   const state =
-    effectiveState === "running" && latestThreadInterrupted
+    acpState === "running" && latestThreadInterrupted
       ? ""
-      : effectiveState;
+      : acpState;
   if (!state) return "";
   if (VIEWER_ONLY_STATES.has(state)) {
     return isViewersMessage ? state : "";
@@ -274,7 +268,6 @@ interface Props {
   onForceScrollToBottom?: () => void;
 
   acpState?: string;
-  threadAcpState?: string;
   dim?: boolean;
   searchHighlight?: string;
   openActivityToken?: number;
@@ -333,7 +326,6 @@ export default function Message({
   threadViewMode = false,
   onForceScrollToBottom,
   acpState,
-  threadAcpState,
   dim,
   searchHighlight,
   openActivityToken,
@@ -1813,7 +1805,6 @@ export default function Message({
   const acpStateToRender = useMemo(() => {
     return computeAcpStateToRender({
       acpState,
-      threadAcpState,
       latestThreadInterrupted,
       isViewersMessage: is_viewers_message,
       generating,
@@ -1821,7 +1812,6 @@ export default function Message({
     });
   }, [
     acpState,
-    threadAcpState,
     latestThreadInterrupted,
     is_viewers_message,
     generating,

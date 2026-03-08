@@ -54,19 +54,6 @@ describe("computeAcpStateToRender", () => {
     ).toBe("running");
   });
 
-  it("prefers running over queued when the thread is already running", () => {
-    expect(
-      computeAcpStateToRender({
-        acpState: "queue",
-        threadAcpState: "running",
-        latestThreadInterrupted: false,
-        isViewersMessage: true,
-        generating: false,
-        showViewerRunning: true,
-      }),
-    ).toBe("running");
-  });
-
   it("hides running state for viewer messages after the assistant row exists", () => {
     expect(
       computeAcpStateToRender({

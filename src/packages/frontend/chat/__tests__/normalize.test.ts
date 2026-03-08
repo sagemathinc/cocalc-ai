@@ -204,7 +204,7 @@ describe("initFromSyncDB", () => {
     expect(store.state.acpState?.get("thread:thread-queued")).toBe("queue");
     expect(store.state.acpState?.get("thread:thread-complete")).toBeUndefined();
     expect(store.state.acpState?.get("message:msg-running")).toBe("running");
-    expect(store.state.acpState?.get("message:msg-queued")).toBe("queue");
+    expect(store.state.acpState?.get("message:msg-queued")).toBeUndefined();
     expect(store.state.acpState?.get("message:msg-complete")).toBeUndefined();
   });
 
@@ -227,5 +227,28 @@ describe("initFromSyncDB", () => {
 
     initFromSyncDB({ syncdb, store });
     expect(store.state.acpState?.get("message:msg-user-queued")).toBe("queue");
+  });
+
+  it("hydrates running acp state from chat rows", () => {
+    const store = new MockStore();
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2024-01-02T03:04:05.000Z",
+        message_id: "msg-user-running",
+        thread_id: "thread-running",
+        acp_state: "running",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+    ]);
+
+    initFromSyncDB({ syncdb, store });
+    expect(store.state.acpState?.get("message:msg-user-running")).toBe(
+      "running",
+    );
   });
 });

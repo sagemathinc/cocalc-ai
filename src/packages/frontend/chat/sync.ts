@@ -31,6 +31,8 @@ function chatRowToAcpState(state: unknown): string | undefined {
   switch (state) {
     case "queued":
       return "queue";
+    case "running":
+      return "running";
     default:
       return undefined;
   }
@@ -63,6 +65,8 @@ export function initFromSyncDB({
   for (const row of rows) {
     if ((row as any)?.event === THREAD_STATE_EVENT) {
       const mapped = threadStateToAcpState((row as any)?.state);
+      const messageMapped =
+        (row as any)?.state === "running" ? mapped : undefined;
       const byThreadId = threadStateKey(row);
       const byMessageId = threadStateActiveMessageKey(row);
       if (mapped) {
@@ -70,7 +74,9 @@ export function initFromSyncDB({
           acpState = acpState.set(byThreadId, mapped);
         }
         if (byMessageId) {
-          acpState = acpState.set(byMessageId, mapped);
+          acpState = messageMapped
+            ? acpState.set(byMessageId, messageMapped)
+            : acpState.delete(byMessageId);
         }
       } else {
         if (byThreadId) {
@@ -162,6 +168,8 @@ export function handleSyncDBChange({
     if (event === THREAD_STATE_EVENT) {
       const record = syncdb.get_one(where);
       const mapped = threadStateToAcpState((record as any)?.state);
+      const messageMapped =
+        (record as any)?.state === "running" ? mapped : undefined;
       const byThreadId = threadStateKey(record ?? obj);
       const byMessageId = threadStateActiveMessageKey(record ?? obj);
       const acpState = store.get("acpState") ?? iMap();
@@ -170,7 +178,9 @@ export function handleSyncDBChange({
         next = mapped ? next.set(byThreadId, mapped) : next.delete(byThreadId);
       }
       if (byMessageId) {
-        next = mapped ? next.set(byMessageId, mapped) : next.delete(byMessageId);
+        next = messageMapped
+          ? next.set(byMessageId, messageMapped)
+          : next.delete(byMessageId);
       }
       store.setState({
         acpState: next,

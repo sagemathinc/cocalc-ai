@@ -756,13 +756,6 @@ export function MessageList({
                 return acpState?.get(`message:${messageId}`);
               })()
             }
-            threadAcpState={
-              (() => {
-                const threadId = field<string>(message, "thread_id");
-                if (!threadId) return undefined;
-                return acpState?.get(`thread:${threadId}`);
-              })()
-            }
             dim={shouldDim}
             searchHighlight={searchQuery}
             openActivityToken={

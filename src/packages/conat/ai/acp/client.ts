@@ -38,7 +38,6 @@ export async function* streamAcp(
   const cn = client ?? (await conat());
   let seq = -1;
 
-  console.log("streamAcp, sending", request);
   for await (const resp of await cn.requestMany(subject, request, {
     maxWait: timeout,
   })) {
