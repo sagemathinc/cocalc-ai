@@ -3,13 +3,14 @@ Edit with either plain text input **or** WYSIWYG slate-based input.
 */
 
 import { fromJS } from "immutable";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { MarkdownTextAdapter, SlateRichTextAdapter } from "./adapters";
 import { BLURED_STYLE, FOCUSED_STYLE } from "./component";
 import { MarkdownInputModeSwitch } from "./mode-switch";
+import { useMultimodeFocusInteraction } from "./use-multimode-focus-interaction";
 import { useMultimodeModeState } from "./use-multimode-mode-state";
 import { useMultimodeSelection } from "./use-multimode-selection";
 import type {
@@ -109,6 +110,18 @@ export default function MultiMarkdownInput({
       fallbackMode: IS_MOBILE ? "markdown" : "editor",
       onModeChange,
     });
+  const {
+    focused,
+    beginModeSwitchInteraction,
+    endModeSwitchInteraction,
+    handleMarkdownBlur,
+    handleRichTextFocus,
+    handleRichTextBlur,
+  } = useMultimodeFocusInteraction({
+    autoFocus,
+    onFocus,
+    onBlur,
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -129,23 +142,6 @@ export default function MultiMarkdownInput({
       return false;
     }
     return true;
-  }
-
-  const [focused, setFocused] = useState<boolean>(!!autoFocus);
-  const internalInteractionRef = useRef<"mode-switch" | null>(null);
-
-  function beginModeSwitchInteraction() {
-    internalInteractionRef.current = "mode-switch";
-  }
-
-  function endModeSwitchInteraction() {
-    if (internalInteractionRef.current === "mode-switch") {
-      internalInteractionRef.current = null;
-    }
-  }
-
-  function shouldSuppressBlur() {
-    return internalInteractionRef.current != null;
   }
 
   const cursorsMap = useMemo(() => {
@@ -231,9 +227,7 @@ export default function MultiMarkdownInput({
           hideHelp={hideHelp}
           onBlur={(value) => {
             onChangeRef.current?.(value);
-            if (!shouldSuppressBlur()) {
-              onBlur?.();
-            }
+            handleMarkdownBlur();
           }}
           onFocus={onFocus}
           onSave={onSave}
@@ -285,16 +279,8 @@ export default function MultiMarkdownInput({
           cursors={cursorsMap}
           fontSize={fontSize}
           autoFocus={focused}
-          onFocus={() => {
-            setFocused(true);
-            onFocus?.();
-          }}
-          onBlur={() => {
-            setFocused(false);
-            if (!shouldSuppressBlur()) {
-              onBlur?.();
-            }
-          }}
+          onFocus={handleRichTextFocus}
+          onBlur={handleRichTextBlur}
           onCursorTop={onCursorTop}
           onCursorBottom={onCursorBottom}
           isFocused={isFocused}
