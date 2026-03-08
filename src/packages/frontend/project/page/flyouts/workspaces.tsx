@@ -11,7 +11,6 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Segmented,
   Space,
   Switch,
   Tag,
@@ -71,15 +70,6 @@ function selectionValue(selection: WorkspaceSelection): string {
   }
 }
 
-function valueToSelection(value: string): WorkspaceSelection {
-  if (value === "all") return { kind: "all" };
-  if (value === "unscoped") return { kind: "unscoped" };
-  if (value.startsWith("workspace:")) {
-    return { kind: "workspace", workspace_id: value.slice("workspace:".length) };
-  }
-  return { kind: "all" };
-}
-
 function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDraft {
   if (!record) {
     return {
@@ -133,17 +123,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     return current_path_abs || "/";
   }, [active_project_tab, current_path_abs]);
 
-  const selectionItems = useMemo(() => {
-    const items = [
-      { label: "All tabs", value: "all" },
-      { label: "Unscoped", value: "unscoped" },
-      ...workspaces.records.map((record) => ({
-        label: record.theme.title,
-        value: `workspace:${record.workspace_id}`,
-      })),
-    ];
-    return items;
-  }, [workspaces.records]);
+  function select(next: WorkspaceSelection): void {
+    workspaces.setSelection(next);
+  }
 
   function openCreate(): void {
     const draft = makeDraft(null, defaultRootPath);
@@ -265,13 +247,12 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               <Button
                 size="small"
                 type={selected ? "primary" : "default"}
-                onClick={() => {
-                  workspaces.setSelection({
+                onClick={() =>
+                  select({
                     kind: "workspace",
                     workspace_id: record.workspace_id,
-                  });
-                  workspaces.touchWorkspace(record.workspace_id);
-                }}
+                  })
+                }
               >
                 Show tabs
               </Button>
@@ -322,14 +303,36 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           message="Workspace tabs"
           description="A workspace filters visible tabs by an absolute directory path inside this project. It does not close files or change permissions."
         />
-        <Space wrap>
-          <Segmented
-            options={selectionItems}
-            value={selectionValue(workspaces.selection)}
-            onChange={(value) =>
-              workspaces.setSelection(valueToSelection(`${value}`))
-            }
-          />
+        <Space wrap size={[6, 6]}>
+          <Tag.CheckableTag
+            checked={selectionValue(workspaces.selection) === "all"}
+            onChange={() => select({ kind: "all" })}
+          >
+            All tabs
+          </Tag.CheckableTag>
+          <Tag.CheckableTag
+            checked={selectionValue(workspaces.selection) === "unscoped"}
+            onChange={() => select({ kind: "unscoped" })}
+          >
+            Unscoped
+          </Tag.CheckableTag>
+          {workspaces.records.map((record) => (
+            <Tag.CheckableTag
+              key={record.workspace_id}
+              checked={
+                selectionValue(workspaces.selection) ===
+                `workspace:${record.workspace_id}`
+              }
+              onChange={() =>
+                select({
+                  kind: "workspace",
+                  workspace_id: record.workspace_id,
+                })
+              }
+            >
+              {record.theme.title}
+            </Tag.CheckableTag>
+          ))}
           <Tooltip title={`Suggested path: ${defaultRootPath}`}>
             <Button type="primary" onClick={openCreate}>
               New workspace
