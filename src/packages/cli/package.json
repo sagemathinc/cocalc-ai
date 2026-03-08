@@ -36,6 +36,10 @@
     "./api/tasks": {
       "types": "./dist/api/tasks.d.ts",
       "default": "./dist/api/tasks.js"
+    },
+    "./api/timetravel": {
+      "types": "./dist/api/timetravel.d.ts",
+      "default": "./dist/api/timetravel.js"
     }
   },
   "author": "SageMath, Inc.",

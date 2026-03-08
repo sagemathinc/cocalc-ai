@@ -125,6 +125,7 @@ import { registerImportCommand, type ImportCommandDeps } from "./commands/import
 import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
 import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
 import { createTasksApi } from "../api/tasks";
+import { createLiveTimeTravelBinder } from "../api/timetravel";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1485,6 +1486,10 @@ const tasksApi = createTasksApi<CommandContext, WorkspaceRow>({
   withWorkspaceTasksSession,
 });
 
+const timeTravelApi = createLiveTimeTravelBinder<CommandContext, WorkspaceRow>({
+  resolveWorkspaceConatClient,
+});
+
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
   workspace: WorkspaceRow,
@@ -2009,6 +2014,7 @@ registerTasksCommand(program, tasksCommandDeps);
 const execCommandDeps = {
   withContext,
   tasksApi,
+  timeTravelApi,
 } satisfies ExecCommandDeps;
 
 registerExecCommand(program, execCommandDeps);

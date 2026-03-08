@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises";
 import { Command } from "commander";
 
 import type { TasksApi } from "../../api/tasks";
+import type { TimeTravelApi } from "../../api/timetravel";
 
 export type ExecCommandDeps = {
   withContext: any;
   tasksApi: TasksApi<any, any>;
+  timeTravelApi: TimeTravelApi<any, any>;
 };
 
 const BACKEND_EXEC_API_DECLARATION = `/**
@@ -13,6 +15,7 @@ const BACKEND_EXEC_API_DECLARATION = `/**
  *
  * Current implemented namespaces:
  * - api.tasks
+ * - api.timetravel
  *
  * Return only JSON-serializable values from scripts.
  *
@@ -99,6 +102,50 @@ export interface TasksDocument {
   }>;
 }
 
+export interface TimeTravelVersionRecord {
+  id: string;
+  index: number;
+  versionNumber: number | null;
+  timestamp: string;
+  timestampMs: number;
+  wallTime: string | null;
+  wallTimeMs: number | null;
+  accountId: string | null;
+  userId: number | null;
+}
+
+export interface TimeTravelDocument {
+  readonly path: string;
+  listVersions(): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    doctype: "syncstring" | "syncdb" | "immer";
+    hasFullHistory: boolean;
+    versions: TimeTravelVersionRecord[];
+  }>;
+  loadMoreHistory(): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    doctype: "syncstring" | "syncdb" | "immer";
+    hasFullHistory: boolean;
+    versions: TimeTravelVersionRecord[];
+  }>;
+  readVersion(versionId: string): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    doctype: "syncstring" | "syncdb" | "immer";
+    version: TimeTravelVersionRecord;
+    text: string;
+  }>;
+  readLive(): Promise<{
+    workspace: { project_id: string; title: string; host_id: string | null };
+    path: string;
+    doctype: "syncstring" | "syncdb" | "immer";
+    text: string;
+    latestVersionId: string | null;
+  }>;
+}
+
 export interface BackendExecApi {
   tasks: {
     /**
@@ -111,6 +158,18 @@ export interface BackendExecApi {
       workspaceIdentifier?: string;
       cwd?: string;
     }): TasksDocument;
+  };
+  timetravel: {
+    /**
+     * Open live document history through the sync/service path.
+     *
+     * This works for both string and structured sync documents.
+     */
+    open(options: {
+      path: string;
+      workspaceIdentifier?: string;
+      cwd?: string;
+    }): TimeTravelDocument;
   };
 }
 
@@ -139,6 +198,15 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
         cwd?: string;
       }) {
         return deps.tasksApi.bindDocument(ctx, options);
+      },
+    },
+    timetravel: {
+      open(options: {
+        path: string;
+        workspaceIdentifier?: string;
+        cwd?: string;
+      }) {
+        return deps.timeTravelApi.bindDocument(ctx, options);
       },
     },
   };
@@ -174,6 +242,7 @@ export function registerExecCommand(program: Command, deps: ExecCommandDeps): Co
       `
 Current implemented namespaces:
 - api.tasks
+- api.timetravel
 
 Important:
 - api.tasks.open({ path }) uses the live collaborative sync/session path.

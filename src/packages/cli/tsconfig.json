@@ -5,22 +5,51 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@cocalc/app-tasks": ["../apps/tasks"],
-      "@cocalc/app-tasks/*": ["../apps/tasks/*"],
-      "@cocalc/conat": ["../conat"],
-      "@cocalc/conat/*": ["../conat/*"],
-      "@cocalc/export": ["../export"],
-      "@cocalc/export/*": ["../export/*"],
-      "@cocalc/util": ["../util"],
-      "@cocalc/util/*": ["../util/*"]
+      "@cocalc/app-tasks": [
+        "../apps/tasks"
+      ],
+      "@cocalc/app-tasks/*": [
+        "../apps/tasks/*"
+      ],
+      "@cocalc/conat": [
+        "../conat"
+      ],
+      "@cocalc/conat/*": [
+        "../conat/*"
+      ],
+      "@cocalc/export": [
+        "../export"
+      ],
+      "@cocalc/export/*": [
+        "../export/*"
+      ],
+      "@cocalc/util": [
+        "../util"
+      ],
+      "@cocalc/util/*": [
+        "../util/*"
+      ]
     }
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules"],
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ],
   "references": [
-    { "path": "../apps/tasks" },
-    { "path": "../conat" },
-    { "path": "../export" },
-    { "path": "../util" }
+    {
+      "path": "../apps/tasks"
+    },
+    {
+      "path": "../conat"
+    },
+    {
+      "path": "../export"
+    },
+    {
+      "path": "../util"
+    }
   ]
 }
