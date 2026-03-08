@@ -1,8 +1,8 @@
 /**
- * Workspace file operation backend primitives for the CLI.
+ * Project file operation backend primitives for the CLI.
  *
  * This module centralizes file list/cat/put/get/rm/mkdir/rg/fd operations and
- * the end-to-end workspace file health checks used by both direct CLI commands
+ * the end-to-end project file health checks used by both direct CLI commands
  * and daemon-backed file command handlers.
  */
 import { dirname } from "node:path";

@@ -170,7 +170,7 @@ Rules:
 - User can override per session.
 - Override persists with session metadata.
 
-(COMMENT: I think we had trouble implementing setting a different workspace root after starting the session so right now changing the working directory is disabled. But we should just assume we'll be able to figure this out somehow, e.g,. worse case, we can make a new session and copy the context from the old session.)
+(COMMENT: I think we had trouble implementing setting a different project root after starting the session so right now changing the working directory is disabled. But we should just assume we'll be able to figure this out somehow, e.g,. worse case, we can make a new session and copy the context from the old session.)
 
 ## 10. Safety and Execution Policy
 

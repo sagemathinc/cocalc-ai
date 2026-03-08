@@ -36,7 +36,7 @@ import {
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
-import { HostWorkspaceStatus } from "./host-workspace-status";
+import { HostProjectStatus } from "./host-project-status";
 import { HostProjectsBrowser } from "./host-projects-browser";
 
 type HostDrawerViewModel = {
@@ -559,7 +559,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             )}
           </Space>
           <Space orientation="vertical" size="small">
-            <HostWorkspaceStatus host={host} fontSize={14} />
+            <HostProjectStatus host={host} fontSize={14} />
             <Button size="small" onClick={() => setShowProjects(true)}>
               Browse projects
             </Button>

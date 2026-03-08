@@ -1617,7 +1617,7 @@ export class BaseEditorActions<
       this.explicit_save();
     }
     if (hasUnsavedChanges) {
-      // No secondary hosts to sync; main workspace is authoritative.
+      // No secondary hosts to sync; main project is authoritative.
     }
   }
 

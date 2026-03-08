@@ -17,7 +17,7 @@ export type HostLike = {
 };
 
 export type ProjectCacheContext<W extends ProjectLike = ProjectLike> = {
-  projectCache: Map<string, { expiresAt: number; workspace: W }>;
+  projectCache: Map<string, { expiresAt: number; project: W }>;
   hub: Pick<HubApi, "db" | "system" | "hosts">;
 };
 
@@ -40,18 +40,18 @@ function getCachedProject<W extends ProjectLike>(
     ctx.projectCache.delete(key);
     return undefined;
   }
-  return cached.workspace;
+  return cached.project;
 }
 
 function setCachedProject<W extends ProjectLike>(
   ctx: ProjectCacheContext<W>,
-  workspace: W,
+  project: W,
   projectCacheTtlMs: number,
 ): void {
   const expiresAt = Date.now() + projectCacheTtlMs;
-  ctx.projectCache.set(projectCacheKey(workspace.project_id), { workspace, expiresAt });
-  if (workspace.title) {
-    ctx.projectCache.set(projectCacheKey(workspace.title), { workspace, expiresAt });
+  ctx.projectCache.set(projectCacheKey(project.project_id), { project, expiresAt });
+  if (project.title) {
+    ctx.projectCache.set(projectCacheKey(project.title), { project, expiresAt });
   }
 }
 

@@ -241,7 +241,7 @@ Suggested name:
 
 - `src/packages/apps/tasks`
 
-This should be a real workspace package with its own:
+This should be a real package with its own:
 
 - `package.json`
 - `tsconfig.json`
@@ -542,7 +542,7 @@ At this point the frontend shell should mostly be hosting the tasks app, not own
 
 This first refactor is successful if:
 
-- there is a real `packages/apps/tasks` workspace package
+- there is a real `packages/apps/tasks` package
 - there is a clear markdown/editor contract and default adapter implementation
 - tasks no longer depends directly on all of `packages/frontend`
 - the headless task model is reusable from CLI and export/import code

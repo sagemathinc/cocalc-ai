@@ -6,7 +6,7 @@
 /*
 Wrapper object around xterm.js's Terminal, which adds
 extra support for being connected to:
-  - a backend server pty via a conat socket for the workspace
+  - a backend server pty via a conat socket for the project
   - react/redux
   - frame-editor (via actions)
 */

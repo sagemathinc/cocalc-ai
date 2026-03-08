@@ -45,7 +45,7 @@ Rules:
 
 - Subscription credential is only usable by its owning `account_id`.
 - Project key is usable by any collaborator with Codex access for that project.
-- Site key never gets exposed directly inside workspace-accessible paths.
+- Site key never gets exposed directly inside project-accessible paths.
 
 ## Phase plan
 

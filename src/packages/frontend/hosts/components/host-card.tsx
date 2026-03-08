@@ -22,7 +22,7 @@ import {
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
-import { HostWorkspaceStatus } from "./host-workspace-status";
+import { HostProjectStatus } from "./host-project-status";
 import {
   confirmHostDeprovision,
   confirmHostDrain,
@@ -302,7 +302,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           </Tooltip>
         )}
         <HostOpProgress op={hostOp} compact />
-        <HostWorkspaceStatus host={host} fontSize={14} />
+        <HostProjectStatus host={host} fontSize={14} />
         <HostBackupStatus host={host} />
         <Typography.Text>
         Provider:{" "}

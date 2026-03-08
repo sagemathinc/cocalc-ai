@@ -171,7 +171,7 @@ export function LauncherDefaults({ project_id, project }: Props) {
             appsRemove: siteLauncherDefaults.hiddenApps,
           },
           {
-            key: "workspace",
+            key: "project",
             title: "Project defaults",
             quickCreateAdd: projectDefaults.quickCreate,
             quickCreateRemove: projectDefaults.hiddenQuickCreate,

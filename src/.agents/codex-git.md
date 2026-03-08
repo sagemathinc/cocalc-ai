@@ -27,7 +27,7 @@ Define concrete state, storage keys, and sync semantics for:
 - commit review metadata (`reviewed`, note),
 - inline diff comments,
 - incremental submit-to-agent workflow,
-- persistence across refreshes/projects/workspaces for the same commit.
+- persistence across refreshes/projects for the same commit.
 
 This is design-only (no implementation code in this doc).
 
@@ -429,7 +429,7 @@ Design intent:
 
 ## Acceptance Criteria
 
-1. Comments for commit `X` appear across different repo roots/workspaces for the same account.
+1. Comments for commit `X` appear across different repo roots/projects for the same account.
 2. HEAD mode does not expose inline review comments.
 3. AKV updates no more than periodic flush + explicit events (not every keystroke).
 4. Submit sends only changed draft comments since prior submission.

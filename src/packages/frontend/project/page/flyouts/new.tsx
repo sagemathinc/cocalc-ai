@@ -694,7 +694,7 @@ export function NewFlyout({
             appsRemove: userLauncherLayers.account.hiddenApps,
           },
           {
-            key: "workspace-user",
+            key: "project-user",
             title: "This project overrides",
             quickCreateAdd: userLauncherLayers.project.quickCreate,
             quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,

@@ -182,7 +182,7 @@ type CommandContext = {
   remote: RemoteConnection;
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
-  projectCache: Map<string, { expiresAt: number; workspace: ProjectRow }>;
+  projectCache: Map<string, { expiresAt: number; project: ProjectRow }>;
   hostConnectionCache: Map<string, { expiresAt: number; connection: HostConnectionInfo }>;
 };
 
@@ -1248,10 +1248,10 @@ function closeRoutedProjectHostClient(
 
 async function getOrCreateRoutedProjectHostClient(
   ctx: CommandContext,
-  workspace: ProjectRow,
+  project: ProjectRow,
   allowTokenRetry = true,
 ): Promise<RoutedProjectHostClientState> {
-  const host_id = workspace.host_id;
+  const host_id = project.host_id;
   if (!host_id) {
     throw new Error("project has no assigned host");
   }
@@ -1269,7 +1269,7 @@ async function getOrCreateRoutedProjectHostClient(
     });
   }
   const address = connection.local_proxy
-    ? localProxyProjectHostAddress(ctx.apiBaseUrl, workspace.project_id)
+    ? localProxyProjectHostAddress(ctx.apiBaseUrl, project.project_id)
     : connection.connect_url
       ? normalizeUrl(connection.connect_url)
       : "";
@@ -1299,7 +1299,7 @@ async function getOrCreateRoutedProjectHostClient(
     ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
     auth: async (cb) => {
       try {
-        const token = await issueProjectHostAuthToken(ctx, state, workspace.project_id);
+        const token = await issueProjectHostAuthToken(ctx, state, project.project_id);
         cb({ bearer: token });
       } catch (err) {
         cliDebug("project-host token issuance failed", {
@@ -1348,7 +1348,7 @@ async function getOrCreateRoutedProjectHostClient(
     closeRoutedProjectHostClient(ctx, host_id);
     if (shouldRetryWithFreshToken) {
       invalidateProjectHostAuthToken(state);
-      return await getOrCreateRoutedProjectHostClient(ctx, workspace, false);
+      return await getOrCreateRoutedProjectHostClient(ctx, project, false);
     }
     throw err;
   }
@@ -1378,18 +1378,18 @@ async function resolveProjectApi(
   ctx: CommandContext,
   projectIdentifier?: string,
   cwd = process.cwd(),
-): Promise<{ workspace: ProjectRow; api: ProjectApi }> {
-  const workspace = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
-  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+): Promise<{ project: ProjectRow; api: ProjectApi }> {
+  const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
     throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
   }
   const api = projectApiClient({
-    project_id: workspace.project_id,
+    project_id: project.project_id,
     client: routed.client,
     timeout: Math.max(1_000, Math.min(ctx.timeoutMs, ctx.rpcTimeoutMs)),
   });
-  return { workspace, api };
+  return { project, api };
 }
 
 async function resolveProjectProjectApi(
@@ -1397,12 +1397,12 @@ async function resolveProjectProjectApi(
   projectIdentifier?: string,
   cwd = process.cwd(),
 ): Promise<{ project: ProjectRow; api: ProjectApi }> {
-  const { workspace, api } = await resolveProjectApi(
+  const { project, api } = await resolveProjectApi(
     ctx,
     projectIdentifier,
     cwd,
   );
-  return { project: workspace, api };
+  return { project, api };
 }
 
 async function resolveProjectConatClient(
@@ -1552,13 +1552,13 @@ const importApi = createImportApi<CommandContext>();
 
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
-  workspace: ProjectRow,
+  project: ProjectRow,
   name: string,
   args: any[] = [],
   timeout?: number,
   allowAuthRetry = true,
 ): Promise<T> {
-  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
     throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
   }
@@ -1569,8 +1569,8 @@ async function projectHostHubCallAccount<T>(
     timeoutMs,
     rpcTimeoutMs,
     account_id: ctx.accountId,
-    project_id: workspace.project_id,
-    host_id: workspace.host_id,
+    project_id: project.project_id,
+    host_id: project.host_id,
   });
   try {
     return (await withTimeout(
@@ -1585,11 +1585,11 @@ async function projectHostHubCallAccount<T>(
       `timeout waiting for project-host response: ${name} (${rpcTimeoutMs}ms)`,
     )) as T;
   } catch (err) {
-    if (allowAuthRetry && isProjectHostAuthError(err) && workspace.host_id) {
-      closeRoutedProjectHostClient(ctx, workspace.host_id);
+    if (allowAuthRetry && isProjectHostAuthError(err) && project.host_id) {
+      closeRoutedProjectHostClient(ctx, project.host_id);
       return await projectHostHubCallAccount(
         ctx,
-        workspace,
+        project,
         name,
         args,
         timeout,
@@ -1662,7 +1662,7 @@ async function waitForProjectPlacement(
   });
 }
 
-async function waitForWorkspaceNotRunning(
+async function waitForProjectNotRunning(
   ctx: CommandContext,
   projectId: string,
   {
@@ -1684,13 +1684,13 @@ async function waitForWorkspaceNotRunning(
   });
 }
 
-async function confirmHardWorkspaceDelete({
-  workspace_id,
+async function confirmHardProjectDelete({
+  project_id,
   title,
   backupRetentionDays,
   purgeBackupsNow,
 }: {
-  workspace_id: string;
+  project_id: string;
   title?: string;
   backupRetentionDays: number;
   purgeBackupsNow: boolean;
@@ -1700,7 +1700,7 @@ async function confirmHardWorkspaceDelete({
       "hard delete requires interactive confirmation; pass --yes to continue non-interactively",
     );
   }
-  const expected = workspace_id;
+  const expected = project_id;
   const backupMessage = purgeBackupsNow
     ? "File backups will be purged immediately."
     : backupRetentionDays > 0
@@ -1714,7 +1714,7 @@ async function confirmHardWorkspaceDelete({
   );
   console.error(backupMessage);
   console.error(
-    `Type project_id '${expected}' to permanently delete project '${title?.trim() || workspace_id}'.`,
+    `Type project_id '${expected}' to permanently delete project '${title?.trim() || project_id}'.`,
   );
   const rl = createInterface({
     input: process.stdin,
@@ -1763,11 +1763,11 @@ async function resolveProxyUrl({
   url: string;
   local_proxy: boolean;
 }> {
-  const workspace = await resolveProject(ctx, projectIdentifier);
+  const project = await resolveProject(ctx, projectIdentifier);
   const host = hostIdentifier
     ? await resolveHost(ctx, hostIdentifier)
-    : workspace.host_id
-      ? await resolveHost(ctx, workspace.host_id)
+    : project.host_id
+      ? await resolveHost(ctx, project.host_id)
       : null;
   if (!host) {
     throw new Error("project has no assigned host; specify --host or start/move the project first");
@@ -1791,10 +1791,10 @@ async function resolveProxyUrl({
   }
 
   return {
-    project_id: workspace.project_id,
+    project_id: project.project_id,
     host_id: host.id,
     local_proxy: !!connection.local_proxy,
-    url: `${base}/${workspace.project_id}/proxy/${port}/`,
+    url: `${base}/${project.project_id}/proxy/${port}/`,
   };
 }
 
@@ -1926,9 +1926,9 @@ const projectCommandDeps = {
   projectContextPath: projectContextPath,
   clearProjectContext: clearWorkspaceContext,
   isValidUUID,
-  confirmHardProjectDelete: confirmHardWorkspaceDelete,
+  confirmHardProjectDelete,
   waitForLro,
-  waitForProjectNotRunning: waitForWorkspaceNotRunning,
+  waitForProjectNotRunning,
   resolveProjectSshConnection,
   ensureSyncKeyPair,
   installSyncPublicKey: installProjectSyncPublicKey,

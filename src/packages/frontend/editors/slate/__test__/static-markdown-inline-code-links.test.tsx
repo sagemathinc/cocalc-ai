@@ -29,7 +29,7 @@ describe("StaticMarkdown inline code links", () => {
     expect(link.getAttribute("title")).toBe("/tmp/x/src/workspaces.py:12");
   });
 
-  it("prefers display_path_at_turn over recomputing from current workspace root", () => {
+  it("prefers display_path_at_turn over recomputing from current project root", () => {
     render(
       <StaticMarkdown
         value={"Use `different/path.ts:3`."}

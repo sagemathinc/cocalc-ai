@@ -1,7 +1,7 @@
 import { Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 
-function formatWorkspaceStatus(host: Host, compact: boolean): string | null {
+function formatProjectStatus(host: Host, compact: boolean): string | null {
   const status = host.backup_status;
   const assigned = status?.total ?? host.projects;
   const provisioned = status?.provisioned;
@@ -21,7 +21,7 @@ function formatWorkspaceStatus(host: Host, compact: boolean): string | null {
   return `Projects: ${assignedVal} assigned · ${provisionedVal} provisioned · ${runningVal} running`;
 }
 
-export function HostWorkspaceStatus({
+export function HostProjectStatus({
   host,
   compact = false,
   fontSize = 11,
@@ -30,7 +30,7 @@ export function HostWorkspaceStatus({
   compact?: boolean;
   fontSize?: number;
 }) {
-  const label = formatWorkspaceStatus(host, compact);
+  const label = formatProjectStatus(host, compact);
   if (!label) return null;
   return (
     <Typography.Text type="secondary" style={{ fontSize }}>

@@ -4,7 +4,7 @@ import type { KernelSpec } from "@cocalc/jupyter/types";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
 const cache = new LRU<string, KernelSpec[]>({
-  // up to 15 workspaces cached
+  // up to 15 projects cached
   max: 15,
   // cache for 5 minutes; when user explicitly clicks refresh it doesn't use cache.
   ttl: 1000 * 5 * 60,

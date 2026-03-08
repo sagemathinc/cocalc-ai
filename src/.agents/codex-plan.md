@@ -50,7 +50,7 @@ Goal: make Codex/ACP chat turns deterministic, multi-client safe, and refresh-sa
 
 - [ ] change what sandbox option in container mode means \(as configured in frontend/chat\), i.e., when 'lite' is true, where `import {lite} from @cocalc/frontend/lite`. see other tasks below. The codex internal sandbox mode doesn't make any sense, but having a sandbox mode does.
 
-- [ ] limit agent to only be able to write inside the workspace by mounting only a subset of the project's directory writable and the rest readonly, when doing sandboxExec. This is the key needed for sandbox mode.  Also handle fs calls differently.
+- [ ] limit agent to only be able to write inside the project by mounting only a subset of the project's directory writable and the rest readonly, when doing sandboxExec. This is the key needed for sandbox mode.  Also handle fs calls differently.
 
 - [ ] implement readonly container mode by mounting the sandboxExec container fs readonly
 
@@ -305,7 +305,7 @@ codex-cli has  had many releases in the last 1-2 weeks, and we have a fork of it
 
 ## Goal
 
-Bring Codex agents into CoCalc chat so users can open a thread, point it at a workspace, and let a fully capable agent edit files, run commands, and stream results safely.
+Bring Codex agents into CoCalc chat so users can open a thread, point it at a project, and let a fully capable agent edit files, run commands, and stream results safely.
 
 ## Architecture snapshot (Nov 25)
 
