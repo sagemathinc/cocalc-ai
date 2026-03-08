@@ -3,18 +3,15 @@ import { Command } from "commander";
 import type {
   TaskMutableFields,
   TaskQuery,
+  TaskRecord,
   TaskSortColumn,
   TaskSortDirection,
 } from "@cocalc/app-tasks";
+import type { TasksApi } from "../../api/tasks";
 
 export type TasksCommandDeps = {
   withContext: any;
-  workspaceTasksListData: any;
-  workspaceTasksGetData: any;
-  workspaceTasksSetDoneData: any;
-  workspaceTasksAppendData: any;
-  workspaceTasksUpdateData: any;
-  workspaceTasksAddData: any;
+  tasksApi: TasksApi<any, any>;
 };
 
 type TasksListCliOptions = {
@@ -65,6 +62,19 @@ type TasksAddCliOptions = {
   done?: string;
   deleted?: string;
 };
+
+function compactTaskRecord(task: TaskRecord): Record<string, unknown> {
+  return {
+    task_id: task.task_id,
+    done: task.done === true,
+    deleted: task.deleted === true,
+    due_date: task.due_date ?? null,
+    last_edited: task.last_edited ?? null,
+    color: task.color ?? null,
+    hideBody: task.hideBody === true,
+    desc: task.desc ?? "",
+  };
+}
 
 const TASK_SORT_COLUMNS: TaskSortColumn[] = ["Custom", "Due", "Changed"];
 const TASK_SORT_DIRECTIONS: TaskSortDirection[] = ["asc", "desc"];
@@ -215,6 +225,10 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     .option("--dir <direction>", "sort direction (asc|desc)")
     .action(async (path: string, opts: TasksListCliOptions, command: Command) => {
       await deps.withContext(command, "tasks list", async (ctx) => {
+        const doc = deps.tasksApi.bindDocument(ctx, {
+          workspaceIdentifier: opts.workspace,
+          path,
+        });
         const query: TaskQuery = {
           includeDone: opts.includeDone === true,
           includeDeleted: opts.includeDeleted === true,
@@ -222,12 +236,8 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
           limit: parseOptionalNumber(opts.limit, "--limit"),
           sort: parseSort(opts.sort, opts.dir),
         };
-        return await deps.workspaceTasksListData({
-          ctx,
-          workspaceIdentifier: opts.workspace,
-          path,
-          query,
-        });
+        const snapshot = await doc.getSnapshot(query);
+        return snapshot.tasks.map(compactTaskRecord);
       });
     });
 
@@ -241,12 +251,19 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     )
     .action(async (path: string, opts: TasksGetCliOptions, command: Command) => {
       await deps.withContext(command, "tasks get", async (ctx) => {
-        return await deps.workspaceTasksGetData({
-          ctx,
+        const doc = deps.tasksApi.bindDocument(ctx, {
           workspaceIdentifier: opts.workspace,
           path,
-          taskId: requireTaskId(opts.taskId),
         });
+        const result = await doc.getTask(requireTaskId(opts.taskId));
+        if (!result.task) {
+          throw new Error(`Task '${requireTaskId(opts.taskId)}' not found`);
+        }
+        return {
+          workspace_id: result.workspace.project_id,
+          path: result.path,
+          task: compactTaskRecord(result.task),
+        };
       });
     });
 
@@ -261,13 +278,20 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     )
     .action(async (path: string, opts: TasksSetDoneCliOptions, command: Command) => {
       await deps.withContext(command, "tasks set-done", async (ctx) => {
-        return await deps.workspaceTasksSetDoneData({
-          ctx,
+        const taskId = requireTaskId(opts.taskId);
+        const doc = deps.tasksApi.bindDocument(ctx, {
           workspaceIdentifier: opts.workspace,
           path,
-          taskId: requireTaskId(opts.taskId),
-          done: parseOptionalBoolean(opts.done) ?? true,
         });
+        const result = await doc.setDone(taskId, parseOptionalBoolean(opts.done) ?? true);
+        return {
+          workspace_id: result.workspace.project_id,
+          path: result.path,
+          task_id: taskId,
+          changed_task_ids: result.changedTaskIds,
+          revision: result.revision ?? null,
+          task: result.task ? compactTaskRecord(result.task) : null,
+        };
       });
     });
 
@@ -284,17 +308,24 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     )
     .action(async (path: string, opts: TasksAppendCliOptions, command: Command) => {
       await deps.withContext(command, "tasks append", async (ctx) => {
+        const taskId = requireTaskId(opts.taskId);
         const text = `${opts.text ?? ""}`;
         if (!text.trim()) {
           throw new Error("--text is required");
         }
-        return await deps.workspaceTasksAppendData({
-          ctx,
+        const doc = deps.tasksApi.bindDocument(ctx, {
           workspaceIdentifier: opts.workspace,
           path,
-          taskId: requireTaskId(opts.taskId),
-          text,
         });
+        const result = await doc.appendToDescription(taskId, text);
+        return {
+          workspace_id: result.workspace.project_id,
+          path: result.path,
+          task_id: taskId,
+          changed_task_ids: result.changedTaskIds,
+          revision: result.revision ?? null,
+          task: result.task ? compactTaskRecord(result.task) : null,
+        };
       });
     });
 
@@ -317,15 +348,22 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     )
     .action(async (path: string, opts: TasksUpdateCliOptions, command: Command) => {
       await deps.withContext(command, "tasks update", async (ctx) => {
+        const taskId = requireTaskId(opts.taskId);
         const changes = buildUpdateChanges(opts);
         assertHasUpdates(changes);
-        return await deps.workspaceTasksUpdateData({
-          ctx,
+        const doc = deps.tasksApi.bindDocument(ctx, {
           workspaceIdentifier: opts.workspace,
           path,
-          taskId: requireTaskId(opts.taskId),
-          changes,
         });
+        const result = await doc.updateTask(taskId, changes);
+        return {
+          workspace_id: result.workspace.project_id,
+          path: result.path,
+          task_id: taskId,
+          changed_task_ids: result.changedTaskIds,
+          revision: result.revision ?? null,
+          task: result.task ? compactTaskRecord(result.task) : null,
+        };
       });
     });
 
@@ -348,12 +386,16 @@ Paths are workspace-relative. If --workspace is omitted, the command uses:
     )
     .action(async (path: string, opts: TasksAddCliOptions, command: Command) => {
       await deps.withContext(command, "tasks add", async (ctx) => {
-        return await deps.workspaceTasksAddData({
-          ctx,
+        const doc = deps.tasksApi.bindDocument(ctx, {
           workspaceIdentifier: opts.workspace,
           path,
-          input: buildCreateInput(opts),
         });
+        const result = await doc.createTask(buildCreateInput(opts));
+        return {
+          workspace_id: result.workspace.project_id,
+          path: result.path,
+          task: compactTaskRecord(result.task),
+        };
       });
     });
 

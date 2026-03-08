@@ -123,6 +123,7 @@ import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import { registerExportCommand, type ExportCommandDeps } from "./commands/export";
 import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
 import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
+import { createTasksApi } from "../api/tasks";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -1474,14 +1475,13 @@ const {
 });
 
 const {
-  workspaceTasksListData,
-  workspaceTasksGetData,
-  workspaceTasksSetDoneData,
-  workspaceTasksAppendData,
-  workspaceTasksUpdateData,
-  workspaceTasksAddData,
+  withWorkspaceTasksSession,
 } = createWorkspaceTasksOps<CommandContext, WorkspaceRow>({
   resolveWorkspaceConatClient,
+});
+
+const tasksApi = createTasksApi<CommandContext, WorkspaceRow>({
+  withWorkspaceTasksSession,
 });
 
 async function projectHostHubCallAccount<T>(
@@ -2000,12 +2000,7 @@ registerImportCommand(program, importCommandDeps);
 
 const tasksCommandDeps = {
   withContext,
-  workspaceTasksListData,
-  workspaceTasksGetData,
-  workspaceTasksSetDoneData,
-  workspaceTasksAppendData,
-  workspaceTasksUpdateData,
-  workspaceTasksAddData,
+  tasksApi,
 } satisfies TasksCommandDeps;
 
 registerTasksCommand(program, tasksCommandDeps);

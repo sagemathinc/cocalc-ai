@@ -32,6 +32,12 @@
     "package.json",
     "README.md"
   ],
+  "exports": {
+    "./api/tasks": {
+      "types": "./dist/api/tasks.d.ts",
+      "default": "./dist/api/tasks.js"
+    }
+  },
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
