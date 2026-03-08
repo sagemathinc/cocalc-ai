@@ -1,16 +1,11 @@
 /*
 Editing/composing a message.
-
-TODO: There is a slider with all versions, but it is not persisted
-between editing sessions of a draft.  It could be, e.g., via json
-to the database or something...
 */
 
-import { Button, Flex, Input, Modal, Slider, Space, Spin, Tooltip } from "antd";
+import { Button, Flex, Input, Modal, Space, Spin, Tooltip } from "antd";
 import { isEqual } from "lodash";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { useAsyncEffect } from "use-async-effect";
 import { useDebouncedCallback } from "use-debounce";
 import {
   redux,
@@ -20,12 +15,10 @@ import {
 import { Paragraph } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import ephemeralSyncstring from "@cocalc/sync/editor/string/test/ephemeral-syncstring";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import { human_readable_size } from "@cocalc/util/misc";
 import SelectUsers from "./select-users";
@@ -61,34 +54,6 @@ export default function Compose({
   const [bodyIsFocused, setBodyIsFocused] = useState<boolean | undefined>(
     undefined,
   );
-
-  const [version, setVersion] = useState<number>(0);
-  const [versions, setVersions] = useState<Date[]>([]);
-  const renderSliderTooltip = (index) => {
-    const logicalTime = versions[index];
-    if (logicalTime == null) {
-      return;
-    }
-    const date = syncstringRef.current?.wallTime(logicalTime);
-    if (date == null) {
-      return;
-    }
-    return <TimeAgo date={date} />;
-  };
-  const getValueRef = useRef<any>(null);
-  const syncstringRef = useRef<any>(null);
-  useAsyncEffect(async () => {
-    const syncstring = await ephemeralSyncstring();
-    syncstringRef.current = syncstring;
-    syncstring.from_str(body);
-    syncstring.save();
-    return async () => {
-      if (syncstringRef.current != null) {
-        await syncstringRef.current.close();
-        syncstringRef.current = null;
-      }
-    };
-  }, []);
 
   const [draft, setDraft] = useState<{
     to_ids: string[];
@@ -325,31 +290,6 @@ export default function Compose({
             }}
           />
         </Flex>
-        {version != null && versions != null && versions.length >= 2 && (
-          <div style={{ flex: 1, margin: "0 10px" }}>
-            <Slider
-              min={0}
-              max={versions.length - 1}
-              value={version}
-              onChange={(version) => {
-                setVersion(version);
-                if (version < versions.length) {
-                  const body = syncstringRef.current
-                    ?.version(versions[version])
-                    ?.to_str();
-                  if (body != null) {
-                    setBody(body);
-                    queueSaveDraft({ subject, body });
-                  }
-                }
-              }}
-              tooltip={{
-                formatter: renderSliderTooltip,
-                placement: "bottom",
-              }}
-            />
-          </div>
-        )}
         <Zoom style={{ margin: "0 5px" }} />
         <Tooltip
           placement="right"
@@ -401,19 +341,9 @@ export default function Compose({
           fontSize={fontSize}
           isFocused={bodyIsFocused}
           editorDivRef={editorDivRef}
-          getValueRef={getValueRef}
           saveDebounceMs={SAVE_DEBOUNCE_MS}
           value={body}
           onChange={(body) => {
-            const syncstring = syncstringRef.current;
-            if (syncstring != null) {
-              syncstring.from_str(body);
-              syncstring.save();
-              syncstring.exit_undo_mode();
-              const versions = syncstring.versions();
-              setVersions(versions);
-              setVersion(versions.length - 1);
-            }
             setBody(body);
             queueSaveDraft({ body, subject });
           }}
@@ -426,34 +356,8 @@ export default function Compose({
               send(body);
             }
           }}
-          onUndo={() => {
-            const syncstring = syncstringRef.current;
-            if (syncstring != null) {
-              if (syncstring.undo_state == null) {
-                const value = getValueRef.current?.();
-                if (value != null && value != syncstring.to_str()) {
-                  syncstring.from_str(value);
-                  syncstring.save();
-                }
-              }
-              syncstring.undo();
-              setBody(syncstring.to_str());
-            }
-          }}
-          onRedo={() => {
-            const syncstring = syncstringRef.current;
-            if (syncstring != null) {
-              if (syncstring.undo_state == null) {
-                const value = getValueRef.current?.();
-                if (value != null && value != syncstring.to_str()) {
-                  syncstring.from_str(value);
-                  syncstring.save();
-                }
-              }
-              syncstring.redo();
-              setBody(syncstring.to_str());
-            }
-          }}
+          undoMode="local"
+          redoMode="local"
         />
       )}
       <div>
