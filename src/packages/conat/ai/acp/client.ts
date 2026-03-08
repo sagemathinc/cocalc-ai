@@ -2,12 +2,19 @@ import { conat } from "@cocalc/conat/client";
 import type { Client } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
+  AcpControlRequest,
+  AcpControlResponse,
   AcpForkSessionRequest,
   AcpInterruptRequest,
   AcpRequest,
   AcpStreamMessage,
 } from "./types";
-import { acpForkSubject, acpInterruptSubject, acpSubject } from "./server";
+import {
+  acpControlSubject,
+  acpForkSubject,
+  acpInterruptSubject,
+  acpSubject,
+} from "./server";
 
 interface StreamOptions {
   timeout?: number;
@@ -115,4 +122,24 @@ export async function forkAcpSession(
     throw Error("invalid sessionId returned from fork");
   }
   return { sessionId };
+}
+
+export async function controlAcp(
+  request: AcpControlRequest,
+  client?: Client,
+): Promise<AcpControlResponse> {
+  if (!isValidUUID(request.project_id)) {
+    throw Error("project_id must be a valid uuid");
+  }
+  if (!isValidUUID(request.account_id)) {
+    throw Error("account_id must be a valid uuid");
+  }
+  const subject = acpControlSubject({ project_id: request.project_id });
+  const cn = client ?? (await conat());
+  const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
+  const error = resp?.data?.error;
+  if (error) {
+    throw Error(error);
+  }
+  return (resp?.data ?? { ok: false, state: "missing" }) as AcpControlResponse;
 }

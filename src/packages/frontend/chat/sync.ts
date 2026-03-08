@@ -2,6 +2,7 @@ import { Map as iMap, fromJS } from "immutable";
 import { normalizeChatMessage } from "./normalize";
 
 const THREAD_STATE_EVENT = "chat-thread-state";
+const CHAT_EVENT = "chat";
 
 function threadStateToAcpState(state: unknown): string | undefined {
   switch (state) {
@@ -26,6 +27,28 @@ function threadStateActiveMessageKey(record: any): string | undefined {
   return `message:${messageId}`;
 }
 
+function chatRowToAcpState(state: unknown): string | undefined {
+  switch (state) {
+    case "queued":
+      return "queue";
+    default:
+      return undefined;
+  }
+}
+
+function chatMessageKey(record: any): string | undefined {
+  const messageId = (record as any)?.message_id;
+  if (typeof messageId !== "string" || messageId.length === 0) return undefined;
+  return `message:${messageId}`;
+}
+
+function applyChatRowAcpState(acpState: any, record: any): any {
+  const mapped = chatRowToAcpState((record as any)?.acp_state);
+  const byMessageId = chatMessageKey(record);
+  if (!byMessageId) return acpState;
+  return mapped ? acpState.set(byMessageId, mapped) : acpState.delete(byMessageId);
+}
+
 export function initFromSyncDB({
   syncdb,
   store,
@@ -38,24 +61,29 @@ export function initFromSyncDB({
   if (!Array.isArray(rows)) return;
   let acpState = store.get("acpState") ?? iMap();
   for (const row of rows) {
-    if ((row as any)?.event !== THREAD_STATE_EVENT) continue;
-    const mapped = threadStateToAcpState((row as any)?.state);
-    const byThreadId = threadStateKey(row);
-    const byMessageId = threadStateActiveMessageKey(row);
-    if (mapped) {
-      if (byThreadId) {
-        acpState = acpState.set(byThreadId, mapped);
+    if ((row as any)?.event === THREAD_STATE_EVENT) {
+      const mapped = threadStateToAcpState((row as any)?.state);
+      const byThreadId = threadStateKey(row);
+      const byMessageId = threadStateActiveMessageKey(row);
+      if (mapped) {
+        if (byThreadId) {
+          acpState = acpState.set(byThreadId, mapped);
+        }
+        if (byMessageId) {
+          acpState = acpState.set(byMessageId, mapped);
+        }
+      } else {
+        if (byThreadId) {
+          acpState = acpState.delete(byThreadId);
+        }
+        if (byMessageId) {
+          acpState = acpState.delete(byMessageId);
+        }
       }
-      if (byMessageId) {
-        acpState = acpState.set(byMessageId, mapped);
-      }
-    } else {
-      if (byThreadId) {
-        acpState = acpState.delete(byThreadId);
-      }
-      if (byMessageId) {
-        acpState = acpState.delete(byMessageId);
-      }
+      continue;
+    }
+    if ((row as any)?.event === CHAT_EVENT) {
+      acpState = applyChatRowAcpState(acpState, row);
     }
   }
   store.setState({ acpState });
@@ -106,20 +134,28 @@ export function handleSyncDBChange({
       continue;
     }
 
-    if (event === "chat") {
+    if (event === CHAT_EVENT) {
       const record = syncdb.get_one(where);
       if (!record) continue;
       const { message } = normalizeChatMessage(record);
-      if (!activityReady || !message) continue;
+      let acpState = store.get("acpState") ?? iMap();
+      acpState = applyChatRowAcpState(acpState, record);
+      if (!activityReady || !message) {
+        store.setState({ acpState });
+        continue;
+      }
       const threadId =
         typeof (message as any)?.thread_id === "string"
           ? `${(message as any).thread_id}`.trim()
           : "";
-      if (!threadId) continue;
+      if (!threadId) {
+        store.setState({ acpState });
+        continue;
+      }
       const key = threadId;
       const now = Date.now();
       const activity = (store.get("activity") ?? iMap()).set(key, now);
-      store.setState({ activity });
+      store.setState({ activity, acpState });
       continue;
     }
 

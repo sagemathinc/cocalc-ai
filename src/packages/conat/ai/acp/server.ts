@@ -3,6 +3,8 @@ import type { Subscription } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
+  AcpControlRequest,
+  AcpControlResponse,
   AcpForkSessionRequest,
   AcpInterruptRequest,
   AcpRequest,
@@ -55,6 +57,13 @@ export function acpForkSubject(opts: {
   return `${buildSubjectPrefix(opts)}.fork`;
 }
 
+export function acpControlSubject(opts: {
+  account_id?: string;
+  project_id?: string;
+}): string {
+  return `${buildSubjectPrefix(opts)}.control`;
+}
+
 function getProjectId(subject: string): string | undefined {
   if (subject.startsWith(`${SUBJECT}.project-`)) {
     const id = subject.slice(
@@ -71,6 +80,7 @@ function getProjectId(subject: string): string | undefined {
 let apiSub: Subscription | null = null;
 let interruptSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
+let controlSub: Subscription | null = null;
 const MAX_CONCURRENCY = Number(process.env.COCALC_ACP_MAX_CONCURRENCY ?? 64);
 const limiter = pLimit(MAX_CONCURRENCY);
 const inFlightChatTurnKeys = new Map<
@@ -105,12 +115,16 @@ type InterruptHandler = (options: AcpInterruptRequest) => Promise<void>;
 type ForkHandler = (
   options: AcpForkSessionRequest,
 ) => Promise<{ sessionId: string }>;
+type ControlHandler = (
+  options: AcpControlRequest,
+) => Promise<AcpControlResponse>;
 
 export async function init(
   handlers: {
     evaluate: EvaluateHandler;
     interrupt?: InterruptHandler;
     forkSession?: ForkHandler;
+    control?: ControlHandler;
   },
   client,
 ): Promise<void> {
@@ -129,6 +143,12 @@ export async function init(
     });
     listenForks(handlers.forkSession);
   }
+  if (handlers.control) {
+    controlSub = await client.subscribe(`${SUBJECT}.*.control`, {
+      queue: "acp-control-q",
+    });
+    listenControls(handlers.control);
+  }
 }
 
 export async function close(): Promise<void> {
@@ -143,6 +163,10 @@ export async function close(): Promise<void> {
   if (forkSub != null) {
     forkSub.close();
     forkSub = null;
+  }
+  if (controlSub != null) {
+    controlSub.close();
+    controlSub = null;
   }
 }
 
@@ -178,6 +202,19 @@ function listenForks(forkHandler: ForkHandler): void {
     }
   })().catch((err) => {
     logger.warn("acp fork listener stopped", err);
+  });
+}
+
+function listenControls(controlHandler: ControlHandler): void {
+  if (controlSub == null) return;
+  (async () => {
+    for await (const mesg of controlSub!) {
+      void runLimited("control", () =>
+        handleControlMessage(mesg, controlHandler),
+      );
+    }
+  })().catch((err) => {
+    logger.warn("acp control listener stopped", err);
   });
 }
 
@@ -239,49 +276,51 @@ async function handleMessage(mesg, evaluate: EvaluateHandler) {
     // avoid trusting client-provided IDs. Ensure any provided project_id
     // matches what was derived.
     validateOptions(options, mesg.subject);
-    activeChatTurnKey = chatTurnKey(options);
-    if (activeChatTurnKey != null) {
-      const existing = inFlightChatTurnKeys.get(activeChatTurnKey);
-      if (existing != null) {
-        logger.warn(
-          "duplicate acp evaluate request rejected while turn is in-flight",
-          {
-            chatTurnKey: activeChatTurnKey,
-            subject: mesg.subject,
-            existingSubject: existing.subject,
-            inFlightMs: Date.now() - existing.startedAt,
-          },
-        );
-        throw Error(
-          "duplicate acp evaluate request for this chat turn while it is already running",
-        );
+    if (!options.chat) {
+      activeChatTurnKey = chatTurnKey(options);
+      if (activeChatTurnKey != null) {
+        const existing = inFlightChatTurnKeys.get(activeChatTurnKey);
+        if (existing != null) {
+          logger.warn(
+            "duplicate acp evaluate request rejected while turn is in-flight",
+            {
+              chatTurnKey: activeChatTurnKey,
+              subject: mesg.subject,
+              existingSubject: existing.subject,
+              inFlightMs: Date.now() - existing.startedAt,
+            },
+          );
+          throw Error(
+            "duplicate acp evaluate request for this chat turn while it is already running",
+          );
+        }
+        inFlightChatTurnKeys.set(activeChatTurnKey, {
+          startedAt: Date.now(),
+          subject: mesg.subject,
+        });
       }
-      inFlightChatTurnKeys.set(activeChatTurnKey, {
-        startedAt: Date.now(),
-        subject: mesg.subject,
-      });
-    }
-    activeSessionTurnKey = sessionTurnKey(options);
-    if (activeSessionTurnKey != null) {
-      const existing = inFlightSessionTurnKeys.get(activeSessionTurnKey);
-      if (existing != null) {
-        logger.warn(
-          "duplicate acp evaluate request rejected while session turn is in-flight",
-          {
-            sessionTurnKey: activeSessionTurnKey,
-            subject: mesg.subject,
-            existingSubject: existing.subject,
-            inFlightMs: Date.now() - existing.startedAt,
-          },
-        );
-        throw Error(
-          "ACP agent is already processing a request for this session",
-        );
+      activeSessionTurnKey = sessionTurnKey(options);
+      if (activeSessionTurnKey != null) {
+        const existing = inFlightSessionTurnKeys.get(activeSessionTurnKey);
+        if (existing != null) {
+          logger.warn(
+            "duplicate acp evaluate request rejected while session turn is in-flight",
+            {
+              sessionTurnKey: activeSessionTurnKey,
+              subject: mesg.subject,
+              existingSubject: existing.subject,
+              inFlightMs: Date.now() - existing.startedAt,
+            },
+          );
+          throw Error(
+            "ACP agent is already processing a request for this session",
+          );
+        }
+        inFlightSessionTurnKeys.set(activeSessionTurnKey, {
+          startedAt: Date.now(),
+          subject: mesg.subject,
+        });
       }
-      inFlightSessionTurnKeys.set(activeSessionTurnKey, {
-        startedAt: Date.now(),
-        subject: mesg.subject,
-      });
     }
 
     await evaluate({
@@ -384,6 +423,28 @@ async function handleForkMessage(
   try {
     validateOptions(options, mesg.subject);
     const result = await forkSession(options);
+    await respond(result);
+  } catch (err) {
+    await respond(undefined, `${err}`);
+  }
+}
+
+async function handleControlMessage(
+  mesg,
+  control: ControlHandler,
+): Promise<void> {
+  const options = mesg.data ?? {};
+  const respond = async (payload?: any, error?: string) => {
+    const data: any = payload ?? {};
+    if (error) {
+      data.error = error;
+    }
+    await mesg.respond(data, { noThrow: true });
+  };
+
+  try {
+    validateOptions(options, mesg.subject);
+    const result = await control(options);
     await respond(result);
   } catch (err) {
     await respond(undefined, `${err}`);

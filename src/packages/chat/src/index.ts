@@ -98,6 +98,7 @@ export interface ChatMessage {
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
+  acp_state?: "queued" | null;
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
