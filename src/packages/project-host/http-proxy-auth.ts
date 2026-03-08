@@ -189,29 +189,29 @@ function isSecureRequest(req: IncomingMessage): boolean {
 
 function readBearerToken(
   req: IncomingMessage,
-): { token?: string; fromQuery: boolean } {
+): { token?: string; source?: "header" | "cookie" | "query" } {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string") {
     const m = authHeader.match(/^Bearer\s+(.+)$/i);
     if (m?.[1]) {
-      return { token: m[1].trim(), fromQuery: false };
+      return { token: m[1].trim(), source: "header" };
     }
   }
   const cookies = parseCookies(req.headers.cookie as string | undefined);
   const cookieToken = `${cookies[PROJECT_HOST_HTTP_AUTH_COOKIE_NAME] ?? ""}`.trim();
   if (cookieToken) {
-    return { token: cookieToken, fromQuery: false };
+    return { token: cookieToken, source: "cookie" };
   }
   try {
     const u = new URL(req.url ?? "/", "http://project-host.local");
     const queryToken = `${u.searchParams.get(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM) ?? ""}`.trim();
     if (queryToken) {
-      return { token: queryToken, fromQuery: true };
+      return { token: queryToken, source: "query" };
     }
   } catch {
     // ignore malformed URL and fall through.
   }
-  return { token: undefined, fromQuery: false };
+  return { token: undefined, source: undefined };
 }
 
 function stripQueryToken(req: IncomingMessage): void {
@@ -423,7 +423,7 @@ export function createProjectHostHttpProxyAuth({
       });
       return;
     }
-    const { token, fromQuery } = readBearerToken(req);
+    const { token, source } = readBearerToken(req);
     if (!token) {
       const allowedPublic = await authorizePublicAppPath({
         project_id,
@@ -448,8 +448,11 @@ export function createProjectHostHttpProxyAuth({
       account_id,
       issued_at_s: claims.iat,
     });
+    if (source === "header") {
+      delete req.headers.authorization;
+    }
     setSessionCookie(req, res, account_id, project_id);
-    if (fromQuery) {
+    if (source === "query") {
       // Clean the browser URL and avoid forwarding a bearer query parameter.
       const cleaned = urlWithoutQueryToken(req);
       if (cleaned && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
@@ -483,7 +486,7 @@ export function createProjectHostHttpProxyAuth({
       setAuthContext(req, context);
       return context;
     }
-    const { token } = readBearerToken(req);
+    const { token, source } = readBearerToken(req);
     if (!token) {
       const allowedPublic = await authorizePublicAppPath({
         project_id,
@@ -510,6 +513,9 @@ export function createProjectHostHttpProxyAuth({
       issued_at_s: claims.iat,
     };
     setAuthContext(req, context);
+    if (source === "header") {
+      delete req.headers.authorization;
+    }
     return context;
   };
 
