@@ -8,6 +8,7 @@ import type {
   Mode,
   RichTextSelectionBridgeControl,
   SelectionController,
+  SubscribeSelectionReady,
 } from "./types";
 
 interface PendingSelection {
@@ -32,14 +33,57 @@ export function useMultimodeSelection({
 }: UseMultimodeSelectionOptions) {
   const selectionRef = useRef<SelectionController | null>(null);
   const pendingModeSelectionRef = useRef<PendingSelection | null>(null);
+  const modeSwitchSelectionRef = useRef<MarkdownPosition | null>(null);
+  const markdownReadyListenersRef = useRef<Set<() => void>>(new Set());
+  const richTextReadyListenersRef = useRef<Set<() => void>>(new Set());
+
+  const subscribeMarkdownReady: SubscribeSelectionReady = (callback) => {
+    markdownReadyListenersRef.current.add(callback);
+    return () => {
+      markdownReadyListenersRef.current.delete(callback);
+    };
+  };
+
+  const subscribeRichTextReady: SubscribeSelectionReady = (callback) => {
+    richTextReadyListenersRef.current.add(callback);
+    return () => {
+      richTextReadyListenersRef.current.delete(callback);
+    };
+  };
+
+  function emitReady(listeners: Set<() => void>) {
+    for (const listener of Array.from(listeners)) {
+      listener();
+    }
+  }
 
   function applyMarkdownSelection(pos: MarkdownPosition) {
     const selection = selectionRef.current;
     if (selection?.setSelection == null) {
       return false;
     }
+    selection.focus?.();
     selection.setSelection([{ anchor: pos, head: pos }]);
     return true;
+  }
+
+  function getMarkdownPositionForActiveSelection(): MarkdownPosition | null {
+    if (mode === "editor") {
+      return richTextControlRef.current?.getMarkdownPositionForSelection?.() ?? null;
+    }
+    const selection = selectionRef.current?.getSelection?.();
+    const primary =
+      (Array.isArray(selection) ? selection[0] : selection) ??
+      null;
+    const point = primary?.head ?? primary?.anchor ?? null;
+    if (
+      point == null ||
+      typeof point.line !== "number" ||
+      typeof point.ch !== "number"
+    ) {
+      return null;
+    }
+    return { line: point.line, ch: point.ch };
   }
 
   useEffect(() => {
@@ -51,6 +95,7 @@ export function useMultimodeSelection({
       return retrySelectionApply({
         isReady: () =>
           richTextControlRef.current?.isSelectionReady?.() ?? true,
+        subscribeReady: subscribeRichTextReady,
         apply: () => {
           const applied =
             richTextControlRef.current?.setSelectionFromMarkdownPosition?.(
@@ -65,6 +110,7 @@ export function useMultimodeSelection({
     }
     return retrySelectionApply({
       isReady: () => selectionRef.current?.isSelectionReady?.() ?? true,
+      subscribeReady: subscribeMarkdownReady,
       apply: () => {
         const applied = applyMarkdownSelection(pending.pos);
         if (applied) {
@@ -81,10 +127,12 @@ export function useMultimodeSelection({
     }
     let cancelRestore = () => {};
     const cachedSelection = getCachedSelection();
-    if (cachedSelection != null && selectionRef.current != null) {
+    if (cachedSelection != null) {
       cancelRestore = restoreSelectionWithRetry({
         getController: () => selectionRef.current,
         selection: cachedSelection,
+        subscribeReady:
+          mode === "editor" ? subscribeRichTextReady : subscribeMarkdownReady,
       });
     }
     return () => {
@@ -101,8 +149,27 @@ export function useMultimodeSelection({
     rememberPendingSelection: (to: Mode, pos: MarkdownPosition) => {
       pendingModeSelectionRef.current = { to, pos };
     },
+    captureModeSwitchSelection: () => {
+      modeSwitchSelectionRef.current = getMarkdownPositionForActiveSelection();
+    },
+    clearModeSwitchSelection: () => {
+      modeSwitchSelectionRef.current = null;
+    },
+    rememberSelectionForModeSwitch: (to: Mode) => {
+      const pos = modeSwitchSelectionRef.current ?? getMarkdownPositionForActiveSelection();
+      modeSwitchSelectionRef.current = null;
+      if (pos != null) {
+        pendingModeSelectionRef.current = { to, pos };
+      }
+    },
     getMarkdownPositionForSelection: () => {
       return richTextControlRef.current?.getMarkdownPositionForSelection?.();
+    },
+    notifyMarkdownSelectionReady: () => {
+      emitReady(markdownReadyListenersRef.current);
+    },
+    notifyRichTextSelectionReady: () => {
+      emitReady(richTextReadyListenersRef.current);
     },
   };
 }

@@ -79,6 +79,7 @@ interface Props {
   onEscape?: () => void;
   onBlur?: (value: string) => void;
   onFocus?: () => void;
+  onSelectionReady?: () => void;
   isFocused?: boolean; // see docs in multimode.tsx
   placeholder?: string;
   height?: string;
@@ -138,6 +139,7 @@ export function MarkdownInput(props: Props) {
     onCursorTop,
     onEscape,
     onFocus,
+    onSelectionReady,
     onAltEnter,
     onRedo,
     onSave,
@@ -200,6 +202,14 @@ export function MarkdownInput(props: Props) {
   } | undefined>(undefined);
 
   const mentionableUsers = useMentionableUsers();
+  const onSelectionReadyRef = useRef<typeof onSelectionReady>(onSelectionReady);
+  onSelectionReadyRef.current = onSelectionReady;
+
+  const emitSelectionReady = useCallback(() => {
+    queueMicrotask(() => {
+      onSelectionReadyRef.current?.();
+    });
+  }, []);
 
   const parseHeightPx = (value?: string): number | null => {
     if (!value) return null;
@@ -558,8 +568,16 @@ export function MarkdownInput(props: Props) {
         getSelection: () => {
           return cm.current?.listSelections();
         },
+        focus: () => {
+          if (cm.current == null) {
+            return false;
+          }
+          cm.current.focus();
+          return true;
+        },
       };
     }
+    emitSelectionReady();
 
     if (registerEditor != null) {
       registerEditor({
@@ -709,10 +727,11 @@ export function MarkdownInput(props: Props) {
         },
       });
     }
+    emitSelectionReady();
     if (upload_close_preview_ref.current != null) {
       upload_close_preview_ref.current(true);
     }
-  }, [value, setValueNoJump, saveValue]);
+  }, [value, setValueNoJump, saveValue, emitSelectionReady]);
 
   function upload_sending(file: { name: string }): void {
     if (project_id == null || path == null) {

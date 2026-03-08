@@ -129,7 +129,11 @@ describe("MultiMarkdownInput wrapper contract", () => {
   it("switches from markdown to rich text and reapplies the markdown cursor position", () => {
     const onChange = jest.fn();
     const setSelectionFromMarkdownPosition = jest.fn(() => true);
-    editableControlApi = { setSelectionFromMarkdownPosition };
+    let editorReady = false;
+    editableControlApi = {
+      setSelectionFromMarkdownPosition,
+      isSelectionReady: jest.fn(() => editorReady),
+    };
 
     render(
       <MultiMarkdownInput
@@ -147,9 +151,11 @@ describe("MultiMarkdownInput wrapper contract", () => {
 
     expect(onChange).toHaveBeenCalledWith("updated markdown");
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
+    expect(setSelectionFromMarkdownPosition).not.toHaveBeenCalled();
 
+    editorReady = true;
     act(() => {
-      jest.runOnlyPendingTimers();
+      latestEditableProps.onSelectionReady();
     });
 
     expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
@@ -161,9 +167,11 @@ describe("MultiMarkdownInput wrapper contract", () => {
   it("switches from rich text to markdown and restores the mapped cursor position", () => {
     const onChange = jest.fn();
     const setSelection = jest.fn();
+    let markdownReady = false;
     markdownSelectionApi = {
       setSelection,
       getSelection: jest.fn(() => null),
+      isSelectionReady: jest.fn(() => markdownReady),
     };
     editableControlApi = {
       getMarkdownPositionForSelection: jest.fn(() => ({ line: 5, ch: 1 })),
@@ -179,15 +187,83 @@ describe("MultiMarkdownInput wrapper contract", () => {
 
     expect(onChange).toHaveBeenCalledWith("plain markdown");
     expect(screen.queryByTestId("markdown-input")).not.toBeNull();
+    expect(setSelection).not.toHaveBeenCalled();
 
+    markdownReady = true;
     act(() => {
-      jest.runOnlyPendingTimers();
+      latestMarkdownProps.onSelectionReady();
     });
 
     expect(setSelection).toHaveBeenCalledWith([
       {
         anchor: { line: 5, ch: 1 },
         head: { line: 5, ch: 1 },
+      },
+    ]);
+  });
+
+  it("mode switch from markdown to rich text preserves the markdown cursor position", () => {
+    const setSelectionFromMarkdownPosition = jest.fn(() => true);
+    let editorReady = false;
+    markdownSelectionApi = {
+      setSelection: jest.fn(),
+      getSelection: jest.fn(() => [
+        {
+          anchor: { line: 2, ch: 4 },
+          head: { line: 2, ch: 4 },
+        },
+      ]),
+    };
+    editableControlApi = {
+      setSelectionFromMarkdownPosition,
+      isSelectionReady: jest.fn(() => editorReady),
+    };
+
+    render(<MultiMarkdownInput value="" onChange={() => {}} defaultMode="markdown" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "editor" }));
+    expect(setSelectionFromMarkdownPosition).not.toHaveBeenCalled();
+
+    editorReady = true;
+    act(() => {
+      latestEditableProps.onSelectionReady();
+    });
+
+    expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
+      line: 2,
+      ch: 4,
+    });
+  });
+
+  it("mode switch from rich text to markdown preserves focusable cursor state", () => {
+    const setSelection = jest.fn();
+    const focus = jest.fn(() => true);
+    let markdownReady = false;
+    markdownSelectionApi = {
+      setSelection,
+      getSelection: jest.fn(() => null),
+      focus,
+      isSelectionReady: jest.fn(() => markdownReady),
+    };
+    editableControlApi = {
+      getMarkdownPositionForSelection: jest.fn(() => ({ line: 4, ch: 2 })),
+    };
+
+    render(<MultiMarkdownInput value="" onChange={() => {}} defaultMode="editor" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "markdown" }));
+    expect(setSelection).not.toHaveBeenCalled();
+
+    markdownReady = true;
+    act(() => {
+      latestMarkdownProps.onSelectionReady();
+    });
+
+    expect(focus).toHaveBeenCalled();
+    expect(setSelection).toHaveBeenCalledWith([
+      {
+        anchor: { line: 4, ch: 2 },
+        head: { line: 4, ch: 2 },
       },
     ]);
   });

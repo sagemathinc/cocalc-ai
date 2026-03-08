@@ -271,6 +271,7 @@ interface Props {
   editBarStyle?: CSS;
   onFocus?: () => void;
   onBlur?: () => void;
+  onSelectionReady?: () => void;
   autoFocus?: boolean;
   hideSearch?: boolean;
   saveDebounceMs?: number;
@@ -341,6 +342,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     onCursorBottom,
     onCursorTop,
     onFocus,
+    onSelectionReady,
     pageStyle,
     placeholder,
     read_only,
@@ -499,6 +501,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         getSelection: () => {
           return ed.selection;
         },
+        focus: () => focusSlateEditorSafely(ed),
       };
     }
 
@@ -942,6 +945,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const internalScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = scrollDivRef ?? internalScrollRef;
+  const selectionReadyFrameRef = useRef<number | null>(null);
+  const scheduleSelectionReady = useCallback(() => {
+    if (onSelectionReady == null || typeof window === "undefined") {
+      return;
+    }
+    if (selectionReadyFrameRef.current != null) {
+      window.cancelAnimationFrame(selectionReadyFrameRef.current);
+    }
+    selectionReadyFrameRef.current = window.requestAnimationFrame(() => {
+      selectionReadyFrameRef.current = null;
+      onSelectionReady();
+    });
+  }, [onSelectionReady]);
   const restoreEditableDomSelectionAtStart = useCallback(() => {
     if (typeof window === "undefined") return false;
     const container = scrollRef.current;
@@ -967,6 +983,22 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return true;
   }, [scrollRef]);
   const didRestoreScrollRef = useRef<boolean>(false);
+  useEffect(() => {
+    return () => {
+      if (
+        selectionReadyFrameRef.current != null &&
+        typeof window !== "undefined"
+      ) {
+        window.cancelAnimationFrame(selectionReadyFrameRef.current);
+        selectionReadyFrameRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    scheduleSelectionReady();
+  }, [scheduleSelectionReady, value, value_slate]);
+
   const restoreScroll = useMemo(() => {
     return async () => {
       if (didRestoreScrollRef.current) return; // so we only ever do this once.

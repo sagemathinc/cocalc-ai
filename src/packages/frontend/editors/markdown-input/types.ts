@@ -23,7 +23,13 @@ export interface SelectionController {
   setSelection: (selection: any) => void;
   getSelection: () => any;
   isSelectionReady?: () => boolean;
+  focus?: () => boolean;
 }
+
+export type SelectionReadyCallback = () => void;
+export type SubscribeSelectionReady = (
+  callback: SelectionReadyCallback,
+) => () => void;
 
 export interface RichTextSelectionBridgeControl {
   getMarkdownPositionForSelection?: () => MarkdownPosition | null | undefined;
