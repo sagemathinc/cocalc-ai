@@ -9,6 +9,7 @@
 
 import {
   CSSProperties,
+  MutableRefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -22,6 +23,7 @@ import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { lite } from "@cocalc/frontend/lite";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
+import { shouldIgnoreSentEcho, type SentEchoGuard } from "./send-echo-guard";
 import { SubmitMentionsRef } from "./types";
 
 interface Props {
@@ -49,6 +51,11 @@ interface Props {
   sessionToken?: number;
   fixedMode?: "markdown" | "editor";
   externalMultilinePasteAsCodeBlock?: boolean;
+  inputControlRef?: MutableRefObject<ChatInputControl | null>;
+}
+
+export interface ChatInputControl {
+  focus: () => boolean;
 }
 
 type HistoryEntry = {
@@ -90,12 +97,17 @@ export default function ChatInput({
   sessionToken,
   fixedMode,
   externalMultilinePasteAsCodeBlock,
+  inputControlRef,
 }: Props) {
   const intl = useIntl();
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
   const mountedRef = useRef<boolean>(true);
   const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
+  const previousSessionTokenRef = useRef<number | undefined>(sessionToken);
+  const currentInputRef = useRef<string>(propsInput ?? "");
+  const previousPropsInputRef = useRef<string>(propsInput ?? "");
+  const sentEchoGuardRef = useRef<SentEchoGuard>(null);
   const historyRef = useRef<HistoryEntry[]>([
     { value: propsInput ?? "", at: Date.now() },
   ]);
@@ -112,6 +124,10 @@ export default function ChatInput({
   useEffect(() => {
     currentSessionTokenRef.current = sessionToken;
   }, [sessionToken]);
+
+  useEffect(() => {
+    currentInputRef.current = input;
+  }, [input]);
 
   const isStaleSessionCallback = useCallback(
     (token?: number): boolean => {
@@ -204,8 +220,55 @@ export default function ChatInput({
     applyingHistoryRef.current = false;
   };
 
+  const focusInput = useCallback((): boolean => {
+    const control = controlRef.current;
+    control?.allowNextValueUpdateWhileFocused?.();
+    if (typeof control?.focus === "function") {
+      return control.focus() !== false;
+    }
+    return (
+      control?.setSelectionFromMarkdownPosition?.(
+        markdownEndPosition(currentInputRef.current ?? ""),
+      ) ?? false
+    );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const previousSessionToken = previousSessionTokenRef.current;
+    const previousPropsInput = previousPropsInputRef.current ?? "";
+    previousSessionTokenRef.current = sessionToken;
+    previousPropsInputRef.current = propsInput ?? "";
+    if (sessionToken == null || previousSessionToken == null) return;
+    if (sessionToken === previousSessionToken) return;
+    if ((propsInput ?? "").length > 0) return;
+    if (previousPropsInput.trim().length === 0) return;
+    sentEchoGuardRef.current = {
+      raw: previousPropsInput,
+      trimmed: previousPropsInput.trim(),
+      active: true,
+    };
+    const id = window.setTimeout(() => {
+      focusInput();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [focusInput, propsInput, sessionToken]);
+
+  useEffect(() => {
+    if (inputControlRef == null) return;
+    inputControlRef.current = {
+      focus: focusInput,
+    };
+    return () => {
+      if (inputControlRef.current?.focus === focusInput) {
+        inputControlRef.current = null;
+      }
+    };
+  }, [focusInput, inputControlRef]);
+
   return (
     <MarkdownInput
+      key={`chat-input-session-${sessionToken ?? "default"}`}
       fixedMode={fixedMode}
       slateExternalMultilinePasteAsCodeBlock={
         externalMultilinePasteAsCodeBlock
@@ -229,7 +292,21 @@ export default function ChatInput({
       onChange={(value) => {
         if (!mountedRef.current) return;
         if (isStaleSessionCallback(sessionToken)) {
-          return;
+          const currentInputValue = currentInputRef.current ?? "";
+          const suppress = sentEchoGuardRef.current;
+          if (
+            shouldIgnoreSentEcho({
+              suppress,
+              incoming: value,
+              currentInput: currentInputValue,
+            })
+          ) {
+            return;
+          }
+          if (!suppress?.active || currentInputValue.trim() !== "") {
+            return;
+          }
+          sentEchoGuardRef.current = null;
         }
         if (value === input) {
           if (!applyingHistoryRef.current) {
@@ -245,6 +322,7 @@ export default function ChatInput({
           return;
         }
         setInput(value);
+        sentEchoGuardRef.current = null;
         onChange(value, sessionToken);
         savePresence(value);
         if (applyingHistoryRef.current) return;

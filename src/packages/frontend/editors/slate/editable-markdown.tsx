@@ -166,6 +166,33 @@ export function handleEditableMarkdownProjectNavigationKeydown({
   return command;
 }
 
+function focusSlateEditorSafely(editor: SlateEditor): boolean {
+  try {
+    if (editor.selection != null) {
+      const safe = ensureRange(editor, editor.selection);
+      Transforms.setSelection(editor, safe);
+    } else {
+      resetSelection(editor);
+    }
+  } catch {
+    resetSelection(editor);
+  }
+  ReactEditor.focus(editor);
+  if (typeof window !== "undefined" && editor.selection != null) {
+    const domSelection = window.getSelection?.();
+    if (domSelection != null && domSelection.rangeCount === 0) {
+      try {
+        const domRange = ReactEditor.toDOMRange(editor, editor.selection);
+        domSelection.removeAllRanges();
+        domSelection.addRange(domRange);
+      } catch {
+        // ignore; DOM may not be ready yet for the current Slate selection
+      }
+    }
+  }
+  return true;
+}
+
 // Whether or not to use windowing by default (=only rendering visible elements).
 // This is unfortunately essential.  I've tried everything I can think
 // of to optimize slate without using windowing, and I just can't do it
@@ -492,6 +519,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         getSelection: () => ed.selection ?? null,
         getValue: () => ed.children,
         moveCursorToEndOfLine: () => control.moveCursorToEndOfLine(ed),
+        focus: () => focusSlateEditorSafely(ed),
         allowNextValueUpdateWhileFocused: () => {
           allowFocusedValueUpdateRef.current = true;
         },
@@ -700,12 +728,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (isFocused == null) return;
     if (ReactEditor.isFocused(editor) != isFocused) {
       if (isFocused) {
-        ReactEditor.focus(editor);
+        focusSlateEditorSafely(editor);
       } else {
         ReactEditor.blur(editor);
       }
     }
-  }, [isFocused]);
+  }, [editor, isFocused]);
 
   const [editorValue, setEditorValue] = useState<Descendant[]>(() => {
     const doc =
@@ -914,6 +942,30 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const internalScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = scrollDivRef ?? internalScrollRef;
+  const restoreEditableDomSelectionAtStart = useCallback(() => {
+    if (typeof window === "undefined") return false;
+    const container = scrollRef.current;
+    const target =
+      container?.matches?.("[data-slate-editor='true']")
+        ? container
+        : container?.querySelector<HTMLElement>("[data-slate-editor='true']");
+    if (target == null) return false;
+    target.focus?.({ preventScroll: true } as FocusOptions);
+    const selection = window.getSelection?.();
+    if (selection == null) return false;
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    const firstTextNode = walker.nextNode();
+    const range = document.createRange();
+    if (firstTextNode != null) {
+      range.setStart(firstTextNode, 0);
+    } else {
+      range.selectNodeContents(target);
+    }
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }, [scrollRef]);
   const didRestoreScrollRef = useRef<boolean>(false);
   const restoreScroll = useMemo(() => {
     return async () => {
@@ -2018,6 +2070,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           // we want all the change handler stuff to happen, e.g.,
           // broadcasting cursors.
           onChange(nextEditorValue);
+          if (forceDirectSetForClear) {
+            if (isFocused || ReactEditor.isFocused(editor)) {
+              window.setTimeout(() => {
+                if (!isMountedRef.current) return;
+                try {
+                  const start = { path: [0, 0], offset: 0 };
+                  Transforms.select(editor, { anchor: start, focus: start });
+                } catch {
+                  resetSelection(editor);
+                }
+                focusSlateEditorSafely(editor);
+                restoreEditableDomSelectionAtStart();
+              }, 0);
+            }
+          }
           // console.log("time to set directly ", new Date() - t);
         } else if (!blockPatchApplied) {
           // Applying this operation below will trigger

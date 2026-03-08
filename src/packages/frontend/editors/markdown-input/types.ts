@@ -29,6 +29,7 @@ export interface RichTextSelectionBridgeControl {
   getMarkdownPositionForSelection?: () => MarkdownPosition | null | undefined;
   setSelectionFromMarkdownPosition?: (pos: MarkdownPosition) => boolean;
   isSelectionReady?: () => boolean;
+  focus?: () => boolean;
 }
 
 export type UndoMode = "auto" | "local" | "external";
