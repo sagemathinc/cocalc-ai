@@ -31,6 +31,8 @@ export interface RichTextSelectionBridgeControl {
   isSelectionReady?: () => boolean;
 }
 
+export type UndoMode = "auto" | "local" | "external";
+
 export interface MultiMarkdownInputProps {
   cacheId?: string;
   value?: string;
@@ -68,6 +70,8 @@ export interface MultiMarkdownInputProps {
   cmOptions?: { [key: string]: any };
   onUndo?: () => void;
   onRedo?: () => void;
+  undoMode?: UndoMode;
+  redoMode?: UndoMode;
   onSave?: () => void;
   compact?: boolean;
   onCursorTop?: () => void;

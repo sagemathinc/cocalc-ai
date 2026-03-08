@@ -2,10 +2,12 @@ import type { Map as ImmutableMap } from "immutable";
 import type { MutableRefObject, ReactNode, RefObject } from "react";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
 import { MarkdownInput } from "./component";
+import { resolveUndoHandler } from "./undo-policy";
 import type {
   EditorFunctions,
   MarkdownPosition,
   SelectionController,
+  UndoMode,
 } from "./types";
 
 const MIN_INPUT_HEIGHT = 38;
@@ -42,6 +44,8 @@ interface MarkdownTextAdapterProps {
   onSave?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  undoMode?: UndoMode;
+  redoMode?: UndoMode;
   onCursors?: (cursors: { x: number; y: number }[]) => void;
   cursors?: ImmutableMap<string, any>;
   onCursorTop?: () => void;
@@ -85,6 +89,8 @@ export function MarkdownTextAdapter({
   onSave,
   onUndo,
   onRedo,
+  undoMode,
+  redoMode,
   onCursors,
   cursors,
   onCursorTop,
@@ -128,6 +134,8 @@ export function MarkdownTextAdapter({
       onSave={onSave}
       onUndo={onUndo}
       onRedo={onRedo}
+      undoMode={undoMode}
+      redoMode={redoMode}
       onCursors={onCursors}
       cursors={cursors}
       onCursorTop={onCursorTop}
@@ -157,6 +165,8 @@ interface SlateRichTextAdapterProps {
   onCursors?: (cursors: { x: number; y: number }[]) => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  undoMode?: UndoMode;
+  redoMode?: UndoMode;
   onSave?: () => void;
   cursors?: ImmutableMap<string, any>;
   fontSize?: number;
@@ -196,6 +206,8 @@ export function SlateRichTextAdapter({
   onCursors,
   onUndo,
   onRedo,
+  undoMode,
+  redoMode,
   onSave,
   cursors,
   fontSize,
@@ -221,6 +233,9 @@ export function SlateRichTextAdapter({
 }: SlateRichTextAdapterProps) {
   const hasFixedHeight = height != null && height !== "auto";
   const maxHeight = hasFixedHeight ? height : MAX_INPUT_HEIGHT;
+
+  const externalUndo = resolveUndoHandler({ mode: undoMode, handler: onUndo });
+  const externalRedo = resolveUndoHandler({ mode: redoMode, handler: onRedo });
 
   return (
     <div
@@ -279,8 +294,8 @@ export function SlateRichTextAdapter({
           },
           altEnter: onAltEnter,
           set_cursor_locs: onCursors,
-          undo: onUndo,
-          redo: onRedo,
+          undo: externalUndo,
+          redo: externalRedo,
           save: onSave as any,
         }}
         cursors={cursors}

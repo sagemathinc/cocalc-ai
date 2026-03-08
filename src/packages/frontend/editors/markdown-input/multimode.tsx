@@ -57,6 +57,8 @@ export default function MultiMarkdownInput({
   onSave,
   onShiftEnter,
   onUndo,
+  redoMode,
+  undoMode,
   onUploadEnd,
   onUploadStart,
   overflowEllipsis = true,
@@ -233,6 +235,8 @@ export default function MultiMarkdownInput({
           onSave={onSave}
           onUndo={onUndo}
           onRedo={onRedo}
+          undoMode={undoMode}
+          redoMode={redoMode}
           onCursors={onCursors}
           cursors={cursorsMap}
           onCursorTop={onCursorTop}
@@ -275,6 +279,8 @@ export default function MultiMarkdownInput({
           onCursors={onCursors}
           onUndo={onUndo}
           onRedo={onRedo}
+          undoMode={undoMode}
+          redoMode={redoMode}
           onSave={onSave}
           cursors={cursorsMap}
           fontSize={fontSize}

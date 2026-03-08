@@ -272,4 +272,31 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(latestMarkdownProps.onUndo).toBe(onUndo);
     expect(latestMarkdownProps.onRedo).toBe(onRedo);
   });
+
+  it("allows explicit local undo ownership even when callbacks are provided", () => {
+    const onUndo = jest.fn();
+    const onRedo = jest.fn();
+
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="editor"
+        onUndo={onUndo}
+        onRedo={onRedo}
+        undoMode="local"
+        redoMode="local"
+      />,
+    );
+
+    expect(latestEditableProps.actions.undo).toBeUndefined();
+    expect(latestEditableProps.actions.redo).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "markdown" }));
+
+    expect(latestMarkdownProps.onUndo).toBe(onUndo);
+    expect(latestMarkdownProps.onRedo).toBe(onRedo);
+    expect(latestMarkdownProps.undoMode).toBe("local");
+    expect(latestMarkdownProps.redoMode).toBe("local");
+  });
 });

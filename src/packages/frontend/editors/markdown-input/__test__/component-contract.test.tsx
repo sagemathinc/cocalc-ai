@@ -311,4 +311,21 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
       "redo",
     ]);
   });
+
+  it("keeps undo and redo local when explicit local ownership is requested", () => {
+    render(
+      <MarkdownInput
+        value="start"
+        onChange={() => {}}
+        saveDebounceMs={0}
+        onUndo={() => {}}
+        onRedo={() => {}}
+        undoMode="local"
+        redoMode="local"
+      />,
+    );
+
+    expect(latestEditor.undo).toBeUndefined();
+    expect(latestEditor.redo).toBeUndefined();
+  });
 });
