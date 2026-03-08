@@ -2156,7 +2156,7 @@ export class SyncDoc extends EventEmitter {
       // @ts-ignore
       this.project_id = x.project_id;
     }
-    if (x.string_id) {
+    if (this.opts.string_id === undefined && x.string_id) {
       this.string_id = x.string_id;
     }
     if (x.path) {
