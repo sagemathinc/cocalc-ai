@@ -21,6 +21,7 @@ import {
 } from "antd";
 import type {
   AppSpec,
+  AppMetricsSummary,
   AppPublicReadinessAudit,
   DetectedAppPort,
   InstalledAppTemplate,
@@ -296,6 +297,80 @@ function buildPublicUrlFromExposure(
   return hostname ? `https://${hostname}` : undefined;
 }
 
+function formatBytes(value?: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = n;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  const digits = size >= 10 || unit === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatLastHit(last_hit_ms?: number): string {
+  if (!last_hit_ms) return "never";
+  return new Date(last_hit_ms).toLocaleString();
+}
+
+function MetricsSparkline({
+  values,
+  width = 120,
+  height = 28,
+  color = "#1677ff",
+}: {
+  values: number[];
+  width?: number;
+  height?: number;
+  color?: string;
+}) {
+  if (!values.length || values.every((value) => value === 0)) {
+    return (
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+        <line
+          x1={0}
+          y1={height - 1}
+          x2={width}
+          y2={height - 1}
+          stroke="#d9d9d9"
+          strokeWidth="1"
+        />
+      </svg>
+    );
+  }
+  const max = Math.max(...values, 1);
+  const points = values
+    .map((value, idx) => {
+      const x = values.length === 1 ? width / 2 : (idx / (values.length - 1)) * width;
+      const y = height - (value / max) * (height - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <line
+        x1={0}
+        y1={height - 1}
+        x2={width}
+        y2={height - 1}
+        stroke="#d9d9d9"
+        strokeWidth="1"
+      />
+      <polyline
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+      />
+    </svg>
+  );
+}
+
 function normalizeCommand(exec?: string, args?: string[]): string {
   return exec ? [exec, ...(args ?? [])].join(" ").trim() : "";
 }
@@ -522,6 +597,9 @@ export function AppServerPanel({
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
+  const [metricsById, setMetricsById] = useState<
+    Record<string, AppMetricsSummary | undefined>
+  >({});
   const [editSpecOpen, setEditSpecOpen] = useState<boolean>(false);
   const [editSpecLoading, setEditSpecLoading] = useState<boolean>(false);
   const [editSpecSaving, setEditSpecSaving] = useState<boolean>(false);
@@ -688,9 +766,10 @@ export function AppServerPanel({
       setLoading(true);
       setError(undefined);
       setStartupFailures({});
-      const [next, specRecords] = await Promise.all([
+      const [next, specRecords, metrics] = await Promise.all([
         api.apps.listAppStatuses(),
         api.apps.listAppSpecs(),
+        api.apps.listAppMetrics({ minutes: 60 }),
       ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
       const map: Record<string, AppSpec | undefined> = {};
@@ -700,6 +779,9 @@ export function AppServerPanel({
         }
       }
       setSpecById(map);
+      setMetricsById(
+        Object.fromEntries(metrics.map((item) => [item.app_id, item] as const)),
+      );
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1993,6 +2075,7 @@ export function AppServerPanel({
           const isRunning = row.state === "running";
           const isPublic = isPublicExposure(row);
           const spec = specById[row.id];
+          const metrics = metricsById[row.id];
           const specSummary = summarizeSpec(spec);
           const startupFailure = startupFailures[row.id];
           const isExpanded = !!expandedRows[row.id] || !!startupFailure;
@@ -2126,6 +2209,55 @@ export function AppServerPanel({
                   {specSummary.map((item) => (
                     <div key={`${row.id}-${item}`}>{item}</div>
                   ))}
+                </div>
+              ) : null}
+              {isExpanded && metrics ? (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    padding: "8px 10px",
+                    border: "1px solid #f0f0f0",
+                    borderRadius: "8px",
+                    background: "#fafafa",
+                    display: "grid",
+                    gap: "6px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "10px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: "12px" }}>
+                      Recent usage
+                    </div>
+                    <MetricsSparkline
+                      values={metrics.history.map((item) => item.requests)}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                      gap: "6px 10px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <div>last hit: {formatLastHit(metrics.last_hit_ms)}</div>
+                    <div>requests: {metrics.totals.requests}</div>
+                    <div>egress: {formatBytes(metrics.totals.bytes_sent)}</div>
+                    <div>ingress: {formatBytes(metrics.totals.bytes_received)}</div>
+                    <div>active websockets: {metrics.active_websockets}</div>
+                    <div>wake count: {metrics.totals.wake_count}</div>
+                    <div>public requests: {metrics.totals.public_requests}</div>
+                    <div>private requests: {metrics.totals.private_requests}</div>
+                    <div>p50 latency: {metrics.totals.p50_ms ?? 0} ms</div>
+                    <div>p95 latency: {metrics.totals.p95_ms ?? 0} ms</div>
+                  </div>
                 </div>
               ) : null}
               {isExpanded && isPublic ? (
