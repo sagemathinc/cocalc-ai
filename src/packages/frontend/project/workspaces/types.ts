@@ -48,6 +48,7 @@ export type WorkspaceUpdatePatch = Partial<{
 }>;
 
 export type ProjectWorkspaceState = {
+  loading: boolean;
   records: WorkspaceRecord[];
   selection: WorkspaceSelection;
   current: WorkspaceRecord | null;

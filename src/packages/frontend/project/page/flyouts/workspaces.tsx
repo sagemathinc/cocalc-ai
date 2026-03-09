@@ -11,6 +11,7 @@ import {
   Popover,
   Popconfirm,
   Space,
+  Spin,
   Switch,
   Tag,
   Tooltip,
@@ -363,7 +364,11 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             </Button>
           </Tooltip>
         </Space>
-        {workspaces.records.length === 0 ? (
+        {workspaces.loading ? (
+          <div style={{ padding: "24px 0", textAlign: "center" }}>
+            <Spin tip="Loading workspaces..." />
+          </div>
+        ) : workspaces.records.length === 0 ? (
           <Empty
             description="No workspaces yet"
             image={Empty.PRESENTED_IMAGE_SIMPLE}

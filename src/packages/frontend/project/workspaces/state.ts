@@ -209,6 +209,7 @@ export function useProjectWorkspaces(
   project_id: string,
 ): ProjectWorkspaceState {
   const canPersist = typeof account_id === "string" && account_id.trim().length > 0;
+  const [loading, setLoading] = useState(canPersist);
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
   const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
     loadSessionSelection(project_id),
@@ -224,6 +225,7 @@ export function useProjectWorkspaces(
     if (!canPersist) {
       storeRef.current?.close?.();
       storeRef.current = null;
+      setLoading(false);
       setRecords([]);
       setSelectionState(loadSessionSelection(project_id));
     }
@@ -231,6 +233,7 @@ export function useProjectWorkspaces(
 
   useEffect(() => {
     if (!canPersist) return;
+    setLoading(true);
     let closed = false;
     let store: WorkspaceStore | null = null;
     let onChange:
@@ -280,6 +283,10 @@ export function useProjectWorkspaces(
         store.on("change", onChange);
       } catch (err) {
         console.warn(`workspace store initialization warning -- ${err}`);
+      } finally {
+        if (!closed) {
+          setLoading(false);
+        }
       }
     };
 
@@ -446,6 +453,7 @@ export function useProjectWorkspaces(
   );
 
   return {
+    loading,
     records,
     selection,
     current,
