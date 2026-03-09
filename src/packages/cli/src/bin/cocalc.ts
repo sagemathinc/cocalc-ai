@@ -6,6 +6,30 @@ const cliDebugEnabled =
   process.env.COCALC_CLI_DEBUG === "1" ||
   process.env.COCALC_CLI_DEBUG === "true";
 
+const origEmitWarning = process.emitWarning.bind(process);
+process.emitWarning = ((warning: any, ...args: any[]) => {
+  const type =
+    typeof args[0] === "string" && args[0]
+      ? args[0]
+      : typeof warning?.name === "string"
+        ? warning.name
+        : "";
+  const message =
+    typeof warning === "string"
+      ? warning
+      : typeof warning?.message === "string"
+        ? warning.message
+        : "";
+  if (
+    !cliDebugEnabled &&
+    type === "ExperimentalWarning" &&
+    /SQLite is an experimental feature/i.test(message)
+  ) {
+    return;
+  }
+  return (origEmitWarning as any)(warning, ...args);
+}) as typeof process.emitWarning;
+
 if (!cliDebugEnabled) {
   process.env.SMC_TEST ??= "1";
   process.env.DEBUG_CONSOLE ??= "no";
