@@ -90,6 +90,7 @@ import { slate_to_markdown } from "./slate-to-markdown";
 import { SlateHelpModal } from "./help-modal";
 import {
   findSlatePointNearMarkdownPosition,
+  indexToPosition,
   markdownPositionToSlatePoint,
   nearestMarkdownPositionForSlatePoint,
 } from "./sync";
@@ -178,7 +179,7 @@ function focusSlateEditorSafely(editor: SlateEditor): boolean {
   ReactEditor.focus(editor);
   if (typeof window !== "undefined" && editor.selection != null) {
     const domSelection = window.getSelection?.();
-    if (domSelection != null && domSelection.rangeCount === 0) {
+    if (domSelection != null) {
       try {
         const domRange = ReactEditor.toDOMRange(editor, editor.selection);
         domSelection.removeAllRanges();
@@ -189,6 +190,78 @@ function focusSlateEditorSafely(editor: SlateEditor): boolean {
     }
   }
   return true;
+}
+
+function syncSlateDomSelection(editor: SlateEditor, point?: Point | null): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const domSelection = window.getSelection?.();
+  const selection =
+    point != null
+      ? { anchor: point, focus: point }
+      : editor.selection;
+  if (domSelection == null || selection == null) {
+    return false;
+  }
+  try {
+    const domRange = ReactEditor.toDOMRange(editor, selection);
+    domSelection.removeAllRanges();
+    domSelection.addRange(domRange);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getLiveSlateSelection(editor: SlateEditor) {
+  if (typeof window === "undefined") {
+    return editor.selection ?? null;
+  }
+  const domSelection = window.getSelection?.();
+  if (domSelection != null && domSelection.rangeCount > 0) {
+    try {
+      return ReactEditor.toSlateRange(editor, domSelection) ?? editor.selection ?? null;
+    } catch {
+      // fall back to Slate's model selection below
+    }
+  }
+  return editor.selection ?? null;
+}
+
+function getPlainParagraphMarkdownFallback(
+  editor: SlateEditor,
+  point: Point | undefined,
+): { line: number; ch: number } | null {
+  if (point == null || point.path.length !== 2 || point.path[1] !== 0) {
+    return null;
+  }
+  const topLevelIndex = point.path[0];
+  const block = editor.children[topLevelIndex];
+  if (
+    !SlateElement.isElement(block) ||
+    block.type !== "paragraph" ||
+    !Array.isArray(block.children) ||
+    block.children.length !== 1 ||
+    !Text.isText(block.children[0])
+  ) {
+    return null;
+  }
+  const leaf = block.children[0];
+  const extraMarks = Object.keys(leaf).filter((key) => key !== "text");
+  if (extraMarks.length > 0) {
+    return null;
+  }
+  const fullMarkdown = editor.getMarkdownValue();
+  const prefixMarkdown =
+    topLevelIndex <= 0
+      ? ""
+      : slate_to_markdown(editor.children.slice(0, topLevelIndex) as Node[], {
+          cache: editor.syncCache,
+          preserveBlankLines: editor.preserveBlankLines,
+        });
+  const index = Math.max(0, prefixMarkdown.length + point.offset);
+  return indexToPosition({ index, markdown: fullMarkdown }) ?? null;
 }
 
 // Whether or not to use windowing by default (=only rendering visible elements).
@@ -557,14 +630,37 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             point = Editor.start(ed, [0]);
           }
           if (!point) return false;
-          ReactEditor.focus(ed);
-          Transforms.setSelection(ed, { anchor: point, focus: point });
+          try {
+            Transforms.setSelection(ed, { anchor: point, focus: point });
+          } catch {
+            return false;
+          }
+          if (!focusSlateEditorSafely(ed)) {
+            return false;
+          }
+          queueMicrotask(() => {
+            syncSlateDomSelection(ed, point);
+          });
           return true;
         },
         getMarkdownPositionForSelection: () => {
-          const point = ed.selection?.focus;
+          const liveSelection = getLiveSlateSelection(ed);
+          const point = liveSelection?.focus;
+          const mappedPos =
+            point != null ? nearestMarkdownPositionForSlatePoint(ed, point) ?? null : null;
+          const plainFallback =
+            point != null ? getPlainParagraphMarkdownFallback(ed, point) : null;
+          const markdownPos =
+            point != null &&
+            plainFallback != null &&
+            mappedPos != null &&
+            mappedPos.line === 0 &&
+            mappedPos.ch === 0 &&
+            point.offset > 0
+              ? plainFallback
+              : mappedPos ?? plainFallback;
           if (!point) return null;
-          return nearestMarkdownPositionForSlatePoint(ed, point) ?? null;
+          return markdownPos;
         },
         isSelectionReady: () => ed.children.length > 0,
       };

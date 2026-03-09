@@ -180,7 +180,6 @@ export default function MultiMarkdownInput({
     selectionRef,
     rememberPendingSelection,
     captureModeSwitchSelection,
-    clearModeSwitchSelection,
     rememberSelectionForModeSwitch,
     getMarkdownPositionForSelection,
     notifyMarkdownSelectionReady,
@@ -255,7 +254,6 @@ export default function MultiMarkdownInput({
                 beginModeSwitchInteraction();
               }}
               onInteractionEnd={() => {
-                clearModeSwitchSelection();
                 endModeSwitchInteraction();
               }}
             />
@@ -283,7 +281,6 @@ export default function MultiMarkdownInput({
             beginModeSwitchInteraction();
           }}
           onInteractionEnd={() => {
-            clearModeSwitchSelection();
             endModeSwitchInteraction();
           }}
         />

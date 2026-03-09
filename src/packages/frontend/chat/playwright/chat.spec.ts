@@ -186,6 +186,24 @@ test("composer mode: switching from markdown to rich text keeps typing live", as
   await expectHarnessHealthy(page);
 });
 
+test("composer mode: markdown to rich text preserves a mid-line caret", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=markdown");
+  await waitForHarness(page);
+
+  await typeInCodeMirror(page, "abcd");
+  await expectComposerInput(page, "abcd");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+
+  await switchComposerMode(page, "Rich Text");
+  await page.keyboard.type("X");
+
+  await expectComposerInput(page, "abXcd");
+  await expectHarnessHealthy(page);
+});
+
 test("composer editor mode: send button appears while typing", async ({ page }) => {
   await page.goto("/?mode=composer&editorMode=editor");
   await waitForHarness(page);
@@ -203,6 +221,24 @@ test("composer editor mode: send button appears while typing", async ({ page }) 
       return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
     })
     .toBe(false);
+  await expectHarnessHealthy(page);
+});
+
+test("composer mode: rich text to markdown preserves a mid-line caret", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await typeInSlate(page, "abcd");
+  await expectComposerInput(page, "abcd");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+
+  await switchComposerMode(page, "Markdown");
+  await page.keyboard.type("Y");
+
+  await expectComposerInput(page, "abYcd");
   await expectHarnessHealthy(page);
 });
 
