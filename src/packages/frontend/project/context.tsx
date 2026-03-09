@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import * as immutable from "immutable";
@@ -196,6 +197,7 @@ export function useProjectContextProvider({
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const workspaces = useProjectWorkspaces(account_id, project_id);
+  const previousWorkspaceSelectionRef = useRef<string>("all");
 
   useEffect(() => {
     const activePath = tab_to_path(active_project_tab ?? "");
@@ -214,6 +216,14 @@ export function useProjectContextProvider({
   ]);
 
   useEffect(() => {
+    const currentSelectionKey =
+      workspaces.selection.kind === "workspace"
+        ? `workspace:${workspaces.selection.workspace_id}`
+        : workspaces.selection.kind;
+    const selectionChanged =
+      previousWorkspaceSelectionRef.current !== currentSelectionKey;
+    previousWorkspaceSelectionRef.current = currentSelectionKey;
+
     if (!actions) return;
     if (workspaces.selection.kind !== "workspace") return;
     if (active_project_tab && !active_project_tab.startsWith("editor-")) {
@@ -223,11 +233,29 @@ export function useProjectContextProvider({
       if (current_path_abs && pathMatchesRoot(current_path_abs, current.root_path)) {
         return;
       }
+      if (current_path_abs && !selectionChanged) {
+        const resolved = workspaces.resolveWorkspaceForPath(current_path_abs);
+        workspaces.setSelection(
+          resolved
+            ? { kind: "workspace", workspace_id: resolved.workspace_id }
+            : { kind: "unscoped" },
+        );
+        return;
+      }
       void actions.open_directory(current.root_path, false, true);
       return;
     }
     const activePath = tab_to_path(active_project_tab ?? "");
     if (activePath && workspaces.matchesPath(activePath)) return;
+    if (activePath && !selectionChanged) {
+      const resolved = workspaces.resolveWorkspaceForPath(activePath);
+      workspaces.setSelection(
+        resolved
+          ? { kind: "workspace", workspace_id: resolved.workspace_id }
+          : { kind: "unscoped" },
+      );
+      return;
+    }
 
     const current = workspaces.current;
     if (!current) return;
