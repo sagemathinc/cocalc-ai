@@ -333,6 +333,7 @@ export default function MultiMarkdownInput({
           height={editorHeight}
           autoGrow={autoGrow ?? height === "auto"}
           autoGrowMaxHeight={autoGrowMaxHeight}
+          chromeLayout={showToolbarModeSwitch ? "external" : "internal"}
           style={style}
           autoFocus={focused}
           submitMentionsRef={submitMentionsRef}

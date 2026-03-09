@@ -375,4 +375,20 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(editorHost.style.width).toBe("100%");
     expect(editorHost.style.clear).toBe("right");
   });
+
+  it("does not reserve internal help chrome when the editor is using an external toolbar", () => {
+    const { container } = render(
+      <MarkdownInput
+        value="hello"
+        onChange={() => {}}
+        saveDebounceMs={0}
+        height="220px"
+        hideHelp
+        chromeLayout="external"
+      />,
+    );
+
+    const body = container.firstElementChild as HTMLElement;
+    expect(body.children).toHaveLength(1);
+  });
 });

@@ -114,6 +114,7 @@ interface Props {
   // preserve fixed-height consumers (e.g., task editor).
   autoGrow?: boolean;
   autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
+  chromeLayout?: "internal" | "external";
 }
 
 export function MarkdownInput(props: Props) {
@@ -163,6 +164,7 @@ export function MarkdownInput(props: Props) {
     unregisterEditor,
     value,
     autoGrow = false,
+    chromeLayout = "internal",
   } = props;
   const { actions, isVisible } = useFrameContext();
   const cm = useRef<CodeMirror.Editor | undefined>(undefined);
@@ -207,7 +209,8 @@ export function MarkdownInput(props: Props) {
   const onSelectionReadyRef = useRef<typeof onSelectionReady>(onSelectionReady);
   onSelectionReadyRef.current = onSelectionReady;
 
-  const showInstructions = !!value?.trim();
+  const showInstructions =
+    chromeLayout !== "external" && !!value?.trim();
 
   const emitSelectionReady = useCallback(() => {
     queueMicrotask(() => {
