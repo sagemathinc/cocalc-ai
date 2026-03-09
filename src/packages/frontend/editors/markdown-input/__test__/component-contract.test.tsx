@@ -328,4 +328,36 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.undo).toBeUndefined();
     expect(latestEditor.redo).toBeUndefined();
   });
+
+  it("reclamps the markdown wrapper height when an auto-grow editor is resized smaller", () => {
+    const value = "a\n\nb\n\nc\n\nd";
+    const { rerender } = render(
+      <MarkdownInput
+        value={value}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        height="220px"
+      />,
+    );
+
+    const wrapper = latestEditor.getWrapperElement();
+    expect(wrapper.style.height).toBe("174px");
+    expect(wrapper.style.maxHeight).toBe("174px");
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 174);
+
+    rerender(
+      <MarkdownInput
+        value={value}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        height="120px"
+      />,
+    );
+
+    expect(wrapper.style.height).toBe("74px");
+    expect(wrapper.style.maxHeight).toBe("74px");
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 74);
+  });
 });
