@@ -1094,6 +1094,10 @@ export class ChatActions extends Actions<ChatState> {
     opts?: { threadId?: string; date?: Date | string | number },
   ): boolean => {
     if (this.syncdb == null) return false;
+    const state = this.syncdb.get_state?.();
+    if (state != null && state !== "ready") {
+      return false;
+    }
     const thread_id = this.normalizeThreadId(threadKey, opts?.threadId);
     if (!thread_id) {
       if (!warnedMissingThreadIds.has(threadKey)) {
@@ -1642,17 +1646,21 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     const { agent_kind, agent_mode } = identityFromModel(model);
-    this.setThreadConfigRecord(
-      normalizedThreadId,
-      {
-        agent_kind,
-        agent_model: model,
-        agent_mode,
-      },
-      {
-        threadId: normalizedThreadId,
-      },
-    );
+    if (
+      !this.setThreadConfigRecord(
+        normalizedThreadId,
+        {
+          agent_kind,
+          agent_model: model,
+          agent_mode,
+        },
+        {
+          threadId: normalizedThreadId,
+        },
+      )
+    ) {
+      return;
+    }
     this.syncdb.commit();
   };
 
@@ -1663,16 +1671,20 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setThreadModel: invalid threadKey ${threadKey}`);
     }
     const { agent_kind, agent_mode } = identityFromModel(model);
-    this.setThreadConfigRecord(
-      threadKey,
-      {
-        acp_config: null,
-        agent_kind,
-        agent_model: model,
-        agent_mode,
-      },
-      { threadId },
-    );
+    if (
+      !this.setThreadConfigRecord(
+        threadKey,
+        {
+          acp_config: null,
+          agent_kind,
+          agent_model: model,
+          agent_mode,
+        },
+        { threadId },
+      )
+    ) {
+      return;
+    }
     this.syncdb.commit();
     void this.saveSyncdb();
   };
@@ -1684,16 +1696,20 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
     const model = config.model ?? DEFAULT_CODEX_MODEL_NAME;
-    this.setThreadConfigRecord(
-      threadKey,
-      {
-        acp_config: config,
-        agent_kind: "acp",
-        agent_model: model,
-        agent_mode: "interactive",
-      },
-      { threadId },
-    );
+    if (
+      !this.setThreadConfigRecord(
+        threadKey,
+        {
+          acp_config: config,
+          agent_kind: "acp",
+          agent_model: model,
+          agent_mode: "interactive",
+        },
+        { threadId },
+      )
+    ) {
+      return;
+    }
     this.syncdb.commit();
     void this.saveSyncdb();
   };
@@ -1709,16 +1725,20 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setThreadAgentMode: invalid threadKey ${threadKey}`);
     }
     if (mode === "none") {
-      this.setThreadConfigRecord(
-        threadKey,
-        {
-          acp_config: null,
-          agent_kind: "none",
-          agent_model: null,
-          agent_mode: null,
-        },
-        { threadId },
-      );
+      if (
+        !this.setThreadConfigRecord(
+          threadKey,
+          {
+            acp_config: null,
+            agent_kind: "none",
+            agent_model: null,
+            agent_mode: null,
+          },
+          { threadId },
+        )
+      ) {
+        return;
+      }
       this.syncdb.commit();
       void this.saveSyncdb();
       return;
@@ -1865,11 +1885,15 @@ export class ChatActions extends Actions<ChatState> {
       loop_config: sourceMetadata.loop_config ?? null,
       loop_state: null,
     };
-    this.setThreadConfigRecord(
-      newThreadId,
-      configPatch,
-      { threadId: newThreadId, date: newRootIso },
-    );
+    if (
+      !this.setThreadConfigRecord(
+        newThreadId,
+        configPatch,
+        { threadId: newThreadId, date: newRootIso },
+      )
+    ) {
+      return newThreadId;
+    }
     this.syncdb.commit();
     void this.saveSyncdb();
 

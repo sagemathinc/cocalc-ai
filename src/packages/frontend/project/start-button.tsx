@@ -93,13 +93,15 @@ export function StartButton({
   const assignedHostLabel = hostLabel(hostInfo, host_id);
   const lastNotRunningRef = useRef<null | number>(null);
   const allowed = useAllowedFreeProjectToRun(project_id);
-  const startLro = redux.useProjectStore(
-    (store) => store?.get("start_lro")?.toJS() as StartLroState | undefined,
-    project_id,
+  const startLroRecord = useTypedRedux({ project_id }, "start_lro");
+  const moveLroRecord = useTypedRedux({ project_id }, "move_lro");
+  const startLro = useMemo(
+    () => startLroRecord?.toJS() as StartLroState | undefined,
+    [startLroRecord],
   );
-  const moveLro = redux.useProjectStore(
-    (store) => store?.get("move_lro")?.toJS() as MoveLroState | undefined,
-    project_id,
+  const moveLro = useMemo(
+    () => moveLroRecord?.toJS() as MoveLroState | undefined,
+    [moveLroRecord],
   );
   const startLroActive =
     startLro != null &&

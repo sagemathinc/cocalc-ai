@@ -2,7 +2,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useState } from "react";
 import { Progress, Space, Spin, Switch, Tooltip } from "antd";
 import { useProjectContext } from "./context";
-import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
+import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroEvent, LroScopeType } from "@cocalc/conat/hub/api/lro";
 import ShowError from "@cocalc/frontend/components/error";
 import { capitalize, field_cmp, human_readable_size, plural } from "@cocalc/util/misc";
@@ -37,10 +37,9 @@ export default function Bootlog({
   const [rawBootlog, setRawBootlog] = useState<boolean>(
     !!localStorage.rawBootlog,
   );
-  const startLro = redux.useProjectStore(
-    (store) => store?.get("start_lro")?.toJS() as StartLroState | undefined,
-    project_id,
-  );
+  const startLro = useTypedRedux({ project_id }, "start_lro")?.toJS() as
+    | StartLroState
+    | undefined;
   const fallbackLro =
     startLro?.summary != null
       ? {
