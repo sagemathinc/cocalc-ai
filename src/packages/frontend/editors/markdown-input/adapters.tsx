@@ -34,6 +34,7 @@ interface MarkdownTextAdapterProps {
   height?: string;
   autoGrow?: boolean;
   autoGrowMaxHeight?: number;
+  chromeLayout?: "internal" | "external";
   style?: React.CSSProperties;
   autoFocus: boolean;
   submitMentionsRef?: any;
@@ -80,6 +81,7 @@ export function MarkdownTextAdapter({
   height,
   autoGrow,
   autoGrowMaxHeight,
+  chromeLayout,
   style,
   autoFocus,
   submitMentionsRef,
@@ -126,6 +128,7 @@ export function MarkdownTextAdapter({
       height={height}
       autoGrow={autoGrow ?? height === "auto"}
       autoGrowMaxHeight={autoGrowMaxHeight}
+      chromeLayout={chromeLayout}
       style={style}
       autoFocus={autoFocus}
       submitMentionsRef={submitMentionsRef}

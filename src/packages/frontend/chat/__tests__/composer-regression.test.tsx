@@ -147,16 +147,19 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps).toBeTruthy();
     expect(lastMarkdownInputProps.undoMode).toBe("local");
     expect(lastMarkdownInputProps.redoMode).toBe("local");
-    expect(lastMarkdownInputProps.modeSwitchStyle).toEqual({
-      position: "absolute",
-      top: 0,
-      right: 0,
-    });
+    expect(lastMarkdownInputProps.hideHelp).toBe(true);
+    expect(lastMarkdownInputProps.modeSwitchPlacement).toBe("toolbar");
+    expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
 
     act(() => {
       lastMarkdownInputProps.onChange("hello");
     });
     expect(lastMarkdownInputProps.value).toBe("hello");
+
+    act(() => {
+      lastMarkdownInputProps.onModeChange("markdown");
+    });
+    expect(lastMarkdownInputProps.modeSwitchRightContent).toBeTruthy();
   });
 
   it("ignores stale callbacks from an unmounted input instance", () => {

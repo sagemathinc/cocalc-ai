@@ -56,6 +56,8 @@ export interface MultiMarkdownInputProps {
   autoGrowMaxHeight?: number;
   style?: CSSProperties;
   modeSwitchStyle?: CSSProperties;
+  modeSwitchPlacement?: "float" | "toolbar";
+  modeSwitchRightContent?: ReactNode;
   autoFocus?: boolean;
   enableMentions?: boolean;
   enableUpload?: boolean;
