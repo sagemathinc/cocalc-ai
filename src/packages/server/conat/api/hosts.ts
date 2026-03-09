@@ -3716,6 +3716,7 @@ export async function upgradeHostSoftwareInternal({
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
 }): Promise<HostSoftwareUpgradeResponse> {
+  const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
@@ -3726,6 +3727,7 @@ export async function upgradeHostSoftwareInternal({
   const client = createHostControlClient({
     host_id: id,
     client: conatWithProjectRouting(),
+    timeout: HOST_UPGRADE_RPC_TIMEOUT_MS,
   });
   const response = await client.upgradeSoftware({
     targets,
