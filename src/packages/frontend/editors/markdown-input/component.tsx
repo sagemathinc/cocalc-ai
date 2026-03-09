@@ -1102,6 +1102,8 @@ export function MarkdownInput(props: Props) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        width: "100%",
+        clear: "right",
       }}
     >
       {showInstructions ? render_instructions() : undefined}

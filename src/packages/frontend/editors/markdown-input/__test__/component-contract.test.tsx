@@ -360,4 +360,19 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(wrapper.style.maxHeight).toBe("74px");
     expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 74);
   });
+
+  it("clears the mode switch float so the markdown body keeps full width", () => {
+    const { container } = render(
+      <MarkdownInput
+        value="hello"
+        onChange={() => {}}
+        saveDebounceMs={0}
+        height="220px"
+      />,
+    );
+
+    const body = container.firstElementChild as HTMLElement;
+    expect(body.style.width).toBe("100%");
+    expect(body.style.clear).toBe("right");
+  });
 });
