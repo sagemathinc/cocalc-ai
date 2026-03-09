@@ -1,4 +1,13 @@
-import { buildProjectHostSessionCookie, projectCookiePath } from "./http-proxy-cookies";
+import {
+  buildProjectHostSessionCookie,
+  buildProjectHostSessionCookieDeletion,
+  legacyProjectHostCookiePath,
+  projectCookiePath,
+} from "./http-proxy-cookies";
+import {
+  createProjectHostHttpSessionToken,
+  resolveProjectHostHttpSessionFromCookieHeader,
+} from "./http-proxy-auth";
 
 describe("project-host HTTP session cookie", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
@@ -38,5 +47,39 @@ describe("project-host HTTP session cookie", () => {
     expect(cookie).toContain(`Path=/${project_id}`);
     expect(cookie).not.toContain("Path=/;");
     expect(cookie).not.toContain("Secure");
+  });
+
+  it("can delete the legacy broad-path session cookie", () => {
+    const cookie = buildProjectHostSessionCookieDeletion({
+      req: {
+        headers: {
+          "x-forwarded-proto": "https",
+        },
+        socket: {},
+      } as any,
+      path: legacyProjectHostCookiePath(),
+    });
+
+    expect(cookie).toContain("cocalc_project_host_http_session=");
+    expect(cookie).toContain("Path=/");
+    expect(cookie).toContain("Max-Age=0");
+    expect(cookie).toContain("Secure");
+  });
+
+  it("accepts a valid scoped session cookie even if a stale legacy cookie is also present", () => {
+    const valid = createProjectHostHttpSessionToken({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      now_ms: Date.UTC(2026, 2, 9, 18, 0, 0),
+    });
+    const invalid = "stale-legacy-cookie";
+    const header = [
+      `cocalc_project_host_http_session=${encodeURIComponent(valid)}`,
+      `cocalc_project_host_http_session=${encodeURIComponent(invalid)}`,
+    ].join("; ");
+
+    const session = resolveProjectHostHttpSessionFromCookieHeader(header);
+    expect(session).toMatchObject({
+      account_id: "00000000-1000-4000-8000-000000000001",
+    });
   });
 });
