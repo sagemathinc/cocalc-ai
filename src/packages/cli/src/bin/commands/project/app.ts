@@ -182,6 +182,28 @@ function filterManagedAppForwardRows(
     .filter((row) => row.name?.startsWith(prefix));
 }
 
+function printManagedAppForwardRowsHuman(rows: ManagedAppForwardRow[]): void {
+  if (!rows.length) {
+    console.log("(no managed app forwards)");
+    return;
+  }
+  for (const [index, row] of rows.entries()) {
+    if (index > 0) {
+      console.log("");
+    }
+    const title = row.app_id ? `${row.app_id} (#${row.id})` : `forward #${row.id}`;
+    console.log(`${title}  ${row.state ?? "unknown"}`);
+    console.log(`  Local:   ${row.local_url}`);
+    console.log(`  Remote:  ${row.remote_port}`);
+    if (row.monitor_pid != null) {
+      console.log(`  PID:     ${row.monitor_pid}`);
+    }
+    if (row.last_error) {
+      console.log(`  Error:   ${row.last_error}`);
+    }
+  }
+}
+
 function ensureManagedProjectSshConfigEntry({
   configPath,
   alias,
@@ -770,11 +792,16 @@ export function registerProjectAppCommands(
       ) => {
         await withContext(command, "project app forward-list", async (ctx) => {
           const { project } = await resolveProjectProjectApi(ctx, opts.project);
-          return filterManagedAppForwardRows(
+          const rows = filterManagedAppForwardRows(
             await listReflectForwards(),
             project.project_id,
             opts.all ? undefined : appId,
           );
+          if (!ctx.globals.json && ctx.globals.output !== "json") {
+            printManagedAppForwardRowsHuman(rows);
+            return null;
+          }
+          return rows;
         });
       },
     );
