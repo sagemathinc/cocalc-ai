@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { uuid } from "@cocalc/util/misc";
 import type { DKV } from "@cocalc/conat/sync/dkv";
@@ -16,14 +15,6 @@ const STORAGE_VERSION = 1;
 const STORE_VERSION_KEY = "version";
 const STORE_RECORDS_KEY = "records";
 const STORE_SELECTION_KEY = "selection";
-
-function recordsKey(account_id: string, project_id: string): string[] {
-  return ["workspaces", account_id, project_id, "records"];
-}
-
-function selectionKey(account_id: string, project_id: string): string[] {
-  return ["workspaces", account_id, project_id, "selection"];
-}
 
 function normalizePath(path: string): string {
   let next = `${path ?? ""}`.trim();
@@ -94,21 +85,6 @@ function sortRecords(records: WorkspaceRecord[]): WorkspaceRecord[] {
   });
 }
 
-function loadRecords(account_id: string, project_id: string): WorkspaceRecord[] {
-  const raw = LS.get<WorkspaceRecord[]>(recordsKey(account_id, project_id));
-  if (!Array.isArray(raw)) return [];
-  return sortRecords(raw.map(normalizeRecord));
-}
-
-function loadSelection(
-  account_id: string,
-  project_id: string,
-  records: WorkspaceRecord[],
-): WorkspaceSelection {
-  const raw = LS.get<WorkspaceSelection>(selectionKey(account_id, project_id));
-  return normalizeSelection(raw, records);
-}
-
 function normalizeSelection(
   selection: WorkspaceSelection | undefined | null,
   records: WorkspaceRecord[],
@@ -158,13 +134,6 @@ function readSelectionFromStore(
   );
 }
 
-function hasLocalStorageSeed(account_id: string, project_id: string): boolean {
-  return (
-    LS.get(recordsKey(account_id, project_id)) != null ||
-    LS.get(selectionKey(account_id, project_id)) != null
-  );
-}
-
 export function pathMatchesRoot(path: string, root_path: string): boolean {
   const normalizedPath = normalizePath(path);
   const normalizedRoot = normalizePath(root_path);
@@ -206,12 +175,8 @@ export function useProjectWorkspaces(
   project_id: string,
 ): ProjectWorkspaceState {
   const canPersist = typeof account_id === "string" && account_id.trim().length > 0;
-  const [records, setRecords] = useState<WorkspaceRecord[]>(() =>
-    canPersist ? loadRecords(account_id!, project_id) : [],
-  );
-  const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
-    canPersist ? loadSelection(account_id!, project_id, records) : { kind: "all" },
-  );
+  const [records, setRecords] = useState<WorkspaceRecord[]>([]);
+  const [selection, setSelectionState] = useState<WorkspaceSelection>({ kind: "all" });
   const storeRef = useRef<WorkspaceStore | null>(null);
   const recordsRef = useRef(records);
   const selectionRef = useRef(selection);
@@ -230,11 +195,7 @@ export function useProjectWorkspaces(
       storeRef.current = null;
       setRecords([]);
       setSelectionState({ kind: "all" });
-      return;
     }
-    const nextRecords = loadRecords(account_id!, project_id);
-    setRecords(nextRecords);
-    setSelectionState(loadSelection(account_id!, project_id, nextRecords));
   }, [account_id, project_id, canPersist]);
 
   useEffect(() => {
@@ -265,7 +226,6 @@ export function useProjectWorkspaces(
           store.get(STORE_SELECTION_KEY) != null;
 
         const hasSeedState =
-          hasLocalStorageSeed(account_id!, project_id) ||
           recordsRef.current.length > 0 ||
           selectionRef.current.kind !== "all";
 
