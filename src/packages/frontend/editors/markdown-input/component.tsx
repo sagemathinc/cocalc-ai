@@ -57,6 +57,8 @@ export const FOCUSED_STYLE: CSSProperties = {
 
 const PADDING_TOP = 6;
 const MIN_INPUT_HEIGHT = IS_MOBILE ? 44 : 38;
+const MODE_SWITCH_OVERLAY_HEIGHT = 22;
+const INSTRUCTIONS_HEIGHT = 24;
 
 const MENTION_CSS =
   "color:#7289da; background:rgba(114,137,218,.1); border-radius: 3px; padding: 0 2px;";
@@ -205,6 +207,8 @@ export function MarkdownInput(props: Props) {
   const onSelectionReadyRef = useRef<typeof onSelectionReady>(onSelectionReady);
   onSelectionReadyRef.current = onSelectionReady;
 
+  const showInstructions = !!value?.trim();
+
   const emitSelectionReady = useCallback(() => {
     queueMicrotask(() => {
       onSelectionReadyRef.current?.();
@@ -213,37 +217,58 @@ export function MarkdownInput(props: Props) {
 
   const parseHeightPx = (value?: string): number | null => {
     if (!value) return null;
+    const trimmed = value.trim();
+    if (!/^\d+(\.\d+)?(px)?$/.test(trimmed)) {
+      return null;
+    }
     const n = parseFloat(value);
     return Number.isFinite(n) && n > 0 ? n : null;
   };
 
   const isAutoGrow = autoGrow || height === "auto";
+  const explicitEditorHeight = useMemo(() => {
+    const parsed = parseHeightPx(height);
+    if (parsed == null) return null;
+    const reserved = showInstructions
+      ? MODE_SWITCH_OVERLAY_HEIGHT + INSTRUCTIONS_HEIGHT
+      : 0;
+    return Math.max(1, Math.round(parsed - reserved));
+  }, [height, showInstructions]);
 
   const initialMinHeight = useMemo(() => {
-    const parsed = parseHeightPx(height);
-    if (parsed != null && parsed > 0 && parsed < 2000) {
-      return Math.max(MIN_INPUT_HEIGHT, parsed);
+    if (
+      explicitEditorHeight != null &&
+      explicitEditorHeight > 0 &&
+      explicitEditorHeight < 2000
+    ) {
+      return explicitEditorHeight;
     }
     return MIN_INPUT_HEIGHT;
-  }, [height]);
+  }, [explicitEditorHeight]);
 
   const [editorHeight, setEditorHeight] = useState<number>(initialMinHeight);
   const maxHeightRef = useRef<number>(initialMinHeight * 2);
 
   const refreshMaxHeight = useCallback(() => {
-    if (typeof window === "undefined") return;
+    let nextMaxHeight: number;
     if (autoGrowMaxHeight != null && Number.isFinite(autoGrowMaxHeight)) {
-      maxHeightRef.current = Math.max(
+      nextMaxHeight = Math.max(
         initialMinHeight,
         Math.round(autoGrowMaxHeight),
       );
-      return;
+    } else if (typeof window !== "undefined") {
+      nextMaxHeight = Math.max(
+        initialMinHeight,
+        Math.round(Math.max(window.innerHeight * 0.5, initialMinHeight * 2)),
+      );
+    } else {
+      nextMaxHeight = Math.max(initialMinHeight, initialMinHeight * 2);
     }
-    maxHeightRef.current = Math.max(
-      initialMinHeight,
-      Math.round(Math.max(window.innerHeight * 0.5, initialMinHeight * 2)),
-    );
-  }, [autoGrowMaxHeight, initialMinHeight]);
+    if (explicitEditorHeight != null) {
+      nextMaxHeight = Math.min(nextMaxHeight, explicitEditorHeight);
+    }
+    maxHeightRef.current = Math.max(1, nextMaxHeight);
+  }, [autoGrowMaxHeight, explicitEditorHeight, initialMinHeight]);
 
   const adjustHeight = useCallback(() => {
     if (!isAutoGrow) return;
@@ -271,6 +296,17 @@ export function MarkdownInput(props: Props) {
     }
     setEditorHeight((prev) => (prev !== clamped ? clamped : prev));
   }, [initialMinHeight, refreshMaxHeight, isAutoGrow]);
+
+  const syncFixedHeight = useCallback(() => {
+    if (isAutoGrow || cm.current == null) return;
+    cm.current.setSize(null, "100%");
+    const wrapper = cm.current.getWrapperElement();
+    if (wrapper) {
+      wrapper.style.height = "100%";
+      wrapper.style.maxHeight = "100%";
+      wrapper.style.minHeight = "100%";
+    }
+  }, [isAutoGrow]);
 
   const focus = useCallback(() => {
     if (isFocusedRef.current) return; // already focused
@@ -311,6 +347,21 @@ export function MarkdownInput(props: Props) {
       }
     };
   }, [adjustHeight, isAutoGrow]);
+
+  useEffect(() => {
+    if (cm.current == null) return;
+    if (isAutoGrow) {
+      adjustHeight();
+    } else {
+      syncFixedHeight();
+    }
+  }, [
+    adjustHeight,
+    explicitEditorHeight,
+    isAutoGrow,
+    showInstructions,
+    syncFixedHeight,
+  ]);
 
   useEffect(() => {
     // initialize the codemirror editor
@@ -469,8 +520,7 @@ export function MarkdownInput(props: Props) {
     }
 
     const e: any = cm.current.getWrapperElement();
-    const fixedHeight =
-      !isAutoGrow && height && height !== "auto" ? height : undefined;
+    const fixedHeight = !isAutoGrow ? "100%" : undefined;
     const baseHeight = fixedHeight ?? `${editorHeight}px`;
     let s = `height:${baseHeight}; font-family:sans-serif !important;`;
     if (compact) {
@@ -479,7 +529,7 @@ export function MarkdownInput(props: Props) {
       s += !options.lineNumbers ? `padding:${PADDING_TOP}px 12px` : "";
     }
     if (!isAutoGrow) {
-      const h = fixedHeight ?? `${initialMinHeight}px`;
+      const h = fixedHeight ?? "100%";
       s += `;min-height:${h};max-height:${h};overflow:auto;`;
     }
     e.setAttribute("style", s);
@@ -1036,10 +1086,26 @@ export function MarkdownInput(props: Props) {
     );
   }
 
-  const showInstructions = !!value?.trim();
+  const bodyHeight =
+    height != null && height !== "auto"
+      ? showInstructions
+        ? `calc(${height} - ${MODE_SWITCH_OVERLAY_HEIGHT}px)`
+        : height
+      : showInstructions
+        ? `calc(100% - ${MODE_SWITCH_OVERLAY_HEIGHT}px)`
+        : "100%";
 
   let body: React.JSX.Element = (
-    <div style={{ height: showInstructions ? "calc(100% - 22px)" : "100%" }}>
+    <div
+      style={{
+        height: bodyHeight,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        width: "100%",
+        clear: "right",
+      }}
+    >
       {showInstructions ? render_instructions() : undefined}
       <div
         ref={divRef}
@@ -1048,7 +1114,9 @@ export function MarkdownInput(props: Props) {
           ...style,
           ...{
             fontSize: `${fontSize ? fontSize : defaultFontSize}px`,
-            height,
+            flex: "1 1 auto",
+            minHeight: 0,
+            overflow: "hidden",
           },
         }}
       >
