@@ -22,7 +22,7 @@ const FULL_TABS: FindTab[] = ["contents", "files", "snapshots", "backups"];
 export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
   mode,
 }) => {
-  const { project_id } = useProjectContext();
+  const { project_id, workspaces } = useProjectContext();
   const actions = useActions({ project_id });
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
   const currentPath = currentPathAbs ?? "/";
@@ -64,9 +64,12 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
 
   const availableTabs = lite ? LITE_TABS : FULL_TABS;
   const scopeMode: FindScopeMode = storedScopeMode ?? "current";
+  const workspaceRoot = workspaces.current?.root_path;
   const scopePath =
     storedScopePath ??
-    (scopeMode === "home"
+    (scopeMode === "workspace" && workspaceRoot
+      ? workspaceRoot
+      : scopeMode === "home"
       ? homePath
       : scopeMode === "current"
         ? currentPath
@@ -315,6 +318,7 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
         mode={mode}
         project_id={project_id}
         homePath={homePath}
+        workspacePath={workspaceRoot}
         currentPath={currentPath}
         scopePath={scopePath}
         scopeMode={scopeMode}

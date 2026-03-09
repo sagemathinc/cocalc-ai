@@ -58,6 +58,7 @@ import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/navigator-state";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "processing",
@@ -71,6 +72,7 @@ const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
 const AGENTS_OPEN_SESSION_STORAGE_PREFIX = "agents-panel-open-session";
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
+const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
 
 function shortAccountId(accountId?: string): string {
   if (!accountId) return "unknown";
@@ -151,6 +153,20 @@ function saveOpenedSessionId(
   set_local_storage(key, sessionId);
 }
 
+function workspaceOnlyStorageKey(project_id: string): string {
+  return `${AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX}:${project_id}`;
+}
+
+function loadWorkspaceOnly(project_id: string): boolean {
+  const raw = get_local_storage(workspaceOnlyStorageKey(project_id));
+  if (typeof raw !== "string") return true;
+  return raw !== "false";
+}
+
+function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
+  set_local_storage(workspaceOnlyStorageKey(project_id), enabled ? "true" : "false");
+}
+
 interface AgentsFlyoutProps {
   project_id: string;
   wrap: (content: React.JSX.Element, style?: React.CSSProperties) => React.JSX.Element;
@@ -162,6 +178,7 @@ interface AgentsPanelProps {
 }
 
 export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
+  const { workspaces } = useProjectContext();
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
@@ -172,6 +189,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [showArchived, setShowArchived] = useState(false);
+  const [workspaceOnly, setWorkspaceOnly] = useState<boolean>(() =>
+    loadWorkspaceOnly(project_id),
+  );
   const [error, setError] = useState<string>("");
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
   const [inlineSessionId, setInlineSessionId] = useState<string | null>(() =>
@@ -323,10 +343,31 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     if (scope === "mine" && typeof account_id === "string" && account_id.trim()) {
       filtered = filtered.filter((session) => session.account_id === account_id);
     }
+    if (workspaceOnly && workspaces.current) {
+      const workspaceId = workspaces.current.workspace_id;
+      filtered = filtered.filter((session) => {
+        const chatPath = session.chat_path;
+        if (typeof chatPath !== "string" || !chatPath.trim()) return false;
+        return (
+          workspaces.resolveWorkspaceForPath(chatPath)?.workspace_id === workspaceId
+        );
+      });
+    }
     return [...filtered].sort(
       (a, b) => dateMs(b.updated_at) - dateMs(a.updated_at),
     );
-  }, [sessionsWithExistingChat, scope, account_id]);
+  }, [
+    sessionsWithExistingChat,
+    scope,
+    account_id,
+    workspaceOnly,
+    workspaces.current,
+    workspaces.resolveWorkspaceForPath,
+  ]);
+
+  useEffect(() => {
+    saveWorkspaceOnly(project_id, workspaceOnly);
+  }, [project_id, workspaceOnly]);
 
   const visibleSections = useMemo(() => {
     const activeItems: SessionListItem[] = scopedSessions
@@ -1053,6 +1094,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 ? "Hide archived"
                 : `Show archived${archivedSessions.length ? ` (${archivedSessions.length})` : ""}`}
             </Button>
+            {workspaces.current ? (
+              <Tag.CheckableTag
+                checked={workspaceOnly}
+                onChange={setWorkspaceOnly}
+              >
+                Only current workspace
+              </Tag.CheckableTag>
+            ) : null}
           </Space>
         </div>
       </div>

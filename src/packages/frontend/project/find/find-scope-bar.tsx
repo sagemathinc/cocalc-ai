@@ -12,6 +12,7 @@ export function FindScopeBar({
   mode,
   project_id,
   homePath,
+  workspacePath,
   currentPath,
   scopePath,
   scopeMode,
@@ -24,6 +25,7 @@ export function FindScopeBar({
   mode: "project" | "flyout";
   project_id: string;
   homePath: string;
+  workspacePath?: string;
   currentPath: string;
   scopePath: string;
   scopeMode: FindScopeMode;
@@ -66,6 +68,13 @@ export function FindScopeBar({
     onScopePathChange(homePath);
     setPathWarning(null);
   }, [homePath, onScopeModeChange, onScopePathChange]);
+
+  const setWorkspace = useCallback(() => {
+    if (!workspacePath) return;
+    onScopeModeChange("workspace");
+    onScopePathChange(workspacePath);
+    setPathWarning(null);
+  }, [workspacePath, onScopeModeChange, onScopePathChange]);
 
   const setCurrent = useCallback(() => {
     onScopeModeChange("current");
@@ -192,6 +201,15 @@ export function FindScopeBar({
           >
             Home
           </Button>
+          {workspacePath ? (
+            <Button
+              size={size}
+              type={scopeMode === "workspace" ? "primary" : "default"}
+              onClick={setWorkspace}
+            >
+              Workspace root
+            </Button>
+          ) : null}
           <Tooltip title="Nearest directory containing .git">
             <Button
               size={size}
