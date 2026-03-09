@@ -73,6 +73,7 @@ import {
   createBrowserSessionAutomation,
   type BrowserSessionAutomation,
 } from "./browser-session";
+import { routeProjectHostHttpUrl } from "./project-host-route";
 
 export interface ConatConnectionStatus {
   state: "connected" | "disconnected";
@@ -292,6 +293,20 @@ export class ConatClient extends EventEmitter {
     return { host_id, address };
   }
 
+  private ensureProjectRoutingInfo = async (
+    project_id: string,
+  ): Promise<undefined | { host_id: string; address: string }> => {
+    const initial = this.getProjectRoutingInfo(project_id);
+    if (initial) return initial;
+    const project_map = redux.getStore("projects")?.get("project_map");
+    const host_id = project_map?.getIn([project_id, "host_id"]) as
+      | string
+      | undefined;
+    if (!host_id) return;
+    await redux.getActions("projects")?.ensure_host_info(host_id);
+    return this.getProjectRoutingInfo(project_id);
+  };
+
   private isProjectHostAuthError = (err: any): boolean => {
     const mesg = `${err?.message ?? ""}`.toLowerCase();
     return (
@@ -383,7 +398,7 @@ export class ConatClient extends EventEmitter {
   }): Promise<string | undefined> => {
     const id = `${project_id ?? ""}`.trim();
     if (!id) return;
-    const routing = this.getProjectRoutingInfo(id);
+    const routing = await this.ensureProjectRoutingInfo(id);
     if (!routing?.host_id) return;
     return await this.getProjectHostToken({
       host_id: routing.host_id,
@@ -399,8 +414,12 @@ export class ConatClient extends EventEmitter {
     url: string;
   }): Promise<string> => {
     if (!url) return url;
-    const routing = this.getProjectRoutingInfo(project_id);
+    const routing = await this.ensureProjectRoutingInfo(project_id);
     if (!routing) return url;
+    const routedUrl = routeProjectHostHttpUrl({
+      url,
+      routingAddress: routing.address,
+    });
     // Project-host HTTP/WS proxy auth is enforced on the target host, including
     // local-proxy paths through the hub. Always attach a short-lived bootstrap
     // token so project-host can mint its own HttpOnly session cookie.
@@ -408,9 +427,9 @@ export class ConatClient extends EventEmitter {
       host_id: routing.host_id,
       project_id,
     });
-    const isAbsolute = /^https?:\/\//i.test(url);
+    const isAbsolute = /^https?:\/\//i.test(routedUrl);
     const parsed = new URL(
-      url,
+      routedUrl,
       typeof window !== "undefined" ? window.location.origin : "http://localhost",
     );
     parsed.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, token);
@@ -706,7 +725,7 @@ export class ConatClient extends EventEmitter {
       isValidUUID(project_id);
     let cn = this.conat();
     if (routeToProjectHost) {
-      const routing = this.getProjectRoutingInfo(project_id!);
+      const routing = await this.ensureProjectRoutingInfo(project_id!);
       if (!routing && !PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name)) {
         throw Error(
           `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
@@ -722,7 +741,7 @@ export class ConatClient extends EventEmitter {
       return resp.data;
     } catch (err) {
       if (routeToProjectHost && project_id) {
-        const routing = this.getProjectRoutingInfo(project_id);
+        const routing = await this.ensureProjectRoutingInfo(project_id);
         if (routing && this.isProjectHostAuthError(err)) {
           this.invalidateProjectHostToken(routing.host_id);
           this.removeRoutedHubClient(routing.host_id);
