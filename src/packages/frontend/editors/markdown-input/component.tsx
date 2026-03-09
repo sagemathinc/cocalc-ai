@@ -1103,7 +1103,6 @@ export function MarkdownInput(props: Props) {
         flexDirection: "column",
         minHeight: 0,
         width: "100%",
-        clear: "right",
       }}
     >
       {showInstructions ? render_instructions() : undefined}
@@ -1117,6 +1116,8 @@ export function MarkdownInput(props: Props) {
             flex: "1 1 auto",
             minHeight: 0,
             overflow: "hidden",
+            width: "100%",
+            clear: "right",
           },
         }}
       >

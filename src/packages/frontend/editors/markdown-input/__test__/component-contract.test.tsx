@@ -361,7 +361,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
     expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 74);
   });
 
-  it("clears the mode switch float so the markdown body keeps full width", () => {
+  it("clears the mode switch float on the editor box so markdown keeps full width", () => {
     const { container } = render(
       <MarkdownInput
         value="hello"
@@ -371,8 +371,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
       />,
     );
 
-    const body = container.firstElementChild as HTMLElement;
-    expect(body.style.width).toBe("100%");
-    expect(body.style.clear).toBe("right");
+    const editorHost = container.querySelector("textarea")?.parentElement as HTMLElement;
+    expect(editorHost.style.width).toBe("100%");
+    expect(editorHost.style.clear).toBe("right");
   });
 });
