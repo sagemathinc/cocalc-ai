@@ -3,7 +3,7 @@ import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { connect } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
-import { runDetachedAcpQueueWorker } from "./hub/acp";
+import { disposeAcpAgents, runDetachedAcpQueueWorker } from "./hub/acp";
 
 const logger = getLogger("lite:acp-worker");
 
@@ -15,7 +15,10 @@ function readRequiredEnv(name: string): string {
   return value;
 }
 
-function registerPidFile(pidFile: string): void {
+function registerPidFile(
+  pidFile: string,
+  onShutdown: () => Promise<void>,
+): void {
   writeFileSync(pidFile, `${process.pid}\n`);
   const cleanup = () => {
     try {
@@ -24,9 +27,22 @@ function registerPidFile(pidFile: string): void {
       // ignore
     }
   };
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void onShutdown()
+      .catch((err) => {
+        logger.warn("ACP worker shutdown failed", err);
+      })
+      .finally(() => {
+        cleanup();
+        process.exit(0);
+      });
+  };
   process.once("exit", cleanup);
-  process.once("SIGINT", () => process.exit(0));
-  process.once("SIGTERM", () => process.exit(0));
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 export async function main(): Promise<void> {
@@ -34,7 +50,6 @@ export async function main(): Promise<void> {
   const pidFile = readRequiredEnv("COCALC_LITE_ACP_WORKER_PID_FILE");
   const conatServer = readRequiredEnv("CONAT_SERVER");
   setConatPassword(conatPassword);
-  registerPidFile(pidFile);
   const createConatClient = () =>
     connect({
       address: conatServer,
@@ -47,6 +62,14 @@ export async function main(): Promise<void> {
     getLogger,
   });
   const client = createConatClient();
+  registerPidFile(pidFile, async () => {
+    await disposeAcpAgents();
+    try {
+      client.close();
+    } catch {
+      // ignore close errors
+    }
+  });
   try {
     await runDetachedAcpQueueWorker(client);
   } finally {

@@ -95,6 +95,14 @@ import {
   setAcpJobState,
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
+import {
+  decodeAcpInterruptCandidateIds,
+  decodeAcpInterruptChat,
+  enqueueAcpInterrupt,
+  listPendingAcpInterrupts,
+  markAcpInterruptError,
+  markAcpInterruptHandled,
+} from "../sqlite/acp-interrupts";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
@@ -124,6 +132,9 @@ let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
 let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
+let acpExecutionOwnedByCurrentProcess = false;
+let acpInterruptPollerStarted = false;
+let acpInterruptPollInFlight = false;
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -166,6 +177,11 @@ const ACP_WORKER_POLL_MS = envNumber("COCALC_ACP_WORKER_POLL_MS", 1000);
 const ACP_WORKER_IDLE_EXIT_MS = envNumber(
   "COCALC_ACP_WORKER_IDLE_EXIT_MS",
   5000,
+);
+const ACP_INTERRUPT_POLL_MS = envNumber("COCALC_ACP_INTERRUPT_POLL_MS", 250);
+const ACP_INTERRUPT_MAX_AGE_MS = envNumber(
+  "COCALC_ACP_INTERRUPT_MAX_AGE_MS",
+  30_000,
 );
 
 function liteUseDetachedAcpWorker(): boolean {
@@ -2683,6 +2699,8 @@ export async function runDetachedAcpQueueWorker(
   } = {},
 ): Promise<void> {
   initializeAcpRuntime(client);
+  acpExecutionOwnedByCurrentProcess = true;
+  startAcpInterruptPoller();
   if (typeof (client as any)?.waitUntilSignedIn === "function") {
     await (client as any).waitUntilSignedIn({ timeout: 5000 });
   }
@@ -3817,6 +3835,156 @@ function resolveRunningInterruptKey({
   return `${running?.session_id ?? thread_id}`.trim() || thread_id;
 }
 
+function resolveInterruptCandidateIds({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id?: string;
+  path?: string;
+  thread_id?: string;
+}): string[] {
+  const ids = new Set<string>();
+  const projectId = `${project_id ?? ""}`.trim();
+  const chatPath = `${path ?? ""}`.trim();
+  const threadId = `${thread_id ?? ""}`.trim();
+  if (threadId) {
+    ids.add(threadId);
+  }
+  try {
+    for (const row of listRunningAcpTurnLeases()) {
+      if (projectId && row.project_id !== projectId) continue;
+      if (chatPath && row.path !== chatPath) continue;
+      if (
+        threadId &&
+        row.thread_id !== threadId &&
+        `${row.session_id ?? ""}`.trim() !== threadId
+      ) {
+        continue;
+      }
+      const sessionId = `${row.session_id ?? ""}`.trim();
+      if (sessionId) {
+        ids.add(sessionId);
+      }
+      const runningThreadId = `${row.thread_id ?? ""}`.trim();
+      if (runningThreadId) {
+        ids.add(runningThreadId);
+      }
+    }
+  } catch (err) {
+    logger.debug("failed to resolve interrupt candidates from leases", {
+      project_id: projectId,
+      path: chatPath,
+      thread_id: threadId,
+      err,
+    });
+  }
+  return [...ids];
+}
+
+async function tryInterruptCandidateIds({
+  threadId,
+  chat,
+  candidateIds,
+  notifyText = INTERRUPT_STATUS_TEXT,
+}: {
+  threadId?: string;
+  chat?: AcpChatContext;
+  candidateIds?: string[];
+  notifyText?: string;
+}): Promise<boolean> {
+  const writer = findChatWriter({ threadId, chat });
+  const ids = new Set<string>();
+  for (const id of candidateIds ?? []) {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) ids.add(trimmed);
+  }
+  if (threadId) {
+    ids.add(threadId);
+  }
+  writer?.getKnownThreadIds().forEach((id) => {
+    const trimmed = `${id ?? ""}`.trim();
+    if (trimmed) ids.add(trimmed);
+  });
+
+  for (const id of ids) {
+    if (await interruptCodexSession(id)) {
+      writer?.notifyInterrupted(notifyText);
+      return true;
+    }
+  }
+  return false;
+}
+
+function enqueueInterruptRequestForExecution({
+  project_id,
+  path,
+  thread_id,
+  chat,
+  candidateIds,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  chat?: AcpChatContext;
+  candidateIds?: string[];
+}): void {
+  enqueueAcpInterrupt({
+    project_id,
+    path,
+    thread_id,
+    candidate_ids: candidateIds,
+    chat,
+  });
+}
+
+async function processPendingAcpInterruptsOnce(): Promise<void> {
+  if (acpInterruptPollInFlight) return;
+  acpInterruptPollInFlight = true;
+  try {
+    for (const row of listPendingAcpInterrupts()) {
+      const ageMs = Date.now() - row.created_at;
+      const chat = decodeAcpInterruptChat(row);
+      const handled = await tryInterruptCandidateIds({
+        threadId: row.thread_id,
+        chat,
+        candidateIds: [
+          ...decodeAcpInterruptCandidateIds(row),
+          ...resolveInterruptCandidateIds({
+            project_id: row.project_id,
+            path: row.path,
+            thread_id: row.thread_id,
+          }),
+        ],
+      });
+      if (handled) {
+        markAcpInterruptHandled({ id: row.id });
+      } else if (ageMs >= ACP_INTERRUPT_MAX_AGE_MS) {
+        markAcpInterruptError({
+          id: row.id,
+          error: "unable to interrupt codex session",
+        });
+      }
+    }
+  } finally {
+    acpInterruptPollInFlight = false;
+  }
+}
+
+function startAcpInterruptPoller(): void {
+  if (acpInterruptPollerStarted) return;
+  acpInterruptPollerStarted = true;
+  const timer = setInterval(() => {
+    void processPendingAcpInterruptsOnce().catch((err) => {
+      logger.warn("ACP interrupt poll failed", err);
+    });
+  }, ACP_INTERRUPT_POLL_MS);
+  timer.unref?.();
+  void processPendingAcpInterruptsOnce().catch((err) => {
+    logger.warn("ACP initial interrupt poll failed", err);
+  });
+}
+
 async function enqueueChatAcpTurn({
   request,
   stream,
@@ -3958,14 +4126,7 @@ export async function init(
   );
   initializeAcpRuntime(client);
   process.once("exit", () => {
-    for (const agent of agents.values()) {
-      agent
-        .dispose?.()
-        .catch((err) => {
-          logger.warn("failed to dispose ACP agent", err);
-        })
-        .finally(() => undefined);
-    }
+    void disposeAcpAgents();
   });
   await initConatAcp(
     {
@@ -3978,16 +4139,21 @@ export async function init(
   );
   if (options.manageDetachedWorker !== false) {
     if (liteUseDetachedAcpWorker()) {
+      acpExecutionOwnedByCurrentProcess = false;
       startAcpWorkerSupervisor();
       await ensureDetachedWorkerRunning();
     } else {
+      acpExecutionOwnedByCurrentProcess = true;
       logger.warn(
         "ACP detached worker disabled in Lite; using same-process queue execution",
       );
       await recoverOrphanedAcpTurns(client);
       markRunningAcpJobsInterrupted("server restart");
+      startAcpInterruptPoller();
       kickAllQueuedAcpJobs();
     }
+  } else {
+    acpExecutionOwnedByCurrentProcess = false;
   }
 }
 
@@ -4150,30 +4316,46 @@ function parseBlobReference(target: string): BlobReference | undefined {
 async function handleInterruptRequest(
   request: AcpInterruptRequest,
 ): Promise<void> {
-  const writer = findChatWriter({
-    threadId: request.threadId,
-    chat: request.chat,
+  const project_id = `${request.project_id ?? request.chat?.project_id ?? ""}`.trim();
+  const path = `${request.chat?.path ?? ""}`.trim();
+  const threadId = `${request.threadId ?? request.chat?.thread_id ?? ""}`.trim();
+  const candidateIds = resolveInterruptCandidateIds({
+    project_id,
+    path,
+    thread_id: threadId,
   });
 
-  const candidateIds: Set<string> = new Set();
-  if (request.threadId) {
-    candidateIds.add(request.threadId);
+  if (
+    await tryInterruptCandidateIds({
+      threadId,
+      chat: request.chat,
+      candidateIds,
+    })
+  ) {
+    return;
   }
-  writer?.getKnownThreadIds().forEach((id) => candidateIds.add(id));
-
-  let handled = false;
-  for (const id of candidateIds) {
-    if (!id) continue;
-    if (await interruptCodexSession(id)) {
-      handled = true;
-      break;
-    }
-  }
-
-  if (!handled) {
+  if (!project_id || !path || !threadId) {
     throw Error("unable to interrupt codex session");
   }
-  writer?.notifyInterrupted(INTERRUPT_STATUS_TEXT);
+  enqueueInterruptRequestForExecution({
+    project_id,
+    path,
+    thread_id: threadId,
+    chat: request.chat,
+    candidateIds,
+  });
+  if (!acpExecutionOwnedByCurrentProcess) {
+    try {
+      await ensureDetachedWorkerRunning({ force: true });
+    } catch (err) {
+      logger.debug("failed waking detached ACP worker for interrupt", {
+        project_id,
+        path,
+        threadId,
+        err,
+      });
+    }
+  }
 }
 
 async function handleForkSessionRequest(
@@ -4213,4 +4395,18 @@ async function interruptCodexSession(threadId: string): Promise<boolean> {
     }
   }
   return false;
+}
+
+export async function disposeAcpAgents(): Promise<void> {
+  const pending: Promise<void>[] = [];
+  for (const [key, agent] of agents.entries()) {
+    if (typeof agent.dispose !== "function") continue;
+    pending.push(
+      Promise.resolve(agent.dispose()).catch((err) => {
+        logger.warn("failed to dispose ACP agent", { key, err });
+      }),
+    );
+  }
+  await Promise.all(pending);
+  agents.clear();
 }

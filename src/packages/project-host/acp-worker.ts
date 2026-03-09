@@ -4,7 +4,7 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { setConatClient } from "@cocalc/conat/client";
-import { runDetachedAcpQueueWorker } from "@cocalc/lite/hub/acp";
+import { disposeAcpAgents, runDetachedAcpQueueWorker } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
@@ -26,7 +26,10 @@ function readRequiredEnv(name: string): string {
   return value;
 }
 
-function registerPidFile(pidFile: string): void {
+function registerPidFile(
+  pidFile: string,
+  onShutdown: () => Promise<void>,
+): void {
   writeFileSync(pidFile, `${process.pid}\n`);
   const cleanup = () => {
     try {
@@ -35,9 +38,22 @@ function registerPidFile(pidFile: string): void {
       // ignore
     }
   };
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void onShutdown()
+      .catch((err) => {
+        logger.warn("project-host ACP worker shutdown failed", err);
+      })
+      .finally(() => {
+        cleanup();
+        process.exit(0);
+      });
+  };
   process.once("exit", cleanup);
-  process.once("SIGINT", () => process.exit(0));
-  process.once("SIGTERM", () => process.exit(0));
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 function configureProjectHostAcpRuntime(): void {
@@ -94,7 +110,6 @@ export async function main(): Promise<void> {
   const pidFile = readRequiredEnv("COCALC_PROJECT_HOST_ACP_WORKER_PID_FILE");
   const conatServer = readRequiredEnv("CONAT_SERVER");
   setConatPassword(conatPassword);
-  registerPidFile(pidFile);
   initSqlite();
   configureProjectHostAcpRuntime();
   const createConatClient = () =>
@@ -110,6 +125,20 @@ export async function main(): Promise<void> {
   });
   const client = createConatClient();
   const masterClient = connectMasterClient();
+  registerPidFile(pidFile, async () => {
+    await disposeAcpAgents();
+    try {
+      masterClient?.close();
+    } catch {
+      // ignore close errors
+    }
+    setMasterConatClient(undefined);
+    try {
+      client.close();
+    } catch {
+      // ignore close errors
+    }
+  });
   try {
     await runDetachedAcpQueueWorker(client, {
       idleExitMs: null,
