@@ -722,6 +722,49 @@ Initial behavior:
 1. the modal may simply call `forward-command`,
 2. no daemon automation is required for the first pass.
 
+#### Phase 3.1: CLI Onboarding / Auth Login
+
+Goal:
+
+1. make local app forwarding usable by ordinary users, not just developers who
+   already have a configured `cocalc` CLI,
+2. keep the Apps-page `Tunnel locally` flow simple while the deeper automation
+   catches up.
+
+Near-term Apps UI behavior:
+
+1. `Tunnel locally` opens a modal,
+2. the modal links to the CLI download page:
+   - `https://software.cocalc.ai/software/cocalc/index.html`
+3. the modal shows a copyable command such as:
+   - `cocalc project app forward --project <id> <app-id>`
+4. no browser-to-daemon automation is required yet.
+
+CLI onboarding gap:
+
+1. the current `cocalc auth login` command is still a profile/credential storage
+   command, not a polished end-user login flow,
+2. users should not be expected to manually reason about API URLs, bearer
+   tokens, or profile internals before using app forwarding.
+
+Planned `cocalc auth login` product shape:
+
+1. prompt for the CoCalc site when not already known, e.g.:
+   - `https://dev.cocalc.ai`
+2. start a standard browser/device-style auth flow,
+3. persist an auth profile automatically,
+4. return to the original command once login succeeds,
+5. make the first-run path for:
+   - `cocalc project app forward ...`
+   - future daemon-assisted local forwarding
+   feel normal and self-explanatory.
+
+Non-goals for this slice:
+
+1. solving local daemon approval UX,
+2. implementing the full long-term browser/daemon pairing story,
+3. exposing the raw auth/profile surface in the Apps UI.
+
 #### Phase 4: Daemon-Assisted Forwarding
 
 Goal:

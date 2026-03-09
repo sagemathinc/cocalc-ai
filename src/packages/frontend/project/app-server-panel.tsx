@@ -19,6 +19,7 @@ import {
   Space,
   Spin,
   Tag,
+  Typography,
 } from "antd";
 import type {
   AppSpec,
@@ -117,6 +118,9 @@ const APP_SECURITY_MARKDOWN = `
 
 More detail: \`docs/security/private-app-trust-model.md\`
 `;
+
+const COCALC_CLI_DOWNLOAD_URL =
+  "https://software.cocalc.ai/software/cocalc/index.html";
 
 function normalizeError(err: unknown): Error {
   if (err instanceof Error) return err;
@@ -297,6 +301,15 @@ function buildPublicUrlFromExposure(
   if (exposure?.public_url) return exposure.public_url;
   const hostname = buildPublicHostnameFromExposure(status, policy);
   return hostname ? `https://${hostname}` : undefined;
+}
+
+function shellQuoteCliArg(value: string): string {
+  if (!value) return '""';
+  return /^[A-Za-z0-9_./:=@-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function buildTunnelLocallyCommand(projectId: string, appId: string): string {
+  return `cocalc project app forward --project=${shellQuoteCliArg(projectId)} ${shellQuoteCliArg(appId)}`;
 }
 
 function formatBytes(value?: number): string {
@@ -632,6 +645,9 @@ export function AppServerPanel({
     stderr: string;
   } | null>(null);
   const [securityOpen, setSecurityOpen] = useState<boolean>(false);
+  const [localTunnelTarget, setLocalTunnelTarget] = useState<ManagedAppStatus | null>(
+    null,
+  );
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
@@ -762,6 +778,10 @@ export function AppServerPanel({
       attention,
     };
   }, [rows, startupFailures]);
+  const siteOrigin = useMemo(() => {
+    if (typeof window === "undefined" || !window.location?.origin) return "";
+    return window.location.origin.replace(/\/+$/, "");
+  }, []);
 
   const quickPresetKeys = useMemo(
     () => ["jupyterlab", "code-server", "pluto", "rstudio", "python-hello", "static-hello"],
@@ -1511,9 +1531,14 @@ export function AppServerPanel({
     }
   }
 
+  function onTunnelLocally(row: ManagedAppStatus) {
+    setLocalTunnelTarget(row);
+  }
+
   function onRowMenuAction(
     row: ManagedAppStatus,
     action:
+      | "tunnel"
       | "expose"
       | "unexpose"
       | "audit"
@@ -1523,6 +1548,9 @@ export function AppServerPanel({
       | "delete",
   ) {
     switch (action) {
+      case "tunnel":
+        onTunnelLocally(row);
+        return;
       case "expose":
         void onExpose(row.id);
         return;
@@ -2148,6 +2176,14 @@ export function AppServerPanel({
           const startupFailure = startupFailures[row.id];
           const isExpanded = !!expandedRows[row.id] || !!startupFailure;
           const rowMenuItems = [
+            ...(row.kind === "service"
+              ? [
+                  {
+                    key: "tunnel",
+                    label: "Tunnel locally",
+                  },
+                ]
+              : []),
             {
               key: isPublic ? "unexpose" : "expose",
               label: isPublic ? "Unexpose" : "Expose",
@@ -2237,6 +2273,7 @@ export function AppServerPanel({
                         onRowMenuAction(
                           row,
                           key as
+                            | "tunnel"
                             | "expose"
                             | "unexpose"
                             | "audit"
@@ -2543,6 +2580,70 @@ export function AppServerPanel({
           </Space>
         </div>
       ) : null}
+      <Modal
+        open={!!localTunnelTarget}
+        onCancel={() => setLocalTunnelTarget(null)}
+        title={
+          localTunnelTarget
+            ? `Tunnel locally: ${localTunnelTarget.title || localTunnelTarget.id}`
+            : "Tunnel locally"
+        }
+        width={720}
+        footer={[
+          <Button key="close" onClick={() => setLocalTunnelTarget(null)}>
+            Close
+          </Button>,
+        ]}
+      >
+        {localTunnelTarget ? (
+          <div style={{ display: "grid", gap: "12px" }}>
+            <Paragraph style={{ marginBottom: 0 }}>
+              Use the CoCalc CLI on your local computer to create a private tunnel to
+              this app. The command will wake the project and app if needed, then print
+              the local URL.
+            </Paragraph>
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "4px" }}>Install CoCalc CLI</div>
+              <a
+                href={COCALC_CLI_DOWNLOAD_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {COCALC_CLI_DOWNLOAD_URL}
+              </a>
+            </div>
+            {siteOrigin ? (
+              <div style={{ fontSize: "12px", opacity: 0.78 }}>
+                This tunnel targets: {siteOrigin}
+              </div>
+            ) : null}
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: "4px" }}>Run locally</div>
+              <Typography.Paragraph
+                copyable={{
+                  text: buildTunnelLocallyCommand(project_id, localTunnelTarget.id),
+                }}
+                style={{
+                  marginBottom: 0,
+                  padding: "10px 12px",
+                  border: "1px solid #eee",
+                  borderRadius: "8px",
+                  background: "#fafafa",
+                  fontFamily: "monospace",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {buildTunnelLocallyCommand(project_id, localTunnelTarget.id)}
+              </Typography.Paragraph>
+            </div>
+            <div style={{ fontSize: "12px", opacity: 0.78 }}>
+              The end-user CLI login flow is still being improved. If the CLI is not
+              authenticated locally yet, follow the auth prompts/help from the CLI
+              first, then rerun the tunnel command.
+            </div>
+          </div>
+        ) : null}
+      </Modal>
       <Modal
         open={securityOpen}
         onCancel={() => setSecurityOpen(false)}

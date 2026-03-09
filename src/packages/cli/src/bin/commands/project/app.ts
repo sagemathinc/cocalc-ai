@@ -3,6 +3,7 @@
  *
  * Phase 0 intentionally keeps this JSON-first and deterministic for agent flows.
  */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Command } from "commander";
 
@@ -41,6 +42,49 @@ type AppForwardCommandResult = {
   note: string;
 };
 
+type ManagedAppForwardResult = {
+  project_id: string;
+  app_id: string;
+  title: string | null;
+  kind: "service" | "static";
+  state: string;
+  ready: boolean | null;
+  ssh_transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
+  ssh_server: string | null;
+  ssh_alias: string;
+  ssh_config_path: string;
+  remote_port: number;
+  local_host: string;
+  local_port: number;
+  local_url: string;
+  forward_id: number | null;
+  forward_name: string;
+  forward_state: string | null;
+  reused: boolean;
+  key_created: boolean;
+  key_path: string | null;
+  key_installed: boolean;
+  key_already_present: boolean;
+  reflect_home: string;
+  session_db: string;
+  note: string;
+};
+
+type ManagedAppForwardRow = {
+  id: number;
+  name: string | null;
+  project_id: string;
+  app_id: string | null;
+  local_host: string;
+  local_port: number;
+  local_url: string;
+  remote_port: number;
+  state: string | null;
+  desired_state: string | null;
+  monitor_pid: number | null;
+  last_error: string | null;
+};
+
 function parsePositiveIntOrThrow(value: string | undefined, context: string): number | undefined {
   if (value == null || `${value}`.trim() === "") return undefined;
   const n = Number(value);
@@ -69,6 +113,151 @@ function shellQuoteArg(arg: string): string {
 
 function buildSshCommand(args: string[]): string {
   return `ssh ${args.map(shellQuoteArg).join(" ")}`;
+}
+
+function sanitizeForwardToken(value: string): string {
+  const trimmed = `${value}`.trim().toLowerCase();
+  const normalized = trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || "app";
+}
+
+function managedProjectSshAlias(projectId: string): string {
+  return `cocalc-project-${projectId}`;
+}
+
+function managedAppForwardName(projectId: string, appId: string, localPort: number): string {
+  return `cocalc-app-forward-${projectId.slice(0, 8)}-${sanitizeForwardToken(appId)}-${localPort}`;
+}
+
+function managedAppForwardPrefix(projectId: string, appId?: string): string {
+  const prefix = `cocalc-app-forward-${projectId.slice(0, 8)}-`;
+  if (!appId) return prefix;
+  return `${prefix}${sanitizeForwardToken(appId)}-`;
+}
+
+function localUrlForForward(localHost: string, localPort: number): string {
+  return `http://${localHost === "0.0.0.0" ? "127.0.0.1" : localHost}:${localPort}`;
+}
+
+function isReflectForwardRunning(state: string | null | undefined): boolean {
+  return state === "running" || state === "starting";
+}
+
+function formatManagedAppForwardRow(row: any): ManagedAppForwardRow {
+  const name = `${row.name ?? ""}`.trim() || null;
+  const match =
+    name?.match(/^cocalc-app-forward-([a-f0-9]{8})-([a-z0-9._-]+)-(\d+)$/i) ?? null;
+  const localHost = `${row.local_host ?? row.local?.split(":")[0] ?? "127.0.0.1"}`.trim() || "127.0.0.1";
+  const localPort = Number.parseInt(
+    `${row.local_port ?? row.local?.split(":").slice(-1)[0] ?? 0}`,
+    10,
+  );
+  return {
+    id: Number(row.id),
+    name,
+    project_id: `${row.project_id ?? ""}`.trim() || (match?.[1] ?? ""),
+    app_id: match?.[2] ?? null,
+    local_host: localHost,
+    local_port: localPort,
+    local_url: localUrlForForward(localHost, localPort),
+    remote_port: Number.parseInt(`${row.remote_port ?? 0}`, 10),
+    state: row.state ?? row.actual_state ?? null,
+    desired_state: row.desired_state ?? null,
+    monitor_pid:
+      row.monitor_pid == null || row.monitor_pid === ""
+        ? null
+        : Number.parseInt(`${row.monitor_pid}`, 10),
+    last_error: row.last_error ?? null,
+  };
+}
+
+function filterManagedAppForwardRows(
+  rows: unknown[],
+  projectId: string,
+  appId?: string,
+): ManagedAppForwardRow[] {
+  const prefix = managedAppForwardPrefix(projectId, appId);
+  return rows
+    .map((row) => ({ ...formatManagedAppForwardRow(row), project_id: projectId }))
+    .filter((row) => row.name?.startsWith(prefix));
+}
+
+function printManagedAppForwardRowsHuman(rows: ManagedAppForwardRow[]): void {
+  if (!rows.length) {
+    console.log("(no managed app forwards)");
+    return;
+  }
+  for (const [index, row] of rows.entries()) {
+    if (index > 0) {
+      console.log("");
+    }
+    const title = row.app_id ? `${row.app_id} (#${row.id})` : `forward #${row.id}`;
+    console.log(`${title}  ${row.state ?? "unknown"}`);
+    console.log(`  Local:   ${row.local_url}`);
+    console.log(`  Remote:  ${row.remote_port}`);
+    if (row.monitor_pid != null) {
+      console.log(`  PID:     ${row.monitor_pid}`);
+    }
+    if (row.last_error) {
+      console.log(`  Error:   ${row.last_error}`);
+    }
+  }
+}
+
+function ensureManagedProjectSshConfigEntry({
+  configPath,
+  alias,
+  route,
+  keyPath,
+  cloudflaredBinary,
+  removeProjectSshConfigBlock,
+  projectSshConfigBlockMarkers,
+}: {
+  configPath: string;
+  alias: string;
+  route: {
+    ssh_transport: "cloudflare-tcp" | "cloudflare-access-tcp" | "direct";
+    ssh_username: string;
+    cloudflare_hostname: string | null;
+    ssh_host: string | null;
+    ssh_port: number | null;
+  };
+  keyPath: string | null;
+  cloudflaredBinary: string | null;
+  removeProjectSshConfigBlock: (content: string, alias: string) => { content: string };
+  projectSshConfigBlockMarkers: (alias: string) => { start: string; end: string };
+}): void {
+  const hostName =
+    route.ssh_transport !== "direct"
+      ? `${route.cloudflare_hostname ?? ""}`.trim()
+      : `${route.ssh_host ?? ""}`.trim();
+  if (!hostName) {
+    throw new Error("project ssh route is missing host endpoint");
+  }
+  const lines = [`Host ${alias}`, `  HostName ${hostName}`, `  User ${route.ssh_username}`];
+  if (route.ssh_transport !== "direct") {
+    if (!cloudflaredBinary) {
+      throw new Error("cloudflared is required for managed Cloudflare SSH forwarding");
+    }
+    lines.push(`  ProxyCommand ${cloudflaredBinary} access ssh --hostname %h`);
+  } else if (route.ssh_port != null) {
+    lines.push(`  Port ${route.ssh_port}`);
+  }
+  lines.push("  StrictHostKeyChecking accept-new");
+  lines.push("  ServerAliveInterval 15");
+  lines.push("  ServerAliveCountMax 2");
+  if (keyPath) {
+    lines.push(`  IdentityFile ${keyPath}`);
+    lines.push("  IdentitiesOnly yes");
+  }
+
+  const markers = projectSshConfigBlockMarkers(alias);
+  const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+  const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const stripped = removeProjectSshConfigBlock(existing, alias).content.trimEnd();
+  const next = stripped ? `${stripped}\n\n${block}` : block;
+  writeFileSync(configPath, next, { encoding: "utf8", mode: 0o600 });
 }
 
 async function resolveAppForwardCommand(
@@ -194,6 +383,175 @@ async function resolveAppForwardCommand(
   };
 }
 
+async function createManagedAppForward(
+  ctx: any,
+  deps: ProjectCommandDeps,
+  opts: {
+    project?: string;
+    appId: string;
+    direct?: boolean;
+    localPort?: string;
+    localHost?: string;
+    timeout?: string;
+    keyPath?: string;
+    installKey?: boolean;
+    compress?: boolean;
+    sshConfig?: string;
+  },
+): Promise<ManagedAppForwardResult> {
+  const {
+    resolveProjectProjectApi,
+    resolveProjectSshConnection,
+    ensureSyncKeyPair,
+    installSyncPublicKey,
+    durationToMs,
+    normalizeProjectSshConfigPath,
+    normalizeProjectSshHostAlias,
+    removeProjectSshConfigBlock,
+    projectSshConfigBlockMarkers,
+    resolveCloudflaredBinary,
+    runReflectSyncCli,
+    listReflectForwards,
+    parseCreatedForwardId,
+    reflectSyncHomeDir,
+    reflectSyncSessionDbPath,
+  } = deps;
+
+  const { project, api } = await resolveProjectProjectApi(ctx, opts.project);
+  const spec = await api.apps.getAppSpec(opts.appId);
+  if (spec.kind !== "service") {
+    throw new Error(
+      `app '${opts.appId}' is ${spec.kind}; only service apps with a TCP port support SSH forwarding`,
+    );
+  }
+
+  const timeout = opts.timeout ? durationToMs(opts.timeout) : undefined;
+  const status = await api.apps.ensureRunning(opts.appId, {
+    timeout,
+    interval: 500,
+  });
+  if (!Number.isInteger(status.port) || status.port! <= 0) {
+    throw new Error(
+      `app '${opts.appId}' is running without a concrete port; cannot create an SSH forward`,
+    );
+  }
+
+  const remotePort = status.port!;
+  const localPort = parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
+  const localHost = `${opts.localHost ?? "127.0.0.1"}`.trim() || "127.0.0.1";
+  const route = await resolveProjectSshConnection(ctx, project.project_id, {
+    direct: !!opts.direct,
+  });
+
+  let keyInfo: any = null;
+  let keyInstall: Record<string, unknown> | null = null;
+  if (opts.installKey !== false) {
+    keyInfo = await ensureSyncKeyPair(opts.keyPath);
+    keyInstall = await installSyncPublicKey({
+      ctx,
+      projectIdentifier: project.project_id,
+      publicKey: keyInfo.public_key,
+    });
+  }
+
+  const sshAlias = normalizeProjectSshHostAlias(managedProjectSshAlias(project.project_id));
+  const sshConfigPath = normalizeProjectSshConfigPath(opts.sshConfig);
+  const cloudflaredBinary =
+    route.transport !== "direct" ? resolveCloudflaredBinary() : null;
+  ensureManagedProjectSshConfigEntry({
+    configPath: sshConfigPath,
+    alias: sshAlias,
+    route: {
+      ssh_transport: route.transport,
+      ssh_username: route.ssh_username,
+      cloudflare_hostname: route.cloudflare_hostname,
+      ssh_host: route.ssh_host,
+      ssh_port: route.ssh_port,
+    },
+    keyPath: keyInfo?.private_key_path ?? null,
+    cloudflaredBinary,
+    removeProjectSshConfigBlock,
+    projectSshConfigBlockMarkers,
+  });
+
+  const forwardName = managedAppForwardName(project.project_id, opts.appId, localPort);
+  const existingRows = filterManagedAppForwardRows(
+    await listReflectForwards(),
+    project.project_id,
+    opts.appId,
+  );
+  const existing = existingRows.find((row) => row.name === forwardName) ?? null;
+  let forwardId: number | null = null;
+  let forwardState: string | null = existing?.state ?? null;
+  let reused = false;
+
+  if (existing && isReflectForwardRunning(existing.state)) {
+    forwardId = existing.id;
+    reused = true;
+  } else {
+    if (existing) {
+      await runReflectSyncCli(["forward", "terminate", String(existing.id)]);
+    }
+    const created = await runReflectSyncCli([
+      "forward",
+      "create",
+      `${localHost}:${localPort}`,
+      `${sshAlias}:${remotePort}`,
+      "--name",
+      forwardName,
+      ...(opts.compress ? ["--compress"] : []),
+    ]);
+    forwardId = parseCreatedForwardId(`${created.stdout}\n${created.stderr}`);
+    const refreshed = filterManagedAppForwardRows(
+      await listReflectForwards(),
+      project.project_id,
+      opts.appId,
+    ).find((row) => row.name === forwardName);
+    if (refreshed) {
+      forwardId = refreshed.id;
+      forwardState = refreshed.state ?? null;
+    } else {
+      forwardState = "running";
+    }
+  }
+
+  return {
+    project_id: project.project_id,
+    app_id: opts.appId,
+    title: status.title ?? spec.title ?? null,
+    kind: spec.kind,
+    state: status.state,
+    ready: status.ready ?? null,
+    ssh_transport: route.transport,
+    ssh_server:
+      route.transport !== "direct"
+        ? route.cloudflare_hostname
+          ? `${route.cloudflare_hostname}:443`
+          : null
+        : route.ssh_server ?? null,
+    ssh_alias: sshAlias,
+    ssh_config_path: sshConfigPath,
+    remote_port: remotePort,
+    local_host: localHost,
+    local_port: localPort,
+    local_url: localUrlForForward(localHost, localPort),
+    forward_id: forwardId,
+    forward_name: forwardName,
+    forward_state: forwardState,
+    reused,
+    key_created: keyInfo?.created ?? false,
+    key_path: keyInfo?.private_key_path ?? null,
+    key_installed: keyInstall ? Boolean((keyInstall as any).installed) : false,
+    key_already_present: keyInstall
+      ? Boolean((keyInstall as any).already_present)
+      : false,
+    reflect_home: reflectSyncHomeDir(),
+    session_db: reflectSyncSessionDbPath(),
+    note:
+      "The forward is managed locally via reflect-sync. Re-run this command to reuse it, or stop it with 'cocalc project app forward-stop'.",
+  };
+}
+
 function normalizePrefix(value: string): string {
   const withLeading = value.startsWith("/") ? value : `/${value}`;
   return withLeading.replace(/\/+$/, "") || "/";
@@ -286,7 +644,8 @@ export function registerProjectAppCommands(
     readAllStdin,
     mkdirLocal,
     writeFileLocal,
-    runSsh,
+    listReflectForwards,
+    terminateReflectForwards,
   } = deps;
 
   const app = project
@@ -376,12 +735,14 @@ export function registerProjectAppCommands(
 
   app
     .command("forward <appId>")
-    .description("run a private local SSH tunnel to a managed service app")
+    .description("create or reuse a managed local SSH tunnel to a service app")
     .option("-w, --project <project>", "project id or name")
     .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
     .option("--local-port <port>", "local port to bind (default: same as app port)")
     .option("--local-host <host>", "local bind host", "127.0.0.1")
     .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
+    .option("--compress", "enable SSH compression for the managed tunnel")
+    .option("--ssh-config <path>", "ssh config path to use/manage (default: ~/.ssh/config)")
     .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
     .option(
       "--no-install-key",
@@ -396,28 +757,85 @@ export function registerProjectAppCommands(
           localPort?: string;
           localHost?: string;
           timeout?: string;
+          compress?: boolean;
+          sshConfig?: string;
           keyPath?: string;
           installKey?: boolean;
         },
         command: Command,
       ) => {
         await withContext(command, "project app forward", async (ctx) => {
-          const resolved = await resolveAppForwardCommand(ctx, deps, {
+          const resolved = await createManagedAppForward(ctx, deps, {
             ...opts,
             appId,
           });
           if (!ctx.globals.json && ctx.globals.output !== "json") {
             console.log(
-              `Forwarding ${resolved.title ?? appId} to ${resolved.local_url}. Press Ctrl-C to stop.`,
+              `${resolved.reused ? "Reusing" : "Created"} local tunnel for ${resolved.title ?? appId} at ${resolved.local_url}.`,
             );
           }
-          const code = await runSsh(resolved.ssh_args);
-          if (code !== 0) {
-            process.exitCode = code;
+          return resolved;
+        });
+      },
+    );
+
+  app
+    .command("forward-list [appId]")
+    .description("list managed local SSH tunnels for apps")
+    .option("-w, --project <project>", "project id or name")
+    .option("--all", "list all managed app tunnels for the project")
+    .action(
+      async (
+        appId: string | undefined,
+        opts: { project?: string; all?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "project app forward-list", async (ctx) => {
+          const { project } = await resolveProjectProjectApi(ctx, opts.project);
+          const rows = filterManagedAppForwardRows(
+            await listReflectForwards(),
+            project.project_id,
+            opts.all ? undefined : appId,
+          );
+          if (!ctx.globals.json && ctx.globals.output !== "json") {
+            printManagedAppForwardRowsHuman(rows);
+            return null;
           }
+          return rows;
+        });
+      },
+    );
+
+  app
+    .command("forward-stop [appId]")
+    .description("stop one or more managed local SSH tunnels for apps")
+    .option("-w, --project <project>", "project id or name")
+    .option("--all", "stop all managed app tunnels for the project")
+    .action(
+      async (
+        appId: string | undefined,
+        opts: { project?: string; all?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "project app forward-stop", async (ctx) => {
+          const { project } = await resolveProjectProjectApi(ctx, opts.project);
+          const rows = filterManagedAppForwardRows(
+            await listReflectForwards(),
+            project.project_id,
+            opts.all ? undefined : appId,
+          );
+          if (!rows.length) {
+            return {
+              project_id: project.project_id,
+              terminated: 0,
+              refs: [],
+            };
+          }
+          await terminateReflectForwards(rows.map((row) => String(row.id)));
           return {
-            ...resolved,
-            exit_code: code,
+            project_id: project.project_id,
+            terminated: rows.length,
+            refs: rows.map((row) => row.id),
           };
         });
       },

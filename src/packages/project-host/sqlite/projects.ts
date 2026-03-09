@@ -161,10 +161,14 @@ export function upsertProject(row: ProjectRow) {
     row.users ??
     existing.users ??
     (account_id ? { [account_id]: { group: "owner" } } : undefined);
-  const http_port =
-    row.http_port ?? (existing as any).http_port ?? existingProjectsRow.http_port ?? null;
-  const ssh_port =
-    row.ssh_port ?? (existing as any).ssh_port ?? existingProjectsRow.ssh_port ?? null;
+  const hasHttpPort = Object.prototype.hasOwnProperty.call(row, "http_port");
+  const hasSshPort = Object.prototype.hasOwnProperty.call(row, "ssh_port");
+  const http_port = hasHttpPort
+    ? row.http_port ?? null
+    : ((existing as any).http_port ?? existingProjectsRow.http_port ?? null);
+  const ssh_port = hasSshPort
+    ? row.ssh_port ?? null
+    : ((existing as any).ssh_port ?? existingProjectsRow.ssh_port ?? null);
   const secret_token =
     row.secret_token ??
     (existingProjectsRow as any).secret_token ??
