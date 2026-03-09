@@ -4,12 +4,10 @@
  */
 
 import {
-  Alert,
   Button,
   Card,
   Empty,
   Input,
-  Modal,
   Popover,
   Popconfirm,
   Space,
@@ -20,8 +18,12 @@ import {
 } from "antd";
 import { useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { ColorPicker } from "@cocalc/frontend/colorpicker";
-import { Icon, TimeAgo, type IconName } from "@cocalc/frontend/components";
+import {
+  Icon,
+  ThemeEditorModal,
+  TimeAgo,
+  type IconName,
+} from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import type {
@@ -30,6 +32,12 @@ import type {
   WorkspaceSelection,
 } from "@cocalc/frontend/project/workspaces/types";
 import { defaultWorkspaceTitle } from "@cocalc/frontend/project/workspaces/state";
+import {
+  themeDraftFromTheme,
+  themeFromDraft,
+  type ThemeEditorDraft,
+  type ThemeImageChoice,
+} from "@cocalc/frontend/theme/types";
 
 const DEFAULT_ICON = "cube";
 
@@ -46,12 +54,7 @@ type WorkspacesFlyoutProps = {
 type EditorDraft = {
   workspace_id?: string;
   root_path: string;
-  title: string;
-  description: string;
-  color: string | null;
-  accent_color: string | null;
-  icon: string;
-  image_blob: string;
+  theme: ThemeEditorDraft;
   pinned: boolean;
   chat_path: string;
 };
@@ -75,12 +78,10 @@ function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDr
   if (!record) {
     return {
       root_path: fallbackPath,
-      title: fallbackPath ? defaultWorkspaceTitle(fallbackPath) : "",
-      description: "",
-      color: null,
-      accent_color: null,
-      icon: "",
-      image_blob: "",
+      theme: themeDraftFromTheme(
+        undefined,
+        fallbackPath ? defaultWorkspaceTitle(fallbackPath) : "",
+      ),
       pinned: false,
       chat_path: "",
     };
@@ -88,12 +89,7 @@ function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDr
   return {
     workspace_id: record.workspace_id,
     root_path: record.root_path,
-    title: record.theme.title,
-    description: record.theme.description,
-    color: record.theme.color,
-    accent_color: record.theme.accent_color,
-    icon: record.theme.icon ?? "",
-    image_blob: record.theme.image_blob ?? "",
+    theme: themeDraftFromTheme(record.theme),
     pinned: record.pinned,
     chat_path: record.chat_path ?? "",
   };
@@ -143,13 +139,19 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     setEditing((current) => (current ? { ...current, ...patch } : current));
   }
 
+  function patchTheme(themePatch: Partial<ThemeEditorDraft>): void {
+    setEditing((current) =>
+      current ? { ...current, theme: { ...current.theme, ...themePatch } } : current,
+    );
+  }
+
   async function onSave(): Promise<void> {
     if (!editing) return;
     setSaving(true);
     setError("");
     try {
       const values = editing;
-      if (!values.title.trim()) {
+      if (!values.theme.title.trim()) {
         setError("A workspace title is required.");
         return;
       }
@@ -161,26 +163,14 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       if (editing.workspace_id) {
         workspaces.updateWorkspace(editing.workspace_id, {
           root_path: values.root_path,
-          theme: {
-            title: values.title,
-            description: values.description,
-            color: values.color,
-            accent_color: values.accent_color,
-            icon: values.icon.trim() || null,
-            image_blob: values.image_blob.trim() || null,
-          },
+          theme: themeFromDraft(values.theme),
           pinned: values.pinned,
           chat_path: values.chat_path.trim() || null,
         });
       } else {
         workspaces.createWorkspace({
           root_path: values.root_path,
-          title: values.title,
-          description: values.description,
-          color: values.color,
-          accent_color: values.accent_color,
-          icon: values.icon.trim() || null,
-          image_blob: values.image_blob.trim() || null,
+          ...themeFromDraft(values.theme),
           pinned: values.pinned,
           chat_path: values.chat_path.trim() || null,
           source: "manual",
@@ -198,6 +188,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     const selected =
       workspaces.selection.kind === "workspace" &&
       workspaces.selection.workspace_id === record.workspace_id;
+    const imageUrl = record.theme.image_blob?.trim()
+      ? `/blobs/theme-image.png?uuid=${encodeURIComponent(record.theme.image_blob.trim())}`
+      : undefined;
     return (
       <Card
         key={record.workspace_id}
@@ -209,21 +202,35 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         bodyStyle={{ padding: isFlyout ? 10 : 12 }}
       >
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: record.theme.accent_color ?? "#f5f5f5",
-              color: record.theme.color ?? undefined,
-              flex: "0 0 auto",
-            }}
-          >
-            <Icon name={iconFor(record)} />
-          </div>
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt={`${record.theme.title} workspace`}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                objectFit: "cover",
+                flex: "0 0 auto",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: record.theme.accent_color ?? "#f5f5f5",
+                color: record.theme.color ?? undefined,
+                flex: "0 0 auto",
+              }}
+            >
+              <Icon name={iconFor(record)} />
+            </div>
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <Space size={6} wrap>
               <Typography.Text strong>{record.theme.title}</Typography.Text>
@@ -295,6 +302,16 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     );
   }
 
+  const recentImageChoices = useMemo<ThemeImageChoice[]>(
+    () =>
+      workspaces.records.flatMap((record) => {
+        const blob = record.theme.image_blob?.trim();
+        if (!blob) return [];
+        return [{ blob, label: record.theme.title } satisfies ThemeImageChoice];
+      }),
+    [workspaces.records],
+  );
+
   const body = (
     <div style={{ paddingRight: isFlyout ? 4 : 0 }}>
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
@@ -361,19 +378,22 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           </Space>
         )}
       </Space>
-      <Modal
+      <ThemeEditorModal
         open={editing != null}
         title={editing?.workspace_id ? "Edit Workspace" : "New Workspace"}
         onCancel={() => {
           setEditing(null);
           setError("");
         }}
-        onOk={() => void onSave()}
+        value={editing?.theme ?? null}
+        onChange={patchTheme}
+        onSave={onSave}
         confirmLoading={saving}
-        destroyOnHidden
-      >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
-          {error ? <Alert type="error" showIcon message={error} /> : null}
+        error={error}
+        projectId={project_id}
+        defaultIcon={DEFAULT_ICON as IconName}
+        recentImageChoices={recentImageChoices}
+        extraBeforeTheme={
           <div>
             <Typography.Text strong>Directory path</Typography.Text>
             <Input
@@ -382,72 +402,29 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               onChange={(e) => patchEditing({ root_path: e.target.value })}
             />
           </div>
-          <div>
-            <Typography.Text strong>Title</Typography.Text>
-            <Input
-              value={editing?.title ?? ""}
-              onChange={(e) => patchEditing({ title: e.target.value })}
-            />
-          </div>
-          <div>
-            <Typography.Text strong>Description</Typography.Text>
-            <Input.TextArea
-              rows={3}
-              value={editing?.description ?? ""}
-              onChange={(e) => patchEditing({ description: e.target.value })}
-            />
-          </div>
-          <div>
-            <Typography.Text strong>Icon</Typography.Text>
-            <Input
-              placeholder="e.g. cube, code, book"
-              value={editing?.icon ?? ""}
-              onChange={(e) => patchEditing({ icon: e.target.value })}
-            />
-          </div>
-          <div style={{ display: "flex", gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <Typography.Text strong>Color</Typography.Text>
-              <ColorPicker
-                color={editing?.color ?? undefined}
-                onChange={(color) => patchEditing({ color })}
+        }
+        extraAfterTheme={
+          <Space direction="vertical" style={{ width: "100%" }} size={12}>
+            <div>
+              <Typography.Text strong>Canonical chat path</Typography.Text>
+              <Input
+                placeholder="optional for later agent routing"
+                value={editing?.chat_path ?? ""}
+                onChange={(e) => patchEditing({ chat_path: e.target.value })}
               />
             </div>
-            <div style={{ flex: 1 }}>
-              <Typography.Text strong>Accent color</Typography.Text>
-              <ColorPicker
-                color={editing?.accent_color ?? undefined}
-                onChange={(color) => patchEditing({ accent_color: color })}
-              />
+            <div>
+              <Typography.Text strong>Pinned</Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                <Switch
+                  checked={editing?.pinned ?? false}
+                  onChange={(pinned) => patchEditing({ pinned })}
+                />
+              </div>
             </div>
-          </div>
-          <div>
-            <Typography.Text strong>Image blob hash</Typography.Text>
-            <Input
-              placeholder="optional blob hash"
-              value={editing?.image_blob ?? ""}
-              onChange={(e) => patchEditing({ image_blob: e.target.value })}
-            />
-          </div>
-          <div>
-            <Typography.Text strong>Canonical chat path</Typography.Text>
-            <Input
-              placeholder="optional for later agent routing"
-              value={editing?.chat_path ?? ""}
-              onChange={(e) => patchEditing({ chat_path: e.target.value })}
-            />
-          </div>
-          <div>
-            <Typography.Text strong>Pinned</Typography.Text>
-            <div style={{ marginTop: 8 }}>
-              <Switch
-                checked={editing?.pinned ?? false}
-                onChange={(pinned) => patchEditing({ pinned })}
-              />
-            </div>
-          </div>
-        </Space>
-      </Modal>
+          </Space>
+        }
+      />
     </div>
   );
 

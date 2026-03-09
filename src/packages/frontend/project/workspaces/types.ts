@@ -1,11 +1,6 @@
-export type WorkspaceTheme = {
-  title: string;
-  description: string;
-  color: string | null;
-  accent_color: string | null;
-  icon: string | null;
-  image_blob: string | null;
-};
+import type { EntityTheme } from "@cocalc/frontend/theme/types";
+
+export type WorkspaceTheme = EntityTheme;
 
 export type WorkspaceSource = "manual" | "git-root" | "inferred";
 
