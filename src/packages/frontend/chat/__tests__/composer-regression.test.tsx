@@ -147,6 +147,11 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps).toBeTruthy();
     expect(lastMarkdownInputProps.undoMode).toBe("local");
     expect(lastMarkdownInputProps.redoMode).toBe("local");
+    expect(lastMarkdownInputProps.modeSwitchStyle).toEqual({
+      position: "absolute",
+      top: 0,
+      right: 0,
+    });
 
     act(() => {
       lastMarkdownInputProps.onChange("hello");

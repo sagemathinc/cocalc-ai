@@ -312,9 +312,9 @@ export default function ChatInput({
       overflowEllipsis={true}
       hideModeSwitch={!hasInput}
       modeSwitchStyle={{
-        float: "right",
-        position: "relative",
-        marginBottom: "-5px",
+        position: "absolute",
+        top: 0,
+        right: 0,
       }}
       autoGrow
     />
