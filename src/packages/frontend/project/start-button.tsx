@@ -146,20 +146,18 @@ export function StartButton({
   // Making the UI depend on this instead of *just* the state
   // makes things feel more responsive.
   const starting = useMemo(() => {
-    if (startLroActive) {
+    const lifecycleState = state?.get("state");
+    if (lifecycleState === "starting" || lifecycleState === "opening")
       return true;
-    }
-    if (state?.get("state") === "starting" || state?.get("state") === "opening")
-      return true;
-    if (state?.get("state") === "running") return false;
+    if (lifecycleState === "running") return false;
     const action_request = (
       project_map?.getIn([project_id, "action_request"]) as any
     )?.toJS() as any;
     if (action_request == null) {
-      return false; // no action request at all
+      return startLroActive && lifecycleState == null;
     }
     if (action_request.action !== "start") {
-      return false; // a non-start action
+      return startLroActive && lifecycleState == null;
     }
     if (action_request.finished >= new Date(action_request.time)) {
       return false; // already done
@@ -173,7 +171,7 @@ export function StartButton({
     // action is start and it didn't quite get taken care of yet by backend server,
     // but keep disabled so the user doesn't keep making the request.
     return true;
-  }, [project_map, startLroActive]);
+  }, [project_map, project_id, startLroActive, state]);
 
   // in lite mode cocalc *is* being served directly from the project so it makes no sense
   // to start or stop the project.

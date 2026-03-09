@@ -94,6 +94,14 @@ project
         if (keyInfo?.private_key_path) {
           baseArgs.push("-i", keyInfo.private_key_path, "-o", "IdentitiesOnly=yes");
         }
+        baseArgs.push(
+          "-o",
+          "PasswordAuthentication=no",
+          "-o",
+          "KbdInteractiveAuthentication=no",
+          "-o",
+          "PreferredAuthentications=publickey",
+        );
         let sshServer = route.ssh_server;
         if (route.transport !== "direct") {
           const cloudflareHostname = route.cloudflare_hostname;
