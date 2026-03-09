@@ -37,7 +37,7 @@ import { Project } from "./settings/types";
 import { lite } from "@cocalc/frontend/lite";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
-import { useProjectWorkspaces } from "./workspaces/state";
+import { pathMatchesRoot, useProjectWorkspaces } from "./workspaces/state";
 import type { ProjectWorkspaceState } from "./workspaces/types";
 import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
 
@@ -97,6 +97,7 @@ export const emptyProjectContext = {
   setContentSize: () => {},
   status: INIT_PROJECT_STATE,
   workspaces: {
+    loading: false,
     records: [],
     selection: { kind: "all" },
     current: null,
@@ -219,7 +220,9 @@ export function useProjectContextProvider({
       if (active_project_tab !== "files") return;
       const current = workspaces.current;
       if (!current) return;
-      if (current_path_abs === current.root_path) return;
+      if (current_path_abs && pathMatchesRoot(current_path_abs, current.root_path)) {
+        return;
+      }
       void actions.open_directory(current.root_path, false, true);
       return;
     }

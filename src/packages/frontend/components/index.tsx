@@ -46,6 +46,7 @@ export { SelectorInput } from "./selector-input";
 export { SettingBox } from "./setting-box";
 export { SimpleX } from "./simple-x";
 export { SkinnyError } from "./skinny-error";
+export { ThemeEditorModal } from "./theme-editor-modal";
 export * from "./table-of-contents";
 export { TextInput } from "./text-input";
 export { TimeAgo, TimeAgoElement, is_different_date } from "./time-ago";
