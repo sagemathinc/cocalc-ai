@@ -37,6 +37,44 @@ function getSubject({ project_id }: { project_id: string }) {
   return `terminal.project-${project_id}.0`;
 }
 
+function sanitizedTerminalBaseEnv(
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(baseEnv)) {
+    if (value == null) continue;
+    if (
+      name.startsWith("COCALC_") ||
+      name === "DEBUG" ||
+      name === "DEBUG_CONSOLE" ||
+      name === "DEBUG_FILE" ||
+      name === "NODE_ENV"
+    ) {
+      continue;
+    }
+    env[name] = value;
+  }
+  return env;
+}
+
+export function mergeTerminalEnv0({
+  env,
+  env0,
+  baseEnv,
+}: {
+  env?: Record<string, string>;
+  env0?: Record<string, string>;
+  baseEnv?: NodeJS.ProcessEnv;
+}): Record<string, string> | undefined {
+  if (env0 == null) {
+    return env;
+  }
+  return {
+    ...(env ?? sanitizedTerminalBaseEnv(baseEnv)),
+    ...env0,
+  };
+}
+
 export interface Options {
   cwd?: string;
   // path of the primary terminal tab (typically a .term file) for UI linking
@@ -435,12 +473,10 @@ export function terminalServer({
               await preHook(opts);
               ({ command, args, options } = opts);
             }
-            if (options.env0 != null) {
-              options.env = {
-                ...(options.env ?? process.env),
-                ...options.env0,
-              };
-            }
+            options.env = mergeTerminalEnv0({
+              env: options.env,
+              env0: options.env0,
+            });
             setPty(spawn(command, args, options));
             if (id) {
               sessions[id] = pty;
