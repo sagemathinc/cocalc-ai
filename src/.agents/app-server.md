@@ -452,6 +452,10 @@ Recommended source model:
 3. site/admin catalogs:
    - configured as an ordered list of URLs or local paths,
    - merged after the default catalog with higher priority.
+4. project-local catalogs:
+   - stored inside the project filesystem,
+   - intended for project-specific augmentation, experimentation, and agent-driven template development,
+   - merged last with highest priority for that project only.
 
 Recommended merge/priority rules:
 
@@ -460,6 +464,7 @@ Recommended merge/priority rules:
 3. A catalog entry may explicitly mark a template hidden/disabled.
 4. Sort order is an explicit numeric `priority`, not source-order alone.
 5. The UI should show the final merged catalog only, not every source separately.
+6. Project-local templates should be clearly labeled in the UI as project-scoped so users know they are not site/global defaults.
 
 Recommended format:
 
@@ -472,6 +477,14 @@ Why JSON:
 3. easy for agents/CLI/admin tooling to inspect,
 4. easy to validate with JSON schema,
 5. avoids executable source as catalog data.
+
+Recommended project-local location:
+
+1. `.local/share/cocalc/app-templates/*.json`
+2. or, if we later want a broader shared catalog namespace:
+   - `.local/share/cocalc/catalog/app-templates/*.json`
+
+The important requirement is that project-local template catalogs live alongside project data and clone naturally with the project, similar to app specs themselves.
 
 Suggested catalog shape:
 
@@ -564,6 +577,7 @@ Admin configuration implications:
    - optionally pin to a curated CoCalc catalog version.
 2. sites should be able to ship private/internal templates without forking frontend code.
 3. the merged catalog result should be cached locally with refresh/invalidation controls.
+4. admins should be able to enable/disable project-local catalogs if they want stricter control.
 
 Agent/admin extension workflow:
 
@@ -585,6 +599,12 @@ Expected workflow:
 5. publish/update the catalog,
 6. refresh catalog cache on the site,
 7. report back the exact template id, source, recipe used, and validation result.
+
+Common development path:
+
+1. prototype a new template first in the project-local catalog,
+2. test it in that project,
+3. if successful, promote it to a site/admin catalog or upstream CoCalc catalog later.
 
 Agent guidance implications:
 
@@ -644,6 +664,7 @@ Non-goals for the first slice:
 1. arbitrary user-authored template catalogs with executable code,
 2. full package-manager abstraction for every Linux distro,
 3. freeform unaudited remote templates that immediately execute without review.
+4. project-local catalogs that contain executable logic instead of pure versioned data.
 
 ## 11. CLI Plan (Agent-First)
 
