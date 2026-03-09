@@ -168,6 +168,13 @@ const ACP_WORKER_IDLE_EXIT_MS = envNumber(
   5000,
 );
 
+function liteUseDetachedAcpWorker(): boolean {
+  const value = `${process.env.COCALC_LITE_ACP_DETACHED_WORKER ?? ""}`
+    .trim()
+    .toLowerCase();
+  return !["0", "false", "no", "off"].includes(value);
+}
+
 function envNumber(name: string, fallback: number): number {
   const value = `${process.env[name] ?? ""}`.trim();
   if (!value) return fallback;
@@ -3840,7 +3847,11 @@ async function enqueueChatAcpTurn({
         : "queued",
   });
   await stream(null);
-  await ensureDetachedWorkerRunning({ force: true });
+  if (liteUseDetachedAcpWorker()) {
+    await ensureDetachedWorkerRunning({ force: true });
+  } else {
+    kickAllQueuedAcpJobs();
+  }
 }
 
 async function handleAcpControlRequest(
@@ -3911,7 +3922,11 @@ async function handleAcpControlRequest(
         err,
       });
     }
-    await ensureDetachedWorkerRunning({ force: true });
+    if (liteUseDetachedAcpWorker()) {
+      await ensureDetachedWorkerRunning({ force: true });
+    } else {
+      kickAllQueuedAcpJobs();
+    }
     return { ok: true, state: "queued" };
   }
   throw new Error(`unsupported ACP control action: ${request.action}`);
@@ -3962,8 +3977,17 @@ export async function init(
     client,
   );
   if (options.manageDetachedWorker !== false) {
-    startAcpWorkerSupervisor();
-    await ensureDetachedWorkerRunning();
+    if (liteUseDetachedAcpWorker()) {
+      startAcpWorkerSupervisor();
+      await ensureDetachedWorkerRunning();
+    } else {
+      logger.warn(
+        "ACP detached worker disabled in Lite; using same-process queue execution",
+      );
+      await recoverOrphanedAcpTurns(client);
+      markRunningAcpJobsInterrupted("server restart");
+      kickAllQueuedAcpJobs();
+    }
   }
 }
 
