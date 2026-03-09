@@ -14,7 +14,7 @@ import type {
 const STORAGE_VERSION = 1;
 const STORE_VERSION_KEY = "version";
 const STORE_RECORDS_KEY = "records";
-const STORE_SELECTION_KEY = "selection";
+const SESSION_SELECTION_PREFIX = "project-workspace-selection";
 
 function normalizePath(path: string): string {
   let next = `${path ?? ""}`.trim();
@@ -104,6 +104,43 @@ function storeName(account_id: string): string {
 
 type WorkspaceStore = DKV<WorkspaceRecord[] | WorkspaceSelection | number>;
 
+function sessionSelectionKey(project_id: string): string {
+  return `${SESSION_SELECTION_PREFIX}:${project_id}`;
+}
+
+function loadSessionSelection(project_id: string): WorkspaceSelection {
+  if (typeof sessionStorage === "undefined") return { kind: "all" };
+  try {
+    const raw = sessionStorage.getItem(sessionSelectionKey(project_id));
+    if (!raw) return { kind: "all" };
+    const parsed = JSON.parse(raw);
+    if (parsed?.kind === "workspace" && typeof parsed.workspace_id === "string") {
+      return { kind: "workspace", workspace_id: parsed.workspace_id };
+    }
+    if (parsed?.kind === "unscoped") {
+      return { kind: "unscoped" };
+    }
+  } catch (err) {
+    console.warn(`workspace selection sessionStorage warning -- ${err}`);
+  }
+  return { kind: "all" };
+}
+
+function persistSessionSelection(
+  project_id: string,
+  selection: WorkspaceSelection,
+): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      sessionSelectionKey(project_id),
+      JSON.stringify(selection),
+    );
+  } catch (err) {
+    console.warn(`workspace selection sessionStorage warning -- ${err}`);
+  }
+}
+
 async function initStore(
   account_id: string,
   project_id: string,
@@ -124,14 +161,11 @@ function readRecordsFromStore(store: WorkspaceStore): WorkspaceRecord[] {
   return sortRecords(raw.map(normalizeRecord));
 }
 
-function readSelectionFromStore(
-  store: WorkspaceStore,
+function readSelectionForProject(
+  project_id: string,
   records: WorkspaceRecord[],
 ): WorkspaceSelection {
-  return normalizeSelection(
-    store.get(STORE_SELECTION_KEY) as WorkspaceSelection | undefined,
-    records,
-  );
+  return normalizeSelection(loadSessionSelection(project_id), records);
 }
 
 export function pathMatchesRoot(path: string, root_path: string): boolean {
@@ -176,25 +210,22 @@ export function useProjectWorkspaces(
 ): ProjectWorkspaceState {
   const canPersist = typeof account_id === "string" && account_id.trim().length > 0;
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
-  const [selection, setSelectionState] = useState<WorkspaceSelection>({ kind: "all" });
+  const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
+    loadSessionSelection(project_id),
+  );
   const storeRef = useRef<WorkspaceStore | null>(null);
   const recordsRef = useRef(records);
-  const selectionRef = useRef(selection);
 
   useEffect(() => {
     recordsRef.current = records;
   }, [records]);
 
   useEffect(() => {
-    selectionRef.current = selection;
-  }, [selection]);
-
-  useEffect(() => {
     if (!canPersist) {
       storeRef.current?.close?.();
       storeRef.current = null;
       setRecords([]);
-      setSelectionState({ kind: "all" });
+      setSelectionState(loadSessionSelection(project_id));
     }
   }, [account_id, project_id, canPersist]);
 
@@ -219,21 +250,17 @@ export function useProjectWorkspaces(
         storeRef.current = store;
 
         const storeRecords = readRecordsFromStore(store);
-        const storeSelection = readSelectionFromStore(store, storeRecords);
+        const storeSelection = readSelectionForProject(project_id, storeRecords);
         const hasStoreState =
           store.get(STORE_VERSION_KEY) != null ||
-          store.get(STORE_RECORDS_KEY) != null ||
-          store.get(STORE_SELECTION_KEY) != null;
+          store.get(STORE_RECORDS_KEY) != null;
 
-        const hasSeedState =
-          recordsRef.current.length > 0 ||
-          selectionRef.current.kind !== "all";
+        const hasSeedState = recordsRef.current.length > 0;
 
         if (!hasStoreState && hasSeedState) {
           store.setMany({
             [STORE_VERSION_KEY]: STORAGE_VERSION,
             [STORE_RECORDS_KEY]: recordsRef.current,
-            [STORE_SELECTION_KEY]: selectionRef.current,
           });
         } else {
           setRecords(storeRecords);
@@ -241,15 +268,11 @@ export function useProjectWorkspaces(
         }
 
         onChange = (event) => {
-          if (
-            event.key !== STORE_RECORDS_KEY &&
-            event.key !== STORE_SELECTION_KEY &&
-            event.key !== STORE_VERSION_KEY
-          ) {
+          if (event.key !== STORE_RECORDS_KEY && event.key !== STORE_VERSION_KEY) {
             return;
           }
           const nextRecords = readRecordsFromStore(store!);
-          const nextSelection = readSelectionFromStore(store!, nextRecords);
+          const nextSelection = readSelectionForProject(project_id, nextRecords);
           setRecords(nextRecords);
           setSelectionState(nextSelection);
         };
@@ -277,17 +300,13 @@ export function useProjectWorkspaces(
   }, [account_id, project_id, canPersist]);
 
   const persistState = useCallback(
-    (
-      nextRecords: WorkspaceRecord[],
-      nextSelection: WorkspaceSelection,
-    ) => {
+    (nextRecords: WorkspaceRecord[]) => {
       if (!canPersist || storeRef.current == null) {
         return;
       }
       storeRef.current.setMany({
         [STORE_VERSION_KEY]: STORAGE_VERSION,
         [STORE_RECORDS_KEY]: nextRecords,
-        [STORE_SELECTION_KEY]: nextSelection,
       });
     },
     [canPersist],
@@ -303,9 +322,9 @@ export function useProjectWorkspaces(
   const setSelection = useCallback(
     (next: WorkspaceSelection) => {
       setSelectionState(next);
-      persistState(records, next);
+      persistSessionSelection(project_id, next);
     },
-    [records, persistState],
+    [project_id],
   );
 
   const createWorkspace = useCallback(
@@ -341,7 +360,8 @@ export function useProjectWorkspaces(
       };
       setRecords(nextRecords);
       setSelectionState(nextSelection);
-      persistState(nextRecords, nextSelection);
+      persistSessionSelection(project_id, nextSelection);
+      persistState(nextRecords);
       return record;
     },
     [project_id, records, persistState],
@@ -380,10 +400,11 @@ export function useProjectWorkspaces(
           ? ({ kind: "all" } as WorkspaceSelection)
           : selection;
       setSelectionState(nextSelection);
-      persistState(nextRecords, nextSelection);
+      persistSessionSelection(project_id, nextSelection);
+      persistState(nextRecords);
       return updated;
     },
-    [records, selection, persistState],
+    [project_id, records, selection, persistState],
   );
 
   const deleteWorkspace = useCallback(
@@ -395,9 +416,10 @@ export function useProjectWorkspaces(
           : selection;
       setRecords(nextRecords);
       setSelectionState(nextSelection);
-      persistState(nextRecords, nextSelection);
+      persistSessionSelection(project_id, nextSelection);
+      persistState(nextRecords);
     },
-    [records, selection, persistState],
+    [project_id, records, selection, persistState],
   );
 
   const touchWorkspace = useCallback(
