@@ -428,7 +428,7 @@ Template catalog should be broader, but structured:
 
 ### 10.6 Curated Template Catalog Plan
 
-Template growth should not be hard coded only in frontend source. We want a curated catalog that CoCalc can ship centrally, while still allowing a site to override, extend, or fully replace that catalog.
+Template growth should not be hard coded only in frontend source. We want a curated catalog that CoCalc can ship centrally, while still allowing a site (or agent assisting a site admin) to override, extend, or fully replace that catalog.
 
 Design goals:
 
@@ -565,6 +565,38 @@ Admin configuration implications:
 2. sites should be able to ship private/internal templates without forking frontend code.
 3. the merged catalog result should be cached locally with refresh/invalidation controls.
 
+Agent/admin extension workflow:
+
+Agents should understand that the template catalog is an operator-controlled artifact, not just fixed product data.
+
+Expected workflow:
+
+1. inspect the current merged catalog sources and priority order,
+2. determine whether the request should:
+   - extend the site catalog,
+   - override a CoCalc default template,
+   - or propose a core-catalog improvement upstream,
+3. add or modify the template entry in the highest-priority appropriate catalog,
+4. validate:
+   - install recipe,
+   - verify commands,
+   - app start,
+   - app open,
+5. publish/update the catalog,
+6. refresh catalog cache on the site,
+7. report back the exact template id, source, recipe used, and validation result.
+
+Agent guidance implications:
+
+1. agents should prefer site-local catalog extension over patching core frontend code when the request is admin/site-specific,
+2. agents should know the catalog format and where the configured sources live,
+3. agents should treat template additions as data-first changes with validation, not ad hoc UI edits,
+4. a future dedicated skill should cover:
+   - launchpad installation assumptions,
+   - snapshot-before-install policy,
+   - catalog editing and publication,
+   - verification steps.
+
 Frontend implications:
 
 1. the Apps page template picker should render from the merged catalog, not a hard-coded array.
@@ -583,6 +615,29 @@ Validation plan:
 1. maintain a tested top-template matrix in the repo,
 2. periodically run install + start + open verification against the curated recipes,
 3. feed the working commands/examples back into the catalog and agent prompts.
+
+Broader catalog platform note:
+
+This catalog machinery should later generalize into a broader software catalog system, especially for Jupyter kernels.
+
+Principle:
+
+1. do not force apps and kernels into one identical schema immediately,
+2. do reuse the same catalog infrastructure:
+   - remote/local sources,
+   - merge rules,
+   - priority,
+   - detection,
+   - install recipes,
+   - verification,
+   - agent/admin extension workflow.
+
+Likely later catalog kinds:
+
+1. `app-template`
+2. `kernel-template`
+
+Kernel-specific metadata would differ, but the operator/agent/product problems are similar enough that the app-template work should be designed as the first instance of a broader catalog platform, not a dead-end one-off.
 
 Non-goals for the first slice:
 
@@ -1151,9 +1206,11 @@ Existing components to reuse where possible:
 18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 20. `[partial]` Add app portability workflows:
+
    - explicit CLI export/import/clone,
    - document that full project clone already carries app specs because they live in the project filesystem,
    - frontend download/upload/"copy to another project" UX still pending.
+
 21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
 
 ## 19.1 Next Execution Order
