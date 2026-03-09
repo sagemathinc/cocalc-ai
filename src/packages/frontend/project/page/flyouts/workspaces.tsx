@@ -30,7 +30,7 @@ import type {
 } from "@cocalc/frontend/project/workspaces/types";
 import { defaultWorkspaceTitle } from "@cocalc/frontend/project/workspaces/state";
 
-const DEFAULT_ICON = "folder-open";
+const DEFAULT_ICON = "cube";
 
 type Props = {
   project_id: string;
@@ -393,7 +393,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           <div>
             <Typography.Text strong>Icon</Typography.Text>
             <Input
-              placeholder="e.g. folder-open, code, book"
+              placeholder="e.g. cube, code, book"
               value={editing?.icon ?? ""}
               onChange={(e) => patchEditing({ icon: e.target.value })}
             />

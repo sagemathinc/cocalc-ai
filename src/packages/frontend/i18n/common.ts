@@ -487,8 +487,8 @@ export const labels = defineMessages({
   },
   explorer: {
     id: "labels.explorer",
-    defaultMessage: "Explorer",
-    description: "a short label for showing a file explorer",
+    defaultMessage: "Files",
+    description: "a short label for showing project files",
   },
   log: {
     id: "labels.log",
@@ -662,8 +662,8 @@ export const labels = defineMessages({
   },
   file_explorer: {
     id: "labels.file_explorer",
-    defaultMessage: "File Explorer",
-    description: "File browser and file management interface",
+    defaultMessage: "Files",
+    description: "Project file browser and file management interface",
   },
   theme: {
     id: "labels.theme",
