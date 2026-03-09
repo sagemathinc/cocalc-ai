@@ -126,6 +126,21 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(onModeChange).toHaveBeenCalledTimes(1);
   });
 
+  it("renders the mode switch in a toolbar row when requested", () => {
+    render(
+      <MultiMarkdownInput
+        value="hello"
+        onChange={() => {}}
+        modeSwitchPlacement="toolbar"
+        modeSwitchRightContent={<span>help</span>}
+      />,
+    );
+
+    expect(screen.getByText("help")).not.toBeNull();
+    expect(screen.getByTestId("mode-switch")).not.toBeNull();
+    expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
+  });
+
   it("switches from markdown to rich text and reapplies the markdown cursor position", () => {
     const onChange = jest.fn();
     const setSelectionFromMarkdownPosition = jest.fn(() => true);

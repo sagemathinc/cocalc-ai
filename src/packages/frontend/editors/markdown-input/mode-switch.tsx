@@ -6,6 +6,7 @@ import type { Mode } from "./types";
 
 interface MarkdownInputModeSwitchProps {
   mode: Mode;
+  layout?: "float" | "inline";
   isFocusedFrame?: boolean;
   isVisible?: boolean;
   hideHelp?: boolean;
@@ -20,6 +21,7 @@ interface MarkdownInputModeSwitchProps {
 
 export function MarkdownInputModeSwitch({
   mode,
+  layout = "float",
   isFocusedFrame,
   isVisible,
   hideHelp,
@@ -67,6 +69,7 @@ export function MarkdownInputModeSwitch({
 
   return (
     <div
+      style={layout === "inline" ? { display: "flex", alignItems: "center" } : undefined}
       onMouseDown={onInteractionStart}
       onMouseUp={onInteractionEnd}
       onTouchStart={onInteractionStart}
@@ -77,13 +80,19 @@ export function MarkdownInputModeSwitch({
         style={{
           background: "white",
           color: COLORS.GRAY_M,
-          ...(mode == "editor" || hideHelp
-            ? {
-                float: "right",
+          ...(layout === "float"
+            ? mode == "editor" || hideHelp
+              ? {
+                  float: "right",
+                  position: "relative",
+                  zIndex: 1,
+                }
+              : { float: "right" }
+            : {
                 position: "relative",
                 zIndex: 1,
-              }
-            : { float: "right" }),
+                display: "inline-flex",
+              }),
           ...style,
         }}
       >

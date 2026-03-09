@@ -44,6 +44,8 @@ export default function MultiMarkdownInput({
   hideModeSwitch,
   isFocused,
   minimal,
+  modeSwitchPlacement = "float",
+  modeSwitchRightContent,
   modeSwitchStyle,
   noVfill,
   onBlur,
@@ -108,6 +110,17 @@ export default function MultiMarkdownInput({
   const isAutoGrow = autoGrow ?? height === "auto";
   const internalControlRef = useRef<any>(null);
   const slateControlRef = controlRef ?? internalControlRef;
+  const showToolbarModeSwitch =
+    modeSwitchPlacement === "toolbar" && !fixedMode && !hideModeSwitch;
+  const toolbarInset = showToolbarModeSwitch ? 28 : 0;
+  const editorHeight =
+    showToolbarModeSwitch && height != null && height !== "auto"
+      ? `calc(${height} - ${toolbarInset}px)`
+      : height;
+  const shellHeight =
+    showToolbarModeSwitch && height != null && height !== "auto"
+      ? height
+      : "100%";
   const { activeModeRef, mode, setMode, getCachedSelection, saveCachedSelection } =
     useMultimodeModeState({
       cacheId,
@@ -185,7 +198,10 @@ export default function MultiMarkdownInput({
       style={{
         position: "relative",
         width: "100%",
-        height: "100%",
+        height: shellHeight,
+        display: showToolbarModeSwitch ? "flex" : undefined,
+        flexDirection: showToolbarModeSwitch ? "column" : undefined,
+        minHeight: showToolbarModeSwitch ? 0 : undefined,
         ...(minimal
           ? undefined
           : {
@@ -196,33 +212,95 @@ export default function MultiMarkdownInput({
             }),
       }}
     >
-      <MarkdownInputModeSwitch
-        mode={mode}
-        isFocusedFrame={isFocusedFrame}
-        isVisible={isVisible}
-        hideHelp={hideHelp}
-        hidden={!!fixedMode || !!hideModeSwitch}
-        overflowEllipsis={overflowEllipsis}
-        style={modeSwitchStyle}
-        editBarContentRef={editBar2}
-        onSelectMode={(nextMode) => {
-          if (nextMode !== mode) {
-            syncLiveValueBeforeModeSwitch();
-            rememberSelectionForModeSwitch(nextMode);
-            setMode(nextMode);
-          }
-        }}
-        onInteractionStart={() => {
-          captureModeSwitchSelection();
-          beginModeSwitchInteraction();
-        }}
-        onInteractionEnd={() => {
-          clearModeSwitchSelection();
-          endModeSwitchInteraction();
-        }}
-      />
-      {mode === "markdown" ? (
-        <MarkdownTextAdapter
+      {showToolbarModeSwitch ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            minHeight: `${toolbarInset}px`,
+            paddingBottom: "4px",
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              flexShrink: 0,
+            }}
+          >
+            {modeSwitchRightContent}
+            <MarkdownInputModeSwitch
+              mode={mode}
+              layout="inline"
+              isFocusedFrame={isFocusedFrame}
+              isVisible={isVisible}
+              hideHelp={hideHelp}
+              hidden={false}
+              overflowEllipsis={overflowEllipsis}
+              style={modeSwitchStyle}
+              editBarContentRef={editBar2}
+              onSelectMode={(nextMode) => {
+                if (nextMode !== mode) {
+                  syncLiveValueBeforeModeSwitch();
+                  rememberSelectionForModeSwitch(nextMode);
+                  setMode(nextMode);
+                }
+              }}
+              onInteractionStart={() => {
+                captureModeSwitchSelection();
+                beginModeSwitchInteraction();
+              }}
+              onInteractionEnd={() => {
+                clearModeSwitchSelection();
+                endModeSwitchInteraction();
+              }}
+            />
+          </div>
+        </div>
+      ) : (
+        <MarkdownInputModeSwitch
+          mode={mode}
+          isFocusedFrame={isFocusedFrame}
+          isVisible={isVisible}
+          hideHelp={hideHelp}
+          hidden={!!fixedMode || !!hideModeSwitch}
+          overflowEllipsis={overflowEllipsis}
+          style={modeSwitchStyle}
+          editBarContentRef={editBar2}
+          onSelectMode={(nextMode) => {
+            if (nextMode !== mode) {
+              syncLiveValueBeforeModeSwitch();
+              rememberSelectionForModeSwitch(nextMode);
+              setMode(nextMode);
+            }
+          }}
+          onInteractionStart={() => {
+            captureModeSwitchSelection();
+            beginModeSwitchInteraction();
+          }}
+          onInteractionEnd={() => {
+            clearModeSwitchSelection();
+            endModeSwitchInteraction();
+          }}
+        />
+      )}
+      <div
+        style={
+          showToolbarModeSwitch
+            ? {
+                flex: "1 1 auto",
+                minHeight: 0,
+                position: "relative",
+              }
+            : undefined
+        }
+      >
+        {mode === "markdown" ? (
+          <MarkdownTextAdapter
           editorDivRef={editorDivRef}
           selectionRef={selectionRef}
           value={value}
@@ -252,7 +330,7 @@ export default function MultiMarkdownInput({
           placeholder={placeholder ?? "Type markdown..."}
           fontSize={fontSize}
           cmOptions={cmOptions}
-          height={height}
+          height={editorHeight}
           autoGrow={autoGrow ?? height === "auto"}
           autoGrowMaxHeight={autoGrowMaxHeight}
           style={style}
@@ -281,16 +359,16 @@ export default function MultiMarkdownInput({
           refresh={refresh}
           compact={compact}
           dirtyRef={dirtyRef}
-        />
-      ) : undefined}
-      {mode === "editor" ? (
-        <SlateRichTextAdapter
+          />
+        ) : undefined}
+        {mode === "editor" ? (
+          <SlateRichTextAdapter
           selectionRef={selectionRef}
           editorDivRef={editorDivRef}
           noVfill={noVfill}
           value={value}
           minimal={minimal}
-          height={height}
+          height={editorHeight}
           saveDebounceMs={saveDebounceMs}
           getValueRef={internalGetValueRef}
           onChange={(value) => {
@@ -340,8 +418,9 @@ export default function MultiMarkdownInput({
           style={style}
           editBarStyle={editBarStyle}
           autoGrow={isAutoGrow}
-        />
-      ) : undefined}
+          />
+        ) : undefined}
+      </div>
     </div>
   );
 }
