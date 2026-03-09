@@ -45,7 +45,7 @@ export async function init({
   base_url,
   port,
 }: {
-  getSshdPort: (target: SshTarget) => number | null;
+  getSshdPort: (target: SshTarget) => Promise<number | null> | number | null;
   getAuthorizedKeys: (target: SshTarget) => Promise<string>;
   // as an extra level of security, it is recommended to
   // make the base_url a secure random string.
@@ -106,7 +106,7 @@ export async function init({
   return { server, app, url, publicKey: sshKey.publicKey };
 }
 
-async function handleRequest(
+export async function handleRequest(
   user: string | undefined,
   getSshdPort,
   getAuthorizedKeys,
@@ -119,7 +119,7 @@ async function handleRequest(
     throw Error("invalid user");
   }
   const target = parseUser(user);
-  const port = getSshdPort(target);
+  const port = await getSshdPort(target);
   if (!port) {
     return { target, port, authorizedKeys: "" };
   }

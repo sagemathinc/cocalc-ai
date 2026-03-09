@@ -419,10 +419,22 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     if (!project.host_id) {
       throw new Error("project has no assigned host");
     }
-    const connection = (await (ctx as any).hub.projects.resolveProjectSshConnection({
-      project_id: project.project_id,
-      direct,
-    })) as WorkspaceSshConnectionInfo;
+    let connection: WorkspaceSshConnectionInfo;
+    try {
+      connection = (await (ctx as any).hub.projects.resolveProjectSshConnection({
+        project_id: project.project_id,
+        direct,
+      })) as WorkspaceSshConnectionInfo;
+    } catch (err) {
+      const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+      if (!message.includes("unknown function 'projects.resolveprojectsshconnection'")) {
+        throw err;
+      }
+      connection = (await (ctx as any).hub.projects.resolveWorkspaceSshConnection({
+        project_id: project.project_id,
+        direct,
+      })) as WorkspaceSshConnectionInfo;
+    }
     const sshUsername =
       `${connection.ssh_username ?? project.project_id}`.trim() || project.project_id;
     if (isCloudflareProjectSshTransport(connection.transport)) {

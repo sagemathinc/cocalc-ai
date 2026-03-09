@@ -229,12 +229,12 @@ function resolveHubPostgresConnection(statusInfo) {
   if (fromStatus.pgHost) return fromStatus;
 
   const localEnvCandidates = [];
+  localEnvCandidates.push(path.join(ROOT, "data", "app", "postgres", "local-postgres.env"));
+  localEnvCandidates.push(path.join(ROOT, "data", "postgres", "local-postgres.env"));
   const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
   if (pgDataDir) {
     localEnvCandidates.push(path.join(path.dirname(pgDataDir), "local-postgres.env"));
   }
-  localEnvCandidates.push(path.join(ROOT, "data", "app", "postgres", "local-postgres.env"));
-  localEnvCandidates.push(path.join(ROOT, "data", "postgres", "local-postgres.env"));
 
   for (const file of localEnvCandidates) {
     if (!file || !fs.existsSync(file)) continue;
@@ -328,23 +328,26 @@ LIMIT 1;`,
 
 function resolveHubPassword(statusInfo) {
   const explicit = `${process.env.COCALC_HUB_PASSWORD ?? ""}`.trim();
-  if (explicit) return explicit;
+  const explicitLooksLikePath =
+    explicit.includes(path.sep) || explicit.startsWith(".") || explicit.startsWith("~");
 
   const candidates = [];
   if (process.env.SECRETS?.trim()) {
     candidates.push(path.join(process.env.SECRETS.trim(), "conat-password"));
   }
+  candidates.push(path.join(ROOT, "data", "app", "postgres", "secrets", "conat-password"));
+  candidates.push(path.join(ROOT, "data", "secrets", "conat-password"));
+  candidates.push(path.join(ROOT, "data.0", "secrets", "conat-password"));
   const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
   if (pgDataDir) {
     candidates.push(path.join(path.dirname(pgDataDir), "secrets", "conat-password"));
   }
-  candidates.push(path.join(ROOT, "data", "app", "postgres", "secrets", "conat-password"));
-  candidates.push(path.join(ROOT, "data", "secrets", "conat-password"));
-  candidates.push(path.join(ROOT, "data.0", "secrets", "conat-password"));
 
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) return candidate;
   }
+  if (explicit && !explicitLooksLikePath) return explicit;
+  if (explicit) return explicit;
   return "";
 }
 

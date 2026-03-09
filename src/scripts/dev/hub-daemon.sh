@@ -65,6 +65,29 @@ detect_hub_postgres_socket_dir() {
 }
 
 detect_hub_postgres_data_dir() {
+  local env_file data_base
+  for env_file in \
+    "$SRC_DIR/data/app/postgres/local-postgres.env" \
+    "$SRC_DIR/data/postgres/local-postgres.env"
+  do
+    if [ -f "$env_file" ]; then
+      data_base="$(
+        sed -n \
+          -e 's/^export COCALC_DATA_DIR=//p' \
+          -e 's/^export DATA=//p' \
+          "$env_file" \
+          | head -n 1
+      )"
+      if [ -n "$data_base" ]; then
+        if [ -d "$data_base/postgres" ]; then
+          echo "$data_base/postgres"
+        else
+          echo "$data_base"
+        fi
+        return 0
+      fi
+    fi
+  done
   if [ ! -f "$HUB_STDOUT_LOG" ]; then
     return 0
   fi

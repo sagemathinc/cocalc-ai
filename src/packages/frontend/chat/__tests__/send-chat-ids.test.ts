@@ -353,6 +353,25 @@ describe("thread-config by thread_id", () => {
     expect(meta.archived).toBe(true);
   });
 
+  it("does not mutate thread config before syncdb is ready", () => {
+    const actions = makeActions();
+    actions.syncdb.get_state = () => "loading";
+    actions.syncdb.delete.mockImplementation(() => {
+      throw Error("must be ready -- delete");
+    });
+
+    expect(() => {
+      actions.setThreadAgentMode("thread-1", "codex", {
+        model: "gpt-5.3-codex-spark",
+        workingDirectory: "/root",
+      });
+    }).not.toThrow();
+
+    expect(actions.syncdb.delete).not.toHaveBeenCalled();
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    expect(actions.syncdb.commit).not.toHaveBeenCalled();
+  });
+
   it("updates thread-config by UUID thread key with a canonical thread row key", () => {
     const threadId = "22222222-2222-4222-8222-222222222222";
     const existing = {
