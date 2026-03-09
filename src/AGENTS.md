@@ -35,15 +35,18 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
   - a concise first line (subject), and
   - a detailed markdown body explaining details of the commit, which is more succinct than the agent turn summary, including only information that is valuable longterm.
   - do not include a dedicated `Tests and validation` section; mention verification only when it adds long-term value.
-  - do not embed literal escaped newlines (e.g. `\n`) in commit messages.
-  - For multiline commit messages, prefer stdin/heredoc form instead of escaped `-m` strings:
+  - do not embed literal escaped newlines (e.g. `\n` or `\\n`) in commit messages.
+  - For multiline commit messages, always use stdin/heredoc or a message file instead of `git commit -m`.
+  - In `exec_command` / shell tool calls, do not rely on quoted `\n` sequences to create commit-message line breaks; use literal newlines in the heredoc body.
+  - Safe default pattern:
 ```
 git commit -F - <<'EOF'
 <subject line>
+
 <body>
 EOF
   ```
-- If using `-m`, use multiple `-m` flags (one paragraph per flag) rather than embedding `\n`.
+- `git commit -m` is only for subject-only commits with no body.
 - For new source files that use the standard CoCalc file header comment, set the copyright year to the current year.
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
 - Run `prettier -w <file>` on modified files as needed.
