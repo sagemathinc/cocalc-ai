@@ -233,8 +233,8 @@ export function ensureProjectRow({
   project_id: string;
   opts?: CreateProjectOptions;
   state?: string;
-  http_port?: number;
-  ssh_port?: number;
+  http_port?: number | null;
+  ssh_port?: number | null;
   authorized_keys?: string;
 }) {
   logger.debug("ensureProjectRow", {
@@ -261,11 +261,23 @@ export function ensureProjectRow({
       row.scratch = disk;
     }
   }
-  if (http_port !== undefined) {
-    row.http_port = http_port;
+  const hasExplicitHttpPort = Object.prototype.hasOwnProperty.call(
+    arguments[0] ?? {},
+    "http_port",
+  );
+  const hasExplicitSshPort = Object.prototype.hasOwnProperty.call(
+    arguments[0] ?? {},
+    "ssh_port",
+  );
+  if (hasExplicitHttpPort) {
+    row.http_port = http_port ?? null;
+  } else if (state !== "running") {
+    row.http_port = null;
   }
-  if (ssh_port !== undefined) {
-    row.ssh_port = ssh_port;
+  if (hasExplicitSshPort) {
+    row.ssh_port = ssh_port ?? null;
+  } else if (state !== "running") {
+    row.ssh_port = null;
   }
   if (authorized_keys !== undefined) {
     row.authorized_keys = authorized_keys;
