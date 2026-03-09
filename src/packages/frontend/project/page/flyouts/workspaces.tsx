@@ -10,6 +10,7 @@ import {
   Empty,
   Input,
   Modal,
+  Popover,
   Popconfirm,
   Space,
   Switch,
@@ -297,13 +298,19 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const body = (
     <div style={{ paddingRight: isFlyout ? 4 : 0 }}>
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
-        <Alert
-          type="info"
-          showIcon
-          message="Workspace tabs"
-          description="A workspace filters visible tabs by an absolute directory path inside this project. It does not close files or change permissions."
-        />
         <Space wrap size={[6, 6]}>
+          <Popover
+            trigger="click"
+            content={
+              <div style={{ maxWidth: 280 }}>
+                A workspace filters visible tabs by an absolute directory path
+                inside this project. It does not close files or change
+                permissions.
+              </div>
+            }
+          >
+            <Button size="small">?</Button>
+          </Popover>
           <Tag.CheckableTag
             checked={selectionValue(workspaces.selection) === "all"}
             onChange={() => select({ kind: "all" })}
