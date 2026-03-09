@@ -215,6 +215,14 @@ export function useProjectContextProvider({
   useEffect(() => {
     if (!actions) return;
     if (workspaces.selection.kind !== "workspace") return;
+    if (active_project_tab && !active_project_tab.startsWith("editor-")) {
+      if (active_project_tab !== "files") return;
+      const current = workspaces.current;
+      if (!current) return;
+      if (current_path_abs === current.root_path) return;
+      void actions.open_directory(current.root_path, false, true);
+      return;
+    }
     const activePath = tab_to_path(active_project_tab ?? "");
     if (activePath && workspaces.matchesPath(activePath)) return;
 
@@ -233,13 +241,6 @@ export function useProjectContextProvider({
 
     if (fallbackPath) {
       actions.set_active_tab(path_to_tab(fallbackPath), { change_history: false });
-      return;
-    }
-
-    if (
-      active_project_tab === "files" &&
-      current_path_abs === current.root_path
-    ) {
       return;
     }
 
