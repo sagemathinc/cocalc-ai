@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { uuid } from "@cocalc/util/misc";
+import type { DKV } from "@cocalc/conat/sync/dkv";
 import type {
   ProjectWorkspaceState,
   WorkspaceCreateInput,
@@ -11,7 +13,9 @@ import type {
 } from "./types";
 
 const STORAGE_VERSION = 1;
-const STORAGE_EVENT = "cocalc-project-workspaces-changed";
+const STORE_VERSION_KEY = "version";
+const STORE_RECORDS_KEY = "records";
+const STORE_SELECTION_KEY = "selection";
 
 function recordsKey(account_id: string, project_id: string): string[] {
   return ["workspaces", account_id, project_id, "records"];
@@ -102,27 +106,62 @@ function loadSelection(
   records: WorkspaceRecord[],
 ): WorkspaceSelection {
   const raw = LS.get<WorkspaceSelection>(selectionKey(account_id, project_id));
-  if (!raw || typeof raw !== "object") return { kind: "all" };
-  if (raw.kind === "workspace") {
-    return records.some((record) => record.workspace_id === raw.workspace_id)
-      ? raw
-      : { kind: "all" };
-  }
-  return raw.kind === "unscoped" ? { kind: "unscoped" } : { kind: "all" };
+  return normalizeSelection(raw, records);
 }
 
-function persist(
+function normalizeSelection(
+  selection: WorkspaceSelection | undefined | null,
+  records: WorkspaceRecord[],
+): WorkspaceSelection {
+  if (!selection || typeof selection !== "object") return { kind: "all" };
+  if (selection.kind === "workspace") {
+    return records.some((record) => record.workspace_id === selection.workspace_id)
+      ? selection
+      : { kind: "all" };
+  }
+  return selection.kind === "unscoped" ? { kind: "unscoped" } : { kind: "all" };
+}
+
+function storeName(account_id: string): string {
+  return `workspaces/${account_id}`;
+}
+
+type WorkspaceStore = DKV<WorkspaceRecord[] | WorkspaceSelection | number>;
+
+async function initStore(
   account_id: string,
   project_id: string,
+): Promise<WorkspaceStore> {
+  const store = await webapp_client.conat_client.dkv<
+    WorkspaceRecord[] | WorkspaceSelection | number
+  >({
+    project_id,
+    name: storeName(account_id),
+  });
+  store.setMaxListeners(100);
+  return store;
+}
+
+function readRecordsFromStore(store: WorkspaceStore): WorkspaceRecord[] {
+  const raw = store.get(STORE_RECORDS_KEY);
+  if (!Array.isArray(raw)) return [];
+  return sortRecords(raw.map(normalizeRecord));
+}
+
+function readSelectionFromStore(
+  store: WorkspaceStore,
   records: WorkspaceRecord[],
-  selection: WorkspaceSelection,
-): void {
-  LS.set(recordsKey(account_id, project_id), records);
-  LS.set(selectionKey(account_id, project_id), selection);
-  window.dispatchEvent(
-    new CustomEvent(STORAGE_EVENT, {
-      detail: { account_id, project_id, version: STORAGE_VERSION },
-    }),
+): WorkspaceSelection {
+  return normalizeSelection(
+    store.get(STORE_SELECTION_KEY) as WorkspaceSelection | undefined,
+    records,
+  );
+}
+
+function hasLocalStorageSeed(account_id: string, project_id: string): boolean {
+  return (
+    LS.get(recordsKey(account_id, project_id)) != null ||
+    LS.get(selectionKey(account_id, project_id)) != null
   );
 }
 
@@ -173,9 +212,22 @@ export function useProjectWorkspaces(
   const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
     canPersist ? loadSelection(account_id!, project_id, records) : { kind: "all" },
   );
+  const storeRef = useRef<WorkspaceStore | null>(null);
+  const recordsRef = useRef(records);
+  const selectionRef = useRef(selection);
+
+  useEffect(() => {
+    recordsRef.current = records;
+  }, [records]);
+
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
 
   useEffect(() => {
     if (!canPersist) {
+      storeRef.current?.close?.();
+      storeRef.current = null;
       setRecords([]);
       setSelectionState({ kind: "all" });
       return;
@@ -187,20 +239,99 @@ export function useProjectWorkspaces(
 
   useEffect(() => {
     if (!canPersist) return;
-    const onStorage = (event: Event) => {
-      const detail = (event as CustomEvent).detail ?? {};
-      if (detail.account_id !== account_id || detail.project_id !== project_id) {
-        return;
+    let closed = false;
+    let store: WorkspaceStore | null = null;
+    let onChange:
+      | ((event: {
+          key: string;
+          value?: WorkspaceRecord[] | WorkspaceSelection | number;
+        }) => void)
+      | null = null;
+
+    const initialize = async () => {
+      try {
+        store = await initStore(account_id!, project_id);
+        if (closed || store == null) {
+          store?.close?.();
+          return;
+        }
+        storeRef.current = store;
+
+        const storeRecords = readRecordsFromStore(store);
+        const storeSelection = readSelectionFromStore(store, storeRecords);
+        const hasStoreState =
+          store.get(STORE_VERSION_KEY) != null ||
+          store.get(STORE_RECORDS_KEY) != null ||
+          store.get(STORE_SELECTION_KEY) != null;
+
+        const hasSeedState =
+          hasLocalStorageSeed(account_id!, project_id) ||
+          recordsRef.current.length > 0 ||
+          selectionRef.current.kind !== "all";
+
+        if (!hasStoreState && hasSeedState) {
+          store.setMany({
+            [STORE_VERSION_KEY]: STORAGE_VERSION,
+            [STORE_RECORDS_KEY]: recordsRef.current,
+            [STORE_SELECTION_KEY]: selectionRef.current,
+          });
+        } else {
+          setRecords(storeRecords);
+          setSelectionState(storeSelection);
+        }
+
+        onChange = (event) => {
+          if (
+            event.key !== STORE_RECORDS_KEY &&
+            event.key !== STORE_SELECTION_KEY &&
+            event.key !== STORE_VERSION_KEY
+          ) {
+            return;
+          }
+          const nextRecords = readRecordsFromStore(store!);
+          const nextSelection = readSelectionFromStore(store!, nextRecords);
+          setRecords(nextRecords);
+          setSelectionState(nextSelection);
+        };
+
+        store.on("change", onChange);
+      } catch (err) {
+        console.warn(`workspace store initialization warning -- ${err}`);
       }
-      const nextRecords = loadRecords(account_id!, project_id);
-      setRecords(nextRecords);
-      setSelectionState(loadSelection(account_id!, project_id, nextRecords));
     };
-    window.addEventListener(STORAGE_EVENT, onStorage as EventListener);
+
+    void initialize();
+
     return () => {
-      window.removeEventListener(STORAGE_EVENT, onStorage as EventListener);
+      closed = true;
+      if (storeRef.current === store) {
+        storeRef.current = null;
+      }
+      if (store != null && onChange != null) {
+        store.off("change", onChange);
+      }
+      if (store != null) {
+        store.close();
+      }
     };
   }, [account_id, project_id, canPersist]);
+
+  const persistState = useCallback(
+    (
+      nextRecords: WorkspaceRecord[],
+      nextSelection: WorkspaceSelection,
+    ) => {
+      if (!canPersist || storeRef.current == null) {
+        return;
+      }
+      storeRef.current.setMany({
+        [STORE_VERSION_KEY]: STORAGE_VERSION,
+        [STORE_RECORDS_KEY]: nextRecords,
+        [STORE_SELECTION_KEY]: nextSelection,
+      });
+    },
+    [canPersist],
+  );
 
   const current = useMemo(() => {
     if (selection.kind !== "workspace") return null;
@@ -212,11 +343,9 @@ export function useProjectWorkspaces(
   const setSelection = useCallback(
     (next: WorkspaceSelection) => {
       setSelectionState(next);
-      if (canPersist) {
-        persist(account_id!, project_id, records, next);
-      }
+      persistState(records, next);
     },
-    [account_id, project_id, records, canPersist],
+    [records, persistState],
   );
 
   const createWorkspace = useCallback(
@@ -252,12 +381,10 @@ export function useProjectWorkspaces(
       };
       setRecords(nextRecords);
       setSelectionState(nextSelection);
-      if (canPersist) {
-        persist(account_id!, project_id, nextRecords, nextSelection);
-      }
+      persistState(nextRecords, nextSelection);
       return record;
     },
-    [account_id, project_id, records, canPersist],
+    [project_id, records, persistState],
   );
 
   const updateWorkspace = useCallback(
@@ -293,12 +420,10 @@ export function useProjectWorkspaces(
           ? ({ kind: "all" } as WorkspaceSelection)
           : selection;
       setSelectionState(nextSelection);
-      if (canPersist) {
-        persist(account_id!, project_id, nextRecords, nextSelection);
-      }
+      persistState(nextRecords, nextSelection);
       return updated;
     },
-    [account_id, project_id, records, selection, canPersist],
+    [records, selection, persistState],
   );
 
   const deleteWorkspace = useCallback(
@@ -310,11 +435,9 @@ export function useProjectWorkspaces(
           : selection;
       setRecords(nextRecords);
       setSelectionState(nextSelection);
-      if (canPersist) {
-        persist(account_id!, project_id, nextRecords, nextSelection);
-      }
+      persistState(nextRecords, nextSelection);
     },
-    [account_id, project_id, records, selection, canPersist],
+    [records, selection, persistState],
   );
 
   const touchWorkspace = useCallback(
