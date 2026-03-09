@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Popover } from "antd";
 import { useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
 import { CSS } from "@cocalc/frontend/app-framework";
@@ -75,7 +76,6 @@ export default function ChatInput({
   editBarStyle,
   fontSize,
   height,
-  hideHelp,
   input: propsInput,
   on_send,
   onBlur,
@@ -95,6 +95,7 @@ export default function ChatInput({
   const intl = useIntl();
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
+  const [mode, setMode] = useState<"markdown" | "editor">(fixedMode ?? "editor");
   const mountedRef = useRef<boolean>(true);
   const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
   const previousSessionTokenRef = useRef<number | undefined>(sessionToken);
@@ -112,6 +113,12 @@ export default function ChatInput({
   useEffect(() => {
     currentSessionTokenRef.current = sessionToken;
   }, [sessionToken]);
+
+  useEffect(() => {
+    if (fixedMode != null) {
+      setMode(fixedMode);
+    }
+  }, [fixedMode]);
 
   useEffect(() => {
     currentInputRef.current = input;
@@ -192,6 +199,7 @@ export default function ChatInput({
   }
 
   const hasInput = (input ?? "").trim().length > 0;
+  const showModeSwitch = hasInput || !!isFocused;
 
   const focusInput = useCallback((): boolean => {
     const control = controlRef.current;
@@ -205,6 +213,20 @@ export default function ChatInput({
       ) ?? false
     );
   }, []);
+
+  const markdownHelp = (
+    <div
+      style={{
+        maxWidth: "280px",
+        fontSize: "12px",
+        lineHeight: 1.5,
+        color: "#555",
+      }}
+    >
+      Use Markdown and LaTeX. You can upload or paste images, mention people
+      with <code>@name</code>, and press <code>Shift+Enter</code> to send.
+    </div>
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -306,16 +328,39 @@ export default function ChatInput({
       autoGrowMaxHeight={autoGrowMaxHeight}
       placeholder={getPlaceholder()}
       fontSize={fontSize}
-      hideHelp={hideHelp}
+      hideHelp={true}
       style={style}
       editBarStyle={editBarStyle}
       overflowEllipsis={true}
-      hideModeSwitch={!hasInput}
-      modeSwitchStyle={{
-        position: "absolute",
-        top: 0,
-        right: 0,
-      }}
+      hideModeSwitch={!showModeSwitch}
+      modeSwitchPlacement="toolbar"
+      modeSwitchRightContent={
+        mode === "markdown" ? (
+          <Popover
+            content={markdownHelp}
+            placement="topRight"
+            trigger={["hover", "click"]}
+          >
+            <span
+              aria-label="Markdown help"
+              role="button"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#777",
+                cursor: "pointer",
+                fontSize: "13px",
+                lineHeight: 1,
+                fontWeight: 600,
+              }}
+            >
+              ?
+            </span>
+          </Popover>
+        ) : null
+      }
+      onModeChange={setMode}
       autoGrow
     />
   );
