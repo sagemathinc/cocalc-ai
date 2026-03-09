@@ -39,6 +39,7 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 import { useProjectWorkspaces } from "./workspaces/state";
 import type { ProjectWorkspaceState } from "./workspaces/types";
+import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
 
 export interface ProjectContextState {
   actions?: ProjectActions;
@@ -148,6 +149,8 @@ export function useProjectContextProvider({
     { project_id },
     "active_project_tab",
   );
+  const open_files_order = useTypedRedux({ project_id }, "open_files_order");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   // shared data: used to flip through the open tabs in the active files flyout
   const flipTabs = useState<number>(0);
 
@@ -192,6 +195,65 @@ export function useProjectContextProvider({
 
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const workspaces = useProjectWorkspaces(account_id, project_id);
+
+  useEffect(() => {
+    const activePath = tab_to_path(active_project_tab ?? "");
+    if (!activePath) return;
+    const record = workspaces.resolveWorkspaceForPath(activePath);
+    if (!record) return;
+    if (record.last_active_path === activePath) return;
+    workspaces.updateWorkspace(record.workspace_id, {
+      last_active_path: activePath,
+    });
+  }, [
+    active_project_tab,
+    workspaces.resolveWorkspaceForPath,
+    workspaces.updateWorkspace,
+    workspaces.records,
+  ]);
+
+  useEffect(() => {
+    if (!actions) return;
+    if (workspaces.selection.kind !== "workspace") return;
+    const activePath = tab_to_path(active_project_tab ?? "");
+    if (activePath && workspaces.matchesPath(activePath)) return;
+
+    const current = workspaces.current;
+    if (!current) return;
+    const orderedPaths: string[] = open_files_order?.toJS?.() ?? open_files_order ?? [];
+    const fallbackPath =
+      (current.last_active_path &&
+      orderedPaths.includes(current.last_active_path) &&
+      workspaces.matchesPath(current.last_active_path)
+        ? current.last_active_path
+        : null) ??
+      orderedPaths.find((path) => {
+        return workspaces.resolveWorkspaceForPath(path)?.workspace_id === current.workspace_id;
+      });
+
+    if (fallbackPath) {
+      actions.set_active_tab(path_to_tab(fallbackPath), { change_history: false });
+      return;
+    }
+
+    if (
+      active_project_tab === "files" &&
+      current_path_abs === current.root_path
+    ) {
+      return;
+    }
+
+    void actions.open_directory(current.root_path, false, true);
+  }, [
+    actions,
+    active_project_tab,
+    current_path_abs,
+    open_files_order,
+    workspaces.current,
+    workspaces.matchesPath,
+    workspaces.resolveWorkspaceForPath,
+    workspaces.selection,
+  ]);
 
   return {
     actions,

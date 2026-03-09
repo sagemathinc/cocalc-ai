@@ -20,6 +20,7 @@ function record(root_path: string, workspace_id: string): WorkspaceRecord {
     },
     pinned: false,
     last_used_at: null,
+    last_active_path: null,
     chat_path: null,
     created_at: 1,
     updated_at: 1,

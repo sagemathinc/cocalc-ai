@@ -63,6 +63,10 @@ function normalizeRecord(record: WorkspaceRecord): WorkspaceRecord {
       typeof record.last_used_at === "number" && Number.isFinite(record.last_used_at)
         ? record.last_used_at
         : null,
+    last_active_path:
+      typeof record.last_active_path === "string" && record.last_active_path.trim()
+        ? normalizePath(record.last_active_path)
+        : null,
     chat_path: record.chat_path ?? null,
     created_at:
       typeof record.created_at === "number" && Number.isFinite(record.created_at)
@@ -232,6 +236,10 @@ export function useProjectWorkspaces(
         },
         pinned: input.pinned === true,
         last_used_at: now,
+        last_active_path:
+          typeof input.last_active_path === "string" && input.last_active_path.trim()
+            ? normalizePath(input.last_active_path)
+            : null,
         chat_path: input.chat_path ?? null,
         created_at: now,
         updated_at: now,
@@ -269,6 +277,10 @@ export function useProjectWorkspaces(
             chat_path: patch.chat_path ?? record.chat_path,
             last_used_at:
               patch.last_used_at === undefined ? record.last_used_at : patch.last_used_at,
+            last_active_path:
+              patch.last_active_path === undefined
+                ? record.last_active_path
+                : patch.last_active_path,
             updated_at: Date.now(),
             source: patch.source ?? record.source,
           });

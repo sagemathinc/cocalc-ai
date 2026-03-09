@@ -16,6 +16,7 @@ export type WorkspaceRecord = {
   theme: WorkspaceTheme;
   pinned: boolean;
   last_used_at: number | null;
+  last_active_path: string | null;
   chat_path: string | null;
   created_at: number;
   updated_at: number;
@@ -37,6 +38,7 @@ export type WorkspaceCreateInput = {
   image_blob?: string | null;
   pinned?: boolean;
   chat_path?: string | null;
+  last_active_path?: string | null;
   source?: WorkspaceSource;
 };
 
@@ -46,6 +48,7 @@ export type WorkspaceUpdatePatch = Partial<{
   pinned: boolean;
   chat_path: string | null;
   last_used_at: number | null;
+  last_active_path: string | null;
   source: WorkspaceSource;
 }>;
 
