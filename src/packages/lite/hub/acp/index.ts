@@ -106,7 +106,10 @@ import {
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
-import { ensureAcpWorkerRunning, startAcpWorkerSupervisor } from "./worker-manager";
+import {
+  ensureAcpWorkerRunning,
+  startAcpWorkerSupervisor,
+} from "./worker-manager";
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
@@ -231,8 +234,9 @@ type AcpMockScript = {
   rules: AcpMockRule[];
 };
 
-type ChatIntegrityCounters =
-  ReturnType<typeof computeChatIntegrityReport>["counters"];
+type ChatIntegrityCounters = ReturnType<
+  typeof computeChatIntegrityReport
+>["counters"];
 
 type ChatIntegritySnapshot = {
   counters?: ChatIntegrityCounters;
@@ -276,15 +280,16 @@ function syncdbRowsMatching(
     typeof (syncdb as any)?.get === "function"
       ? ((syncdb as any).get(where) ?? (syncdb as any).get())
       : [];
-  const rows =
-    Array.isArray(source)
-      ? source
-      : typeof source?.toJS === "function"
-        ? source.toJS()
-        : [];
+  const rows = Array.isArray(source)
+    ? source
+    : typeof source?.toJS === "function"
+      ? source.toJS()
+      : [];
   if (!Array.isArray(rows)) return [];
   return rows.filter((row) =>
-    Object.entries(where).every(([key, value]) => (row as any)?.[key] === value),
+    Object.entries(where).every(
+      ([key, value]) => (row as any)?.[key] === value,
+    ),
   ) as Record<string, unknown>[];
 }
 
@@ -296,7 +301,9 @@ function threadConfigRowRank(
   const isCanonical =
     syncdbField<string>(row, "sender_id") === canonical.sender_id &&
     syncdbField<string>(row, "date") === canonical.date;
-  const updatedAt = Date.parse(`${syncdbField<string>(row, "updated_at") ?? ""}`);
+  const updatedAt = Date.parse(
+    `${syncdbField<string>(row, "updated_at") ?? ""}`,
+  );
   const rowDate = Date.parse(`${syncdbField<string>(row, "date") ?? ""}`);
   return (
     (isCanonical ? 1_000_000_000_000_000 : 0) +
@@ -1135,6 +1142,35 @@ export class ChatStreamWriter {
     return threadId || undefined;
   }
 
+  private clearParentMessageAcpState(): void {
+    if (!this.syncdb) return;
+    const parentMessageId =
+      `${(this.metadata as any).parent_message_id ?? ""}`.trim();
+    if (!parentMessageId) return;
+    const current = findChatRowByMessageId(this.syncdb, parentMessageId);
+    if (current == null) return;
+    const rowDate =
+      normalizeIsoDateString(syncdbField<string>(current, "date")) ?? undefined;
+    const rowSender = syncdbField<string>(current, "sender_id");
+    if (!rowDate || !rowSender) return;
+    const update: Record<string, unknown> = {
+      event: "chat",
+      date: rowDate,
+      sender_id: rowSender,
+      message_id: parentMessageId,
+      thread_id:
+        syncdbField<string>(current, "thread_id") ?? this.metadata.thread_id,
+      acp_state: null,
+    };
+    const parentOfParent = syncdbField<string>(current, "parent_message_id");
+    if (parentOfParent) {
+      update.parent_message_id = parentOfParent;
+    }
+    this.syncdb.set(update);
+    this.syncdb.commit();
+    this.markIntegrityDirty("clear-parent-acp-state");
+  }
+
   private markIntegrityDirty(reason: string): void {
     this.integritySnapshot.dirty = true;
     this.integritySnapshot.dirtySinceMs = Date.now();
@@ -1478,6 +1514,7 @@ export class ChatStreamWriter {
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
     }
+    this.clearParentMessageAcpState();
     this.setThreadState("running");
   }
 
@@ -2294,11 +2331,7 @@ export class ChatStreamWriter {
     return this.interruptNotified === true;
   }
 
-  public getTerminalState():
-    | "completed"
-    | "error"
-    | "interrupted"
-    | undefined {
+  public getTerminalState(): "completed" | "error" | "interrupted" | undefined {
     switch (this.finishedBy) {
       case "error":
         return "error";
@@ -2684,9 +2717,7 @@ function initializeAcpRuntime(client: ConatClient): void {
 }
 
 export function configureAcpDetachedWorkerRunning(
-  ensureRunning:
-    | typeof ensureAcpWorkerRunning
-    | undefined,
+  ensureRunning: typeof ensureAcpWorkerRunning | undefined,
 ): void {
   ensureDetachedWorkerRunning = ensureRunning ?? ensureAcpWorkerRunning;
 }
@@ -2705,7 +2736,9 @@ export async function runDetachedAcpQueueWorker(
     await (client as any).waitUntilSignedIn({ timeout: 5000 });
   }
   const idleExitMs =
-    options.idleExitMs === undefined ? ACP_WORKER_IDLE_EXIT_MS : options.idleExitMs;
+    options.idleExitMs === undefined
+      ? ACP_WORKER_IDLE_EXIT_MS
+      : options.idleExitMs;
   const restartReason = options.restartReason ?? "worker restart";
   logger.warn("starting ACP queue worker", {
     instance: ACP_INSTANCE_ID,
@@ -2719,8 +2752,7 @@ export async function runDetachedAcpQueueWorker(
   while (true) {
     kickAllQueuedAcpJobs();
     const hasWork =
-      listQueuedAcpJobs().length > 0 ||
-      listRunningAcpJobs().length > 0;
+      listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
     if (hasWork) {
       idleSince = 0;
     } else if (!idleSince) {
@@ -4316,9 +4348,11 @@ function parseBlobReference(target: string): BlobReference | undefined {
 async function handleInterruptRequest(
   request: AcpInterruptRequest,
 ): Promise<void> {
-  const project_id = `${request.project_id ?? request.chat?.project_id ?? ""}`.trim();
+  const project_id =
+    `${request.project_id ?? request.chat?.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? ""}`.trim();
-  const threadId = `${request.threadId ?? request.chat?.thread_id ?? ""}`.trim();
+  const threadId =
+    `${request.threadId ?? request.chat?.thread_id ?? ""}`.trim();
   const candidateIds = resolveInterruptCandidateIds({
     project_id,
     path,
