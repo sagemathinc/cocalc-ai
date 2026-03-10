@@ -34,3 +34,30 @@ export function pastedBlobFilename(contentType: string | undefined): string {
   const ext = extensionForContentType(contentType) ?? "";
   return `paste-${Math.random().toString(36).slice(2)}${ext}`;
 }
+
+export function initialPastedImageDimensions(opts: {
+  filename?: string;
+  naturalWidth?: number;
+  naturalHeight?: number;
+  devicePixelRatio?: number;
+}): { width: string; height: string } | undefined {
+  const filename = `${opts.filename ?? ""}`.trim();
+  if (!filename.startsWith("paste-")) return undefined;
+  const naturalWidth = Number(opts.naturalWidth);
+  const naturalHeight = Number(opts.naturalHeight);
+  if (
+    !Number.isFinite(naturalWidth) ||
+    !Number.isFinite(naturalHeight) ||
+    naturalWidth <= 0 ||
+    naturalHeight <= 0
+  ) {
+    return undefined;
+  }
+  const dpr = Math.max(1, Number(opts.devicePixelRatio) || 1);
+  const width = Math.max(1, Math.round(naturalWidth / dpr));
+  const height = Math.max(1, Math.round(naturalHeight / dpr));
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+  };
+}

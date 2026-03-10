@@ -9,7 +9,27 @@ import { useEffect, useMemo, useRef } from "react";
 import { Dropzone, BlobUpload } from "@cocalc/frontend/file-upload";
 import { getFocus } from "./format/commands";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { pastedBlobFilename } from "./upload-utils";
+import {
+  initialPastedImageDimensions,
+  pastedBlobFilename,
+} from "./upload-utils";
+
+async function loadImageDimensions(
+  src: string | undefined,
+): Promise<{ naturalWidth: number; naturalHeight: number } | undefined> {
+  const resolved = `${src ?? ""}`.trim();
+  if (!resolved || typeof Image === "undefined") return undefined;
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () =>
+      resolve({
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+      });
+    img.onerror = () => resolve(undefined);
+    img.src = resolved;
+  });
+}
 
 export default function useUpload(
   editor: SlateEditor,
@@ -72,7 +92,7 @@ export default function useUpload(
       sending: ({ name }) => {
         actionsRef.current?.set_status?.(`Uploading ${name}...`);
       },
-      complete: (file) => {
+      complete: async (file) => {
         actionsRef.current?.set_status?.("");
         const { url } = file;
         if (!url) {
@@ -98,11 +118,20 @@ export default function useUpload(
             url,
           } as const;
         } else {
+          const dimensions = initialPastedImageDimensions({
+            filename: upload?.filename,
+            ...(await loadImageDimensions(file?.dataURL ?? url)),
+            devicePixelRatio:
+              typeof window === "undefined"
+                ? 1
+                : window.devicePixelRatio,
+          });
           node = {
             type: "image",
             isInline: true,
             isVoid: true,
             src: url,
+            ...(dimensions ?? {}),
             children: [{ text: "" }],
           } as const;
         }
