@@ -28,7 +28,7 @@ import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
 import {
-  DEFAULT_NEW_THREAD_SETUP,
+  getDefaultNewThreadSetup,
   type NewThreadSetup,
 } from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
@@ -334,17 +334,18 @@ export function ChatPanel({
     const navigatorWorkingDirectory = asTrimmedString(
       getDescValue(desc, "data-navigatorNewThreadWorkingDirectoryDefault"),
     );
+    const baseNewThreadSetup = getDefaultNewThreadSetup();
     return {
-      ...DEFAULT_NEW_THREAD_SETUP,
-      title: title ?? DEFAULT_NEW_THREAD_SETUP.title,
-      icon: icon ?? DEFAULT_NEW_THREAD_SETUP.icon,
-      color: color ?? DEFAULT_NEW_THREAD_SETUP.color,
+      ...baseNewThreadSetup,
+      title: title ?? baseNewThreadSetup.title,
+      icon: icon ?? baseNewThreadSetup.icon,
+      color: color ?? baseNewThreadSetup.color,
       agentMode: "codex",
       codexConfig: {
-        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        ...baseNewThreadSetup.codexConfig,
         workingDirectory:
           navigatorWorkingDirectory ??
-          DEFAULT_NEW_THREAD_SETUP.codexConfig.workingDirectory,
+          baseNewThreadSetup.codexConfig.workingDirectory,
       },
     };
   }, [desc]);

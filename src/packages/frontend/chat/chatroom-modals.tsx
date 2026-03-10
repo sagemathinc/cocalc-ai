@@ -22,7 +22,6 @@ import { COLORS } from "@cocalc/util/theme";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { lite } from "@cocalc/frontend/lite";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { path_split } from "@cocalc/util/misc";
@@ -34,6 +33,7 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
+import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { ThreadImageUpload } from "./thread-image-upload";
 import { ChatIconPicker } from "./chat-icon-picker";
 import type { ChatExportOpenRequest, ChatExportScope } from "./export-types";
@@ -62,9 +62,6 @@ interface ChatRoomModalsProps {
 type ThreadAgentMode = "codex" | "human" | "model";
 const DEFAULT_CODEX_MODEL =
   DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
-const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
-  ? "read-only"
-  : "workspace-write";
 const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
   { value: "read-only", label: "Read only" },
   { value: "workspace-write", label: "Workspace write" },
@@ -85,6 +82,7 @@ export function ChatRoomModals({
   isCombinedFeedSelected = false,
   onHandlers,
 }: ChatRoomModalsProps) {
+  const defaultSessionMode = getDefaultCodexSessionMode();
   const { project_id } = useFrameContext();
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
@@ -98,12 +96,15 @@ export function ChatRoomModals({
     Partial<CodexThreadConfig>
   >({
     model: DEFAULT_CODEX_MODEL,
-    sessionMode: DEFAULT_CODEX_SESSION_MODE,
+    sessionMode: defaultSessionMode,
     workingDirectory: defaultWorkingDir(path),
   });
-  const [exportRequest, setExportRequest] = useState<ExportRequest | null>(null);
-  const [exportScope, setExportScope] =
-    useState<ChatExportScope>("all-non-archived-threads");
+  const [exportRequest, setExportRequest] = useState<ExportRequest | null>(
+    null,
+  );
+  const [exportScope, setExportScope] = useState<ChatExportScope>(
+    "all-non-archived-threads",
+  );
   const [exportFilename, setExportFilename] = useState<string>("");
   const [exportIncludeBlobs, setExportIncludeBlobs] = useState<boolean>(false);
   const [exportRunning, setExportRunning] = useState<boolean>(false);
@@ -113,53 +114,56 @@ export function ChatRoomModals({
     isAI: boolean;
   } | null>(null);
   const [forkName, setForkName] = useState<string>("");
-  const openRenameModal = useCallback((
-    threadKey: string,
-    currentLabel: string,
-    _useCurrentLabel: boolean,
-    currentColor?: string,
-    currentIcon?: string,
-  ) => {
-    const metadata = actions?.getThreadMetadata?.(threadKey);
-    const currentModel =
-      metadata?.agent_model?.trim() ||
-      metadata?.acp_config?.model?.trim() ||
-      DEFAULT_CODEX_MODEL;
-    let agentMode: ThreadAgentMode = "human";
-    if (metadata?.agent_kind === "acp" || metadata?.acp_config != null) {
-      agentMode = "codex";
-    } else if (metadata?.agent_kind === "llm") {
-      // "Other model" is currently hidden from UI for shipping focus.
-      agentMode = "human";
-    }
-    setRenamingThread(threadKey);
-    setRenameValue(metadata?.name?.trim() || currentLabel || "");
-    setRenameColor(
-      metadata?.thread_color?.trim() || currentColor?.trim() || undefined,
-    );
-    setRenameIcon(
-      (metadata?.thread_icon?.trim() as IconName) ||
-        (currentIcon as IconName) ||
-        undefined,
-    );
-    setRenameImage(metadata?.thread_image?.trim() || "");
-    setRenameAgentMode(agentMode);
-    setRenameModel(currentModel);
-    const savedConfig = metadata?.acp_config ?? {};
-    setRenameCodexConfig({
-      ...savedConfig,
-      model: currentModel,
-      workingDirectory:
-        savedConfig.workingDirectory?.trim() || defaultWorkingDir(path),
-      sessionMode:
-        normalizeSessionMode(savedConfig as CodexThreadConfig) ??
-        DEFAULT_CODEX_SESSION_MODE,
-      reasoning: getReasoningForModel({
-        modelValue: currentModel,
-        desired: savedConfig.reasoning,
-      }),
-    });
-  }, [actions, path]);
+  const openRenameModal = useCallback(
+    (
+      threadKey: string,
+      currentLabel: string,
+      _useCurrentLabel: boolean,
+      currentColor?: string,
+      currentIcon?: string,
+    ) => {
+      const metadata = actions?.getThreadMetadata?.(threadKey);
+      const currentModel =
+        metadata?.agent_model?.trim() ||
+        metadata?.acp_config?.model?.trim() ||
+        DEFAULT_CODEX_MODEL;
+      let agentMode: ThreadAgentMode = "human";
+      if (metadata?.agent_kind === "acp" || metadata?.acp_config != null) {
+        agentMode = "codex";
+      } else if (metadata?.agent_kind === "llm") {
+        // "Other model" is currently hidden from UI for shipping focus.
+        agentMode = "human";
+      }
+      setRenamingThread(threadKey);
+      setRenameValue(metadata?.name?.trim() || currentLabel || "");
+      setRenameColor(
+        metadata?.thread_color?.trim() || currentColor?.trim() || undefined,
+      );
+      setRenameIcon(
+        (metadata?.thread_icon?.trim() as IconName) ||
+          (currentIcon as IconName) ||
+          undefined,
+      );
+      setRenameImage(metadata?.thread_image?.trim() || "");
+      setRenameAgentMode(agentMode);
+      setRenameModel(currentModel);
+      const savedConfig = metadata?.acp_config ?? {};
+      setRenameCodexConfig({
+        ...savedConfig,
+        model: currentModel,
+        workingDirectory:
+          savedConfig.workingDirectory?.trim() || defaultWorkingDir(path),
+        sessionMode:
+          normalizeSessionMode(savedConfig as CodexThreadConfig) ??
+          defaultSessionMode,
+        reasoning: getReasoningForModel({
+          modelValue: currentModel,
+          desired: savedConfig.reasoning,
+        }),
+      });
+    },
+    [actions, path, defaultSessionMode],
+  );
 
   const closeRenameModal = () => {
     setRenamingThread(null);
@@ -171,7 +175,7 @@ export function ChatRoomModals({
     setRenameModel(DEFAULT_CODEX_MODEL);
     setRenameCodexConfig({
       model: DEFAULT_CODEX_MODEL,
-      sessionMode: DEFAULT_CODEX_SESSION_MODE,
+      sessionMode: defaultSessionMode,
       workingDirectory: defaultWorkingDir(path),
       reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
     });
@@ -198,7 +202,7 @@ export function ChatRoomModals({
     } else if (renameAgentMode === "codex") {
       const model = renameCodexConfig.model?.trim() || DEFAULT_CODEX_MODEL;
       const sessionMode: CodexSessionMode =
-        normalizeSessionMode(renameCodexConfig) ?? DEFAULT_CODEX_SESSION_MODE;
+        normalizeSessionMode(renameCodexConfig) ?? defaultSessionMode;
       actions.setCodexConfig?.(renamingThread, {
         ...renameCodexConfig,
         model,
@@ -209,8 +213,7 @@ export function ChatRoomModals({
         sessionMode,
         allowWrite: sessionMode !== "read-only",
         workingDirectory:
-          renameCodexConfig.workingDirectory?.trim() ||
-          defaultWorkingDir(path),
+          renameCodexConfig.workingDirectory?.trim() || defaultWorkingDir(path),
         sessionId: renameCodexConfig.sessionId?.trim(),
       });
     } else {
@@ -224,22 +227,29 @@ export function ChatRoomModals({
     closeRenameModal();
   };
 
-  const openExportModal = useCallback((opts?: ChatExportOpenRequest) => {
-    const requestThreadKey =
-      opts?.threadKey?.trim() ||
-      (!isCombinedFeedSelected ? selectedThreadKey?.trim() || undefined : undefined);
-    const requestLabel =
-      opts?.label?.trim() ||
-      (!isCombinedFeedSelected ? selectedThreadLabel?.trim() || undefined : undefined);
-    const scope =
-      opts?.scope ??
-      (requestThreadKey ? "current-thread" : "all-non-archived-threads");
-    setExportRequest({
-      scope,
-      threadKey: requestThreadKey,
-      label: requestLabel,
-    });
-  }, [isCombinedFeedSelected, selectedThreadKey, selectedThreadLabel]);
+  const openExportModal = useCallback(
+    (opts?: ChatExportOpenRequest) => {
+      const requestThreadKey =
+        opts?.threadKey?.trim() ||
+        (!isCombinedFeedSelected
+          ? selectedThreadKey?.trim() || undefined
+          : undefined);
+      const requestLabel =
+        opts?.label?.trim() ||
+        (!isCombinedFeedSelected
+          ? selectedThreadLabel?.trim() || undefined
+          : undefined);
+      const scope =
+        opts?.scope ??
+        (requestThreadKey ? "current-thread" : "all-non-archived-threads");
+      setExportRequest({
+        scope,
+        threadKey: requestThreadKey,
+        label: requestLabel,
+      });
+    },
+    [isCombinedFeedSelected, selectedThreadKey, selectedThreadLabel],
+  );
 
   const closeExportModal = () => {
     setExportRequest(null);
@@ -265,7 +275,10 @@ export function ChatRoomModals({
       setExportRunning(true);
       await actions.exportChatArchive({
         scope: exportScope,
-        threadId: exportScope === "current-thread" ? exportRequest.threadKey : undefined,
+        threadId:
+          exportScope === "current-thread"
+            ? exportRequest.threadKey
+            : undefined,
         outputPath,
         includeBlobs: exportIncludeBlobs,
       });
@@ -283,10 +296,13 @@ export function ChatRoomModals({
     }
   };
 
-  const openForkModal = useCallback((threadKey: string, label: string, isAI: boolean) => {
-    setForkName(getDefaultForkName(label));
-    setForkThread({ key: threadKey, label, isAI });
-  }, []);
+  const openForkModal = useCallback(
+    (threadKey: string, label: string, isAI: boolean) => {
+      setForkName(getDefaultForkName(label));
+      setForkThread({ key: threadKey, label, isAI });
+    },
+    [],
+  );
 
   const closeForkModal = () => {
     setForkThread(null);
@@ -319,11 +335,7 @@ export function ChatRoomModals({
 
   const handlers = useMemo(
     () => ({ openRenameModal, openExportModal, openForkModal }),
-    [
-      openRenameModal,
-      openExportModal,
-      openForkModal,
-    ],
+    [openRenameModal, openExportModal, openForkModal],
   );
 
   useEffect(() => {
@@ -566,11 +578,7 @@ export function ChatRoomModals({
           </div>
           {renameAgentMode === "codex" && (
             <div>
-              <Space
-                orientation="vertical"
-                size={10}
-                style={{ width: "100%" }}
-              >
+              <Space orientation="vertical" size={10} style={{ width: "100%" }}>
                 <div>
                   <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                     Codex model
@@ -619,7 +627,7 @@ export function ChatRoomModals({
                   <Select
                     value={
                       normalizeSessionMode(renameCodexConfig) ??
-                      DEFAULT_CODEX_SESSION_MODE
+                      defaultSessionMode
                     }
                     style={{ width: "100%" }}
                     options={MODE_OPTIONS}
@@ -701,9 +709,8 @@ export function ChatRoomModals({
             />
           </div>
           <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-            This creates a new chat and links it to the current one. For
-            Codex chats, the agent session will be forked with the same
-            context.
+            This creates a new chat and links it to the current one. For Codex
+            chats, the agent session will be forked with the same context.
           </div>
         </Space>
       </Modal>
