@@ -101,7 +101,11 @@ export interface InstalledAppTemplate {
   details?: string;
 }
 
-export type AppTemplateCatalogEntry = AppTemplateCatalogEntryV1;
+export interface AppTemplateCatalogEntry extends AppTemplateCatalogEntryV1 {
+  template_source?: string;
+  template_scope?: "builtin" | "remote" | "project-local";
+  source_path?: string;
+}
 
 export interface AppAuditCheck {
   id: string;
