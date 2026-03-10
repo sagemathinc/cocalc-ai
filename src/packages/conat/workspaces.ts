@@ -83,11 +83,24 @@ export async function openWorkspaceStore({
   project_id: string;
   account_id: string;
 }): Promise<WorkspaceStore> {
-  const store = await dkv<WorkspaceRecord[] | number>({
-    client: client as any,
-    project_id,
-    name: workspaceStoreName(account_id),
-  });
+  const name = workspaceStoreName(account_id);
+  const clientAny = client as {
+    dkv?: (opts: {
+      project_id: string;
+      name: string;
+    }) => Promise<WorkspaceStore>;
+  };
+  const store =
+    typeof clientAny?.dkv === "function"
+      ? await clientAny.dkv({
+          project_id,
+          name,
+        })
+      : await dkv<WorkspaceRecord[] | number>({
+          client: client as any,
+          project_id,
+          name,
+        });
   store.setMaxListeners(100);
   return store;
 }
