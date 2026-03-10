@@ -41,7 +41,7 @@ function deriveVMSpecs(spec: string): {
   const [family, size, cpu_str] = spec.split("-");
   if (family != "n2")
     throw new Error(
-      `machine families beside "n2" are not supported -- implement it!`
+      `machine families beside "n2" are not supported -- implement it!`,
     );
   const cpu = parseInt(cpu_str);
   if (typeof cpu !== "number" || cpu <= 0)

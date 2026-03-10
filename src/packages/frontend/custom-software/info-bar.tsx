@@ -54,7 +54,7 @@ export const CustomSoftwareInfo: React.FC<Props> = (props: Props) => {
       : path_split(path).tail;
 
     return (
-      <Button onClick={onClick} >
+      <Button onClick={onClick}>
         <Tip title={`Open '${path}'`} placement={"bottom"}>
           <Icon name={"rocket"} />{" "}
           <VisibleMDLG>{trunc_middle(display_path, 40)}</VisibleMDLG>
@@ -97,11 +97,11 @@ export const CustomSoftwareInfo: React.FC<Props> = (props: Props) => {
           </LinkRetry>
         ) : undefined}
 
-        <Button  onClick={reset}>
+        <Button onClick={reset}>
           <Icon name={RESET_ICON} /> <VisibleMDLG>Reset...</VisibleMDLG>
         </Button>
 
-        <Button  onClick={() => open_new_tab(help_url)}>
+        <Button onClick={() => open_new_tab(help_url)}>
           <Icon name={"question-circle"} />
         </Button>
       </>

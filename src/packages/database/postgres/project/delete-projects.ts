@@ -20,7 +20,7 @@ later then purges these projects from disk as well as the database.
 */
 export async function permanently_unlink_all_deleted_projects_of_user(
   db: PostgreSQL,
-  account_id_or_email_address: string
+  account_id_or_email_address: string,
 ): Promise<void> {
   // Get the account_id if necessary.
   const account_id = await get_account_id(db, account_id_or_email_address);
@@ -36,7 +36,7 @@ export async function permanently_unlink_all_deleted_projects_of_user(
 
 async function get_account_id(
   db: PostgreSQL,
-  account_id_or_email_address: string
+  account_id_or_email_address: string,
 ): Promise<string> {
   if (account_id_or_email_address.indexOf("@") == -1) {
     return account_id_or_email_address;
@@ -57,7 +57,7 @@ Another task has to run to actually get rid of the data, etc.
 */
 export async function unlink_old_deleted_projects(
   db: PostgreSQL,
-  age_d = 30
+  age_d = 30,
 ): Promise<void> {
   await callback2(db._query, {
     query: "UPDATE projects",

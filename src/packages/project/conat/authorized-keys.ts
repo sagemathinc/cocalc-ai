@@ -34,7 +34,7 @@ export async function update(opts?) {
   let keys;
   try {
     keys = await api.projects.getSshKeys();
-  } catch  {
+  } catch {
     // this happens right at startup with cocalc-lite
     await delay(3000);
     keys = await api.projects.getSshKeys();
@@ -48,7 +48,9 @@ export async function update(opts?) {
   } catch (err) {
     if (isNonWritableError(err)) {
       // Some users intentionally keep authorized_keys read-only.
-      logger.debug("authorized_keys is not writable; skipping update", { path });
+      logger.debug("authorized_keys is not writable; skipping update", {
+        path,
+      });
       return "";
     }
     throw err;

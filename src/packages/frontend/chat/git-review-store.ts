@@ -138,9 +138,7 @@ function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
   };
 }
 
-function sanitizeComments(
-  input: unknown,
-): Record<string, GitReviewCommentV2> {
+function sanitizeComments(input: unknown): Record<string, GitReviewCommentV2> {
   const out: Record<string, GitReviewCommentV2> = {};
   if (!input || typeof input !== "object") return out;
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
@@ -151,7 +149,9 @@ function sanitizeComments(
   return out;
 }
 
-export function loadReviewDraft(commitSha?: string): GitReviewDraftV2 | undefined {
+export function loadReviewDraft(
+  commitSha?: string,
+): GitReviewDraftV2 | undefined {
   const key = makeDraftKey(commitSha);
   if (!key) return undefined;
   try {
@@ -269,10 +269,8 @@ export async function loadReviewRecord({
     reviewed: Boolean(legacy.reviewed),
     note: `${legacy.note ?? ""}`,
     comments: {},
-    created_at:
-      typeof legacy.updated_at === "number" ? legacy.updated_at : now,
-    updated_at:
-      typeof legacy.updated_at === "number" ? legacy.updated_at : now,
+    created_at: typeof legacy.updated_at === "number" ? legacy.updated_at : now,
+    updated_at: typeof legacy.updated_at === "number" ? legacy.updated_at : now,
     revision: 1,
   };
   await kvV2.set(key, migrated);

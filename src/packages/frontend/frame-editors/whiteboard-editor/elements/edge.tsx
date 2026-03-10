@@ -71,7 +71,7 @@ function getEndpoints(
   element,
   elementsMap,
   transforms,
-  zIndex
+  zIndex,
 ): { start: Point; end: Point; zIndex: number } | null {
   const { from: fromId } = element.data ?? {};
   if (fromId == null) return null; // invalid data

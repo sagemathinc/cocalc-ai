@@ -55,7 +55,10 @@ import {
   Transforms,
   createEditor,
 } from "slate";
-import { HistoryEditor as SlateHistoryEditor, withHistory } from "slate-history";
+import {
+  HistoryEditor as SlateHistoryEditor,
+  withHistory,
+} from "slate-history";
 import { resetSelection } from "./control";
 import * as control from "./control";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
@@ -105,7 +108,10 @@ import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
-import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
+import {
+  buildCodeBlockDecorations,
+  getPrismGrammar,
+} from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
 import type { JupyterGapCursor } from "./jupyter-cell-context";
 
@@ -187,7 +193,9 @@ export function handleEditableMarkdownProjectNavigationKeydown({
   if (projectId == null) return;
   const command = matchProjectNavigationCommand(event as KeyboardEvent);
   if (command == null) return;
-  const navigationActions = actions as EditableMarkdownNavigationActions | undefined;
+  const navigationActions = actions as
+    | EditableMarkdownNavigationActions
+    | undefined;
 
   event.preventDefault();
   event.stopPropagation();
@@ -233,15 +241,16 @@ function focusSlateEditorSafely(editor: SlateEditor): boolean {
   return true;
 }
 
-function syncSlateDomSelection(editor: SlateEditor, point?: Point | null): boolean {
+function syncSlateDomSelection(
+  editor: SlateEditor,
+  point?: Point | null,
+): boolean {
   if (typeof window === "undefined") {
     return false;
   }
   const domSelection = window.getSelection?.();
   const selection =
-    point != null
-      ? { anchor: point, focus: point }
-      : editor.selection;
+    point != null ? { anchor: point, focus: point } : editor.selection;
   if (domSelection == null || selection == null) {
     return false;
   }
@@ -262,7 +271,11 @@ function getLiveSlateSelection(editor: SlateEditor) {
   const domSelection = window.getSelection?.();
   if (domSelection != null && domSelection.rangeCount > 0) {
     try {
-      return ReactEditor.toSlateRange(editor, domSelection) ?? editor.selection ?? null;
+      return (
+        ReactEditor.toSlateRange(editor, domSelection) ??
+        editor.selection ??
+        null
+      );
     } catch {
       // fall back to Slate's model selection below
     }
@@ -405,15 +418,16 @@ interface Props {
   dirtyRef?: MutableRefObject<boolean>;
   minimal?: boolean;
   controlRef?: MutableRefObject<
-    (RichTextSelectionBridgeControl & {
-      setSelection?: (selection: any) => boolean;
-      getSelection?: () => any;
-      getValue?: () => any;
-      moveCursorToEndOfLine: () => void;
-      allowNextValueUpdateWhileFocused?: () => void;
-      setValueNow?: (value: string) => void;
-      cancelPendingUploads?: () => void;
-    }) | null
+    | (RichTextSelectionBridgeControl & {
+        setSelection?: (selection: any) => boolean;
+        getSelection?: () => any;
+        getValue?: () => any;
+        moveCursorToEndOfLine: () => void;
+        allowNextValueUpdateWhileFocused?: () => void;
+        setValueNow?: (value: string) => void;
+        cancelPendingUploads?: () => void;
+      })
+    | null
   >;
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
@@ -484,10 +498,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const actions = actions0 ?? {};
   const storeName = actions0?.name ?? "";
   const [localHelpOpen, setLocalHelpOpen] = useState(false);
-  const reduxHelpOpen = useRedux(
-    storeName,
-    "show_slate_help",
-  ) as boolean | undefined;
+  const reduxHelpOpen = useRedux(storeName, "show_slate_help") as
+    | boolean
+    | undefined;
   const showHelpModal = reduxHelpOpen ?? localHelpOpen;
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
   const preserveBlankLines = preserveBlankLinesProp ?? false;
@@ -501,7 +514,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
   const ignoreRemoteWhileFocused = !!ignoreRemoteMergesWhileFocused;
   const mergeIdleMs =
-    remoteMergeConfig.idleMs ?? remoteMergeIdleMs ?? saveDebounceMs ?? SAVE_DEBOUNCE_MS;
+    remoteMergeConfig.idleMs ??
+    remoteMergeIdleMs ??
+    saveDebounceMs ??
+    SAVE_DEBOUNCE_MS;
 
   // Defer remote merges while typing/composing to avoid cursor jumps.
   const lastLocalEditAtRef = useRef<number>(0);
@@ -524,9 +540,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         withInsertBreakHack(
           withNormalize(
             withAutoFormat(
-              withIsInline(
-                withIsVoid(withCodeLineInsertBreak(baseEditor)),
-              ),
+              withIsInline(withIsVoid(withCodeLineInsertBreak(baseEditor))),
             ),
           ),
         ),
@@ -688,7 +702,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           const liveSelection = getLiveSlateSelection(ed);
           const point = liveSelection?.focus;
           const mappedPos =
-            point != null ? nearestMarkdownPositionForSlatePoint(ed, point) ?? null : null;
+            point != null
+              ? (nearestMarkdownPositionForSlatePoint(ed, point) ?? null)
+              : null;
           const plainFallback =
             point != null ? getPlainParagraphMarkdownFallback(ed, point) : null;
           const markdownPos =
@@ -699,7 +715,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             mappedPos.ch === 0 &&
             point.offset > 0
               ? plainFallback
-              : mappedPos ?? plainFallback;
+              : (mappedPos ?? plainFallback);
           if (!point) return null;
           return markdownPos;
         },
@@ -738,13 +754,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const updatePendingRemoteIndicator = useCallback(
     (remote: string, local: string) => {
-    const preview = mergeHelperRef.current.previewMerge({ remote, local });
-    if (!preview.changed) {
-      pendingRemoteRef.current = null;
-      mergeHelperRef.current.noteApplied(preview.merged);
-    } else {
-      pendingRemoteRef.current = remote;
-    }
+      const preview = mergeHelperRef.current.previewMerge({ remote, local });
+      if (!preview.changed) {
+        pendingRemoteRef.current = null;
+        mergeHelperRef.current.noteApplied(preview.merged);
+      } else {
+        pendingRemoteRef.current = remote;
+      }
       setPendingRemoteIndicator((prev) =>
         prev === preview.changed ? prev : preview.changed,
       );
@@ -1050,7 +1066,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const text = block.children.map((line) => Node.string(line)).join("\n");
       const info =
         block.type === "code_block" || block.type === "jupyter_code_cell"
-          ? (block as CodeBlock).info ?? ""
+          ? ((block as CodeBlock).info ?? "")
           : block.type === "html_block"
             ? "html"
             : "yaml";
@@ -1102,10 +1118,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const restoreEditableDomSelectionAtStart = useCallback(() => {
     if (typeof window === "undefined") return false;
     const container = scrollRef.current;
-    const target =
-      container?.matches?.("[data-slate-editor='true']")
-        ? container
-        : container?.querySelector<HTMLElement>("[data-slate-editor='true']");
+    const target = container?.matches?.("[data-slate-editor='true']")
+      ? container
+      : container?.querySelector<HTMLElement>("[data-slate-editor='true']");
     if (target == null) return false;
     target.focus?.({ preventScroll: true } as FocusOptions);
     const selection = window.getSelection?.();
@@ -1289,7 +1304,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (typeof rawTopIndex !== "number") return;
     const node = editor.children[rawTopIndex] as any;
     if (!SlateElement.isElement(node)) return;
-    if (node.type !== "jupyter_code_cell" && node.type !== "jupyter_markdown_cell") {
+    if (
+      node.type !== "jupyter_code_cell" &&
+      node.type !== "jupyter_markdown_cell"
+    ) {
       return;
     }
     return { node, topIndex: rawTopIndex };
@@ -1301,7 +1319,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (entry == null) return false;
       const { node, topIndex } = entry;
       const cell_id = newTransientJupyterCellId();
-      const info = node.type === "jupyter_code_cell" ? `${(node as any).info ?? ""}` : "";
+      const info =
+        node.type === "jupyter_code_cell" ? `${(node as any).info ?? ""}` : "";
       const nextNode =
         kind === "code"
           ? ({
@@ -1392,16 +1411,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       Transforms.splitNodes(editor, {
         at: editor.selection!,
         match: (n, path) =>
-          SlateElement.isElement(n) && path.length === 1 && (n as any).type === nodeType,
+          SlateElement.isElement(n) &&
+          path.length === 1 &&
+          (n as any).type === nodeType,
         always: true,
       });
       // The new top-level sibling must get its own transient id so
       // reconciliation can treat this as an intentional structural insert.
-      Transforms.setNodes(
-        editor,
-        { cell_id: newCellId } as any,
-        { at: [topIndex + 1] },
-      );
+      Transforms.setNodes(editor, { cell_id: newCellId } as any, {
+        at: [topIndex + 1],
+      });
     });
     const path = [topIndex + 1, 0, 0];
     Transforms.select(editor, {
@@ -1442,7 +1461,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const entry = getTopLevelJupyterCell();
       if (entry == null || editor.selection == null) return false;
       const activePoint = editor.selection.focus;
-      if (!extendSelection && !Range.isCollapsed(editor.selection)) return false;
+      if (!extendSelection && !Range.isCollapsed(editor.selection))
+        return false;
       const topPath = [entry.topIndex];
       let atBoundary = false;
       try {
@@ -1474,7 +1494,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (!atBoundary) return false;
       const targetIndex =
         direction === "left" ? entry.topIndex - 1 : entry.topIndex + 1;
-      if (targetIndex < 0 || targetIndex >= editor.children.length) return false;
+      if (targetIndex < 0 || targetIndex >= editor.children.length)
+        return false;
       const targetPath = [targetIndex];
       const nextFocus =
         direction === "left"
@@ -1496,7 +1517,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const isJupyterTopLevelCell = useCallback((node: any): boolean => {
     return (
       SlateElement.isElement(node) &&
-      (node.type === "jupyter_code_cell" || node.type === "jupyter_markdown_cell")
+      (node.type === "jupyter_code_cell" ||
+        node.type === "jupyter_markdown_cell")
     );
   }, []);
 
@@ -1614,7 +1636,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           ? Math.min(editor.children.length, range.end + 1)
           : Math.max(0, Math.min(editor.children.length, fallbackIndex));
       Editor.withoutNormalizing(editor, () => {
-        Transforms.insertNodes(editor, normalized as any, { at: [insertIndex] });
+        Transforms.insertNodes(editor, normalized as any, {
+          at: [insertIndex],
+        });
       });
       const point = pointAtPath(editor, [insertIndex], undefined, "start");
       Transforms.select(editor, { anchor: point, focus: point });
@@ -1642,10 +1666,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
       return false;
     },
-    [
-      copySelectedJupyterCells,
-      clipboardPlainText,
-    ],
+    [copySelectedJupyterCells, clipboardPlainText],
   );
 
   const handleJupyterCellCut = useCallback(
@@ -1667,11 +1688,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
       return false;
     },
-    [
-      copySelectedJupyterCells,
-      clipboardPlainText,
-      deleteSelectedJupyterCells,
-    ],
+    [copySelectedJupyterCells, clipboardPlainText, deleteSelectedJupyterCells],
   );
 
   const handleJupyterCellPaste = useCallback(
@@ -1716,7 +1733,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             children: [{ text: "" }],
           } as any,
         ],
-        editor.selection?.focus != null ? { at: editor.selection.focus } : undefined,
+        editor.selection?.focus != null
+          ? { at: editor.selection.focus }
+          : undefined,
       );
       try {
         const entry = Editor.nodes(editor, {
@@ -2083,28 +2102,29 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-  const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
-  const debugLogEnabled =
-    typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
-  const blockPatchDebugEnabled = isBlockPatchDebugEnabled() || debugLogEnabled;
-  const forceDirectSetForClear = normalizedValue.length === 0;
-  debugSyncLog("value-normalized", {
-    focused: isMergeFocused(),
-    blockPatchEnabled,
-    blockPatchDebugEnabled,
-    sameAsLastSet: lastSetValueRef.current == normalizedValue,
-    sameAsEditor: normalizedValue == editor.getMarkdownValue(),
-    valueLength: normalizedValue.length,
-    forceDirectSetForClear,
-  });
-  const activeBlockIndex = editor.selection?.anchor?.path?.[0];
-  const recentlyTyped =
-    Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
+    const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
+    const debugLogEnabled =
+      typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
+    const blockPatchDebugEnabled =
+      isBlockPatchDebugEnabled() || debugLogEnabled;
+    const forceDirectSetForClear = normalizedValue.length === 0;
+    debugSyncLog("value-normalized", {
+      focused: isMergeFocused(),
+      blockPatchEnabled,
+      blockPatchDebugEnabled,
+      sameAsLastSet: lastSetValueRef.current == normalizedValue,
+      sameAsEditor: normalizedValue == editor.getMarkdownValue(),
+      valueLength: normalizedValue.length,
+      forceDirectSetForClear,
+    });
+    const activeBlockIndex = editor.selection?.anchor?.path?.[0];
+    const recentlyTyped =
+      Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
     const shouldDirectSet =
       forceDirectSetForClear ||
-      previousEditorValue.length <= 1 &&
-      nextEditorValue.length >= 40 &&
-      !ReactEditor.isFocused(editor);
+      (previousEditorValue.length <= 1 &&
+        nextEditorValue.length >= 40 &&
+        !ReactEditor.isFocused(editor));
     let operations: ReturnType<typeof slateDiff> | null = null;
     if (!blockPatchEnabled) {
       operations = shouldDirectSet
@@ -2117,7 +2137,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
     if (blockPatchEnabled) {
       const chunks = diffBlockSignatures(previousEditorValue, nextEditorValue);
-      const defer = shouldDeferBlockPatch(chunks, activeBlockIndex, recentlyTyped);
+      const defer = shouldDeferBlockPatch(
+        chunks,
+        activeBlockIndex,
+        recentlyTyped,
+      );
       if (defer) {
         debugSyncLog("block-patch:defer-active", {
           activeBlockIndex,
@@ -2161,111 +2185,111 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               next: normalizedValue,
             });
           }
-        //const t = new Date();
+          //const t = new Date();
 
-        let blockPatchApplied = false;
-        const previousSelection = editor.selection
-          ? {
-              anchor: { ...editor.selection.anchor },
-              focus: { ...editor.selection.focus },
-            }
-          : null;
-        if (blockPatchEnabled && !shouldDirectSet) {
-          editor.syncCausedUpdate = true;
-          const blockPatchResult = applyBlockDiffPatchWithDebug(
-            editor,
-            previousEditorValue,
-            nextEditorValue,
-          );
-          blockPatchApplied = blockPatchResult.applied;
-          debugSyncLog("block-patch:apply", {
-            applied: blockPatchApplied,
-            chunks: blockPatchResult.chunks,
-          });
-          if (blockPatchApplied && previousSelection) {
-            const remapped = remapSelectionAfterBlockPatchWithSentinels(
+          let blockPatchApplied = false;
+          const previousSelection = editor.selection
+            ? {
+                anchor: { ...editor.selection.anchor },
+                focus: { ...editor.selection.focus },
+              }
+            : null;
+          if (blockPatchEnabled && !shouldDirectSet) {
+            editor.syncCausedUpdate = true;
+            const blockPatchResult = applyBlockDiffPatchWithDebug(
               editor,
-              previousSelection,
               previousEditorValue,
               nextEditorValue,
-              blockPatchResult.chunks,
             );
-            if (remapped) {
-              editor.selection = remapped;
-              debugSyncLog("block-patch:remap-selection", {
-                selection: remapped,
-              });
-            }
-          }
-        }
-        if (shouldDirectSet) {
-          // This is a **MASSIVE** optimization.  E.g., for a few thousand
-          // lines markdown file with about 500 top level elements (and lots
-          // of nested lists), applying operations below starting with the
-          // empty document can take 5-10 seconds, whereas just setting the
-          // value is instant.  The drawback to directly setting the value
-          // is only that it messes up selection, and it's difficult
-          // to know where to move the selection to after changing.
-          // However, if the editor isn't focused, we don't have to worry
-          // about selection at all.  TODO: we might be able to avoid the
-          // slateDiff stuff entirely via some tricky stuff, e.g., managing
-          // the cursor on the plain text side before/after the change, since
-          // codemirror is much faster att "setValueNoJump".
-          // The main time we use this optimization here is when opening the
-          // document in the first place, in which case we're converting
-          // the document from "Loading..." to it's initial value.
-          // Also, the default config is source text focused on the left and
-          // editable text acting as a preview on the right not focused, and
-          // again this makes things fastest.
-          // DRAWBACK: this doesn't preserve scroll position and breaks selection.
-          editor.syncCausedUpdate = true;
-          // we call "onChange" instead of setEditorValue, since
-          // we want all the change handler stuff to happen, e.g.,
-          // broadcasting cursors.
-          onChange(nextEditorValue);
-          if (forceDirectSetForClear) {
-            if (isFocused || ReactEditor.isFocused(editor)) {
-              window.setTimeout(() => {
-                if (!isMountedRef.current) return;
-                try {
-                  const start = { path: [0, 0], offset: 0 };
-                  Transforms.select(editor, { anchor: start, focus: start });
-                } catch {
-                  resetSelection(editor);
-                }
-                focusSlateEditorSafely(editor);
-                restoreEditableDomSelectionAtStart();
-              }, 0);
-            }
-          }
-          // console.log("time to set directly ", new Date() - t);
-        } else if (!blockPatchApplied) {
-          // Applying this operation below will trigger
-          // an onChange, which it is best to ignore to save time and
-          // also so we don't update the source editor (and other browsers)
-          // with a view with things like loan $'s escaped.'
-          editor.syncCausedUpdate = true;
-          // console.log("setEditorToValue: applying operations...", { operations });
-          if (operations == null) {
-            operations = slateDiff(previousEditorValue, nextEditorValue);
-          }
-          preserveScrollPosition(editor, operations);
-          applyOperations(editor, operations);
-          // If the op-based transform fails to converge (which can happen with
-          // some focused void-node states), force a direct value reset.
-          const appliedMarkdown = slate_to_markdown(editor.children, {
-            cache: editor.syncCache,
-            preserveBlankLines,
-          });
-          if (appliedMarkdown !== normalizedValue) {
-            debugSyncLog("value-apply:mismatch-fallback", {
-              appliedLength: appliedMarkdown.length,
-              targetLength: normalizedValue.length,
+            blockPatchApplied = blockPatchResult.applied;
+            debugSyncLog("block-patch:apply", {
+              applied: blockPatchApplied,
+              chunks: blockPatchResult.chunks,
             });
-            onChange(nextEditorValue);
+            if (blockPatchApplied && previousSelection) {
+              const remapped = remapSelectionAfterBlockPatchWithSentinels(
+                editor,
+                previousSelection,
+                previousEditorValue,
+                nextEditorValue,
+                blockPatchResult.chunks,
+              );
+              if (remapped) {
+                editor.selection = remapped;
+                debugSyncLog("block-patch:remap-selection", {
+                  selection: remapped,
+                });
+              }
+            }
           }
-          // console.log("time to set via diff", new Date() - t);
-        }
+          if (shouldDirectSet) {
+            // This is a **MASSIVE** optimization.  E.g., for a few thousand
+            // lines markdown file with about 500 top level elements (and lots
+            // of nested lists), applying operations below starting with the
+            // empty document can take 5-10 seconds, whereas just setting the
+            // value is instant.  The drawback to directly setting the value
+            // is only that it messes up selection, and it's difficult
+            // to know where to move the selection to after changing.
+            // However, if the editor isn't focused, we don't have to worry
+            // about selection at all.  TODO: we might be able to avoid the
+            // slateDiff stuff entirely via some tricky stuff, e.g., managing
+            // the cursor on the plain text side before/after the change, since
+            // codemirror is much faster att "setValueNoJump".
+            // The main time we use this optimization here is when opening the
+            // document in the first place, in which case we're converting
+            // the document from "Loading..." to it's initial value.
+            // Also, the default config is source text focused on the left and
+            // editable text acting as a preview on the right not focused, and
+            // again this makes things fastest.
+            // DRAWBACK: this doesn't preserve scroll position and breaks selection.
+            editor.syncCausedUpdate = true;
+            // we call "onChange" instead of setEditorValue, since
+            // we want all the change handler stuff to happen, e.g.,
+            // broadcasting cursors.
+            onChange(nextEditorValue);
+            if (forceDirectSetForClear) {
+              if (isFocused || ReactEditor.isFocused(editor)) {
+                window.setTimeout(() => {
+                  if (!isMountedRef.current) return;
+                  try {
+                    const start = { path: [0, 0], offset: 0 };
+                    Transforms.select(editor, { anchor: start, focus: start });
+                  } catch {
+                    resetSelection(editor);
+                  }
+                  focusSlateEditorSafely(editor);
+                  restoreEditableDomSelectionAtStart();
+                }, 0);
+              }
+            }
+            // console.log("time to set directly ", new Date() - t);
+          } else if (!blockPatchApplied) {
+            // Applying this operation below will trigger
+            // an onChange, which it is best to ignore to save time and
+            // also so we don't update the source editor (and other browsers)
+            // with a view with things like loan $'s escaped.'
+            editor.syncCausedUpdate = true;
+            // console.log("setEditorToValue: applying operations...", { operations });
+            if (operations == null) {
+              operations = slateDiff(previousEditorValue, nextEditorValue);
+            }
+            preserveScrollPosition(editor, operations);
+            applyOperations(editor, operations);
+            // If the op-based transform fails to converge (which can happen with
+            // some focused void-node states), force a direct value reset.
+            const appliedMarkdown = slate_to_markdown(editor.children, {
+              cache: editor.syncCache,
+              preserveBlankLines,
+            });
+            if (appliedMarkdown !== normalizedValue) {
+              debugSyncLog("value-apply:mismatch-fallback", {
+                appliedLength: appliedMarkdown.length,
+                targetLength: normalizedValue.length,
+              });
+              onChange(nextEditorValue);
+            }
+            // console.log("time to set via diff", new Date() - t);
+          }
         } finally {
           // In all cases, now that we have transformed editor into the new value
           // let's save the fact that we haven't changed anything yet and we
@@ -2544,7 +2568,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [],
   );
 
-  const useWindowing = !disableWindowing && ReactEditor.isUsingWindowing(editor);
+  const useWindowing =
+    !disableWindowing && ReactEditor.isUsingWindowing(editor);
   const showPendingRemoteIndicator =
     ignoreRemoteWhileFocused && pendingRemoteIndicator;
 
@@ -2594,9 +2619,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         <Editable
           placeholder={placeholder}
           autoFocus={autoFocus}
-          className={
-            useWindowing && height != "auto" ? "smc-vfill" : undefined
-          }
+          className={useWindowing && height != "auto" ? "smc-vfill" : undefined}
           readOnly={read_only}
           renderElement={renderElement}
           renderLeaf={Leaf}

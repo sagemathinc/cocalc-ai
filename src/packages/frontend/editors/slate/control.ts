@@ -13,7 +13,7 @@ import { logSlateDebug, withSelectionReason } from "./slate-utils/slate-debug";
 // Scroll to the n-th heading in the document
 export async function scrollToHeading(
   editor: ReactEditor,
-  n: number
+  n: number,
 ): Promise<void> {
   let i = 0;
   for (const x of Editor.nodes(editor, {
@@ -162,7 +162,7 @@ export function ensureCursorNotBlocked(editor: Editor, up: boolean = false) {
 // Find path to a given element.
 export function findElement(
   editor: Editor,
-  element: Element
+  element: Element,
 ): number[] | undefined {
   // Usually when called, the element we are searching for is right
   // near the selection, so this first search finds it.
@@ -193,7 +193,7 @@ export function moveCursorToElement(editor: Editor, element: Element): void {
 // Move cursor to the end of a top-level non-inline element.
 export function moveCursorToEndOfElement(
   editor: Editor,
-  element: Element // non-line element
+  element: Element, // non-line element
 ): void {
   // Find the element
   const path = findElement(editor, element);
@@ -217,7 +217,7 @@ export function moveCursorToEndOfElement(
 
 export function moveCursorToBeginningOfBlock(
   editor: Editor,
-  path?: number[]
+  path?: number[],
 ): void {
   if (path == null) {
     const selection = editor.selection;
@@ -238,7 +238,7 @@ export function moveCursorToBeginningOfBlock(
 // that it is in (or top level block if mode='highest').
 export function isAtBeginningOfBlock(
   editor: Editor,
-  options: { at?: Point; mode?: "lowest" | "highest" }
+  options: { at?: Point; mode?: "lowest" | "highest" },
 ): boolean {
   let { at, mode } = options;
   if (mode == null) mode = "lowest";
@@ -264,7 +264,7 @@ export function isAtBeginningOfBlock(
 // Also, return false if "at" is not valid.
 export function isAtEndOfBlock(
   editor: Editor,
-  options: { at?: Point; mode?: "lowest" | "highest" }
+  options: { at?: Point; mode?: "lowest" | "highest" },
 ): boolean {
   let { at, mode } = options;
   if (mode == null) mode = "lowest";

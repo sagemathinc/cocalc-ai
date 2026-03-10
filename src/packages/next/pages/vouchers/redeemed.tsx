@@ -101,7 +101,7 @@ export default function Redeemed({ customize }) {
             {profile != null && !profile.account_id && (
               <Card>
                 <div style={{ fontSize: "75px", textAlign: "center" }}>
-                  <Icon name="gift2"/>
+                  <Icon name="gift2" />
                 </div>
                 <InPlaceSignInOrUp
                   title="Redeemed Vouchers"

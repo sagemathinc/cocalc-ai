@@ -52,7 +52,9 @@ export type ProjectSshRoute<Project extends ProjectLike = ProjectLike> = {
 function isCloudflareProjectSshTransport(
   transport: WorkspaceSshConnectionInfo["transport"],
 ): transport is "cloudflare-tcp" | "cloudflare-access-tcp" {
-  return transport === "cloudflare-tcp" || transport === "cloudflare-access-tcp";
+  return (
+    transport === "cloudflare-tcp" || transport === "cloudflare-access-tcp"
+  );
 }
 
 export type ReflectForwardRecord = {
@@ -145,10 +147,14 @@ function normalizeProjectSshHostAlias(input: string): string {
     );
   }
   if (/\s/.test(alias)) {
-    throw new Error(`ssh config host alias '${alias}' cannot contain whitespace`);
+    throw new Error(
+      `ssh config host alias '${alias}' cannot contain whitespace`,
+    );
   }
   if (!/^[a-zA-Z0-9._-]+$/.test(alias)) {
-    throw new Error(`ssh config host alias '${alias}' must match [a-zA-Z0-9._-]+`);
+    throw new Error(
+      `ssh config host alias '${alias}' must match [a-zA-Z0-9._-]+`,
+    );
   }
   return alias;
 }
@@ -203,7 +209,10 @@ function isNotFoundLikeError(err: unknown): boolean {
 }
 
 function reflectSyncHomeDir(authConfigPathValue: string): string {
-  return process.env.COCALC_REFLECT_HOME ?? join(dirname(authConfigPathValue), "reflect-sync");
+  return (
+    process.env.COCALC_REFLECT_HOME ??
+    join(dirname(authConfigPathValue), "reflect-sync")
+  );
 }
 
 function reflectSyncSessionDbPath(authConfigPathValue: string): string {
@@ -243,7 +252,9 @@ function forwardsForProject(
   return rows.filter((row) => `${row.ssh_host ?? ""}`.startsWith(prefix));
 }
 
-function formatReflectForwardRow(row: ReflectForwardRecord): Record<string, unknown> {
+function formatReflectForwardRow(
+  row: ReflectForwardRecord,
+): Record<string, unknown> {
   const sshHost = `${row.ssh_host ?? ""}`;
   const projectId = sshHost.includes("@") ? sshHost.split("@")[0] : null;
   const target = row.ssh_port ? `${sshHost}:${row.ssh_port}` : sshHost;
@@ -273,7 +284,9 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     resolveModule,
   } = deps;
 
-  async function ensureSyncKeyPair(keyPathInput?: string): Promise<SyncKeyInfo> {
+  async function ensureSyncKeyPair(
+    keyPathInput?: string,
+  ): Promise<SyncKeyInfo> {
     const privateKeyPath = normalizeSyncKeyBasePath(keyPathInput);
     const publicKeyPath = syncKeyPublicPath(privateKeyPath);
     const privateExists = existsSync(privateKeyPath);
@@ -307,7 +320,9 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     }
     if (created.status !== 0) {
       const stderr = `${created.stderr ?? ""}`.trim();
-      throw new Error(stderr || `ssh-keygen failed with exit code ${created.status}`);
+      throw new Error(
+        stderr || `ssh-keygen failed with exit code ${created.status}`,
+      );
     }
     if (!existsSync(privateKeyPath) || !existsSync(publicKeyPath)) {
       throw new Error("ssh-keygen completed, but key files were not created");
@@ -336,7 +351,11 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
       throw new Error("public key is empty");
     }
 
-    const { project, fs } = await resolveProjectFilesystem(ctx, projectIdentifier, cwd);
+    const { project, fs } = await resolveProjectFilesystem(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     const sshDir = ".ssh";
     const authorizedKeysPath = ".ssh/authorized_keys";
     await fs.mkdir(sshDir, { recursive: true });
@@ -365,7 +384,9 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     }
 
     const prefix =
-      existing.length === 0 || existing.endsWith("\n") ? existing : `${existing}\n`;
+      existing.length === 0 || existing.endsWith("\n")
+        ? existing
+        : `${existing}\n`;
     const next = `${prefix}${trimmedKey}\n`;
     await fs.writeFile(authorizedKeysPath, Buffer.from(next, "utf8"));
     return {
@@ -382,7 +403,11 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     projectIdentifier?: string,
     cwd = process.cwd(),
   ): Promise<ProjectSshTarget<Project>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     if (!project.host_id) {
       throw new Error("project has no assigned host");
     }
@@ -394,7 +419,8 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     }
     const parsed = parseSshServer(connection.ssh_server);
     const sshHost = `${project.project_id}@${parsed.host}`;
-    const sshTarget = parsed.port != null ? `${sshHost}:${parsed.port}` : sshHost;
+    const sshTarget =
+      parsed.port != null ? `${sshHost}:${parsed.port}` : sshHost;
     return {
       project,
       ssh_server: connection.ssh_server,
@@ -415,28 +441,41 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
       direct?: boolean;
     } = {},
   ): Promise<ProjectSshRoute<Project>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     if (!project.host_id) {
       throw new Error("project has no assigned host");
     }
     let connection: WorkspaceSshConnectionInfo;
     try {
-      connection = (await (ctx as any).hub.projects.resolveProjectSshConnection({
-        project_id: project.project_id,
-        direct,
-      })) as WorkspaceSshConnectionInfo;
+      connection = (await (ctx as any).hub.projects.resolveProjectSshConnection(
+        {
+          project_id: project.project_id,
+          direct,
+        },
+      )) as WorkspaceSshConnectionInfo;
     } catch (err) {
       const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
-      if (!message.includes("unknown function 'projects.resolveprojectsshconnection'")) {
+      if (
+        !message.includes(
+          "unknown function 'projects.resolveprojectsshconnection'",
+        )
+      ) {
         throw err;
       }
-      connection = (await (ctx as any).hub.projects.resolveWorkspaceSshConnection({
+      connection = (await (
+        ctx as any
+      ).hub.projects.resolveWorkspaceSshConnection({
         project_id: project.project_id,
         direct,
       })) as WorkspaceSshConnectionInfo;
     }
     const sshUsername =
-      `${connection.ssh_username ?? project.project_id}`.trim() || project.project_id;
+      `${connection.ssh_username ?? project.project_id}`.trim() ||
+      project.project_id;
     if (isCloudflareProjectSshTransport(connection.transport)) {
       const hostname = `${connection.cloudflare_hostname ?? ""}`.trim();
       if (!hostname) {
@@ -464,7 +503,8 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
       transport: "direct",
       ssh_username: sshUsername,
       ssh_server: sshServer,
-      cloudflare_hostname: `${connection.cloudflare_hostname ?? ""}`.trim() || null,
+      cloudflare_hostname:
+        `${connection.cloudflare_hostname ?? ""}`.trim() || null,
       ssh_host: parsed.host,
       ssh_port: parsed.port ?? null,
     };
@@ -513,7 +553,9 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     }
   }
 
-  async function runReflectSyncCli(args: string[]): Promise<CommandCaptureResult> {
+  async function runReflectSyncCli(
+    args: string[],
+  ): Promise<CommandCaptureResult> {
     const authConfigPathValue = authConfigPath();
     const reflectHome = reflectSyncHomeDir(authConfigPathValue);
     mkdirSync(reflectHome, { recursive: true, mode: 0o700 });
@@ -537,7 +579,9 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     );
     if (result.code !== 0) {
       const message = result.stderr.trim() || result.stdout.trim();
-      throw new Error(message || `reflect-sync exited with code ${result.code}`);
+      throw new Error(
+        message || `reflect-sync exited with code ${result.code}`,
+      );
     }
     return result;
   }
@@ -547,7 +591,9 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     return parseReflectForwardRows(result.stdout);
   }
 
-  async function terminateReflectForwards(forwardRefs: string[]): Promise<void> {
+  async function terminateReflectForwards(
+    forwardRefs: string[],
+  ): Promise<void> {
     if (!forwardRefs.length) return;
     await runReflectSyncCli(["forward", "terminate", ...forwardRefs]);
   }

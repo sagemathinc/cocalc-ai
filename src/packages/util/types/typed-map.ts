@@ -22,8 +22,9 @@ For more information see "app-framework/examples/"
 import { Map } from "immutable";
 import { TypedCollectionMethods } from "./immutable-types";
 
-export interface TypedMap<TProps extends Record<string, any>>
-  extends TypedCollectionMethods<TProps> {
+export interface TypedMap<
+  TProps extends Record<string, any>,
+> extends TypedCollectionMethods<TProps> {
   size: number;
 
   // Reading values
@@ -40,7 +41,7 @@ export interface TypedMap<TProps extends Record<string, any>>
   set<K extends keyof TProps>(key: K, value: TProps[K]): this;
   update<K extends keyof TProps>(
     key: K,
-    updater: (value: TProps[K]) => TProps[K]
+    updater: (value: TProps[K]) => TProps[K],
   ): this;
   merge(...collections: Array<Partial<TProps> | Iterable<[string, any]>>): this;
   mergeDeep(
@@ -124,7 +125,7 @@ interface TypedMapFactory<TProps extends Record<string, any>> {
 }
 
 export function TypedMap<TProps extends object>(
-  defaults: Partial<TProps> = {}
+  defaults: Partial<TProps> = {},
 ): TypedMap<TProps> {
   // Add `& readonly TProps` to enable property access?
   return Map(defaults) as any;
@@ -133,7 +134,7 @@ export function TypedMap<TProps extends object>(
 export function createTypedMap<OuterProps extends Record<string, any>>(
   defaults?: Partial<
     OuterProps extends TypedMap<infer InnerProps> ? InnerProps : OuterProps
-  >
+  >,
 ): TypedMapFactory<
   OuterProps extends TypedMap<infer InnerProps> ? InnerProps : OuterProps
 > {
@@ -142,9 +143,8 @@ export function createTypedMap<OuterProps extends Record<string, any>>(
     default_map = Map(defaults as any);
   }
 
-  type TProps = OuterProps extends TypedMap<infer InnerProps>
-    ? InnerProps
-    : OuterProps;
+  type TProps =
+    OuterProps extends TypedMap<infer InnerProps> ? InnerProps : OuterProps;
 
   class OldTypedMap {
     private data: any;
@@ -175,11 +175,11 @@ export function createTypedMap<OuterProps extends Record<string, any>>(
     get<K extends keyof TProps>(key: K): TProps[K];
     get<K extends keyof TProps, NSV>(
       key: K,
-      notSetValue: NSV
+      notSetValue: NSV,
     ): NonNullable<TProps[K]> | NSV;
     get<K extends keyof TProps, NSV>(
       key: K,
-      notSetValue?: NSV
+      notSetValue?: NSV,
     ): TProps[K] | NSV {
       return this.data.get(key, notSetValue);
     }
@@ -206,7 +206,7 @@ export function createTypedMap<OuterProps extends Record<string, any>>(
     }
     update<K extends keyof TProps>(
       key: K,
-      updater: (value: TProps[K]) => TProps[K]
+      updater: (value: TProps[K]) => TProps[K],
     ): this {
       return this.data.update(key, updater);
     }

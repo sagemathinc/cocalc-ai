@@ -72,12 +72,7 @@ export async function logCloudVmEvent(event: CloudVmLogEvent): Promise<void> {
       )
       WHERE id=$1 AND deleted IS NULL
     `,
-    [
-      event.vm_id,
-      event.action,
-      event.status,
-      event.error ?? null,
-    ],
+    [event.vm_id, event.action, event.status, event.error ?? null],
   );
 }
 

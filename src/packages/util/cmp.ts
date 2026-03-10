@@ -27,7 +27,7 @@ null_last:
 export function cmp_Date(
   a: Date | undefined | null,
   b: Date | undefined | null,
-  null_last = false
+  null_last = false,
 ): number {
   if (a == null) {
     if (b == null) {
@@ -89,7 +89,7 @@ export function all_fields_equal<T extends { [K: string]: any }>(
   a: T,
   b: T,
   fields: (keyof T)[],
-  verbose?: any
+  verbose?: any,
 ) {
   return !is_different(a, b, fields, verbose);
 }
@@ -98,7 +98,7 @@ export function is_different<T extends { [K: string]: any }>(
   a: T,
   b: T,
   fields: (keyof T)[],
-  verbose?: any
+  verbose?: any,
 ): boolean {
   if (verbose != null) {
     return is_different_verbose(a, b, fields, verbose);
@@ -182,5 +182,5 @@ export const is_different_array = (a, b) => !isEqual(a, b);
 export const shallowCompare = (obj1, obj2) =>
   Object.keys(obj1).length === Object.keys(obj2).length &&
   Object.keys(obj1).every(
-    (key) => obj2.hasOwnProperty(key) && obj1[key] === obj2[key]
+    (key) => obj2.hasOwnProperty(key) && obj1[key] === obj2[key],
   );

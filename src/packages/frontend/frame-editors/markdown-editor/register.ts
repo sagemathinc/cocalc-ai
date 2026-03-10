@@ -14,5 +14,5 @@ import { register_file_editor } from "../frame-tree/register";
     ext,
     editor: async () => await import("./editor"),
     actions: async () => await import("./actions"),
-  })
+  }),
 );

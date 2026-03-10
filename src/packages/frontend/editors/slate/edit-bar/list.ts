@@ -56,7 +56,7 @@ export function setListProperties(editor, props: ListProperties) {
         start: props.start,
         tight: props.tight,
       },
-      { at: path }
+      { at: path },
     );
     return;
   }

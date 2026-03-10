@@ -8,4 +8,3 @@ export const dirname = (p: string) => p.replace(/\/[^/]*$/, "") || "/";
 export const basename = (p: string) => p.split("/").pop() || "";
 
 export default {};
-

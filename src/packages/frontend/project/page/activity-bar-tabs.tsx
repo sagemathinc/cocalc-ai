@@ -222,8 +222,8 @@ export function VerticalFixedTabs({
         : "12px"; // margin for normal mode
     const iconName: IconName | undefined =
       name === "workspaces"
-        ? ((workspaces.current?.theme.icon?.trim() as IconName | undefined) ||
-          undefined)
+        ? (workspaces.current?.theme.icon?.trim() as IconName | undefined) ||
+          undefined
         : undefined;
     const themedIconStyle =
       name === "workspaces" && workspaces.current?.theme.color

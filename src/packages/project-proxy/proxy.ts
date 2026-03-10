@@ -37,16 +37,16 @@ interface StartOptions {
     req: http.IncomingMessage,
     socket: Socket | Duplex,
   ) => void;
-  rewriteRequest?: (
-    req: http.IncomingMessage,
-  ) => Promise<void> | void;
+  rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
 }
 
 function stripProjectHostProxyAuthCookies(
   cookieHeader: string | string[] | undefined,
 ): string | undefined {
   if (cookieHeader == null) return undefined;
-  const raw = Array.isArray(cookieHeader) ? cookieHeader.join(";") : cookieHeader;
+  const raw = Array.isArray(cookieHeader)
+    ? cookieHeader.join(";")
+    : cookieHeader;
   const kept = raw
     .split(";")
     .map((part) => part.trim())
@@ -125,9 +125,7 @@ export function createProxyHandlers({
     req: http.IncomingMessage,
     socket: Socket | Duplex,
   ) => void;
-  rewriteRequest?: (
-    req: http.IncomingMessage,
-  ) => Promise<void> | void;
+  rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
 } = {}) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -174,8 +172,9 @@ export function createProxyHandlers({
       if (!handled || !target) throw new Error("not matched");
       proxy.web(req, res, { target, prependPath: false });
     } catch (err: any) {
-      const statusCode =
-        Number.isInteger(err?.statusCode) ? err.statusCode : 404;
+      const statusCode = Number.isInteger(err?.statusCode)
+        ? err.statusCode
+        : 404;
       res.writeHead(statusCode, { "Content-Type": "text/plain" });
       res.end(`${err?.message ?? "Not found"}\n`);
     }
@@ -196,8 +195,9 @@ export function createProxyHandlers({
       logger.debug("upgrade", { url: req.url, target });
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err: any) {
-      const statusCode =
-        Number.isInteger(err?.statusCode) ? err.statusCode : 404;
+      const statusCode = Number.isInteger(err?.statusCode)
+        ? err.statusCode
+        : 404;
       const statusText =
         statusCode === 401
           ? "Unauthorized"
@@ -230,9 +230,7 @@ export function attachProjectProxy({
     req: http.IncomingMessage,
     socket: Socket | Duplex,
   ) => void;
-  rewriteRequest?: (
-    req: http.IncomingMessage,
-  ) => Promise<void> | void;
+  rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
 }) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -280,10 +278,9 @@ export function attachProjectProxy({
     } catch (err) {
       logger.debug("proxy request failed", { err: `${err}`, url: req.url });
       if (!res.headersSent) {
-        const statusCode =
-          Number.isInteger((err as any)?.statusCode)
-            ? (err as any).statusCode
-            : 502;
+        const statusCode = Number.isInteger((err as any)?.statusCode)
+          ? (err as any).statusCode
+          : 502;
         res.writeHead(statusCode, { "Content-Type": "text/plain" });
       }
       res.end(`${(err as any)?.message ?? "Bad Gateway"}\n`);
@@ -302,8 +299,9 @@ export function attachProjectProxy({
       onUpgradeAuthorized?.(req, socket);
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err: any) {
-      const statusCode =
-        Number.isInteger(err?.statusCode) ? err.statusCode : 502;
+      const statusCode = Number.isInteger(err?.statusCode)
+        ? err.statusCode
+        : 502;
       const statusText =
         statusCode === 401
           ? "Unauthorized"

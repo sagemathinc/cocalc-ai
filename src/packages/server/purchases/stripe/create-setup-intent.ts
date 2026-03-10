@@ -9,7 +9,7 @@ flow." -- https://docs.stripe.com/api/setup_intents
 
 import getConn from "@cocalc/server/stripe/connection";
 import getLogger from "@cocalc/backend/logger";
-import {  getStripeCustomerId } from "./util";
+import { getStripeCustomerId } from "./util";
 
 const logger = getLogger("purchases:stripe:create-setup-intent");
 

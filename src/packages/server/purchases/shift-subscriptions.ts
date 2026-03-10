@@ -18,7 +18,7 @@ const logger = getLogger("purchase:shift-subscriptions");
 export default async function shiftAllSubscriptionsToEndOnDay(
   account_id: string,
   day: number,
-  client: PoolClient
+  client: PoolClient,
 ) {
   logger.debug("shiftAllSubscriptionsToEndOnDay", { account_id, day });
   if (day < 1 || day > 28) {
@@ -32,7 +32,7 @@ export default async function shiftAllSubscriptionsToEndOnDay(
   logger.debug(
     "shiftAllSubscriptionsToEndOnDay -- considering ",
     rows.length,
-    " subscriptions"
+    " subscriptions",
   );
   if (rows.length == 0) {
     // easy special case...
@@ -49,7 +49,7 @@ async function shiftSubscriptionToEndOnDay(
     "id" | "interval" | "current_period_end" | "status" | "metadata"
   >,
   day: number,
-  client: PoolClient
+  client: PoolClient,
 ) {
   const curEndDay = sub.current_period_end.getDate();
   if (curEndDay == day) {
@@ -81,7 +81,7 @@ async function shiftSubscriptionToEndOnDay(
   ) {
     await client.query(
       "UPDATE subscriptions SET current_period_start=$1, current_period_end=$2 WHERE id=$3",
-      [current_period_start, current_period_end, sub.id]
+      [current_period_start, current_period_end, sub.id],
     );
 
     // No side-effect updates needed here.

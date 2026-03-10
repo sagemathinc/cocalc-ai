@@ -284,10 +284,9 @@ export async function restoreLicense({
     throw Error("must be an admin");
   }
   const pool = getPool();
-  await pool.query(
-    "UPDATE software_licenses SET revoked_at=NULL WHERE id=$1",
-    [license_id],
-  );
+  await pool.query("UPDATE software_licenses SET revoked_at=NULL WHERE id=$1", [
+    license_id,
+  ]);
   await recordEvent({
     license_id,
     event: "restored",
@@ -295,11 +294,7 @@ export async function restoreLicense({
   });
 }
 
-export async function listMyLicenses({
-  account_id,
-}: {
-  account_id?: string;
-}) {
+export async function listMyLicenses({ account_id }: { account_id?: string }) {
   if (!account_id) {
     throw Error("must be signed in");
   }

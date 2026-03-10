@@ -397,7 +397,7 @@ export class PersistentStream extends EventEmitter {
     }
   });
 
-  private runTransaction = <T,>(fn: () => T): T => {
+  private runTransaction = <T>(fn: () => T): T => {
     this.db.exec("BEGIN");
     try {
       const result = fn();
@@ -531,10 +531,9 @@ export class PersistentStream extends EventEmitter {
         : {};
     for (const [key, expected] of Object.entries(required)) {
       if (!Object.is(provided[key], expected)) {
-        throw new ConatError(
-          `required header mismatch for '${key}'`,
-          { code: "reject" },
-        );
+        throw new ConatError(`required header mismatch for '${key}'`, {
+          code: "reject",
+        });
       }
     }
   };

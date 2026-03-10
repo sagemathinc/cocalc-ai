@@ -52,7 +52,10 @@ interface Props {
   news?: NewsItem;
 }
 
-type NewsTypeForm = Omit<NewsItem, "date" | "until"> & { date: dayjs.Dayjs; until?: dayjs.Dayjs };
+type NewsTypeForm = Omit<NewsItem, "date" | "until"> & {
+  date: dayjs.Dayjs;
+  until?: dayjs.Dayjs;
+};
 
 export default function EditNews(props: Props) {
   const { customize, news } = props;
@@ -115,11 +118,11 @@ export default function EditNews(props: Props) {
     setSaving(true);
     try {
       // send data, but convert date and until fields to epoch seconds
-      const next = { 
-        ...data, 
-        id, 
+      const next = {
+        ...data,
+        id,
         date: data.date.unix(),
-        until: data.until?.unix()
+        until: data.until?.unix(),
       };
       const { channel } = data;
       const ret = await apiPost("/news/edit", next);
@@ -292,7 +295,14 @@ export default function EditNews(props: Props) {
         <Row gutter={30}>
           <Col span={16}>
             <Paragraph>
-              <News news={{ ...data, id, date: data.date.unix(), until: data.until?.unix() }} />
+              <News
+                news={{
+                  ...data,
+                  id,
+                  date: data.date.unix(),
+                  until: data.until?.unix(),
+                }}
+              />
             </Paragraph>
           </Col>
           <Col span={8}>

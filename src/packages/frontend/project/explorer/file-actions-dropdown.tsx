@@ -1,7 +1,14 @@
 import { useMemo } from "react";
 import { useIntl } from "react-intl";
-import { DropdownMenu, Icon, type MenuItems } from "@cocalc/frontend/components";
-import { file_actions, type ProjectActions } from "@cocalc/frontend/project_store";
+import {
+  DropdownMenu,
+  Icon,
+  type MenuItems,
+} from "@cocalc/frontend/components";
+import {
+  file_actions,
+  type ProjectActions,
+} from "@cocalc/frontend/project_store";
 import type { FileAction } from "@cocalc/frontend/project_actions";
 import { isDisabledSnapshots, isSnapshotPath } from "./action-utils";
 

@@ -55,9 +55,7 @@ export default function LatexEditor({ customize }) {
             body={Logo}
             title={"Online LaTeX Editor"}
             subtitle={
-              <>
-                Focus on writing LaTeX. CoCalc takes care of everything else.
-              </>
+              <>Focus on writing LaTeX. CoCalc takes care of everything else.</>
             }
             image={LatexEditorImage}
           />
@@ -324,9 +322,9 @@ export default function LatexEditor({ customize }) {
               <strong>
                 <a href="#a-forwardinverse">Inverse search</a>
               </strong>{" "}
-              works seamlessly with multi-file documents: double-click
-              anywhere in the PDF and CoCalc automatically opens the correct
-              subfile for you.
+              works seamlessly with multi-file documents: double-click anywhere
+              in the PDF and CoCalc automatically opens the correct subfile for
+              you.
             </Paragraph>
             <Paragraph>
               Learn more in the{" "}
@@ -394,8 +392,9 @@ export default function LatexEditor({ customize }) {
               required.
             </Paragraph>
             <Paragraph>
-              Learn more on our <A href="/features/linux">Available Software page</A>{" "}
-              or <A href="/features/jupyter-notebook">Jupyter Notebook page</A>.
+              Learn more on our{" "}
+              <A href="/features/linux">Available Software page</A> or{" "}
+              <A href="/features/jupyter-notebook">Jupyter Notebook page</A>.
             </Paragraph>
           </Info>
 
@@ -503,7 +502,9 @@ export default function LatexEditor({ customize }) {
             <Paragraph>
               <ul>
                 <li>
-                  <A href="/features/r-statistical-software">Thousands of R packages</A>{" "}
+                  <A href="/features/r-statistical-software">
+                    Thousands of R packages
+                  </A>{" "}
                   pre-installed and maintained
                 </li>
                 <li>Full compilation pipeline from R code to final PDF</li>

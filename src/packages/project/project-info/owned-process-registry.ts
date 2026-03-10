@@ -50,7 +50,11 @@ export class OwnedProcessRegistry {
     return root;
   }
 
-  attachPid(root_id: string, pid: number, start_time?: number): OwnedRootProcess {
+  attachPid(
+    root_id: string,
+    pid: number,
+    start_time?: number,
+  ): OwnedRootProcess {
     const root = this.roots.get(root_id);
     if (root == null) {
       throw Error(`no such root_id '${root_id}'`);
@@ -65,7 +69,10 @@ export class OwnedProcessRegistry {
     return root;
   }
 
-  markExited(root_id: string, opts?: { pid?: number; exited_at?: number }): void {
+  markExited(
+    root_id: string,
+    opts?: { pid?: number; exited_at?: number },
+  ): void {
     const root = this.roots.get(root_id);
     if (root == null) {
       return;

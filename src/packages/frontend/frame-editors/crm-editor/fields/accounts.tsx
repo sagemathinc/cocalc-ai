@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";import {
+import { useCallback, useState } from "react";
+import {
   Alert,
   Button,
   Input,
@@ -24,7 +25,6 @@ import { CloseOutlined } from "@ant-design/icons";
 import { TimeAgo } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components";
 import { AVATAR_SIZE } from "./account";
-
 
 render({ type: "accounts" }, ({ field, obj, spec, viewOnly }) => {
   if (spec.type != "accounts") throw Error("bug");
@@ -55,7 +55,7 @@ function EditAccounts({ obj, field, account_ids }) {
         setAdding(false);
       } catch (_) {}
     },
-    [save0, obj]
+    [save0, obj],
   );
 
   const haveAccounts = account_ids != null && account_ids.length > 0;
@@ -196,7 +196,7 @@ function Users({
   users: User[];
   addAccounts: (account_ids: string[]) => void;
 }) {
-  const intl = useIntl()
+  const intl = useIntl();
   const [selected, setSelected] = useState<string[]>([]);
   if (users.length == 0) {
     return <div>No results</div>;

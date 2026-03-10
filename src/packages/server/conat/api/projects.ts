@@ -13,9 +13,7 @@ export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
-import {
-  updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl,
-} from "@cocalc/server/project-host/control";
+import { updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
@@ -124,11 +122,14 @@ export async function copyPathBetweenProjects({
       progress: 0,
     },
   }).catch((err) => {
-    log.warn("copyPathBetweenProjects: unable to publish queued progress event", {
-      op_id: op.op_id,
-      project_id: src.project_id,
-      err,
-    });
+    log.warn(
+      "copyPathBetweenProjects: unable to publish queued progress event",
+      {
+        op_id: op.op_id,
+        project_id: src.project_id,
+        err,
+      },
+    );
   });
   return {
     op_id: op.op_id,
@@ -184,7 +185,6 @@ function normalizeLogTail(lines?: number): number {
   if (!Number.isFinite(n)) return 200;
   return Math.max(1, Math.min(5000, Math.floor(n)));
 }
-
 
 export async function setQuotas(opts: {
   account_id: string;
@@ -325,7 +325,9 @@ export async function resolveWorkspaceSshConnection({
   const machine = metadata?.machine ?? {};
   const rawSelfHostMode = machine?.metadata?.self_host_mode;
   const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !rawSelfHostMode ? "local" : rawSelfHostMode;
+    machine?.cloud === "self-host" && !rawSelfHostMode
+      ? "local"
+      : rawSelfHostMode;
   const isLocalSelfHost =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   const cloudflareHostname =
@@ -1254,7 +1256,12 @@ export async function chatStoreVacuum({
   project_id: string;
   chat_path: string;
   db_path?: string;
-}): Promise<{ chat_id: string; db_path: string; before_bytes: number; after_bytes: number }> {
+}): Promise<{
+  chat_id: string;
+  db_path: string;
+  before_bytes: number;
+  after_bytes: number;
+}> {
   await assertCollab({ account_id, project_id });
   return vacuumChatStore({
     chat_path,

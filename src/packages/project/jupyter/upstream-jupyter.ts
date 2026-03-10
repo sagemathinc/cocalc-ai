@@ -27,7 +27,7 @@ export default async function getPort(lab: boolean = false): Promise<number> {
   }
 
   winston.debug(
-    `getPort: started jupyter ${lab ? "lab" : "classic"} at port ${s.port}`
+    `getPort: started jupyter ${lab ? "lab" : "classic"} at port ${s.port}`,
   );
   return s.port;
 }
@@ -39,14 +39,14 @@ async function cmd(arg: string, lab: boolean) {
 }
 
 async function start(
-  lab: boolean
+  lab: boolean,
 ): Promise<{ base: string; pid: number; port: number }> {
   const { stdout } = await cmd("start", lab);
   return JSON.parse(stdout);
 }
 
 async function status(
-  lab: boolean
+  lab: boolean,
 ): Promise<{ status: "stopped" | "running"; port?: number }> {
   try {
     const { stdout } = await cmd("status", lab);

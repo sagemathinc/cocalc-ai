@@ -98,7 +98,12 @@ export function trackBackendWatcher(opts: TrackOptions): () => void {
     const existing = active.get(id);
     if (!existing) {
       counters.closeUnknown += 1;
-      logger.warn("close of unknown backend watcher", { id, source, type, path });
+      logger.warn("close of unknown backend watcher", {
+        id,
+        source,
+        type,
+        path,
+      });
       return;
     }
     active.delete(id);

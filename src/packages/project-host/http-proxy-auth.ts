@@ -14,6 +14,8 @@ import {
 } from "@cocalc/conat/auth/project-host-http";
 import {
   buildProjectHostSessionCookie,
+  buildProjectHostSessionCookieDeletion,
+  legacyProjectHostCookiePath,
   projectCookiePath,
 } from "./http-proxy-cookies";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
@@ -38,10 +40,7 @@ function envNumber(name: string, fallback: number): number {
 }
 const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
-  envNumber(
-    "COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS",
-    30 * 24 * 60 * 60,
-  ),
+  envNumber("COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60),
 );
 const HTTP_UPGRADE_REVOKE_SWEEP_MS = Math.max(
   5_000,
@@ -72,6 +71,25 @@ function parseCookies(header: string | undefined): Record<string, string> {
     }
   }
   return out;
+}
+
+function readCookieValues(header: string | undefined, name: string): string[] {
+  if (!header) return [];
+  const values: string[] = [];
+  for (const part of header.split(";")) {
+    const i = part.indexOf("=");
+    if (i <= 0) continue;
+    const key = part.slice(0, i).trim();
+    if (key !== name) continue;
+    const value = part.slice(i + 1).trim();
+    if (!value) continue;
+    try {
+      values.push(decodeURIComponent(value));
+    } catch {
+      values.push(value);
+    }
+  }
+  return values;
 }
 
 type AuthorizedAccountContext = {
@@ -122,10 +140,12 @@ function base64UrlDecode(value: string): string {
 }
 
 function sessionSignature(payload: string): string {
-  return createHmac("sha256", conatPassword).update(payload).digest("base64url");
+  return createHmac("sha256", conatPassword)
+    .update(payload)
+    .digest("base64url");
 }
 
-function createSessionToken({
+export function createProjectHostHttpSessionToken({
   account_id,
   now_ms = Date.now(),
 }: {
@@ -143,7 +163,7 @@ function createSessionToken({
   return `${encoded}.${sig}`;
 }
 
-function verifySessionToken(
+export function verifyProjectHostHttpSessionToken(
   token: string,
   now_ms = Date.now(),
 ):
@@ -180,9 +200,25 @@ function verifySessionToken(
   return { account_id, iat_s: iat, exp_s: exp };
 }
 
-function readBearerToken(
-  req: IncomingMessage,
-): { token?: string; source?: "header" | "cookie" | "query" } {
+export function resolveProjectHostHttpSessionFromCookieHeader(
+  header: string | undefined,
+): { account_id: string; iat_s: number; exp_s: number } | undefined {
+  const tokens = readCookieValues(header, PROJECT_HOST_HTTP_SESSION_COOKIE_NAME)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  for (const token of tokens) {
+    const session = verifyProjectHostHttpSessionToken(token);
+    if (session) {
+      return session;
+    }
+  }
+  return;
+}
+
+function readBearerToken(req: IncomingMessage): {
+  token?: string;
+  source?: "header" | "cookie" | "query";
+} {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string") {
     const m = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -191,13 +227,15 @@ function readBearerToken(
     }
   }
   const cookies = parseCookies(req.headers.cookie as string | undefined);
-  const cookieToken = `${cookies[PROJECT_HOST_HTTP_AUTH_COOKIE_NAME] ?? ""}`.trim();
+  const cookieToken =
+    `${cookies[PROJECT_HOST_HTTP_AUTH_COOKIE_NAME] ?? ""}`.trim();
   if (cookieToken) {
     return { token: cookieToken, source: "cookie" };
   }
   try {
     const u = new URL(req.url ?? "/", "http://project-host.local");
-    const queryToken = `${u.searchParams.get(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM) ?? ""}`.trim();
+    const queryToken =
+      `${u.searchParams.get(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM) ?? ""}`.trim();
     if (queryToken) {
       return { token: queryToken, source: "query" };
     }
@@ -248,8 +286,7 @@ function isProjectCollaboratorLocal({
   }
   const row = getRow("projects", JSON.stringify({ project_id }));
   const userEntry = row?.users?.[account_id];
-  const group =
-    typeof userEntry === "string" ? userEntry : userEntry?.group;
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectCollaboratorGroup(group);
   collaboratorCache.set(key, allowed);
   return allowed;
@@ -293,9 +330,13 @@ export function createProjectHostHttpProxyAuth({
   ): string => {
     const actor = claims.act ?? "account";
     if (actor === "hub") {
-      const publicAppHost = `${req?.headers?.[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
+      const publicAppHost =
+        `${req?.headers?.[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
       if (!publicAppHost || !project_id) {
-        throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
+        throw new HttpAuthError(
+          403,
+          "invalid actor for project-host HTTP auth",
+        );
       }
       return project_id;
     }
@@ -328,16 +369,42 @@ export function createProjectHostHttpProxyAuth({
         iat_s: number;
       }
     | undefined => {
-    const cookies = parseCookies(req.headers.cookie as string | undefined);
-    const token = `${cookies[PROJECT_HOST_HTTP_SESSION_COOKIE_NAME] ?? ""}`.trim();
-    if (!token) return;
-    return verifySessionToken(token);
+    const tokenCount = readCookieValues(
+      req.headers.cookie as string | undefined,
+      PROJECT_HOST_HTTP_SESSION_COOKIE_NAME,
+    ).length;
+    if (!tokenCount) return;
+    const session = resolveProjectHostHttpSessionFromCookieHeader(
+      req.headers.cookie as string | undefined,
+    );
+    if (!session) {
+      logger.debug("invalid project-host http session cookie", {
+        host: req.headers.host,
+        url: req.url,
+        cookie_count: tokenCount,
+      });
+    }
+    return session;
   };
 
-  const clearSessionCookie = (res: ServerResponse, project_id: string) => {
+  const clearSessionCookie = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    project_id: string,
+  ) => {
     appendSetCookie(
       res,
-      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=; Path=${projectCookiePath(project_id)}; HttpOnly; SameSite=Lax; Max-Age=0`,
+      buildProjectHostSessionCookieDeletion({
+        req,
+        path: projectCookiePath(project_id),
+      }),
+    );
+    appendSetCookie(
+      res,
+      buildProjectHostSessionCookieDeletion({
+        req,
+        path: legacyProjectHostCookiePath(),
+      }),
     );
   };
 
@@ -347,7 +414,14 @@ export function createProjectHostHttpProxyAuth({
     account_id: string,
     project_id: string,
   ) => {
-    const sessionToken = createSessionToken({ account_id });
+    const sessionToken = createProjectHostHttpSessionToken({ account_id });
+    appendSetCookie(
+      res,
+      buildProjectHostSessionCookieDeletion({
+        req,
+        path: legacyProjectHostCookiePath(),
+      }),
+    );
     appendSetCookie(
       res,
       buildProjectHostSessionCookie({ req, sessionToken, project_id }),
@@ -396,7 +470,7 @@ export function createProjectHostHttpProxyAuth({
           issued_at_s: accountFromSession.iat_s,
         });
       } catch (err) {
-        clearSessionCookie(res, project_id);
+        clearSessionCookie(req, res, project_id);
         throw err;
       }
       authorizeAccountForProject({

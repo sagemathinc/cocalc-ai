@@ -165,7 +165,7 @@ export function getFieldSpec(table: string, field: string): FieldSpec {
     if (spec != null) return spec;
   }
   throw Error(
-    `invalid db-schema spec for field '${field}' of table '${table}'`
+    `invalid db-schema spec for field '${field}' of table '${table}'`,
   );
 }
 

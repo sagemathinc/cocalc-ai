@@ -63,7 +63,13 @@ describe("launcher additive merge", () => {
       "codex",
       "totally-custom",
     ]);
-    expect(merged.apps).toEqual(["jupyterlab", "code", "jupyter", "pluto", "rserver"]);
+    expect(merged.apps).toEqual([
+      "jupyterlab",
+      "code",
+      "jupyter",
+      "pluto",
+      "rserver",
+    ]);
   });
 });
 

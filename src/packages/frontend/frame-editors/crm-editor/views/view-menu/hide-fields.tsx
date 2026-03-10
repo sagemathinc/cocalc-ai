@@ -89,8 +89,8 @@ function MenuContents({
       .filter((field) =>
         search_match(
           (fieldToColumns[field]?.title ?? "No Title").toLowerCase(),
-          search
-        )
+          search,
+        ),
       )
       .map((field) => {
         const { title } = fieldToColumns[field] ?? { title: "No Title" };

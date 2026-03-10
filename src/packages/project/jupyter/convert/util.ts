@@ -1,4 +1,3 @@
-
 export function parseTo(args: string[]): { to: string; j: number } {
   let j: number = 0;
   let to: string = "";

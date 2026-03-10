@@ -399,11 +399,13 @@ type ExecCliOptions = {
   stdin?: boolean;
 };
 
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
-  ...args: string[]
-) => (...fnArgs: any[]) => Promise<any>;
+const AsyncFunction = Object.getPrototypeOf(async function () {})
+  .constructor as new (...args: string[]) => (...fnArgs: any[]) => Promise<any>;
 
-export function registerExecCommand(program: Command, deps: ExecCommandDeps): Command {
+export function registerExecCommand(
+  program: Command,
+  deps: ExecCommandDeps,
+): Command {
   program
     .command("exec-api")
     .description("print the TypeScript declaration for the backend exec API")
@@ -482,10 +484,7 @@ Example:
         }
 
         const api = createBackendExecApi(ctx, deps);
-        const runner = new AsyncFunction(
-          "api",
-          `"use strict";\n${script}\n`,
-        );
+        const runner = new AsyncFunction("api", `"use strict";\n${script}\n`);
         const result = await runner(api);
         return {
           result: result ?? null,

@@ -57,7 +57,7 @@ export function set(tree: ImmutableFrameTree, obj: any): ImmutableFrameTree {
 
 export function set_leafs(
   tree: ImmutableFrameTree,
-  obj: object
+  obj: object,
 ): ImmutableFrameTree {
   if (len(obj) < 1) {
     // nothing to do
@@ -178,7 +178,7 @@ export function getAllIds(tree: ImmutableFrameTree): Set<string> {
 // Ensure ids are unique (changing tree if necessary).
 // We assume every node has an id, and that they are all strings.
 export function ensure_ids_are_unique(
-  tree: ImmutableFrameTree
+  tree: ImmutableFrameTree,
 ): ImmutableFrameTree {
   const ids = {};
   let dupe = false;
@@ -233,7 +233,7 @@ export function is_leaf(node: ImmutableFrameTree): boolean {
 // Get node in the tree with given id, or returned undefined if there is no such node.
 export function get_node(
   tree: ImmutableFrameTree,
-  id: string
+  id: string,
 ): ImmutableFrameTree | undefined {
   let the_node: ImmutableFrameTree | undefined;
   let done = false;
@@ -254,7 +254,7 @@ export function get_node(
 
 export function delete_node(
   tree: ImmutableFrameTree,
-  id: string
+  id: string,
 ): ImmutableFrameTree {
   if (tree.get("id") === id) {
     // we never delete the root of the tree
@@ -294,7 +294,7 @@ function split_the_leaf(
   type?: string,
   extra?: object,
   first?: boolean,
-  ids?: Set<string>
+  ids?: Set<string>,
 ) {
   // 1. split this leaf node
   let leaf2;
@@ -312,7 +312,11 @@ function split_the_leaf(
     }
   }
   // 2. Make node with these two leafs
-  let node = fromJS({ direction, id: generate_id(ids), type: "node" }) as ImmutableFrameTree;
+  let node = fromJS({
+    direction,
+    id: generate_id(ids),
+    type: "node",
+  }) as ImmutableFrameTree;
   if (first) {
     node = node.set("first", leaf2);
     node = node.set("second", leaf);
@@ -329,7 +333,7 @@ export function split_leaf(
   direction: FrameDirection,
   type?: string,
   extra?: object,
-  first?: boolean // if true, new leaf is left or top instead of right or bottom.
+  first?: boolean, // if true, new leaf is left or top instead of right or bottom.
 ): ImmutableFrameTree {
   let done = false;
   var process = function (node) {
@@ -344,7 +348,7 @@ export function split_leaf(
         type,
         extra,
         first,
-        getAllIds(tree)
+        getAllIds(tree),
       );
     }
     for (const x of ["first", "second"]) {
@@ -368,7 +372,7 @@ export function new_frame(
   tree: ImmutableFrameTree,
   type: string,
   direction: FrameDirection,
-  first: boolean // if true, new leaf is left or top instead of right or bottom.
+  first: boolean, // if true, new leaf is left or top instead of right or bottom.
 ): ImmutableFrameTree {
   const ids = getAllIds(tree);
   const newTree = fromJS({
@@ -408,7 +412,7 @@ export function get_some_leaf_id(tree: ImmutableFrameTree): string {
   process(tree);
   if (!id) {
     throw Error(
-      "BUG -- get_some_leaf_id could not find any leaves! -- tree corrupt"
+      "BUG -- get_some_leaf_id could not find any leaves! -- tree corrupt",
     );
   }
   return id;
@@ -416,7 +420,7 @@ export function get_some_leaf_id(tree: ImmutableFrameTree): string {
 
 export function get_parent_id(
   tree: ImmutableFrameTree,
-  id: string
+  id: string,
 ): string | undefined {
   let done: boolean = false;
   let parent_id: string | undefined = undefined;

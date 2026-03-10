@@ -75,9 +75,11 @@ export default async function getCustomize(
       support: settings.support,
       supportVideoCall: settings.support_video_call,
       project_hosts_nebius_enabled: settings.project_hosts_nebius_enabled,
-      "project_hosts_google-cloud_enabled":
-        (settings as any)["project_hosts_google-cloud_enabled"],
-      project_hosts_hyperstack_enabled: settings.project_hosts_hyperstack_enabled,
+      "project_hosts_google-cloud_enabled": (settings as any)[
+        "project_hosts_google-cloud_enabled"
+      ],
+      project_hosts_hyperstack_enabled:
+        settings.project_hosts_hyperstack_enabled,
       project_hosts_lambda_enabled: settings.project_hosts_lambda_enabled,
       project_hosts_local_enabled: settings.project_hosts_local_enabled,
       project_hosts_self_host_alpha_enabled:
@@ -113,7 +115,6 @@ export default async function getCustomize(
       mistralEnabled: settings.mistral_enabled,
       anthropicEnabled: settings.anthropic_enabled,
       ollamaEnabled: settings.ollama_enabled,
-
 
       // GitHub proxy project
       githubProjectId: settings.github_project_id,

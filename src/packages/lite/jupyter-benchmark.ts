@@ -17,10 +17,7 @@ import { AsciiTable3 } from "ascii-table3";
 import getLogger from "@cocalc/backend/logger";
 import { conatPassword } from "@cocalc/backend/data";
 import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
-import {
-  connect,
-  type Client as ConatClient,
-} from "@cocalc/conat/core/client";
+import { connect, type Client as ConatClient } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import { jupyterClient } from "@cocalc/conat/project/jupyter/run-code";
@@ -150,7 +147,9 @@ const SCENARIOS_FULL: ScenarioConfig[] = [
   },
 ];
 
-function profileScenarios(profile: "quick" | "output" | "full"): ScenarioConfig[] {
+function profileScenarios(
+  profile: "quick" | "output" | "full",
+): ScenarioConfig[] {
   switch (profile) {
     case "output":
       return SCENARIOS_OUTPUT;
@@ -181,7 +180,12 @@ function isRunningPid(pid: number): boolean {
 function normalizeLiteHost(host: unknown): string {
   if (typeof host !== "string") return "localhost";
   const trimmed = host.trim();
-  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
+  if (
+    !trimmed ||
+    trimmed === "0.0.0.0" ||
+    trimmed === "::" ||
+    trimmed === "[::]"
+  ) {
     return "localhost";
   }
   return trimmed;
@@ -193,7 +197,9 @@ function startLiteServerMessage(detail: string): Error {
   );
 }
 
-async function resolveConatAddress(opts: JupyterBenchmarkOptions): Promise<string> {
+async function resolveConatAddress(
+  opts: JupyterBenchmarkOptions,
+): Promise<string> {
   if (opts.conat_server) {
     return trimTrailingSlash(opts.conat_server);
   }
@@ -439,7 +445,10 @@ async function runOne({
   }
 }
 
-function summarizeScenario(name: string, results: IterationResult[]): ScenarioSummary {
+function summarizeScenario(
+  name: string,
+  results: IterationResult[],
+): ScenarioSummary {
   const ok = results.filter((x) => x.ok);
   const failed = results.filter((x) => !x.ok);
   const first = ok
@@ -527,7 +536,11 @@ export async function runJupyterBenchmark(
     });
     opts.log?.({ step: "kernel_syncdb", status: "ok" });
 
-    opts.log?.({ step: "jupyter_start", status: "start", message: path_syncdb });
+    opts.log?.({
+      step: "jupyter_start",
+      status: "start",
+      message: path_syncdb,
+    });
     await projectApi.jupyter.start(path_syncdb);
     opts.log?.({ step: "jupyter_start", status: "ok" });
 
@@ -538,7 +551,11 @@ export async function runJupyterBenchmark(
     });
 
     for (let i = 0; i < warmup; i += 1) {
-      opts.log?.({ step: "warmup", status: "start", message: `iteration ${i + 1}` });
+      opts.log?.({
+        step: "warmup",
+        status: "start",
+        message: `iteration ${i + 1}`,
+      });
       const warm = await runOne({ client: runClient, code: "2+3", limit });
       if (!warm.ok) {
         throw new Error(`warmup failed: ${warm.error}`);
@@ -606,7 +623,10 @@ export async function runJupyterBenchmark(
     } catch {}
     try {
       if (stopJupyterOnFinish) {
-        const projectApi = projectApiClient({ project_id, client: conatClient });
+        const projectApi = projectApiClient({
+          project_id,
+          client: conatClient,
+        });
         await projectApi.jupyter.stop(path_syncdb);
       }
     } catch {

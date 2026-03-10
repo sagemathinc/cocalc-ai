@@ -15,7 +15,7 @@ export function get_browser(): { name: string; version: string } {
     tem,
     M =
       ua.match(
-        /(opera|chrome|safari|firefox|msie|trident(?=\/))\/?\s*(\d+)/i
+        /(opera|chrome|safari|firefox|msie|trident(?=\/))\/?\s*(\d+)/i,
       ) || [];
   if (/trident/i.test(M[1])) {
     tem = /\brv[ :]+(\d+)/g.exec(ua) || [];

@@ -55,13 +55,7 @@ export function register_file_editor(opts: Register | AsyncRegister) {
     });
     return;
   }
-  register(
-    opts.icon,
-    opts.ext,
-    opts.component,
-    opts.Actions,
-    opts.asyncData,
-  );
+  register(opts.icon, opts.ext, opts.component, opts.Actions, opts.asyncData);
 }
 
 const reference_count: { [name: string]: number } = {};

@@ -66,16 +66,10 @@ export default function PasswordResetForm({ onNavigate }: PasswordResetProps) {
         {resetting ? "Sending reset email..." : "Send password reset email"}
       </Button>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <a
-          onClick={() => onNavigate("sign-in")}
-          style={{ cursor: "pointer" }}
-        >
+        <a onClick={() => onNavigate("sign-in")} style={{ cursor: "pointer" }}>
           Back to sign in
         </a>
-        <a
-          onClick={() => onNavigate("sign-up")}
-          style={{ cursor: "pointer" }}
-        >
+        <a onClick={() => onNavigate("sign-up")} style={{ cursor: "pointer" }}>
           Create an account
         </a>
       </div>

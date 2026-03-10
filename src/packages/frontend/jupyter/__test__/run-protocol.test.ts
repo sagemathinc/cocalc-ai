@@ -1,7 +1,4 @@
-import {
-  classifyRunStreamMessage,
-  getRunLifecycleType,
-} from "../run-protocol";
+import { classifyRunStreamMessage, getRunLifecycleType } from "../run-protocol";
 
 describe("jupyter run protocol classification", () => {
   it("parses lifecycle from either lifecycle or msg_type field", () => {

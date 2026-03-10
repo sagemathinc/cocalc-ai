@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
+import {
+  mkdir as mkdirLocal,
+  readFile as readFileLocal,
+  writeFile as writeFileLocal,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
@@ -10,23 +14,33 @@ import { Command } from "commander";
 
 import pkg from "../../package.json";
 
-import { connect as connectConat, type Client as ConatClient } from "@cocalc/conat/core/client";
+import {
+  connect as connectConat,
+  type Client as ConatClient,
+} from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type { HubApi } from "@cocalc/conat/hub/api";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type {
-  HostConnectionInfo,
-} from "@cocalc/conat/hub/api/hosts";
-import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
-import type {
-  ProjectCollabInviteRow,
-} from "@cocalc/conat/hub/api/projects";
-import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
+  LroScopeType,
+  LroSummary as HubLroSummary,
+} from "@cocalc/conat/hub/api/lro";
+import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
+import {
+  fsClient,
+  fsSubject,
+  type FilesystemClient,
+} from "@cocalc/conat/files/fs";
 import { projectApiClient, type ProjectApi } from "@cocalc/conat/project/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
-import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
+import {
+  FALLBACK_ACCOUNT_UUID,
+  basePathCookieName,
+  isValidUUID,
+} from "@cocalc/util/misc";
 import {
   applyAuthProfile,
   authConfigPath,
@@ -113,15 +127,30 @@ import {
 } from "./core/lro";
 import { registerOpCommand, type OpCommandDeps } from "./commands/op";
 import { registerHostCommand, type HostCommandDeps } from "./commands/host";
-import { registerProjectCommand, type ProjectCommandDeps } from "./commands/project";
+import {
+  registerProjectCommand,
+  type ProjectCommandDeps,
+} from "./commands/project";
 import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
-import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon";
+import {
+  registerDaemonCommand,
+  type DaemonCommandDeps,
+} from "./commands/daemon";
 import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
-import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
+import {
+  registerAccountCommand,
+  type AccountCommandDeps,
+} from "./commands/account";
 import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
 import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
-import { registerExportCommand, type ExportCommandDeps } from "./commands/export";
-import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
+import {
+  registerExportCommand,
+  type ExportCommandDeps,
+} from "./commands/export";
+import {
+  registerImportCommand,
+  type ImportCommandDeps,
+} from "./commands/import";
 import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
 import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
 import {
@@ -150,7 +179,10 @@ const requireCjs = createRequire(__filename);
 const origLog = console.log.bind(console);
 console.log = (...args: any[]) => {
   const first = args[0];
-  if (typeof first === "string" && first.startsWith("WARNING: inbox not available --")) {
+  if (
+    typeof first === "string" &&
+    first.startsWith("WARNING: inbox not available --")
+  ) {
     if (cliDebugEnabled) {
       console.error(...args);
     }
@@ -187,7 +219,10 @@ type CommandContext = {
   hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
   projectCache: Map<string, { expiresAt: number; project: ProjectRow }>;
-  hostConnectionCache: Map<string, { expiresAt: number; connection: HostConnectionInfo }>;
+  hostConnectionCache: Map<
+    string,
+    { expiresAt: number; connection: HostConnectionInfo }
+  >;
 };
 
 type RoutedProjectHostClientState = {
@@ -235,7 +270,12 @@ type LroStatus = {
   timedOut?: boolean;
 };
 
-const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
+const TERMINAL_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
 const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
 const WORKSPACE_CONTEXT_FILENAME = ".cocalc-project";
@@ -269,8 +309,12 @@ function projectContextPath(cwd = process.cwd()): string {
   return join(cwd, WORKSPACE_CONTEXT_FILENAME);
 }
 
-function saveProjectContext(context: ProjectContextRecord, cwd = process.cwd()): void {
-  const project_id = `${context.project_id ?? context.workspace_id ?? ""}`.trim();
+function saveProjectContext(
+  context: ProjectContextRecord,
+  cwd = process.cwd(),
+): void {
+  const project_id =
+    `${context.project_id ?? context.workspace_id ?? ""}`.trim();
   if (!isValidUUID(project_id)) {
     throw new Error("project context requires a valid project_id UUID");
   }
@@ -281,7 +325,9 @@ function saveProjectContext(context: ProjectContextRecord, cwd = process.cwd()):
   );
 }
 
-function readProjectContext(cwd = process.cwd()): ProjectContextRecord | undefined {
+function readProjectContext(
+  cwd = process.cwd(),
+): ProjectContextRecord | undefined {
   const path = projectContextPath(cwd);
   if (!existsSync(path)) return undefined;
   const raw = readFileSync(path, "utf8").trim();
@@ -376,7 +422,11 @@ function normalizeBoolean(value: unknown): boolean {
   return Boolean(value);
 }
 
-function normalizeProcessExitCode(raw: unknown, stdout: string, stderr: string): number {
+function normalizeProcessExitCode(
+  raw: unknown,
+  stdout: string,
+  stderr: string,
+): number {
   const code = Number(raw);
   if (Number.isFinite(code)) {
     return code;
@@ -394,7 +444,10 @@ function emitError(
   emitErrorCore(ctx, commandName, error, normalizeUrl);
 }
 
-function optionValueSource(command: any, optionName: string): string | undefined {
+function optionValueSource(
+  command: any,
+  optionName: string,
+): string | undefined {
   let cur = command;
   while (cur && typeof cur === "object") {
     if (typeof cur.getOptionValueSource === "function") {
@@ -473,7 +526,10 @@ function globalsFrom(command: unknown): GlobalOptions {
     }
   }
   if (typeof program?.opts === "function") {
-    return applyAgentModeOutputDefaults(program.opts() as GlobalOptions, command);
+    return applyAgentModeOutputDefaults(
+      program.opts() as GlobalOptions,
+      command,
+    );
   }
   return applyAgentModeOutputDefaults({}, command);
 }
@@ -540,7 +596,9 @@ function buildCookieHeader(
 }
 
 function hasHubPassword(globals: GlobalOptions): boolean {
-  return !!normalizeSecretValue(globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD);
+  return !!normalizeSecretValue(
+    globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+  );
 }
 
 function maskSecret(value: string | undefined): string | null {
@@ -549,7 +607,9 @@ function maskSecret(value: string | undefined): string | null {
   return `${value.slice(0, 3)}...${value.slice(-3)}`;
 }
 
-function normalizeOptionalSecret(value: string | undefined): string | undefined {
+function normalizeOptionalSecret(
+  value: string | undefined,
+): string | undefined {
   const trimmed = `${value ?? ""}`.trim();
   if (!trimmed) return undefined;
   return trimmed;
@@ -622,7 +682,9 @@ function matchesLiteConnection({
           base.protocol.replace(/:$/, "").toLowerCase()
         : true;
     const port = Number(info.port ?? NaN);
-    const basePort = Number(base.port || (base.protocol === "https:" ? 443 : 80));
+    const basePort = Number(
+      base.port || (base.protocol === "https:" ? 443 : 80),
+    );
     const portOk = Number.isFinite(port) ? port === basePort : true;
     return hostOk && protocolOk && portOk;
   } catch {
@@ -900,7 +962,9 @@ async function resolveDefaultAdminAccountId({
   return existingCandidates[0] ?? candidates[0];
 }
 
-function resolveAccountIdFromRemote(remote: RemoteConnection): string | undefined {
+function resolveAccountIdFromRemote(
+  remote: RemoteConnection,
+): string | undefined {
   const value = remote.user?.account_id;
   if (typeof value === "string" && isValidUUID(value)) {
     return value;
@@ -908,7 +972,9 @@ function resolveAccountIdFromRemote(remote: RemoteConnection): string | undefine
   return undefined;
 }
 
-async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext> {
+async function contextForGlobals(
+  globals: GlobalOptions,
+): Promise<CommandContext> {
   const config = loadAuthConfig();
   const applied = applyAuthProfile(globals, config);
   let effectiveGlobals = applied.globals as GlobalOptions;
@@ -916,15 +982,24 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
   const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
   const rpcTimeoutMs = Math.max(
     1_000,
-    Math.min(timeoutMs, durationToMs(effectiveGlobals.rpcTimeout, MAX_TRANSPORT_TIMEOUT_MS)),
+    Math.min(
+      timeoutMs,
+      durationToMs(effectiveGlobals.rpcTimeout, MAX_TRANSPORT_TIMEOUT_MS),
+    ),
   );
   const pollMs = durationToMs(effectiveGlobals.pollMs, 1_000);
-  const apiBaseUrl = effectiveGlobals.api ? normalizeUrl(effectiveGlobals.api) : defaultApiBaseUrl();
+  const apiBaseUrl = effectiveGlobals.api
+    ? normalizeUrl(effectiveGlobals.api)
+    : defaultApiBaseUrl();
   effectiveGlobals = maybeApplyLiteAgentAuth({
     globals: effectiveGlobals,
     apiBaseUrl,
   });
-  const remote = await connectRemote({ globals: effectiveGlobals, apiBaseUrl, timeoutMs });
+  const remote = await connectRemote({
+    globals: effectiveGlobals,
+    apiBaseUrl,
+    timeoutMs,
+  });
 
   let accountId =
     getExplicitAccountId(effectiveGlobals) ??
@@ -1080,7 +1155,10 @@ async function queryProjects({
   });
 }
 
-async function resolveProject(ctx: CommandContext, identifier: string): Promise<ProjectRow> {
+async function resolveProject(
+  ctx: CommandContext,
+  identifier: string,
+): Promise<ProjectRow> {
   return await resolveProjectCore<ProjectRow>(
     ctx,
     identifier,
@@ -1114,7 +1192,9 @@ async function resolveAccountByIdentifier(
   return await resolveAccountByIdentifierCore(ctx, identifier);
 }
 
-function serializeInviteRow(invite: ProjectCollabInviteRow): Record<string, unknown> {
+function serializeInviteRow(
+  invite: ProjectCollabInviteRow,
+): Record<string, unknown> {
   return {
     invite_id: invite.invite_id,
     project_id: invite.project_id,
@@ -1183,7 +1263,10 @@ function isProjectHostAuthError(err: unknown): boolean {
   );
 }
 
-function localProxyProjectHostAddress(apiBaseUrl: string, routeId: string): string {
+function localProxyProjectHostAddress(
+  apiBaseUrl: string,
+  routeId: string,
+): string {
   const url = new URL(normalizeUrl(apiBaseUrl));
   const base = url.pathname.replace(/\/+$/, "");
   url.pathname = `${base}/${routeId}`.replace(/\/+/g, "/");
@@ -1229,7 +1312,9 @@ async function issueProjectHostAuthToken(
   return await state.tokenInFlight;
 }
 
-function invalidateProjectHostAuthToken(state: RoutedProjectHostClientState): void {
+function invalidateProjectHostAuthToken(
+  state: RoutedProjectHostClientState,
+): void {
   delete state.token;
   delete state.expiresAt;
   delete state.tokenSource;
@@ -1278,7 +1363,9 @@ async function getOrCreateRoutedProjectHostClient(
       ? normalizeUrl(connection.connect_url)
       : "";
   if (!address) {
-    throw new Error(`host '${host_id}' has no connect_url and is not local_proxy`);
+    throw new Error(
+      `host '${host_id}' has no connect_url and is not local_proxy`,
+    );
   }
 
   const existing = ctx.routedProjectHostClients[host_id];
@@ -1294,7 +1381,9 @@ async function getOrCreateRoutedProjectHostClient(
     address,
   };
   const cookie = connection.local_proxy
-    ? buildCookieHeader(ctx.apiBaseUrl, ctx.globals, { includeHubPassword: false })
+    ? buildCookieHeader(ctx.apiBaseUrl, ctx.globals, {
+        includeHubPassword: false,
+      })
     : undefined;
   const routed = connectConat({
     address,
@@ -1303,7 +1392,11 @@ async function getOrCreateRoutedProjectHostClient(
     ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
     auth: async (cb) => {
       try {
-        const token = await issueProjectHostAuthToken(ctx, state, project.project_id);
+        const token = await issueProjectHostAuthToken(
+          ctx,
+          state,
+          project.project_id,
+        );
         cb({ bearer: token });
       } catch (err) {
         cliDebug("project-host token issuance failed", {
@@ -1348,7 +1441,8 @@ async function getOrCreateRoutedProjectHostClient(
     );
   } catch (err) {
     const hadToken = !!state.token;
-    const shouldRetryWithFreshToken = allowTokenRetry && (hadToken || isProjectHostAuthError(err));
+    const shouldRetryWithFreshToken =
+      allowTokenRetry && (hadToken || isProjectHostAuthError(err));
     closeRoutedProjectHostClient(ctx, host_id);
     if (shouldRetryWithFreshToken) {
       invalidateProjectHostAuthToken(state);
@@ -1365,10 +1459,16 @@ async function resolveProjectFilesystem(
   projectIdentifier?: string,
   cwd = process.cwd(),
 ): Promise<{ project: ProjectRow; fs: FilesystemClient }> {
-  const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+  const project = await resolveProjectFromArgOrContext(
+    ctx,
+    projectIdentifier,
+    cwd,
+  );
   const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
-    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+    throw new Error(
+      `internal error: routed client missing for host ${routed.host_id}`,
+    );
   }
   const fs = fsClient({
     client: routed.client,
@@ -1383,10 +1483,16 @@ async function resolveProjectApi(
   projectIdentifier?: string,
   cwd = process.cwd(),
 ): Promise<{ project: ProjectRow; api: ProjectApi }> {
-  const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+  const project = await resolveProjectFromArgOrContext(
+    ctx,
+    projectIdentifier,
+    cwd,
+  );
   const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
-    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+    throw new Error(
+      `internal error: routed client missing for host ${routed.host_id}`,
+    );
   }
   const api = projectApiClient({
     project_id: project.project_id,
@@ -1401,11 +1507,7 @@ async function resolveProjectProjectApi(
   projectIdentifier?: string,
   cwd = process.cwd(),
 ): Promise<{ project: ProjectRow; api: ProjectApi }> {
-  const { project, api } = await resolveProjectApi(
-    ctx,
-    projectIdentifier,
-    cwd,
-  );
+  const { project, api } = await resolveProjectApi(ctx, projectIdentifier, cwd);
   return { project, api };
 }
 
@@ -1510,21 +1612,15 @@ const {
   resolveModule: (specifier) => requireCjs.resolve(specifier),
 });
 
-const { withProjectTasksSession: withProjectTasksSessionCore } = createProjectTasksOps<
-  CommandContext,
-  ProjectRow
->({
-  resolveProjectConatClient,
-});
+const { withProjectTasksSession: withProjectTasksSessionCore } =
+  createProjectTasksOps<CommandContext, ProjectRow>({
+    resolveProjectConatClient,
+  });
 
 async function withProjectTasksSession<T>(
   ctx: CommandContext,
   options: Parameters<typeof withProjectTasksSessionCore>[1],
-  fn: (args: {
-    project: ProjectRow;
-    session: any;
-    path: string;
-  }) => Promise<T>,
+  fn: (args: { project: ProjectRow; session: any; path: string }) => Promise<T>,
 ): Promise<T> {
   return await withProjectTasksSessionCore(
     ctx,
@@ -1567,7 +1663,9 @@ async function projectHostHubCallAccount<T>(
 ): Promise<T> {
   const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
   if (!routed.client) {
-    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+    throw new Error(
+      `internal error: routed client missing for host ${routed.host_id}`,
+    );
   }
   const timeoutMs = timeout ?? ctx.timeoutMs;
   const rpcTimeoutMs = Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs));
@@ -1607,23 +1705,32 @@ async function projectHostHubCallAccount<T>(
   }
 }
 
-async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
+async function resolveHost(
+  ctx: CommandContext,
+  identifier: string,
+): Promise<HostRow> {
   return await resolveHostCore<HostRow>(ctx, identifier);
 }
 
 async function listHosts(
   ctx: CommandContext,
-  opts: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean } = {},
+  opts: {
+    include_deleted?: boolean;
+    catalog?: boolean;
+    admin_view?: boolean;
+  } = {},
 ): Promise<HostRow[]> {
   return await listHostsCore<HostRow>(ctx, opts);
 }
-const { waitForHostCreateReady, resolveHostSshEndpoint } =
-  createHostHelpers<CommandContext, HostRow>({
-    listHosts,
-    resolveHost,
-    parseSshServer,
-    cliDebug,
-  });
+const { waitForHostCreateReady, resolveHostSshEndpoint } = createHostHelpers<
+  CommandContext,
+  HostRow
+>({
+  listHosts,
+  resolveHost,
+  parseSshServer,
+  cliDebug,
+});
 
 async function waitForLro(
   ctx: CommandContext,
@@ -1777,10 +1884,14 @@ async function resolveProxyUrl({
       ? await resolveHost(ctx, project.host_id)
       : null;
   if (!host) {
-    throw new Error("project has no assigned host; specify --host or start/move the project first");
+    throw new Error(
+      "project has no assigned host; specify --host or start/move the project first",
+    );
   }
 
-  const connection = await ctx.hub.hosts.resolveHostConnection({ host_id: host.id });
+  const connection = await ctx.hub.hosts.resolveHostConnection({
+    host_id: host.id,
+  });
 
   let base = connection.connect_url ? normalizeUrl(connection.connect_url) : "";
   if (!base && connection.local_proxy) {
@@ -1811,7 +1922,7 @@ const { serveDaemon, runDaemonRequestFromCommand } =
     contextForGlobals,
     closeCommandContext,
     globalsFrom,
-  daemonContextMeta: (ctx) => ({
+    daemonContextMeta: (ctx) => ({
       api: ctx.apiBaseUrl,
       account_id: ctx.accountId,
     }),
@@ -1860,7 +1971,10 @@ program
   .option("--api-key <key>", "account api key (also read from COCALC_API_KEY)")
   .option("--cookie <cookie>", "raw Cookie header value")
   .option("--bearer <token>", "bearer token for conat authorization")
-  .option("--hub-password <password-or-file>", "hub system password for local dev")
+  .option(
+    "--hub-password <password-or-file>",
+    "hub system password for local dev",
+  )
   .showHelpAfterError();
 
 for (const spec of Object.values(PRODUCT_SPECS)) {

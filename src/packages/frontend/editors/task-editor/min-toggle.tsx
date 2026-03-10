@@ -44,5 +44,5 @@ export const MinToggle: React.FC<Props> = React.memo(
     } else {
       return <span />;
     }
-  }
+  },
 );

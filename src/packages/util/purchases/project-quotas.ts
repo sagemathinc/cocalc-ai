@@ -17,7 +17,7 @@ export function getPricePerHour(
     disk_quota: number; // price per month for 1GB of disk
     memory: number; // price per month for 1GB RAM
     member_host: number; // cost multiple for non pre-emptible/less loaded (i.e., member hosting)
-  }
+  },
 ): number {
   // start with the core and memory pricing, which are separate.
   let price =

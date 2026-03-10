@@ -75,7 +75,9 @@ function parseOptionalKeep(value?: string): number | undefined {
   if (value == null || value === "") return undefined;
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`Invalid --keep '${value}' (must be a non-negative integer)`);
+    throw new Error(
+      `Invalid --keep '${value}' (must be a non-negative integer)`,
+    );
   }
   return Math.floor(n);
 }

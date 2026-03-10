@@ -56,7 +56,9 @@ const FIELD_LABELS: Record<HostFieldId, string> = {
 };
 
 const inOptions = (value: string | undefined, options?: SelectOption[]) =>
-  value !== undefined && value !== null && !!options?.some((opt) => opt.value === value);
+  value !== undefined &&
+  value !== null &&
+  !!options?.some((opt) => opt.value === value);
 
 const firstValue = (options?: SelectOption[]) =>
   options?.find((opt) => !opt.disabled)?.value ?? options?.[0]?.value;
@@ -234,11 +236,7 @@ export const useHostForm = ({
     };
 
     for (const field of [...fieldSchema.primary, ...fieldSchema.advanced]) {
-      ensureValue(
-        field,
-        currentValues[field],
-        fieldOptions[field],
-      );
+      ensureValue(field, currentValues[field], fieldOptions[field]);
     }
 
     if (Object.keys(updates).length > 0) {

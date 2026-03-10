@@ -14,9 +14,6 @@ describe("resolveEditedMessageForSave", () => {
   });
 
   it("falls back to edited value when submitted is undefined", () => {
-    expect(resolveEditedMessageForSave("", undefined, "edited")).toBe(
-      "edited",
-    );
+    expect(resolveEditedMessageForSave("", undefined, "edited")).toBe("edited");
   });
 });
-

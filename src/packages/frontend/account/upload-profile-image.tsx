@@ -63,7 +63,7 @@ export default function UploadProfileImage({ account_id, onChange }: Props) {
           }}
         >
           <p className="ant-upload-drag-icon">
-            <Avatar account_id={account_id} size={AVATAR_SIZE/2} />
+            <Avatar account_id={account_id} size={AVATAR_SIZE / 2} />
           </p>
           <p className="ant-upload-text">
             Click or drag image to this area to upload

@@ -8,11 +8,11 @@ export const FILE_TAB_STRIP_ATTRIBUTE = "data-cocalc-file-tab-strip";
 const BEFORE_EDITOR_BOUNDARIES = new Set(["flyout"]);
 const AFTER_EDITOR_BOUNDARIES = new Set(["dock", "side-chat"]);
 const FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  '[href]',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
   '[contenteditable="true"]',
   '[role="button"]',
   '[role="tab"]',
@@ -154,7 +154,9 @@ export function matchProjectNavigationCommand(
   host: HostProfile = getHostProfile(),
 ): ProjectNavigationCommandId | undefined {
   for (const command of PROJECT_NAVIGATION_COMMANDS) {
-    if (command.bindings.some((binding) => bindingMatches(event, binding, host))) {
+    if (
+      command.bindings.some((binding) => bindingMatches(event, binding, host))
+    ) {
       return command.id;
     }
   }
@@ -168,7 +170,8 @@ export function getAdjacentOpenFilePath(
 ): string | undefined {
   if (openFiles.length === 0) return;
   const activePath =
-    typeof activeProjectTab === "string" && activeProjectTab.startsWith(EDITOR_PREFIX)
+    typeof activeProjectTab === "string" &&
+    activeProjectTab.startsWith(EDITOR_PREFIX)
       ? tab_to_path(activeProjectTab)
       : undefined;
   let index = activePath != null ? openFiles.indexOf(activePath) : -1;
@@ -183,11 +186,15 @@ export function getProjectFileTabStrip(
   root: ParentNode | null | undefined,
 ): HTMLElement | null {
   if (root == null) return null;
-  const strip = root.querySelector<HTMLElement>(`[${FILE_TAB_STRIP_ATTRIBUTE}]`);
+  const strip = root.querySelector<HTMLElement>(
+    `[${FILE_TAB_STRIP_ATTRIBUTE}]`,
+  );
   return strip instanceof HTMLElement ? strip : null;
 }
 
-function isVisibleElement(element: Element | null | undefined): element is HTMLElement {
+function isVisibleElement(
+  element: Element | null | undefined,
+): element is HTMLElement {
   if (!(element instanceof HTMLElement) || !element.isConnected) return false;
   if (element.getAttribute("aria-hidden") === "true") return false;
   const style = window.getComputedStyle(element);
@@ -207,7 +214,9 @@ function findActiveFileTabButton(strip: ParentNode): HTMLElement | null {
   return (
     strip.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
     strip.querySelector<HTMLElement>(".ant-tabs-tab-active [role='tab']") ??
-    strip.querySelector<HTMLElement>(".ant-tabs-tab-active .ant-tabs-tab-btn") ??
+    strip.querySelector<HTMLElement>(
+      ".ant-tabs-tab-active .ant-tabs-tab-btn",
+    ) ??
     strip.querySelector<HTMLElement>('[role="tab"]')
   );
 }
@@ -241,7 +250,9 @@ function getNavigationBoundaries(
 ): HTMLElement[] {
   if (projectRoot == null) return [];
   const candidates = Array.from(
-    projectRoot.querySelectorAll<HTMLElement>(`[${KEYBOARD_BOUNDARY_ATTRIBUTE}]`),
+    projectRoot.querySelectorAll<HTMLElement>(
+      `[${KEYBOARD_BOUNDARY_ATTRIBUTE}]`,
+    ),
   ).filter((element) => {
     const boundary = element.getAttribute(KEYBOARD_BOUNDARY_ATTRIBUTE) ?? "";
     return names.has(boundary) && isVisibleElement(element);
@@ -252,7 +263,9 @@ function getNavigationBoundaries(
   );
 }
 
-function buildEditorTargets(editorActions: EditorNavigationActions | undefined): FocusTarget[] {
+function buildEditorTargets(
+  editorActions: EditorNavigationActions | undefined,
+): FocusTarget[] {
   const frameIds = editorActions?.get_frame_ids_in_order?.() ?? [];
   if (frameIds.length === 0 || editorActions?.set_active_id == null) {
     return editorActions?.focus == null
@@ -314,13 +327,17 @@ function getCurrentTargetIndex(
 ): number {
   const activeElement =
     document.activeElement instanceof Element ? document.activeElement : null;
-  const directIndex = targets.findIndex((target) => target.contains(activeElement));
+  const directIndex = targets.findIndex((target) =>
+    target.contains(activeElement),
+  );
   if (directIndex !== -1) {
     return directIndex;
   }
   const activeFrameId = runtime.editorActions?.get_active_frame_id?.();
   if (activeFrameId != null) {
-    return targets.findIndex((target) => target.id === `editor:${activeFrameId}`);
+    return targets.findIndex(
+      (target) => target.id === `editor:${activeFrameId}`,
+    );
   }
   return -1;
 }
@@ -355,14 +372,16 @@ export function runProjectNavigationCommand(
     case "focusPreviousFrame":
       return focusAdjacentTarget(runtime, -1);
     case "activateNextFileTab": {
-      const handled = runtime.projectActions?.activate_next_file_tab?.() ?? false;
+      const handled =
+        runtime.projectActions?.activate_next_file_tab?.() ?? false;
       if (handled && fileTabStripHasFocus) {
         runtime.projectActions?.focus_file_tab_strip?.();
       }
       return handled;
     }
     case "activatePreviousFileTab": {
-      const handled = runtime.projectActions?.activate_previous_file_tab?.() ?? false;
+      const handled =
+        runtime.projectActions?.activate_previous_file_tab?.() ?? false;
       if (handled && fileTabStripHasFocus) {
         runtime.projectActions?.focus_file_tab_strip?.();
       }
@@ -383,9 +402,12 @@ export function resolveProjectNavigationRuntime(
   opts: ProjectNavigationRuntimeOptions = {},
 ): ProjectNavigationRuntime {
   const store = redux.getProjectStore(projectId);
-  const activeProjectTab = opts.activeProjectTab ?? store?.get("active_project_tab");
+  const activeProjectTab =
+    opts.activeProjectTab ?? store?.get("active_project_tab");
   const projectActions =
-    opts.projectActions ?? ((redux.getProjectActions(projectId) as any) ?? undefined);
+    opts.projectActions ??
+    (redux.getProjectActions(projectId) as any) ??
+    undefined;
   const editorPath = getActiveEditorTabPath(activeProjectTab);
   const openFiles = store?.get("open_files");
   const syncPath =
@@ -395,7 +417,9 @@ export function resolveProjectNavigationRuntime(
       : undefined;
   const editorActions =
     opts.editorActions ??
-    (syncPath != null ? ((redux.getEditorActions(projectId, syncPath) as any) ?? undefined) : undefined);
+    (syncPath != null
+      ? ((redux.getEditorActions(projectId, syncPath) as any) ?? undefined)
+      : undefined);
   return {
     activeProjectTab,
     editorActions,
@@ -423,7 +447,11 @@ export function handleProjectNavigationKeydown(
   if (event.defaultPrevented) return false;
   const command = matchProjectNavigationCommand(event);
   if (command == null) return false;
-  const handled = runProjectNavigationCommandForProject(command, projectId, opts);
+  const handled = runProjectNavigationCommandForProject(
+    command,
+    projectId,
+    opts,
+  );
   if (!handled) return false;
   event.preventDefault();
   event.stopPropagation();
@@ -436,7 +464,9 @@ export function handoffProjectNavigationFromLocalOwner(
   opts: LocalOwnerNavigationOptions = {},
 ): void {
   const blurTarget =
-    opts.blurActiveElement instanceof HTMLElement ? opts.blurActiveElement : null;
+    opts.blurActiveElement instanceof HTMLElement
+      ? opts.blurActiveElement
+      : null;
   blurTarget?.blur();
   setTimeout(() => {
     if (command === "focusNextFrame" || command === "focusPreviousFrame") {
@@ -461,8 +491,13 @@ export function handoffProjectNavigationFromLocalOwner(
   }, 0);
 }
 
-export function getActiveEditorTabPath(activeProjectTab?: string): string | undefined {
-  if (typeof activeProjectTab !== "string" || !activeProjectTab.startsWith(EDITOR_PREFIX)) {
+export function getActiveEditorTabPath(
+  activeProjectTab?: string,
+): string | undefined {
+  if (
+    typeof activeProjectTab !== "string" ||
+    !activeProjectTab.startsWith(EDITOR_PREFIX)
+  ) {
     return;
   }
   return tab_to_path(activeProjectTab);

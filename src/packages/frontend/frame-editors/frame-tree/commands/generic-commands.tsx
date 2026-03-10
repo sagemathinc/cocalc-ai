@@ -1180,8 +1180,7 @@ addCommands({
   },
   chat: {
     // we have a side chat menu item... except for in a chatroom or side chat.
-    isVisible: ({ props }) =>
-      !isChatPath(props.path) && props.type != "chat",
+    isVisible: ({ props }) => !isChatPath(props.path) && props.type != "chat",
     pos: -1,
     group: "show-frames",
     icon: "comment",

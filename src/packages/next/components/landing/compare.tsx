@@ -37,7 +37,7 @@ export default function Compare(props: Props) {
         table={table}
         disclaimer={disclaimer}
         title={title}
-      />
+      />,
     );
   }
   return <div style={{ background: "white", width: "100%" }}>{v}</div>;

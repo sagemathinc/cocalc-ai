@@ -37,7 +37,7 @@ export default function ConfigMenu({ main, sub }) {
         const icon = topIcons[main] ?? "gear";
         return menuItem(main, title, <Icon name={icon} />, sub);
       }),
-    []
+    [],
   );
 
   return (

@@ -103,7 +103,7 @@ const Leaf: React.FC<RenderLeafProps> = React.memo(
         {children}
       </span>
     );
-  }
+  },
 );
 
 export default Leaf;

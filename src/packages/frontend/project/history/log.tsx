@@ -47,7 +47,10 @@ function loadWorkspaceOnly(project_id: string): boolean {
 }
 
 function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
-  set_local_storage(workspaceOnlyStorageKey(project_id), enabled ? "true" : "false");
+  set_local_storage(
+    workspaceOnlyStorageKey(project_id),
+    enabled ? "true" : "false",
+  );
 }
 
 export const ProjectLog: React.FC<Props> = ({ project_id }) => {
@@ -98,7 +101,8 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
         if (paths.length === 0) return false;
         return paths.some(
           (path) =>
-            workspaces.resolveWorkspaceForPath(path)?.workspace_id === workspaceId,
+            workspaces.resolveWorkspaceForPath(path)?.workspace_id ===
+            workspaceId,
         );
       });
     }

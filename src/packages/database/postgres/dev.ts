@@ -49,7 +49,9 @@ function which(cmd: string): string | null {
 function requireBinary(cmd: string): string {
   const found = which(cmd);
   if (!found) {
-    throw new Error(`missing '${cmd}' (install postgres client/server packages)`);
+    throw new Error(
+      `missing '${cmd}' (install postgres client/server packages)`,
+    );
   }
   return found;
 }
@@ -67,7 +69,9 @@ function resolvePgBinaries(): PgBinaries {
       pgIsReady: existsSync(join(bindir, "pg_isready"))
         ? join(bindir, "pg_isready")
         : undefined,
-      pgCtl: existsSync(join(bindir, "pg_ctl")) ? join(bindir, "pg_ctl") : undefined,
+      pgCtl: existsSync(join(bindir, "pg_ctl"))
+        ? join(bindir, "pg_ctl")
+        : undefined,
     };
   }
   return {
@@ -98,7 +102,10 @@ function resolveSocketDir(dataDir: string): string {
 function resolveEnvFile(): string {
   const override = process.env.COCALC_LOCAL_PG_ENV_FILE;
   if (override) return override;
-  const dataRoot = process.env.COCALC_DATA_DIR ?? process.env.DATA ?? join(process.cwd(), "data");
+  const dataRoot =
+    process.env.COCALC_DATA_DIR ??
+    process.env.DATA ??
+    join(process.cwd(), "data");
   return join(dataRoot, "local-postgres.env");
 }
 
@@ -115,7 +122,8 @@ function writeEnvFile({
   try {
     ensureDir(dirname(path), 0o700);
     const dataDir = process.env.COCALC_DATA_DIR ?? process.env.DATA;
-    const secretsDir = process.env.SECRETS ?? (dataDir ? join(dataDir, "secrets") : undefined);
+    const secretsDir =
+      process.env.SECRETS ?? (dataDir ? join(dataDir, "secrets") : undefined);
     const secretSettingsKeyPath =
       process.env.COCALC_SECRET_SETTINGS_KEY_PATH ??
       (secretsDir ? join(secretsDir, "server-settings-key") : undefined);
@@ -162,7 +170,11 @@ function runSync(cmd: string, args: string[], env?: NodeJS.ProcessEnv): void {
   }
 }
 
-function runQuiet(cmd: string, args: string[], env?: NodeJS.ProcessEnv): string {
+function runQuiet(
+  cmd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): string {
   const res = spawnSync(cmd, args, {
     env: { ...process.env, ...env },
     encoding: "utf8",
@@ -178,14 +190,7 @@ function runQuiet(cmd: string, args: string[], env?: NodeJS.ProcessEnv): string 
 function ensureConfig(dataDir: string, socketDir: string): void {
   const hba = join(dataDir, "pg_hba.conf");
   if (existsSync(hba)) {
-    writeFileSync(
-      hba,
-      [
-        "# cocalc-dev",
-        "local all all trust",
-        "",
-      ].join("\n"),
-    );
+    writeFileSync(hba, ["# cocalc-dev", "local all all trust", ""].join("\n"));
   }
 
   const conf = join(dataDir, "postgresql.conf");
@@ -216,11 +221,9 @@ function waitForReady(
   while (Date.now() < deadline) {
     try {
       if (pgIsReady) {
-        const res = spawnSync(
-          pgIsReady,
-          ["-h", socketDir, "-U", user],
-          { encoding: "utf8" },
-        );
+        const res = spawnSync(pgIsReady, ["-h", socketDir, "-U", user], {
+          encoding: "utf8",
+        });
         if (res.status === 0) return;
       } else {
         runQuiet(psqlBin ?? "psql", [
@@ -284,7 +287,15 @@ function ensureRoleAndDb(
     "SELECT 1 FROM pg_database WHERE datname='smc';",
   ]);
   if (!dbCheck.trim()) {
-    runSync(bins.createdb, ["-h", socketDir, "-U", adminUser, "-O", "smc", "smc"]);
+    runSync(bins.createdb, [
+      "-h",
+      socketDir,
+      "-U",
+      adminUser,
+      "-O",
+      "smc",
+      "smc",
+    ]);
   }
 }
 
@@ -332,7 +343,9 @@ export async function ensureLocalPostgres(opts?: {
       socketDir = altSocketDir;
     }
     ensureDir(socketDir, 0o700);
-    const entries = readdirSync(dataDir).filter((entry) => entry !== "lost+found");
+    const entries = readdirSync(dataDir).filter(
+      (entry) => entry !== "lost+found",
+    );
     if (entries.length > 0) {
       logger.warn("clearing non-postgres data dir before initdb", {
         dataDir,

@@ -102,7 +102,11 @@ export class SimpleInputMerge {
     const remote = opts.remote ?? "";
     const local = opts.local ?? "";
 
-    if (this.pending != null && remote === this.pending && local === this.pending) {
+    if (
+      this.pending != null &&
+      remote === this.pending &&
+      local === this.pending
+    ) {
       return { merged: remote, changed: false };
     }
 

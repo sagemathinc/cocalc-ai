@@ -39,7 +39,7 @@ function isWhitespace(ch: string): boolean {
 function escapeEmphasisRuns(
   s: string,
   delim: "*" | "_",
-  avoidInWord: boolean
+  avoidInWord: boolean,
 ): string {
   const runs: {
     index: number;
@@ -124,7 +124,7 @@ function escapeEmphasisRuns(
 function escapeReferenceDefinitions(s: string): string {
   return s.replace(
     /(^|\n)(\s*)\[(\^?[^\]\n]+)\]:/g,
-    (_match, start, ws, label) => `${start}${ws}\\[${label}]:`
+    (_match, start, ws, label) => `${start}${ws}\\[${label}]:`,
   );
 }
 
@@ -143,7 +143,7 @@ function escapeTableSeparatorPipes(s: string): string {
 
 export function markdownEscape(
   s: string,
-  isFirstChild: boolean = false
+  isFirstChild: boolean = false,
 ): string {
   // The 1-character replacements we make in any text.
   s = s.replace(/[\\`<>$]/g, (m) => MAP[m]);
@@ -166,11 +166,11 @@ export function markdownEscape(
     // Escape list markers at the start of a line.
     s = s.replace(
       /^(\s*)([*+-])(\s+)/,
-      (_, ws, marker, rest) => `${ws}\\${marker}${rest}`
+      (_, ws, marker, rest) => `${ws}\\${marker}${rest}`,
     );
     s = s.replace(
       /^(\s*)(\d+)([.)])(\s+)/,
-      (_, ws, digits, marker, rest) => `${ws}${digits}\\${marker}${rest}`
+      (_, ws, digits, marker, rest) => `${ws}${digits}\\${marker}${rest}`,
     );
   }
 
@@ -280,7 +280,7 @@ export function stripWhitespace(s: string): {
 export function markInlineText(
   text: string,
   left: string,
-  right?: string // defaults to left if not given
+  right?: string, // defaults to left if not given
 ): string {
   // For non-HTML, we have to put the mark *inside* of any
   // whitespace on the outside.

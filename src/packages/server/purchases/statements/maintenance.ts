@@ -27,7 +27,7 @@ export default async function statementMaintenance() {
     await emailNewStatements();
   } catch (err) {
     logger.debug(
-      `WARNING: Nonfatal error emailing out new statements -- ${err}`
+      `WARNING: Nonfatal error emailing out new statements -- ${err}`,
     );
   }
 }

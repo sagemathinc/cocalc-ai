@@ -95,4 +95,3 @@ function processLineDiff(
 
   return { lines, types, gutters, chunkBoundaries };
 }
-

@@ -52,7 +52,7 @@ export default function Path(props: Props) {
   const src = embed
     ? join(
         ROOT_PATH,
-        `static/embed.html?target=projects/${project_id}/files/${path ?? ""}`
+        `static/embed.html?target=projects/${project_id}/files/${path ?? ""}`,
       )
     : appURL + "?fullscreen=project&session=";
 

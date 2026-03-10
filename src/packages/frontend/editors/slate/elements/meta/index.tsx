@@ -37,9 +37,7 @@ register({
     return (
       <div {...attributes}>
         <code>---</code>
-        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-          {element.value}
-        </pre>
+        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{element.value}</pre>
         <code>---</code>
       </div>
     );

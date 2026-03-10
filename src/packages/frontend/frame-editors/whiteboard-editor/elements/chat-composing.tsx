@@ -21,7 +21,7 @@ export default function Composing({ element, focused }) {
         (!focused || sender_id != redux.getStore("account").get_account_id())
       ) {
         v.push(
-          <Message key={sender_id} element={element} messageId={sender_id} />
+          <Message key={sender_id} element={element} messageId={sender_id} />,
         );
       }
     }

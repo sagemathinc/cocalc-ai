@@ -10,7 +10,7 @@ import { nextPath, splitTextNodes } from "./split-text-nodes";
 export function handleChangeTextNodes(
   nodes: Text[],
   nextNodes: Text[],
-  path: number[]
+  path: number[],
 ): Operation[] {
   if (nodes.length == 0) throw Error("must have at least one nodes");
   if (nextNodes.length == 0) throw Error("must have at least one nextNodes");

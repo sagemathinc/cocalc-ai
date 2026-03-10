@@ -32,7 +32,7 @@ function replace_hidden_tests_region(input: string): string | undefined {
       // check to make sure this isn't a nested BEGIN HIDDEN TESTS region
       if (in_test)
         throw Error(
-          "encountered nested begin hidden tests statement, which is not allowed"
+          "encountered nested begin hidden tests statement, which is not allowed",
         );
 
       in_test = true;
@@ -94,7 +94,7 @@ export function ipynb_clear_hidden_tests(ipynb: object): void {
             name: "stderr",
             output_type: "stream",
             text: ["A HIDDEN TEST failed"],
-          }
+          },
     );
   }
 }

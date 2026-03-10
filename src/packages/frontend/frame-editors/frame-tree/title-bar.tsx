@@ -966,7 +966,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     );
   }
 
-
   function spec2display(
     spec: EditorDescription,
     aspect: "name" | "short",
@@ -1190,7 +1189,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       );
     }
   }
-
 
   function renderPage() {
     if (

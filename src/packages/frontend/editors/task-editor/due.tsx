@@ -122,5 +122,5 @@ export const DueDate: React.FC<Props> = React.memo(
         </div>
       );
     }
-  }
+  },
 );

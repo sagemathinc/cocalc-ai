@@ -12,7 +12,7 @@ import { isSecretSetting } from "../secret-settings";
 import { keys } from "../misc";
 
 const site_settings_fields = keys(site_settings_conf).concat(
-  keys(site_settings_extras)
+  keys(site_settings_extras),
 );
 
 import { Table } from "./types";

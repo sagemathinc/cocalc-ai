@@ -49,13 +49,18 @@ type AnyCapabilityDescriptor<TContext> = AgentCapabilityDescriptor<
 >;
 
 export class AgentCapabilityRegistry<TContext = unknown> {
-  private readonly capabilities = new Map<string, AnyCapabilityDescriptor<TContext>>();
+  private readonly capabilities = new Map<
+    string,
+    AnyCapabilityDescriptor<TContext>
+  >();
 
   register<TArgs, TResult>(
     descriptor: AgentCapabilityDescriptor<TArgs, TResult, TContext>,
   ): this {
     if (this.capabilities.has(descriptor.actionType)) {
-      throw new Error(`Capability '${descriptor.actionType}' is already registered`);
+      throw new Error(
+        `Capability '${descriptor.actionType}' is already registered`,
+      );
     }
     this.capabilities.set(descriptor.actionType, descriptor);
     return this;

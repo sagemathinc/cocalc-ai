@@ -13,6 +13,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Run these from the repo root unless a command says otherwise.
 - Full dev build: `pnpm -C src build:dev`
 - Full typecheck: `pnpm -C src tsc`
+- Prettier (repo-pinned): `pnpm -C src prettier --write <file>`
 - Package typecheck (fast): `cd src/packages/<pkg> && pnpm tsc --build`
 - Package build: `cd src/packages/<pkg> && pnpm build`
 - For `next` / `static`: use `pnpm -C src build:dev` instead of `pnpm -C src build`
@@ -50,7 +51,7 @@ EOF
 - `git commit -m` is only for subject-only commits with no body.
 - For new source files that use the standard CoCalc file header comment, set the copyright year to the current year.
 - Before finishing a change-set, run relevant typecheck/tests for touched packages.
-- Run `prettier -w <file>` on modified files as needed.
+- Run `pnpm -C src prettier --write <file>` on modified files as needed.
 
 ## Docs
 

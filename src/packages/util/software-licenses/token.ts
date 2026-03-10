@@ -43,8 +43,9 @@ export function encodeSoftwareLicenseToken(
 
 export function decodeSoftwareLicenseToken(raw: string): SoftwareLicenseToken {
   const trimmed = raw.trim();
-  const json =
-    trimmed.startsWith("{") ? trimmed : Buffer.from(trimmed, "base64").toString("utf8");
+  const json = trimmed.startsWith("{")
+    ? trimmed
+    : Buffer.from(trimmed, "base64").toString("utf8");
   return JSON.parse(json);
 }
 

@@ -4,7 +4,11 @@
  */
 
 import { debounce } from "lodash";
-import { useIsMountedRef, useMemo, useState } from "@cocalc/frontend/app-framework";
+import {
+  useIsMountedRef,
+  useMemo,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import { Editor } from "slate";
 import { ReactEditor } from "../slate-react";
 

@@ -6,7 +6,7 @@ export function importLangchain<T = any>(path: string): Promise<T> {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     return Promise.resolve(require(path) as T);
   }
-  return (new Function("p", "return import(p)") as (
-    p: string,
-  ) => Promise<T>)(path);
+  return (new Function("p", "return import(p)") as (p: string) => Promise<T>)(
+    path,
+  );
 }

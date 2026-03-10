@@ -136,8 +136,8 @@ export default function ResumeSubscription({
                 {costToResume == 0 ? (
                   <>
                     <b>There is no charge</b> to resume your subscription, since
-                    your subscription is still active. Your subscription will resume
-                    at the current rate, which is{" "}
+                    your subscription is still active. Your subscription will
+                    resume at the current rate, which is{" "}
                     {currency(moneyRound2Up(periodicCost ?? 0).toNumber())}/
                     {interval}.
                   </>

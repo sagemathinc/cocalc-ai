@@ -149,8 +149,7 @@ export function useProjectContextProvider({
       hostInfo,
     }) ?? status.get("state");
   const isRunning =
-    useMemo(() => effectiveStatus === "running", [effectiveStatus]) ||
-    lite;
+    useMemo(() => effectiveStatus === "running", [effectiveStatus]) || lite;
   const active_project_tab = useTypedRedux(
     { project_id },
     "active_project_tab",

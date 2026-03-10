@@ -100,7 +100,7 @@ interface StrategyIconProps {
 }
 
 export const PassportStrategyIcon: React.FC<StrategyIconProps> = (
-  props: StrategyIconProps
+  props: StrategyIconProps,
 ) => {
   const { strategy, small = false } = props;
   const defaultIconStyle = {
@@ -228,7 +228,7 @@ export const Passports: React.FC<Props> = (props: Props) => {
   } = props;
 
   const havePrivateSSO = strategies.some(
-    (strategy) => strategy.get("public", true) === false
+    (strategy) => strategy.get("public", true) === false,
   );
 
   function renderHeading() {
@@ -246,7 +246,7 @@ export const Passports: React.FC<Props> = (props: Props) => {
     return strategies
       .filter(
         (strategy) =>
-          strategy.get("public", true) || strategy.get("do_not_hide", false)
+          strategy.get("public", true) || strategy.get("do_not_hide", false),
       )
       .map((strategy) => (
         <PassportStrategy

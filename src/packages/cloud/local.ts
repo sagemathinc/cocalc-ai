@@ -85,7 +85,8 @@ export class LocalProvider implements CloudProvider {
   ): Promise<RemoteInstance[]> {
     const instances: RemoteInstance[] = [];
     for (const [instance_id, status] of this.states.entries()) {
-      if (opts?.namePrefix && !instance_id.startsWith(opts.namePrefix)) continue;
+      if (opts?.namePrefix && !instance_id.startsWith(opts.namePrefix))
+        continue;
       instances.push({
         instance_id,
         name: instance_id,

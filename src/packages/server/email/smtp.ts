@@ -14,14 +14,14 @@ type BackendType = "email" | "password_reset";
 
 export default async function sendEmail(
   message: Message,
-  type: BackendType = "email"
+  type: BackendType = "email",
 ): Promise<void> {
   let settings: SMTPSettings;
   try {
     settings = await getSMTPSettings(type);
   } catch (err) {
     throw Error(
-      `SMTP ${type} is not properly configured for this server. Contact the site administrator. -- ${err}`
+      `SMTP ${type} is not properly configured for this server. Contact the site administrator. -- ${err}`,
     );
   }
 
@@ -72,7 +72,7 @@ interface SMTPSettings {
  * secondary SMTP configuartion.
  */
 async function getEmailServerSettings(
-  type: BackendType
+  type: BackendType,
 ): Promise<SMTPSettings> {
   const settings = await getServerSettings();
 
@@ -104,7 +104,7 @@ async function getEmailServerSettings(
       };
   }
   throw new Error(
-    `unexpected password_reset_override: ${settings.password_reset_override}`
+    `unexpected password_reset_override: ${settings.password_reset_override}`,
   );
 }
 

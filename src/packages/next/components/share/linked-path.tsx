@@ -29,7 +29,7 @@ export default function LinkedPath({ id, path, relativePath, isDir }: Props) {
     segments.push(
       <Link href={href} key={href}>
         {segment}
-      </Link>
+      </Link>,
     );
     segments.push(slash(href));
   }

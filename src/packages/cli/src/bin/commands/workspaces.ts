@@ -143,7 +143,9 @@ export function registerWorkspacesCommand(
 ): Command {
   const workspaces = program
     .command("workspaces")
-    .description("manage project-scoped workspaces and browser workspace selection");
+    .description(
+      "manage project-scoped workspaces and browser workspace selection",
+    );
 
   workspaces
     .command("list")
@@ -254,7 +256,9 @@ export function registerWorkspacesCommand(
               ...(opts.rootPath
                 ? { root_path: normalizeWorkspaceCliPath(opts.rootPath) }
                 : {}),
-              ...(buildThemePatch(opts) ? { theme: buildThemePatch(opts) } : {}),
+              ...(buildThemePatch(opts)
+                ? { theme: buildThemePatch(opts) }
+                : {}),
               ...(opts.pinned != null
                 ? { pinned: parseOptionalBoolean(opts.pinned) === true }
                 : {}),
@@ -317,28 +321,34 @@ export function registerWorkspacesCommand(
     .command("resolve <path>")
     .description("resolve a path to the most specific matching workspace")
     .option("--project <project>", "project id/title")
-    .action(async (path: string, opts: WorkspaceProjectCliOptions, command: Command) => {
-      await deps.withContext(command, "workspaces resolve", async (ctx) => {
-        const { project, client } = await deps.resolveProjectConatClient(
-          ctx,
-          opts.project,
-        );
-        const store = await openWorkspaceStore({
-          client,
-          project_id: project.project_id,
-          account_id: ctx.accountId,
-        });
-        try {
-          const resolved = resolveWorkspaceForPath(
-            readStoredWorkspaceRecords(store),
-            normalizeWorkspaceCliPath(path),
+    .action(
+      async (
+        path: string,
+        opts: WorkspaceProjectCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(command, "workspaces resolve", async (ctx) => {
+          const { project, client } = await deps.resolveProjectConatClient(
+            ctx,
+            opts.project,
           );
-          return resolved ? workspaceSummary(resolved) : null;
-        } finally {
-          store.close();
-        }
-      });
-    });
+          const store = await openWorkspaceStore({
+            client,
+            project_id: project.project_id,
+            account_id: ctx.accountId,
+          });
+          try {
+            const resolved = resolveWorkspaceForPath(
+              readStoredWorkspaceRecords(store),
+              normalizeWorkspaceCliPath(path),
+            );
+            return resolved ? workspaceSummary(resolved) : null;
+          } finally {
+            store.close();
+          }
+        });
+      },
+    );
 
   workspaces
     .command("select <selection>")
@@ -347,7 +357,10 @@ export function registerWorkspacesCommand(
     )
     .option("--project <project>", "project id/title")
     .option("--browser <id>", "browser id or unique prefix")
-    .option("--session-project-id <id>", "prefer browser sessions with this project open")
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this project open",
+    )
     .option("--active-only", "only target active browser sessions")
     .option("--require-discovery", "force browser session discovery")
     .option("--posture <posture>", "browser exec posture")

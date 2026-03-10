@@ -292,9 +292,7 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
   return (
     <div style={{ overflow: "auto" }}>
       <div style={STYLE}>
-        {err && (
-          <Alert type="error" title="Error" showIcon description={err} />
-        )}
+        {err && <Alert type="error" title="Error" showIcon description={err} />}
         <Row gutter={[24, 24]}>{render()}</Row>
       </div>
     </div>

@@ -27,7 +27,7 @@ use longterm in a vastly better way.
 
 CodeMirror.defineExtension("align_assignments", function () {
   // @ts-ignore
-  const cm : any = this;
+  const cm: any = this;
   for (let sel of cm.listSelections()) {
     const { start_line, end_line } = cm_start_end(sel);
     let symbol: string | undefined = undefined;
@@ -86,14 +86,14 @@ CodeMirror.defineExtension("align_assignments", function () {
           cm.replaceRange(
             "",
             { line: n, ch: column + 1 },
-            { line: n, ch: column + (j - i - 1) }
+            { line: n, ch: column + (j - i - 1) },
           );
         } else if (j - i === 1) {
           // insert a space
           cm.replaceRange(
             " ",
             { line: n, ch: column + 1 },
-            { line: n, ch: column + 1 }
+            { line: n, ch: column + 1 },
           );
         }
       }

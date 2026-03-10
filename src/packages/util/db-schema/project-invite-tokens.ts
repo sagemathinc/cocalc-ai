@@ -33,8 +33,7 @@ Table({
     },
     created: {
       type: "timestamp",
-      desc:
-        "when this token was created (just used for user convenience so no sanity checking)",
+      desc: "when this token was created (just used for user convenience so no sanity checking)",
     },
     expires: {
       type: "timestamp",

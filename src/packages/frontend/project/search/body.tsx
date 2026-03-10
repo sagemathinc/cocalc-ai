@@ -498,8 +498,8 @@ function ProjectSearchResultLine({
   }
 
   return (
-      <FindResultCard
-        title={filename}
+    <FindResultCard
+      title={filename}
       subtitle={line_number != null ? `Line ${line_number}` : undefined}
       snippet={description}
       snippetExt={filename}

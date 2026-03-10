@@ -18,12 +18,12 @@ import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 
 export default async function getMinBalance(
   account_id: string,
-  client?: PoolClient | Pool
+  client?: PoolClient | Pool,
 ): Promise<MoneyValue> {
   const pool = client ?? getPool("long");
   const { rows } = await pool.query(
     "SELECT min_balance FROM accounts WHERE account_id=$1",
-    [account_id]
+    [account_id],
   );
   return moneyToDbString(rows[0]?.min_balance ?? 0); // defaults to 0
 }

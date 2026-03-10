@@ -153,7 +153,11 @@ export async function uploadBackupIndex({
       return { snapshot_id, time };
     }
   } catch (err) {
-    logger.debug("backup index upload parse failed", { projectId, backupId, err });
+    logger.debug("backup index upload parse failed", {
+      projectId,
+      backupId,
+      err,
+    });
   }
   return {};
 }
@@ -236,11 +240,14 @@ async function scanSnapshot(
           lines.length > 0 &&
           lines.every((line) => line.includes("Permission denied"));
         if (onlyPermissionDenied) {
-          logger.debug("backup index find permission denied (this is expected)", {
-            snapshotPath,
-            count,
-            lines: lines.length,
-          });
+          logger.debug(
+            "backup index find permission denied (this is expected)",
+            {
+              snapshotPath,
+              count,
+              lines: lines.length,
+            },
+          );
           resolve();
           return;
         }

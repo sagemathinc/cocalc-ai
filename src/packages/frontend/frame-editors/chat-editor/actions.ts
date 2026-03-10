@@ -63,7 +63,9 @@ export function focusChatFrameInput(frameId: string): boolean {
     target.setAttribute("tabindex", "-1");
   }
   target.focus({ preventScroll: true });
-  return target === document.activeElement || target.contains(document.activeElement);
+  return (
+    target === document.activeElement || target.contains(document.activeElement)
+  );
 }
 
 export class Actions extends CodeEditorActions<ChatEditorState> {

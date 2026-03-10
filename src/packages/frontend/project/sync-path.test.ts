@@ -11,7 +11,9 @@ describe("toAbsoluteProjectPath", () => {
   });
 
   it("normalizes explicit absolute paths unchanged", () => {
-    expect(toAbsoluteProjectPath("/tmp/../tmp/test.txt", HOME)).toBe("/tmp/test.txt");
+    expect(toAbsoluteProjectPath("/tmp/../tmp/test.txt", HOME)).toBe(
+      "/tmp/test.txt",
+    );
   });
 
   it("expands ~ and ~/ to the provided home", () => {
@@ -38,6 +40,8 @@ describe("canonicalSyncPath", () => {
   });
 
   it("keeps hidden terminal paths absolute without remapping", () => {
-    expect(canonicalSyncPath(".shell.term", HOME)).toBe("/home/wstein/work/.shell.term");
+    expect(canonicalSyncPath(".shell.term", HOME)).toBe(
+      "/home/wstein/work/.shell.term",
+    );
   });
 });

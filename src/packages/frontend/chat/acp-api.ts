@@ -88,7 +88,7 @@ export function resetAcpThreadState({
 
   const normalizedThreadId = `${threadId ?? ""}`.trim();
   const threadMessages = normalizedThreadId
-    ? actions.getMessagesInThread(normalizedThreadId) ?? []
+    ? (actions.getMessagesInThread(normalizedThreadId) ?? [])
     : [];
   let nextState = store.get("acpState");
   for (const msg of threadMessages) {
@@ -408,7 +408,8 @@ function buildAcpConfig({
   const opts: CodexSessionConfig = {
     workingDirectory,
   };
-  const defaultModel = DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+  const defaultModel =
+    DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
   const selectedModel = config?.model ?? model ?? defaultModel;
   if (selectedModel) {
     opts.model = selectedModel;

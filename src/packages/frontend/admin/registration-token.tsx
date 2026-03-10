@@ -431,10 +431,7 @@ export function RegistrationToken() {
             defaultSortOrder={"ascend"}
             sorter={(a, b) => a.token.localeCompare(b.token)}
           />
-          <Table.Column<Token>
-            title="Description"
-            dataIndex="descr"
-          />
+          <Table.Column<Token> title="Description" dataIndex="descr" />
           <Table.Column<Token>
             title="Uses"
             dataIndex="counter"

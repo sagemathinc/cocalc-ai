@@ -97,7 +97,10 @@ async function waitForLambdaStatus(opts: {
   let lastStatus: "running" | "stopped" | "starting" | "error" | undefined;
   while (Date.now() < deadline) {
     try {
-      const status = await opts.entry.provider.getStatus(opts.runtime, opts.creds);
+      const status = await opts.entry.provider.getStatus(
+        opts.runtime,
+        opts.creds,
+      );
       lastStatus = status;
       if (status === opts.desired) return status;
       if (status === "error") return status;
@@ -121,7 +124,10 @@ async function waitForLambdaInstanceGone(opts: {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const inst = await opts.entry.provider.getInstance?.(opts.runtime, opts.creds);
+      const inst = await opts.entry.provider.getInstance?.(
+        opts.runtime,
+        opts.creds,
+      );
       if (!inst) return true;
     } catch (err) {
       logger.warn("lambda wait instance failed", { err });
@@ -275,10 +281,7 @@ async function refreshRuntimePublicIp(row: any) {
   return ip;
 }
 
-async function scheduleRuntimeRefresh(
-  row: any,
-  opts?: { force?: boolean },
-) {
+async function scheduleRuntimeRefresh(row: any, opts?: { force?: boolean }) {
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(row.metadata?.machine?.cloud);
   const force = !!opts?.force;
@@ -463,12 +466,12 @@ async function handleProvision(row: any) {
   }
   const publicUrl = isLocalSelfHost
     ? null
-    : provisioned.public_url ??
-      (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined);
+    : (provisioned.public_url ??
+      (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
   const internalUrl = isLocalSelfHost
     ? null
-    : provisioned.internal_url ??
-      (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined);
+    : (provisioned.internal_url ??
+      (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
   await updateHostRow(provisioned.id, {
     metadata: nextMetadata,
     status: nextStatus,

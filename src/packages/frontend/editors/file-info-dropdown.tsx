@@ -24,13 +24,7 @@ interface Props {
 
 const EditorFileInfoDropdown: React.FC<Props> = React.memo(
   (props: Props) => {
-    const {
-      filename,
-      project_id,
-      style,
-      button,
-      mode = "explorer",
-    } = props;
+    const { filename, project_id, style, button, mode = "explorer" } = props;
     const actions = useActions({ project_id });
     const student_project_functionality =
       useStudentProjectFunctionality(project_id);

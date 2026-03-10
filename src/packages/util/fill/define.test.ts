@@ -16,11 +16,14 @@ test("Defaulted value should be defined", () => {
   interface Defaults {
     baz: string;
   }
-  const A = define<Input, Defaults>({ foo: 0, bar: "" }, {
-    foo: required,
-    bar: required,
-    baz: "defaulted",
-  });
+  const A = define<Input, Defaults>(
+    { foo: 0, bar: "" },
+    {
+      foo: required,
+      bar: required,
+      baz: "defaulted",
+    },
+  );
 
   expectType<string>(A.baz);
 });

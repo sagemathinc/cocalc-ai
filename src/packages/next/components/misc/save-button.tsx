@@ -119,7 +119,7 @@ export default function SaveButton({
 
   const doSaveDebounced = useMemo(
     () => debounce(doSave, debounce_ms),
-    [onSave]
+    [onSave],
   );
 
   useEffect(() => {

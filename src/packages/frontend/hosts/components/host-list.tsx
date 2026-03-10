@@ -1,16 +1,38 @@
-import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Input,
+  Modal,
+  Popconfirm,
+  Popover,
+  Radio,
+  Row,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { HostCard } from "./host-card";
-import { STATUS_COLOR, getHostOnlineTooltip, getHostStatusTooltip, isHostOnline, isHostTransitioning } from "../constants";
+import {
+  STATUS_COLOR,
+  getHostOnlineTooltip,
+  getHostStatusTooltip,
+  isHostOnline,
+  isHostTransitioning,
+} from "../constants";
 import type { ColumnsType } from "antd/es/table";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  getProviderDescriptor,
-  isKnownProvider,
-} from "../providers/registry";
+import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import type { HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
@@ -192,7 +214,10 @@ type HostListViewModel = {
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
   selfHost?: {
-    connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
+    connectorMap: Map<
+      string,
+      { id: string; name?: string; last_seen?: string }
+    >;
     isConnectorOnline: (connectorId?: string) => boolean;
     onSetup: (host: Host) => void;
   };
@@ -381,7 +406,14 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       return ordered.concat(sortHosts(missing, sortField, sortDirection));
     }
     return sortHosts(visibleHosts, sortField, sortDirection);
-  }, [visibleHosts, sortField, sortDirection, autoResort, dynamicOrder, isDynamicSort]);
+  }, [
+    visibleHosts,
+    sortField,
+    sortDirection,
+    autoResort,
+    dynamicOrder,
+    isDynamicSort,
+  ]);
 
   const resortNow = React.useCallback(() => {
     if (!isDynamicSort) return;
@@ -416,17 +448,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   );
   const stopTargets = React.useMemo(
     () =>
-      selectedHosts.filter(
-        (host) => {
-          if (host.deleted) return false;
-          if (!(host.status === "running" || host.status === "error")) return false;
-          const providerId = host.machine?.cloud;
-          const caps = providerId ? providerCapabilities?.[providerId] : undefined;
-          if (caps?.supportsStop === false) return false;
-          if (host.machine?.storage_mode === "ephemeral") return false;
-          return true;
-        },
-      ),
+      selectedHosts.filter((host) => {
+        if (host.deleted) return false;
+        if (!(host.status === "running" || host.status === "error"))
+          return false;
+        const providerId = host.machine?.cloud;
+        const caps = providerId
+          ? providerCapabilities?.[providerId]
+          : undefined;
+        if (caps?.supportsStop === false) return false;
+        if (host.machine?.storage_mode === "ephemeral") return false;
+        return true;
+      }),
     [selectedHosts, providerCapabilities],
   );
   const deprovisionTargets = React.useMemo(
@@ -615,7 +648,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) =>
-        host.machine?.cloud === "self-host" ? `Connector: ${host.region}` : host.region,
+        host.machine?.cloud === "self-host"
+          ? `Connector: ${host.region}`
+          : host.region,
     },
     {
       title: "Size",
@@ -729,7 +764,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
         const statusValue = host.status;
         const providerId = host.machine?.cloud;
-        const caps = providerId ? providerCapabilities?.[providerId] : undefined;
+        const caps = providerId
+          ? providerCapabilities?.[providerId]
+          : undefined;
         const allowStop =
           !isDeleted &&
           (statusValue === "running" || statusValue === "error") &&
@@ -915,9 +952,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     viewMode === "list" && selectedRowKeys.length ? (
       <div style={{ marginBottom: 12 }}>
         <Space wrap size="small">
-          <Typography.Text>
-            Selected: {selectedRowKeys.length}
-          </Typography.Text>
+          <Typography.Text>Selected: {selectedRowKeys.length}</Typography.Text>
           <Button
             size="small"
             onClick={() =>
@@ -974,8 +1009,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 deprovisionTargets,
                 (host) => onDelete(host.id),
                 {
-                danger: true,
-              })
+                  danger: true,
+                },
+              )
             }
             disabled={!deprovisionTargets.length}
           >
@@ -990,8 +1026,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 deleteTargets,
                 (host) => onDelete(host.id),
                 {
-                danger: true,
-              })
+                  danger: true,
+                },
+              )
             }
             disabled={!deleteTargets.length}
           >
@@ -1092,14 +1129,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           )}
           {isAdmin && (
             <Space size="small" align="center" wrap>
-              <Switch size="small" checked={showAdmin} onChange={setShowAdmin} />
+              <Switch
+                size="small"
+                checked={showAdmin}
+                onChange={setShowAdmin}
+              />
               <Typography.Text style={{ whiteSpace: "nowrap" }}>
                 All (Admin)
               </Typography.Text>
             </Space>
           )}
           <Space size="small" align="center" wrap>
-            <Switch size="small" checked={showDeleted} onChange={setShowDeleted} />
+            <Switch
+              size="small"
+              checked={showDeleted}
+              onChange={setShowDeleted}
+            />
             <Typography.Text style={{ whiteSpace: "nowrap" }}>
               Deleted
             </Typography.Text>
@@ -1126,7 +1171,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     </div>
   );
 
-  const showInitialLoading = hosts.length === 0 && (!hostsLoaded || hostsLoading);
+  const showInitialLoading =
+    hosts.length === 0 && (!hostsLoaded || hostsLoading);
   const showLoadError =
     hosts.length === 0 && !!hostsError && !showInitialLoading;
 
@@ -1135,7 +1181,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       <div>
         {header}
         <Card style={{ maxWidth: 720, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              padding: "24px 0",
+            }}
+          >
             <Spin tip="Loading project hosts..." />
           </div>
         </Card>
@@ -1176,10 +1228,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           }
         >
           <Typography.Paragraph>
-            Dedicated project hosts let you run and share normal CoCalc
-            projects
-            on your own VMs (e.g. GPU or large-memory machines). Create one below
-            to get started.
+            Dedicated project hosts let you run and share normal CoCalc projects
+            on your own VMs (e.g. GPU or large-memory machines). Create one
+            below to get started.
           </Typography.Paragraph>
         </Card>
       </div>

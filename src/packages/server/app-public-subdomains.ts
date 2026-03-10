@@ -50,7 +50,9 @@ export interface ReserveProjectAppPublicSubdomainResult {
   warnings: string[];
 }
 
-export async function resolvePublicAppDnsTarget(target_hostname: string): Promise<string> {
+export async function resolvePublicAppDnsTarget(
+  target_hostname: string,
+): Promise<string> {
   const existingTarget = await getCnameTargetForHostname(target_hostname);
   if (existingTarget?.endsWith(".cfargotunnel.com")) {
     return existingTarget;
@@ -58,10 +60,11 @@ export async function resolvePublicAppDnsTarget(target_hostname: string): Promis
   return target_hostname;
 }
 
-const ensureSchema = reuseInFlight(async () => {
-  const pool = getPool();
-  await pool.query(
-    `
+const ensureSchema = reuseInFlight(
+  async () => {
+    const pool = getPool();
+    await pool.query(
+      `
       CREATE TABLE IF NOT EXISTS ${TABLE} (
         project_id UUID NOT NULL,
         app_id TEXT NOT NULL,
@@ -76,8 +79,10 @@ const ensureSchema = reuseInFlight(async () => {
         UNIQUE (hostname)
       )
     `,
-  );
-}, { createKey: () => "schema" });
+    );
+  },
+  { createKey: () => "schema" },
+);
 
 function normalizeBasePath(value: string): string {
   const trimmed = `${value ?? ""}`.trim();
@@ -127,15 +132,15 @@ function buildHostname({
   dns_domain: string;
 }): string {
   const parts = dns_domain.split(".").filter(Boolean);
-  const root =
-    parts.length > 2 ? parts.slice(-2).join(".") : dns_domain;
-  const prefix =
-    parts.length > 2 ? parts.slice(0, -2).join("-") : "";
+  const root = parts.length > 2 ? parts.slice(-2).join(".") : dns_domain;
+  const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
   const hostLabel = [label, suffix, prefix].filter(Boolean).join("-");
   return `${hostLabel}.${root}`;
 }
 
-async function getProjectHostCloudProvider(project_id: string): Promise<string | undefined> {
+async function getProjectHostCloudProvider(
+  project_id: string,
+): Promise<string | undefined> {
   const pool = getPool();
   const { rows } = await pool.query(
     `
@@ -151,7 +156,9 @@ async function getProjectHostCloudProvider(project_id: string): Promise<string |
   return provider || undefined;
 }
 
-async function getProjectHostPublicHostname(project_id: string): Promise<string | undefined> {
+async function getProjectHostPublicHostname(
+  project_id: string,
+): Promise<string | undefined> {
   const pool = getPool();
   const { rows } = await pool.query(
     `
@@ -163,7 +170,8 @@ async function getProjectHostPublicHostname(project_id: string): Promise<string 
     [project_id],
   );
   const raw =
-    `${rows[0]?.public_url ?? ""}`.trim() || `${rows[0]?.internal_url ?? ""}`.trim();
+    `${rows[0]?.public_url ?? ""}`.trim() ||
+    `${rows[0]?.internal_url ?? ""}`.trim();
   if (!raw) return;
   try {
     return new URL(raw).hostname.toLowerCase();
@@ -216,7 +224,9 @@ export async function getProjectAppPublicPolicy(
     );
   }
   if (!hasCloudflareDns) {
-    warnings.push("Cloudflare DNS automation is not configured on this server.");
+    warnings.push(
+      "Cloudflare DNS automation is not configured on this server.",
+    );
   }
   if (!dns_domain) {
     warnings.push("Project Hosts domain is not configured.");
@@ -407,7 +417,10 @@ export async function reserveProjectAppPublicSubdomain(opts: {
     `UPDATE ${TABLE} SET dns_record_id=$3, updated_at=NOW() WHERE project_id=$1 AND app_id=$2`,
     [project_id, app_id, dns.record_id],
   );
-  if (reserved.previous?.hostname && reserved.previous.hostname !== reserved.hostname) {
+  if (
+    reserved.previous?.hostname &&
+    reserved.previous.hostname !== reserved.hostname
+  ) {
     await deleteAppSubdomainDns({ record_id: reserved.previous.dns_record_id });
   }
   hostCache.delete(reserved.hostname.toLowerCase());

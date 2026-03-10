@@ -142,7 +142,9 @@ describe("chat export", () => {
     });
 
     expect(bundle.manifest.kind).toBe("chat");
-    expect((bundle.manifest as any).entrypoints.machine_index).toBe("threads/index.json");
+    expect((bundle.manifest as any).entrypoints.machine_index).toBe(
+      "threads/index.json",
+    );
     expect((bundle.manifest as any).thread_count).toBe(1);
     const readme = `${bundle.files.find((file) => file.path === "README.md")?.content ?? ""}`;
     expect(readme).toContain("canonical machine-readable message stream");
@@ -155,11 +157,12 @@ describe("chat export", () => {
     expect(threadIndex[0].message_count).toBe(3);
     expect(threadIndex[0].offloaded_message_count).toBe(1);
 
-    const messagesJsonl = `${bundle.files.find((file) => file.path === `threads/${threadId1}/messages.jsonl`)?.content ?? ""}`
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    const messagesJsonl =
+      `${bundle.files.find((file) => file.path === `threads/${threadId1}/messages.jsonl`)?.content ?? ""}`
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
     expect(messagesJsonl.map((row) => row.message_id)).toEqual([
       root1,
       reply1,
@@ -192,7 +195,11 @@ describe("chat export", () => {
     let server: Server | undefined;
     try {
       server = createServer((req, res) => {
-        if (req.url?.startsWith("/blobs/example?uuid=11111111-1111-4111-8111-111111111111")) {
+        if (
+          req.url?.startsWith(
+            "/blobs/example?uuid=11111111-1111-4111-8111-111111111111",
+          )
+        ) {
           res.statusCode = 200;
           res.setHeader("content-type", "application/octet-stream");
           res.end(blobData);
@@ -201,7 +208,9 @@ describe("chat export", () => {
         res.statusCode = 404;
         res.end("missing");
       });
-      await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", () => resolve()));
+      await new Promise<void>((resolve) =>
+        server!.listen(0, "127.0.0.1", () => resolve()),
+      );
       const address = server.address();
       if (!address || typeof address === "string") {
         throw new Error("failed to bind blob server");
@@ -242,12 +251,15 @@ describe("chat export", () => {
       expect(transcript).toContain(`../../${bundle.assets?.[0].path}`);
       expect(transcript).not.toContain(blobRef);
 
-      const messagesJsonl = `${bundle.files.find((file) => file.path === `threads/${threadId}/messages.jsonl`)?.content ?? ""}`
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
-      expect(messagesJsonl[0].content).toContain(`../../${bundle.assets?.[0].path}`);
+      const messagesJsonl =
+        `${bundle.files.find((file) => file.path === `threads/${threadId}/messages.jsonl`)?.content ?? ""}`
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+      expect(messagesJsonl[0].content).toContain(
+        `../../${bundle.assets?.[0].path}`,
+      );
       expect(messagesJsonl[0].content).not.toContain(blobRef);
 
       const assetIndex = JSON.parse(

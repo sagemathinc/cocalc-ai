@@ -30,7 +30,12 @@ function resolveBootstrapPyPath(): string | undefined {
   const candidates: Array<string | undefined> = [
     process.env.COCALC_BOOTSTRAP_PY,
     process.env.COCALC_BUNDLE_DIR
-      ? join(process.env.COCALC_BUNDLE_DIR, "bundle", "bootstrap", "bootstrap.py")
+      ? join(
+          process.env.COCALC_BUNDLE_DIR,
+          "bundle",
+          "bootstrap",
+          "bootstrap.py",
+        )
       : undefined,
     join(process.cwd(), "packages/server/cloud/bootstrap/bootstrap.py"),
     join(process.cwd(), "src/packages/server/cloud/bootstrap/bootstrap.py"),
@@ -202,18 +207,18 @@ export default function init(router: Router) {
         const httpPort = localConfig.http_port ?? 9200;
         baseUrl = `http://127.0.0.1:${httpPort}`;
       } else {
-      try {
-        const resolved = await resolveLaunchpadBootstrapUrl({
-          fallbackHost: req.get("host"),
-          fallbackProtocol: req.protocol,
-        });
-        baseUrl = resolved.baseUrl;
-      } catch {
-        const hostHeader = req.get("host") ?? "";
-        const proto = req.protocol;
-        const base = basePath === "/" ? "" : basePath;
-        baseUrl = `${proto}://${hostHeader}${base}`;
-      }
+        try {
+          const resolved = await resolveLaunchpadBootstrapUrl({
+            fallbackHost: req.get("host"),
+            fallbackProtocol: req.protocol,
+          });
+          baseUrl = resolved.baseUrl;
+        } catch {
+          const hostHeader = req.get("host") ?? "";
+          const proto = req.protocol;
+          const base = basePath === "/" ? "" : basePath;
+          baseUrl = `${proto}://${hostHeader}${base}`;
+        }
       }
       const script = await buildBootstrapScriptWithStatus(
         hostRow,
@@ -228,33 +233,39 @@ export default function init(router: Router) {
     }
   });
 
-  router.post("/project-host/bootstrap/status", jsonParser, async (req, res) => {
-    try {
-      const token = extractToken(req);
-      if (!token) {
-        res.status(401).send("missing bootstrap token");
-        return;
+  router.post(
+    "/project-host/bootstrap/status",
+    jsonParser,
+    async (req, res) => {
+      try {
+        const token = extractToken(req);
+        if (!token) {
+          res.status(401).send("missing bootstrap token");
+          return;
+        }
+        const tokenInfo = await verifyProjectHostToken(token, {
+          purpose: "bootstrap",
+        });
+        if (!tokenInfo) {
+          res.status(401).send("invalid bootstrap token");
+          return;
+        }
+        const status = String(req.body?.status ?? "");
+        if (!status) {
+          res.status(400).send("missing status");
+          return;
+        }
+        const message = req.body?.message
+          ? String(req.body.message)
+          : undefined;
+        await updateBootstrapStatus(tokenInfo.host_id, status, message);
+        res.json({ ok: true });
+      } catch (err) {
+        logger.warn("bootstrap status update failed", err);
+        res.status(500).send("bootstrap status update failed");
       }
-      const tokenInfo = await verifyProjectHostToken(token, {
-        purpose: "bootstrap",
-      });
-      if (!tokenInfo) {
-        res.status(401).send("invalid bootstrap token");
-        return;
-      }
-      const status = String(req.body?.status ?? "");
-      if (!status) {
-        res.status(400).send("missing status");
-        return;
-      }
-      const message = req.body?.message ? String(req.body.message) : undefined;
-      await updateBootstrapStatus(tokenInfo.host_id, status, message);
-      res.json({ ok: true });
-    } catch (err) {
-      logger.warn("bootstrap status update failed", err);
-      res.status(500).send("bootstrap status update failed");
-    }
-  });
+    },
+  );
 
   router.get("/project-host/bootstrap/conat", async (req, res) => {
     try {
@@ -273,7 +284,7 @@ export default function init(router: Router) {
       const issued = await createProjectHostMasterConatToken(
         tokenInfo.host_id,
         {
-        ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
+          ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
         },
       );
       res.type("text/plain").send(issued.token);

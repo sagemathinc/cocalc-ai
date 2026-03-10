@@ -18,7 +18,7 @@ function close(proc, cb): void {
 
 function run_clang_format(
   input_path: string,
-  indent: number /*, logger: any*/
+  indent: number /*, logger: any*/,
 ) {
   const style = `-style={BasedOnStyle: google, IndentWidth: ${indent}}`;
   // See https://github.com/sagemathinc/cocalc/issues/5419 for why we disable sort-includes!
@@ -31,7 +31,7 @@ export async function clang_format(
   input: string,
   ext: string,
   options: Options,
-  logger: any
+  logger: any,
 ): Promise<string> {
   // create input temp file
   // we have to set the correct filename extension, because clang format uses it
@@ -50,7 +50,7 @@ export async function clang_format(
         break;
       default:
         throw Error(
-          `Unknown C/C++ code formatting utility '${options.parser}'`
+          `Unknown C/C++ code formatting utility '${options.parser}'`,
         );
     }
     // stdout/err capture

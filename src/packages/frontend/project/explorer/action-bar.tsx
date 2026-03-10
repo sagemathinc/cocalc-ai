@@ -123,12 +123,13 @@ export function ActionBar({
             restoreMode === "scratch"
               ? path.posix.join("/scratch", rel || "")
               : undefined;
-          const op = await webapp_client.conat_client.hub.projects.restoreBackup({
-            project_id,
-            id: entry.id,
-            path: rel || undefined,
-            dest,
-          });
+          const op =
+            await webapp_client.conat_client.hub.projects.restoreBackup({
+              project_id,
+              id: entry.id,
+              path: rel || undefined,
+              dest,
+            });
           actions?.trackRestoreOp?.(op);
         }
       }
@@ -196,9 +197,7 @@ export function ActionBar({
       if (current_path === "/") {
         return candidate.replace(/^\/+/, "");
       }
-      return candidate
-        .slice(current_path.length + 1)
-        .replace(/^\/+/, "");
+      return candidate.slice(current_path.length + 1).replace(/^\/+/, "");
     };
     const selected = Array.from(checked_files)
       .filter(startsWithCurrentPath)
@@ -400,7 +399,9 @@ export function ActionBar({
           </ul>
         )}
         {restoreError && (
-          <div style={{ color: "red", marginTop: "8px" }}>{`${restoreError}`}</div>
+          <div
+            style={{ color: "red", marginTop: "8px" }}
+          >{`${restoreError}`}</div>
         )}
       </Modal>
     );

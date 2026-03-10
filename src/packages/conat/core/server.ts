@@ -412,7 +412,10 @@ export class ConatServer extends EventEmitter {
     }
   };
 
-  private isAddressAuthBlocked = (address: string, now = Date.now()): boolean => {
+  private isAddressAuthBlocked = (
+    address: string,
+    now = Date.now(),
+  ): boolean => {
     const rec = this.authFailuresByAddress.get(address);
     if (!rec) return false;
     if (rec.blockedUntil > now) return true;
@@ -560,7 +563,12 @@ export class ConatServer extends EventEmitter {
     await socket.join(room);
     await this.updateInterest({ op: "add", subject, room, queue });
     if (DEBUG) {
-      this.log("subscribe - succeeded ", { id: socket.id, subject, queue, room });
+      this.log("subscribe - succeeded ", {
+        id: socket.id,
+        subject,
+        queue,
+        room,
+      });
     }
   };
 
@@ -830,7 +838,10 @@ export class ConatServer extends EventEmitter {
     try {
       if (this.isAddressAuthBlocked(address)) {
         const rec = this.authFailuresByAddress.get(address);
-        const waitMs = Math.max(1_000, (rec?.blockedUntil ?? Date.now()) - Date.now());
+        const waitMs = Math.max(
+          1_000,
+          (rec?.blockedUntil ?? Date.now()) - Date.now(),
+        );
         const waitSec = Math.ceil(waitMs / 1000);
         throw new ConatError(
           `too many authentication failures from ${address}; retry in about ${waitSec}s`,
@@ -1029,7 +1040,6 @@ export class ConatServer extends EventEmitter {
     socket.on("cluster", (respond) => {
       respond?.(this.clusterAddresses(this.clusterName));
     });
-
   };
 
   sendInfo = async (socket, user) => {
@@ -1765,9 +1775,11 @@ export function getAddress(
   socket,
   { strictCloudflareProxy = false }: { strictCloudflareProxy?: boolean } = {},
 ) {
-  const peer = normalizeIp(socket.handshake.address) ?? socket.handshake.address;
+  const peer =
+    normalizeIp(socket.handshake.address) ?? socket.handshake.address;
   const headers = socket.handshake.headers ?? {};
-  const trustForwarded = !strictCloudflareProxy || isTrustedLocalProxyPeer(peer);
+  const trustForwarded =
+    !strictCloudflareProxy || isTrustedLocalProxyPeer(peer);
 
   if (trustForwarded) {
     for (const other of ["cf-connecting-ip", "fastly-client-ip"]) {

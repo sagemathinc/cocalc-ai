@@ -35,7 +35,11 @@ type HostLike = {
 type HostHelpersDeps<Ctx, Host extends HostLike> = {
   listHosts: (
     ctx: Ctx,
-    opts?: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean },
+    opts?: {
+      include_deleted?: boolean;
+      catalog?: boolean;
+      admin_view?: boolean;
+    },
   ) => Promise<Host[]>;
   resolveHost: (ctx: Ctx, identifier: string) => Promise<Host>;
   parseSshServer: (value: string) => { host: string; port?: number | null };
@@ -43,7 +47,9 @@ type HostHelpersDeps<Ctx, Host extends HostLike> = {
   hostSshResolveTimeoutMs?: number;
 };
 
-export function normalizeHostSoftwareArtifactValue(value: string): HostSoftwareArtifact {
+export function normalizeHostSoftwareArtifactValue(
+  value: string,
+): HostSoftwareArtifact {
   const normalized = value.trim().toLowerCase();
   if (normalized === "project-host" || normalized === "host") {
     return "project-host";
@@ -69,7 +75,9 @@ export function parseHostSoftwareArtifactsOption(
   if (!values?.length) {
     return ["project-host", "project", "tools"];
   }
-  const artifacts = values.map((value) => normalizeHostSoftwareArtifactValue(value));
+  const artifacts = values.map((value) =>
+    normalizeHostSoftwareArtifactValue(value),
+  );
   return Array.from(new Set(artifacts));
 }
 
@@ -83,7 +91,9 @@ export function parseHostSoftwareChannelsOption(
     const normalized = value.trim().toLowerCase();
     if (normalized === "latest" || normalized === "stable") return "latest";
     if (normalized === "staging") return "staging";
-    throw new Error(`invalid channel '${value}'; expected one of: latest, staging`);
+    throw new Error(
+      `invalid channel '${value}'; expected one of: latest, staging`,
+    );
   });
   return Array.from(new Set(channels));
 }
@@ -133,7 +143,9 @@ export function parseOptionalPositiveInteger(
   return parsed;
 }
 
-export function inferRegionFromZone(zone: string | undefined): string | undefined {
+export function inferRegionFromZone(
+  zone: string | undefined,
+): string | undefined {
   const raw = `${zone ?? ""}`.trim();
   if (!raw) return undefined;
   const parts = raw.split("-").filter(Boolean);
@@ -150,7 +162,9 @@ function summarizeCatalogPayload(payload: unknown): string {
     const named = payload
       .slice(0, 3)
       .map((item) =>
-        item && typeof item === "object" ? `${(item as any).name ?? ""}`.trim() : "",
+        item && typeof item === "object"
+          ? `${(item as any).name ?? ""}`.trim()
+          : "",
       )
       .filter(Boolean);
     if (named.length > 0) {
@@ -174,12 +188,12 @@ export function summarizeHostCatalogEntries(
   kinds?: string[],
 ): Array<Record<string, unknown>> {
   const wantedKinds = new Set(
-    (kinds ?? [])
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean),
+    (kinds ?? []).map((x) => x.trim().toLowerCase()).filter(Boolean),
   );
   const entries = (catalog.entries ?? []).filter((entry) =>
-    wantedKinds.size ? wantedKinds.has(`${entry.kind ?? ""}`.toLowerCase()) : true,
+    wantedKinds.size
+      ? wantedKinds.has(`${entry.kind ?? ""}`.toLowerCase())
+      : true,
   );
   return entries.map((entry: HostCatalogEntry) => ({
     provider: catalog.provider,
@@ -223,8 +237,11 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
         return { host, timedOut: false };
       }
       if (HOST_CREATE_FAILED_STATUSES.has(status)) {
-        const detail = `${host.last_action_error ?? host.last_error ?? ""}`.trim();
-        throw new Error(`host create failed: status=${status}${detail ? ` error=${detail}` : ""}`);
+        const detail =
+          `${host.last_action_error ?? host.last_error ?? ""}`.trim();
+        throw new Error(
+          `host create failed: status=${status}${detail ? ` error=${detail}` : ""}`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
@@ -245,11 +262,14 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
   }> {
     const host = await resolveHost(ctx, hostIdentifier);
     const machine = (host.machine ?? {}) as Record<string, any>;
-    const directHost = `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
+    const directHost =
+      `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
     if (directHost) {
       const configuredPort = Number(machine?.metadata?.ssh_port);
       const directPort =
-        Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
+        Number.isInteger(configuredPort) &&
+        configuredPort > 0 &&
+        configuredPort <= 65535
           ? configuredPort
           : 22;
       return {
@@ -276,10 +296,13 @@ export function createHostHelpers<Ctx, Host extends HostLike>(
         ),
       ]);
     } catch (err) {
-      cliDebug("host ssh: resolveHostConnection failed, falling back to host ip", {
-        host_id: host.id,
-        err: err instanceof Error ? err.message : `${err}`,
-      });
+      cliDebug(
+        "host ssh: resolveHostConnection failed, falling back to host ip",
+        {
+          host_id: host.id,
+          err: err instanceof Error ? err.message : `${err}`,
+        },
+      );
     }
     if (connection?.ssh_server) {
       const parsed = parseSshServer(connection.ssh_server);

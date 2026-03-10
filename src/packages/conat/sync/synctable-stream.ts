@@ -168,10 +168,7 @@ export class SyncTableStream extends EventEmitter {
     if (this.dstream == null) {
       throw Error("closed");
     }
-    this.dstream.publish(
-      obj2,
-      headers != null ? { headers } : undefined,
-    );
+    this.dstream.publish(obj2, headers != null ? { headers } : undefined);
   };
 
   private handle = (obj, changeEvent: boolean) => {

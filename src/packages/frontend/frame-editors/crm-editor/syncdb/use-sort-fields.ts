@@ -38,8 +38,8 @@ export default function useSortFields({
     field: string,
     newField: string,
     direction: SortDirection | null,
-    position?: number
-  ) => void
+    position?: number,
+  ) => void,
 ] {
   const [record, setRecord] = useRecord<{
     fields?: string[];
@@ -57,7 +57,7 @@ export default function useSortFields({
     (fields: string[]) => {
       setRecord({ fields: [...fields] });
     },
-    [setRecord]
+    [setRecord],
   );
 
   const setSortField = useCallback(
@@ -65,7 +65,7 @@ export default function useSortFields({
       field: string,
       newField: string,
       direction: SortDirection | null, // set to null to delete this sort
-      position?: number
+      position?: number,
     ) => {
       let i = sortFields.indexOf(field);
       if (i == -1) {
@@ -98,7 +98,7 @@ export default function useSortFields({
       }
       setSortFields(sortFields);
     },
-    [setSortFields]
+    [setSortFields],
   );
 
   return [sortFields, setSortField];

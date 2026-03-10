@@ -176,9 +176,8 @@ export function AIGenerateCodeCell({
         if (input == "") return;
 
         // do not import until needed -- it is HUGE!
-        const { getMaxTokens, numTokensUpperBound } = await import(
-          "@cocalc/frontend/misc/llm"
-        );
+        const { getMaxTokens, numTokensUpperBound } =
+          await import("@cocalc/frontend/misc/llm");
 
         const { history, system } = inputPrompt;
 

@@ -29,12 +29,7 @@ export default async function handle(req, res) {
     if (!account_id && !project_id0) {
       throw Error("must sign in as project or account");
     }
-    const {
-      project_id = project_id0,
-      name,
-      args,
-      timeout,
-    } = getParams(req);
+    const { project_id = project_id0, name, args, timeout } = getParams(req);
     if (!project_id) {
       throw Error("must specify project_id or use project-specific api key");
     }

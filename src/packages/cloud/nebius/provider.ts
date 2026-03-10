@@ -140,7 +140,8 @@ async function findDiskIdByName(
       }),
     );
     const match = (res.items ?? []).find(
-      (disk) => (disk.metadata?.name ?? "").toLowerCase() === name.toLowerCase(),
+      (disk) =>
+        (disk.metadata?.name ?? "").toLowerCase() === name.toLowerCase(),
     );
     if (match?.metadata?.id) return match.metadata.id;
     const nextToken = res.nextPageToken ?? "";
@@ -264,10 +265,14 @@ export class NebiusProvider implements CloudProvider {
     const sourceImageFamily =
       spec.metadata?.source_image_family ?? spec.metadata?.image_family;
     const routingCode =
-      this.routingCodeFromId(subnetId) ??
-      this.routingCodeFromId(parentId);
+      this.routingCodeFromId(subnetId) ?? this.routingCodeFromId(parentId);
     const imageRouting = this.routingCodeFromId(sourceImage);
-    if (sourceImage && routingCode && imageRouting && routingCode !== imageRouting) {
+    if (
+      sourceImage &&
+      routingCode &&
+      imageRouting &&
+      routingCode !== imageRouting
+    ) {
       logger.warn("nebius: source image routing code mismatch; using family", {
         source_image: sourceImage,
         source_image_family: sourceImageFamily,
@@ -331,9 +336,7 @@ export class NebiusProvider implements CloudProvider {
     const storageMode = spec.metadata?.storage_mode;
     if (storageMode === "persistent") {
       const existingDataDiskId =
-        spec.metadata?.data_disk_id ??
-        spec.metadata?.dataDiskId ??
-        undefined;
+        spec.metadata?.data_disk_id ?? spec.metadata?.dataDiskId ?? undefined;
       const normalized = normalizeDiskSizeGib(spec.disk_gb, dataDiskType);
       if (normalized.adjusted) {
         logger.info("nebius: adjusting data disk size for IO M3", {
@@ -523,7 +526,8 @@ export class NebiusProvider implements CloudProvider {
         instance_id: runtime.instance_id,
       });
     }
-    const diskIds = (runtime.metadata as NebiusRuntimeMeta | undefined)?.diskIds;
+    const diskIds = (runtime.metadata as NebiusRuntimeMeta | undefined)
+      ?.diskIds;
     const disksToDelete = opts?.preserveDataDisk
       ? [diskIds?.boot]
       : [diskIds?.data, diskIds?.boot];
@@ -545,7 +549,8 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
   ) {
     const client = new NebiusClient(creds);
-    const diskIds = (runtime.metadata as NebiusRuntimeMeta | undefined)?.diskIds;
+    const diskIds = (runtime.metadata as NebiusRuntimeMeta | undefined)
+      ?.diskIds;
     if (!diskIds?.data) {
       throw new Error("nebius: no data disk to resize");
     }

@@ -5,8 +5,10 @@ import { type Client as ConatClient } from "@cocalc/conat/core/client";
 export type MakeOptional<T, K extends keyof T> = Omit<T, K> &
   Partial<Pick<T, K>>;
 
-export interface SyncDBOptions
-  extends MakeOptional<Omit<SyncDBOpts0, "client">, "fs"> {
+export interface SyncDBOptions extends MakeOptional<
+  Omit<SyncDBOpts0, "client">,
+  "fs"
+> {
   client: ConatClient;
   // name of the file service that hosts this file:
   service?: string;

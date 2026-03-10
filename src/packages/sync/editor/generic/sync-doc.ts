@@ -2674,11 +2674,7 @@ export class SyncDoc extends EventEmitter {
     const message = `Unable to save changes to the database for ${this.path}. Your recent edits may not be safely stored yet. ${raw}`;
     const now = Date.now();
     const last = this.lastPatchflowWriteAlert;
-    if (
-      last != null &&
-      last.message === message &&
-      now - last.time < 30000
-    ) {
+    if (last != null && last.message === message && now - last.time < 30000) {
       return;
     }
     this.lastPatchflowWriteAlert = { message, time: now };

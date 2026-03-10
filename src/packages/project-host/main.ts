@@ -26,7 +26,11 @@ import { setConatClient } from "@cocalc/conat/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
-import { initFileServer, initFsServer } from "./file-server";
+import {
+  configureProjectHostAcpContainerFileIO,
+  initFileServer,
+  initFsServer,
+} from "./file-server";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
@@ -138,7 +142,9 @@ function rewritePublicAppUrl({
 }): string {
   const parsed = new URL(originalUrl ?? "/", "http://project-host.local");
   const incomingPath = parsed.pathname || "/";
-  const canonicalBasePath = normalizePrefix(`/${route.project_id}${route.base_path}`);
+  const canonicalBasePath = normalizePrefix(
+    `/${route.project_id}${route.base_path}`,
+  );
   const proxiedPath =
     incomingPath === canonicalBasePath ||
     incomingPath.startsWith(`${canonicalBasePath}/`)
@@ -189,17 +195,17 @@ function resolveTlsConfig(host: string, port: number): TlsConfig {
   return { enabled, hostname };
 }
 
-async function startHttpServer(
-  port: number,
-  host: string,
-  tls: TlsConfig,
-) {
+async function startHttpServer(port: number, host: string, tls: TlsConfig) {
   const app = express();
   app.use(express.json());
 
-  let httpServer: ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
+  let httpServer:
+    | ReturnType<typeof createHttpServer>
+    | ReturnType<typeof createHttpsServer>;
   if (tls.enabled) {
-    const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(tls.hostname);
+    const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(
+      tls.hostname,
+    );
     httpServer = createHttpsServer({ key, cert }, app);
     logger.info(`TLS enabled (key=${keyPath}, cert=${certPath})`);
   } else {
@@ -311,6 +317,7 @@ export async function main(
       useEphemeral: true,
     }),
   );
+  configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
@@ -348,7 +355,10 @@ export async function main(
           hostname,
         });
         route =
-          traced?.matched && traced.project_id && traced.app_id && traced.base_path
+          traced?.matched &&
+          traced.project_id &&
+          traced.app_id &&
+          traced.base_path
             ? {
                 project_id: traced.project_id,
                 app_id: traced.app_id,
@@ -388,7 +398,8 @@ export async function main(
       } else {
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
       }
-      const publicAppHost = `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
+      const publicAppHost =
+        `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
       if (publicAppHost) {
         req.headers.host = publicAppHost;
       }
@@ -411,7 +422,9 @@ export async function main(
       }
       const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
       req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;
-      req.headers[APP_PROXY_EXPOSURE_HEADER] = publicAppHost ? "public" : "private";
+      req.headers[APP_PROXY_EXPOSURE_HEADER] = publicAppHost
+        ? "public"
+        : "private";
       const http_port = await waitForProjectHttpPort(project_id);
       return { handled: true, target: { host: "127.0.0.1", port: http_port } };
     },

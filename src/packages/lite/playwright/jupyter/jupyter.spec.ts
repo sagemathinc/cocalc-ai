@@ -43,7 +43,8 @@ function envFlag(name: string): boolean {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-const REQUIRE_KERNEL = envFlag("COCALC_JUPYTER_E2E_REQUIRE_KERNEL") || envFlag("CI");
+const REQUIRE_KERNEL =
+  envFlag("COCALC_JUPYTER_E2E_REQUIRE_KERNEL") || envFlag("CI");
 
 function execCountAdvanced(
   before: number | undefined,
@@ -58,10 +59,15 @@ function execCountAdvanced(
   return after > before;
 }
 
-async function readSingleDocCodeInput(page: Page, index: number): Promise<string> {
+async function readSingleDocCodeInput(
+  page: Page,
+  index: number,
+): Promise<string> {
   return await page.evaluate((targetIndex: number) => {
     const cells = Array.from(
-      document.querySelectorAll('[data-cocalc-test="jupyter-singledoc-code-cell"]'),
+      document.querySelectorAll(
+        '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+      ),
     );
     const cell = cells[targetIndex] as HTMLElement | undefined;
     if (!cell) return "";
@@ -84,7 +90,9 @@ async function readSingleDocSelectionCells(page: Page): Promise<{
       if (!node) return "";
       const base =
         node instanceof Element ? node : (node.parentElement as Element | null);
-      const cell = base?.closest?.('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+      const cell = base?.closest?.(
+        '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+      );
       return `${cell?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim();
     };
     return {
@@ -95,29 +103,32 @@ async function readSingleDocSelectionCells(page: Page): Promise<{
   });
 }
 
-async function primeKernel(
-  page: Page,
-  cellIndex = 0,
-) {
+async function primeKernel(page: Page, cellIndex = 0) {
   const marker = `warmup-${Date.now()}`;
   const beforeExec = await readInputExecCount(page, cellIndex);
   await setCellInputCode(page, cellIndex, `print("${marker}")`);
   await clickRunButton(page, cellIndex);
 
   await expect
-    .poll(async () => {
-      const output = await readCellOutputText(page, cellIndex);
-      return output.includes(marker);
-    }, { timeout: 60_000 })
+    .poll(
+      async () => {
+        const output = await readCellOutputText(page, cellIndex);
+        return output.includes(marker);
+      },
+      { timeout: 60_000 },
+    )
     .toBe(true);
 
   const afterExec = await readInputExecCount(page, cellIndex);
   if (beforeExec != null || afterExec != null) {
     await expect
-      .poll(async () => {
-        const latestExec = await readInputExecCount(page, cellIndex);
-        return execCountAdvanced(beforeExec, latestExec);
-      }, { timeout: 45_000 })
+      .poll(
+        async () => {
+          const latestExec = await readInputExecCount(page, cellIndex);
+          return execCountAdvanced(beforeExec, latestExec);
+        },
+        { timeout: 45_000 },
+      )
       .toBe(true);
   }
 }
@@ -179,7 +190,8 @@ async function readSingleDocMinimapSnapshot(
     const candidates = [root, ...Array.from(root.querySelectorAll("*"))].filter(
       (el) => {
         if (!(el instanceof HTMLElement)) return false;
-        if (el.closest('[data-cocalc-jupyter-minimap-wrapper="1"]')) return false;
+        if (el.closest('[data-cocalc-jupyter-minimap-wrapper="1"]'))
+          return false;
         const style = window.getComputedStyle(el);
         const overflowY = style.overflowY;
         if (!["auto", "scroll", "overlay"].includes(overflowY)) return false;
@@ -188,7 +200,9 @@ async function readSingleDocMinimapSnapshot(
       },
     ) as HTMLElement[];
     const notebookContentHeight = Number(
-      rail.getAttribute("data-cocalc-jupyter-minimap-notebook-content-height") ?? "0",
+      rail.getAttribute(
+        "data-cocalc-jupyter-minimap-notebook-content-height",
+      ) ?? "0",
     );
     let scroller: HTMLElement | undefined;
     if (Number.isFinite(notebookContentHeight) && notebookContentHeight > 0) {
@@ -208,8 +222,13 @@ async function readSingleDocMinimapSnapshot(
       );
       scroller = candidates[0] ?? root;
     }
-    const notebookMaxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-    const rawRatio = rail.getAttribute("data-cocalc-jupyter-minimap-scroll-ratio");
+    const notebookMaxScroll = Math.max(
+      0,
+      scroller.scrollHeight - scroller.clientHeight,
+    );
+    const rawRatio = rail.getAttribute(
+      "data-cocalc-jupyter-minimap-scroll-ratio",
+    );
     const scrollRatio = Number(rawRatio ?? 0);
     return {
       notebookScrollTop: scroller.scrollTop,
@@ -238,7 +257,8 @@ async function setSingleDocNotebookScrollRatio(
     const candidates = [root, ...Array.from(root.querySelectorAll("*"))].filter(
       (el) => {
         if (!(el instanceof HTMLElement)) return false;
-        if (el.closest('[data-cocalc-jupyter-minimap-wrapper="1"]')) return false;
+        if (el.closest('[data-cocalc-jupyter-minimap-wrapper="1"]'))
+          return false;
         const style = window.getComputedStyle(el);
         const overflowY = style.overflowY;
         if (!["auto", "scroll", "overlay"].includes(overflowY)) return false;
@@ -247,7 +267,9 @@ async function setSingleDocNotebookScrollRatio(
       },
     ) as HTMLElement[];
     const notebookContentHeight = Number(
-      rail?.getAttribute("data-cocalc-jupyter-minimap-notebook-content-height") ?? "0",
+      rail?.getAttribute(
+        "data-cocalc-jupyter-minimap-notebook-content-height",
+      ) ?? "0",
     );
     let scroller: HTMLElement | undefined;
     if (Number.isFinite(notebookContentHeight) && notebookContentHeight > 0) {
@@ -268,7 +290,10 @@ async function setSingleDocNotebookScrollRatio(
       scroller = candidates[0] ?? root;
     }
     const clamped = Math.min(1, Math.max(0, targetRatio));
-    const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const maxScroll = Math.max(
+      0,
+      scroller.scrollHeight - scroller.clientHeight,
+    );
     scroller.scrollTop = clamped * maxScroll;
   }, ratio);
 }
@@ -323,10 +348,7 @@ async function appendSingleDocPlainTextNearTop(
   await page.keyboard.type(text);
 }
 
-async function ensureKernelReadyOrSkip(
-  page: Page,
-  cellIndex = 0,
-) {
+async function ensureKernelReadyOrSkip(page: Page, cellIndex = 0) {
   try {
     await primeKernel(page, cellIndex);
   } catch (err: any) {
@@ -363,7 +385,9 @@ test("runs a cell and shows output", async ({ page }) => {
   await ensureKernelReadyOrSkip(page, 0);
 });
 
-test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => {
+test("single-doc editor handles Shift+Enter and Alt+Enter", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-run-shortcuts");
   const marker = `single-doc-${Date.now()}`;
@@ -423,7 +447,9 @@ test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => 
   }
 });
 
-test("single-doc typing syncs into canonical notebook cell input", async ({ page }) => {
+test("single-doc typing syncs into canonical notebook cell input", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-sync");
   await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
@@ -437,7 +463,11 @@ test("single-doc typing syncs into canonical notebook cell input", async ({ page
   await openSingleDocNotebookPage(page, singleDocUrl);
 
   const marker = `single-doc-sync-${Date.now()}`;
-  await setSingleDocCellCodeViaRuntime(page, 0, `print('base')\nprint("${marker}")`);
+  await setSingleDocCellCodeViaRuntime(
+    page,
+    0,
+    `print('base')\nprint("${marker}")`,
+  );
 
   await expect
     .poll(async () => await readSingleDocCellText(page, 0), {
@@ -458,7 +488,9 @@ test("single-doc typing syncs into canonical notebook cell input", async ({ page
   }
 });
 
-test("single-doc keyboard edits debounce-sync into canonical notebook input", async ({ page }) => {
+test("single-doc keyboard edits debounce-sync into canonical notebook input", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-keyboard-sync");
   await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
@@ -479,7 +511,9 @@ test("single-doc keyboard edits debounce-sync into canonical notebook input", as
       async () =>
         await page.evaluate(() => {
           const runtime = (window as any).__cocalcJupyterRuntime;
-          return Number(runtime?.get_single_doc_debug_for_test?.()?.onSlateChangeCalls ?? 0);
+          return Number(
+            runtime?.get_single_doc_debug_for_test?.()?.onSlateChangeCalls ?? 0,
+          );
         }),
       { timeout: 20_000 },
     )
@@ -489,7 +523,10 @@ test("single-doc keyboard edits debounce-sync into canonical notebook input", as
       async () =>
         await page.evaluate(() => {
           const runtime = (window as any).__cocalcJupyterRuntime;
-          return Number(runtime?.get_single_doc_debug_for_test?.()?.applyNotebookSlateCalls ?? 0);
+          return Number(
+            runtime?.get_single_doc_debug_for_test?.()
+              ?.applyNotebookSlateCalls ?? 0,
+          );
         }),
       { timeout: 20_000 },
     )
@@ -499,7 +536,10 @@ test("single-doc keyboard edits debounce-sync into canonical notebook input", as
       async () =>
         await page.evaluate(() => {
           const runtime = (window as any).__cocalcJupyterRuntime;
-          return Number(runtime?.get_single_doc_debug_for_test?.()?.applyNotebookSlateMutations ?? 0);
+          return Number(
+            runtime?.get_single_doc_debug_for_test?.()
+              ?.applyNotebookSlateMutations ?? 0,
+          );
         }),
       { timeout: 20_000 },
     )
@@ -523,10 +563,15 @@ test("single-doc keyboard edits debounce-sync into canonical notebook input", as
   }
 });
 
-test("single-doc debounce sync settles without feedback-loop growth", async ({ page }) => {
+test("single-doc debounce sync settles without feedback-loop growth", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-no-loop");
-  await ensureNotebook(path_ipynb, [codeCell("print('base')"), codeCell("print('two')")]);
+  await ensureNotebook(path_ipynb, [
+    codeCell("print('base')"),
+    codeCell("print('two')"),
+  ]);
   const singleDocUrl = notebookUrl({
     base_url: conn.base_url,
     path_ipynb,
@@ -582,8 +627,13 @@ test.fixme("single-doc and classic jupyter mixed edits do not duplicate cells", 
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-classic-mixed-stable");
-  await ensureNotebook(path_ipynb, [codeCell("a = 5\nb = 10"), codeCell("a*b")]);
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-classic-mixed-stable",
+  );
+  await ensureNotebook(path_ipynb, [
+    codeCell("a = 5\nb = 10"),
+    codeCell("a*b"),
+  ]);
   const classicUrl = notebookUrl({
     base_url: conn.base_url,
     path_ipynb,
@@ -638,7 +688,9 @@ test.fixme("single-doc and classic jupyter mixed edits do not duplicate cells", 
 
     const classicInputs = await readClassicNotebookInputs(page);
     expect(classicInputs.filter((x) => x.trim() === "a*b").length).toBe(1);
-    expect(classicInputs.filter((x) => x.trim() === "a = 5\nb = 10").length).toBe(1);
+    expect(
+      classicInputs.filter((x) => x.trim() === "a = 5\nb = 10").length,
+    ).toBe(1);
   } finally {
     await slatePage.close();
   }
@@ -648,8 +700,13 @@ test("single-doc stale structural apply is rejected without creating cells", asy
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-stale-structural-reject");
-  await ensureNotebook(path_ipynb, [codeCell("print('one')"), codeCell("print('two')")]);
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-stale-structural-reject",
+  );
+  await ensureNotebook(path_ipynb, [
+    codeCell("print('one')"),
+    codeCell("print('two')"),
+  ]);
   await openSingleDocNotebookPage(
     page,
     notebookUrl({
@@ -669,10 +726,16 @@ test("single-doc stale structural apply is rejected without creating cells", asy
 
   await page.evaluate(() => {
     const runtime = (window as any).__cocalcJupyterRuntime;
-    if (typeof runtime?.apply_single_doc_stale_structural_for_test !== "function") {
-      throw new Error("missing apply_single_doc_stale_structural_for_test runtime helper");
+    if (
+      typeof runtime?.apply_single_doc_stale_structural_for_test !== "function"
+    ) {
+      throw new Error(
+        "missing apply_single_doc_stale_structural_for_test runtime helper",
+      );
     }
-    runtime.apply_single_doc_stale_structural_for_test("print('should-not-create')");
+    runtime.apply_single_doc_stale_structural_for_test(
+      "print('should-not-create')",
+    );
   });
 
   await expect
@@ -685,9 +748,9 @@ test("single-doc stale structural apply is rejected without creating cells", asy
     const runtime = (window as any).__cocalcJupyterRuntime;
     return runtime?.get_single_doc_debug_for_test?.() ?? {};
   });
-  expect(Number(debugAfter.rejectedStaleStructuralApplies ?? 0)).toBeGreaterThan(
-    Number(debugBefore.rejectedStaleStructuralApplies ?? 0),
-  );
+  expect(
+    Number(debugAfter.rejectedStaleStructuralApplies ?? 0),
+  ).toBeGreaterThan(Number(debugBefore.rejectedStaleStructuralApplies ?? 0));
   expect(Number(debugAfter.rejectedStaleCells ?? 0)).toBeGreaterThan(
     Number(debugBefore.rejectedStaleCells ?? 0),
   );
@@ -697,8 +760,13 @@ test("single-doc duplicate canonical cell-id insert is ignored", async ({
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-duplicate-id-remap");
-  await ensureNotebook(path_ipynb, [codeCell("print('one')"), codeCell("print('two')")]);
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-duplicate-id-remap",
+  );
+  await ensureNotebook(path_ipynb, [
+    codeCell("print('one')"),
+    codeCell("print('two')"),
+  ]);
   await openSingleDocNotebookPage(
     page,
     notebookUrl({
@@ -756,16 +824,21 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
     }),
   );
 
-  const firstCell = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  const firstCell = page
+    .locator('[data-cocalc-test="jupyter-singledoc-code-cell"]')
+    .first();
   await firstCell.scrollIntoViewIfNeeded();
-  const firstCellId = `${(await firstCell.getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const firstCellId =
+    `${(await firstCell.getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
   expect(firstCellId.length).toBeGreaterThan(0);
   await firstCell.locator(".cocalc-slate-code-line").last().click();
   await page.keyboard.type(" # focus-nav");
 
   await page.waitForTimeout(1_300); // pass debounce threshold
   const state1 = await page.evaluate((expectedCellId: string) => {
-    const root = document.querySelector('[data-cocalc-jupyter-slate-single-doc="1"]');
+    const root = document.querySelector(
+      '[data-cocalc-jupyter-slate-single-doc="1"]',
+    );
     const active = document.activeElement as HTMLElement | null;
     const sel = window.getSelection();
     const anchor =
@@ -776,7 +849,8 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
         : null;
     return {
       focusedInRoot: !!(root && active && root.contains(active)),
-      cellId: `${(anchor as HTMLElement | null)?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim(),
+      cellId:
+        `${(anchor as HTMLElement | null)?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim(),
       offset: Number(sel?.anchorOffset ?? 0),
       expectedCellId,
     };
@@ -788,7 +862,9 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
 
   await page.waitForTimeout(1_300); // ensure no post-debounce jump
   const state2 = await page.evaluate(() => {
-    const root = document.querySelector('[data-cocalc-jupyter-slate-single-doc="1"]');
+    const root = document.querySelector(
+      '[data-cocalc-jupyter-slate-single-doc="1"]',
+    );
     const active = document.activeElement as HTMLElement | null;
     const sel = window.getSelection();
     const anchor =
@@ -799,7 +875,8 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
         : null;
     return {
       focusedInRoot: !!(root && active && root.contains(active)),
-      cellId: `${(anchor as HTMLElement | null)?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim(),
+      cellId:
+        `${(anchor as HTMLElement | null)?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim(),
       offset: Number(sel?.anchorOffset ?? 0),
     };
   });
@@ -818,7 +895,9 @@ test("single-doc ArrowRight at code-cell end moves caret to next code cell", asy
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-arrow-right-next-cell");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-arrow-right-next-cell",
+  );
   await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
   await openSingleDocNotebookPage(
     page,
@@ -830,7 +909,9 @@ test("single-doc ArrowRight at code-cell end moves caret to next code cell", asy
     }),
   );
 
-  const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  const first = page
+    .locator('[data-cocalc-test="jupyter-singledoc-code-cell"]')
+    .first();
   await first.locator(".cocalc-slate-code-line").last().click();
   await setSingleDocSelectionViaRuntime(page, 0, "end");
   await page.keyboard.press("ArrowRight");
@@ -854,7 +935,9 @@ test("single-doc ArrowLeft at code-cell start moves caret to previous code cell"
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-arrow-left-prev-cell");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-arrow-left-prev-cell",
+  );
   await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
   await openSingleDocNotebookPage(
     page,
@@ -866,9 +949,13 @@ test("single-doc ArrowLeft at code-cell start moves caret to previous code cell"
     }),
   );
 
-  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
-  const firstCellId = `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
-  const secondCellId = `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const cells = page.locator(
+    '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+  );
+  const firstCellId =
+    `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const secondCellId =
+    `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
   const second = cells.nth(1);
   await second.locator(".cocalc-slate-code-line").last().click();
   await setSingleDocSelectionViaRuntime(page, 1, "start");
@@ -918,7 +1005,9 @@ test("single-doc Shift+ArrowRight at cell end extends selection into next cell",
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-shift-right-extend");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-shift-right-extend",
+  );
   await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
   await openSingleDocNotebookPage(
     page,
@@ -930,9 +1019,13 @@ test("single-doc Shift+ArrowRight at cell end extends selection into next cell",
     }),
   );
 
-  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
-  const firstCellId = `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
-  const secondCellId = `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const cells = page.locator(
+    '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+  );
+  const firstCellId =
+    `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const secondCellId =
+    `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
   expect(firstCellId.length).toBeGreaterThan(0);
   expect(secondCellId.length).toBeGreaterThan(0);
 
@@ -955,7 +1048,9 @@ test("single-doc Shift+ArrowLeft at cell start extends selection into previous c
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-shift-left-extend");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-shift-left-extend",
+  );
   await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
   await openSingleDocNotebookPage(
     page,
@@ -967,9 +1062,13 @@ test("single-doc Shift+ArrowLeft at cell start extends selection into previous c
     }),
   );
 
-  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
-  const firstCellId = `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
-  const secondCellId = `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const cells = page.locator(
+    '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+  );
+  const firstCellId =
+    `${(await cells.nth(0).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  const secondCellId =
+    `${(await cells.nth(1).getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
   expect(firstCellId.length).toBeGreaterThan(0);
   expect(secondCellId.length).toBeGreaterThan(0);
 
@@ -998,7 +1097,9 @@ test.fixme("single-doc collapsed copy+paste duplicates current jupyter cell", as
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-cell-copy-paste");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-cell-copy-paste",
+  );
   await ensureNotebook(path_ipynb, [codeCell("alpha"), codeCell("beta")]);
   await openSingleDocNotebookPage(
     page,
@@ -1010,7 +1111,9 @@ test.fixme("single-doc collapsed copy+paste duplicates current jupyter cell", as
     }),
   );
 
-  const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  const first = page
+    .locator('[data-cocalc-test="jupyter-singledoc-code-cell"]')
+    .first();
   await first.locator(".cocalc-slate-code-line").last().click();
   await setSingleDocSelectionViaRuntime(page, 0, "end");
   await page.keyboard.press("ControlOrMeta+C");
@@ -1024,13 +1127,19 @@ test.fixme("single-doc collapsed copy+paste duplicates current jupyter cell", as
     })
     .toBe(3);
   await expect
-    .poll(async () => await readSingleDocCodeInput(page, 0), { timeout: 30_000 })
+    .poll(async () => await readSingleDocCodeInput(page, 0), {
+      timeout: 30_000,
+    })
     .toBe("alpha");
   await expect
-    .poll(async () => await readSingleDocCodeInput(page, 1), { timeout: 30_000 })
+    .poll(async () => await readSingleDocCodeInput(page, 1), {
+      timeout: 30_000,
+    })
     .toBe("alpha");
   await expect
-    .poll(async () => await readSingleDocCodeInput(page, 2), { timeout: 30_000 })
+    .poll(async () => await readSingleDocCodeInput(page, 2), {
+      timeout: 30_000,
+    })
     .toBe("beta");
 });
 
@@ -1038,7 +1147,9 @@ test.fixme("single-doc paste then undo does not crash and restores cell count", 
   page,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-paste-undo-stable");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-paste-undo-stable",
+  );
   await ensureNotebook(path_ipynb, [codeCell("x = 1"), codeCell("y = 2")]);
   await openSingleDocNotebookPage(
     page,
@@ -1050,7 +1161,9 @@ test.fixme("single-doc paste then undo does not crash and restores cell count", 
     }),
   );
 
-  const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  const first = page
+    .locator('[data-cocalc-test="jupyter-singledoc-code-cell"]')
+    .first();
   await first.locator(".cocalc-slate-code-line").last().click();
   await setSingleDocSelectionViaRuntime(page, 0, "end");
   await page.keyboard.press("ControlOrMeta+C");
@@ -1069,14 +1182,16 @@ test.fixme("single-doc paste then undo does not crash and restores cell count", 
   await expect(
     page.locator('[data-cocalc-jupyter-slate-single-doc="1"]'),
   ).toBeVisible();
-  await expect(
-    page.locator("text=CoCalc Crashed"),
-  ).toHaveCount(0);
+  await expect(page.locator("text=CoCalc Crashed")).toHaveCount(0);
 });
 
-test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {
+test("single-doc top-level text typing does not duplicate cells", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-markdown-no-loop");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-markdown-no-loop",
+  );
   await ensureNotebook(path_ipynb, [
     { cell_type: "markdown", metadata: {}, source: ["alpha"] },
     codeCell("print('two')"),
@@ -1127,10 +1242,15 @@ test("single-doc top-level text typing does not duplicate cells", async ({ page 
   expect(await safeNotebookCellCount(page)).toBe(initialCount);
 });
 
-test("single-doc shows chrome for at most one selected code cell", async ({ page }) => {
+test("single-doc shows chrome for at most one selected code cell", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-chrome-hover");
-  await ensureNotebook(path_ipynb, [codeCell("print('a')"), codeCell("print('b')")]);
+  await ensureNotebook(path_ipynb, [
+    codeCell("print('a')"),
+    codeCell("print('b')"),
+  ]);
   await openSingleDocNotebookPage(
     page,
     notebookUrl({
@@ -1141,15 +1261,21 @@ test("single-doc shows chrome for at most one selected code cell", async ({ page
     }),
   );
 
-  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+  const cells = page.locator(
+    '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+  );
   await expect(cells).toHaveCount(2);
   await cells.nth(0).click();
   expect(
-    await page.locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]').count(),
+    await page
+      .locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]')
+      .count(),
   ).toBeLessThanOrEqual(1);
   await cells.nth(1).click();
   expect(
-    await page.locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]').count(),
+    await page
+      .locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]')
+      .count(),
   ).toBeLessThanOrEqual(1);
 });
 
@@ -1157,8 +1283,13 @@ test("single-doc + classic cross-view run does not create extra trailing cells",
   browser,
 }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-classic-no-extra");
-  await ensureNotebook(path_ipynb, [codeCell("a = 5\nb = 10"), codeCell("pass")]);
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-classic-no-extra",
+  );
+  await ensureNotebook(path_ipynb, [
+    codeCell("a = 5\nb = 10"),
+    codeCell("pass"),
+  ]);
   const classicUrl = notebookUrl({
     base_url: conn.base_url,
     path_ipynb,
@@ -1188,7 +1319,8 @@ test("single-doc + classic cross-view run does not create extra trailing cells",
       })
       .toContain("a = 5");
 
-    const baselineSingleDocCodeCount = await countSingleDocCodeCells(singleDocPage);
+    const baselineSingleDocCodeCount =
+      await countSingleDocCodeCells(singleDocPage);
     const baselineClassicCount = await countCells(classicPage);
     expect(baselineSingleDocCodeCount).toBeGreaterThanOrEqual(1);
 
@@ -1226,9 +1358,13 @@ test("single-doc + classic cross-view run does not create extra trailing cells",
   }
 });
 
-test("single-doc local+external concurrent edits converge without duplication", async ({ page }) => {
+test("single-doc local+external concurrent edits converge without duplication", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-converge-local-disk");
+  const path_ipynb = uniqueNotebookPath(
+    "jupyter-e2e-singledoc-converge-local-disk",
+  );
   await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
   await openSingleDocNotebookPage(
     page,
@@ -1263,7 +1399,9 @@ test("single-doc local+external concurrent edits converge without duplication", 
   expect(text.split(diskMarker).length - 1).toBe(1);
 });
 
-test("single-doc local edits and external disk edits merge without loss", async ({ page }) => {
+test("single-doc local edits and external disk edits merge without loss", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-merge");
   await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
@@ -1334,7 +1472,6 @@ test("single-doc local edits and external disk edits merge without loss", async 
       timeout: 45_000,
     })
     .toContain(diskCode);
-
 });
 
 test("running cell execution syncs across tabs", async ({ browser }) => {
@@ -1365,7 +1502,11 @@ test("running cell execution syncs across tabs", async ({ browser }) => {
       })
       .toBeGreaterThan(0);
 
-    await setCellInputCode(pageA, 1, "import time\ntime.sleep(8)\nprint('hi-sync')");
+    await setCellInputCode(
+      pageA,
+      1,
+      "import time\ntime.sleep(8)\nprint('hi-sync')",
+    );
     await expect
       .poll(async () => await readCellText(pageA, 1), { timeout: 20_000 })
       .toContain("hi-sync");
@@ -1376,17 +1517,23 @@ test("running cell execution syncs across tabs", async ({ browser }) => {
     await clickRunButton(pageA, 1);
 
     await expect
-      .poll(async () => {
-        const afterExec = await readInputExecCount(pageA, 1);
-        return execCountAdvanced(beforeExecA, afterExec);
-      }, { timeout: 45_000 })
+      .poll(
+        async () => {
+          const afterExec = await readInputExecCount(pageA, 1);
+          return execCountAdvanced(beforeExecA, afterExec);
+        },
+        { timeout: 45_000 },
+      )
       .toBe(true);
 
     await expect
-      .poll(async () => {
-        const afterExec = await readInputExecCount(pageB, 1);
-        return execCountAdvanced(beforeExecB, afterExec);
-      }, { timeout: 45_000 })
+      .poll(
+        async () => {
+          const afterExec = await readInputExecCount(pageB, 1);
+          return execCountAdvanced(beforeExecB, afterExec);
+        },
+        { timeout: 45_000 },
+      )
       .toBe(true);
 
     await expect
@@ -1452,10 +1599,13 @@ test("queued cell execution syncs across tabs", async ({ browser }) => {
       .toContain("first-done");
 
     await expect
-      .poll(async () => {
-        const afterExec = await readInputExecCount(pageB, 2);
-        return execCountAdvanced(beforeExecB2, afterExec);
-      }, { timeout: 60_000 })
+      .poll(
+        async () => {
+          const afterExec = await readInputExecCount(pageB, 2);
+          return execCountAdvanced(beforeExecB2, afterExec);
+        },
+        { timeout: 60_000 },
+      )
       .toBe(true);
 
     await expect
@@ -1463,13 +1613,14 @@ test("queued cell execution syncs across tabs", async ({ browser }) => {
         timeout: 60_000,
       })
       .toContain("second-done");
-
   } finally {
     await context.close();
   }
 });
 
-test("external on-disk edit reloads open notebook content", async ({ page }) => {
+test("external on-disk edit reloads open notebook content", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-disk-reload-open");
   await ensureNotebook(path_ipynb, [codeCell("print('disk-v1')")]);
@@ -1496,7 +1647,9 @@ test("external on-disk edit reloads open notebook content", async ({ page }) => 
     .toContain("disk-v2");
 });
 
-test("external on-disk edit merges with unsaved live notebook edits", async ({ page }) => {
+test("external on-disk edit merges with unsaved live notebook edits", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-disk-merge-open");
   await ensureNotebook(path_ipynb, [codeCell("print('disk-base')")]);
@@ -1559,7 +1712,9 @@ test("kernel warning banner can be surfaced and cleared", async ({ page }) => {
     .toBe(false);
 });
 
-test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }) => {
+test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({
+  page,
+}) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-last-runtime-metadata");
   await ensureNotebook(path_ipynb, [
@@ -1582,16 +1737,19 @@ test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }
   );
 
   await expect
-    .poll(async () => {
-      const timingState = await readCellTimingState(page, 0);
-      if (timingState != null) {
-        return `state:${timingState}`;
-      }
-      const cellText = await readCellText(page, 0);
-      return /\b2s\b/.test(cellText) ? "text:2s" : "";
-    }, {
-      timeout: 12_000,
-    })
+    .poll(
+      async () => {
+        const timingState = await readCellTimingState(page, 0);
+        if (timingState != null) {
+          return `state:${timingState}`;
+        }
+        const cellText = await readCellText(page, 0);
+        return /\b2s\b/.test(cellText) ? "text:2s" : "";
+      },
+      {
+        timeout: 12_000,
+      },
+    )
     .toMatch(/^(state:last|text:2s)$/);
 
   const maybeTimingState = await readCellTimingState(page, 0);
@@ -1632,10 +1790,13 @@ test("kernel kill mid-run attempt still allows rerun", async ({ page }) => {
   const beforeExec1 = await readInputExecCount(page, 1);
   await clickRunButton(page, 1);
   await expect
-    .poll(async () => {
-      const afterExec = await readInputExecCount(page, 1);
-      return execCountAdvanced(beforeExec1, afterExec);
-    }, { timeout: 45_000 })
+    .poll(
+      async () => {
+        const afterExec = await readInputExecCount(page, 1);
+        return execCountAdvanced(beforeExec1, afterExec);
+      },
+      { timeout: 45_000 },
+    )
     .toBe(true);
   await killKernelProcessesForE2E();
   await page.waitForTimeout(1000);
@@ -1648,10 +1809,13 @@ test("kernel kill mid-run attempt still allows rerun", async ({ page }) => {
   const beforeExec2 = await readInputExecCount(page, 2);
   await clickRunButton(page, 2);
   await expect
-    .poll(async () => {
-      const afterExec = await readInputExecCount(page, 2);
-      return execCountAdvanced(beforeExec2, afterExec);
-    }, { timeout: 60_000 })
+    .poll(
+      async () => {
+        const afterExec = await readInputExecCount(page, 2);
+        return execCountAdvanced(beforeExec2, afterExec);
+      },
+      { timeout: 60_000 },
+    )
     .toBe(true);
   await expect
     .poll(async () => await readCellOutputText(page, 2), {
@@ -1701,15 +1865,18 @@ test("single-doc minimap scrolls and click-jumps notebook viewport", async ({
     });
 
   await expect
-    .poll(async () => {
-      const snap = await readSingleDocMinimapSnapshot(page);
-      return {
-        notebookMaxScroll: snap.notebookMaxScroll,
-        trackMinusRail: snap.trackHeight - snap.railHeight,
-      };
-    }, {
-      timeout: 30_000,
-    })
+    .poll(
+      async () => {
+        const snap = await readSingleDocMinimapSnapshot(page);
+        return {
+          notebookMaxScroll: snap.notebookMaxScroll,
+          trackMinusRail: snap.trackHeight - snap.railHeight,
+        };
+      },
+      {
+        timeout: 30_000,
+      },
+    )
     .toEqual(
       expect.objectContaining({
         notebookMaxScroll: expect.any(Number),
@@ -1718,22 +1885,30 @@ test("single-doc minimap scrolls and click-jumps notebook viewport", async ({
     );
 
   await expect
-    .poll(async () => {
-      const snap = await readSingleDocMinimapSnapshot(page);
-      return snap.notebookMaxScroll > 300 && snap.trackHeight > snap.railHeight + 8;
-    }, {
-      timeout: 30_000,
-    })
+    .poll(
+      async () => {
+        const snap = await readSingleDocMinimapSnapshot(page);
+        return (
+          snap.notebookMaxScroll > 300 && snap.trackHeight > snap.railHeight + 8
+        );
+      },
+      {
+        timeout: 30_000,
+      },
+    )
     .toBe(true);
 
   await setSingleDocNotebookScrollRatio(page, 0.7);
   await expect
-    .poll(async () => {
-      const snap = await readSingleDocMinimapSnapshot(page);
-      return snap.scrollRatio;
-    }, {
-      timeout: 20_000,
-    })
+    .poll(
+      async () => {
+        const snap = await readSingleDocMinimapSnapshot(page);
+        return snap.scrollRatio;
+      },
+      {
+        timeout: 20_000,
+      },
+    )
     .toBeGreaterThan(0.45);
 
   // Manual minimap scrolling should not immediately snap back to notebook scroll.
@@ -1757,14 +1932,20 @@ test("single-doc minimap scrolls and click-jumps notebook viewport", async ({
   const box = await rail.boundingBox();
   expect(box).toBeTruthy();
   if (!box) return;
-  await page.mouse.click(box.x + box.width / 2, box.y + Math.max(8, box.height * 0.1));
+  await page.mouse.click(
+    box.x + box.width / 2,
+    box.y + Math.max(8, box.height * 0.1),
+  );
   await expect
-    .poll(async () => {
-      const snap = await readSingleDocMinimapSnapshot(page);
-      return snap.notebookScrollTop < beforeTopClick.notebookScrollTop;
-    }, {
-      timeout: 20_000,
-    })
+    .poll(
+      async () => {
+        const snap = await readSingleDocMinimapSnapshot(page);
+        return snap.notebookScrollTop < beforeTopClick.notebookScrollTop;
+      },
+      {
+        timeout: 20_000,
+      },
+    )
     .toBe(true);
 
   const beforeBottomClick = await readSingleDocMinimapSnapshot(page);
@@ -1773,11 +1954,14 @@ test("single-doc minimap scrolls and click-jumps notebook viewport", async ({
     box.y + Math.min(box.height - 8, box.height * 0.9),
   );
   await expect
-    .poll(async () => {
-      const snap = await readSingleDocMinimapSnapshot(page);
-      return snap.notebookScrollTop > beforeBottomClick.notebookScrollTop;
-    }, {
-      timeout: 20_000,
-    })
+    .poll(
+      async () => {
+        const snap = await readSingleDocMinimapSnapshot(page);
+        return snap.notebookScrollTop > beforeBottomClick.notebookScrollTop;
+      },
+      {
+        timeout: 20_000,
+      },
+    )
     .toBe(true);
 });

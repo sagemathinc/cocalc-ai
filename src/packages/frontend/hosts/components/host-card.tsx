@@ -1,4 +1,12 @@
-import { Button, Card, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
+import {
+  Button,
+  Card,
+  Popconfirm,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -15,10 +23,7 @@ import {
   isHostOnline,
   isHostTransitioning,
 } from "../constants";
-import {
-  getProviderDescriptor,
-  isKnownProvider,
-} from "../providers/registry";
+import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
@@ -120,7 +125,8 @@ export const HostCard: React.FC<HostCardProps> = ({
     host.status === "deprovisioned"
       ? "Delete this host?"
       : "Deprovision this host?";
-  const deleteOkText = host.status === "deprovisioned" ? "Delete" : "Deprovision";
+  const deleteOkText =
+    host.status === "deprovisioned" ? "Delete" : "Deprovision";
   const isDeprovisioned = host.status === "deprovisioned";
   const opPhase = getHostOpPhase(hostOp);
   const canCancelBackups =
@@ -273,7 +279,7 @@ export const HostCard: React.FC<HostCardProps> = ({
             <Tag color={host.deleted ? "default" : STATUS_COLOR[host.status]}>
               {showSpinner ? (
                 <Space size={4}>
-                 <SyncOutlined spin />
+                  <SyncOutlined spin />
                   <span>{statusLabel}</span>
                 </Space>
               ) : (
@@ -305,12 +311,12 @@ export const HostCard: React.FC<HostCardProps> = ({
         <HostProjectStatus host={host} fontSize={14} />
         <HostBackupStatus host={host} />
         <Typography.Text>
-        Provider:{" "}
-        {host.machine?.cloud
-          ? isKnownProvider(host.machine.cloud)
-            ? getProviderDescriptor(host.machine.cloud).label
-            : host.machine.cloud
-          : "n/a"}
+          Provider:{" "}
+          {host.machine?.cloud
+            ? isKnownProvider(host.machine.cloud)
+              ? getProviderDescriptor(host.machine.cloud).label
+              : host.machine.cloud
+            : "n/a"}
         </Typography.Text>
         <Typography.Text>
           {isSelfHost ? "Connector" : "Region"}: {host.region}
@@ -327,21 +333,21 @@ export const HostCard: React.FC<HostCardProps> = ({
           </Typography.Text>
         )}
         {host.status === "error" && host.last_error && (
-        <div
-          style={{
-            maxHeight: "4.8em",
-            overflowY: "auto",
-            color: "#c00",
-            fontSize: 12,
-            lineHeight: 1.2,
-            whiteSpace: "pre-wrap",
-            paddingRight: 4,
-          }}
-        >
-          {host.last_error}
-        </div>
+          <div
+            style={{
+              maxHeight: "4.8em",
+              overflowY: "auto",
+              color: "#c00",
+              fontSize: 12,
+              lineHeight: 1.2,
+              whiteSpace: "pre-wrap",
+              paddingRight: 4,
+            }}
+          >
+            {host.last_error}
+          </div>
         )}
-    </Space>
+      </Space>
     </Card>
   );
 };

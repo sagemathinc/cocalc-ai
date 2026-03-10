@@ -2,7 +2,11 @@ import getLogger from "@cocalc/backend/logger";
 import { getStripeCustomerId } from "./util";
 import getPool, { getTransactionClient } from "@cocalc/database/pool";
 import { SUBSCRIPTION_RENEWAL } from "@cocalc/util/db-schema/purchases";
-import { moneyRound2Down, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import {
+  moneyRound2Down,
+  moneyToCurrency,
+  toDecimal,
+} from "@cocalc/util/money";
 import dayjs from "dayjs";
 import { ALLOWED_SLACK } from "@cocalc/server/purchases/shopping-cart-checkout";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";

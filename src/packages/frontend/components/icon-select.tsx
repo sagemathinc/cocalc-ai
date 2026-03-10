@@ -83,7 +83,7 @@ function icons(search, fontSize, onClick) {
   for (const name of iconNames) {
     if (!name.includes(search)) continue;
     v.push(
-      <Match fontSize={fontSize} key={name} name={name} onClick={onClick} />
+      <Match fontSize={fontSize} key={name} name={name} onClick={onClick} />,
     );
   }
   return v;

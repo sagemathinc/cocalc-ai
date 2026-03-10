@@ -44,7 +44,7 @@ export function setLinkURL(editor, url: string): void {
 
 export const useLinkURL = (editor) => {
   const [linkURL, setLinkURLState] = useState<string | undefined>(
-    getLinkURL(editor)
+    getLinkURL(editor),
   );
 
   const updateLinkURL = useMemo(() => {

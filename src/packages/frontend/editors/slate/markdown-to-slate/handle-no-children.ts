@@ -16,8 +16,8 @@ export function handleNoChildren({ token, state, cache }) {
   if (token.children != null && token.children.length > 0) {
     throw Error(
       `handleNoChildren -- the token must not have children ${JSON.stringify(
-        token
-      )}`
+        token,
+      )}`,
     );
   }
 

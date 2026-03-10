@@ -1,4 +1,1 @@
-export {
-  isLocalHost,
-  resolveOnPremHost,
-} from "./tls";
+export { isLocalHost, resolveOnPremHost } from "./tls";

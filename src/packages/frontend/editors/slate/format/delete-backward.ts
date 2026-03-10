@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Range, Editor, Element, Path, Point, Text, Transforms, Node } from "slate";
+import {
+  Range,
+  Editor,
+  Element,
+  Path,
+  Point,
+  Text,
+  Transforms,
+  Node,
+} from "slate";
 import { isWhitespaceParagraph } from "../padding";
 import { isCodeLikeBlockType } from "../elements/code-block/utils";
 
@@ -61,7 +70,8 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
     if (selection.anchor.offset === 0 && lineIndex === 0) {
       const codeBlockEntry = Editor.above(editor, {
         at: linePath,
-        match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
+        match: (node) =>
+          Element.isElement(node) && isCodeLikeBlockType(node.type),
       });
       if (codeBlockEntry != null) {
         // Do nothing at the very start of a code block.
@@ -84,11 +94,16 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
     if (path[path.length - 1] > 0) {
       const prevPath = Path.previous(path);
       const prevNode = Editor.node(editor, prevPath)[0] as any;
-      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+      if (
+        Element.isElement(prevNode) &&
+        BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)
+      ) {
         Transforms.removeNodes(editor, { at: prevPath });
         // After removing the previous block, the spacer shifts to prevPath.
         const targetPath = prevPath;
-        Transforms.setNodes(editor, { spacer: false } as any, { at: targetPath });
+        Transforms.setNodes(editor, { spacer: false } as any, {
+          at: targetPath,
+        });
         const start = Editor.start(editor, targetPath);
         Transforms.select(editor, start);
         return true;
@@ -129,14 +144,20 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
     if (path[path.length - 1] > 1 && isWhitespaceParagraph(block)) {
       const prevPath = Path.previous(path);
       const prevNode = Editor.node(editor, prevPath)[0] as any;
-      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+      if (
+        Element.isElement(prevNode) &&
+        BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)
+      ) {
         Transforms.removeNodes(editor, { at: prevPath });
         return true;
       }
     }
     if (path[path.length - 1] > 1) {
       const immediatePrevPath = Path.previous(path);
-      const immediatePrevNode = Editor.node(editor, immediatePrevPath)[0] as any;
+      const immediatePrevNode = Editor.node(
+        editor,
+        immediatePrevPath,
+      )[0] as any;
       if (
         Element.isElement(immediatePrevNode) &&
         immediatePrevNode.type === "paragraph" &&
@@ -157,7 +178,10 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
     if (path[path.length - 1] > 0 && isWhitespaceParagraph(block)) {
       const prevPath = Path.previous(path);
       const prevNode = Editor.node(editor, prevPath)[0] as any;
-      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+      if (
+        Element.isElement(prevNode) &&
+        BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)
+      ) {
         Transforms.removeNodes(editor, { at: prevPath });
         return true;
       }
@@ -182,7 +206,10 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   }
 }
 
-function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolean {
+function pullParagraphIntoPreviousBlockquote(
+  editor: Editor,
+  path: Path,
+): boolean {
   if (path[path.length - 1] === 0) return false;
   const prevPath = Path.previous(path);
   let prevNode;
@@ -199,7 +226,10 @@ function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolea
     // Remove trailing empty quote paragraphs so joins prefer meaningful text.
     while (true) {
       const quoteNode = Editor.node(editor, prevPath)[0] as Element;
-      if (!Array.isArray(quoteNode.children) || quoteNode.children.length <= 1) {
+      if (
+        !Array.isArray(quoteNode.children) ||
+        quoteNode.children.length <= 1
+      ) {
         break;
       }
       const lastIndex = quoteNode.children.length - 1;
@@ -239,9 +269,13 @@ function pullParagraphIntoPreviousBlockquote(editor: Editor, path: Path): boolea
           JSON.stringify((movedNode as any).children ?? []),
         );
         if (Array.isArray(movedChildren) && movedChildren.length > 0) {
-          Transforms.insertFragment(editor, movedChildren as any, {
-            at: insertPoint,
-          } as any);
+          Transforms.insertFragment(
+            editor,
+            movedChildren as any,
+            {
+              at: insertPoint,
+            } as any,
+          );
         }
         Transforms.removeNodes(editor, { at: targetPath });
         Transforms.select(editor, joinBoundary);
@@ -271,7 +305,7 @@ function deleteBackwardsHeading(editor: Editor, block: Element, path: Path) {
       {
         type: "paragraph",
       },
-      { at: path }
+      { at: path },
     );
   } else {
     Transforms.unwrapNodes(editor, {

@@ -21,48 +21,47 @@ register({ key: "Enter" }, ({ editor }) => {
   // If we're inside a code-like line (code/html/meta), let Slate's insertBreak
   // handle splitting the line inside the block.
   const selection = editor.selection;
-    if (selection) {
-      const lineEntry = Editor.above(editor, {
+  if (selection) {
+    const lineEntry = Editor.above(editor, {
+      at: selection,
+      match: (n) => Element.isElement(n) && n.type === "code_line",
+    });
+    if (lineEntry) {
+      const htmlMetaEntry = Editor.above(editor, {
         at: selection,
-        match: (n) => Element.isElement(n) && n.type === "code_line",
+        match: (n) =>
+          Element.isElement(n) &&
+          (n.type === "html_block" || n.type === "meta"),
       });
-      if (lineEntry) {
-        const htmlMetaEntry = Editor.above(editor, {
-          at: selection,
-          match: (n) =>
-            Element.isElement(n) &&
-            (n.type === "html_block" || n.type === "meta"),
-        });
-        if (Range.isExpanded(selection)) {
-          Transforms.delete(editor);
-        }
-        if (htmlMetaEntry) {
-          try {
-            const linePath = lineEntry[1];
-            const start = Editor.start(editor, linePath);
-            const end = Editor.end(editor, linePath);
-            const beforeText = Editor.string(editor, {
-              anchor: start,
-              focus: selection.focus,
-            });
-            const afterText = Editor.string(editor, {
-              anchor: selection.focus,
-              focus: end,
-            });
-            if (beforeText.trim() === "" || afterText.trim() === "") {
-              return true;
-            }
-          } catch {
-            // ignore and fall through to insertBreak
-          }
-        }
-        editor.insertBreak();
-        return true;
+      if (Range.isExpanded(selection)) {
+        Transforms.delete(editor);
       }
+      if (htmlMetaEntry) {
+        try {
+          const linePath = lineEntry[1];
+          const start = Editor.start(editor, linePath);
+          const end = Editor.end(editor, linePath);
+          const beforeText = Editor.string(editor, {
+            anchor: start,
+            focus: selection.focus,
+          });
+          const afterText = Editor.string(editor, {
+            anchor: selection.focus,
+            focus: end,
+          });
+          if (beforeText.trim() === "" || afterText.trim() === "") {
+            return true;
+          }
+        } catch {
+          // ignore and fall through to insertBreak
+        }
+      }
+      editor.insertBreak();
+      return true;
+    }
     const mathEntry = Editor.above(editor, {
       at: selection,
-      match: (n) =>
-        Element.isElement(n) && n.type === "math_block",
+      match: (n) => Element.isElement(n) && n.type === "math_block",
     });
     if (mathEntry) {
       if (Range.isExpanded(selection)) {
@@ -121,7 +120,10 @@ register({ key: "Enter" }, ({ editor }) => {
     return handleBlankLineEnter(editor);
   }
 
-  if (listEntryFromSelection || isElementOfType(x, ["bullet_list", "ordered_list"])) {
+  if (
+    listEntryFromSelection ||
+    isElementOfType(x, ["bullet_list", "ordered_list"])
+  ) {
     const atEnd = isAtEndOfBlock(editor, { mode: "lowest" });
     const atBeginning = isAtBeginningOfBlock(editor, { mode: "lowest" });
     Transforms.insertNodes(
@@ -130,7 +132,7 @@ register({ key: "Enter" }, ({ editor }) => {
       {
         match: (node) => isElementOfType(node, "list_item"),
         mode: "lowest",
-      }
+      },
     );
     if (atBeginning) {
       // done

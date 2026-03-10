@@ -21,7 +21,11 @@ jest.mock("@cocalc/frontend/project/new/new-file-page", () => ({
 describe("NoFiles", () => {
   it("shows the create-file page for empty directories in the project home tree", () => {
     render(
-      <NoFiles project_id="project-1" current_path="/root/tmp" file_search="" />,
+      <NoFiles
+        project_id="project-1"
+        current_path="/root/tmp"
+        file_search=""
+      />,
     );
 
     expect(screen.getByTestId("new-file-page")).not.toBeNull();

@@ -213,30 +213,38 @@ export function useThreadSections({
     const keysInUse = new Set(rawThreads.map((x) => x.key));
     const threadIdsInUse = new Set<string>();
     for (const thread of rawThreads) {
-      const id = `${field<string>(thread.rootMessage, "thread_id") ?? ""}`.trim();
+      const id =
+        `${field<string>(thread.rootMessage, "thread_id") ?? ""}`.trim();
       if (id) threadIdsInUse.add(id);
     }
     const extra: ThreadListItem[] = [];
     for (const row0 of rows) {
-      const row =
-        row0 && typeof row0.toJS === "function" ? row0.toJS() : row0;
+      const row = row0 && typeof row0.toJS === "function" ? row0.toJS() : row0;
       const threadId = `${field<string>(row, "thread_id") ?? ""}`.trim();
-      if (!threadId || threadIdsInUse.has(threadId) || keysInUse.has(threadId)) {
+      if (
+        !threadId ||
+        threadIdsInUse.has(threadId) ||
+        keysInUse.has(threadId)
+      ) {
         continue;
       }
-      const latestChatDateMs = parseEpochMs(field<any>(row, "latest_chat_date_ms"));
+      const latestChatDateMs = parseEpochMs(
+        field<any>(row, "latest_chat_date_ms"),
+      );
       const archivedRows = Number(field<any>(row, "archived_chat_rows"));
       const dateMs =
         latestChatDateMs ??
         (Number.isFinite(archivedRows) && archivedRows > 0
           ? 0
-          : parseEpochMs(field<any>(row, "updated_at")) ??
+          : (parseEpochMs(field<any>(row, "updated_at")) ??
             parseEpochMs(field<any>(row, "date")) ??
-            0);
+            0));
       const name = `${field<string>(row, "name") ?? ""}`.trim();
       extra.push({
         key: threadId,
-        label: name || (dateMs ? new Date(dateMs).toLocaleString() : "Untitled Chat"),
+        label:
+          name ||
+          (dateMs ? new Date(dateMs).toLocaleString() : "Untitled Chat"),
         newestTime: dateMs,
         messageCount: 0,
         rootMessage: undefined,
@@ -260,7 +268,9 @@ export function useThreadSections({
       const threadColor = threadMeta?.thread_color;
       const threadIcon = threadMeta?.thread_icon;
       const threadImage = threadMeta?.thread_image;
-      const hasCustomAppearance = Boolean(threadColor || threadIcon || threadImage);
+      const hasCustomAppearance = Boolean(
+        threadColor || threadIcon || threadImage,
+      );
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
       const isArchived = threadMeta?.archived ?? false;
@@ -275,7 +285,9 @@ export function useThreadSections({
       let isAI = metadataIsAI;
       if (!isAI && actions?.isLanguageModelThread) {
         const fallbackDate =
-          rootMessage?.date != null ? new Date(rootMessage.date as any) : undefined;
+          rootMessage?.date != null
+            ? new Date(rootMessage.date as any)
+            : undefined;
         const result =
           fallbackDate && !Number.isNaN(fallbackDate.valueOf())
             ? actions.isLanguageModelThread(
@@ -371,5 +383,10 @@ export function useThreadSections({
     }));
   }, [visibleThreads]);
 
-  return { threads: visibleThreads, archivedThreads, combinedThread, threadSections };
+  return {
+    threads: visibleThreads,
+    archivedThreads,
+    combinedThread,
+    threadSections,
+  };
 }

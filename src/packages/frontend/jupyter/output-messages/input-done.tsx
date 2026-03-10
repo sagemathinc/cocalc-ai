@@ -31,5 +31,5 @@ export const InputDone: React.FC<InputDoneProps> = React.memo(
         />
       </div>
     );
-  }
+  },
 );

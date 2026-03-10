@@ -28,7 +28,8 @@ export default function init({
     try {
       const url = stripBasePath(`${req.url ?? "/"}`);
       const parsed = new URL(url, "http://proxy.local");
-      const token = `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
+      const token =
+        `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
       if (!token) return false;
       const segments = parsed.pathname.split("/").filter(Boolean);
       if (segments.length < 3) return false;
@@ -72,12 +73,7 @@ export default function init({
     const allowPublicTokenBypass = isPublicAppTokenBypassRequest(req);
     const allowAnonymousProxyBypass =
       allowPublicSubdomainBypass || allowPublicTokenBypass;
-    if (
-      !isPersonal &&
-      !allowAnonymousProxyBypass &&
-      !remember_me &&
-      !api_key
-    ) {
+    if (!isPersonal && !allowAnonymousProxyBypass && !remember_me && !api_key) {
       dbg("no rememember me set, so blocking");
       // Not in personal mode and there is no remember_me or api_key set all, so
       // definitely block access.  4xx since this is a *client* problem.
@@ -130,7 +126,7 @@ export default function init({
       // SECURITY: this path handles internet-facing requests.  Never reflect
       // internal error text to clients.
       const body =
-        "<!doctype html><meta charset=\"utf-8\"><h1>Proxy request failed</h1><p>The request could not be completed.</p>";
+        '<!doctype html><meta charset="utf-8"><h1>Proxy request failed</h1><p>The request could not be completed.</p>';
       try {
         // this will fail if handleProxyRequest already wrote a header, so we
         // try/catch it.

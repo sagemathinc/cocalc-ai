@@ -238,9 +238,15 @@ function gapCursorStyle(active: boolean): CSSProperties {
   };
 }
 
-export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
+export function CodeLikeEditor({
+  attributes,
+  children,
+  element,
+}: RenderElementProps) {
   if (element.type === "code_line") {
-    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
+    return (
+      <CodeLineElement attributes={attributes}>{children}</CodeLineElement>
+    );
   }
   if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
@@ -280,9 +286,13 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const elementPath = ReactEditor.findPath(editor, element);
   const topIndex = elementPath[0];
   const beforeGapActive =
-    isJupyterCodeCell && gapCursor?.index === topIndex && gapCursor.side === "before";
+    isJupyterCodeCell &&
+    gapCursor?.index === topIndex &&
+    gapCursor.side === "before";
   const afterGapActive =
-    isJupyterCodeCell && gapCursor?.index === topIndex && gapCursor.side === "after";
+    isJupyterCodeCell &&
+    gapCursor?.index === topIndex &&
+    gapCursor.side === "after";
   const codeValue = getCodeBlockText(element as CodeBlock);
   const expandState =
     (editor as any).codeBlockExpandState ??
@@ -331,8 +341,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     !!jupyterCellId &&
     `${hoveredCellId ?? ""}`.trim() === jupyterCellId;
   const isLastJupyterCell =
-    isJupyterCodeCell &&
-    topIndex === editor.children.length - 1;
+    isJupyterCodeCell && topIndex === editor.children.length - 1;
   useEffect(() => {
     if (!isJupyterCodeCell || !selectionInBlock || !jupyterCellId) return;
     setSelectedCellId?.(jupyterCellId);
@@ -372,14 +381,15 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const popularGuess = markdownCandidate
     ? guessPopularLanguage(codeValue ?? "")
     : null;
-  const showPopularGuess =
-    !!popularGuess && popularGuess.score >= 4;
+  const showPopularGuess = !!popularGuess && popularGuess.score >= 4;
   const projectedJupyterOutput =
     isJupyterCodeCell && jupyterCellId
       ? renderJupyterOutput?.(jupyterCellId)
       : null;
   const jupyterChromeInfo =
-    isJupyterCodeCell && jupyterCellId ? getCellChromeInfo?.(jupyterCellId) : undefined;
+    isJupyterCodeCell && jupyterCellId
+      ? getCellChromeInfo?.(jupyterCellId)
+      : undefined;
   const isRunningJupyterCell = !!jupyterChromeInfo?.running;
   const showJupyterChrome =
     isJupyterCodeCell &&
@@ -451,12 +461,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
         const point =
           childIndex == null
             ? pointAtPath(editor, paragraphPath, undefined, "end")
-            : pointAtPath(
-                editor,
-                paragraphPath.concat(childIndex),
-                0,
-                "start",
-              );
+            : pointAtPath(editor, paragraphPath.concat(childIndex), 0, "start");
         Transforms.select(editor, { anchor: point, focus: point });
         ReactEditor.focus(editor);
       };
@@ -507,11 +512,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
 
       // Most common case when pasting in the middle of a paragraph:
       // [paragraph-before, code-block, spacer, paragraph-after]
-      if (isParagraph(prev) && isSpacerParagraph(next) && isParagraph(afterSpacer)) {
+      if (
+        isParagraph(prev) &&
+        isSpacerParagraph(next) &&
+        isParagraph(afterSpacer)
+      ) {
         const prevLen = Array.isArray(prev.children) ? prev.children.length : 0;
         const merged = {
           ...prev,
-          children: [...(prev.children ?? []), ...inlineChildren, ...(afterSpacer.children ?? [])],
+          children: [
+            ...(prev.children ?? []),
+            ...inlineChildren,
+            ...(afterSpacer.children ?? []),
+          ],
         };
         newChildren.splice(codeIndex - 1, 4, merged);
         focusParagraphPath = parentPath.concat(codeIndex - 1);
@@ -553,7 +566,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
         for (let i = parentChildren.length - 1; i >= 0; i--) {
           Transforms.removeNodes(editor, { at: parentPath.concat(i) });
         }
-        Transforms.insertNodes(editor, newChildren as any, { at: parentPath.concat(0) });
+        Transforms.insertNodes(editor, newChildren as any, {
+          at: parentPath.concat(0),
+        });
       });
       if (focusParagraphPath != null) {
         focusAtInlineBoundary(focusParagraphPath, focusChildIndex);
@@ -609,7 +624,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       {...attributes}
       spellCheck={false}
       style={{ textIndent: 0 }}
-      data-cocalc-test={isJupyterCodeCell ? "jupyter-singledoc-code-cell" : undefined}
+      data-cocalc-test={
+        isJupyterCodeCell ? "jupyter-singledoc-code-cell" : undefined
+      }
       data-cocalc-cell-id={
         isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
       }
@@ -813,8 +830,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
-                    const ext =
-                      infoToMode(info, { value: codeValue }) || "txt";
+                    const ext = infoToMode(info, { value: codeValue }) || "txt";
                     link.download = `code-block.${ext}`;
                     link.click();
                     URL.revokeObjectURL(url);

@@ -108,12 +108,12 @@ describe("git commit drawer merge commit formatting", () => {
       reviewed: false,
       known: true,
     });
-    expect(
-      getCommitReviewIndicatorState({ abc1234: true }, "abc1234"),
-    ).toEqual({
-      reviewed: true,
-      known: true,
-    });
+    expect(getCommitReviewIndicatorState({ abc1234: true }, "abc1234")).toEqual(
+      {
+        reviewed: true,
+        known: true,
+      },
+    );
   });
 
   it("preserves onModeChange forwarding for git review note/comment editors", () => {

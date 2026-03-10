@@ -70,7 +70,10 @@ async function getHostById(host_id: string): Promise<HostRow | undefined> {
 
 function getPublicAppHubAuthToken(host_id: string): string {
   const cached = publicAuthTokenCache.get(host_id);
-  if (cached && Date.now() < cached.expiresAt - HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS) {
+  if (
+    cached &&
+    Date.now() < cached.expiresAt - HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS
+  ) {
     return cached.token;
   }
   const issued = issueProjectHostAuthToken({
@@ -209,7 +212,11 @@ export async function createProjectHostProxyHandlers() {
       const target =
         parsed.type === "conat"
           ? await targetForConatRoute(parsed.project_id)
-          : (host?.internal_url || host?.public_url || (await targetForProject(parsed.project_id))).replace(/\/+$/, "");
+          : (
+              host?.internal_url ||
+              host?.public_url ||
+              (await targetForProject(parsed.project_id))
+            ).replace(/\/+$/, "");
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy request error", { err: `${err}`, url: req?.url });
@@ -241,7 +248,11 @@ export async function createProjectHostProxyHandlers() {
       const target =
         parsed.type === "conat"
           ? await targetForConatRoute(parsed.project_id)
-          : (host?.internal_url || host?.public_url || (await targetForProject(parsed.project_id))).replace(/\/+$/, "");
+          : (
+              host?.internal_url ||
+              host?.public_url ||
+              (await targetForProject(parsed.project_id))
+            ).replace(/\/+$/, "");
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy upgrade error", { err: `${err}`, url: req?.url });

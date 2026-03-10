@@ -100,8 +100,8 @@ export const TrialBanner: React.FC<BannerProps> = React.memo(
     const style = expired
       ? ALERT_STYLE_EXPIRED
       : elevated
-      ? ALERT_STYLE_ELEVATED
-      : ALERT_STYLE;
+        ? ALERT_STYLE_ELEVATED
+        : ALERT_STYLE;
     const a_style = elevated ? A_STYLE_ELEVATED : A_STYLE;
 
     function renderMembershipCta(): React.JSX.Element {

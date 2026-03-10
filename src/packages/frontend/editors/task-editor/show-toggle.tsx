@@ -60,5 +60,5 @@ export const ShowToggle: React.FC<Props> = React.memo(
         </Checkbox>
       </div>
     );
-  }
+  },
 );

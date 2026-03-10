@@ -123,7 +123,9 @@ function ensureConnectorRateLimit({
 
   if (token) {
     const tokenKey = `${route}:token:${tokenRateKey(token)}`;
-    if (!checkAndRecordCount(tokenShort, tokenKey, CONNECTOR_TOKEN_SHORT_LIMIT)) {
+    if (
+      !checkAndRecordCount(tokenShort, tokenKey, CONNECTOR_TOKEN_SHORT_LIMIT)
+    ) {
       return "too many connector requests for this token; try again shortly";
     }
     if (!checkAndRecordCount(tokenLong, tokenKey, CONNECTOR_TOKEN_LONG_LIMIT)) {

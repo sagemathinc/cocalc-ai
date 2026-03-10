@@ -1,4 +1,7 @@
-import { type RestoreMode, type RestoreStagingHandle } from "@cocalc/conat/files/file-server";
+import {
+  type RestoreMode,
+  type RestoreStagingHandle,
+} from "@cocalc/conat/files/file-server";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import getLogger from "@cocalc/backend/logger";
@@ -62,19 +65,21 @@ async function publishQueuedLroSafe({
   });
 }
 
-export async function createBackup({
-  account_id,
-  project_id,
-  tags,
-}: {
-  account_id?: string;
-  project_id: string;
-  name?: string;
-  tags?: string[];
-},
-opts?: {
-  skip_collab_check?: boolean;
-}): Promise<{
+export async function createBackup(
+  {
+    account_id,
+    project_id,
+    tags,
+  }: {
+    account_id?: string;
+    project_id: string;
+    name?: string;
+    tags?: string[];
+  },
+  opts?: {
+    skip_collab_check?: boolean;
+  },
+): Promise<{
   op_id: string;
   scope_type: "project";
   scope_id: string;
@@ -130,7 +135,9 @@ export async function updateBackups({
   counts?: Partial<SnapshotCounts>;
 }) {
   await assertCollab({ account_id, project_id });
-  await (await projectClient(project_id)).updateBackups({
+  await (
+    await projectClient(project_id)
+  ).updateBackups({
     project_id,
     counts,
     limit: MAX_BACKUPS_PER_PROJECT,
@@ -192,7 +199,9 @@ export async function beginRestoreStaging({
   restore?: RestoreMode;
 }): Promise<RestoreStagingHandle | null> {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).beginRestoreStaging({
+  return await (
+    await projectClient(project_id)
+  ).beginRestoreStaging({
     project_id,
     home,
     restore,
@@ -207,7 +216,9 @@ export async function ensureRestoreStaging({
   handle: RestoreStagingHandle;
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
-  await (await projectClient(handle.project_id)).ensureRestoreStaging({
+  await (
+    await projectClient(handle.project_id)
+  ).ensureRestoreStaging({
     handle,
   });
 }
@@ -220,7 +231,9 @@ export async function finalizeRestoreStaging({
   handle: RestoreStagingHandle;
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
-  await (await projectClient(handle.project_id)).finalizeRestoreStaging({
+  await (
+    await projectClient(handle.project_id)
+  ).finalizeRestoreStaging({
     handle,
   });
 }
@@ -235,7 +248,9 @@ export async function releaseRestoreStaging({
   cleanupStaging?: boolean;
 }) {
   await assertCollab({ account_id, project_id: handle.project_id });
-  await (await projectClient(handle.project_id)).releaseRestoreStaging({
+  await (
+    await projectClient(handle.project_id)
+  ).releaseRestoreStaging({
     handle,
     cleanupStaging,
   });
@@ -264,7 +279,9 @@ export async function getBackups({
   indexed_only?: boolean;
 }) {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).getBackups({
+  return await (
+    await projectClient(project_id)
+  ).getBackups({
     project_id,
     indexed_only,
   });
@@ -282,7 +299,9 @@ export async function getBackupFiles({
   path?: string;
 }) {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).getBackupFiles({
+  return await (
+    await projectClient(project_id)
+  ).getBackupFiles({
     project_id,
     id,
     path,
@@ -305,7 +324,9 @@ export async function findBackupFiles({
   ids?: string[];
 }) {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).findBackupFiles({
+  return await (
+    await projectClient(project_id)
+  ).findBackupFiles({
     project_id,
     glob,
     iglob,
@@ -328,7 +349,9 @@ export async function getBackupFileText({
   max_bytes?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).getBackupFileText({
+  return await (
+    await projectClient(project_id)
+  ).getBackupFileText({
     project_id,
     id,
     path,

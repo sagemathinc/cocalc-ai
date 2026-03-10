@@ -3,7 +3,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 export default async function setDefaultSource(
   account_id: string,
-  default_source: string
+  default_source: string,
 ): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw Error("invalid uuid");

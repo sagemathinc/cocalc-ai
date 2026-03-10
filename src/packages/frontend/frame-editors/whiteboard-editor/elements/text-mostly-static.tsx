@@ -19,7 +19,9 @@ export default function Text({ element, readOnly, style }: Props) {
   return (
     <MostlyStaticMarkdown
       value={
-        isEmpty ? element.data?.placeholder ?? PLACEHOLDER : element.str ?? ""
+        isEmpty
+          ? (element.data?.placeholder ?? PLACEHOLDER)
+          : (element.str ?? "")
       }
       style={{ ...getFullStyle(element, isEmpty), ...style }}
       onChange={

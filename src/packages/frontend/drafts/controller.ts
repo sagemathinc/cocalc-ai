@@ -171,10 +171,8 @@ export class DraftController {
   }
 
   private enqueue(fn: () => Promise<void>): void {
-    this.saveChain = this.saveChain
-      .then(fn)
-      .catch((error) => {
-        this.onError?.(error);
-      });
+    this.saveChain = this.saveChain.then(fn).catch((error) => {
+      this.onError?.(error);
+    });
   }
 }

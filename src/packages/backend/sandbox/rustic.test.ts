@@ -51,10 +51,10 @@ describe("rustic does something", () => {
 
   it("backs up a file relative to cwd without introducing an absolute path", async () => {
     await writeFile(join(home, "b.txt"), "world");
-    const { stdout, truncated } = await rustic(
-      ["backup", "--json", "b.txt"],
-      { ...options, cwd: "." },
-    );
+    const { stdout, truncated } = await rustic(["backup", "--json", "b.txt"], {
+      ...options,
+      cwd: ".",
+    });
     const s = JSON.parse(Buffer.from(stdout).toString());
     expect(s.paths).toEqual(["b.txt"]);
     expect(truncated).toBe(false);
@@ -63,10 +63,10 @@ describe("rustic does something", () => {
   it("resolves '.' relative to cwd (not sandbox root)", async () => {
     await mkdir(join(home, "nested", "deep"), { recursive: true });
     await writeFile(join(home, "nested", "deep", "c.txt"), "cwd");
-    const { stdout, truncated } = await rustic(
-      ["backup", "--json", "."],
-      { ...options, cwd: "nested/deep" },
-    );
+    const { stdout, truncated } = await rustic(["backup", "--json", "."], {
+      ...options,
+      cwd: "nested/deep",
+    });
     const s = JSON.parse(Buffer.from(stdout).toString());
     expect(s.paths).toEqual(["."]);
     expect(truncated).toBe(false);

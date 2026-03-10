@@ -3,9 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export function cm_start_end(
-  selection
-): { start_line: number; end_line: number } {
+export function cm_start_end(selection): {
+  start_line: number;
+  end_line: number;
+} {
   const { head, anchor } = selection;
   let start = head;
   let end = anchor;

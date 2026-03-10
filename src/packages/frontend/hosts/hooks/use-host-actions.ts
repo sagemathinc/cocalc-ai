@@ -4,7 +4,10 @@ import type { HostDrainOptions } from "../types";
 type HubClient = {
   hosts: {
     startHost: (opts: { id: string }) => Promise<HostLroResponse>;
-    stopHost: (opts: { id: string; skip_backups?: boolean }) => Promise<HostLroResponse>;
+    stopHost: (opts: {
+      id: string;
+      skip_backups?: boolean;
+    }) => Promise<HostLroResponse>;
     restartHost?: (opts: {
       id: string;
       mode?: "reboot" | "hard";
@@ -16,9 +19,14 @@ type HubClient = {
       allow_offline?: boolean;
       parallel?: number;
     }) => Promise<HostLroResponse>;
-    deleteHost: (opts: { id: string; skip_backups?: boolean }) => Promise<HostLroResponse>;
+    deleteHost: (opts: {
+      id: string;
+      skip_backups?: boolean;
+    }) => Promise<HostLroResponse>;
     forceDeprovisionHost?: (opts: { id: string }) => Promise<HostLroResponse>;
-    removeSelfHostConnector?: (opts: { id: string }) => Promise<HostLroResponse>;
+    removeSelfHostConnector?: (opts: {
+      id: string;
+    }) => Promise<HostLroResponse>;
     renameHost?: (opts: { id: string; name: string }) => Promise<unknown>;
     updateHostMachine?: (opts: {
       id: string;
@@ -150,7 +158,9 @@ export const useHostActions = ({
       }
       await hub.hosts.renameHost({ id, name: cleaned });
       setHosts((prev) =>
-        prev.map((host) => (host.id === id ? { ...host, name: cleaned } : host)),
+        prev.map((host) =>
+          host.id === id ? { ...host, name: cleaned } : host,
+        ),
       );
       await refresh();
     } catch (err) {

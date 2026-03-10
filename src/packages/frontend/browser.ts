@@ -30,8 +30,9 @@ export function set_window_title(title?: string): void {
     title = last_title;
   }
   last_title = title;
-  const sshRemoteTarget =
-    lite ? (redux.getStore("customize")?.get("ssh_remote_target") ?? "") : "";
+  const sshRemoteTarget = lite
+    ? (redux.getStore("customize")?.get("ssh_remote_target") ?? "")
+    : "";
   if (sshRemoteTarget) {
     title = String(sshRemoteTarget);
   }

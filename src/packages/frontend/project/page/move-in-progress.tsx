@@ -1,8 +1,19 @@
-import { Alert, Button, Popconfirm, Progress, Space, Tag, Timeline } from "antd";
+import {
+  Alert,
+  Button,
+  Popconfirm,
+  Progress,
+  Space,
+  Tag,
+  Timeline,
+} from "antd";
 import { useMemo, useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
-import { LRO_TERMINAL_STATUSES, progressBarStatus } from "@cocalc/frontend/lro/utils";
+import {
+  LRO_TERMINAL_STATUSES,
+  progressBarStatus,
+} from "@cocalc/frontend/lro/utils";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
@@ -27,7 +38,10 @@ const TERMINAL_COLOR: Record<string, string> = {
   expired: "red",
 };
 
-function readHostId(moveLro: MoveLroState | undefined, key: string): string | undefined {
+function readHostId(
+  moveLro: MoveLroState | undefined,
+  key: string,
+): string | undefined {
   if (!moveLro) return;
   const fromProgressDetail = moveLro.last_progress?.detail?.[key];
   if (typeof fromProgressDetail === "string" && fromProgressDetail) {
@@ -127,7 +141,8 @@ export default function MoveInProgress({
               <Space size="small" wrap>
                 {createdBy ? (
                   <span>
-                    Initiated by <User account_id={createdBy} show_avatar avatarSize={18} />
+                    Initiated by{" "}
+                    <User account_id={createdBy} show_avatar avatarSize={18} />
                   </span>
                 ) : (
                   <span>Initiated by unknown user</span>

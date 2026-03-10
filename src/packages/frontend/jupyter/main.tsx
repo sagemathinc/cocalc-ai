@@ -11,12 +11,7 @@ import { Button, Tooltip } from "antd";
 import * as immutable from "immutable";
 import { useEffect } from "react";
 
-import {
-  CSS,
-  React,
-  redux,
-  useRedux,
-} from "@cocalc/frontend/app-framework";
+import { CSS, React, redux, useRedux } from "@cocalc/frontend/app-framework";
 import { useRef } from "react";
 
 // Support for all the MIME types
@@ -282,11 +277,11 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       set_kernel_error_for_test: (message?: string) => {
         setKernelErrorForTest(message);
       },
-        clear_kernel_error_for_test: () => {
-          setKernelErrorForTest("");
-        },
-        set_frame_type_for_test: (nextType?: string) => {
-          setFrameTypeForTest(nextType);
+      clear_kernel_error_for_test: () => {
+        setKernelErrorForTest("");
+      },
+      set_frame_type_for_test: (nextType?: string) => {
+        setFrameTypeForTest(nextType);
       },
     };
     document.documentElement.setAttribute(

@@ -8,14 +8,8 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import {
-  CHAT_THREAD_META_ROW_DATE,
-  threadConfigSenderId,
-} from "@cocalc/chat";
-import {
-  ChatStreamWriter,
-  recoverOrphanedAcpTurns,
-} from "../index";
+import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
+import { ChatStreamWriter, recoverOrphanedAcpTurns } from "../index";
 import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
 import * as chatServer from "@cocalc/chat/server";
@@ -623,12 +617,12 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect((turns.startAcpTurnLease as any).mock.calls.length).toBe(1);
-    expect((turns.heartbeatAcpTurnLease as any).mock.calls.length).toBeGreaterThan(
-      0,
-    );
-    expect((turns.updateAcpTurnLeaseSessionId as any).mock.calls.length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      (turns.heartbeatAcpTurnLease as any).mock.calls.length,
+    ).toBeGreaterThan(0);
+    expect(
+      (turns.updateAcpTurnLeaseSessionId as any).mock.calls.length,
+    ).toBeGreaterThan(0);
     expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
       expect.arrayContaining([
         [
@@ -1102,7 +1096,9 @@ describe("ChatStreamWriter", () => {
         x.date === CHAT_THREAD_META_ROW_DATE,
     );
     expect(
-      sets.find((x) => x.event === "chat" && x.date === rootIso && x.acp_config),
+      sets.find(
+        (x) => x.event === "chat" && x.date === rootIso && x.acp_config,
+      ),
     ).toBeUndefined();
     expect(threadCfgUpdate?.acp_config).toEqual({
       model: "gpt-5.3-codex",

@@ -90,7 +90,9 @@ export default async function createProject(opts: CreateProjectOptions) {
 
   const pool = getPool();
 
-  async function projectIdConflictsDeleted(project_id: string): Promise<boolean> {
+  async function projectIdConflictsDeleted(
+    project_id: string,
+  ): Promise<boolean> {
     try {
       const { rows } = await pool.query<{ project_id: string }>(
         "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
@@ -188,7 +190,11 @@ export default async function createProject(opts: CreateProjectOptions) {
       host_id,
       isLocalSelfHost,
     });
-    return { host_id, hostRegion, hostStatus: row.status as string | null | undefined };
+    return {
+      host_id,
+      hostRegion,
+      hostStatus: row.status as string | null | undefined,
+    };
   }
 
   if (src_project_id) {
@@ -296,13 +302,18 @@ export default async function createProject(opts: CreateProjectOptions) {
         hostStatus === "starting";
       if (mustFail) {
         try {
-          await pool.query("DELETE FROM projects WHERE project_id=$1", [project_id]);
-        } catch (cleanupErr) {
-          log.warn("createProject: failed to cleanup project row after host register error", {
+          await pool.query("DELETE FROM projects WHERE project_id=$1", [
             project_id,
-            host_id,
-            err: `${cleanupErr}`,
-          });
+          ]);
+        } catch (cleanupErr) {
+          log.warn(
+            "createProject: failed to cleanup project row after host register error",
+            {
+              project_id,
+              host_id,
+              err: `${cleanupErr}`,
+            },
+          );
         }
         throw Error(
           `failed to initialize workspace on host ${host_id} (status=${hostStatus ?? "unknown"}): ${err}`,

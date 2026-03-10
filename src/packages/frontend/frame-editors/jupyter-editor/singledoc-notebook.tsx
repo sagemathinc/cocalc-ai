@@ -16,7 +16,10 @@ import useResizeObserver from "use-resize-observer";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
-import { getCodeBlockText, toCodeLines } from "@cocalc/frontend/editors/slate/elements/code-block/utils";
+import {
+  getCodeBlockText,
+  toCodeLines,
+} from "@cocalc/frontend/editors/slate/elements/code-block/utils";
 import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-slate";
 import { slate_to_markdown } from "@cocalc/frontend/editors/slate/slate-to-markdown";
 import type { Actions as SlateActions } from "@cocalc/frontend/editors/slate/types";
@@ -178,7 +181,10 @@ function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
           preserveBlankLines: false,
         }),
       );
-      pushMarkdown(markdown, `${(node as any).cell_id ?? ""}`.trim() || undefined);
+      pushMarkdown(
+        markdown,
+        `${(node as any).cell_id ?? ""}`.trim() || undefined,
+      );
       continue;
     }
     if (
@@ -190,11 +196,7 @@ function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
       const metaCellType = `${(node as any).cell_meta?.cell_type ?? ""}`.trim();
       const info = `${(node as any).info ?? ""}`.toLowerCase();
       const cell_type =
-        metaCellType === ""
-          ? info === "raw"
-            ? "raw"
-            : "code"
-          : metaCellType;
+        metaCellType === "" ? (info === "raw" ? "raw" : "code") : metaCellType;
       ret.push({
         cell_type,
         input,
@@ -269,9 +271,14 @@ function findCellIdFromSlateContext({
   return;
 }
 
-function cellsSignature(cells: Array<Pick<ParsedSlateCell, "cell_type" | "input">>): string {
+function cellsSignature(
+  cells: Array<Pick<ParsedSlateCell, "cell_type" | "input">>,
+): string {
   return cells
-    .map((cell) => `${cell.cell_type}\u0000${normalizeCellSource(`${cell.input ?? ""}`)}`)
+    .map(
+      (cell) =>
+        `${cell.cell_type}\u0000${normalizeCellSource(`${cell.input ?? ""}`)}`,
+    )
     .join("\u0001");
 }
 
@@ -307,7 +314,10 @@ function firstTextPath(node: any, pathPrefix: number[]): number[] | undefined {
   return;
 }
 
-function findCellStartPathInSlateDoc(doc: Descendant[], cellId: string): number[] | undefined {
+function findCellStartPathInSlateDoc(
+  doc: Descendant[],
+  cellId: string,
+): number[] | undefined {
   if (!cellId) return;
   for (let i = 0; i < doc.length; i++) {
     const node = doc[i] as any;
@@ -318,7 +328,10 @@ function findCellStartPathInSlateDoc(doc: Descendant[], cellId: string): number[
   return;
 }
 
-function selectedTopCellIdInSlateDoc(doc: Descendant[], selection: any): string | undefined {
+function selectedTopCellIdInSlateDoc(
+  doc: Descendant[],
+  selection: any,
+): string | undefined {
   if (!selection) return;
   const focusPath = selection?.focus?.path;
   const anchorPath = selection?.anchor?.path;
@@ -335,10 +348,16 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const jupyter_actions: JupyterActions = props.actions.jupyter_actions;
   const name = jupyter_actions.name;
   const cell_list: List<string> | undefined = useRedux([name, "cell_list"]);
-  const cells: Map<string, Map<string, any>> | undefined = useRedux([name, "cells"]);
+  const cells: Map<string, Map<string, any>> | undefined = useRedux([
+    name,
+    "cells",
+  ]);
   const trust: boolean | undefined = useRedux([name, "trust"]);
   const read_only: boolean | undefined = useRedux([name, "read_only"]);
-  const more_output: Map<string, any> | undefined = useRedux([name, "more_output"]);
+  const more_output: Map<string, any> | undefined = useRedux([
+    name,
+    "more_output",
+  ]);
   const kernel: string | undefined = useRedux([name, "kernel"]);
   const kernelState: string | undefined = useRedux([name, "kernel_state"]);
   const kernelDisplayName: string | undefined = useRedux([
@@ -355,9 +374,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const controlRef = React.useRef<any>(null);
   const [minimapTargetVersion, setMinimapTargetVersion] = React.useState(0);
   const [error, setError] = React.useState<string>("");
-  const [selectedCellId, setSelectedCellId] = React.useState<string | undefined>(
-    undefined,
-  );
+  const [selectedCellId, setSelectedCellId] = React.useState<
+    string | undefined
+  >(undefined);
   const [hoveredCellId, setHoveredCellId] = React.useState<string | undefined>(
     undefined,
   );
@@ -370,7 +389,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   >(() => {});
   const pendingSlateSyncTimerRef = React.useRef<number | null>(null);
   const pendingSlateDocRef = React.useRef<Descendant[] | null>(null);
-  const pendingSlateBaseSignatureRef = React.useRef<string | undefined>(undefined);
+  const pendingSlateBaseSignatureRef = React.useRef<string | undefined>(
+    undefined,
+  );
   const pendingFocusCellIdRef = React.useRef<string | undefined>(undefined);
   const recentRunRef = React.useRef<{
     targetId: string;
@@ -411,48 +432,53 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     editableScrollRef as React.RefObject<HTMLDivElement>;
   const editorViewportElementRef =
     editorViewportRef as React.RefObject<HTMLDivElement>;
-  const pickMinimapScrollTarget = React.useCallback((): HTMLDivElement | null => {
-    const root = containerRef.current;
-    const outer = editableContainerRef.current;
-    const inner = editableScrollRef.current;
-    const candidates: HTMLDivElement[] = [];
-    const seen = new Set<HTMLDivElement>();
-    const push = (el?: HTMLDivElement | null) => {
-      if (el == null || seen.has(el)) return;
-      seen.add(el);
-      candidates.push(el);
-    };
-    push(inner);
-    push(outer);
-    if (root != null) {
-      for (const el of Array.from(root.querySelectorAll<HTMLElement>("*"))) {
-        if (!(el instanceof HTMLDivElement)) continue;
-        const style = window.getComputedStyle(el);
-        if (!["auto", "scroll", "overlay"].includes(style.overflowY)) continue;
-        push(el);
+  const pickMinimapScrollTarget =
+    React.useCallback((): HTMLDivElement | null => {
+      const root = containerRef.current;
+      const outer = editableContainerRef.current;
+      const inner = editableScrollRef.current;
+      const candidates: HTMLDivElement[] = [];
+      const seen = new Set<HTMLDivElement>();
+      const push = (el?: HTMLDivElement | null) => {
+        if (el == null || seen.has(el)) return;
+        seen.add(el);
+        candidates.push(el);
+      };
+      push(inner);
+      push(outer);
+      if (root != null) {
+        for (const el of Array.from(root.querySelectorAll<HTMLElement>("*"))) {
+          if (!(el instanceof HTMLDivElement)) continue;
+          const style = window.getComputedStyle(el);
+          if (!["auto", "scroll", "overlay"].includes(style.overflowY))
+            continue;
+          push(el);
+        }
       }
-    }
-    if (candidates.length === 0) return null;
+      if (candidates.length === 0) return null;
 
-    let best: HTMLDivElement | null = null;
-    let bestScrollable = -1;
-    for (const candidate of candidates) {
-      const scrollable = Math.max(0, candidate.scrollHeight - candidate.clientHeight);
-      if (scrollable > bestScrollable) {
-        best = candidate;
-        bestScrollable = scrollable;
+      let best: HTMLDivElement | null = null;
+      let bestScrollable = -1;
+      for (const candidate of candidates) {
+        const scrollable = Math.max(
+          0,
+          candidate.scrollHeight - candidate.clientHeight,
+        );
+        if (scrollable > bestScrollable) {
+          best = candidate;
+          bestScrollable = scrollable;
+        }
       }
-    }
-    if (best != null && bestScrollable > 1) {
-      return best;
-    }
-    // If nothing is currently scrollable, prefer a visible container with
-    // overflow behavior so later relayout retries can promote it.
-    for (const candidate of candidates) {
-      if (candidate.clientHeight > 0) return candidate;
-    }
-    return candidates[0];
-  }, []);
+      if (best != null && bestScrollable > 1) {
+        return best;
+      }
+      // If nothing is currently scrollable, prefer a visible container with
+      // overflow behavior so later relayout retries can promote it.
+      for (const candidate of candidates) {
+        if (candidate.clientHeight > 0) return candidate;
+      }
+      return candidates[0];
+    }, []);
   const refreshMinimapScrollTarget = React.useCallback(() => {
     const prev = minimapScrollTargetRef.current;
     const next =
@@ -515,7 +541,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
               ? output.size * 18
               : 0;
         let estimated =
-          base + Math.min(lineCount, 80) * lineHeight + (outputWeight > 0 ? 28 : 0);
+          base +
+          Math.min(lineCount, 80) * lineHeight +
+          (outputWeight > 0 ? 28 : 0);
         estimated = Math.max(
           MINIMAP_PLACEHOLDER_MIN_HEIGHT,
           Math.min(1200, estimated),
@@ -604,7 +632,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     const getSelection = controlRef.current?.getSelection;
     const currentSelection =
       typeof getSelection === "function" ? getSelection() : undefined;
-    if (selectedTopCellIdInSlateDoc(slateValue, currentSelection) === targetId) {
+    if (
+      selectedTopCellIdInSlateDoc(slateValue, currentSelection) === targetId
+    ) {
       pendingFocusCellIdRef.current = undefined;
       debugCountersRef.current.pendingFocusSkips += 1;
       return;
@@ -883,7 +913,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         for (const cell of parsed) {
           const rawId = `${cell.cell_id ?? ""}`.trim();
           if (!rawId) {
-            const meaningful = cell.cell_type !== "markdown" || cell.input.trim() !== "";
+            const meaningful =
+              cell.cell_type !== "markdown" || cell.input.trim() !== "";
             if (meaningful) rejectedCells += 1;
             continue;
           }
@@ -902,7 +933,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         for (const id of originalIds) {
           const cell = parsedById.get(id);
           if (cell == null) continue;
-          const currentCell = cells.get(id) ?? jupyter_actions.store.getIn(["cells", id]);
+          const currentCell =
+            cells.get(id) ?? jupyter_actions.store.getIn(["cells", id]);
           const currentType = `${currentCell?.get("cell_type") ?? "code"}`;
           const nextType = cell.cell_type;
           if (currentType !== nextType) {
@@ -958,10 +990,15 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         const rawId = `${cell.cell_id ?? ""}`.trim();
         const mappedFromTemp = rawId ? transientIdMap.get(rawId) : undefined;
         const requestedId = mappedFromTemp ?? rawId;
-        const emptyMarkdown = cell.cell_type === "markdown" && !cell.input.trim();
+        const emptyMarkdown =
+          cell.cell_type === "markdown" && !cell.input.trim();
         let resolvedId: string | undefined;
 
-        if (requestedId && existingIdSet.has(requestedId) && !used.has(requestedId)) {
+        if (
+          requestedId &&
+          existingIdSet.has(requestedId) &&
+          !used.has(requestedId)
+        ) {
           resolvedId = requestedId;
           if (rawId && requestedId !== rawId) {
             transientIdMap.set(rawId, requestedId);
@@ -999,7 +1036,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       for (let i = 0; i < parsedToApply.length; i++) {
         const id = resolvedIds[i];
         const cell = parsedToApply[i];
-        const currentCell = cells.get(id) ?? jupyter_actions.store.getIn(["cells", id]);
+        const currentCell =
+          cells.get(id) ?? jupyter_actions.store.getIn(["cells", id]);
         const currentType = `${currentCell?.get("cell_type") ?? "code"}`;
         const nextType = cell.cell_type;
         if (currentType !== nextType) {
@@ -1183,20 +1221,27 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     };
     proxy.shiftEnter = (_markdown: string, context?: RunContext) =>
       runCellAtCursor({ insertBelow: false, context });
-    proxy.altEnter = (
-      _markdown: string,
-      _id?: string,
-      context?: RunContext,
-    ) => runCellAtCursor({ insertBelow: true, context });
+    proxy.altEnter = (_markdown: string, _id?: string, context?: RunContext) =>
+      runCellAtCursor({ insertBelow: true, context });
     return proxy;
-  }, [props.actions, read_only, cell_list, cells, applyNotebookSlate, runCellAtCursor]);
+  }, [
+    props.actions,
+    read_only,
+    cell_list,
+    cells,
+    applyNotebookSlate,
+    runCellAtCursor,
+  ]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const runtime = (window as any).__cocalcJupyterRuntime ?? {};
     (window as any).__cocalcJupyterRuntime = {
       ...runtime,
-      set_single_doc_cell_input_for_test: (cellIndex: number, input: string) => {
+      set_single_doc_cell_input_for_test: (
+        cellIndex: number,
+        input: string,
+      ) => {
         if (!Number.isInteger(cellIndex) || cellIndex < 0) {
           throw new Error(`invalid cellIndex: ${cellIndex}`);
         }
@@ -1237,7 +1282,10 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         let seen = -1;
         for (let i = 0; i < slateValue.length; i++) {
           const node = slateValue[i] as any;
-          if (SlateElement.isElement(node) && node.type === "jupyter_code_cell") {
+          if (
+            SlateElement.isElement(node) &&
+            node.type === "jupyter_code_cell"
+          ) {
             seen += 1;
             if (seen === cellIndex) {
               topIndex = i;
@@ -1265,15 +1313,23 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
                 focus: { path: [topIndex, 0, 0], offset: 0 },
               }
             : {
-                anchor: { path: [topIndex, lastLineIndex, 0], offset: endOffset },
-                focus: { path: [topIndex, lastLineIndex, 0], offset: endOffset },
+                anchor: {
+                  path: [topIndex, lastLineIndex, 0],
+                  offset: endOffset,
+                },
+                focus: {
+                  path: [topIndex, lastLineIndex, 0],
+                  offset: endOffset,
+                },
               };
         const ok = setSelection(selection);
         if (!ok) {
           throw new Error("setSelection rejected requested selection");
         }
       },
-      apply_single_doc_stale_structural_for_test: (input = "print('stale')") => {
+      apply_single_doc_stale_structural_for_test: (
+        input = "print('stale')",
+      ) => {
         const next = JSON.parse(JSON.stringify(slateValue)) as Descendant[];
         next.push({
           type: "jupyter_code_cell",
@@ -1285,7 +1341,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         } as any);
         applyNotebookSlateRef.current(next, { baseSignature: "__stale__" });
       },
-      duplicate_single_doc_code_cell_with_same_id_for_test: (cellIndex: number = 0) => {
+      duplicate_single_doc_code_cell_with_same_id_for_test: (
+        cellIndex: number = 0,
+      ) => {
         if (!Number.isInteger(cellIndex) || cellIndex < 0) {
           throw new Error(`invalid cellIndex: ${cellIndex}`);
         }
@@ -1293,7 +1351,10 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         const codeTopLevelIndexes: number[] = [];
         for (let i = 0; i < next.length; i++) {
           const node = next[i] as any;
-          if (SlateElement.isElement(node) && node.type === "jupyter_code_cell") {
+          if (
+            SlateElement.isElement(node) &&
+            node.type === "jupyter_code_cell"
+          ) {
             codeTopLevelIndexes.push(i);
           }
         }
@@ -1301,7 +1362,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         if (!Number.isInteger(topLevelIndex)) {
           throw new Error(`single-doc code cell ${cellIndex} not found`);
         }
-        const copy = JSON.parse(JSON.stringify(next[topLevelIndex])) as Descendant;
+        const copy = JSON.parse(
+          JSON.stringify(next[topLevelIndex]),
+        ) as Descendant;
         next.splice(topLevelIndex + 1, 0, copy);
         applyNotebookSlateRef.current(next);
       },
@@ -1309,7 +1372,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         cell_list != null ? cell_list.toArray() : [],
       get_single_doc_selection_for_test: () => {
         const getSelection = controlRef.current?.getSelection;
-        const selection = typeof getSelection === "function" ? getSelection() : null;
+        const selection =
+          typeof getSelection === "function" ? getSelection() : null;
         const topCellId = selectedTopCellIdInSlateDoc(slateValue, selection);
         const focus = selection?.focus;
         const anchor = selection?.anchor;
@@ -1381,7 +1445,11 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
             height: "24px",
           }}
         >
-          <Logo kernel={kernel ?? null} size={18} style={{ marginRight: "2px" }} />
+          <Logo
+            kernel={kernel ?? null}
+            size={18}
+            style={{ marginRight: "2px" }}
+          />
           <span>{kernelDisplayName ?? kernel ?? "No Kernel"}</span>
           <span
             style={{
@@ -1463,7 +1531,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
                 }
                 const root = containerRef.current;
                 const active =
-                  typeof document === "undefined" ? null : document.activeElement;
+                  typeof document === "undefined"
+                    ? null
+                    : document.activeElement;
                 if (root != null && active != null && !root.contains(active)) {
                   return;
                 }
@@ -1479,9 +1549,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
               style={{ backgroundColor: "transparent", minHeight: 0 }}
               controlRef={controlRef}
               divRef={editableContainerElementRef}
-              scrollDivRef={editableScrollElementRef as React.MutableRefObject<
-                HTMLDivElement | null
-              >}
+              scrollDivRef={
+                editableScrollElementRef as React.MutableRefObject<HTMLDivElement | null>
+              }
               jupyterGapCursor={gapCursor}
               setJupyterGapCursor={setGapCursor}
             />

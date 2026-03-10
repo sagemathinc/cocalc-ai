@@ -31,7 +31,7 @@ export default function Linux({ customize }) {
     <Customize value={customize}>
       <Head title="Online Linux Environment" />
       <Layout>
-        <Header page="features" subPage="linux"  />
+        <Header page="features" subPage="linux" />
         <Layout.Content>
           <Content
             landing
@@ -208,8 +208,7 @@ export default function Linux({ customize }) {
               to get started.
             </Paragraph>
             <Paragraph>
-              Besides{" "}
-              <A href="https://www.postgresql.org/">PostgreSQL</A>,
+              Besides <A href="https://www.postgresql.org/">PostgreSQL</A>,
               CoCalc also supports <A href="https://www.mysql.com/">MySQL</A>{" "}
               and <A href="https://sqlite.org">SQLite</A>.
             </Paragraph>
@@ -225,8 +224,8 @@ export default function Linux({ customize }) {
               insert data. Finally, the{" "}
               <A href="/features/jupyter-notebook">Jupyter Notebook</A> on the
               left connects via the{" "}
-              <A href="https://www.psycopg.org/">psycopg2</A> library and
-              issues a query to the database!
+              <A href="https://www.psycopg.org/">psycopg2</A> library and issues
+              a query to the database!
             </Paragraph>
           </Info>
           <SignIn startup="Linux" />
@@ -363,8 +362,8 @@ export function FullLinuxTerminal() {
                   </strong>
                   : due to how CoCalc works, you cannot have root rights.
                   However, there is a wealth of software{" "}
-                  <A href="/features/linux">already installed</A>, including both
-                  system utilities and packages for specific language
+                  <A href="/features/linux">already installed</A>, including
+                  both system utilities and packages for specific language
                   environments. Regarding Python, R, Nodejs, and Julia
                   environments, you can{" "}
                   <A href="https://doc.cocalc.com/howto/index.html">

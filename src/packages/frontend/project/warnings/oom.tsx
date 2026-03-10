@@ -59,7 +59,7 @@ export const OOMWarning: React.FC<{ project_id: string }> = ({
     set_oom_dismissed(oom_dismissed);
     LS.set(
       [project_id, "oom_dismissed"],
-      JSON.stringify({ start_ts, oom_dismissed })
+      JSON.stringify({ start_ts, oom_dismissed }),
     );
   }
 

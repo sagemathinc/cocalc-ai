@@ -37,7 +37,7 @@ export function print_code(opts: Options) {
     no_border: true,
   };
   const s: string = renderToStaticMarkup(
-    React.createElement(CodeMirrorStatic, props)
+    React.createElement(CodeMirrorStatic, props),
   );
 
   const font_size =

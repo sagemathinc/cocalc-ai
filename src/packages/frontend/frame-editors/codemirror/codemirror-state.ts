@@ -49,7 +49,7 @@ export function get_state(cm: CodeMirror.Editor): State | undefined {
 
 export async function set_state(
   cm: CodeMirror.Editor,
-  state: State
+  state: State,
 ): Promise<void> {
   if (state.ver < VERSION) {
     return; // ignore old version.

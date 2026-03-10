@@ -103,7 +103,13 @@ function resolveBundlePath(
 }
 
 function resolveBootstrapPath(packagesRoot: string): string | undefined {
-  const file = join(packagesRoot, "server", "cloud", "bootstrap", "bootstrap.py");
+  const file = join(
+    packagesRoot,
+    "server",
+    "cloud",
+    "bootstrap",
+    "bootstrap.py",
+  );
   return existsSync(file) ? file : undefined;
 }
 
@@ -130,7 +136,11 @@ function sendNotFound(res: Response, message: string): void {
   res.status(404).json({ error: message });
 }
 
-function sendShaResponse(res: Response, sha256: string, filename: string): void {
+function sendShaResponse(
+  res: Response,
+  sha256: string,
+  filename: string,
+): void {
   res.type("text/plain");
   res.send(`${sha256}  ${filename}\n`);
 }
@@ -242,7 +252,12 @@ async function sendVersionsIndex(
 async function sendBundleFile(
   _req: Request,
   res: Response,
-  opts: { artifact: BundleArtifact; os: string; arch?: string; version: string },
+  opts: {
+    artifact: BundleArtifact;
+    os: string;
+    arch?: string;
+    version: string;
+  },
 ): Promise<void> {
   if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
@@ -283,7 +298,12 @@ async function sendBundleFile(
 async function sendBundleSha(
   _req: Request,
   res: Response,
-  opts: { artifact: BundleArtifact; os: string; arch?: string; version: string },
+  opts: {
+    artifact: BundleArtifact;
+    os: string;
+    arch?: string;
+    version: string;
+  },
 ): Promise<void> {
   if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
@@ -364,7 +384,9 @@ export default function init(router: Router) {
         os: req.params.os,
       });
     } catch (err) {
-      logger.error("software manifest error (project-host)", { err: String(err) });
+      logger.error("software manifest error (project-host)", {
+        err: String(err),
+      });
       sendNotFound(res, "failed creating project-host manifest");
     }
   });
@@ -412,18 +434,21 @@ export default function init(router: Router) {
     },
   );
 
-  router.get("/software/project/versions-:channel-:os.json", async (req, res) => {
-    try {
-      await sendVersionsIndex(req, res, {
-        artifact: "project",
-        channel: req.params.channel,
-        os: req.params.os,
-      });
-    } catch (err) {
-      logger.error("software versions error (project)", { err: String(err) });
-      sendNotFound(res, "failed creating project versions index");
-    }
-  });
+  router.get(
+    "/software/project/versions-:channel-:os.json",
+    async (req, res) => {
+      try {
+        await sendVersionsIndex(req, res, {
+          artifact: "project",
+          channel: req.params.channel,
+          os: req.params.os,
+        });
+      } catch (err) {
+        logger.error("software versions error (project)", { err: String(err) });
+        sendNotFound(res, "failed creating project versions index");
+      }
+    },
+  );
 
   router.get(
     "/software/tools/versions-:channel-:os-:arch.json",
@@ -442,18 +467,23 @@ export default function init(router: Router) {
     },
   );
 
-  router.get("/software/project-host/:version/bundle-:os.tar.xz", async (req, res) => {
-    try {
-      await sendBundleFile(req, res, {
-        artifact: "project-host",
-        version: req.params.version,
-        os: req.params.os,
-      });
-    } catch (err) {
-      logger.error("software artifact error (project-host)", { err: String(err) });
-      sendNotFound(res, "failed serving project-host bundle");
-    }
-  });
+  router.get(
+    "/software/project-host/:version/bundle-:os.tar.xz",
+    async (req, res) => {
+      try {
+        await sendBundleFile(req, res, {
+          artifact: "project-host",
+          version: req.params.version,
+          os: req.params.os,
+        });
+      } catch (err) {
+        logger.error("software artifact error (project-host)", {
+          err: String(err),
+        });
+        sendNotFound(res, "failed serving project-host bundle");
+      }
+    },
+  );
 
   router.get(
     "/software/project-host/:version/bundle-:os.tar.xz.sha256",
@@ -471,18 +501,21 @@ export default function init(router: Router) {
     },
   );
 
-  router.get("/software/project/:version/bundle-:os.tar.xz", async (req, res) => {
-    try {
-      await sendBundleFile(req, res, {
-        artifact: "project",
-        version: req.params.version,
-        os: req.params.os,
-      });
-    } catch (err) {
-      logger.error("software artifact error (project)", { err: String(err) });
-      sendNotFound(res, "failed serving project bundle");
-    }
-  });
+  router.get(
+    "/software/project/:version/bundle-:os.tar.xz",
+    async (req, res) => {
+      try {
+        await sendBundleFile(req, res, {
+          artifact: "project",
+          version: req.params.version,
+          os: req.params.os,
+        });
+      } catch (err) {
+        logger.error("software artifact error (project)", { err: String(err) });
+        sendNotFound(res, "failed serving project bundle");
+      }
+    },
+  );
 
   router.get(
     "/software/project/:version/bundle-:os.tar.xz.sha256",
@@ -500,19 +533,22 @@ export default function init(router: Router) {
     },
   );
 
-  router.get("/software/tools/:version/tools-:os-:arch.tar.xz", async (req, res) => {
-    try {
-      await sendBundleFile(req, res, {
-        artifact: "tools",
-        version: req.params.version,
-        os: req.params.os,
-        arch: req.params.arch,
-      });
-    } catch (err) {
-      logger.error("software artifact error (tools)", { err: String(err) });
-      sendNotFound(res, "failed serving tools bundle");
-    }
-  });
+  router.get(
+    "/software/tools/:version/tools-:os-:arch.tar.xz",
+    async (req, res) => {
+      try {
+        await sendBundleFile(req, res, {
+          artifact: "tools",
+          version: req.params.version,
+          os: req.params.os,
+          arch: req.params.arch,
+        });
+      } catch (err) {
+        logger.error("software artifact error (tools)", { err: String(err) });
+        sendNotFound(res, "failed serving tools bundle");
+      }
+    },
+  );
 
   router.get(
     "/software/tools/:version/tools-:os-:arch.tar.xz.sha256",

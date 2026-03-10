@@ -16,7 +16,7 @@ import { getProjectAvatarTiny } from "./project-avatar-image";
 
 export default async function getPublicPaths(
   project_id: string,
-  req //  use to get account_id if necessary
+  req, //  use to get account_id if necessary
 ): Promise<PublicPath[]> {
   if (!isUUID(project_id)) {
     throw Error("project_id must be a uuid");
@@ -25,18 +25,18 @@ export default async function getPublicPaths(
   const pool = getPool("short");
   const result = await pool.query(
     `SELECT id, path, description, ${timeInSeconds(
-      "last_edited"
+      "last_edited",
     )}, disabled, unlisted, authenticated,
     counter::INT,
      (SELECT COUNT(*)::INT FROM public_path_stars WHERE public_path_id=id) AS stars
     FROM public_paths WHERE project_id=$1 ORDER BY stars DESC, last_edited DESC`,
-    [project_id]
+    [project_id],
   );
 
   const v = await filterNonPublicAndNotAuthenticated(
     result.rows,
     project_id,
-    req
+    req,
   );
   const avatar_image_tiny = await getProjectAvatarTiny(project_id);
   if (avatar_image_tiny) {
@@ -50,7 +50,7 @@ export default async function getPublicPaths(
 async function filterNonPublicAndNotAuthenticated(
   rows: PublicPath[],
   project_id,
-  req
+  req,
 ): Promise<PublicPath[]> {
   const v: any[] = [];
   let isCollab: boolean | undefined = undefined;

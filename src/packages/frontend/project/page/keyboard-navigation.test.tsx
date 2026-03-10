@@ -21,9 +21,7 @@ import {
   runProjectNavigationCommand,
 } from "./keyboard-navigation";
 
-function keydownEvent(
-  overrides: Partial<KeyboardEvent> = {},
-): KeyboardEvent {
+function keydownEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return {
     key: "F6",
     ctrlKey: false,
@@ -91,22 +89,24 @@ describe("project keyboard navigation", () => {
   });
 
   it("falls back to the first or last open file from non-editor tabs", () => {
-    expect(
-      getAdjacentOpenFilePath(["a.ipynb", "b.ipynb"], "files", 1),
-    ).toBe("a.ipynb");
-    expect(
-      getAdjacentOpenFilePath(["a.ipynb", "b.ipynb"], "files", -1),
-    ).toBe("b.ipynb");
+    expect(getAdjacentOpenFilePath(["a.ipynb", "b.ipynb"], "files", 1)).toBe(
+      "a.ipynb",
+    );
+    expect(getAdjacentOpenFilePath(["a.ipynb", "b.ipynb"], "files", -1)).toBe(
+      "b.ipynb",
+    );
   });
 
   it("matches browser-safe navigation bindings", () => {
-    expect(matchProjectNavigationCommand(keydownEvent())).toBe("focusNextFrame");
+    expect(matchProjectNavigationCommand(keydownEvent())).toBe(
+      "focusNextFrame",
+    );
     expect(
       matchProjectNavigationCommand(keydownEvent({ shiftKey: true })),
     ).toBe("focusPreviousFrame");
-    expect(
-      matchProjectNavigationCommand(keydownEvent({ ctrlKey: true })),
-    ).toBe("activateNextFileTab");
+    expect(matchProjectNavigationCommand(keydownEvent({ ctrlKey: true }))).toBe(
+      "activateNextFileTab",
+    );
     expect(
       matchProjectNavigationCommand(
         keydownEvent({ ctrlKey: true, shiftKey: true }),
@@ -222,7 +222,9 @@ describe("project keyboard navigation", () => {
         if (key === "open_files") {
           return {
             getIn: (path: string[]) =>
-              path[0] === "a.ipynb" && path[1] === "sync_path" ? "a.ipynb" : undefined,
+              path[0] === "a.ipynb" && path[1] === "sync_path"
+                ? "a.ipynb"
+                : undefined,
           };
         }
       },
@@ -250,7 +252,10 @@ describe("project keyboard navigation", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(activateNext).toHaveBeenCalled();
     expect(focusStrip).toHaveBeenCalled();
-    expect(mockRedux.getEditorActions).toHaveBeenCalledWith("project-1", "a.ipynb");
+    expect(mockRedux.getEditorActions).toHaveBeenCalledWith(
+      "project-1",
+      "a.ipynb",
+    );
   });
 
   it("falls through to page navigation when local frame traversal hits the edge", () => {

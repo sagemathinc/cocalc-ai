@@ -32,7 +32,12 @@ import { Full } from "./full";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
 import useProjectInfo from "./use-project-info";
 import useProjectInfoHistory from "./use-project-info-history";
-import { grid_warning, linearList, process_forest, sum_children } from "./utils";
+import {
+  grid_warning,
+  linearList,
+  process_forest,
+  sum_children,
+} from "./utils";
 
 interface Props {
   project_id: string;

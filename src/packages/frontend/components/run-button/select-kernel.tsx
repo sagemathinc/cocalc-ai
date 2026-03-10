@@ -43,7 +43,7 @@ export default function SelectKernel({
 }) {
   const [error, setError] = useState<string>("");
   const [kernelSpecs, setKernelSpecs] = useState<KernelSpec[] | null>(
-    kernelSpecsProp ?? null
+    kernelSpecsProp ?? null,
   );
 
   useEffect(() => {
@@ -62,7 +62,7 @@ export default function SelectKernel({
 
   function entry(
     spec,
-    prefix: "lang" | "kernel"
+    prefix: "lang" | "kernel",
   ): Omit<OptionProps, "children"> {
     const { name, display_name } = spec;
     const lang = spec.language ? capitalize(spec.language) : "unknown";
@@ -100,7 +100,7 @@ export default function SelectKernel({
   function getOptions() {
     if (kernelSpecs == null) return [];
     const [byName, byLang] = get_kernels_by_name_or_language(
-      fromJS(kernelSpecs) as any
+      fromJS(kernelSpecs) as any,
     );
 
     // langs: all kenrels by language, then the popular ones by priority
@@ -115,7 +115,7 @@ export default function SelectKernel({
             return { spec, priority: spec?.metadata?.cocalc?.priority ?? 0 };
           })
           .toJS(),
-        "priority"
+        "priority",
       ).pop();
       if (!top) return;
       const { spec, priority } = top as { spec: any; priority: number };

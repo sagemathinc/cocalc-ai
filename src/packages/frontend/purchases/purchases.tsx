@@ -783,10 +783,7 @@ function PurchaseDescription({
 }) {
   return (
     <div>
-      <Description
-        service={service}
-        description={description}
-      />
+      <Description service={service} description={description} />
       {description?.credit_id != null && (
         <div>
           <a

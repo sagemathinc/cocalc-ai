@@ -21,12 +21,8 @@ export const ALERT_COLS: { [key in AlertLevel]: string } = {
 } as const;
 
 export function compute_usage(opts): Usage {
-  const {
-    kernel_usage,
-    backend_state,
-    cpu_runtime,
-    expected_cell_runtime,
-  } = opts;
+  const { kernel_usage, backend_state, cpu_runtime, expected_cell_runtime } =
+    opts;
   // not using resources, return sane "zero" defaults
   if (
     kernel_usage == null ||
@@ -69,26 +65,26 @@ export function compute_usage(opts): Usage {
     cpu > ALERT_HIGH_PCT * cpu_limit
       ? "high"
       : cpu > ALERT_MEDIUM_PCT * cpu_limit
-      ? "mid"
-      : cpu > 1 // indicate any usage at all, basically
-      ? "low"
-      : "none";
+        ? "mid"
+        : cpu > 1 // indicate any usage at all, basically
+          ? "low"
+          : "none";
   const mem_alert =
     mem > (ALERT_HIGH_PCT / 100) * mem_limit
       ? "high"
       : mem > (ALERT_MEDIUM_PCT / 100) * mem_limit
-      ? "mid"
-      : mem > (ALERT_LOW_PCT / 100) * mem_limit
-      ? "low"
-      : "none";
+        ? "mid"
+        : mem > (ALERT_LOW_PCT / 100) * mem_limit
+          ? "low"
+          : "none";
   const time_alert =
     cpu_runtime > 8 * expected_cell_runtime
       ? "high"
       : cpu_runtime > 4 * expected_cell_runtime
-      ? "mid"
-      : cpu_runtime > 2 * expected_cell_runtime
-      ? "low"
-      : "none";
+        ? "mid"
+        : cpu_runtime > 2 * expected_cell_runtime
+          ? "low"
+          : "none";
   return {
     mem,
     mem_limit,

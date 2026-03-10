@@ -349,8 +349,18 @@ function resolveHubPassword(pathHint?: string): string | undefined {
   const candidates = [
     pathHint,
     process.env.COCALC_HUB_PASSWORD,
-    process.env.SECRETS ? join(process.env.SECRETS, "conat-password") : undefined,
-    join(process.cwd(), "src", "data", "app", "postgres", "secrets", "conat-password"),
+    process.env.SECRETS
+      ? join(process.env.SECRETS, "conat-password")
+      : undefined,
+    join(
+      process.cwd(),
+      "src",
+      "data",
+      "app",
+      "postgres",
+      "secrets",
+      "conat-password",
+    ),
     join(process.cwd(), "data", "app", "postgres", "secrets", "conat-password"),
   ].filter((x): x is string => !!x && !!x.trim());
 
@@ -402,7 +412,8 @@ function buildSmokeCliEnv(cli: CliContext): NodeJS.ProcessEnv {
   delete env.COCALC_PROJECT_INFO_SCOPE;
   // Force deterministic auth/profile selection for smoke runs.
   env.COCALC_CLI_CONFIG =
-    env.COCALC_CLI_CONFIG || join(tmpdir(), `cocalc-smoke-cli-${process.pid}.json`);
+    env.COCALC_CLI_CONFIG ||
+    join(tmpdir(), `cocalc-smoke-cli-${process.pid}.json`);
   // If hub password is not provided, don't let stale env leak in.
   if (!cli.hubPassword) {
     delete env.COCALC_HUB_PASSWORD;
@@ -644,12 +655,7 @@ async function createWorkspaceViaCliWithRetry({
     try {
       const workspace = await runCli<{ workspace_id?: string }>(
         cli,
-        [
-          "workspace",
-          "create",
-          title,
-          ...(host_id ? ["--host", host_id] : []),
-        ],
+        ["workspace", "create", title, ...(host_id ? ["--host", host_id] : [])],
         { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
       );
       const project_id = `${workspace.workspace_id ?? ""}`.trim();
@@ -666,7 +672,11 @@ async function createWorkspaceViaCliWithRetry({
         err: getErrorMessage(err),
       });
       try {
-        const recoveredProjectId = await findWorkspaceByTitleViaCli({ cli, title, host_id });
+        const recoveredProjectId = await findWorkspaceByTitleViaCli({
+          cli,
+          title,
+          host_id,
+        });
         if (recoveredProjectId) {
           return recoveredProjectId;
         }
@@ -794,8 +804,16 @@ async function prepareSmokeStaticContentViaCli({
   const large_file = `${parsed?.large_file ?? ""}`.trim() || "large.bin";
   const large_size = Number(parsed?.large_size ?? 0);
   const cache_control = `${parsed?.cache_control ?? cacheControl}`.trim();
-  if (!root || !root_marker || !nested_marker || !Number.isFinite(large_size) || large_size <= 0) {
-    throw new Error(`invalid static content prep metadata: ${JSON.stringify(parsed)}`);
+  if (
+    !root ||
+    !root_marker ||
+    !nested_marker ||
+    !Number.isFinite(large_size) ||
+    large_size <= 0
+  ) {
+    throw new Error(
+      `invalid static content prep metadata: ${JSON.stringify(parsed)}`,
+    );
   }
   return {
     root,
@@ -834,7 +852,8 @@ async function writeSmokeAppSpecFile({
       static: {
         root,
         index: "index.html",
-        cache_control: `${static_cache_control ?? "public, max-age=600"}`.trim(),
+        cache_control:
+          `${static_cache_control ?? "public, max-age=600"}`.trim(),
       },
       proxy: {
         base_path: `/apps/${app_id}`,
@@ -932,17 +951,22 @@ async function addHostCollaborator({
   host_id: string;
   collaborator_account_id: string;
 }): Promise<void> {
-  const { rows } = await getPool().query<{ metadata: Record<string, any> | null }>(
-    "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-    [host_id],
-  );
+  const { rows } = await getPool().query<{
+    metadata: Record<string, any> | null;
+  }>("SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
+    host_id,
+  ]);
   const row = rows[0];
   if (!row) {
     throw new Error(`host ${host_id} not found`);
   }
   const metadata = { ...(row.metadata ?? {}) };
-  const current = Array.isArray(metadata.collaborators) ? metadata.collaborators : [];
-  const next = [...new Set([...current.map((x: any) => `${x}`), collaborator_account_id])];
+  const current = Array.isArray(metadata.collaborators)
+    ? metadata.collaborators
+    : [];
+  const next = [
+    ...new Set([...current.map((x: any) => `${x}`), collaborator_account_id]),
+  ];
   metadata.collaborators = next;
   await getPool().query(
     "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
@@ -967,7 +991,9 @@ function normalizeProviderStatusForCheck(status?: string | null): string {
   return status ?? "unknown";
 }
 
-async function loadHostStatusSnapshot(host_id: string): Promise<HostStatusSnapshot> {
+async function loadHostStatusSnapshot(
+  host_id: string,
+): Promise<HostStatusSnapshot> {
   const { rows } = await getPool().query<{
     status: string | null;
     metadata: Record<string, any> | null;
@@ -1037,10 +1063,7 @@ async function checkProviderStatus({
   const providerStatus = await entry.provider.getStatus(runtime, creds);
   const normalizedProvider = normalizeProviderStatusForCheck(providerStatus);
   const normalizedHost = normalizeHostStatusForCheck(snapshot.status);
-  if (
-    normalizedHost !== "unknown" &&
-    normalizedProvider !== normalizedHost
-  ) {
+  if (normalizedHost !== "unknown" && normalizedProvider !== normalizedHost) {
     throw new Error(
       `provider status mismatch: host=${normalizedHost} provider=${normalizedProvider}`,
     );
@@ -1150,7 +1173,11 @@ async function waitForLroTerminal(op_id: string, opts: WaitOptions) {
     const op = await getLro(op_id);
     const status = `${op?.status ?? "missing"}`;
     lastStatus = status;
-    if (status === "succeeded" || status === "failed" || status === "canceled") {
+    if (
+      status === "succeeded" ||
+      status === "failed" ||
+      status === "canceled"
+    ) {
       return op;
     }
     await sleep(opts.intervalMs);
@@ -1249,7 +1276,11 @@ async function waitForHostStatusViaCli({
   let lastStatus = "unknown";
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
     try {
-      const host = await runCli<{ status?: string }>(cli, ["host", "get", host_id]);
+      const host = await runCli<{ status?: string }>(cli, [
+        "host",
+        "get",
+        host_id,
+      ]);
       const status = String(host?.status ?? "unknown");
       lastStatus = status;
       if (allowed.includes(status)) {
@@ -1308,7 +1339,15 @@ async function waitForBackupIndexedViaCli({
 
     const backups = await runCli<
       Array<{ backup_id?: string; time?: string | Date | null }>
-    >(cli, ["workspace", "backup", "list", "--workspace", project_id, "--limit", "100"]);
+    >(cli, [
+      "workspace",
+      "backup",
+      "list",
+      "--workspace",
+      project_id,
+      "--limit",
+      "100",
+    ]);
     lastAnyCount = backups.length;
     if (backups.length > 0 && backups[0]?.backup_id) {
       const sorted = [...backups].sort(
@@ -1432,9 +1471,9 @@ async function runProxySmokeViaCli({
     "mkdir -p .smoke",
     `LOG=\".smoke/proxy-${proxy_port}.log\"`,
     `PIDFILE=\".smoke/proxy-${proxy_port}.pid\"`,
-    "rm -f \"$PIDFILE\"",
+    'rm -f "$PIDFILE"',
     "if ! command -v node >/dev/null 2>&1; then",
-    "  echo \"missing node runtime for proxy smoke\" >&2",
+    '  echo "missing node runtime for proxy smoke" >&2',
     "  exit 1",
     "fi",
     `cat > ${JSON.stringify(serverScript)} <<'NODE'`,
@@ -1453,11 +1492,11 @@ async function runProxySmokeViaCli({
     "NODE",
     `nohup node ${JSON.stringify(serverScript)} "$PORT" >"$LOG" 2>&1 < /dev/null &`,
     "PID=$!",
-    "echo \"$PID\" > \"$PIDFILE\"",
+    'echo "$PID" > "$PIDFILE"',
     "for i in $(seq 1 40); do",
-    "  if ! kill -0 \"$PID\" 2>/dev/null; then",
-    "    echo \"proxy smoke server exited early\" >&2",
-    "    tail -n 80 \"$LOG\" >&2 || true",
+    '  if ! kill -0 "$PID" 2>/dev/null; then',
+    '    echo "proxy smoke server exited early" >&2',
+    '    tail -n 80 "$LOG" >&2 || true',
     "    exit 1",
     "  fi",
     "  if node -e \"const net=require('node:net'); const p=Number(process.argv[1]); const s=net.createConnection({host:'127.0.0.1',port:p}); const done=(ok)=>{try{s.destroy();}catch{} process.exit(ok?0:1);}; s.on('connect',()=>done(true)); s.on('error',()=>done(false)); setTimeout(()=>done(false), 700);\" \"$PORT\" >/dev/null 2>&1; then",
@@ -1465,8 +1504,8 @@ async function runProxySmokeViaCli({
     "  fi",
     "  sleep 0.25",
     "done",
-    "echo \"proxy smoke server did not open port\" >&2",
-    "tail -n 80 \"$LOG\" >&2 || true",
+    'echo "proxy smoke server did not open port" >&2',
+    'tail -n 80 "$LOG" >&2 || true',
     "exit 1",
   ].join("\n");
 
@@ -1474,12 +1513,12 @@ async function runProxySmokeViaCli({
     "set +e",
     `PORT=${proxy_port}`,
     `PIDFILE=\".smoke/proxy-${proxy_port}.pid\"`,
-    "if [ -f \"$PIDFILE\" ]; then",
-    "  PID=$(cat \"$PIDFILE\" 2>/dev/null || true)",
-    "  if [ -n \"$PID\" ]; then",
-    "    kill \"$PID\" >/dev/null 2>&1 || true",
+    'if [ -f "$PIDFILE" ]; then',
+    '  PID=$(cat "$PIDFILE" 2>/dev/null || true)',
+    '  if [ -n "$PID" ]; then',
+    '    kill "$PID" >/dev/null 2>&1 || true',
     "  fi",
-    "  rm -f \"$PIDFILE\"",
+    '  rm -f "$PIDFILE"',
     "fi",
     `pkill -f ${JSON.stringify(serverScript)} >/dev/null 2>&1 || true`,
   ].join("\n");
@@ -1575,7 +1614,9 @@ async function runProxySmokeViaCli({
         !body.includes("DOCTYPE") &&
         !body.includes("proxy-smoke-ok")
       ) {
-        throw new Error("authorized proxy response did not look like app content");
+        throw new Error(
+          "authorized proxy response did not look like app content",
+        );
       }
     }, proxyWait);
   } catch (err) {
@@ -1601,7 +1642,10 @@ async function runProxySmokeViaCli({
         );
       }
     } catch (logErr) {
-      if (logErr instanceof Error && logErr.message.includes("proxy-server-log=")) {
+      if (
+        logErr instanceof Error &&
+        logErr.message.includes("proxy-server-log=")
+      ) {
         throw logErr;
       }
       logger.debug("proxy smoke log collection warning", {
@@ -1743,8 +1787,7 @@ async function loadHostConnectionHints(
   const runtime = metadata.runtime ?? {};
   const machine = metadata.machine ?? {};
   const public_ip = runtime.public_ip ?? machine.metadata?.public_ip;
-  const ssh_user =
-    runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  const ssh_user = runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const bootstrap_log_path =
     ssh_user === "root"
       ? "/root/cocalc-host/bootstrap/bootstrap.log"
@@ -1772,7 +1815,10 @@ async function loadHostConnectionHints(
   };
 }
 
-function parseCookie(setCookie: string | null, cookieName: string): string | undefined {
+function parseCookie(
+  setCookie: string | null,
+  cookieName: string,
+): string | undefined {
   if (!setCookie) return undefined;
   const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`${escaped}=([^;]+)`);
@@ -1879,7 +1925,9 @@ async function runProxySmoke({
   const proxyWait = narrowProxyWait(wait);
   const hints = await loadHostConnectionHints(host_id);
   if (!hints.host_url) {
-    throw new Error("host has no public_url/internal_url/public_ip for proxy check");
+    throw new Error(
+      "host has no public_url/internal_url/public_ip for proxy check",
+    );
   }
 
   let serverPid: number | undefined;
@@ -1975,7 +2023,9 @@ async function runProxySmoke({
         !body.includes("DOCTYPE") &&
         !body.includes("proxy-smoke-ok")
       ) {
-        throw new Error("authorized proxy response did not look like app content");
+        throw new Error(
+          "authorized proxy response did not look like app content",
+        );
       }
     }, proxyWait);
   } finally {
@@ -2163,7 +2213,9 @@ async function runSmokeSteps({
           `host_id=${host_id}`,
           debugHints.host_url ? `url=${debugHints.host_url}` : undefined,
           debugHints.ssh_target ? `ssh=${debugHints.ssh_target}` : undefined,
-          debugHints.ssh_tail_log ? `tail='${debugHints.ssh_tail_log}'` : undefined,
+          debugHints.ssh_tail_log
+            ? `tail='${debugHints.ssh_tail_log}'`
+            : undefined,
           debugHints.scp_log ? `scp='${debugHints.scp_log}'` : undefined,
         ].filter(Boolean);
         emit({
@@ -2419,7 +2471,8 @@ async function runSmokeSteps({
             host_name: hostName,
             workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path:
+              "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -2450,7 +2503,8 @@ async function runSmokeSteps({
             host_name: hostName,
             workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path:
+              "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -2499,7 +2553,10 @@ async function runSmokeStepsViaCli({
   const steps: ProjectHostSmokeResult["steps"] = [];
   const waitHostRunning = resolveWait(wait?.host_running, DEFAULT_HOST_RUNNING);
   const waitHostStopped = resolveWait(wait?.host_stopped, DEFAULT_HOST_STOPPED);
-  const waitProjectReady = resolveWait(wait?.project_ready, DEFAULT_PROJECT_READY);
+  const waitProjectReady = resolveWait(
+    wait?.project_ready,
+    DEFAULT_PROJECT_READY,
+  );
   const waitBackupReady = resolveWait(wait?.backup_ready, DEFAULT_BACKUP_READY);
   const verifyProviderStatus = verify_provider_status ?? false;
   const strictProviderStatus =
@@ -2527,7 +2584,10 @@ async function runSmokeStepsViaCli({
     apiUrl: resolveApiUrl(),
     hubPassword: resolveHubPassword(),
     accountId: account_id,
-    timeoutMs: Math.max(waitHostRunning.intervalMs * waitHostRunning.attempts, 600_000),
+    timeoutMs: Math.max(
+      waitHostRunning.intervalMs * waitHostRunning.attempts,
+      600_000,
+    ),
     pollMs: 1000,
   };
 
@@ -2609,7 +2669,10 @@ async function runSmokeStepsViaCli({
             host_name: createSpec.name,
             err: msg,
           });
-          const recoveredHostId = await findHostByNameViaCli(cli, createSpec.name);
+          const recoveredHostId = await findHostByNameViaCli(
+            cli,
+            createSpec.name,
+          );
           if (!recoveredHostId) {
             throw err;
           }
@@ -2646,7 +2709,9 @@ async function runSmokeStepsViaCli({
           `host_id=${host_id}`,
           debugHints.host_url ? `url=${debugHints.host_url}` : undefined,
           debugHints.ssh_target ? `ssh=${debugHints.ssh_target}` : undefined,
-          debugHints.ssh_tail_log ? `tail='${debugHints.ssh_tail_log}'` : undefined,
+          debugHints.ssh_tail_log
+            ? `tail='${debugHints.ssh_tail_log}'`
+            : undefined,
           debugHints.scp_log ? `scp='${debugHints.scp_log}'` : undefined,
         ].filter(Boolean);
         emit({
@@ -2854,10 +2919,13 @@ async function runSmokeStepsViaCli({
           wait: waitBackupReady,
         });
         if (!backup.indexed) {
-          logger.warn("cloud smoke backup index check skipped: backup not indexed", {
-            project_id,
-            backup_id: backup.id,
-          });
+          logger.warn(
+            "cloud smoke backup index check skipped: backup not indexed",
+            {
+              project_id,
+              backup_id: backup.id,
+            },
+          );
           return;
         }
         const children = await runCli<Array<{ name?: string }>>(cli, [
@@ -3038,10 +3106,13 @@ async function runSmokeStepsViaCli({
               "--wait",
             ]);
           } catch (hardErr) {
-            logger.warn("cloud smoke cleanup hard delete failed; falling back to soft delete", {
-              workspace_id: workspaceId,
-              err: getErrorMessage(hardErr),
-            });
+            logger.warn(
+              "cloud smoke cleanup hard delete failed; falling back to soft delete",
+              {
+                workspace_id: workspaceId,
+                err: getErrorMessage(hardErr),
+              },
+            );
             await runCli(cli, [
               "workspace",
               "delete",
@@ -3064,7 +3135,13 @@ async function runSmokeStepsViaCli({
             throw new Error("missing host_id for cleanup");
           }
           for (const id of hostIds) {
-            await runCli(cli, ["host", "delete", id, "--skip-backups", "--wait"]);
+            await runCli(cli, [
+              "host",
+              "delete",
+              id,
+              "--skip-backups",
+              "--wait",
+            ]);
           }
         }
       });
@@ -3091,7 +3168,8 @@ async function runSmokeStepsViaCli({
             host_name: hostName,
             workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path:
+              "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -3122,7 +3200,8 @@ async function runSmokeStepsViaCli({
             host_name: hostName,
             workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path:
+              "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -3154,7 +3233,10 @@ async function runAppSmokeScenarioViaCli({
 }): Promise<ProjectHostSmokeResult> {
   const steps: ProjectHostSmokeResult["steps"] = [];
   const waitHostRunning = resolveWait(wait?.host_running, DEFAULT_HOST_RUNNING);
-  const waitProjectReady = resolveWait(wait?.project_ready, DEFAULT_PROJECT_READY);
+  const waitProjectReady = resolveWait(
+    wait?.project_ready,
+    DEFAULT_PROJECT_READY,
+  );
   const verifyProviderStatus = verify_provider_status ?? false;
   const strictProviderStatus =
     process.env.COCALC_SMOKE_STRICT_PROVIDER_STATUS === "yes";
@@ -3170,7 +3252,10 @@ async function runAppSmokeScenarioViaCli({
     apiUrl: resolveApiUrl(),
     hubPassword: resolveHubPassword(),
     accountId: account_id,
-    timeoutMs: Math.max(waitHostRunning.intervalMs * waitHostRunning.attempts, 600_000),
+    timeoutMs: Math.max(
+      waitHostRunning.intervalMs * waitHostRunning.attempts,
+      600_000,
+    ),
     pollMs: 1000,
   };
 
@@ -3237,16 +3322,19 @@ async function runAppSmokeScenarioViaCli({
   };
 
   try {
-    const normalizedProvider = provider ?? normalizeProviderId(createSpec.machine?.cloud);
+    const normalizedProvider =
+      provider ?? normalizeProviderId(createSpec.machine?.cloud);
     if (!normalizedProvider) {
       throw new Error("unable to determine provider for app smoke host create");
     }
     const appKind: SmokeAppKind = app_kind === "static" ? "static" : "service";
-    const baseHostPrefix = appKind === "static" ? "smoke-apps-static" : "smoke-apps";
+    const baseHostPrefix =
+      appKind === "static" ? "smoke-apps-static" : "smoke-apps";
     const appIdPrefix = appKind === "static" ? "smoke-static-app" : "smoke-app";
 
     hostName =
-      `${createSpec?.name ?? baseHostPrefix}`.trim() || `${baseHostPrefix}-${Date.now()}`;
+      `${createSpec?.name ?? baseHostPrefix}`.trim() ||
+      `${baseHostPrefix}-${Date.now()}`;
     const hostSpec = { ...createSpec, name: hostName };
     const tag = sanitizeRunTag(run_tag) ?? `${Date.now()}`;
     workspaceTitle =
@@ -3256,7 +3344,10 @@ async function runAppSmokeScenarioViaCli({
     await runStep("create_host", async () => {
       const host = await runCli<{ host_id?: string }>(
         cli,
-        buildHostCreateCliArgs({ provider: normalizedProvider, create: hostSpec }),
+        buildHostCreateCliArgs({
+          provider: normalizedProvider,
+          create: hostSpec,
+        }),
       );
       host_id = `${host.host_id ?? ""}`.trim();
       if (!host_id) {
@@ -3278,7 +3369,9 @@ async function runAppSmokeScenarioViaCli({
         const parts = [
           debugHints.host_url ? `url=${debugHints.host_url}` : undefined,
           debugHints.ssh_target ? `ssh=${debugHints.ssh_target}` : undefined,
-          debugHints.ssh_tail_log ? `tail='${debugHints.ssh_tail_log}'` : undefined,
+          debugHints.ssh_tail_log
+            ? `tail='${debugHints.ssh_tail_log}'`
+            : undefined,
           debugHints.scp_log ? `scp='${debugHints.scp_log}'` : undefined,
         ].filter(Boolean);
         emit({
@@ -3392,15 +3485,21 @@ async function runAppSmokeScenarioViaCli({
         "400",
       ]);
       const items = detect.items ?? [];
-      const matched = items.find((row) =>
-        Array.isArray(row?.managed_app_ids) && row.managed_app_ids.includes(app_id as string),
+      const matched = items.find(
+        (row) =>
+          Array.isArray(row?.managed_app_ids) &&
+          row.managed_app_ids.includes(app_id as string),
       );
       if (appKind === "service") {
         if (!matched || !matched.managed) {
-          throw new Error("app detect did not report managed listener for smoke app");
+          throw new Error(
+            "app detect did not report managed listener for smoke app",
+          );
         }
       } else if (matched) {
-        throw new Error("static smoke app unexpectedly appeared as managed listening port");
+        throw new Error(
+          "static smoke app unexpectedly appeared as managed listening port",
+        );
       }
     });
 
@@ -3450,7 +3549,9 @@ async function runAppSmokeScenarioViaCli({
         "token",
       ]);
       if (exposed.exposure?.mode !== "public") {
-        throw new Error(`app expose did not set public mode (mode=${exposed.exposure?.mode})`);
+        throw new Error(
+          `app expose did not set public mode (mode=${exposed.exposure?.mode})`,
+        );
       }
       exposedUrl = `${exposed.url_public ?? ""}`.trim();
       if (!exposedUrl) {
@@ -3475,7 +3576,7 @@ async function runAppSmokeScenarioViaCli({
         }
         const expectedMarker =
           appKind === "static"
-            ? staticContent?.root_marker ?? ""
+            ? (staticContent?.root_marker ?? "")
             : "smoke-app-ok";
         if (!expectedMarker || !body.includes(expectedMarker)) {
           throw new Error(
@@ -3525,12 +3626,17 @@ async function runAppSmokeScenarioViaCli({
         });
         const body = Buffer.from(await response.arrayBuffer());
         if (response.status !== 206) {
-          throw new Error(`expected 206 from static range request; got ${response.status}`);
+          throw new Error(
+            `expected 206 from static range request; got ${response.status}`,
+          );
         }
         if (body.length !== 64) {
-          throw new Error(`expected 64-byte static range body; got ${body.length}`);
+          throw new Error(
+            `expected 64-byte static range body; got ${body.length}`,
+          );
         }
-        const contentRange = `${response.headers.get("content-range") ?? ""}`.trim();
+        const contentRange =
+          `${response.headers.get("content-range") ?? ""}`.trim();
         if (!contentRange.startsWith("bytes 0-63/")) {
           throw new Error(`unexpected content-range header '${contentRange}'`);
         }
@@ -3540,13 +3646,18 @@ async function runAppSmokeScenarioViaCli({
             `unexpected content-range total in '${contentRange}' (expected ${expectedTotal})`,
           );
         }
-        const cacheControl = `${response.headers.get("cache-control") ?? ""}`.trim();
+        const cacheControl =
+          `${response.headers.get("cache-control") ?? ""}`.trim();
         if (!cacheControl) {
           throw new Error("static range response missing cache-control header");
         }
         const actualMaxAge = parseMaxAgeSeconds(cacheControl);
         const expectedMaxAge = parseMaxAgeSeconds(staticContent.cache_control);
-        if (expectedMaxAge != null && actualMaxAge != null && actualMaxAge < expectedMaxAge) {
+        if (
+          expectedMaxAge != null &&
+          actualMaxAge != null &&
+          actualMaxAge < expectedMaxAge
+        ) {
           throw new Error(
             `static range response max-age ${actualMaxAge} is less than expected ${expectedMaxAge} (header='${cacheControl}')`,
           );
@@ -3560,7 +3671,10 @@ async function runAppSmokeScenarioViaCli({
 
       await runStep("app_probe_static_traversal_blocked", async () => {
         if (!exposedUrl) throw new Error("missing exposed URL");
-        const blockedUrl = appendPathToUrl(exposedUrl, "%2e%2e/%2e%2e/etc/passwd");
+        const blockedUrl = appendPathToUrl(
+          exposedUrl,
+          "%2e%2e/%2e%2e/etc/passwd",
+        );
         const response = await fetchWithTimeout(blockedUrl, {
           timeoutMs: 12_000,
         });
@@ -3576,7 +3690,14 @@ async function runAppSmokeScenarioViaCli({
         if (!appPidBeforeKill) {
           const status = await runCli<CliAppStatusRow>(
             cli,
-            ["workspace", "app", "status", app_id as string, "--workspace", workspaceId],
+            [
+              "workspace",
+              "app",
+              "status",
+              app_id as string,
+              "--workspace",
+              workspaceId,
+            ],
             { timeoutSeconds: 45, commandTimeoutMs: 90_000 },
           );
           appPidBeforeKill = Number(status.pid ?? 0) || undefined;
@@ -3646,7 +3767,11 @@ async function runAppSmokeScenarioViaCli({
           );
         }
         const recoveredPid = Number(recovered.pid ?? 0) || undefined;
-        if (appPidBeforeKill && recoveredPid && appPidBeforeKill === recoveredPid) {
+        if (
+          appPidBeforeKill &&
+          recoveredPid &&
+          appPidBeforeKill === recoveredPid
+        ) {
           throw new Error("app pid did not change after kill/recovery");
         }
       });
@@ -3677,25 +3802,40 @@ async function runAppSmokeScenarioViaCli({
       const unexposed = await runCli<{
         exposure?: unknown;
         state?: string;
-      }>(cli, ["workspace", "app", "unexpose", app_id, "--workspace", workspaceId]);
+      }>(cli, [
+        "workspace",
+        "app",
+        "unexpose",
+        app_id,
+        "--workspace",
+        workspaceId,
+      ]);
       if (unexposed.exposure != null) {
         throw new Error("app unexpose returned non-empty exposure");
       }
       if (`${unexposed.state ?? ""}` !== "running") {
-        throw new Error(`app unexpose returned unexpected state '${unexposed.state}'`);
+        throw new Error(
+          `app unexpose returned unexpected state '${unexposed.state}'`,
+        );
       }
     });
 
     await runStep("app_stop", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
       if (!app_id) throw new Error("missing app id");
-      const stopped = await runCli<CliAppStatusRow>(
-        cli,
-        ["workspace", "app", "stop", app_id, "--workspace", workspaceId],
-      );
+      const stopped = await runCli<CliAppStatusRow>(cli, [
+        "workspace",
+        "app",
+        "stop",
+        app_id,
+        "--workspace",
+        workspaceId,
+      ]);
       const expectedState = appKind === "static" ? "running" : "stopped";
       if (stopped.state !== expectedState) {
-        throw new Error(`app stop returned unexpected state '${stopped.state}'`);
+        throw new Error(
+          `app stop returned unexpected state '${stopped.state}'`,
+        );
       }
     });
 
@@ -3703,7 +3843,14 @@ async function runAppSmokeScenarioViaCli({
       await runStep("cleanup", async () => {
         if (workspaceId && app_id) {
           try {
-            await runCli(cli, ["workspace", "app", "delete", app_id, "--workspace", workspaceId]);
+            await runCli(cli, [
+              "workspace",
+              "app",
+              "delete",
+              app_id,
+              "--workspace",
+              workspaceId,
+            ]);
           } catch (err) {
             logger.warn("cloud smoke app cleanup delete failed", {
               app_id,
@@ -3725,10 +3872,13 @@ async function runAppSmokeScenarioViaCli({
               "--wait",
             ]);
           } catch (hardErr) {
-            logger.warn("cloud smoke app cleanup hard delete failed; using soft delete", {
-              workspace_id: workspaceId,
-              err: getErrorMessage(hardErr),
-            });
+            logger.warn(
+              "cloud smoke app cleanup hard delete failed; using soft delete",
+              {
+                workspace_id: workspaceId,
+                err: getErrorMessage(hardErr),
+              },
+            );
             await runCli(cli, [
               "workspace",
               "delete",
@@ -3738,7 +3888,13 @@ async function runAppSmokeScenarioViaCli({
           }
         }
         for (const cleanupHostId of cleanupHostIds) {
-          await runCli(cli, ["host", "delete", cleanupHostId, "--skip-backups", "--wait"]);
+          await runCli(cli, [
+            "host",
+            "delete",
+            cleanupHostId,
+            "--skip-backups",
+            "--wait",
+          ]);
         }
       });
     }
@@ -3777,7 +3933,8 @@ async function runAppSmokeScenarioViaCli({
             app_id: app_id ?? undefined,
             exposed_url: exposedUrl ?? undefined,
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path:
+              "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -3821,7 +3978,8 @@ async function runAppSmokeScenarioViaCli({
             app_id: app_id ?? undefined,
             exposed_url: exposedUrl ?? undefined,
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path:
+              "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -3870,7 +4028,10 @@ async function runMoveSmokeScenarioViaCli({
 }): Promise<ProjectHostSmokeResult> {
   const steps: ProjectHostSmokeResult["steps"] = [];
   const waitHostRunning = resolveWait(wait?.host_running, DEFAULT_HOST_RUNNING);
-  const waitProjectReady = resolveWait(wait?.project_ready, DEFAULT_PROJECT_READY);
+  const waitProjectReady = resolveWait(
+    wait?.project_ready,
+    DEFAULT_PROJECT_READY,
+  );
   const waitBackupReady = resolveWait(wait?.backup_ready, DEFAULT_BACKUP_READY);
   const verifyProviderStatus = verify_provider_status ?? false;
   const strictProviderStatus =
@@ -3887,7 +4048,10 @@ async function runMoveSmokeScenarioViaCli({
     apiUrl: resolveApiUrl(),
     hubPassword: resolveHubPassword(),
     accountId: account_id,
-    timeoutMs: Math.max(waitHostRunning.intervalMs * waitHostRunning.attempts, 600_000),
+    timeoutMs: Math.max(
+      waitHostRunning.intervalMs * waitHostRunning.attempts,
+      600_000,
+    ),
     pollMs: 1000,
   };
 
@@ -3951,12 +4115,16 @@ async function runMoveSmokeScenarioViaCli({
   };
 
   try {
-    const normalizedProvider = provider ?? normalizeProviderId(createSpec.machine?.cloud);
+    const normalizedProvider =
+      provider ?? normalizeProviderId(createSpec.machine?.cloud);
     if (!normalizedProvider) {
-      throw new Error("unable to determine provider for move smoke host create");
+      throw new Error(
+        "unable to determine provider for move smoke host create",
+      );
     }
 
-    const baseHostName = `${createSpec?.name ?? "smoke-move"}`.trim() || "smoke-move";
+    const baseHostName =
+      `${createSpec?.name ?? "smoke-move"}`.trim() || "smoke-move";
     const sourceHostName = `${baseHostName}-src`.slice(0, 63);
     const destHostName = `${baseHostName}-dst`.slice(0, 63);
     const sourceSpec = { ...createSpec, name: sourceHostName };
@@ -3965,7 +4133,10 @@ async function runMoveSmokeScenarioViaCli({
     await runStep("create_source_host", async () => {
       const host = await runCli<{ host_id?: string }>(
         cli,
-        buildHostCreateCliArgs({ provider: normalizedProvider, create: sourceSpec }),
+        buildHostCreateCliArgs({
+          provider: normalizedProvider,
+          create: sourceSpec,
+        }),
       );
       sourceHostId = `${host.host_id ?? ""}`.trim();
       if (!sourceHostId) {
@@ -3977,7 +4148,10 @@ async function runMoveSmokeScenarioViaCli({
     await runStep("create_dest_host", async () => {
       const host = await runCli<{ host_id?: string }>(
         cli,
-        buildHostCreateCliArgs({ provider: normalizedProvider, create: destSpec }),
+        buildHostCreateCliArgs({
+          provider: normalizedProvider,
+          create: destSpec,
+        }),
       );
       destHostId = `${host.host_id ?? ""}`.trim();
       if (!destHostId) {
@@ -4009,9 +4183,15 @@ async function runMoveSmokeScenarioViaCli({
           step: "debug_hints",
           status: "ok",
           message: [
-            sourceHints.ssh_target ? `source_ssh=${sourceHints.ssh_target}` : undefined,
-            destHints.ssh_target ? `dest_ssh=${destHints.ssh_target}` : undefined,
-            sourceHints.host_url ? `source_url=${sourceHints.host_url}` : undefined,
+            sourceHints.ssh_target
+              ? `source_ssh=${sourceHints.ssh_target}`
+              : undefined,
+            destHints.ssh_target
+              ? `dest_ssh=${destHints.ssh_target}`
+              : undefined,
+            sourceHints.host_url
+              ? `source_url=${sourceHints.host_url}`
+              : undefined,
             destHints.host_url ? `dest_url=${destHints.host_url}` : undefined,
           ]
             .filter(Boolean)
@@ -4201,7 +4381,13 @@ async function runMoveSmokeScenarioViaCli({
           }
         }
         for (const hostId of cleanupHostIds) {
-          await runCli(cli, ["host", "delete", hostId, "--skip-backups", "--wait"]);
+          await runCli(cli, [
+            "host",
+            "delete",
+            hostId,
+            "--skip-backups",
+            "--wait",
+          ]);
         }
       });
     }
@@ -4227,7 +4413,9 @@ async function runMoveSmokeScenarioViaCli({
         ssh_tail_log: destHints?.ssh_tail_log ?? sourceHints?.ssh_tail_log,
         scp_log: destHints?.scp_log ?? sourceHints?.scp_log,
         host_log_path:
-          destHints?.host_log_path ?? sourceHints?.host_log_path ?? "/mnt/cocalc/data/log",
+          destHints?.host_log_path ??
+          sourceHints?.host_log_path ??
+          "/mnt/cocalc/data/log",
         bootstrap_log_path:
           destHints?.bootstrap_log_path ??
           sourceHints?.bootstrap_log_path ??
@@ -4263,7 +4451,9 @@ async function runMoveSmokeScenarioViaCli({
         ssh_tail_log: sourceHints?.ssh_tail_log ?? destHints?.ssh_tail_log,
         scp_log: sourceHints?.scp_log ?? destHints?.scp_log,
         host_log_path:
-          sourceHints?.host_log_path ?? destHints?.host_log_path ?? "/mnt/cocalc/data/log",
+          sourceHints?.host_log_path ??
+          destHints?.host_log_path ??
+          "/mnt/cocalc/data/log",
         bootstrap_log_path:
           sourceHints?.bootstrap_log_path ??
           destHints?.bootstrap_log_path ??
@@ -4306,7 +4496,10 @@ async function runDrainSmokeScenarioViaCli({
 }): Promise<ProjectHostSmokeResult> {
   const steps: ProjectHostSmokeResult["steps"] = [];
   const waitHostRunning = resolveWait(wait?.host_running, DEFAULT_HOST_RUNNING);
-  const waitProjectReady = resolveWait(wait?.project_ready, DEFAULT_PROJECT_READY);
+  const waitProjectReady = resolveWait(
+    wait?.project_ready,
+    DEFAULT_PROJECT_READY,
+  );
   const verifyProviderStatus = verify_provider_status ?? false;
   const strictProviderStatus =
     process.env.COCALC_SMOKE_STRICT_PROVIDER_STATUS === "yes";
@@ -4322,7 +4515,10 @@ async function runDrainSmokeScenarioViaCli({
     apiUrl: resolveApiUrl(),
     hubPassword: resolveHubPassword(),
     accountId: account_id,
-    timeoutMs: Math.max(waitHostRunning.intervalMs * waitHostRunning.attempts, 600_000),
+    timeoutMs: Math.max(
+      waitHostRunning.intervalMs * waitHostRunning.attempts,
+      600_000,
+    ),
     pollMs: 1000,
   };
 
@@ -4385,19 +4581,25 @@ async function runDrainSmokeScenarioViaCli({
 
   const cleanupResult = () => ({
     host_ids: [...cleanupHostIds],
-    workspaces: [...cleanupWorkspaces.entries()].map(([workspace_id, account_id]) => ({
-      workspace_id,
-      account_id,
-    })),
+    workspaces: [...cleanupWorkspaces.entries()].map(
+      ([workspace_id, account_id]) => ({
+        workspace_id,
+        account_id,
+      }),
+    ),
   });
 
   try {
-    const normalizedProvider = provider ?? normalizeProviderId(createSpec.machine?.cloud);
+    const normalizedProvider =
+      provider ?? normalizeProviderId(createSpec.machine?.cloud);
     if (!normalizedProvider) {
-      throw new Error("unable to determine provider for drain smoke host create");
+      throw new Error(
+        "unable to determine provider for drain smoke host create",
+      );
     }
 
-    const baseHostName = `${createSpec?.name ?? "smoke-drain"}`.trim() || "smoke-drain";
+    const baseHostName =
+      `${createSpec?.name ?? "smoke-drain"}`.trim() || "smoke-drain";
     const sourceHostName = `${baseHostName}-src`.slice(0, 63);
     const destHostName = `${baseHostName}-dst`.slice(0, 63);
     const sourceSpec = { ...createSpec, name: sourceHostName };
@@ -4406,7 +4608,10 @@ async function runDrainSmokeScenarioViaCli({
     await runStep("create_source_host", async () => {
       const host = await runCli<{ host_id?: string }>(
         cli,
-        buildHostCreateCliArgs({ provider: normalizedProvider, create: sourceSpec }),
+        buildHostCreateCliArgs({
+          provider: normalizedProvider,
+          create: sourceSpec,
+        }),
       );
       sourceHostId = `${host.host_id ?? ""}`.trim();
       if (!sourceHostId) {
@@ -4418,7 +4623,10 @@ async function runDrainSmokeScenarioViaCli({
     await runStep("create_dest_host", async () => {
       const host = await runCli<{ host_id?: string }>(
         cli,
-        buildHostCreateCliArgs({ provider: normalizedProvider, create: destSpec }),
+        buildHostCreateCliArgs({
+          provider: normalizedProvider,
+          create: destSpec,
+        }),
       );
       destHostId = `${host.host_id ?? ""}`.trim();
       if (!destHostId) {
@@ -4450,9 +4658,15 @@ async function runDrainSmokeScenarioViaCli({
           step: "debug_hints",
           status: "ok",
           message: [
-            sourceHints.ssh_target ? `source_ssh=${sourceHints.ssh_target}` : undefined,
-            destHints.ssh_target ? `dest_ssh=${destHints.ssh_target}` : undefined,
-            sourceHints.host_url ? `source_url=${sourceHints.host_url}` : undefined,
+            sourceHints.ssh_target
+              ? `source_ssh=${sourceHints.ssh_target}`
+              : undefined,
+            destHints.ssh_target
+              ? `dest_ssh=${destHints.ssh_target}`
+              : undefined,
+            sourceHints.host_url
+              ? `source_url=${sourceHints.host_url}`
+              : undefined,
             destHints.host_url ? `dest_url=${destHints.host_url}` : undefined,
           ]
             .filter(Boolean)
@@ -4530,7 +4744,9 @@ async function runDrainSmokeScenarioViaCli({
       if (!secondaryAccountId) throw new Error("missing secondary account id");
       for (const workspace of createdWorkspaces) {
         const ownerCli =
-          workspace.owner_account_id === secondaryAccountId ? secondaryCli : cli;
+          workspace.owner_account_id === secondaryAccountId
+            ? secondaryCli
+            : cli;
         await runCli(ownerCli, [
           "workspace",
           "start",
@@ -4578,7 +4794,9 @@ async function runDrainSmokeScenarioViaCli({
       if (!secondaryAccountId) throw new Error("missing secondary account id");
       for (const workspace of createdWorkspaces) {
         const ownerCli =
-          workspace.owner_account_id === secondaryAccountId ? secondaryCli : cli;
+          workspace.owner_account_id === secondaryAccountId
+            ? secondaryCli
+            : cli;
         const row = await runCli<{ host_id?: string | null }>(ownerCli, [
           "workspace",
           "get",
@@ -4598,7 +4816,9 @@ async function runDrainSmokeScenarioViaCli({
       if (!secondaryAccountId) throw new Error("missing secondary account id");
       for (const workspace of createdWorkspaces) {
         const ownerCli =
-          workspace.owner_account_id === secondaryAccountId ? secondaryCli : cli;
+          workspace.owner_account_id === secondaryAccountId
+            ? secondaryCli
+            : cli;
         await runCli(
           ownerCli,
           [
@@ -4632,7 +4852,9 @@ async function runDrainSmokeScenarioViaCli({
         if (secondaryAccountId) {
           for (const workspace of createdWorkspaces) {
             const ownerCli =
-              workspace.owner_account_id === secondaryAccountId ? secondaryCli : cli;
+              workspace.owner_account_id === secondaryAccountId
+                ? secondaryCli
+                : cli;
             try {
               await runCli(ownerCli, [
                 "workspace",
@@ -4656,7 +4878,13 @@ async function runDrainSmokeScenarioViaCli({
           }
         }
         for (const hostId of [...cleanupHostIds]) {
-          await runCli(cli, ["host", "delete", hostId, "--skip-backups", "--wait"]);
+          await runCli(cli, [
+            "host",
+            "delete",
+            hostId,
+            "--skip-backups",
+            "--wait",
+          ]);
           cleanupHostIds.delete(hostId);
         }
       });
@@ -4872,8 +5100,7 @@ async function buildPresetForGcp(): Promise<SmokePreset | undefined> {
   const zone =
     preferredZones.find(
       (z) => (region.zones ?? []).includes(z) && zoneNames.has(z),
-    ) ??
-    (region.zones ?? []).find((z) => zoneNames.has(z));
+    ) ?? (region.zones ?? []).find((z) => zoneNames.has(z));
   if (!zone) return undefined;
 
   const machineTypes =
@@ -5138,7 +5365,9 @@ export async function runProjectHostPersistenceSmokePreset({
 
   if (scenario === "drain") {
     if (execution_mode !== "cli") {
-      throw new Error("drain smoke scenario currently supports execution_mode='cli' only");
+      throw new Error(
+        "drain smoke scenario currently supports execution_mode='cli' only",
+      );
     }
     return await runDrainSmokeScenarioViaCli({
       account_id: smokeInput.account_id,
@@ -5155,7 +5384,9 @@ export async function runProjectHostPersistenceSmokePreset({
 
   if (scenario === "move") {
     if (execution_mode !== "cli") {
-      throw new Error("move smoke scenario currently supports execution_mode='cli' only");
+      throw new Error(
+        "move smoke scenario currently supports execution_mode='cli' only",
+      );
     }
     return await runMoveSmokeScenarioViaCli({
       account_id: smokeInput.account_id,
@@ -5176,7 +5407,9 @@ export async function runProjectHostPersistenceSmokePreset({
 
   if (scenario === "apps") {
     if (execution_mode !== "cli") {
-      throw new Error("apps smoke scenario currently supports execution_mode='cli' only");
+      throw new Error(
+        "apps smoke scenario currently supports execution_mode='cli' only",
+      );
     }
     return await runAppSmokeScenarioViaCli({
       account_id: smokeInput.account_id,
@@ -5193,7 +5426,9 @@ export async function runProjectHostPersistenceSmokePreset({
 
   if (scenario === "apps-static") {
     if (execution_mode !== "cli") {
-      throw new Error("apps-static smoke scenario currently supports execution_mode='cli' only");
+      throw new Error(
+        "apps-static smoke scenario currently supports execution_mode='cli' only",
+      );
     }
     return await runAppSmokeScenarioViaCli({
       account_id: smokeInput.account_id,

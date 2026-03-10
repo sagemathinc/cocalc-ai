@@ -71,7 +71,10 @@ export async function migrateArchivedParentMessageIds(
   if (!options.dry_run && !options.no_backup) {
     const backupPath = createBackupPath(dbPath);
     await fs.copyFile(dbPath, backupPath);
-    const report = await migrateArchivedParentMessageIdsInternal(options, backupPath);
+    const report = await migrateArchivedParentMessageIdsInternal(
+      options,
+      backupPath,
+    );
     return report;
   }
   return migrateArchivedParentMessageIdsInternal(options);
@@ -175,7 +178,9 @@ async function migrateArchivedParentMessageIdsInternal(
   if (!options.dry_run && updates.length) {
     db.exec("BEGIN IMMEDIATE");
     try {
-      const stmt = db.prepare("UPDATE archived_rows SET row_json = ? WHERE row_id = ?");
+      const stmt = db.prepare(
+        "UPDATE archived_rows SET row_json = ? WHERE row_id = ?",
+      );
       for (const update of updates) {
         stmt.run(update.row_json, update.row_id);
       }

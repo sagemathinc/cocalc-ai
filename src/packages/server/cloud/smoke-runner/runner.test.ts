@@ -48,13 +48,7 @@ describe("smoke runner", () => {
 
     expect(result.ok).toBe(true);
     expect(result.steps.every((step) => step.status === "ok")).toBe(true);
-    expect(calls).toEqual([
-      "create",
-      "resize:120",
-      "stop",
-      "start",
-      "delete",
-    ]);
+    expect(calls).toEqual(["create", "resize:120", "stop", "start", "delete"]);
   });
 
   it("marks the failing step and skips the remainder", async () => {

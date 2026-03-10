@@ -56,7 +56,9 @@ export async function findInChatAndOpenFirstResult({
   for (const msg of allMessages?.values?.() ?? []) {
     const dateMs = dateValue(msg)?.valueOf?.();
     if (!Number.isFinite(dateMs)) continue;
-    const text = newest_content(msg).replace(/<[^>]*>/g, " ").toLowerCase();
+    const text = newest_content(msg)
+      .replace(/<[^>]*>/g, " ")
+      .toLowerCase();
     if (!text.includes(searchTermLower)) continue;
     if (!localBest || (dateMs as number) > localBest.dateMs) {
       localBest = {
@@ -94,14 +96,13 @@ export async function findInChatAndOpenFirstResult({
     }
   }
 
-  const best =
-    !localBest
-      ? archivedBest
-      : !archivedBest
+  const best = !localBest
+    ? archivedBest
+    : !archivedBest
+      ? localBest
+      : localBest.dateMs >= archivedBest.dateMs
         ? localBest
-        : localBest.dateMs >= archivedBest.dateMs
-          ? localBest
-          : archivedBest;
+        : archivedBest;
 
   if (!best || !Number.isFinite(best.dateMs)) {
     return false;
@@ -130,7 +131,11 @@ export async function findInChatAndOpenFirstResult({
   }
 
   const threadId = `${best.threadId ?? ""}`.trim();
-  if (threadId && threadId !== COMBINED_FEED_KEY && threadId !== ALL_MESSAGES_KEY) {
+  if (
+    threadId &&
+    threadId !== COMBINED_FEED_KEY &&
+    threadId !== ALL_MESSAGES_KEY
+  ) {
     actions.clearAllFilters?.();
     actions.setSelectedThread?.(threadId);
   }
@@ -142,4 +147,3 @@ export async function findInChatAndOpenFirstResult({
   }
   return true;
 }
-

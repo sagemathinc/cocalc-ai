@@ -13,7 +13,9 @@ async function sleep(ms: number): Promise<void> {
 async function main(): Promise<void> {
   const pg = await getPglite();
 
-  await pg.query("CREATE TABLE IF NOT EXISTS pglite_smoke (id TEXT PRIMARY KEY, note TEXT)");
+  await pg.query(
+    "CREATE TABLE IF NOT EXISTS pglite_smoke (id TEXT PRIMARY KEY, note TEXT)",
+  );
   const id = randomUUID();
   await pg.query("INSERT INTO pglite_smoke (id, note) VALUES ($1, $2)", [
     id,

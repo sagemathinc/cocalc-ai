@@ -15,7 +15,10 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { copy, days_ago } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
-import { WORKSPACE_LABEL, WORKSPACES_LABEL } from "@cocalc/util/i18n/terminology";
+import {
+  WORKSPACE_LABEL,
+  WORKSPACES_LABEL,
+} from "@cocalc/util/i18n/terminology";
 import { CourseActions } from "../actions";
 import { CourseStore } from "../store";
 import { Result, run_in_all_projects } from "./run-in-all-projects";
@@ -65,7 +68,9 @@ export class StudentProjectsActions {
     const id = this.course_actions.set_activity({
       desc: `Create project for ${store.get_student_name(student_id)}.`,
     });
-    const defaultImage = await redux.getStore("customize").getDefaultComputeImage();
+    const defaultImage = await redux
+      .getStore("customize")
+      .getDefaultComputeImage();
     let project_id: string;
     try {
       project_id = await redux.getActions("projects").create_project({
@@ -515,7 +520,9 @@ export class StudentProjectsActions {
   ): Promise<void> => {
     const store = this.get_store();
     if (store == null) return;
-    const defaultImage = await redux.getStore("customize").getDefaultComputeImage();
+    const defaultImage = await redux
+      .getStore("customize")
+      .getDefaultComputeImage();
     const img_id = store.get("settings").get("custom_image") ?? defaultImage;
     const actions = redux.getProjectActions(student_project_id);
     await actions.set_compute_image(img_id);

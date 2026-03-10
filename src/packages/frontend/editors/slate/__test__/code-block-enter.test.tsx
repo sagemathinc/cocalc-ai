@@ -69,9 +69,7 @@ test("enter autoindents after python ':'", () => {
     extra: { actions: {}, id: "", search: EMPTY_SEARCH },
   });
 
-  expect(getCodeBlockText(editor.children[0] as any)).toBe(
-    "def f():\n    "
-  );
+  expect(getCodeBlockText(editor.children[0] as any)).toBe("def f():\n    ");
   expect(editor.selection?.focus.path).toEqual([0, 1, 0]);
   expect(editor.selection?.focus.offset).toBe(4);
 });

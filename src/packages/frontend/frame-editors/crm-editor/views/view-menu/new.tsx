@@ -105,8 +105,8 @@ function RecentRecords({ addedRecords, table, setOpen }) {
     setSortField("id", "id", "descending", 0);
     setOrderFields(
       ["id", "created"].concat(
-        orderFields.filter((x) => x != "id" && x != "created")
-      )
+        orderFields.filter((x) => x != "id" && x != "created"),
+      ),
     );
   }, [newViewId]);
 

@@ -131,7 +131,11 @@ function splitSearchTextNode(node: any, needle: string): any[] {
   const pieces: any[] = [];
   while (found >= 0) {
     if (found > index) {
-      pieces.push({ ...node, text: text.slice(index, found), search: undefined });
+      pieces.push({
+        ...node,
+        text: text.slice(index, found),
+        search: undefined,
+      });
     }
     const end = found + needle.length;
     pieces.push({ ...node, text: text.slice(found, end), search: true });
@@ -286,7 +290,8 @@ function formatInlineCodeDisplay(
       return `${rel}${suffix}`;
     }
   }
-  const fallback = normalizeProjectPath(link.project_path) || absPath || link.code;
+  const fallback =
+    normalizeProjectPath(link.project_path) || absPath || link.code;
   return `${fallback}${suffix}`;
 }
 
@@ -302,7 +307,8 @@ function formatInlineCodeTitle(link: InlineCodeLink): string {
 }
 
 function formatLineSuffix(link: Pick<InlineCodeLink, "line" | "col">): string {
-  if (link.line == null || !Number.isFinite(link.line) || link.line < 1) return "";
+  if (link.line == null || !Number.isFinite(link.line) || link.line < 1)
+    return "";
   const line = Math.trunc(link.line);
   if (link.col == null || !Number.isFinite(link.col) || link.col < 1) {
     return `:${line}`;
@@ -326,10 +332,7 @@ function relativePosix(root: string, target: string): string {
   }
   const up = rootParts.length - i;
   const down = targetParts.slice(i);
-  const rel = [
-    ...Array.from({ length: up }, () => ".."),
-    ...down,
-  ].join("/");
+  const rel = [...Array.from({ length: up }, () => ".."), ...down].join("/");
   return rel || ".";
 }
 

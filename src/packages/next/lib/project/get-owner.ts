@@ -9,7 +9,7 @@ export default async function getOwner(project_id: string): Promise<string> {
   // with a better query...
   const result = await pool.query(
     "SELECT users FROM projects WHERE project_id=$1",
-    [project_id]
+    [project_id],
   );
   if (result.rows.length == 0) {
     throw Error(`no project with id ${project_id}`);

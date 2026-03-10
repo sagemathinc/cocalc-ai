@@ -198,7 +198,8 @@ export async function adminCreateUser({
   const explicitPassword = typeof password === "string" ? password : "";
   const generatedPassword =
     explicitPassword.length > 0 ? undefined : await secureRandomString(24);
-  const finalPassword = explicitPassword.length > 0 ? explicitPassword : generatedPassword!;
+  const finalPassword =
+    explicitPassword.length > 0 ? explicitPassword : generatedPassword!;
   if (!finalPassword) {
     throw Error("password must be non-empty");
   }
@@ -412,9 +413,10 @@ function resolveSharedHomeMode():
     `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
       ? "disabled"
       : "fallback";
-  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
-    .trim()
-    .toLowerCase();
+  const mode =
+    `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
+      .trim()
+      .toLowerCase();
   if (mode === "disabled") return "disabled";
   if (mode === "prefer" || mode === "always") return mode;
   return "fallback";
@@ -424,9 +426,7 @@ const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
 const OPENAI_API_KEY_KIND = "openai-api-key";
 
 function toExternalCredentialInfo(
-  credential:
-    | Awaited<ReturnType<typeof getExternalCredential>>
-    | undefined,
+  credential: Awaited<ReturnType<typeof getExternalCredential>> | undefined,
 ) {
   if (!credential) return undefined;
   return {
@@ -806,7 +806,10 @@ async function getLiveBrowserSessionInfo(
           if (!browser_id) continue;
           const prev = out.get(browser_id);
           const nextCount = (prev?.connection_count ?? 0) + 1;
-          const nextActive = Math.max(prev?.updated_at_ms ?? 0, s.active ?? s.connected ?? 0);
+          const nextActive = Math.max(
+            prev?.updated_at_ms ?? 0,
+            s.active ?? s.connected ?? 0,
+          );
           out.set(browser_id, {
             connected: true,
             connection_count: nextCount,
@@ -816,7 +819,10 @@ async function getLiveBrowserSessionInfo(
       }
     }
   } catch (err) {
-    logger.debug("listBrowserSessions: failed to read live conat stats", `${err}`);
+    logger.debug(
+      "listBrowserSessions: failed to read live conat stats",
+      `${err}`,
+    );
   }
   return out;
 }

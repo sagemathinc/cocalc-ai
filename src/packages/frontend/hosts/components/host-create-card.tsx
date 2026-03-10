@@ -1,4 +1,15 @@
-import { Alert, Button, Card, Divider, Form, Popconfirm, Select, Space, Spin, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Divider,
+  Form,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Typography,
+} from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
@@ -13,11 +24,7 @@ type HostCreateCardProps = {
 export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const { permissions, form, provider, catalogRefresh } = vm;
   const { isAdmin, canCreateHosts } = permissions;
-  const {
-    form: formInstance,
-    creating,
-    onCreate,
-  } = form;
+  const { form: formInstance, creating, onCreate } = form;
   const {
     refreshProviders,
     refreshProvider,
@@ -92,8 +99,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     missingSelfHostTarget;
   const requiredCatalogFields = React.useMemo<HostFieldId[]>(
     () =>
-      (["region", "machine_type", "size"] as HostFieldId[]).filter(
-        (field) => provider.fields.schema.primary.includes(field),
+      (["region", "machine_type", "size"] as HostFieldId[]).filter((field) =>
+        provider.fields.schema.primary.includes(field),
       ),
     [provider.fields.schema.primary],
   );
@@ -108,7 +115,11 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     return requiredCatalogFields.every(
       (field) => (provider.fields.options[field] ?? []).length === 0,
     );
-  }, [provider.fields.options, provider.selectedProvider, requiredCatalogFields]);
+  }, [
+    provider.fields.options,
+    provider.selectedProvider,
+    requiredCatalogFields,
+  ]);
   const showCatalogLoading =
     provider.selectedProvider !== "none" &&
     provider.selectedProvider !== "self-host" &&

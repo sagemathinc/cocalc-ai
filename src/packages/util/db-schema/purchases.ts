@@ -43,8 +43,6 @@ export const MEMBERSHIP_CHANGE = "membership-change";
 // for paying a statement the purpose is `statement-${statement_id}`
 // (Maybe we should be usig metadata for this though?)
 
-
-
 export type Reason =
   | "duplicate"
   | "fraudulent"
@@ -65,7 +63,6 @@ export type ComputeService =
   | "student-pay"
   | "voucher";
 export type Service = ComputeService;
-
 
 export interface Membership {
   type: "membership";

@@ -41,7 +41,7 @@ export function getEmailDomain(email: string): string {
 
 export function emailBelongsToDomain(
   emailDomain: string,
-  ssoDomain: string
+  ssoDomain: string,
 ): boolean {
   return emailDomain === ssoDomain || emailDomain.endsWith(`.${ssoDomain}`);
 }

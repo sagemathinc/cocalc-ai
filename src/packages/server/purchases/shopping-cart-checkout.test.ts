@@ -284,5 +284,4 @@ describe("shopping-cart-checkout", () => {
       expect(total).toEqual(3.0);
     });
   });
-
 });

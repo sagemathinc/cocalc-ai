@@ -79,6 +79,9 @@ export async function removeBlobTtls({ uuids }: { uuids: string[] }) {
   const pool = getPool();
   const v = uuids.filter(isValidUUID);
   if (v.length > 0) {
-    await pool.query("UPDATE blobs SET expire=NULL WHERE id::UUID=ANY($1::UUID[])", [v]);
+    await pool.query(
+      "UPDATE blobs SET expire=NULL WHERE id::UUID=ANY($1::UUID[])",
+      [v],
+    );
   }
 }

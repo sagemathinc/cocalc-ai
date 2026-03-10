@@ -49,7 +49,11 @@ export function getPaths({ home, image, project_id }): {
   merged: string;
   imageName: string;
 } {
-  const userOverlays = join(home, PROJECT_IMAGE_PATH, imagePathComponent(image));
+  const userOverlays = join(
+    home,
+    PROJECT_IMAGE_PATH,
+    imagePathComponent(image),
+  );
   const upperdir = join(userOverlays, "upperdir");
   const workdir = join(userOverlays, "workdir");
   const merged = getMergedPath(project_id);
@@ -185,12 +189,7 @@ export async function mount({
       progress: 70,
       desc: "extracted base image",
     });
-    const {
-      upperdir,
-      workdir,
-      merged,
-      imageName,
-    } = getPaths({
+    const { upperdir, workdir, merged, imageName } = getPaths({
       home,
       image,
       project_id,

@@ -51,7 +51,7 @@ async function tidy(input_path) {
 export async function xml_format(
   input: string,
   options: ParserOptions,
-  logger: any
+  logger: any,
 ): Promise<string> {
   // create input temp file
   const input_path: string = await callback(tmp.file);
@@ -71,7 +71,7 @@ export async function xml_format(
     } catch (e) {
       logger.debug(`Calling XML formatter raised ${e}`);
       throw new Error(
-        `XML formatter broken or not available. Is '${options.parser}' installed?`
+        `XML formatter broken or not available. Is '${options.parser}' installed?`,
       );
     }
 

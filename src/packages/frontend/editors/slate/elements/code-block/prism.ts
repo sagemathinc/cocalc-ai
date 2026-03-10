@@ -88,7 +88,7 @@ const appendTypes = (types: string[], add: string[] | string): string[] => {
 
 // Copied and adapted from prism-react-renderer.
 export const normalizeTokens = (
-  tokens: Array<PrismToken | string>
+  tokens: Array<PrismToken | string>,
 ): NormalizedToken[][] => {
   const typeArrStack: string[][] = [[]];
   const tokenArrStack = [tokens];
@@ -265,7 +265,9 @@ function setCachedNormalizedTokens(
   }
   codeBlockTokenCache.set(key, tokens);
   if (codeBlockTokenCache.size > CODE_BLOCK_TOKEN_CACHE_LIMIT) {
-    const oldestKey = codeBlockTokenCache.keys().next().value as string | undefined;
+    const oldestKey = codeBlockTokenCache.keys().next().value as
+      | string
+      | undefined;
     if (oldestKey != null) {
       codeBlockTokenCache.delete(oldestKey);
     }
@@ -325,7 +327,10 @@ export function buildCodeBlockDecorations(
   blockPath: number[],
   infoOverride?: string,
 ): DecoratedRange[][] {
-  if (typeof window !== "undefined" && (window as any).COCALC_SLATE_DISABLE_PRISM) {
+  if (
+    typeof window !== "undefined" &&
+    (window as any).COCALC_SLATE_DISABLE_PRISM
+  ) {
     return [];
   }
   const text = block.children.map((line) => Node.string(line)).join("\n");

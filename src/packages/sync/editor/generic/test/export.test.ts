@@ -41,4 +41,3 @@ describe("export_history", () => {
     expect(entries[0].time_utc.getTime()).toBe(0);
   });
 });
-

@@ -48,9 +48,7 @@ import {
   mergeLauncherSettings,
   updateUserLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
-import {
-  QUICK_CREATE_MAP,
-} from "@cocalc/frontend/project/new/launcher-catalog";
+import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
@@ -98,10 +96,10 @@ export function NewFlyout({
     "customize",
     LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
-  const project_launcher = useTypedRedux(
-    "projects",
-    "project_map",
-  )?.getIn([project_id, "launcher"]);
+  const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
+    project_id,
+    "launcher",
+  ]);
   const user_group = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
     "users",
@@ -351,7 +349,7 @@ export function NewFlyout({
   function fileIcon() {
     const name: IconName = isNewFiletypeIconName(ext)
       ? NEW_FILETYPE_ICONS[ext!]
-      : file_options(`foo.${ext}`)?.icon ?? "file";
+      : (file_options(`foo.${ext}`)?.icon ?? "file");
     return (
       <Icon
         name={name}
@@ -585,7 +583,9 @@ export function NewFlyout({
           ))}
         </Flex>
         <div style={{ marginTop: "8px" }}>
-          <div style={{ marginBottom: "6px", fontWeight: 500 }}>More file types</div>
+          <div style={{ marginBottom: "6px", fontWeight: 500 }}>
+            More file types
+          </div>
           <div style={{ display: "flex", gap: "8px", flexDirection: "column" }}>
             <Select<string>
               showSearch

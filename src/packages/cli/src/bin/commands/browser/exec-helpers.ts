@@ -12,10 +12,7 @@ import {
   normalizeBrowserPosture,
   parseBrowserExecPolicy,
 } from "./parse-format";
-import type {
-  BrowserExecOperation,
-  BrowserSessionClient,
-} from "./types";
+import type { BrowserExecOperation, BrowserSessionClient } from "./types";
 
 export async function resolveBrowserPolicyAndPosture({
   posture,

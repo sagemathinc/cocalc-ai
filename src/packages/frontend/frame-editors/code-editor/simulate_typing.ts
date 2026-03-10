@@ -46,7 +46,7 @@ export async function test_line(opts0: TestLineOptions): Promise<void> {
       delay: 500,
       wait: 2500,
     },
-    opts0
+    opts0,
   );
   if (opts.length === undefined) opts.length = 48;
 
@@ -71,7 +71,7 @@ export async function test_line(opts0: TestLineOptions): Promise<void> {
     opts.cm.replaceRange(
       opts.cm.getLine(line) + chunk + "\n",
       { line, ch: 0 },
-      { line: line + 1, ch: 0 }
+      { line: line + 1, ch: 0 },
     );
     if (opts.cm.getLine(line) !== content.slice(0, (i + 1) * opts.burst)) {
       throw Error("ERROR: corrupted!");

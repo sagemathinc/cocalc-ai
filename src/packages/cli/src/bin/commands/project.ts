@@ -103,7 +103,10 @@ export type ProjectCommandDeps = {
   resolveProjectProjectApi: any;
 };
 
-export function registerProjectCommand(program: Command, deps: ProjectCommandDeps): Command {
+export function registerProjectCommand(
+  program: Command,
+  deps: ProjectCommandDeps,
+): Command {
   const project = program.command("project").description("project operations");
 
   registerProjectBasicCommands(project, deps);

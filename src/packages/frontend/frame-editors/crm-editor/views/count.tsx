@@ -36,7 +36,7 @@ export default function Count({ dbtable, lowerBound }: Props) {
         setCount(Math.max(lowerBound ?? 0, result.query.pg_class.reltuples));
       }
     },
-    [dbtable, lowerBound]
+    [dbtable, lowerBound],
   );
 
   return (

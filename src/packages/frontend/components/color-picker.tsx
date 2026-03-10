@@ -120,7 +120,7 @@ export default function ColorPicker({
       </div>
       <div>
         {radio ? (
-          <div style={{ textAlign: "center", marginTop:'15px' }}>
+          <div style={{ textAlign: "center", marginTop: "15px" }}>
             <Radio.Group
               size="small"
               optionType="button"

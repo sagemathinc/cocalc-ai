@@ -21,5 +21,5 @@ export const NotImplemented: React.FC<NotImplementedProps> = React.memo(
       <pre style={STDERR_STYLE}>{JSON.stringify(props.message.toJS())}</pre>
     );
   },
-  should_memoize
+  should_memoize,
 );

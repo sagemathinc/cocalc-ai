@@ -106,10 +106,7 @@ function emptyJupyterMarkdownCell(): Element {
   } as Element;
 }
 
-function codeBlockToJupyterCodeCell(
-  node: Element,
-  cellId?: string,
-): Element {
+function codeBlockToJupyterCodeCell(node: Element, cellId?: string): Element {
   return {
     type: "jupyter_code_cell",
     fence: true,
@@ -171,7 +168,9 @@ NORMALIZERS.push(function ensureNotebookTopLevelCellStructure({
   if (path.length !== 0) return;
   const children = (node as any)?.children;
   if (!Array.isArray(children) || children.length === 0) return;
-  const hasNotebookCell = children.some((child) => isNotebookCellElement(child));
+  const hasNotebookCell = children.some((child) =>
+    isNotebookCellElement(child),
+  );
   if (hasNotebookCell) {
     (editor as any).__enforceNotebookTopLevel = true;
   }
@@ -284,7 +283,8 @@ NORMALIZERS.push(function normalizeJupyterMarkdownCellChildren({
   node,
   path,
 }) {
-  if (!(Element.isElement(node) && node.type === "jupyter_markdown_cell")) return;
+  if (!(Element.isElement(node) && node.type === "jupyter_markdown_cell"))
+    return;
   if ((node.children ?? []).length === 0) {
     Transforms.insertNodes(editor, emptyParagraph(), { at: path.concat(0) });
     return;
@@ -310,7 +310,8 @@ NORMALIZERS.push(function normalizeJupyterMarkdownCellChildren({
       const after = children
         .slice(i + 1)
         .map((n) => toMarkdownCellChild(editor, n as Node));
-      const originalId = `${(node as any).cell_id ?? ""}`.trim() || newJupyterCellId();
+      const originalId =
+        `${(node as any).cell_id ?? ""}`.trim() || newJupyterCellId();
       const replacement: Element[] = [];
       if (before.length > 0) {
         replacement.push({
@@ -363,7 +364,7 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   if (!(Element.isElement(node) && isCodeLikeBlockType(node.type))) return;
   const children = node.children ?? [];
   const hasOnlyCodeLines = children.every(
-    (child) => Element.isElement(child) && child.type === "code_line"
+    (child) => Element.isElement(child) && child.type === "code_line",
   );
   if (hasOnlyCodeLines && (node as any).value == null) return;
 
@@ -374,7 +375,11 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
     match: (_n, p) => p.length === path.length + 1,
   });
   Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
-  Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+  Transforms.setNodes(
+    editor,
+    { value: undefined, isVoid: false },
+    { at: path },
+  );
 });
 SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
@@ -435,7 +440,11 @@ const SPACER_BLOCK_TYPES = new Set<string>([
   "ordered_list",
 ]);
 
-function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
+function needsSpacerParagraph(
+  editor: Editor,
+  node: Element,
+  _path?: Path,
+): boolean {
   if (SPACER_BLOCK_TYPES.has(node.type)) return true;
   if (!Editor.isBlock(editor, node)) return false;
   return Editor.isVoid(editor, node);
@@ -444,7 +453,7 @@ function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): bool
 function shiftSelectionForInsert(
   selection: Range | null | undefined,
   atPath: Path,
-  shift: number
+  shift: number,
 ): Range | null {
   if (!selection) return null;
   const shiftPoint = (point: Range["anchor"]): Range["anchor"] => {
@@ -541,7 +550,8 @@ NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
     return;
   }
   if (path.length === 0) return;
-  const prevNode = path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
+  const prevNode =
+    path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
   const nextNode = getNodeAt(editor, Path.next(path));
   const hasSpacerNeighbor =
     (Element.isElement(prevNode) &&
@@ -566,7 +576,11 @@ NORMALIZERS.push(function normalizeMathValue({ editor, node, path }) {
       while (node.children.length > 0) {
         Transforms.removeNodes(editor, { at: path.concat(0) });
       }
-      Transforms.insertNodes(editor, { text: stripped }, { at: path.concat(0) });
+      Transforms.insertNodes(
+        editor,
+        { text: stripped },
+        { at: path.concat(0) },
+      );
       Transforms.setNodes(editor, { value: stripped } as any, { at: path });
     });
     return;
@@ -632,7 +646,11 @@ NORMALIZERS.push(function normalizeHtmlMetaValue({ editor, node, path }) {
 
 function stripMathDelimiters(s: string): string {
   const trimmed = s.trim();
-  if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
+  if (
+    trimmed.startsWith("$$") &&
+    trimmed.endsWith("$$") &&
+    trimmed.length >= 4
+  ) {
     return trimmed.slice(2, -2).trim();
   }
   if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2) {

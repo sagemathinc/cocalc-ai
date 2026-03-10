@@ -454,7 +454,9 @@ export function ProductColumn({ product }) {
   );
 }
 
-function membershipCostFromDescription(description: ProductDescription): CostInputPeriod {
+function membershipCostFromDescription(
+  description: ProductDescription,
+): CostInputPeriod {
   if (description?.type != "membership") {
     throw Error("invalid membership description");
   }

@@ -52,7 +52,7 @@ const RULES = [
       const i = url.lastIndexOf("/doc/software-");
       return `${url.slice(0, i)}/software/${url.slice(
         i + "/doc/software-".length,
-        url.length - ".html".length
+        url.length - ".html".length,
       )}`;
     },
   },
@@ -63,7 +63,7 @@ const RULES = [
       const i = url.lastIndexOf("/doc/");
       return `${url.slice(0, i)}/features/${url.slice(
         i + "/doc/".length,
-        url.length - ".html".length
+        url.length - ".html".length,
       )}`;
     },
   },

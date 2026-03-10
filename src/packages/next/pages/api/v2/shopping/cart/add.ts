@@ -8,7 +8,6 @@ or
 - id: to move something back into the cart that was removed
 */
 
-
 import addToCart, {
   buyItAgain,
   putBackInCart,

@@ -29,7 +29,10 @@ export interface TasksSession {
     taskId: string,
     changes: Partial<TaskMutableFields>,
   ): Promise<TaskMutationResult>;
-  appendToDescription(taskId: string, text: string): Promise<TaskMutationResult>;
+  appendToDescription(
+    taskId: string,
+    text: string,
+  ): Promise<TaskMutationResult>;
 }
 
 export interface TasksSessionProvider {

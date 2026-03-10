@@ -35,7 +35,7 @@ function cleanup_error(err: string, tmpfn: string): string {
 export async function gofmt(
   input: string,
   options: Options,
-  logger: any
+  logger: any,
 ): Promise<string> {
   // create input temp file
   const input_path: string = await callback(tmp.file);

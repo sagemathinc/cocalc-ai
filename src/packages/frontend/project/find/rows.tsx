@@ -85,13 +85,13 @@ export function FindSnapshotRow({
     <FindResultCard
       title={result.path || "(root)"}
       subtitle={
-        result.snapshot ? (
-          snapshotSubtitle ?? (
-            <>
-              Snapshot <TimeAgo date={snapshotDate} />
-            </>
-          )
-        ) : undefined
+        result.snapshot
+          ? (snapshotSubtitle ?? (
+              <>
+                Snapshot <TimeAgo date={snapshotDate} />
+              </>
+            ))
+          : undefined
       }
       meta={meta}
       snippet={result.description}

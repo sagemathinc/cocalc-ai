@@ -30,9 +30,9 @@ winston.debug(`MAX_FILE_SIZE = ${MAX_FILE_SIZE} bytes`);
 export function check_file_size(size): string | undefined {
   if (size != null && size > MAX_FILE_SIZE) {
     const e = `Attempt to open large file of size ${Math.round(
-      size / 1000000
+      size / 1000000,
     )}MB; the maximum allowed size is ${Math.round(
-      MAX_FILE_SIZE / 1000000
+      MAX_FILE_SIZE / 1000000,
     )}MB. Use vim, emacs, or pico from a terminal instead.`;
     winston.debug(e);
     return e;

@@ -178,7 +178,8 @@ export function splitMarkdownToBlocksIncremental(
   options?: SplitOptions,
 ): string[] {
   if (!prevMarkdown) return splitMarkdownToBlocks(nextMarkdown, options);
-  if (prevBlocks.length === 0) return splitMarkdownToBlocks(nextMarkdown, options);
+  if (prevBlocks.length === 0)
+    return splitMarkdownToBlocks(nextMarkdown, options);
   if (prevMarkdown === nextMarkdown) return prevBlocks;
   const slices = computeIncrementalSlices(
     prevMarkdown,

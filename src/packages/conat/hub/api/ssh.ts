@@ -71,7 +71,10 @@ export interface Ssh {
   }) => Promise<void>;
   deleteSessionUI: (opts: { target: string }) => Promise<void>;
   stopSessionUI: (opts: { target: string }) => Promise<void>;
-  upgradeSessionUI: (opts: { target: string; localUrl?: string }) => Promise<void>;
+  upgradeSessionUI: (opts: {
+    target: string;
+    localUrl?: string;
+  }) => Promise<void>;
   upgradeLocalUI: () => Promise<void>;
   statusSessionUI: (opts: { target: string }) => Promise<string>;
   getUpgradeInfoUI: (opts?: {

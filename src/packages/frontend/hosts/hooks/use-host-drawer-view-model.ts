@@ -37,7 +37,10 @@ type UseHostDrawerViewModelArgs = {
     hubSourceBaseUrl?: string;
   };
   selfHost?: {
-    connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
+    connectorMap: Map<
+      string,
+      { id: string; name?: string; last_seen?: string }
+    >;
     isConnectorOnline: (connectorId?: string) => boolean;
     onSetup: (host: Host) => void;
     onRemove: (host: Host) => void;

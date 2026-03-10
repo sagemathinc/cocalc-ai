@@ -36,10 +36,12 @@ const HOST_ONLINE_WINDOW_MINUTES = Math.floor(HOST_ONLINE_WINDOW_MS / 60000);
 const STATUS_TOOLTIP: Record<string, string> = {
   running: "Provider last reported the VM is running.",
   starting: "Provider reports the VM is starting; host is not reachable yet.",
-  provisioning: "Provider reports provisioning in progress; host may not be reachable yet.",
+  provisioning:
+    "Provider reports provisioning in progress; host may not be reachable yet.",
   restarting: "Restart requested; waiting for provider to report running.",
   stopping: "Stop requested; waiting for provider to report stopped.",
-  deprovisioning: "Deprovision requested; waiting for provider to delete disks.",
+  deprovisioning:
+    "Deprovision requested; waiting for provider to delete disks.",
   off: "VM is stopped or deleted; data disk retained.",
   stopped: "VM is stopped; data disk retained.",
   deprovisioned: "VM and data disk deleted; data exists only in backups.",
@@ -126,9 +128,7 @@ const PROVIDER_DISK_TYPES: Partial<Record<HostProvider, string[]>> = {
   nebius: ["ssd_io_m3", "ssd"],
 };
 
-export const getDiskTypeOptions = (
-  provider?: HostProvider,
-) => {
+export const getDiskTypeOptions = (provider?: HostProvider) => {
   const allowed = PROVIDER_DISK_TYPES[provider ?? "none"] ?? DEFAULT_DISK_TYPES;
   const optionMap = new Map(DISK_TYPES.map((entry) => [entry.value, entry]));
   const filtered = allowed

@@ -25,6 +25,7 @@ import type {
   AppSpec,
   AppMetricsSummary,
   AppPublicReadinessAudit,
+  AppTemplateCatalogEntry,
   DetectedAppPort,
   InstalledAppTemplate,
   ManagedAppStatus,
@@ -39,11 +40,15 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  appServerPresetsFromCatalogEntries,
+  builtinAppServerPresets,
+  type AppServerPreset,
+  type AppServiceOpenMode,
+} from "./app-template-catalog";
 import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
-type PresetKind = "service" | "static";
-type AppServiceOpenMode = "proxy" | "port";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 type AppRowAction = "expose" | "unexpose" | "audit";
 
@@ -51,29 +56,6 @@ interface PublicAppPolicy {
   enabled: boolean;
   dns_domain?: string;
   subdomain_suffix?: string;
-}
-
-interface AppServerPreset {
-  key: string;
-  label: string;
-  kind: PresetKind;
-  id: string;
-  title: string;
-  command?: string;
-  serviceOpenMode?: AppServiceOpenMode;
-  preferredPort?: string;
-  healthPath?: string;
-  staticRoot?: string;
-  staticIndex?: string;
-  staticCacheControl?: string;
-  staticRefreshCommand?: string;
-  staticRefreshStaleAfter?: string;
-  staticRefreshTimeout?: string;
-  staticRefreshOnHit?: boolean;
-  note?: string;
-  installCommand?: string;
-  installHint?: string;
-  installAgentPrompt?: string;
 }
 
 interface StartupFailureDetails {
@@ -195,12 +177,6 @@ function downloadJsonFile(filename: string, value: unknown): void {
 function defaultBasePath(appId: string): string {
   const id = `${appId ?? ""}`.trim();
   return id ? `/apps/${id}` : "/apps/my-app";
-}
-
-function joinPath(head: string, tail: string): string {
-  const h = `${head ?? ""}`.replace(/\/+$/, "");
-  const t = `${tail ?? ""}`.replace(/^\/+/, "");
-  return `${h}/${t}`;
 }
 
 function tailLines(text: string, maxLines = 30, maxChars = 4000): string {
@@ -395,7 +371,8 @@ function MetricsSparkline({
   const max = Math.max(...values, 1);
   const points = values
     .map((value, idx) => {
-      const x = values.length === 1 ? width / 2 : (idx / (values.length - 1)) * width;
+      const x =
+        values.length === 1 ? width / 2 : (idx / (values.length - 1)) * width;
       const y = height - (value / max) * (height - 4) - 2;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
@@ -461,126 +438,13 @@ function isPositiveIntegerText(value: string): boolean {
   return Number.isInteger(n) && n > 0;
 }
 
-function appServerPresets(homeDirectory: string): AppServerPreset[] {
-  return [
-    {
-      key: "jupyterlab",
-      label: "JupyterLab",
-      kind: "service",
-      id: "jupyterlab",
-      title: "JupyterLab",
-      preferredPort: "6002",
-      serviceOpenMode: "port",
-      healthPath: "/lab",
-      installCommand: "apt-get update && apt-get install -y jupyterlab jupyter",
-      installHint:
-        "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
-      installAgentPrompt:
-        "Install JupyterLab in the current project so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
-      command:
-        "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
-    },
-    {
-      key: "code-server",
-      label: "code-server",
-      kind: "service",
-      id: "code-server",
-      title: "code-server",
-      preferredPort: "6004",
-      serviceOpenMode: "proxy",
-      installCommand: "curl -fsSL https://code-server.dev/install.sh | sh",
-      installHint:
-        "code-server is not installed in this project image yet. The upstream installer works well on most Linux systems.",
-      installAgentPrompt:
-        "Install code-server in the current project so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
-      command:
-        "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
-    },
-    {
-      key: "pluto",
-      label: "Pluto",
-      kind: "service",
-      id: "pluto",
-      title: "Pluto",
-      preferredPort: "6005",
-      serviceOpenMode: "proxy",
-      installCommand: "julia -e 'using Pkg; Pkg.add(\"Pluto\")'",
-      installHint:
-        "Pluto needs Julia plus the Pluto package in this project environment.",
-      installAgentPrompt:
-        "Install Pluto for the current project so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
-      command:
-        "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
-    },
-    {
-      key: "rstudio",
-      label: "RStudio / rserver",
-      kind: "service",
-      id: "rserver",
-      title: "RStudio Server",
-      preferredPort: "6006",
-      serviceOpenMode: "proxy",
-      installHint:
-        "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
-      installAgentPrompt:
-        "Set up RStudio Server (rserver) in the current Linux project or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
-      command:
-        "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
-    },
-    {
-      key: "python-hello",
-      label: "Python Hello World",
-      kind: "service",
-      id: "python-hello",
-      title: "Python Hello World",
-      preferredPort: "8080",
-      serviceOpenMode: "proxy",
-      healthPath: "/",
-      command:
-        "python3 -c \"import os, pathlib, http.server; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); root=pathlib.Path('/tmp/cocalc-python-hello'); root.mkdir(parents=True, exist_ok=True); (root/'index.html').write_text('<h1>Hello from Python</h1>\\\\n', encoding='utf-8'); os.chdir(root); server=http.server.ThreadingHTTPServer((host,port), http.server.SimpleHTTPRequestHandler); print(f'listening on http://{host}:{port}', flush=True); server.serve_forever()\"",
-    },
-    {
-      key: "node-hello",
-      label: "Node.js Hello World",
-      kind: "service",
-      id: "node-hello",
-      title: "Node.js Hello World",
-      preferredPort: "8080",
-      serviceOpenMode: "proxy",
-      command:
-        "node -e \"const http=require('http');const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body='hello from node\\\\n';res.writeHead(200,{'content-type':'text/plain; charset=utf-8','content-length':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log('listening on http://'+host+':'+port));\"",
-    },
-    {
-      key: "static-hello",
-      label: "Static Hello World",
-      kind: "static",
-      id: "static-hello",
-      title: "Static Hello World",
-      staticRoot: joinPath(homeDirectory, "static-hello"),
-      staticIndex: "index.html",
-      staticCacheControl: "public,max-age=3600",
-      staticRefreshCommand:
-        "mkdir -p \"$APP_STATIC_ROOT\" && [ -f \"$APP_STATIC_ROOT/index.html\" ] || printf '<h1>Hello from static app</h1>\\n' > \"$APP_STATIC_ROOT/index.html\"",
-      staticRefreshStaleAfter: "3600",
-      staticRefreshTimeout: "120",
-      staticRefreshOnHit: true,
-      note:
-        "Optional refresh job can bootstrap or periodically update generated static content on first/stale hits.",
-    },
-  ];
-}
-
-export function AppServerPanel({
-  project_id,
-}: {
-  project_id: string;
-}) {
+export function AppServerPanel({ project_id }: { project_id: string }) {
   const homeDirectory = useMemo(
     () => getProjectHomeDirectory(project_id),
     [project_id],
   );
-  const presets = useMemo(
-    () => appServerPresets(homeDirectory),
+  const fallbackPresets = useMemo(
+    () => builtinAppServerPresets(homeDirectory),
     [homeDirectory],
   );
   const api = useMemo(
@@ -636,6 +500,9 @@ export function AppServerPanel({
   >([]);
   const [detectingInstalledTemplates, setDetectingInstalledTemplates] =
     useState<boolean>(false);
+  const [templateEntries, setTemplateEntries] = useState<
+    AppTemplateCatalogEntry[]
+  >([]);
   const [logsOpen, setLogsOpen] = useState<boolean>(false);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsData, setLogsData] = useState<{
@@ -645,9 +512,8 @@ export function AppServerPanel({
     stderr: string;
   } | null>(null);
   const [securityOpen, setSecurityOpen] = useState<boolean>(false);
-  const [localTunnelTarget, setLocalTunnelTarget] = useState<ManagedAppStatus | null>(
-    null,
-  );
+  const [localTunnelTarget, setLocalTunnelTarget] =
+    useState<ManagedAppStatus | null>(null);
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
@@ -677,6 +543,13 @@ export function AppServerPanel({
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const presets = useMemo(
+    () =>
+      templateEntries.length > 0
+        ? appServerPresetsFromCatalogEntries(templateEntries, homeDirectory)
+        : fallbackPresets,
+    [fallbackPresets, homeDirectory, templateEntries],
+  );
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -737,7 +610,9 @@ export function AppServerPanel({
     return rows.filter((row) => {
       const spec = specById[row.id];
       const rowHasError =
-        !!row.error || !!startupFailures[row.id] || (row.warnings?.length ?? 0) > 0;
+        !!row.error ||
+        !!startupFailures[row.id] ||
+        (row.warnings?.length ?? 0) > 0;
       if (rowFilter === "running" && row.state !== "running") return false;
       if (rowFilter === "stopped" && row.state !== "stopped") return false;
       if (rowFilter === "error" && !rowHasError) return false;
@@ -784,7 +659,14 @@ export function AppServerPanel({
   }, []);
 
   const quickPresetKeys = useMemo(
-    () => ["jupyterlab", "code-server", "pluto", "rstudio", "python-hello", "static-hello"],
+    () => [
+      "jupyterlab",
+      "code-server",
+      "pluto",
+      "rstudio",
+      "python-hello",
+      "static-hello",
+    ],
     [],
   );
   const quickPresets = useMemo(
@@ -796,9 +678,10 @@ export function AppServerPanel({
     let cancelled = false;
     async function loadPublicAppPolicy() {
       try {
-        const policy = await webapp_client.conat_client.hub.system.getProjectAppPublicPolicy(
-          { project_id },
-        );
+        const policy =
+          await webapp_client.conat_client.hub.system.getProjectAppPublicPolicy(
+            { project_id },
+          );
         if (!cancelled) {
           setPublicAppPolicy({
             enabled: !!policy?.enabled,
@@ -817,11 +700,13 @@ export function AppServerPanel({
   }, [project_id]);
 
   const startableRows = useMemo(
-    () => rows.filter((row) => row.kind === "service" && row.state !== "running"),
+    () =>
+      rows.filter((row) => row.kind === "service" && row.state !== "running"),
     [rows],
   );
   const stoppableRows = useMemo(
-    () => rows.filter((row) => row.kind === "service" && row.state === "running"),
+    () =>
+      rows.filter((row) => row.kind === "service" && row.state === "running"),
     [rows],
   );
 
@@ -830,10 +715,11 @@ export function AppServerPanel({
       setLoading(true);
       setError(undefined);
       setStartupFailures({});
-      const [next, specRecords, metrics] = await Promise.all([
+      const [next, specRecords, metrics, templates] = await Promise.all([
         api.apps.listAppStatuses(),
         api.apps.listAppSpecs(),
         api.apps.listAppMetrics({ minutes: 60 }),
+        api.apps.listAppTemplates(),
       ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
       const map: Record<string, AppSpec | undefined> = {};
@@ -846,6 +732,7 @@ export function AppServerPanel({
       setMetricsById(
         Object.fromEntries(metrics.map((item) => [item.app_id, item] as const)),
       );
+      setTemplateEntries(templates);
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -901,9 +788,7 @@ export function AppServerPanel({
     } else {
       setStaticRoot(preset.staticRoot ?? "");
       setStaticIndex(preset.staticIndex ?? "index.html");
-      setStaticCacheControl(
-        preset.staticCacheControl ?? "public,max-age=3600",
-      );
+      setStaticCacheControl(preset.staticCacheControl ?? "public,max-age=3600");
       setStaticRefreshCommand(preset.staticRefreshCommand ?? "");
       setStaticRefreshStaleAfter(preset.staticRefreshStaleAfter ?? "3600");
       setStaticRefreshTimeout(preset.staticRefreshTimeout ?? "120");
@@ -1066,7 +951,10 @@ export function AppServerPanel({
         throw new Error("Command is required for service apps.");
       }
       const parsedPort = `${port ?? ""}`.trim() ? Number(port) : undefined;
-      if (parsedPort != null && (!Number.isInteger(parsedPort) || parsedPort <= 0)) {
+      if (
+        parsedPort != null &&
+        (!Number.isInteger(parsedPort) || parsedPort <= 0)
+      ) {
         throw new Error("Port must be a positive integer.");
       }
       return {
@@ -1116,7 +1004,9 @@ export function AppServerPanel({
         refreshStaleAfter != null &&
         (!Number.isInteger(refreshStaleAfter) || refreshStaleAfter <= 0)
       ) {
-        throw new Error("Static refresh stale-after must be a positive integer.");
+        throw new Error(
+          "Static refresh stale-after must be a positive integer.",
+        );
       }
       if (
         refreshTimeout != null &&
@@ -1706,7 +1596,10 @@ export function AppServerPanel({
         }}
       />
       <ShowError error={error} setError={() => setError(undefined)} />
-      <Card size="small" style={{ background: "#fafafa", borderColor: "#efefef" }}>
+      <Card
+        size="small"
+        style={{ background: "#fafafa", borderColor: "#efefef" }}
+      >
         <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
           <Space wrap>
             <Tag color="blue">apps {summaryCounts.total}</Tag>
@@ -1768,6 +1661,7 @@ export function AppServerPanel({
               {quickPresets.map((preset) => (
                 <Button
                   key={preset.key}
+                  title={preset.description ?? preset.label}
                   onClick={() => {
                     applyPreset(preset.key);
                     setCreatorOpen(true);
@@ -1789,9 +1683,37 @@ export function AppServerPanel({
               onChange={(value) => applyPreset(value)}
               options={presets.map((preset) => ({
                 value: preset.key,
-                label: preset.label,
+                label: `${preset.label}${preset.category ? ` (${preset.category})` : ""}`,
               }))}
             />
+            {activePreset ? (
+              <Card size="small" style={{ background: "#fafafa" }}>
+                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Typography.Text strong>
+                      {activePreset.label}
+                    </Typography.Text>
+                    {activePreset.category ? (
+                      <Tag>{activePreset.category}</Tag>
+                    ) : null}
+                  </Space>
+                  {activePreset.description ? (
+                    <Typography.Text type="secondary">
+                      {activePreset.description}
+                    </Typography.Text>
+                  ) : null}
+                  {activePreset.homepage ? (
+                    <a
+                      href={activePreset.homepage}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Learn more
+                    </a>
+                  ) : null}
+                </Space>
+              </Card>
+            ) : null}
             {activePreset?.note ? (
               <Alert type="info" showIcon message={activePreset.note} />
             ) : null}
@@ -1801,7 +1723,11 @@ export function AppServerPanel({
                 showIcon
                 message={`${unavailableActivePreset.label} is not installed yet`}
                 description={
-                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Space
+                    direction="vertical"
+                    size={8}
+                    style={{ width: "100%" }}
+                  >
                     <div>
                       {unavailableActivePreset.installHint ??
                         "Install this runtime in the project before trying to start the app."}
@@ -1847,13 +1773,20 @@ export function AppServerPanel({
               />
             ) : null}
             <Collapse
-              defaultActiveKey={["basics", kind === "service" ? "runtime" : "static"]}
+              defaultActiveKey={[
+                "basics",
+                kind === "service" ? "runtime" : "static",
+              ]}
               items={[
                 {
                   key: "basics",
                   label: "Basics",
                   children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                    <Space
+                      direction="vertical"
+                      style={{ width: "100%" }}
+                      size={8}
+                    >
                       <Space.Compact style={{ width: "100%" }}>
                         <Select<AppKind>
                           value={kind}
@@ -1895,7 +1828,11 @@ export function AppServerPanel({
                       key: "runtime",
                       label: "Runtime and proxy",
                       children: (
-                        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                        <Space
+                          direction="vertical"
+                          style={{ width: "100%" }}
+                          size={8}
+                        >
                           <Input
                             value={command}
                             placeholder="Command (runs as: bash -lc ...)"
@@ -1922,7 +1859,13 @@ export function AppServerPanel({
                               onChange={(value) => setServiceOpenMode(value)}
                             />
                           </Space.Compact>
-                          <Paragraph style={{ color: "#666", margin: 0, fontSize: "12px" }}>
+                          <Paragraph
+                            style={{
+                              color: "#666",
+                              margin: 0,
+                              fontSize: "12px",
+                            }}
+                          >
                             Open mode: <code>/proxy</code> strips your app base
                             path before forwarding; <code>/port</code> keeps the
                             raw port-style URL path. Use <code>/port</code> for
@@ -1936,7 +1879,11 @@ export function AppServerPanel({
                       key: "static",
                       label: "Static content and refresh",
                       children: (
-                        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                        <Space
+                          direction="vertical"
+                          style={{ width: "100%" }}
+                          size={8}
+                        >
                           <Input
                             value={staticRoot}
                             placeholder="Static root path (e.g. /home/user/project/site)"
@@ -1951,29 +1898,39 @@ export function AppServerPanel({
                             <Input
                               value={staticCacheControl}
                               placeholder="Cache-Control (optional)"
-                              onChange={(e) => setStaticCacheControl(e.target.value)}
+                              onChange={(e) =>
+                                setStaticCacheControl(e.target.value)
+                              }
                             />
                           </Space.Compact>
                           <Input
                             value={staticRefreshCommand}
                             placeholder="Refresh command (optional, runs on first/stale hit)"
-                            onChange={(e) => setStaticRefreshCommand(e.target.value)}
+                            onChange={(e) =>
+                              setStaticRefreshCommand(e.target.value)
+                            }
                           />
                           <Space.Compact style={{ width: "100%" }}>
                             <Input
                               value={staticRefreshStaleAfter}
                               placeholder="Refresh stale-after seconds (default 3600)"
-                              onChange={(e) => setStaticRefreshStaleAfter(e.target.value)}
+                              onChange={(e) =>
+                                setStaticRefreshStaleAfter(e.target.value)
+                              }
                             />
                             <Input
                               value={staticRefreshTimeout}
                               placeholder="Refresh timeout seconds (default 120)"
-                              onChange={(e) => setStaticRefreshTimeout(e.target.value)}
+                              onChange={(e) =>
+                                setStaticRefreshTimeout(e.target.value)
+                              }
                             />
                           </Space.Compact>
                           <Checkbox
                             checked={staticRefreshOnHit}
-                            onChange={(e) => setStaticRefreshOnHit(e.target.checked)}
+                            onChange={(e) =>
+                              setStaticRefreshOnHit(e.target.checked)
+                            }
                           >
                             Trigger refresh on hit when stale
                           </Checkbox>
@@ -1984,7 +1941,11 @@ export function AppServerPanel({
                   key: "launch",
                   label: "Launch and public defaults",
                   children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                    <Space
+                      direction="vertical"
+                      style={{ width: "100%" }}
+                      size={8}
+                    >
                       <Space wrap>
                         <Checkbox
                           checked={startNow}
@@ -1999,7 +1960,13 @@ export function AppServerPanel({
                           Open when ready
                         </Checkbox>
                       </Space>
-                      <div style={{ fontWeight: 600, fontSize: "12px", color: "#666" }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: "12px",
+                          color: "#666",
+                        }}
+                      >
                         Public expose defaults
                       </div>
                       <Space.Compact style={{ width: "100%" }}>
@@ -2021,14 +1988,18 @@ export function AppServerPanel({
                       <Space wrap>
                         <Checkbox
                           checked={exposeRandomSubdomain}
-                          onChange={(e) => setExposeRandomSubdomain(e.target.checked)}
+                          onChange={(e) =>
+                            setExposeRandomSubdomain(e.target.checked)
+                          }
                         >
                           Random subdomain
                         </Checkbox>
                         {!exposeRandomSubdomain ? (
                           <Input
                             value={exposeSubdomainLabel}
-                            onChange={(e) => setExposeSubdomainLabel(e.target.value)}
+                            onChange={(e) =>
+                              setExposeSubdomainLabel(e.target.value)
+                            }
                             placeholder="subdomain label (optional)"
                             style={{ width: "220px" }}
                           />
@@ -2053,7 +2024,10 @@ export function AppServerPanel({
         )}
       </Card>
       {installedTemplates.length > 0 ? (
-        <Card size="small" title={`Installed templates (${installedTemplates.length})`}>
+        <Card
+          size="small"
+          title={`Installed templates (${installedTemplates.length})`}
+        >
           <Space wrap style={{ width: "100%" }}>
             {installedTemplates.map((item) => (
               <Tag
@@ -2077,7 +2051,10 @@ export function AppServerPanel({
         </Card>
       ) : null}
       {detected.length > 0 ? (
-        <Card size="small" title={`Detected running HTTP apps (${detected.length})`}>
+        <Card
+          size="small"
+          title={`Detected running HTTP apps (${detected.length})`}
+        >
           <Space direction="vertical" style={{ width: "100%" }}>
             {detected.map((item) => (
               <div
@@ -2089,10 +2066,18 @@ export function AppServerPanel({
                   fontSize: "12px",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "8px",
+                  }}
+                >
                   <div>
                     <div style={{ fontWeight: 600 }}>:{item.port}</div>
-                    <div style={{ opacity: 0.8 }}>hosts: {item.hosts.join(", ")}</div>
+                    <div style={{ opacity: 0.8 }}>
+                      hosts: {item.hosts.join(", ")}
+                    </div>
                     <div style={{ opacity: 0.8 }}>
                       {item.managed
                         ? `managed by ${item.managed_app_ids.join(", ")}`
@@ -2116,7 +2101,10 @@ export function AppServerPanel({
           </Space>
         </Card>
       ) : null}
-      <Card size="small" title={`Managed Applications (${summaryCounts.total})`}>
+      <Card
+        size="small"
+        title={`Managed Applications (${summaryCounts.total})`}
+      >
         {loading ? <Spin /> : null}
         {!loading && rows.length === 0 ? (
           <Empty
@@ -2127,7 +2115,11 @@ export function AppServerPanel({
         {!loading && rows.length > 0 ? (
           <Space
             wrap
-            style={{ width: "100%", justifyContent: "space-between", marginBottom: "10px" }}
+            style={{
+              width: "100%",
+              justifyContent: "space-between",
+              marginBottom: "10px",
+            }}
           >
             <Space wrap>
               <Input
@@ -2152,13 +2144,17 @@ export function AppServerPanel({
             </Space>
             <Space wrap>
               <Button
-                onClick={() => void onStartMany(startableRows.map((row) => row.id))}
+                onClick={() =>
+                  void onStartMany(startableRows.map((row) => row.id))
+                }
                 disabled={submitting || startableRows.length === 0}
               >
                 Start all stopped ({startableRows.length})
               </Button>
               <Button
-                onClick={() => void onStopMany(stoppableRows.map((row) => row.id))}
+                onClick={() =>
+                  void onStopMany(stoppableRows.map((row) => row.id))
+                }
                 disabled={submitting || stoppableRows.length === 0}
               >
                 Stop all running ({stoppableRows.length})
@@ -2167,368 +2163,419 @@ export function AppServerPanel({
           </Space>
         ) : null}
         <Space direction="vertical" style={{ width: "100%" }}>
-        {filteredRows.map((row) => {
-          const isRunning = row.state === "running";
-          const isPublic = isPublicExposure(row);
-          const spec = specById[row.id];
-          const metrics = metricsById[row.id];
-          const specSummary = summarizeSpec(spec);
-          const startupFailure = startupFailures[row.id];
-          const isExpanded = !!expandedRows[row.id] || !!startupFailure;
-          const rowMenuItems = [
-            ...(row.kind === "service"
-              ? [
-                  {
-                    key: "tunnel",
-                    label: "Tunnel locally",
-                  },
-                ]
-              : []),
-            {
-              key: isPublic ? "unexpose" : "expose",
-              label: isPublic ? "Unexpose" : "Expose",
-            },
-            {
-              key: "audit",
-              label: "Audit with Codex",
-            },
-            {
-              key: "logs",
-              label: "Logs",
-            },
-            {
-              key: "export",
-              label: "Export",
-            },
-            {
-              key: "edit",
-              label: "Edit spec",
-            },
-            {
-              type: "divider" as const,
-            },
-            {
-              key: "delete",
-              label: "Delete",
-              danger: true,
-            },
-          ];
-          return (
-            <div
-              key={row.id}
-              style={{
-                border: "1px solid #e5e5e5",
-                borderRadius: "8px",
-                padding: "8px 10px",
-              }}
-            >
+          {filteredRows.map((row) => {
+            const isRunning = row.state === "running";
+            const isPublic = isPublicExposure(row);
+            const spec = specById[row.id];
+            const metrics = metricsById[row.id];
+            const specSummary = summarizeSpec(spec);
+            const startupFailure = startupFailures[row.id];
+            const isExpanded = !!expandedRows[row.id] || !!startupFailure;
+            const rowMenuItems = [
+              ...(row.kind === "service"
+                ? [
+                    {
+                      key: "tunnel",
+                      label: "Tunnel locally",
+                    },
+                  ]
+                : []),
+              {
+                key: isPublic ? "unexpose" : "expose",
+                label: isPublic ? "Unexpose" : "Expose",
+              },
+              {
+                key: "audit",
+                label: "Audit with Codex",
+              },
+              {
+                key: "logs",
+                label: "Logs",
+              },
+              {
+                key: "export",
+                label: "Export",
+              },
+              {
+                key: "edit",
+                label: "Edit spec",
+              },
+              {
+                type: "divider" as const,
+              },
+              {
+                key: "delete",
+                label: "Delete",
+                danger: true,
+              },
+            ];
+            return (
               <div
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                key={row.id}
+                style={{
+                  border: "1px solid #e5e5e5",
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                }}
               >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{ fontWeight: 600 }}>{row.title || row.id}</span>
-                    <Tag>{row.kind || "service"}</Tag>
-                    <Tag color={isRunning ? "green" : "default"}>
-                      {isRunning ? "running" : "stopped"}
-                    </Tag>
-                    {isPublic ? <Tag color="gold">public</Tag> : null}
-                  </div>
-                  <div style={{ opacity: 0.7, fontFamily: "monospace", fontSize: "12px" }}>
-                    {row.id}
-                  </div>
-                </div>
-                <Space wrap>
-                  <Button size="small" onClick={() => toggleRowExpanded(row.id)}>
-                    {isExpanded ? "Hide details" : "Details"}
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void openStatus(row)}
-                    disabled={
-                      !row.url && !buildPublicUrlFromExposure(row, publicAppPolicy)
-                    }
-                  >
-                    Open
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onStart(row.id)}
-                    disabled={submitting || isRunning}
-                  >
-                    Start
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => void onStop(row.id)}
-                    disabled={submitting || !isRunning}
-                  >
-                    Stop
-                  </Button>
-                  <Dropdown
-                    trigger={["click"]}
-                    menu={{
-                      items: rowMenuItems,
-                      onClick: ({ key }) =>
-                        onRowMenuAction(
-                          row,
-                          key as
-                            | "tunnel"
-                            | "expose"
-                            | "unexpose"
-                            | "audit"
-                            | "logs"
-                            | "export"
-                            | "edit"
-                            | "delete",
-                        ),
-                    }}
-                  >
-                    <Button
-                      size="small"
-                      loading={
-                        submitting &&
-                        rowAction?.appId === row.id &&
-                        (rowAction.action === "expose" ||
-                          rowAction.action === "unexpose" ||
-                          rowAction.action === "audit")
-                      }
-                      disabled={submitting || transferBusy}
-                    >
-                      Actions
-                    </Button>
-                  </Dropdown>
-                </Space>
-              </div>
-              {isExpanded && specSummary.length > 0 ? (
                 <div
                   style={{
-                    marginTop: "8px",
-                    fontSize: "12px",
-                    fontFamily: "monospace",
-                    opacity: 0.82,
-                    display: "grid",
-                    gap: "4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
                   }}
                 >
-                  {specSummary.map((item) => (
-                    <div key={`${row.id}-${item}`}>{item}</div>
-                  ))}
-                </div>
-              ) : null}
-              {isExpanded ? (
-                <div
-                  style={{
-                    marginTop: "8px",
-                    padding: "8px 10px",
-                    border: "1px solid #f0f0f0",
-                    borderRadius: "8px",
-                    background: "#fafafa",
-                    display: "grid",
-                    gap: "6px",
-                  }}
-                  >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "10px",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Space size={8} align="center">
-                      <div style={{ fontWeight: 600, fontSize: "12px" }}>
-                        Recent usage
-                      </div>
-                      <Button
-                        size="small"
-                        type="text"
-                        loading={!!metricsRefreshing[row.id]}
-                        onClick={() => void refreshMetricsForApp(row.id)}
-                      >
-                        Refresh
-                      </Button>
-                    </Space>
-                    <div style={{ display: "grid", justifyItems: "end", gap: "2px" }}>
-                      <MetricsSparkline
-                        values={metrics?.history.map((item) => item.requests) ?? []}
-                      />
-                      <div style={{ fontSize: "11px", opacity: 0.65 }}>
-                        request trend
-                      </div>
-                    </div>
-                  </div>
-                  {metrics && metrics.totals.requests > 0 ? (
+                  <div style={{ minWidth: 0 }}>
                     <div
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))",
+                        display: "flex",
+                        alignItems: "center",
                         gap: "8px",
                       }}
                     >
-                      <MetricStat
-                        label="Last hit"
-                        value={
-                          metrics.last_hit_ms ? (
-                            <TimeAgo date={new Date(metrics.last_hit_ms)} />
-                          ) : (
-                            "never"
-                          )
+                      <span style={{ fontWeight: 600 }}>
+                        {row.title || row.id}
+                      </span>
+                      <Tag>{row.kind || "service"}</Tag>
+                      <Tag color={isRunning ? "green" : "default"}>
+                        {isRunning ? "running" : "stopped"}
+                      </Tag>
+                      {isPublic ? <Tag color="gold">public</Tag> : null}
+                    </div>
+                    <div
+                      style={{
+                        opacity: 0.7,
+                        fontFamily: "monospace",
+                        fontSize: "12px",
+                      }}
+                    >
+                      {row.id}
+                    </div>
+                  </div>
+                  <Space wrap>
+                    <Button
+                      size="small"
+                      onClick={() => toggleRowExpanded(row.id)}
+                    >
+                      {isExpanded ? "Hide details" : "Details"}
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={() => void openStatus(row)}
+                      disabled={
+                        !row.url &&
+                        !buildPublicUrlFromExposure(row, publicAppPolicy)
+                      }
+                    >
+                      Open
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={() => void onStart(row.id)}
+                      disabled={submitting || isRunning}
+                    >
+                      Start
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={() => void onStop(row.id)}
+                      disabled={submitting || !isRunning}
+                    >
+                      Stop
+                    </Button>
+                    <Dropdown
+                      trigger={["click"]}
+                      menu={{
+                        items: rowMenuItems,
+                        onClick: ({ key }) =>
+                          onRowMenuAction(
+                            row,
+                            key as
+                              | "tunnel"
+                              | "expose"
+                              | "unexpose"
+                              | "audit"
+                              | "logs"
+                              | "export"
+                              | "edit"
+                              | "delete",
+                          ),
+                      }}
+                    >
+                      <Button
+                        size="small"
+                        loading={
+                          submitting &&
+                          rowAction?.appId === row.id &&
+                          (rowAction.action === "expose" ||
+                            rowAction.action === "unexpose" ||
+                            rowAction.action === "audit")
                         }
-                      />
-                      <MetricStat
-                        label="Requests"
-                        value={formatCount(metrics.totals.requests)}
-                      />
-                      <MetricStat
-                        label="Bytes sent"
-                        value={formatBytes(metrics.totals.bytes_sent)}
-                      />
-                      <MetricStat
-                        label="Bytes received"
-                        value={formatBytes(metrics.totals.bytes_received)}
-                      />
-                      <MetricStat
-                        label="Active websockets"
-                        value={formatCount(metrics.active_websockets)}
-                      />
-                      <MetricStat
-                        label="Wake-ups"
-                        value={formatCount(metrics.totals.wake_count)}
-                      />
-                      <MetricStat
-                        label="Public / private"
-                        value={`${formatCount(metrics.totals.public_requests)} / ${formatCount(metrics.totals.private_requests)}`}
-                        subtle
-                      />
-                      <MetricStat
-                        label="Latency p50 / p95"
-                        value={`${formatLatency(metrics.totals.p50_ms)} / ${formatLatency(metrics.totals.p95_ms)}`}
-                        subtle
-                      />
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: "12px", opacity: 0.78 }}>
-                      No app traffic recorded yet.
-                    </div>
-                  )}
-                </div>
-              ) : null}
-              {isExpanded && isPublic ? (
-                <div style={{ marginTop: "8px", fontSize: "12px", opacity: 0.85 }}>
-                  {buildPublicUrlFromExposure(row, publicAppPolicy) ? (
-                    <>
-                      Public URL:{" "}
-                      <a
-                        href={buildPublicUrlFromExposure(row, publicAppPolicy)}
-                        target="_blank"
-                        rel="noreferrer"
+                        disabled={submitting || transferBusy}
                       >
-                        {buildPublicUrlFromExposure(row, publicAppPolicy)}
-                      </a>
-                    </>
-                  ) : buildPublicHostnameFromExposure(row, publicAppPolicy) ? (
-                    <>
-                      Public Hostname:{" "}
-                      {buildPublicHostnameFromExposure(row, publicAppPolicy)}
-                    </>
-                  ) : row.exposure?.random_subdomain ? (
-                    <>Public exposure active (subdomain label: {row.exposure.random_subdomain})</>
-                  ) : (
-                    <>Public exposure active</>
-                  )}
-                  {row.exposure?.expires_at_ms ? (
-                    <span>
-                      {" "}
-                      (expires{" "}
-                      {new Date(row.exposure.expires_at_ms).toLocaleString()})
-                    </span>
-                  ) : null}
+                        Actions
+                      </Button>
+                    </Dropdown>
+                  </Space>
                 </div>
-              ) : null}
-              {isExpanded && row.warnings?.length ? (
-                <Alert
-                  style={{ marginTop: "8px" }}
-                  type="warning"
-                  showIcon
-                  message={row.warnings.join(" ")}
-                />
-              ) : null}
-              {isExpanded && startupFailure ? (
-                <Alert
-                  style={{ marginTop: "8px" }}
-                  type="error"
-                  showIcon
-                  closable
-                  onClose={() =>
-                    setStartupFailures((prev) => ({
-                      ...prev,
-                      [row.id]: undefined,
-                    }))
-                  }
-                  message={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} '${row.title || row.id}'`}
-                  description={
-                    <div style={{ display: "grid", gap: "8px" }}>
-                      <div>{startupFailure.errorMessage}</div>
-                      {startupFailure.installHint ? (
-                        <div style={{ opacity: 0.85 }}>{startupFailure.installHint}</div>
-                      ) : null}
-                      {startupFailure.installCommand ? (
-                        <div
-                          style={{
-                            fontFamily: "monospace",
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                            padding: "8px",
-                            background: "#fafafa",
-                            border: "1px solid #eee",
-                            borderRadius: "6px",
-                          }}
-                        >
-                          {startupFailure.installCommand}
+                {isExpanded && specSummary.length > 0 ? (
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      fontSize: "12px",
+                      fontFamily: "monospace",
+                      opacity: 0.82,
+                      display: "grid",
+                      gap: "4px",
+                    }}
+                  >
+                    {specSummary.map((item) => (
+                      <div key={`${row.id}-${item}`}>{item}</div>
+                    ))}
+                  </div>
+                ) : null}
+                {isExpanded ? (
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      padding: "8px 10px",
+                      border: "1px solid #f0f0f0",
+                      borderRadius: "8px",
+                      background: "#fafafa",
+                      display: "grid",
+                      gap: "6px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "10px",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <Space size={8} align="center">
+                        <div style={{ fontWeight: 600, fontSize: "12px" }}>
+                          Recent usage
                         </div>
-                      ) : null}
-                      <Space wrap>
-                        <Button size="small" onClick={() => void onLogs(row.id)}>
-                          View full logs
+                        <Button
+                          size="small"
+                          type="text"
+                          loading={!!metricsRefreshing[row.id]}
+                          onClick={() => void refreshMetricsForApp(row.id)}
+                        >
+                          Refresh
                         </Button>
-                        {startupFailure.installAgentPrompt ? (
+                      </Space>
+                      <div
+                        style={{
+                          display: "grid",
+                          justifyItems: "end",
+                          gap: "2px",
+                        }}
+                      >
+                        <MetricsSparkline
+                          values={
+                            metrics?.history.map((item) => item.requests) ?? []
+                          }
+                        />
+                        <div style={{ fontSize: "11px", opacity: 0.65 }}>
+                          request trend
+                        </div>
+                      </div>
+                    </div>
+                    {metrics && metrics.totals.requests > 0 ? (
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            "repeat(auto-fit, minmax(148px, 1fr))",
+                          gap: "8px",
+                        }}
+                      >
+                        <MetricStat
+                          label="Last hit"
+                          value={
+                            metrics.last_hit_ms ? (
+                              <TimeAgo date={new Date(metrics.last_hit_ms)} />
+                            ) : (
+                              "never"
+                            )
+                          }
+                        />
+                        <MetricStat
+                          label="Requests"
+                          value={formatCount(metrics.totals.requests)}
+                        />
+                        <MetricStat
+                          label="Bytes sent"
+                          value={formatBytes(metrics.totals.bytes_sent)}
+                        />
+                        <MetricStat
+                          label="Bytes received"
+                          value={formatBytes(metrics.totals.bytes_received)}
+                        />
+                        <MetricStat
+                          label="Active websockets"
+                          value={formatCount(metrics.active_websockets)}
+                        />
+                        <MetricStat
+                          label="Wake-ups"
+                          value={formatCount(metrics.totals.wake_count)}
+                        />
+                        <MetricStat
+                          label="Public / private"
+                          value={`${formatCount(metrics.totals.public_requests)} / ${formatCount(metrics.totals.private_requests)}`}
+                          subtle
+                        />
+                        <MetricStat
+                          label="Latency p50 / p95"
+                          value={`${formatLatency(metrics.totals.p50_ms)} / ${formatLatency(metrics.totals.p95_ms)}`}
+                          subtle
+                        />
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: "12px", opacity: 0.78 }}>
+                        No app traffic recorded yet.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+                {isExpanded && isPublic ? (
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      fontSize: "12px",
+                      opacity: 0.85,
+                    }}
+                  >
+                    {buildPublicUrlFromExposure(row, publicAppPolicy) ? (
+                      <>
+                        Public URL:{" "}
+                        <a
+                          href={buildPublicUrlFromExposure(
+                            row,
+                            publicAppPolicy,
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {buildPublicUrlFromExposure(row, publicAppPolicy)}
+                        </a>
+                      </>
+                    ) : buildPublicHostnameFromExposure(
+                        row,
+                        publicAppPolicy,
+                      ) ? (
+                      <>
+                        Public Hostname:{" "}
+                        {buildPublicHostnameFromExposure(row, publicAppPolicy)}
+                      </>
+                    ) : row.exposure?.random_subdomain ? (
+                      <>
+                        Public exposure active (subdomain label:{" "}
+                        {row.exposure.random_subdomain})
+                      </>
+                    ) : (
+                      <>Public exposure active</>
+                    )}
+                    {row.exposure?.expires_at_ms ? (
+                      <span>
+                        {" "}
+                        (expires{" "}
+                        {new Date(row.exposure.expires_at_ms).toLocaleString()})
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {isExpanded && row.warnings?.length ? (
+                  <Alert
+                    style={{ marginTop: "8px" }}
+                    type="warning"
+                    showIcon
+                    message={row.warnings.join(" ")}
+                  />
+                ) : null}
+                {isExpanded && startupFailure ? (
+                  <Alert
+                    style={{ marginTop: "8px" }}
+                    type="error"
+                    showIcon
+                    closable
+                    onClose={() =>
+                      setStartupFailures((prev) => ({
+                        ...prev,
+                        [row.id]: undefined,
+                      }))
+                    }
+                    message={`Failed to ${startupFailure.action === "start" ? "start" : "start after save"} '${row.title || row.id}'`}
+                    description={
+                      <div style={{ display: "grid", gap: "8px" }}>
+                        <div>{startupFailure.errorMessage}</div>
+                        {startupFailure.installHint ? (
+                          <div style={{ opacity: 0.85 }}>
+                            {startupFailure.installHint}
+                          </div>
+                        ) : null}
+                        {startupFailure.installCommand ? (
+                          <div
+                            style={{
+                              fontFamily: "monospace",
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                              padding: "8px",
+                              background: "#fafafa",
+                              border: "1px solid #eee",
+                              borderRadius: "6px",
+                            }}
+                          >
+                            {startupFailure.installCommand}
+                          </div>
+                        ) : null}
+                        <Space wrap>
                           <Button
                             size="small"
-                            onClick={() =>
-                              void sendAgentPrompt(
-                                startupFailure.installAgentPrompt ?? "",
-                                "intent:app-server-install",
-                              )
-                            }
-                            loading={submittingToAgent}
+                            onClick={() => void onLogs(row.id)}
                           >
-                            Install with agent
+                            View full logs
                           </Button>
-                        ) : null}
-                      </Space>
-                      {startupFailure.stderrTail ? (
-                        renderLogTailBlock({
-                          label: "stderr (tail)",
-                          content: startupFailure.stderrTail,
-                          background: "#fff7f7",
-                        })
-                      ) : null}
-                      {startupFailure.stdoutTail ? (
-                        renderLogTailBlock({
-                          label: "stdout (tail)",
-                          content: startupFailure.stdoutTail,
-                          background: "#fafafa",
-                        })
-                      ) : null}
-                    </div>
-                  }
-                />
-              ) : null}
-            </div>
-          );
-        })}
+                          {startupFailure.installAgentPrompt ? (
+                            <Button
+                              size="small"
+                              onClick={() =>
+                                void sendAgentPrompt(
+                                  startupFailure.installAgentPrompt ?? "",
+                                  "intent:app-server-install",
+                                )
+                              }
+                              loading={submittingToAgent}
+                            >
+                              Install with agent
+                            </Button>
+                          ) : null}
+                        </Space>
+                        {startupFailure.stderrTail
+                          ? renderLogTailBlock({
+                              label: "stderr (tail)",
+                              content: startupFailure.stderrTail,
+                              background: "#fff7f7",
+                            })
+                          : null}
+                        {startupFailure.stdoutTail
+                          ? renderLogTailBlock({
+                              label: "stdout (tail)",
+                              content: startupFailure.stdoutTail,
+                              background: "#fafafa",
+                            })
+                          : null}
+                      </div>
+                    }
+                  />
+                ) : null}
+              </div>
+            );
+          })}
         </Space>
       </Card>
       {audit ? (
@@ -2540,7 +2587,13 @@ export function AppServerPanel({
             padding: "10px",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "8px",
+            }}
+          >
             <div style={{ fontWeight: 600 }}>
               Audit: {audit.title || audit.app_id}
             </div>
@@ -2549,9 +2602,16 @@ export function AppServerPanel({
             </Button>
           </div>
           <div style={{ marginTop: "6px", fontSize: "12px", opacity: 0.85 }}>
-            pass={audit.summary.pass}, warn={audit.summary.warn}, fail={audit.summary.fail}
+            pass={audit.summary.pass}, warn={audit.summary.warn}, fail=
+            {audit.summary.fail}
           </div>
-          <ul style={{ marginTop: "8px", marginBottom: "8px", paddingInlineStart: "18px" }}>
+          <ul
+            style={{
+              marginTop: "8px",
+              marginBottom: "8px",
+              paddingInlineStart: "18px",
+            }}
+          >
             {audit.checks.map((check) => (
               <li key={`${check.id}-${check.status}`}>
                 {check.status.toUpperCase()}: {check.message}
@@ -2562,7 +2622,9 @@ export function AppServerPanel({
             <Button
               size="small"
               onClick={() =>
-                navigator.clipboard.writeText(audit.agent_prompt).catch(() => {})
+                navigator.clipboard
+                  .writeText(audit.agent_prompt)
+                  .catch(() => {})
               }
             >
               Copy Agent Prompt
@@ -2572,7 +2634,10 @@ export function AppServerPanel({
               type="primary"
               loading={submittingToAgent}
               onClick={() =>
-                void sendAgentPrompt(audit.agent_prompt, "intent:app-server-audit")
+                void sendAgentPrompt(
+                  audit.agent_prompt,
+                  "intent:app-server-audit",
+                )
               }
             >
               Send to Codex
@@ -2598,12 +2663,14 @@ export function AppServerPanel({
         {localTunnelTarget ? (
           <div style={{ display: "grid", gap: "12px" }}>
             <Paragraph style={{ marginBottom: 0 }}>
-              Use the CoCalc CLI on your local computer to create a private tunnel to
-              this app. The command will wake the project and app if needed, then print
-              the local URL.
+              Use the CoCalc CLI on your local computer to create a private
+              tunnel to this app. The command will wake the project and app if
+              needed, then print the local URL.
             </Paragraph>
             <div>
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>Install CoCalc CLI</div>
+              <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                Install CoCalc CLI
+              </div>
               <a
                 href={COCALC_CLI_DOWNLOAD_URL}
                 target="_blank"
@@ -2618,10 +2685,15 @@ export function AppServerPanel({
               </div>
             ) : null}
             <div>
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>Run locally</div>
+              <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                Run locally
+              </div>
               <Typography.Paragraph
                 copyable={{
-                  text: buildTunnelLocallyCommand(project_id, localTunnelTarget.id),
+                  text: buildTunnelLocallyCommand(
+                    project_id,
+                    localTunnelTarget.id,
+                  ),
                 }}
                 style={{
                   marginBottom: 0,
@@ -2637,9 +2709,9 @@ export function AppServerPanel({
               </Typography.Paragraph>
             </div>
             <div style={{ fontSize: "12px", opacity: 0.78 }}>
-              The end-user CLI login flow is still being improved. If the CLI is not
-              authenticated locally yet, follow the auth prompts/help from the CLI
-              first, then rerun the tunnel command.
+              The end-user CLI login flow is still being improved. If the CLI is
+              not authenticated locally yet, follow the auth prompts/help from
+              the CLI first, then rerun the tunnel command.
             </div>
           </div>
         ) : null}
@@ -2661,10 +2733,16 @@ export function AppServerPanel({
         open={editSpecOpen}
         onCancel={closeEditSpecModal}
         width={980}
-        title={editSpecTargetId ? `Edit spec: ${editSpecTargetId}` : "Edit app spec"}
+        title={
+          editSpecTargetId ? `Edit spec: ${editSpecTargetId}` : "Edit app spec"
+        }
         destroyOnClose={false}
         footer={[
-          <Button key="close" onClick={closeEditSpecModal} disabled={editSpecSaving}>
+          <Button
+            key="close"
+            onClick={closeEditSpecModal}
+            disabled={editSpecSaving}
+          >
             Cancel
           </Button>,
           <Button
@@ -2727,9 +2805,7 @@ export function AppServerPanel({
             }}
           >
             <div>
-              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
-                stdout
-              </div>
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>stdout</div>
               <div
                 style={{
                   maxHeight: "32vh",
@@ -2740,13 +2816,13 @@ export function AppServerPanel({
                   background: "#fafafa",
                 }}
               >
-                <StaticMarkdown value={toFencedCodeBlock(logsData.stdout || "(empty)", "sh")} />
+                <StaticMarkdown
+                  value={toFencedCodeBlock(logsData.stdout || "(empty)", "sh")}
+                />
               </div>
             </div>
             <div>
-              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
-                stderr
-              </div>
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>stderr</div>
               <div
                 style={{
                   maxHeight: "32vh",
@@ -2757,7 +2833,9 @@ export function AppServerPanel({
                   background: "#fafafa",
                 }}
               >
-                <StaticMarkdown value={toFencedCodeBlock(logsData.stderr || "(empty)", "sh")} />
+                <StaticMarkdown
+                  value={toFencedCodeBlock(logsData.stderr || "(empty)", "sh")}
+                />
               </div>
             </div>
           </div>

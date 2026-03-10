@@ -281,7 +281,14 @@ function resolveDbPath(override?: string): string {
       "offload-v1.sqlite3",
     );
   }
-  return path.join(home, ".local", "share", "cocalc", "chats", "offload-v1.sqlite3");
+  return path.join(
+    home,
+    ".local",
+    "share",
+    "cocalc",
+    "chats",
+    "offload-v1.sqlite3",
+  );
 }
 
 function ensureDbDir(dbPath: string): void {
@@ -438,8 +445,7 @@ function parseChatFile(text: string): ParsedLine[] {
       generating: !!obj.generating,
       message_id:
         typeof obj.message_id === "string" ? obj.message_id : undefined,
-      thread_id:
-        typeof obj.thread_id === "string" ? obj.thread_id : undefined,
+      thread_id: typeof obj.thread_id === "string" ? obj.thread_id : undefined,
       sender_id: typeof obj.sender_id === "string" ? obj.sender_id : undefined,
       excerpt: extractExcerpt(obj),
     });
@@ -554,15 +560,16 @@ async function resumePendingRotate({
   };
 }
 
-function getOrCreateChatId(db: DatabaseSync, chatPath: string): {
+function getOrCreateChatId(
+  db: DatabaseSync,
+  chatPath: string,
+): {
   chat_id: string;
   created: boolean;
 } {
   const now = Date.now();
   const existing = db
-    .prepare(
-      "SELECT chat_id FROM chat_registry WHERE chat_path = ?",
-    )
+    .prepare("SELECT chat_id FROM chat_registry WHERE chat_path = ?")
     .get(chatPath) as { chat_id?: string } | undefined;
   if (existing?.chat_id) {
     db.prepare(
@@ -609,7 +616,10 @@ function deleteScopeWhere({
     if (!Number.isFinite(before_date_ms)) {
       throw Error("before_date_ms must be provided for scope=before_date");
     }
-    return { where: "date_ms IS NOT NULL AND date_ms <= ?", params: [before_date_ms] };
+    return {
+      where: "date_ms IS NOT NULL AND date_ms <= ?",
+      params: [before_date_ms],
+    };
   }
   if (scope === "thread") {
     if (!thread_id) throw Error("thread_id must be provided for scope=thread");
@@ -899,7 +909,9 @@ export async function rotateChatStore({
   const sourceSha = sha256Hex(raw);
   const headAfterSha = sha256Hex(headAfterRaw);
   const nextSeqRow = db
-    .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as seq FROM segments WHERE chat_id = ?")
+    .prepare(
+      "SELECT COALESCE(MAX(seq), 0) + 1 as seq FROM segments WHERE chat_id = ?",
+    )
     .get(chat_id) as { seq: number };
   const segmentSeq = Number(nextSeqRow?.seq ?? 1);
   const maintenanceOpId = randomUUID();
@@ -930,7 +942,9 @@ export async function rotateChatStore({
         chat_id, segment_id, ordinal, event, message_id, thread_id, sender_id, date_ms, excerpt, row_json
       ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    const ftsStmt = db.prepare("INSERT INTO archived_rows_fts(rowid, body) VALUES(?, ?)");
+    const ftsStmt = db.prepare(
+      "INSERT INTO archived_rows_fts(rowid, body) VALUES(?, ?)",
+    );
     for (let i = 0; i < archivedSorted.length; i++) {
       const item = archivedSorted[i].row;
       const rowInfo = rowStmt.run(
@@ -992,14 +1006,18 @@ export async function rotateChatStore({
     },
   });
   if (!applied.applied) {
-    rewriteWarning = applied.warning ?? "pending rotate rewrite not yet applied";
-    logger.warn("chat offload rotate: archived rows committed, rewrite pending", {
-      chatPath,
-      chat_id,
-      segment_id,
-      op_id: maintenanceOpId,
-      warning: rewriteWarning,
-    });
+    rewriteWarning =
+      applied.warning ?? "pending rotate rewrite not yet applied";
+    logger.warn(
+      "chat offload rotate: archived rows committed, rewrite pending",
+      {
+        chatPath,
+        chat_id,
+        segment_id,
+        op_id: maintenanceOpId,
+        warning: rewriteWarning,
+      },
+    );
   }
 
   return {
@@ -1079,9 +1097,7 @@ export function readChatStoreArchived({
         ORDER BY date_ms DESC, row_id DESC
         LIMIT ? OFFSET ?`,
     )
-    .all(...params) as Array<
-    Omit<ArchivedRow, "row"> & { row_json: string }
-  >;
+    .all(...params) as Array<Omit<ArchivedRow, "row"> & { row_json: string }>;
   const out: ArchivedRow[] = rows.map((x) => {
     let row: Json;
     try {
@@ -1105,7 +1121,10 @@ export function readChatStoreArchived({
     chat_id,
     rows: out,
     offset: Math.max(0, offset),
-    next_offset: out.length === Math.max(1, limit) ? Math.max(0, offset) + out.length : undefined,
+    next_offset:
+      out.length === Math.max(1, limit)
+        ? Math.max(0, offset) + out.length
+        : undefined,
   };
 }
 
@@ -1122,9 +1141,7 @@ export function readChatStoreArchivedHit({
   const { chat_id } = getOrCreateChatId(db, chatPath);
   const normalizedMessageId = `${message_id ?? ""}`.trim();
   const normalizedThreadId = `${thread_id ?? ""}`.trim();
-  let raw:
-    | (Omit<ArchivedRow, "row"> & { row_json: string })
-    | undefined;
+  let raw: (Omit<ArchivedRow, "row"> & { row_json: string }) | undefined;
   if (Number.isFinite(row_id)) {
     raw = db
       .prepare(
@@ -1217,7 +1234,9 @@ export function searchChatStoreArchived({
   );
   if (excludedThreadIds.length > 0) {
     const placeholders = excludedThreadIds.map(() => "?").join(", ");
-    where.push(`(ar.thread_id IS NULL OR ar.thread_id NOT IN (${placeholders}))`);
+    where.push(
+      `(ar.thread_id IS NULL OR ar.thread_id NOT IN (${placeholders}))`,
+    );
     params.push(...excludedThreadIds);
   }
   const normalizedLimit = Math.max(1, limit);
@@ -1359,9 +1378,7 @@ export function deleteChatStoreData({
       rowIds.map((x) => x.row_id),
     );
     const result = db
-      .prepare(
-        `DELETE FROM archived_rows WHERE chat_id = ? AND ${where}`,
-      )
+      .prepare(`DELETE FROM archived_rows WHERE chat_id = ? AND ${where}`)
       .run(chat_id, ...params) as { changes?: number };
     const deletedRows = Number(result.changes ?? 0);
     const orphanSegs = db

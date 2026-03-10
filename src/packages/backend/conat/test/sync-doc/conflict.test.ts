@@ -221,7 +221,7 @@ describe(`create editing conflict with ${numHeads} heads`, () => {
     clients: any[] = [];
 
   it(`create ${numHeads} clients`, async () => {
-    // first initialize 
+    // first initialize
     const client = connect();
     const doc0 = client.sync.string({
       project_id,

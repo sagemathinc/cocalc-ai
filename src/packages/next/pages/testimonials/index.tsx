@@ -26,7 +26,6 @@ export default function AllNews(props: Props) {
   const { customize } = props;
   const { siteName } = customize;
 
-
   function content() {
     return (
       <>

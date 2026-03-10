@@ -8,6 +8,7 @@ export {
 export {
   APP_PUBLIC_TOKEN_QUERY_PARAM,
   listAppSpecs,
+  listAppTemplates,
   getAppSpec,
   upsertAppSpec,
   startApp,

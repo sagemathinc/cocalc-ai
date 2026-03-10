@@ -8,7 +8,7 @@ import LRU from "lru-cache";
 const cache = new LRU<string, boolean>({ max: 10000, ttl: 1000 * 60 * 60 });
 
 export default async function isValidAccount(
-  account_id: string
+  account_id: string,
 ): Promise<boolean> {
   if (cache.has(account_id)) {
     return true;
@@ -16,7 +16,7 @@ export default async function isValidAccount(
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT COUNT(*) as count FROM accounts WHERE account_id = $1::UUID",
-    [account_id]
+    [account_id],
   );
   if (rows[0].count > 0) {
     // only cache true, as explained in the comment above.

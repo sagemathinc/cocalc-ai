@@ -13,7 +13,7 @@ import getPool from "@cocalc/database/pool";
 const logger = getLogger("purchases:get-live-subscriptions");
 
 export default async function getLiveSubscriptions(
-  account_id: string
+  account_id: string,
 ): Promise<
   { id: number; cost: number; status: "unpaid" | "past_due" | "active" }[]
 > {
@@ -21,7 +21,7 @@ export default async function getLiveSubscriptions(
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT id, cost, status FROM subscriptions WHERE (status = 'unpaid' OR status = 'past_due' OR status = 'active') AND account_id=$1",
-    [account_id]
+    [account_id],
   );
   return rows;
 }

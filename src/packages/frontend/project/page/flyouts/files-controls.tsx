@@ -341,9 +341,7 @@ export function FilesSelectedControls({
     if (!inBackups) return;
     const entries = (backupContext as any).entries as BackupSelection[];
     const err =
-      backupContext.mode === "error"
-        ? (backupContext as any).err
-        : undefined;
+      backupContext.mode === "error" ? (backupContext as any).err : undefined;
     const disabled =
       backupContext.mode === "loading" ||
       backupContext.mode === "error" ||
@@ -359,12 +357,13 @@ export function FilesSelectedControls({
               restoreMode === "scratch"
                 ? path.posix.join("/scratch", rel ?? "")
                 : undefined;
-            const op = await webapp_client.conat_client.hub.projects.restoreBackup({
-              project_id,
-              id: entry.id,
-              path: rel || undefined,
-              dest,
-            });
+            const op =
+              await webapp_client.conat_client.hub.projects.restoreBackup({
+                project_id,
+                id: entry.id,
+                path: rel || undefined,
+                dest,
+              });
             actions?.trackRestoreOp?.(op);
           }
         }
@@ -437,9 +436,7 @@ export function FilesSelectedControls({
           okText="Restore"
           title="Restore backup"
         >
-          <p style={{ marginBottom: 8 }}>
-            Restore selected paths from backup.
-          </p>
+          <p style={{ marginBottom: 8 }}>Restore selected paths from backup.</p>
           <Radio.Group
             value={restoreMode}
             onChange={(e) => setRestoreMode(e.target.value)}

@@ -2,12 +2,7 @@ export type FindTab = "contents" | "files" | "snapshots" | "backups";
 
 export type SnapshotSearchMode = "files" | "contents";
 
-export type FindScopeMode =
-  | "current"
-  | "home"
-  | "workspace"
-  | "git"
-  | "custom";
+export type FindScopeMode = "current" | "home" | "workspace" | "git" | "custom";
 
 export type FindPrefill = {
   tab: FindTab;

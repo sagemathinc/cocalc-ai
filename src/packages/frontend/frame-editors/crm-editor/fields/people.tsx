@@ -30,7 +30,7 @@ function EditPeople({ obj, field, people }) {
         setAdding(false);
       } catch (_) {}
     },
-    [save0, obj]
+    [save0, obj],
   );
 
   return (

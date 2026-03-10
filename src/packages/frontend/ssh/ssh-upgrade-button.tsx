@@ -23,7 +23,9 @@ const SKIP_KEY = "cocalc-plus-upgrade-skip";
 const INFO_KEY = "cocalc-plus-upgrade-info";
 
 export default function SshUpgradeButton() {
-  const [upgradeInfo, setUpgradeInfo] = React.useState<UpgradeInfo | null>(null);
+  const [upgradeInfo, setUpgradeInfo] = React.useState<UpgradeInfo | null>(
+    null,
+  );
   const [checking, setChecking] = React.useState(false);
   const [upgrading, setUpgrading] = React.useState(false);
   const [open, setOpen] = React.useState(false);

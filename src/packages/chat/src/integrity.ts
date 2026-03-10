@@ -110,9 +110,9 @@ export function computeChatIntegrityReport(
         ? `legacy-message-${new Date(dateIso).valueOf()}-${row?.sender_id ?? "unknown"}`
         : undefined);
     const threadId =
-      (typeof row?.thread_id === "string" && row.thread_id.length > 0
+      typeof row?.thread_id === "string" && row.thread_id.length > 0
         ? row.thread_id
-        : undefined);
+        : undefined;
     if (
       !(typeof row?.message_id === "string" && row.message_id.length > 0) ||
       !(typeof row?.thread_id === "string" && row.thread_id.length > 0)
@@ -133,11 +133,9 @@ export function computeChatIntegrityReport(
           ? row.parent_message_id
           : undefined,
       acp_config: toJs(row?.acp_config),
-      is_root:
-        !(
-          typeof row?.parent_message_id === "string" &&
-          row.parent_message_id
-        ),
+      is_root: !(
+        typeof row?.parent_message_id === "string" && row.parent_message_id
+      ),
     };
     messages.push(message);
     messageById.set(message.message_id, message);

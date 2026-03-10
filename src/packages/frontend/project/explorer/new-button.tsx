@@ -63,10 +63,10 @@ export const NewButton: React.FC<Props> = ({
     "customize",
     LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
-  const project_launcher = useTypedRedux(
-    "projects",
-    "project_map",
-  )?.getIn([project_id, "launcher"]);
+  const project_launcher = useTypedRedux("projects", "project_map")?.getIn([
+    project_id,
+    "launcher",
+  ]);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
     apps: site_launcher_apps,
@@ -199,7 +199,7 @@ export const NewButton: React.FC<Props> = ({
   }, [allowedTypes, quickExtensions]);
 
   const items: MenuProps["items"] = [
-    ...(React.useMemo(() => {
+    ...React.useMemo(() => {
       const quick = quickExtensions.map((ext) => {
         const data = file_options("x." + ext);
         return {
@@ -228,7 +228,7 @@ export const NewButton: React.FC<Props> = ({
         ...quick,
         { type: "divider" as const },
       ];
-    }, [quickExtensions])),
+    }, [quickExtensions]),
     ...fullListExtensions.map(file_dropdown_item),
     { type: "divider" },
     {

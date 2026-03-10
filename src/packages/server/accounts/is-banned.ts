@@ -38,4 +38,3 @@ export default async function isBanned(
   }
   return false;
 }
-

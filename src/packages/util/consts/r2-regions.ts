@@ -177,9 +177,7 @@ export function parseR2Region(value?: string | null): R2Region | undefined {
   return;
 }
 
-export function mapCloudRegionToR2Region(
-  region?: string | null,
-): R2Region {
+export function mapCloudRegionToR2Region(region?: string | null): R2Region {
   const normalized = (region ?? "").trim().toLowerCase();
   if (!normalized) return DEFAULT_R2_REGION;
   const direct = parseR2Region(normalized);
@@ -187,7 +185,10 @@ export function mapCloudRegionToR2Region(
   if (normalized.startsWith("africa-") || normalized.includes("africa")) {
     return "weur";
   }
-  if (/^europe-central2/.test(normalized) || normalized.includes("europe-east")) {
+  if (
+    /^europe-central2/.test(normalized) ||
+    normalized.includes("europe-east")
+  ) {
     return "eeur";
   }
   if (
@@ -206,7 +207,10 @@ export function mapCloudRegionToR2Region(
   if (/^us-(west|south)/.test(normalized)) {
     return "wnam";
   }
-  if (/^us-(east|central|north)/.test(normalized) || normalized.startsWith("us-")) {
+  if (
+    /^us-(east|central|north)/.test(normalized) ||
+    normalized.startsWith("us-")
+  ) {
     return "enam";
   }
   if (normalized.startsWith("me-")) {

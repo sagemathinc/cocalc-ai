@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { AGENT_DOCK_OPEN_EVENT } from "./agent-dock-state";
 
 const mockEraseActiveKeyHandler = jest.fn();
@@ -50,7 +56,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
-  watchAgentSessionsForProject: async (_args: any, cb: (records: any[]) => void) => {
+  watchAgentSessionsForProject: async (
+    _args: any,
+    cb: (records: any[]) => void,
+  ) => {
     cb([]);
     return () => undefined;
   },

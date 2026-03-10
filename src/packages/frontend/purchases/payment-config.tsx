@@ -5,7 +5,11 @@ import { zIndexPayAsGo } from "./zindex";
 import * as api from "./api";
 import MoneyStatistic from "./money-statistic";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
-import { moneyToCurrency, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToCurrency,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 
 const zIndex = zIndexPayAsGo + 1;
 export const zIndexTip = zIndex + 1;

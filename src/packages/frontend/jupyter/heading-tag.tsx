@@ -29,14 +29,16 @@ export default function HeadingTagComponent({
         href={`#${fragmentId}`}
       >
         ¶
-      </a>
-    )
+      </a>,
+    ),
   );
 }
 
 // Just replaces each whitespace character with a dash.
 // This is designed to be reasonably consistent with Jupyter classic.
-export function toFragmentId(children: { text?: string; value?: string }[]): string {
+export function toFragmentId(
+  children: { text?: string; value?: string }[],
+): string {
   let fragmentId = "";
   for (const { text, value } of children) {
     fragmentId += text ?? (value ? "$" + value + "$" : "");

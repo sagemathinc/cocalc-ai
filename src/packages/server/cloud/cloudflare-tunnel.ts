@@ -793,7 +793,11 @@ export async function deleteCloudflareTunnel(opts: {
     }
   } else if (zoneIdValue && sshHostname) {
     try {
-      const records = await listDnsRecordsByName(config.token, zoneIdValue, sshHostname);
+      const records = await listDnsRecordsByName(
+        config.token,
+        zoneIdValue,
+        sshHostname,
+      );
       for (const record of records) {
         if (!record.id) continue;
         try {

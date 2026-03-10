@@ -82,8 +82,9 @@ export function describeItem({ info }: DescribeItemProps): ReactNode {
   return (
     <>
       {info.numVouchers ?? 1} {plural(info.numVouchers ?? 1, "Voucher Code")}{" "}
-      {info.numVouchers > 1 ? " each " : ""} worth {currency(info.amount)}. Total
-      Value: {currency(decimalMultiply(info.amount, info.numVouchers ?? 1))}
+      {info.numVouchers > 1 ? " each " : ""} worth {currency(info.amount)}.
+      Total Value:{" "}
+      {currency(decimalMultiply(info.amount, info.numVouchers ?? 1))}
       {info.whenPay == "admin" ? " (admin: no charge)" : ""}
     </>
   );

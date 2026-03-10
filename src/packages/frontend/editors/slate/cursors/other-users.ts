@@ -77,7 +77,7 @@ export const useCursorDecorate = ({
           const { name, color } = getProfile(account_id, user_map);
           nodeToCursors.set(
             leaf,
-            (nodeToCursors.get(leaf) ?? []).concat([{ offset, name, color }])
+            (nodeToCursors.get(leaf) ?? []).concat([{ offset, name, color }]),
           );
         }
       }
@@ -109,18 +109,16 @@ export const useCursorDecorate = ({
             const [block, blockPath] = blockEntry as [Element, number[]];
             const lineIndex = lineEntry[1][lineEntry[1].length - 1];
             const cached = codeBlockCache.get(block);
-            const text = block.children.map((line) => Node.string(line)).join("\n");
+            const text = block.children
+              .map((line) => Node.string(line))
+              .join("\n");
             const info =
               block.type === "code_block" || block.type === "jupyter_code_cell"
-                ? (block as CodeBlock).info ?? ""
+                ? ((block as CodeBlock).info ?? "")
                 : block.type === "html_block"
                   ? "html"
                   : "yaml";
-            if (
-              !cached ||
-              cached.text !== text ||
-              cached.info !== info
-            ) {
+            if (!cached || cached.text !== text || cached.info !== info) {
               if (getPrismGrammar(info, text)) {
                 codeBlockCache.set(block, {
                   text,

@@ -57,7 +57,10 @@ export function ThreadBadge({
     );
   }
   const hasCustom = Boolean(icon || color);
-  const resolvedIcon = (icon as IconName) ?? fallbackIcon ?? (hasCustom ? ("dot-circle" as IconName) : undefined);
+  const resolvedIcon =
+    (icon as IconName) ??
+    fallbackIcon ??
+    (hasCustom ? ("dot-circle" as IconName) : undefined);
   if (!resolvedIcon) return null;
   const background = color ?? (hasCustom ? COLORS.GRAY_L0 : "transparent");
   const border = color ? "none" : `1px solid ${COLORS.GRAY_L}`;

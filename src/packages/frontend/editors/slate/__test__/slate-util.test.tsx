@@ -12,9 +12,7 @@ test("pointAtPath falls back to first text node for list at document start", () 
       children: [
         {
           type: "list_item",
-          children: [
-            { type: "paragraph", children: [{ text: "bar" }] },
-          ],
+          children: [{ type: "paragraph", children: [{ text: "bar" }] }],
         },
       ],
     },

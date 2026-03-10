@@ -48,8 +48,7 @@ if (hasStorage) {
           if (v && typeof v === "object" && "snapshot" in v && v.snapshot) {
             cache.set(k, {
               snapshot: v.snapshot as StateSnapshot,
-              savedAt:
-                typeof v.savedAt === "number" ? v.savedAt : Date.now(),
+              savedAt: typeof v.savedAt === "number" ? v.savedAt : Date.now(),
               viewportHeight:
                 typeof v.viewportHeight === "number"
                   ? v.viewportHeight

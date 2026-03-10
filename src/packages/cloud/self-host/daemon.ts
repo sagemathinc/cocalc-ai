@@ -527,28 +527,19 @@ async function handleResize(payload: Record<string, any>, state: State) {
     }
   }
   if (cpus) {
-    const result = await runMultipass([
-      "set",
-      `local.${name}.cpus=${cpus}`,
-    ]);
+    const result = await runMultipass(["set", `local.${name}.cpus=${cpus}`]);
     if (result.code !== 0) {
       throw new Error(result.stderr.trim() || "multipass set cpus failed");
     }
   }
   if (mem) {
-    const result = await runMultipass([
-      "set",
-      `local.${name}.memory=${mem}`,
-    ]);
+    const result = await runMultipass(["set", `local.${name}.memory=${mem}`]);
     if (result.code !== 0) {
       throw new Error(result.stderr.trim() || "multipass set memory failed");
     }
   }
   if (disk) {
-    const result = await runMultipass([
-      "set",
-      `local.${name}.disk=${disk}`,
-    ]);
+    const result = await runMultipass(["set", `local.${name}.disk=${disk}`]);
     if (result.code !== 0) {
       throw new Error(result.stderr.trim() || "multipass set disk failed");
     }

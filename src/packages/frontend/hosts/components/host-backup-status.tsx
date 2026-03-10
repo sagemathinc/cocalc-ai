@@ -13,8 +13,7 @@ function formatBackupStatus(host: Host, compact: boolean): string | null {
   if (compact) {
     return `Backups ${upToDate}/${provisioned || 0}`;
   }
-  const assignedDetail =
-    total !== provisioned ? ` · assigned ${total}` : "";
+  const assignedDetail = total !== provisioned ? ` · assigned ${total}` : "";
   const detail =
     needs > 0
       ? ` · needs ${needs}${running ? ` (running ${running})` : ""}`

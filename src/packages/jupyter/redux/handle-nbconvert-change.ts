@@ -41,7 +41,7 @@ interface Value {
 export default async function handleChange(
   actions: JupyterActions,
   oldVal?: Value,
-  newVal?: Value
+  newVal?: Value,
 ): Promise<void> {
   log.debug("got a change:", oldVal, newVal);
   if (newVal == null) {
@@ -50,7 +50,7 @@ export default async function handleChange(
   }
   if (newVal.state != "start") {
     log.debug(
-      `nothing to do -- requesting to change state to '${newVal.state}'.`
+      `nothing to do -- requesting to change state to '${newVal.state}'.`,
     );
     return;
   }
@@ -75,12 +75,12 @@ export default async function handleChange(
 
   try {
     log.debug(
-      "saving file to disk first, since some nbconvert functionality uses that file is on disk."
+      "saving file to disk first, since some nbconvert functionality uses that file is on disk.",
     );
     await actions.save_ipynb_file();
 
     log.debug(
-      "now actually run nbconvert command (which may or may not actually use upstream nbconvert...)"
+      "now actually run nbconvert command (which may or may not actually use upstream nbconvert...)",
     );
     if (actions.jupyter_kernel == null) {
       throw Error("no kernel, so can't run nbconvert");

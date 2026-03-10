@@ -68,9 +68,10 @@ function resolveSharedHomeMode(): SharedHomeMode {
     `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
       ? "disabled"
       : "fallback";
-  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
-    .trim()
-    .toLowerCase();
+  const mode =
+    `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
+      .trim()
+      .toLowerCase();
   if (mode === "disabled") return "disabled";
   if (mode === "prefer" || mode === "always") return mode;
   return "fallback";
@@ -127,8 +128,7 @@ export function subscriptionRuntime({
 const CODEX_CREDENTIAL_STORE_SETTING = 'cli_auth_credentials_store = "file"';
 
 function upsertCredentialStoreSetting(configToml: string): string {
-  const settingPattern =
-    /^(?!\s*#)\s*cli_auth_credentials_store\s*=\s*.*$/m;
+  const settingPattern = /^(?!\s*#)\s*cli_auth_credentials_store\s*=\s*.*$/m;
   if (settingPattern.test(configToml)) {
     return configToml.replace(settingPattern, CODEX_CREDENTIAL_STORE_SETTING);
   }
@@ -155,7 +155,9 @@ export async function ensureCodexCredentialsStoreFile(
   await fs.writeFile(configPath, updated, { mode: 0o600 });
 }
 
-export async function ensureCodexAuthFileExists(codexHome: string): Promise<void> {
+export async function ensureCodexAuthFileExists(
+  codexHome: string,
+): Promise<void> {
   await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
   const authPath = join(codexHome, "auth.json");
   if (await pathExists(authPath)) return;
@@ -321,10 +323,9 @@ export async function resolveCodexAuthRuntime({
   if (projectKey) {
     return {
       source: "project-api-key",
-      contextId: hashText(`project-key:${projectId}:${hashText(projectKey)}`).slice(
-        0,
-        16,
-      ),
+      contextId: hashText(
+        `project-key:${projectId}:${hashText(projectKey)}`,
+      ).slice(0, 16),
       env: { OPENAI_API_KEY: projectKey },
     };
   }
@@ -366,7 +367,9 @@ export function resolveSharedCodexHome(): string | undefined {
   return codexHome;
 }
 
-export function redactCodexAuthRuntime(runtime: CodexAuthRuntime): Record<string, unknown> {
+export function redactCodexAuthRuntime(
+  runtime: CodexAuthRuntime,
+): Record<string, unknown> {
   return {
     source: runtime.source,
     contextId: runtime.contextId,

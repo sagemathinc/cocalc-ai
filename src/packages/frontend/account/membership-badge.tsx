@@ -30,34 +30,39 @@ export default function MembershipBadge(): ReactElement | null {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
-  const [membership, setMembership] = useState<MembershipResolution | null>(null);
+  const [membership, setMembership] = useState<MembershipResolution | null>(
+    null,
+  );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
 
-  useAsyncEffect(async (isMounted) => {
-    if (!account_id) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const [membershipResult, tiersResult] = await Promise.all([
-        api("purchases/get-membership"),
-        api("purchases/get-membership-tiers"),
-      ]);
-      if (!isMounted()) return;
-      setMembership(membershipResult as MembershipResolution);
-      setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
-    } catch (err) {
-      if (!isMounted()) return;
-      console.warn("Issue loading membership badge data", err);
-      setError(`${err}`);
-    } finally {
-      if (isMounted()) {
+  useAsyncEffect(
+    async (isMounted) => {
+      if (!account_id) {
         setLoading(false);
+        return;
       }
-    }
-  }, [account_id, refreshToken]);
+      setLoading(true);
+      setError("");
+      try {
+        const [membershipResult, tiersResult] = await Promise.all([
+          api("purchases/get-membership"),
+          api("purchases/get-membership-tiers"),
+        ]);
+        if (!isMounted()) return;
+        setMembership(membershipResult as MembershipResolution);
+        setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
+      } catch (err) {
+        if (!isMounted()) return;
+        console.warn("Issue loading membership badge data", err);
+        setError(`${err}`);
+      } finally {
+        if (isMounted()) {
+          setLoading(false);
+        }
+      }
+    },
+    [account_id, refreshToken],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -69,10 +74,13 @@ export default function MembershipBadge(): ReactElement | null {
   }, []);
 
   const tierById = useMemo(() => {
-    return tiers.reduce((acc, tier) => {
-      acc[tier.id] = tier;
-      return acc;
-    }, {} as Record<string, MembershipTier>);
+    return tiers.reduce(
+      (acc, tier) => {
+        acc[tier.id] = tier;
+        return acc;
+      },
+      {} as Record<string, MembershipTier>,
+    );
   }, [tiers]);
 
   if (!account_id) {
@@ -82,13 +90,13 @@ export default function MembershipBadge(): ReactElement | null {
   const membershipClass = membership?.class;
   const tierLabel =
     membershipClass != null
-      ? tierById[membershipClass]?.label ?? capitalize(membershipClass)
+      ? (tierById[membershipClass]?.label ?? capitalize(membershipClass))
       : undefined;
   const tagLabel = error
     ? "Unavailable"
     : loading && !membership
       ? "Loading..."
-      : tierLabel ?? "Free";
+      : (tierLabel ?? "Free");
   const tagColor = membershipClass === "free" ? "default" : "blue";
 
   return (

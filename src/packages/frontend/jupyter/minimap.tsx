@@ -116,12 +116,13 @@ function getMinimapCellKind(cellType: string | undefined): MinimapCellKind {
   return "unknown";
 }
 
-function getMinimapPreviewLines(
-  input: unknown,
-  hasOutput: boolean,
-): string[] {
+function getMinimapPreviewLines(input: unknown, hasOutput: boolean): string[] {
   const raw =
-    typeof input === "string" && input.length > 0 ? input : hasOutput ? " " : "";
+    typeof input === "string" && input.length > 0
+      ? input
+      : hasOutput
+        ? " "
+        : "";
   const lines = raw
     .replace(/\t/g, "  ")
     .split("\n")
@@ -260,7 +261,10 @@ const minimapOpenSettingsCallbacks = new Set<() => void>();
 let minimapWindowListenersAttached = false;
 
 function claimMinimapSettingsModal(owner: symbol): boolean {
-  if (minimapSettingsModalOwner == null || minimapSettingsModalOwner === owner) {
+  if (
+    minimapSettingsModalOwner == null ||
+    minimapSettingsModalOwner === owner
+  ) {
     minimapSettingsModalOwner = owner;
     return true;
   }
@@ -298,7 +302,10 @@ function attachMinimapWindowListeners(): void {
     MINIMAP_SETTINGS_CHANGED_EVENT,
     onWindowMinimapSettingsChanged,
   );
-  window.addEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onWindowOpenMinimapSettings);
+  window.addEventListener(
+    MINIMAP_OPEN_SETTINGS_EVENT,
+    onWindowOpenMinimapSettings,
+  );
   minimapWindowListenersAttached = true;
 }
 
@@ -315,7 +322,10 @@ function detachMinimapWindowListenersIfUnused(): void {
     MINIMAP_SETTINGS_CHANGED_EVENT,
     onWindowMinimapSettingsChanged,
   );
-  window.removeEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onWindowOpenMinimapSettings);
+  window.removeEventListener(
+    MINIMAP_OPEN_SETTINGS_EVENT,
+    onWindowOpenMinimapSettings,
+  );
   minimapWindowListenersAttached = false;
 }
 
@@ -360,7 +370,9 @@ export function useNotebookMinimap({
     useState<boolean>(minimapOptIn);
   const [minimapDraftWidth, setMinimapDraftWidth] =
     useState<number>(minimapWidth);
-  const minimapModalOwnerRef = useRef<symbol>(Symbol("jupyter-minimap-modal-owner"));
+  const minimapModalOwnerRef = useRef<symbol>(
+    Symbol("jupyter-minimap-modal-owner"),
+  );
 
   const closeMinimapSettingsModal = useCallback(() => {
     releaseMinimapSettingsModal(minimapModalOwnerRef.current);
@@ -435,7 +447,8 @@ export function useNotebookMinimap({
           ? Math.min(viewportHeightRaw, layoutHeight)
           : layoutHeight
         : viewportHeightRaw;
-    const measuredLayoutWidth = layoutResize.width ?? layoutNode?.clientWidth ?? 0;
+    const measuredLayoutWidth =
+      layoutResize.width ?? layoutNode?.clientWidth ?? 0;
     const layoutWidth =
       measuredLayoutWidth > 0
         ? measuredLayoutWidth
@@ -444,7 +457,9 @@ export function useNotebookMinimap({
       minimapOptIn &&
       viewportHeight >= MINIMAP_MIN_LAYOUT_HEIGHT &&
       layoutWidth >=
-        minimapWidth + MINIMAP_MIN_CELL_VIEWPORT_WIDTH + MINIMAP_HORIZONTAL_CHROME;
+        minimapWidth +
+          MINIMAP_MIN_CELL_VIEWPORT_WIDTH +
+          MINIMAP_HORIZONTAL_CHROME;
     if (!showMinimap) return null;
 
     const scroller = resolveNotebookScroller(
@@ -486,7 +501,8 @@ export function useNotebookMinimap({
       const id = cellList.get(i);
       if (id == null) continue;
       const cell = cells.get(id);
-      const cellType = (cell?.get?.("cell_type") as string | undefined) ?? "code";
+      const cellType =
+        (cell?.get?.("cell_type") as string | undefined) ?? "code";
       const kind = getMinimapCellKind(cellType);
       const input = cell?.get?.("input");
       const output = cell?.get?.("output");
@@ -638,7 +654,9 @@ export function useNotebookMinimap({
     const charWidth = Math.max(1, ctx.measureText("M").width);
     const maxChars = Math.max(
       8,
-      Math.floor((cssWidth - metrics.leftPadding - metrics.rightPadding) / charWidth),
+      Math.floor(
+        (cssWidth - metrics.leftPadding - metrics.rightPadding) / charWidth,
+      ),
     );
 
     let drawnLines = 0;
@@ -657,7 +675,12 @@ export function useNotebookMinimap({
       if (row.isCurrent) {
         ctx.strokeStyle = "rgba(37,99,235,0.8)";
         ctx.lineWidth = 0.9;
-        ctx.strokeRect(0.5, row.top + 0.5, cssWidth - 1, Math.max(1, row.height - 1));
+        ctx.strokeRect(
+          0.5,
+          row.top + 0.5,
+          cssWidth - 1,
+          Math.max(1, row.height - 1),
+        );
       }
 
       const visibleLineCount = Math.min(
@@ -708,7 +731,10 @@ export function useNotebookMinimap({
       scroller.scrollHeight,
       minimapData.notebookContentHeight,
     );
-    const maxNotebookScroll = Math.max(1, notebookContentHeight - scroller.clientHeight);
+    const maxNotebookScroll = Math.max(
+      1,
+      notebookContentHeight - scroller.clientHeight,
+    );
     const clampedNotebookScrollTop = Math.min(
       Math.max(0, scroller.scrollTop),
       maxNotebookScroll,
@@ -750,7 +776,10 @@ export function useNotebookMinimap({
         (scroller.clientHeight / notebookContentHeight) * contentHeight,
       ),
     );
-    const viewportTravelInTrack = Math.max(0, contentHeight - viewportHeightInTrack);
+    const viewportTravelInTrack = Math.max(
+      0,
+      contentHeight - viewportHeightInTrack,
+    );
     const viewportTopInTrack = notebookRatio * viewportTravelInTrack;
 
     const thumbHeight = Math.min(minimapData.railHeight, viewportHeightInTrack);
@@ -845,7 +874,12 @@ export function useNotebookMinimap({
       saveScrollDebounce();
       return true;
     },
-    [cellListDivRef, hydrateVisibleCells, saveScrollDebounce, updateMinimapViewport],
+    [
+      cellListDivRef,
+      hydrateVisibleCells,
+      saveScrollDebounce,
+      updateMinimapViewport,
+    ],
   );
 
   const onMinimapTrackMouseDown = useCallback(
@@ -878,7 +912,8 @@ export function useNotebookMinimap({
       );
       const rowScrolled = row != null ? scrollToCellById(row.id) : false;
       if (!rowScrolled) {
-        const targetRatio = yContent / Math.max(1, minimapData.totalContentHeight);
+        const targetRatio =
+          yContent / Math.max(1, minimapData.totalContentHeight);
         scroller.scrollTop = targetRatio * maxNotebookScroll;
         hydrateVisibleCells();
         updateMinimapViewport();
@@ -908,7 +943,9 @@ export function useNotebookMinimap({
       markUserInteraction();
     };
     miniScroll.addEventListener("scroll", onMiniScroll, { passive: true });
-    miniScroll.addEventListener("wheel", markUserInteraction, { passive: true });
+    miniScroll.addEventListener("wheel", markUserInteraction, {
+      passive: true,
+    });
     miniScroll.addEventListener("touchstart", markUserInteraction, {
       passive: true,
     });
@@ -923,81 +960,82 @@ export function useNotebookMinimap({
     };
   }, [minimapData]);
 
-  const minimapNode = minimapData == null ? null : (
-    <div
-      data-cocalc-jupyter-minimap-wrapper="1"
-      style={{
-        width: `${minimapWidth}px`,
-        flex: `0 0 ${minimapWidth}px`,
-        marginLeft: "8px",
-        marginRight: "6px",
-        display: "flex",
-        height: "100%",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
+  const minimapNode =
+    minimapData == null ? null : (
       <div
-        ref={minimapRailRef}
-        data-cocalc-jupyter-minimap-rail="1"
-        onMouseDown={onMinimapTrackMouseDown}
+        data-cocalc-jupyter-minimap-wrapper="1"
         style={{
-          position: "relative",
-          width: "100%",
-          height: `${minimapData.railHeight}px`,
-          borderRadius: "4px",
-          background: "rgba(255,255,255,0.92)",
-          border: "1px solid rgba(148,163,184,0.68)",
-          cursor: "pointer",
-          overflow: "hidden",
+          width: `${minimapWidth}px`,
+          flex: `0 0 ${minimapWidth}px`,
+          marginLeft: "8px",
+          marginRight: "6px",
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
         <div
-          ref={minimapScrollRef}
-          data-cocalc-jupyter-minimap-scroll="1"
+          ref={minimapRailRef}
+          data-cocalc-jupyter-minimap-rail="1"
+          onMouseDown={onMinimapTrackMouseDown}
           style={{
-            position: "absolute",
-            inset: 0,
-            overflowY: "auto",
-            overflowX: "hidden",
+            position: "relative",
+            width: "100%",
+            height: `${minimapData.railHeight}px`,
+            borderRadius: "4px",
+            background: "rgba(255,255,255,0.92)",
+            border: "1px solid rgba(148,163,184,0.68)",
+            cursor: "pointer",
+            overflow: "hidden",
           }}
         >
           <div
-            ref={minimapTrackRef}
-            data-cocalc-jupyter-minimap-track="1"
+            ref={minimapScrollRef}
+            data-cocalc-jupyter-minimap-scroll="1"
             style={{
-              position: "relative",
-              height: `${minimapData.totalContentHeight}px`,
+              position: "absolute",
+              inset: 0,
+              overflowY: "auto",
+              overflowX: "hidden",
             }}
           >
-            <canvas
-              ref={minimapCanvasRef}
+            <div
+              ref={minimapTrackRef}
+              data-cocalc-jupyter-minimap-track="1"
               style={{
-                display: "block",
-                width: "100%",
+                position: "relative",
                 height: `${minimapData.totalContentHeight}px`,
               }}
-            />
+            >
+              <canvas
+                ref={minimapCanvasRef}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  height: `${minimapData.totalContentHeight}px`,
+                }}
+              />
+            </div>
           </div>
+          <div
+            ref={minimapViewportRef}
+            data-cocalc-jupyter-minimap-viewport="1"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 0,
+              height: "10px",
+              border: "1px solid rgba(37,99,235,0.75)",
+              background: "rgba(59,130,246,0.12)",
+              borderRadius: "3px",
+              pointerEvents: "none",
+            }}
+          />
         </div>
-        <div
-          ref={minimapViewportRef}
-          data-cocalc-jupyter-minimap-viewport="1"
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: 0,
-            height: "10px",
-            border: "1px solid rgba(37,99,235,0.75)",
-            background: "rgba(59,130,246,0.12)",
-            borderRadius: "3px",
-            pointerEvents: "none",
-          }}
-        />
       </div>
-    </div>
-  );
+    );
 
   const settingsModal = (
     <Modal
@@ -1029,7 +1067,8 @@ export function useNotebookMinimap({
               max={MINIMAP_MAX_WIDTH}
               value={minimapDraftWidth}
               onChange={(value) => {
-                if (typeof value !== "number" || !Number.isFinite(value)) return;
+                if (typeof value !== "number" || !Number.isFinite(value))
+                  return;
                 setMinimapDraftWidth(clampMinimapWidth(value));
               }}
             />

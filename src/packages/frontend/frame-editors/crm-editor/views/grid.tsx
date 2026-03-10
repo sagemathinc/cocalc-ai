@@ -98,7 +98,7 @@ function GridRow({
       >
         <Icon name="expand-arrows" />
       </Button>
-    </td>
+    </td>,
   );
   if (primaryKey) {
     v.push([

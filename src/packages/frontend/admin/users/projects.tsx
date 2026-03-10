@@ -142,7 +142,9 @@ export class Projects extends Component<Props, State> {
           <FormattedMessage
             id="admin.users.projects.none"
             defaultMessage="No {projectsLabel}"
-            values={{ projectsLabel: <FormattedMessage {...labels.projects} /> }}
+            values={{
+              projectsLabel: <FormattedMessage {...labels.projects} />,
+            }}
           />
         </div>
       );
@@ -202,9 +204,7 @@ export class Projects extends Component<Props, State> {
     const content = this.state.status ? (
       this.state.status
     ) : (
-      <span>
-        {this.props.title}
-      </span>
+      <span>{this.props.title}</span>
     );
     const title = (
       <div style={{ fontWeight: "bold", color: "#666", width: "100%" }}>

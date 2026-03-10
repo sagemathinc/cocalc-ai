@@ -4,13 +4,7 @@
  */
 
 import { fromJS, Map } from "immutable";
-import {
-  MutableRefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
 import { three_way_merge as threeWayMerge } from "@cocalc/sync/editor/generic/util";
 import { redux } from "@cocalc/frontend/app-framework";
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
@@ -117,10 +111,7 @@ export default function Input({
             e.preventDefault();
             // ensure use latest input, straight from the editor (avoiding all debounce issues)
             const str = cm.getValue();
-            frame.actions.setElement({
-              obj: { id: element.id, str },
-              commit: false,
-            });
+            actions.set_cell_input(element.id, str, false);
             // evaluate in all cases
             frame.actions.runCodeElement({ id: element.id, str });
             // TODO: handle these cases

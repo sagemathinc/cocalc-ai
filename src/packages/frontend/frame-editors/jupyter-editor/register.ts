@@ -14,4 +14,3 @@ register_file_editor({
   editor: async () => await import("./editor"),
   actions: async () => await import("./actions"),
 });
-

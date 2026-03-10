@@ -1,6 +1,10 @@
 import { Card, Typography } from "antd";
 
-import { React, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  React,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { SiteName } from "@cocalc/frontend/customize";
 import { set_url } from "@cocalc/frontend/history";
 import { SITE_NAME } from "@cocalc/util/theme";

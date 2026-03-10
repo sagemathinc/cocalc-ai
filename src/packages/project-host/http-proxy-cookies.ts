@@ -3,13 +3,19 @@ import { PROJECT_HOST_HTTP_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/projec
 
 const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
-  Number.isFinite(Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS))
+  Number.isFinite(
+    Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS),
+  )
     ? Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS)
     : 30 * 24 * 60 * 60,
 );
 
 export function projectCookiePath(project_id: string): string {
   return `/${project_id}`;
+}
+
+export function legacyProjectHostCookiePath(): string {
+  return "/";
 }
 
 export function isSecureRequest(req: IncomingMessage): boolean {
@@ -34,6 +40,26 @@ export function buildProjectHostSessionCookie({
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${HTTP_SESSION_TTL_SECONDS}`,
+  ];
+  if (isSecureRequest(req)) {
+    attrs.push("Secure");
+  }
+  return attrs.join("; ");
+}
+
+export function buildProjectHostSessionCookieDeletion({
+  req,
+  path,
+}: {
+  req: IncomingMessage;
+  path: string;
+}): string {
+  const attrs = [
+    `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=`,
+    `Path=${path}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
   ];
   if (isSecureRequest(req)) {
     attrs.push("Secure");

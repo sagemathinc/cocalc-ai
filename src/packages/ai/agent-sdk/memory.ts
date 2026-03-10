@@ -35,4 +35,3 @@ export class InMemoryAuditSink implements AgentAuditSink {
     return this.events.filter((event) => event.status === options.status);
   }
 }
-

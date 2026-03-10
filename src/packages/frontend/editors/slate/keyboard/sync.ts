@@ -17,8 +17,9 @@ register(
       console.log("slate alt/meta+enter handler", {
         selection: editor.selection ?? null,
         topPath: editor.selection?.focus?.path?.[0],
-        topNodeType: (editor.children?.[editor.selection?.focus?.path?.[0] ?? -1] as any)
-          ?.type,
+        topNodeType: (
+          editor.children?.[editor.selection?.focus?.path?.[0] ?? -1] as any
+        )?.type,
       });
       altEnter(editor.getMarkdownValue(), extra?.id, {
         selection: editor.selection ?? null,
@@ -28,5 +29,5 @@ register(
     }
     editor.inverseSearch(true);
     return true;
-  }
+  },
 );

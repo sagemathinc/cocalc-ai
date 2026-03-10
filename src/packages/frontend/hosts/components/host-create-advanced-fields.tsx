@@ -15,9 +15,7 @@ export const HostCreateAdvancedFields: React.FC<
   const form = Form.useFormInstance();
   const diskTypeOptions = getDiskTypeOptions(selectedProvider);
   const defaultDiskType =
-    selectedProvider === "nebius"
-      ? "ssd_io_m3"
-      : diskTypeOptions[0]?.value;
+    selectedProvider === "nebius" ? "ssd_io_m3" : diskTypeOptions[0]?.value;
   const hideSelfHostAdvanced = selectedProvider === "self-host";
   const { schema, options, labels, tooltips } = fields;
   const {

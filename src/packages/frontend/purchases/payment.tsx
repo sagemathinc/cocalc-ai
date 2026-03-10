@@ -1,7 +1,11 @@
 import { Divider, Tag } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useEffect, useState } from "react";
-import { moneyToCurrency, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToCurrency,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 import { zIndexPayAsGo } from "./zindex";
 import * as api from "./api";
 import PaymentConfig from "./payment-config";

@@ -19,11 +19,11 @@ if (loadContainer) {
     <>
       <PreflightCheck />
       <StartupBanner />
-    </>
+    </>,
   );
 } else {
   throw Error(
-    "there must be a div with id cocalc-load-container in the document!"
+    "there must be a div with id cocalc-load-container in the document!",
   );
 }
 
@@ -34,10 +34,10 @@ if (scriptsContainer != null) {
       <Manifest />
       <Meta />
       <Favicons />
-    </span>
+    </span>,
   );
 } else {
   throw Error(
-    "there must be a div with id cocalc-scripts-container in the document!"
+    "there must be a div with id cocalc-scripts-container in the document!",
   );
 }

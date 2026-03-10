@@ -17,9 +17,9 @@ export function useScrollY() {
         setScrollY(window.pageYOffset);
       },
       100,
-      { trailing: true }
+      { trailing: true },
     ),
-    []
+    [],
   );
 
   useEffect(() => {

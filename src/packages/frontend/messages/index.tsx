@@ -48,9 +48,7 @@ function Messages0({ filter, style }: Props) {
   const search = useTypedRedux("messages", "search");
   const error = useTypedRedux("messages", "error");
   return (
-    <FileContext.Provider
-      value={{ AnchorTagComponent }}
-    >
+    <FileContext.Provider value={{ AnchorTagComponent }}>
       <ConfigProvider renderEmpty={() => <Empty description={"No messages"} />}>
         <KeyboardShortcuts />
         <div

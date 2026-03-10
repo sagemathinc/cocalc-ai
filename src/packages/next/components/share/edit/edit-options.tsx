@@ -13,7 +13,10 @@ import ChooseProject from "./choose-project";
 import { Props } from "./index";
 import InPlaceSignInOrUp from "components/auth/in-place-sign-in-or-up";
 import { trunc_middle } from "@cocalc/util/misc";
-import { WORKSPACE_LABEL, WORKSPACES_LABEL } from "@cocalc/util/i18n/terminology";
+import {
+  WORKSPACE_LABEL,
+  WORKSPACES_LABEL,
+} from "@cocalc/util/i18n/terminology";
 
 interface EditOptionsProps extends Props {
   onClose: () => void;
@@ -82,10 +85,7 @@ export default function EditOptions({
         />
       )}
       {account?.account_id == null && (
-        <NotSignedInOptions
-          path={path}
-          id={id}
-        />
+        <NotSignedInOptions path={path} id={id} />
       )}
       <br />
     </Card>

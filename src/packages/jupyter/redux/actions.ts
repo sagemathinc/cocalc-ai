@@ -291,7 +291,8 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   };
 
   private getRuntimeRecord<T extends object>(key: string): T | undefined {
-    const value = this.runtimeState?.get(key) ?? this.pendingRuntimeRecords.get(key);
+    const value =
+      this.runtimeState?.get(key) ?? this.pendingRuntimeRecords.get(key);
     if (value == null || typeof value !== "object") {
       return;
     }
@@ -343,15 +344,23 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
   };
 
-  private getRuntimeCell = (id: string): JupyterRuntimeCellState | undefined => {
+  private getRuntimeCell = (
+    id: string,
+  ): JupyterRuntimeCellState | undefined => {
     if (!id) {
       return;
     }
-    return this.getRuntimeRecord<JupyterRuntimeCellState>(jupyterRuntimeCellKey(id));
+    return this.getRuntimeRecord<JupyterRuntimeCellState>(
+      jupyterRuntimeCellKey(id),
+    );
   };
 
   private withRuntimeCell = (id: string, cell: immutable.Map<string, any>) => {
-    let result = cell.remove("state").remove("start").remove("end").remove("done");
+    let result = cell
+      .remove("state")
+      .remove("start")
+      .remove("end")
+      .remove("done");
     const runtimeCell = this.getRuntimeCell(id);
     if (runtimeCell == null) {
       return result;
@@ -370,7 +379,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   private withPersistentCellMetadata = (
     cell: immutable.Map<string, any>,
   ): immutable.Map<string, any> => {
-    const persisted = normalizeLastRuntimeMs(getCellMetadataLastRuntimeMs(cell));
+    const persisted = normalizeLastRuntimeMs(
+      getCellMetadataLastRuntimeMs(cell),
+    );
     const legacy = normalizeLastRuntimeMs(cell.get("last"));
     const last = persisted ?? legacy;
     if (last == null) {
@@ -386,8 +397,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (!id) {
       return;
     }
-    const cells: immutable.Map<string, immutable.Map<string, any>> =
-      this.store.get("cells");
+    const cells: immutable.Map<
+      string,
+      immutable.Map<string, any>
+    > = this.store.get("cells");
     if (cells == null) {
       return;
     }
@@ -675,7 +688,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       },
       save,
     );
-    this.set_runtime_cell_state(id, { state: undefined, start: null, end: null });
+    this.set_runtime_cell_state(id, {
+      state: undefined,
+      start: null,
+      end: null,
+    });
   }
 
   set_cell_output = (id: string, output: any, save = true) => {
@@ -696,7 +713,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
     const runtimeCell = this.getRuntimeCell(id);
     if (Object.prototype.hasOwnProperty.call(cell, "last")) {
-      cell.metadata = patchCellMetadataWithLastRuntime(cell.metadata, cell.last);
+      cell.metadata = patchCellMetadataWithLastRuntime(
+        cell.metadata,
+        cell.last,
+      );
     }
     cell.id = newId;
     delete cell.last;
@@ -1478,7 +1498,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       },
       save,
     );
-    this.set_runtime_cell_state(cell_id, { state: undefined, start: null, end: null });
+    this.set_runtime_cell_state(cell_id, {
+      state: undefined,
+      start: null,
+      end: null,
+    });
   }
 
   // Merge the given cells into one cell, which replaces
@@ -2496,7 +2520,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
           Object.prototype.hasOwnProperty.call(obj, "last")
         ) {
           obj = { ...obj };
-          obj.metadata = patchCellMetadataWithLastRuntime(obj.metadata, obj.last);
+          obj.metadata = patchCellMetadataWithLastRuntime(
+            obj.metadata,
+            obj.last,
+          );
           delete obj.last;
         }
         this.syncdb.set(obj);

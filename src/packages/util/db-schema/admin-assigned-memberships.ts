@@ -8,7 +8,12 @@ Table({
   name: "admin_assigned_memberships",
   rules: {
     primary_key: "account_id",
-    pg_indexes: ["membership_class", "expires_at", "assigned_by", "assigned_at"],
+    pg_indexes: [
+      "membership_class",
+      "expires_at",
+      "assigned_by",
+      "assigned_at",
+    ],
     user_query: {
       set: {
         admin: true,

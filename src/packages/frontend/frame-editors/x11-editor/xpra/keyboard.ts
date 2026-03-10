@@ -233,7 +233,7 @@ export class Keyboard {
         keycode,
         str,
         keycode,
-        group
+        group,
       );
 
       // MacOS will swallow the key release event if the meta modifier is pressed,
@@ -248,7 +248,7 @@ export class Keyboard {
           keycode,
           str,
           keycode,
-          group
+          group,
         );
       }
 

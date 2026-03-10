@@ -239,8 +239,10 @@ function resolveBootstrapSelector({
     typeof metadata.bootstrap_version === "string"
       ? metadata.bootstrap_version.trim()
       : "";
-  const settingsChannel = settings.project_hosts_bootstrap_channel?.trim() || "";
-  const settingsVersion = settings.project_hosts_bootstrap_version?.trim() || "";
+  const settingsChannel =
+    settings.project_hosts_bootstrap_channel?.trim() || "";
+  const settingsVersion =
+    settings.project_hosts_bootstrap_version?.trim() || "";
   if (metaVersion) return { selector: metaVersion, source: "host-version" };
   if (metaChannel) return { selector: metaChannel, source: "host-channel" };
   if (settingsVersion)
@@ -278,7 +280,9 @@ function buildAppPublicWildcardHostname({
   const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
   const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
   const normalizedSuffix = `${suffix ?? ""}`.trim().toLowerCase() || "app";
-  const wildcardLabel = ["*", normalizedSuffix, prefix].filter(Boolean).join("-");
+  const wildcardLabel = ["*", normalizedSuffix, prefix]
+    .filter(Boolean)
+    .join("-");
   return `${wildcardLabel}.${root}`;
 }
 
@@ -352,7 +356,7 @@ export async function buildBootstrapScripts(
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
   const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
-    : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+    : (runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu");
   const runtimeUser =
     `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
     "cocalc-host";
@@ -461,11 +465,12 @@ export async function buildBootstrapScripts(
   const localConfig = useOnPremSettings
     ? getLaunchpadLocalConfig("local")
     : undefined;
-  const localConat =
-    localConfig?.http_port ? `http://127.0.0.1:${localConfig.http_port}` : "";
+  const localConat = localConfig?.http_port
+    ? `http://127.0.0.1:${localConfig.http_port}`
+    : "";
   const launchpadConat = useOnPremSettings
     ? localConat
-    : opts.launchpadBaseUrl ?? "";
+    : (opts.launchpadBaseUrl ?? "");
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ??
     process.env.COCALC_MASTER_CONAT_SERVER ??
@@ -476,11 +481,11 @@ export async function buildBootstrapScripts(
 
   const tunnel = useOnPremSettings
     ? undefined
-    : opts.tunnel ??
+    : (opts.tunnel ??
       (await ensureCloudflareTunnelForHost({
         host_id: row.id,
         existing: metadata.cloudflare_tunnel,
-      }));
+      })));
   const tunnelEnabled = !!tunnel;
 
   const spec = await buildHostSpec(row);
@@ -724,7 +729,9 @@ fi
     "chrony",
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
-  const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
+  const cloudflaredJson = JSON.stringify(
+    scripts.cloudflaredConfig ?? { enabled: false },
+  );
   const preferredBootstrapUser =
     scripts.bootstrapUser && scripts.bootstrapUser !== "root"
       ? scripts.bootstrapUser
@@ -1157,6 +1164,8 @@ bootstrap/
 bin/
   ctl                     - start/stop/status helper (runs as runtime user)
   logs [lines]            - tail project-host log (runs as runtime user)
+  acp-status              - show ACP worker pid/log/container state
+  acp-logs [lines]        - tail ACP worker log
   logs-cf                 - tail cloudflared logs (if enabled; runtime user)
   ctl-cf                  - cloudflared {start|stop|restart|status} (runtime user)
   fetch-project-bundle.sh - refresh project bundle from software endpoint
@@ -1170,6 +1179,8 @@ Runtime scripts (owned by runtime user):
 
 Logs and status:
   - Project-host logs:  $HOME/cocalc-host/bin/logs
+  - ACP worker status:  $HOME/cocalc-host/bin/acp-status
+  - ACP worker logs:    $HOME/cocalc-host/bin/acp-logs
   - Connector logs:     journalctl --user -u cocalc-self-host-connector.service -f
   - Cloudflared logs:   $HOME/cocalc-host/bin/logs-cf
 
@@ -1182,6 +1193,15 @@ Deprovision:
 Notes:
   - /mnt/cocalc holds project data and snapshots.
   - /etc/cocalc/project-host.env contains runtime settings.
+
+ACP worker (Codex turn runner):
+  - Project-host ACP turns run in a separate worker process.
+  - The main project-host process is responsible for starting and supervising it.
+  - Worker pid file: /btrfs/data/acp-worker.pid
+  - Worker log: /btrfs/data/logs/acp-worker.log
+  - Active turns usually create podman containers named codex-<project>-...
+  - If the host looks healthy but the browser is stuck on "Codex is starting",
+    also inspect the central hub/browser control plane.
 EOF_COCALC_README
 sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/README.md"
 `;

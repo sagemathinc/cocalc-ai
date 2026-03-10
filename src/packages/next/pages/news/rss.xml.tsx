@@ -34,7 +34,7 @@ export default function RSS() {
 async function populateNewsItems(
   xml: XMLBuilder,
   ch: Channel | "all",
-  dns: string
+  dns: string,
 ): Promise<XMLBuilder> {
   for (const n of await getFeedData()) {
     const { id, text, title, date, channel } = n;
@@ -105,7 +105,7 @@ async function getXML(channel?: string): Promise<string> {
     .up()
     .ele("description")
     .txt(
-      `News about ${siteName}. ${descExtra}Also available at https://${dns}/news`
+      `News about ${siteName}. ${descExtra}Also available at https://${dns}/news`,
     )
     .up()
     .ele("link")

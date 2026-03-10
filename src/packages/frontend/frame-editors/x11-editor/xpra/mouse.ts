@@ -44,9 +44,7 @@ const WHEEL_EVENT_NAME = get_wheel_event_name();
 
 import { PIXEL_STEP, LINE_HEIGHT, PAGE_HEIGHT } from "./constants";
 
-function normalize_wheel(
-  ev: any
-): {
+function normalize_wheel(ev: any): {
   spinX: number;
   spinY: number;
   pixelX: number;
@@ -122,8 +120,8 @@ function getMouseButton(ev: MouseEvent): number {
   let button: number = ev.which
     ? Math.max(0, ev.which)
     : ev.button
-    ? Math.max(0, ev.button) + 1
-    : 0;
+      ? Math.max(0, ev.button) + 1
+      : 0;
 
   if (button === 4) {
     button = 8;
@@ -136,7 +134,7 @@ function getMouseButton(ev: MouseEvent): number {
 
 function getMouse(
   ev: MouseEvent,
-  surface: Surface
+  surface: Surface,
 ): { x: number; y: number; button: number; buttons: number[] } | undefined {
   const { top, left, bottom, right } = surface.canvas.getBoundingClientRect();
   if (
@@ -154,10 +152,10 @@ function getMouse(
   }
 
   const x = Math.round(
-    surface.canvas.width * ((ev.clientX - left) / (right - left)) + surface.x
+    surface.canvas.width * ((ev.clientX - left) / (right - left)) + surface.x,
   );
   const y = Math.round(
-    surface.canvas.height * ((ev.clientY - top) / (bottom - top)) + surface.y
+    surface.canvas.height * ((ev.clientY - top) / (bottom - top)) + surface.y,
   );
 
   const buttons = [];
@@ -204,7 +202,7 @@ export class Mouse {
       // TODO: this shouldn't happen, or if it does, probably
       // we should do something special to fix it?
       console.warn(
-        `process mouse -- weird, we clicked on surface ${wid} but can't find it`
+        `process mouse -- weird, we clicked on surface ${wid} but can't find it`,
       );
       return;
     }
@@ -234,7 +232,7 @@ export class Mouse {
           pressed,
           [x, y],
           modifiers,
-          buttons
+          buttons,
         );
         break;
       }

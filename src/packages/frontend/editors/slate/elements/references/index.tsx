@@ -8,7 +8,6 @@ import { References, createReferencesNode } from "./type";
 export type { References };
 export { createReferencesNode };
 
-
 register({
   slateType: "references",
 

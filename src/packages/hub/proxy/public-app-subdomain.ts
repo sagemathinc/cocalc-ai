@@ -53,7 +53,9 @@ export async function maybeRewritePublicAppSubdomainRequest(
   const parsed = new URL(req.url ?? "/", "http://proxy.local");
   const incomingPath = parsed.pathname || "/";
   const appBasePath = normalizePrefix(target.base_path);
-  const canonicalBasePath = normalizePrefix(`/${target.project_id}${appBasePath}`);
+  const canonicalBasePath = normalizePrefix(
+    `/${target.project_id}${appBasePath}`,
+  );
   const proxiedPath =
     incomingPath === canonicalBasePath ||
     incomingPath.startsWith(`${canonicalBasePath}/`)

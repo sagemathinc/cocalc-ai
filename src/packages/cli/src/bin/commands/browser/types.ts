@@ -333,7 +333,10 @@ export type BrowserProfileSelection = {
 };
 
 export type BrowserSessionRegisterUtils = {
-  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  loadProfileSelection: (
+    deps: BrowserCommandDeps,
+    command: Command,
+  ) => BrowserProfileSelection;
   saveProfileBrowserId: (opts: {
     deps: BrowserCommandDeps;
     command: Command;
@@ -362,7 +365,10 @@ export type BrowserSessionRegisterUtils = {
     apiKey?: string;
   }) => SpawnCookie[];
   writeDaemonConfig: (path: string, value: PlaywrightDaemonConfig) => void;
-  parseDiscoveryTimeout: (value: string | undefined, fallbackMs: number) => number;
+  parseDiscoveryTimeout: (
+    value: string | undefined,
+    fallbackMs: number,
+  ) => number;
   waitForSpawnStateReady: (opts: {
     stateFile: string;
     timeoutMs: number;
@@ -424,7 +430,10 @@ export type BrowserSessionRegisterUtils = {
 };
 
 export type BrowserObservabilityRegisterUtils = {
-  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  loadProfileSelection: (
+    deps: BrowserCommandDeps,
+    command: Command,
+  ) => BrowserProfileSelection;
   chooseBrowserSession: (opts: {
     ctx: BrowserCommandContext;
     browserHint?: string;
@@ -434,7 +443,9 @@ export type BrowserObservabilityRegisterUtils = {
     activeOnly?: boolean;
   }) => Promise<BrowserSessionInfo>;
   browserHintFromOption: (value: unknown) => string | undefined;
-  parseRuntimeEventLevels: (value: unknown) => BrowserRuntimeEventLevel[] | undefined;
+  parseRuntimeEventLevels: (
+    value: unknown,
+  ) => BrowserRuntimeEventLevel[] | undefined;
   formatRuntimeEventLine: (event: BrowserRuntimeEvent) => string;
   durationToMs: (value: unknown, fallbackMs: number) => number;
   sessionTargetContext: (
@@ -448,14 +459,19 @@ export type BrowserObservabilityRegisterUtils = {
   parseNetworkProtocols: (
     value: unknown,
   ) => BrowserNetworkTraceProtocol[] | undefined;
-  parseNetworkPhases: (value: unknown) => BrowserNetworkTracePhase[] | undefined;
+  parseNetworkPhases: (
+    value: unknown,
+  ) => BrowserNetworkTracePhase[] | undefined;
   formatNetworkTraceLine: (event: BrowserNetworkTraceEvent) => string;
   parseCsvStrings: (value: unknown) => string[] | undefined;
   sleep: (ms: number) => Promise<void>;
 };
 
 export type BrowserActionRegisterUtils = {
-  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  loadProfileSelection: (
+    deps: BrowserCommandDeps,
+    command: Command,
+  ) => BrowserProfileSelection;
   browserHintFromOption: (value: unknown) => string | undefined;
   chooseBrowserSession: (opts: {
     ctx: BrowserCommandContext;
@@ -504,7 +520,10 @@ export type BrowserActionRegisterUtils = {
 };
 
 export type BrowserHarnessRegisterUtils = {
-  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  loadProfileSelection: (
+    deps: BrowserCommandDeps,
+    command: Command,
+  ) => BrowserProfileSelection;
   browserHintFromOption: (value: unknown) => string | undefined;
   chooseBrowserSession: (opts: {
     ctx: BrowserCommandContext;
@@ -539,7 +558,10 @@ export type BrowserHarnessRegisterUtils = {
 };
 
 export type BrowserInspectRegisterUtils = {
-  loadProfileSelection: (deps: BrowserCommandDeps, command: Command) => BrowserProfileSelection;
+  loadProfileSelection: (
+    deps: BrowserCommandDeps,
+    command: Command,
+  ) => BrowserProfileSelection;
   browserHintFromOption: (value: unknown) => string | undefined;
   chooseBrowserSession: (opts: {
     ctx: BrowserCommandContext;

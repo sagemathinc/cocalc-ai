@@ -102,7 +102,10 @@ export const Invoice: React.FC<Props> = ({ invoice }) => {
     );
   }
 
-  function render_line_items(): undefined | React.JSX.Element | React.JSX.Element[] {
+  function render_line_items():
+    | undefined
+    | React.JSX.Element
+    | React.JSX.Element[] {
     if (invoice.get("lines") == null) return;
     if (hide_line_items) {
       return (
@@ -128,7 +131,7 @@ export const Invoice: React.FC<Props> = ({ invoice }) => {
           }}
         >
           (hide details)
-        </a>
+        </a>,
       );
       let n = 1;
       for (const line of invoice.getIn(["lines", "data"], [] as any)) {

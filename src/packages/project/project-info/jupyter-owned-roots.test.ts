@@ -5,7 +5,8 @@
 
 describe("jupyter owned roots bridge", () => {
   afterEach(async () => {
-    const { closeOwnedProcessRegistry } = await import("./owned-process-registry");
+    const { closeOwnedProcessRegistry } =
+      await import("./owned-process-registry");
     closeOwnedProcessRegistry();
     jest.resetModules();
     jest.clearAllMocks();
@@ -27,8 +28,10 @@ describe("jupyter owned roots bridge", () => {
       },
     }));
 
-    const { ensureJupyterOwnedRootBridge } = await import("./jupyter-owned-roots");
-    const { getOwnedProcessRegistry } = await import("./owned-process-registry");
+    const { ensureJupyterOwnedRootBridge } =
+      await import("./jupyter-owned-roots");
+    const { getOwnedProcessRegistry } =
+      await import("./owned-process-registry");
 
     ensureJupyterOwnedRootBridge();
     expect(typeof observer).toBe("function");
@@ -63,4 +66,3 @@ describe("jupyter owned roots bridge", () => {
     expect(registry.listRoots()).toHaveLength(0);
   });
 });
-

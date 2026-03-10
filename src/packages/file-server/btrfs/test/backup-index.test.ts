@@ -50,7 +50,9 @@ describe("backup index", () => {
       const meta = db
         .prepare("SELECT key, value FROM meta ORDER BY key")
         .all() as { key: string; value: string }[];
-      const metaMap = Object.fromEntries(meta.map((row) => [row.key, row.value]));
+      const metaMap = Object.fromEntries(
+        meta.map((row) => [row.key, row.value]),
+      );
       expect(metaMap.backup_id).toBe("snap");
       expect(metaMap.snapshot_id).toBe("snap");
       expect(metaMap.backup_time).toBe("2026-01-01T00:00:00.000Z");

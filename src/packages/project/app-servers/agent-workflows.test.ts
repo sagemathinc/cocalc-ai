@@ -1,5 +1,11 @@
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -152,7 +158,9 @@ describe("app server agent workflows", () => {
     expect(exposed.exposure?.token).toBeTruthy();
 
     const auditPublic = await auditAppPublicReadiness(id);
-    const publicCheck = auditPublic.checks.find((c) => c.id === "exposure.public");
+    const publicCheck = auditPublic.checks.find(
+      (c) => c.id === "exposure.public",
+    );
     expect(publicCheck?.status).toBe("pass");
     expect(auditPublic.agent_prompt).toContain(`app '${id}'`);
     expect(auditPublic.suggested_actions.length).toBeGreaterThan(0);
@@ -161,7 +169,9 @@ describe("app server agent workflows", () => {
     expect(privateStatus.exposure).toBeUndefined();
 
     const auditPrivate = await auditAppPublicReadiness(id);
-    const privateCheck = auditPrivate.checks.find((c) => c.id === "exposure.public");
+    const privateCheck = auditPrivate.checks.find(
+      (c) => c.id === "exposure.public",
+    );
     expect(privateCheck?.status).toBe("warn");
   });
 
@@ -180,29 +190,39 @@ describe("app server agent workflows", () => {
     expect(managed.port).toBeGreaterThan(0);
     const managedPort = managed.port as number;
 
-    const unmanagedServer = await new Promise<ReturnType<typeof createServer>>((resolve) => {
-      const srv = createServer((_req, res) => {
-        res.statusCode = 200;
-        res.end("unmanaged");
-      });
-      srv.listen(0, "127.0.0.1", () => resolve(srv));
-    });
+    const unmanagedServer = await new Promise<ReturnType<typeof createServer>>(
+      (resolve) => {
+        const srv = createServer((_req, res) => {
+          res.statusCode = 200;
+          res.end("unmanaged");
+        });
+        srv.listen(0, "127.0.0.1", () => resolve(srv));
+      },
+    );
     const unmanagedPort = (unmanagedServer.address() as any).port as number;
     expect(unmanagedPort).toBeGreaterThan(0);
 
     try {
-      const withManaged = await detectApps({ include_managed: true, limit: 1000 });
+      const withManaged = await detectApps({
+        include_managed: true,
+        limit: 1000,
+      });
       const managedRow = withManaged.find((x) => x.port === managedPort);
       const unmanagedRow = withManaged.find((x) => x.port === unmanagedPort);
       expect(managedRow?.managed).toBe(true);
       expect(managedRow?.managed_app_ids).toContain(id);
       expect(unmanagedRow?.managed).toBe(false);
 
-      const unmanagedOnly = await detectApps({ include_managed: false, limit: 1000 });
+      const unmanagedOnly = await detectApps({
+        include_managed: false,
+        limit: 1000,
+      });
       expect(unmanagedOnly.some((x) => x.port === unmanagedPort)).toBe(true);
       expect(unmanagedOnly.some((x) => x.port === managedPort)).toBe(false);
     } finally {
-      await new Promise<void>((resolve) => unmanagedServer.close(() => resolve()));
+      await new Promise<void>((resolve) =>
+        unmanagedServer.close(() => resolve()),
+      );
       await stopApp(id);
     }
   });
@@ -212,7 +232,11 @@ describe("app server agent workflows", () => {
     const root = mkdtempSync(join(testHome, "static-app-"));
     mkdirSync(join(root, "sub"), { recursive: true });
     writeFileSync(join(root, "index.html"), "static-root-ok\n", "utf8");
-    writeFileSync(join(root, "sub", "index.html"), "static-nested-ok\n", "utf8");
+    writeFileSync(
+      join(root, "sub", "index.html"),
+      "static-nested-ok\n",
+      "utf8",
+    );
 
     await upsertAppSpec({
       version: 1,
@@ -249,7 +273,9 @@ describe("app server agent workflows", () => {
     expect((nestedTarget as any)?.rewritePath).toBe("/sub/");
 
     const audit = await auditAppPublicReadiness(id);
-    const cacheCheck = audit.checks.find((c) => c.id === "static.cache_control");
+    const cacheCheck = audit.checks.find(
+      (c) => c.id === "static.cache_control",
+    );
     expect(cacheCheck?.status).toBe("pass");
 
     const exposed = await exposeApp({

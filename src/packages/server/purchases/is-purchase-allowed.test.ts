@@ -138,5 +138,4 @@ describe("test checking whether or not purchase is allowed under various conditi
     });
     expect(allowed).toBe(false);
   });
-
 });

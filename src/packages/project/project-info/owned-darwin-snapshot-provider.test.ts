@@ -35,13 +35,9 @@ describe("owned darwin snapshot helpers", () => {
   });
 
   it("parses etime formats used by mac ps", () => {
-    const row1 = parsePsLine(
-      "201 1 1.0 1024 01:23 0 S /bin/bash /bin/bash",
-    );
+    const row1 = parsePsLine("201 1 1.0 1024 01:23 0 S /bin/bash /bin/bash");
     expect(row1?.etimes).toBe(83);
-    const row2 = parsePsLine(
-      "202 1 1.0 1024 01:02:03 0 S /bin/bash /bin/bash",
-    );
+    const row2 = parsePsLine("202 1 1.0 1024 01:02:03 0 S /bin/bash /bin/bash");
     expect(row2?.etimes).toBe(3723);
     const row3 = parsePsLine(
       "203 1 1.0 1024 2-03:04:05 0 S /bin/bash /bin/bash",
@@ -50,9 +46,12 @@ describe("owned darwin snapshot helpers", () => {
   });
 
   it("prefers args path over truncated comm for exe", () => {
-    expect(inferExeFromPs("/opt/homebrew/Ce", "/opt/homebrew/Cellar/python@3.12/bin/python3 -i")).toBe(
-      "/opt/homebrew/Cellar/python@3.12/bin/python3",
-    );
+    expect(
+      inferExeFromPs(
+        "/opt/homebrew/Ce",
+        "/opt/homebrew/Cellar/python@3.12/bin/python3 -i",
+      ),
+    ).toBe("/opt/homebrew/Cellar/python@3.12/bin/python3");
     expect(inferExeFromPs("bash", "bash")).toBe("bash");
   });
 });

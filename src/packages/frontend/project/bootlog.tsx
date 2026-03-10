@@ -5,7 +5,12 @@ import { useProjectContext } from "./context";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroEvent, LroScopeType } from "@cocalc/conat/hub/api/lro";
 import ShowError from "@cocalc/frontend/components/error";
-import { capitalize, field_cmp, human_readable_size, plural } from "@cocalc/util/misc";
+import {
+  capitalize,
+  field_cmp,
+  human_readable_size,
+  plural,
+} from "@cocalc/util/misc";
 import { namespaceToColor } from "@cocalc/util/color";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { TimeAgo } from "@cocalc/frontend/components";
@@ -75,11 +80,7 @@ export default function Bootlog({
     return () => {
       stream.close();
     };
-  }, [
-    resolvedLro?.op_id,
-    resolvedLro?.scope_type,
-    resolvedLro?.scope_id,
-  ]);
+  }, [resolvedLro?.op_id, resolvedLro?.scope_type, resolvedLro?.scope_id]);
 
   if (!resolvedLro?.op_id) {
     return null;

@@ -61,7 +61,8 @@ describe("path_split", () => {
 describe("path_to_file", () => {
   const pf = misc.path_to_file;
 
-  test("relative directory", () => expect(pf("foo", "bar.txt")).toBe("foo/bar.txt"));
+  test("relative directory", () =>
+    expect(pf("foo", "bar.txt")).toBe("foo/bar.txt"));
   test("empty directory", () => expect(pf("", "bar.txt")).toBe("bar.txt"));
   test("absolute root", () => expect(pf("/", "bar.txt")).toBe("/bar.txt"));
 });

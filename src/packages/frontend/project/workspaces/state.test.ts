@@ -37,10 +37,15 @@ describe("project workspaces path matching", () => {
   });
 
   it("uses the longest matching workspace prefix", () => {
-    const records = [record("/home/wstein/build", "1"), record("/home/wstein/build/cocalc-lite3", "2")];
+    const records = [
+      record("/home/wstein/build", "1"),
+      record("/home/wstein/build/cocalc-lite3", "2"),
+    ];
     expect(
-      resolveWorkspaceForPath(records, "/home/wstein/build/cocalc-lite3/src/index.ts")
-        ?.workspace_id,
+      resolveWorkspaceForPath(
+        records,
+        "/home/wstein/build/cocalc-lite3/src/index.ts",
+      )?.workspace_id,
     ).toBe("2");
   });
 

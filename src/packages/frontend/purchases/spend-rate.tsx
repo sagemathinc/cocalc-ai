@@ -1,5 +1,9 @@
 import { Card, Statistic, Tooltip } from "antd";
-import { moneyToCurrency, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToCurrency,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 
 interface Props {
   style?;

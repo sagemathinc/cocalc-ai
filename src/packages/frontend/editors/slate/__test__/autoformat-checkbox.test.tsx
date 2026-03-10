@@ -8,7 +8,7 @@ import { withIsInline, withIsVoid } from "../plugins";
 
 test("autoformat checkbox in list item", () => {
   const editor = withAutoFormat(
-    withIsInline(withIsVoid(withReact(createEditor())))
+    withIsInline(withIsVoid(withReact(createEditor()))),
   );
   const value: Descendant[] = [
     {
@@ -16,9 +16,7 @@ test("autoformat checkbox in list item", () => {
       children: [
         {
           type: "list_item",
-          children: [
-            { type: "paragraph", children: [{ text: "[ ]" }] },
-          ],
+          children: [{ type: "paragraph", children: [{ text: "[ ]" }] }],
         },
       ],
     },
@@ -46,7 +44,7 @@ test("autoformat checkbox in list item", () => {
 
 test("autoformat checked checkbox in list item", () => {
   const editor = withAutoFormat(
-    withIsInline(withIsVoid(withReact(createEditor())))
+    withIsInline(withIsVoid(withReact(createEditor()))),
   );
   const value: Descendant[] = [
     {
@@ -54,9 +52,7 @@ test("autoformat checked checkbox in list item", () => {
       children: [
         {
           type: "list_item",
-          children: [
-            { type: "paragraph", children: [{ text: "[x]" }] },
-          ],
+          children: [{ type: "paragraph", children: [{ text: "[x]" }] }],
         },
       ],
     },

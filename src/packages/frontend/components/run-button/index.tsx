@@ -126,13 +126,7 @@ export default function RunButton({
 
   // determine the kernel
   useEffect(() => {
-    if (
-      noRun ||
-      !project_id ||
-      setOutput == null ||
-      running ||
-      !info.trim()
-    ) {
+    if (noRun || !project_id || setOutput == null || running || !info.trim()) {
       return;
     }
     setOutput({ old: true });

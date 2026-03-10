@@ -3,11 +3,7 @@ import { getDatabase } from "./database";
 
 const TABLE = "acp_turns";
 
-export type AcpTurnLeaseState =
-  | "running"
-  | "completed"
-  | "error"
-  | "aborted";
+export type AcpTurnLeaseState = "running" | "completed" | "error" | "aborted";
 
 export interface AcpTurnLeaseKey {
   project_id: string;

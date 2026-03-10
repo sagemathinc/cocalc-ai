@@ -78,13 +78,7 @@ export function useMentionableUsers(): (
         opts,
       });
     };
-  }, [
-    project_id,
-    JSON.stringify(enabledLLMs),
-    ollama,
-    custom_openai,
-    model,
-  ]);
+  }, [project_id, JSON.stringify(enabledLLMs), ollama, custom_openai, model]);
 }
 
 interface Props {

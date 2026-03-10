@@ -40,11 +40,7 @@ function getCursorThreadKey(cursor: any): string | null {
   return `${immutableValue}`;
 }
 
-export default function Composing({
-  actions,
-  accountId,
-  userMap,
-}: Props) {
+export default function Composing({ actions, accountId, userMap }: Props) {
   const [cursorTick, setCursorTick] = useState(0);
 
   useEffect(() => {
@@ -90,7 +86,7 @@ export default function Composing({
       const threadLabel =
         threadKey == null || threadKey === "null"
           ? null
-          : threadLabels.get(threadKey) ?? null;
+          : (threadLabels.get(threadKey) ?? null);
       items.push(
         <div
           key={`cursor-${senderId}`}

@@ -134,7 +134,8 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
     const [minimapSettings, setMinimapSettings] = useState(() =>
       readCodeMirrorMinimapSettings(),
     );
-    const [showMinimapSettingsModal, setShowMinimapSettingsModal] = useState(false);
+    const [showMinimapSettingsModal, setShowMinimapSettingsModal] =
+      useState(false);
     const [minimapDraftEnabled, setMinimapDraftEnabled] = useState(
       minimapSettings.enabled,
     );
@@ -156,7 +157,8 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
       const rail = railRef.current;
       const track = trackRef.current;
       const canvas = canvasRef.current;
-      if (scroller == null || rail == null || track == null || canvas == null) return;
+      if (scroller == null || rail == null || track == null || canvas == null)
+        return;
 
       const lineCount = Math.max(1, cm.lineCount());
       const cssWidth = Math.max(1, track.clientWidth || rail.clientWidth);
@@ -201,7 +203,9 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
       const charWidth = Math.max(1, ctx.measureText("M").width);
       const maxChars = Math.max(
         8,
-        Math.floor((cssWidth - metrics.leftPadding - metrics.rightPadding) / charWidth),
+        Math.floor(
+          (cssWidth - metrics.leftPadding - metrics.rightPadding) / charWidth,
+        ),
       );
 
       const scrollInfo = cm.getScrollInfo();
@@ -246,18 +250,28 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
       }
 
       const currentLine = cm.getDoc().getCursor().line;
-      const currentLineTopPx = Math.max(0, cm.heightAtLine(currentLine, "local"));
+      const currentLineTopPx = Math.max(
+        0,
+        cm.heightAtLine(currentLine, "local"),
+      );
       const currentLineBottomPx =
         currentLine + 1 < lineCount
-          ? Math.max(currentLineTopPx + 1, cm.heightAtLine(currentLine + 1, "local"))
+          ? Math.max(
+              currentLineTopPx + 1,
+              cm.heightAtLine(currentLine + 1, "local"),
+            )
           : editorContentHeight;
       const currentY = Math.max(
         0,
-        Math.min(cssHeight, (currentLineTopPx / editorContentHeight) * cssHeight),
+        Math.min(
+          cssHeight,
+          (currentLineTopPx / editorContentHeight) * cssHeight,
+        ),
       );
       const currentH = Math.max(
         1.5,
-        ((currentLineBottomPx - currentLineTopPx) / editorContentHeight) * cssHeight,
+        ((currentLineBottomPx - currentLineTopPx) / editorContentHeight) *
+          cssHeight,
       );
       ctx.fillStyle = "rgba(59,130,246,0.28)";
       ctx.fillRect(0, currentY, cssWidth, currentH);
@@ -284,7 +298,10 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
       const scrollInfo = cm.getScrollInfo();
       const editorContentHeight = Math.max(1, scrollInfo.height);
       const editorClientHeight = Math.max(1, scrollInfo.clientHeight);
-      const maxEditorScroll = Math.max(1, editorContentHeight - editorClientHeight);
+      const maxEditorScroll = Math.max(
+        1,
+        editorContentHeight - editorClientHeight,
+      );
       const clampedEditorScroll = Math.min(
         Math.max(0, scrollInfo.top),
         maxEditorScroll,
@@ -433,11 +450,15 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
       const rail = railRef.current;
       const scroll = scrollRef.current;
       const track = trackRef.current;
-      if (scroller == null || rail == null || scroll == null || track == null) return;
+      if (scroller == null || rail == null || scroll == null || track == null)
+        return;
       const rect = rail.getBoundingClientRect();
       if (rect.height <= 0) return;
       const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
-      const yContent = Math.max(0, Math.min(track.scrollHeight, scroll.scrollTop + y));
+      const yContent = Math.max(
+        0,
+        Math.min(track.scrollHeight, scroll.scrollTop + y),
+      );
       const ratio = yContent / Math.max(1, track.scrollHeight);
       const maxEditorScroll = Math.max(
         0,
@@ -490,7 +511,8 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
                 max={CODEMIRROR_MINIMAP_MAX_WIDTH}
                 value={minimapDraftWidth}
                 onChange={(value) => {
-                  if (typeof value !== "number" || !Number.isFinite(value)) return;
+                  if (typeof value !== "number" || !Number.isFinite(value))
+                    return;
                   setMinimapDraftWidth(clampCodeMirrorMinimapWidth(value));
                 }}
               />
@@ -857,7 +879,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
       }
     } else {
       const value =
-        typeof props.value == "function" ? props.value() ?? "" : props.value;
+        typeof props.value == "function" ? (props.value() ?? "") : props.value;
       cm.setValue(value);
     }
 
@@ -1045,7 +1067,10 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
         }}
         className="smc-vfill"
       >
-        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }} className="smc-vfill">
+        <div
+          style={{ flex: 1, minWidth: 0, overflow: "hidden" }}
+          className="smc-vfill"
+        >
           {render_cursors()}
           {render_gutter_markers()}
           <textarea

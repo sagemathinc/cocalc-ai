@@ -89,7 +89,9 @@ export function enqueueAcpInterrupt({
     now,
     now,
   );
-  return db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(id) as AcpInterruptRow;
+  return db
+    .prepare(`SELECT * FROM ${TABLE} WHERE id = ?`)
+    .get(id) as AcpInterruptRow;
 }
 
 export function listPendingAcpInterrupts(limit = 50): AcpInterruptRow[] {
@@ -105,11 +107,7 @@ export function listPendingAcpInterrupts(limit = 50): AcpInterruptRow[] {
     .all(limit) as AcpInterruptRow[];
 }
 
-export function markAcpInterruptHandled({
-  id,
-}: {
-  id: string;
-}): void {
+export function markAcpInterruptHandled({ id }: { id: string }): void {
   ensureInit();
   const db = getDatabase();
   const now = Date.now();

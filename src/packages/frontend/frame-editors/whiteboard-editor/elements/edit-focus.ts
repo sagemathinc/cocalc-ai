@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useFrameContext } from "../hooks";
 
 export default function useEditFocus(
-  init: boolean = false
+  init: boolean = false,
 ): [boolean, (state: boolean) => void] {
   const { actions, id: frameId, desc } = useFrameContext();
   const [editFocus, setEditFocus0] = useState<boolean>(init);

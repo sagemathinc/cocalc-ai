@@ -8,7 +8,7 @@ import { len } from "@cocalc/util/misc";
 
 export function r_join(
   components: ReactNode[],
-  sep: ReactNode = ", "
+  sep: ReactNode = ", ",
 ): React.JSX.Element {
   const w: ReactNode[] = [];
   for (const c of components) {

@@ -26,7 +26,7 @@ function docToStrings(doc: Node[]): string[] {
 export function slateDiff(
   doc0: Node[],
   doc1: Node[],
-  path: number[] = []
+  path: number[] = [],
 ): Operation[] {
   // const t0 = path.length == 0 ? Date.now() : 0;
   const string_mapping = new StringCharMapping();
@@ -78,7 +78,7 @@ export function slateDiff(
           for (const op of handleChangeTextNodes(
             nodes,
             nextNodes,
-            path.concat([index])
+            path.concat([index]),
           )) {
             operations.push(op);
           }
@@ -91,7 +91,7 @@ export function slateDiff(
           for (const op of handleChangeOneNode(
             nodes[0],
             nextNodes[0],
-            path.concat([index])
+            path.concat([index]),
           )) {
             operations.push(op);
           }

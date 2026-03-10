@@ -70,7 +70,11 @@ export function LauncherDefaults({ project_id, project }: Props) {
   const effectiveQuickCreate = effective.quickCreate;
   const effectiveApps = effective.apps;
 
-  const quickCreateSpecs = useMemo((): { id: string; label: string; icon: IconName }[] => {
+  const quickCreateSpecs = useMemo((): {
+    id: string;
+    label: string;
+    icon: IconName;
+  }[] => {
     return effectiveQuickCreate.map((id) => {
       const spec = QUICK_CREATE_MAP[id];
       if (spec) {
@@ -85,7 +89,11 @@ export function LauncherDefaults({ project_id, project }: Props) {
     });
   }, [effectiveQuickCreate]);
 
-  const appSpecs = useMemo((): { id: string; label: string; icon: IconName }[] => {
+  const appSpecs = useMemo((): {
+    id: string;
+    label: string;
+    icon: IconName;
+  }[] => {
     return effectiveApps
       .map((id) => {
         const spec = APP_CATALOG.find((item) => item.id === id);
@@ -100,9 +108,8 @@ export function LauncherDefaults({ project_id, project }: Props) {
   return (
     <SettingBox title="Project Launcher Defaults" icon="rocket">
       <Paragraph style={{ marginBottom: "12px" }}>
-        These are the default Quick Create buttons for everyone in this
-        project. Each user can still further customize their buttons on their
-        +New page.
+        These are the default Quick Create buttons for everyone in this project.
+        Each user can still further customize their buttons on their +New page.
       </Paragraph>
       <Space orientation="vertical" style={{ width: "100%" }}>
         <div>
@@ -150,9 +157,7 @@ export function LauncherDefaults({ project_id, project }: Props) {
         projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
         globalDefaults={siteLauncherDefaults}
         onSaveProject={(prefs) =>
-          redux
-            .getActions("projects")
-            .set_project_launcher(project_id, prefs)
+          redux.getActions("projects").set_project_launcher(project_id, prefs)
         }
         saveMode="project"
         contributions={[

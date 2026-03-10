@@ -7,7 +7,10 @@ import { getLocalHostId } from "../sqlite/hosts";
 const logger = getLogger("project-host:codex-site-metering");
 
 function getHubCaller():
-  | { client: NonNullable<ReturnType<typeof getMasterConatClient>>; host_id: string }
+  | {
+      client: NonNullable<ReturnType<typeof getMasterConatClient>>;
+      host_id: string;
+    }
   | undefined {
   const client = getMasterConatClient();
   const host_id = getLocalHostId();
@@ -72,7 +75,9 @@ function markMeteringFailure(err: unknown): {
 export function initCodexSiteKeyGovernor(): void {
   setCodexSiteKeyGovernor({
     pollIntervalMs: SITE_KEY_POLL_MS,
-    ...(SITE_KEY_MAX_TURN_MS == null ? {} : { maxTurnMs: SITE_KEY_MAX_TURN_MS }),
+    ...(SITE_KEY_MAX_TURN_MS == null
+      ? {}
+      : { maxTurnMs: SITE_KEY_MAX_TURN_MS }),
     async checkAllowed({ accountId, projectId, model }) {
       const caller = getHubCaller();
       if (!caller) {
@@ -118,7 +123,14 @@ export function initCodexSiteKeyGovernor(): void {
         return { allowed: true };
       }
     },
-    async reportUsage({ accountId, projectId, model, usage, totalTimeS, path }) {
+    async reportUsage({
+      accountId,
+      projectId,
+      model,
+      usage,
+      totalTimeS,
+      path,
+    }) {
       const caller = getHubCaller();
       if (!caller) {
         return;

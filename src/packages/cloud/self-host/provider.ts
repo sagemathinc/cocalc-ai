@@ -34,9 +34,7 @@ const DEFAULT_TIMEOUTS = {
 
 function requireConnectorId(spec: HostSpec): string {
   const connectorId =
-    spec.region ??
-    spec.metadata?.connector_id ??
-    spec.metadata?.connectorId;
+    spec.region ?? spec.metadata?.connector_id ?? spec.metadata?.connectorId;
   if (!connectorId) {
     throw new Error("self-host requires region set to connector id");
   }
@@ -44,9 +42,7 @@ function requireConnectorId(spec: HostSpec): string {
 }
 
 function connectorFromRuntime(runtime: HostRuntime): string {
-  const connectorId =
-    runtime.metadata?.connector_id ??
-    runtime.zone;
+  const connectorId = runtime.metadata?.connector_id ?? runtime.zone;
   if (!connectorId) {
     throw new Error("self-host runtime missing connector_id");
   }
@@ -104,7 +100,10 @@ export class SelfHostProvider implements CloudProvider {
         ? { self_host_kind: spec.metadata.self_host_kind }
         : {}),
     };
-    logger.debug("self-host.createHost", { connector_id: connectorId, name: spec.name });
+    logger.debug("self-host.createHost", {
+      connector_id: connectorId,
+      name: spec.name,
+    });
     const result = await this.send(
       creds,
       connectorId,
@@ -132,8 +131,17 @@ export class SelfHostProvider implements CloudProvider {
       host_id: runtimeHostId(runtime),
       name: runtime.metadata?.instance_name ?? runtime.instance_id,
     };
-    logger.debug("self-host.startHost", { connector_id: connectorId, instance: runtime.instance_id });
-    await this.send(creds, connectorId, "start", payload, DEFAULT_TIMEOUTS.start);
+    logger.debug("self-host.startHost", {
+      connector_id: connectorId,
+      instance: runtime.instance_id,
+    });
+    await this.send(
+      creds,
+      connectorId,
+      "start",
+      payload,
+      DEFAULT_TIMEOUTS.start,
+    );
   }
 
   async stopHost(runtime: HostRuntime, creds: any): Promise<void> {
@@ -142,7 +150,10 @@ export class SelfHostProvider implements CloudProvider {
       host_id: runtimeHostId(runtime),
       name: runtime.metadata?.instance_name ?? runtime.instance_id,
     };
-    logger.debug("self-host.stopHost", { connector_id: connectorId, instance: runtime.instance_id });
+    logger.debug("self-host.stopHost", {
+      connector_id: connectorId,
+      instance: runtime.instance_id,
+    });
     await this.send(creds, connectorId, "stop", payload, DEFAULT_TIMEOUTS.stop);
   }
 
@@ -152,8 +163,17 @@ export class SelfHostProvider implements CloudProvider {
       host_id: runtimeHostId(runtime),
       name: runtime.metadata?.instance_name ?? runtime.instance_id,
     };
-    logger.debug("self-host.deleteHost", { connector_id: connectorId, instance: runtime.instance_id });
-    await this.send(creds, connectorId, "delete", payload, DEFAULT_TIMEOUTS.delete);
+    logger.debug("self-host.deleteHost", {
+      connector_id: connectorId,
+      instance: runtime.instance_id,
+    });
+    await this.send(
+      creds,
+      connectorId,
+      "delete",
+      payload,
+      DEFAULT_TIMEOUTS.delete,
+    );
   }
 
   async restartHost(runtime: HostRuntime, creds: any): Promise<void> {
@@ -205,8 +225,17 @@ export class SelfHostProvider implements CloudProvider {
       name: runtime.metadata?.instance_name ?? runtime.instance_id,
       disk_gb: newSizeGb,
     };
-    logger.debug("self-host.resizeDisk", { connector_id: connectorId, instance: runtime.instance_id });
-    await this.send(creds, connectorId, "resize", payload, DEFAULT_TIMEOUTS.start);
+    logger.debug("self-host.resizeDisk", {
+      connector_id: connectorId,
+      instance: runtime.instance_id,
+    });
+    await this.send(
+      creds,
+      connectorId,
+      "resize",
+      payload,
+      DEFAULT_TIMEOUTS.start,
+    );
   }
 
   async getStatus(

@@ -37,7 +37,9 @@ export interface JupyterCellContextValue {
   getCellChromeInfo?: (cellId: string) => JupyterCellChromeInfo;
 }
 
-export const JupyterCellContext = React.createContext<JupyterCellContextValue>({});
+export const JupyterCellContext = React.createContext<JupyterCellContextValue>(
+  {},
+);
 
 export function useJupyterCellContext(): JupyterCellContextValue {
   return React.useContext(JupyterCellContext);

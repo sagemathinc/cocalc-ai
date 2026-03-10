@@ -1,5 +1,9 @@
 #!/usr/bin/env ts-node
-import { closeDatabase, getDatabase, initDatabase } from "../../sqlite/database";
+import {
+  closeDatabase,
+  getDatabase,
+  initDatabase,
+} from "../../sqlite/database";
 import {
   decodeAcpInterruptCandidateIds,
   decodeAcpInterruptChat,

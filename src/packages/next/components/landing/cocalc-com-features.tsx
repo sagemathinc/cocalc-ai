@@ -135,8 +135,8 @@ export function CoCalcComFeatures() {
         </Paragraph>
         <Paragraph>
           <Text strong>Pre-installed Software</Text> like in a computer lab,{" "}
-          <A href={"/features/linux"}>all software you need</A> is already installed
-          and ready to use.
+          <A href={"/features/linux"}>all software you need</A> is already
+          installed and ready to use.
         </Paragraph>
         <Paragraph>
           <Text strong>Real-time Collaboration</Text> allows you to virtually
@@ -155,7 +155,6 @@ export function CoCalcComFeatures() {
       </Info>
     );
   }
-
 
   function renderShareServer() {
     if (!shareServer) return;
@@ -507,7 +506,6 @@ export function CoCalcComFeatures() {
       </Info>
     );
   }
-
 
   return (
     <>

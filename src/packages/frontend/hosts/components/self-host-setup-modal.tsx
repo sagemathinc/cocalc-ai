@@ -50,22 +50,21 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   onInstall,
 }) => {
   const connectorId = connector?.id ?? host?.region ?? "n/a";
-  const connectorName = connector?.name ? `${connector.name} (${connectorId})` : connectorId;
+  const connectorName = connector?.name
+    ? `${connector.name} (${connectorId})`
+    : connectorId;
   const lastSeen = connector?.last_seen
     ? new Date(connector.last_seen).toLocaleString()
     : undefined;
   const base = baseUrl || "<base-url>";
   const safeName =
-    connector?.name?.trim() ||
-    host?.name?.trim() ||
-    `connector-${connectorId}`;
+    connector?.name?.trim() || host?.name?.trim() || `connector-${connectorId}`;
   const quoteShell = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
   const selfHostMode =
     (host?.machine?.metadata?.self_host_mode as string | undefined) ??
     (host?.machine?.cloud === "self-host" ? "local" : undefined);
   const selfHostKind =
-    (host?.machine?.metadata?.self_host_kind as string | undefined) ??
-    "direct";
+    (host?.machine?.metadata?.self_host_kind as string | undefined) ?? "direct";
   const isDirect = selfHostKind === "direct";
   const useSshPairing = selfHostMode === "local";
   const parsedBase = (() => {
@@ -107,17 +106,14 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
     "<ssh-host>";
   const sshPortValue =
     sshTarget?.port ??
-    (hasSshTarget ? undefined : launchpad?.sshd_port ?? undefined);
+    (hasSshTarget ? undefined : (launchpad?.sshd_port ?? undefined));
   const sshUserValue =
     sshTarget?.user ??
-    (hasSshTarget ? undefined : launchpad?.ssh_user ?? undefined);
-  const sshPort =
-    sshPortValue != null ? ` --ssh-port ${sshPortValue}` : "";
+    (hasSshTarget ? undefined : (launchpad?.ssh_user ?? undefined));
+  const sshPort = sshPortValue != null ? ` --ssh-port ${sshPortValue}` : "";
   const sshUser = sshUserValue ? ` --ssh-user ${sshUserValue}` : "";
   const sshNoStrict = " --ssh-no-strict-host-key-checking";
-  const versionFlag = connectorVersion
-    ? ` --version ${connectorVersion}`
-    : "";
+  const versionFlag = connectorVersion ? ` --version ${connectorVersion}` : "";
   const installCommand = token
     ? useSshPairing
       ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --ssh-host ${sshHost}${sshPort}${sshUser} --token ${token} --name ${quoteShell(safeName)}${sshNoStrict}${versionFlag}`
@@ -229,9 +225,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
             }
           />
         )}
-        {notice && (
-          <Alert type="success" showIcon title={notice} />
-        )}
+        {notice && <Alert type="success" showIcon title={notice} />}
         {installCommand && useSshPairing && onInstall && hasSshTarget ? (
           <>
             <Button
@@ -357,8 +351,8 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           </Button>
         )}
         <Typography.Paragraph type="secondary">
-          The connector will start immediately and your host will auto-start once it connects.
-          Run only one connector per computer.
+          The connector will start immediately and your host will auto-start
+          once it connects. Run only one connector per computer.
         </Typography.Paragraph>
       </Space>
     </Modal>

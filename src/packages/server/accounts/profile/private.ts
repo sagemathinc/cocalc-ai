@@ -10,7 +10,7 @@ import { Profile } from "./types";
 
 export default async function getPrivateProfile(
   account_id: string,
-  noCache: boolean = false
+  noCache: boolean = false,
 ): Promise<Profile> {
   const pool = getPool(noCache ? undefined : "medium");
   const { rows } = await pool.query(

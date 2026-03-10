@@ -27,14 +27,11 @@ jest.mock("antd", () => {
     Typography: {
       Text: ({ children }: any) => <span>{children}</span>,
     },
-    Form: Object.assign(
-      ({ children }: any) => <div>{children}</div>,
-      {
-        useForm: () => [stableForm],
-        useWatch: () => undefined,
-        Item: ({ children }: any) => <div>{children}</div>,
-      },
-    ),
+    Form: Object.assign(({ children }: any) => <div>{children}</div>, {
+      useForm: () => [stableForm],
+      useWatch: () => undefined,
+      Item: ({ children }: any) => <div>{children}</div>,
+    }),
   };
 });
 
@@ -117,10 +114,12 @@ describe("CodexConfigButton", () => {
       <CodexConfigButton
         threadKey="thread-1"
         chatPath="foo.chat"
-        actions={{
-          getCodexConfig: jest.fn(() => undefined),
-          setCodexConfig: jest.fn(),
-        } as any}
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
         threadConfig={null}
       />,
     );

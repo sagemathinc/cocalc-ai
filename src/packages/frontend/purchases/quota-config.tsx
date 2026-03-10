@@ -107,7 +107,9 @@ export default function QuotaConfig({
                 min={0}
                 step={STEP}
                 value={inputValue}
-                defaultValue={toDecimal(quotas.services[service] ?? 0).toNumber()}
+                defaultValue={toDecimal(
+                  quotas.services[service] ?? 0,
+                ).toNumber()}
                 formatter={(value) =>
                   `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
                 }

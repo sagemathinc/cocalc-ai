@@ -8,7 +8,7 @@ import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc
 
 export default async function redeemVerifyEmail(
   email_address: string,
-  token: string
+  token: string,
 ): Promise<void> {
   if (token.length < 16) {
     throw Error("token is too short");
@@ -20,7 +20,7 @@ export default async function redeemVerifyEmail(
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT account_id, email_address_challenge, email_address_verified FROM accounts WHERE email_address=$1",
-    [email_address]
+    [email_address],
   );
   if (rows.length == 0) {
     throw Error(`no account with email address ${email_address}`);
@@ -41,7 +41,7 @@ export default async function redeemVerifyEmail(
   // we're good, save this in the email_address_verified JSONB record and also delete the challenge
   await pool.query(
     "UPDATE accounts SET email_address_challenge=NULL, email_address_verified=$1::JSONB WHERE account_id=$2",
-    [{ ...email_address_verified, [email_address]: new Date() }, account_id]
+    [{ ...email_address_verified, [email_address]: new Date() }, account_id],
   );
 }
 
@@ -49,7 +49,7 @@ export async function isEmailVerified(email_address: string): Promise<boolean> {
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT email_address_verified FROM accounts WHERE email_address=$1::TEXT",
-    [email_address]
+    [email_address],
   );
   if (rows.length == 0) return false;
   const { email_address_verified } = rows[0];

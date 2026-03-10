@@ -49,9 +49,7 @@ export class Subvolume {
     if (await exists(this.path)) {
       const isSubvolume = await isBtrfsSubvolume(this.path);
       if (!isSubvolume) {
-        throw new Error(
-          `existing path is not a btrfs subvolume: ${this.path}`,
-        );
+        throw new Error(`existing path is not a btrfs subvolume: ${this.path}`);
       }
     }
     if (!(await exists(this.path))) {
@@ -100,9 +98,7 @@ export class Subvolume {
       await tryCreate();
     } catch (err: any) {
       const stderr =
-        typeof err?.stderr === "string"
-          ? err.stderr
-          : `${err?.message ?? err}`;
+        typeof err?.stderr === "string" ? err.stderr : `${err?.message ?? err}`;
       if (stderr.includes("quota not enabled")) {
         // quotas are disabled on the mount; enable and retry once
         await btrfs({
@@ -173,7 +169,9 @@ export async function getSubvolumeField(
   const re = new RegExp(`^\\s*${field}\\s*:\\s*(.+)$`, "im");
   const match = stdout.match(re);
   if (!match?.[1]) {
-    throw new Error(`field '${field}' not found in btrfs show output for ${path}`);
+    throw new Error(
+      `field '${field}' not found in btrfs show output for ${path}`,
+    );
   }
   return match[1].trim();
 }

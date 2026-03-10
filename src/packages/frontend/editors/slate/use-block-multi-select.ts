@@ -66,9 +66,7 @@ export function useBlockMultiSelect({
       containerRef.current?.focus();
       if (opts.shiftKey) {
         const anchor =
-          blockSelectionRef.current?.anchor ??
-          focusedIndex ??
-          index;
+          blockSelectionRef.current?.anchor ?? focusedIndex ?? index;
         const next = { anchor, focus: index };
         blockSelectionRef.current = next;
         setBlockSelection(next);

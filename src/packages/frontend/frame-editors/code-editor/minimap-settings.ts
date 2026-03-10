@@ -24,20 +24,10 @@ export interface CodeMirrorMinimapSettings {
 function parseBooleanOverride(raw: string | null): boolean | undefined {
   if (raw == null) return;
   const value = raw.trim().toLowerCase();
-  if (
-    value === "1" ||
-    value === "true" ||
-    value === "on" ||
-    value === "yes"
-  ) {
+  if (value === "1" || value === "true" || value === "on" || value === "yes") {
     return true;
   }
-  if (
-    value === "0" ||
-    value === "false" ||
-    value === "off" ||
-    value === "no"
-  ) {
+  if (value === "0" || value === "false" || value === "off" || value === "no") {
     return false;
   }
 }

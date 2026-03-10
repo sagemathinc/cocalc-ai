@@ -506,10 +506,7 @@ export interface Projects {
   /////////////
   // BACKUPS
   /////////////
-  createBackup: (opts: {
-    account_id?: string;
-    project_id: string;
-  }) => Promise<{
+  createBackup: (opts: { account_id?: string; project_id: string }) => Promise<{
     op_id: string;
     scope_type: "project";
     scope_id: string;
@@ -825,7 +822,12 @@ export interface Projects {
     thread_id?: string;
     limit?: number;
     offset?: number;
-  }) => Promise<{ chat_id: string; rows: ChatStoreArchivedRow[]; offset: number; next_offset?: number }>;
+  }) => Promise<{
+    chat_id: string;
+    rows: ChatStoreArchivedRow[];
+    offset: number;
+    next_offset?: number;
+  }>;
 
   chatStoreReadArchivedHit: (opts: {
     account_id?: string;
@@ -871,5 +873,10 @@ export interface Projects {
     project_id: string;
     chat_path: string;
     db_path?: string;
-  }) => Promise<{ chat_id: string; db_path: string; before_bytes: number; after_bytes: number }>;
+  }) => Promise<{
+    chat_id: string;
+    db_path: string;
+    before_bytes: number;
+    after_bytes: number;
+  }>;
 }

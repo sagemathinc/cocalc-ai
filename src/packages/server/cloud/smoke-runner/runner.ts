@@ -65,8 +65,7 @@ const DEFAULT_WAIT: SmokeWaitOptions = {
   attempts: 120,
 };
 
-const sleep = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function waitOptions(opts?: SmokeRunnerOptions["wait"]): SmokeWaitOptions {
   return {

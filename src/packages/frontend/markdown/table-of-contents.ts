@@ -28,7 +28,7 @@ const markdown_it = new MarkdownIt(OPTIONS);
 
 export function parseTableOfContents(
   markdown: string,
-  state?: { number: number[] }
+  state?: { number: number[] },
 ): Entry[] {
   markdown = parseHeader(markdown).body;
   let id = 0;

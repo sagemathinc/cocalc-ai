@@ -327,7 +327,11 @@ export interface BrowserSessionServiceApi {
     dropped: number;
     total_buffered: number;
   }>;
-  clearNetworkTrace: () => Promise<{ ok: true; cleared: number; next_seq: number }>;
+  clearNetworkTrace: () => Promise<{
+    ok: true;
+    cleared: number;
+    next_seq: number;
+  }>;
   listRuntimeEvents: (opts?: {
     after_seq?: number;
     limit?: number;
@@ -368,9 +372,7 @@ export interface BrowserSessionServiceApi {
     posture?: BrowserAutomationPosture;
     policy?: BrowserExecPolicyV1;
   }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
-  getExec: (opts: {
-    exec_id: string;
-  }) => Promise<BrowserExecOperation>;
+  getExec: (opts: { exec_id: string }) => Promise<BrowserExecOperation>;
   cancelExec: (opts: {
     exec_id: string;
   }) => Promise<{ ok: true; exec_id: string; status: BrowserExecStatus }>;

@@ -27,7 +27,7 @@ export default function useOrderFields({
   fields: string[];
 }): [
   orderFields: string[], // ordered array of "field_name"
-  setOrderFields: (orderFields: string[]) => void
+  setOrderFields: (orderFields: string[]) => void,
 ] {
   const [record, setRecord] = useRecord<{
     fields?: string[];
@@ -45,7 +45,7 @@ export default function useOrderFields({
     (orderFields: string[]) => {
       setRecord({ fields: normalize([...orderFields], fields) });
     },
-    [setRecord]
+    [setRecord],
   );
 
   return [orderFields, setOrderFields];

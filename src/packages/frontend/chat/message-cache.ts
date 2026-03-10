@@ -149,16 +149,12 @@ export class ChatMessageCache extends EventEmitter {
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
-  private getThreadKeyForMap(
-    message: PlainChatMessage,
-  ): string | undefined {
+  private getThreadKeyForMap(message: PlainChatMessage): string | undefined {
     const threadId = this.getThreadId(message);
     return threadId;
   }
 
-  private getMessageId(
-    message?: PlainChatMessage,
-  ): string | undefined {
+  private getMessageId(message?: PlainChatMessage): string | undefined {
     const id = (message as any)?.message_id;
     if (typeof id === "string" && id.length > 0) return id;
     return undefined;
@@ -208,7 +204,10 @@ export class ChatMessageCache extends EventEmitter {
     if (!thread) return;
     thread.messageKeys.delete(messageKey);
     thread.messageCount = thread.messageKeys.size;
-    if (!parentMessageId(message) && thread.rootMessage?.date === message.date) {
+    if (
+      !parentMessageId(message) &&
+      thread.rootMessage?.date === message.date
+    ) {
       thread.rootMessage = undefined;
       const threadId = this.getThreadId(message);
       if (threadId && threadKeyByThreadId.get(threadId) === messageKey) {
@@ -435,7 +434,8 @@ export class ChatMessageCache extends EventEmitter {
                 if (row0?.event != null) where.event = row0.event;
                 if (row0?.sender_id != null) where.sender_id = row0.sender_id;
                 if (row0?.date != null) where.date = row0.date;
-                if (row0?.message_id != null) where.message_id = row0.message_id;
+                if (row0?.message_id != null)
+                  where.message_id = row0.message_id;
                 if (row0?.thread_id != null) where.thread_id = row0.thread_id;
                 const rec = this.syncdb.get_one(where);
                 const key = this.getDateKey(rec ?? row0);

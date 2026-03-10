@@ -30,7 +30,13 @@ function defaultReflectHome(): string {
       "reflect-sync",
     );
   }
-  return path.join(os.homedir(), ".local", "share", "cocalc-plus", "reflect-sync");
+  return path.join(
+    os.homedir(),
+    ".local",
+    "share",
+    "cocalc-plus",
+    "reflect-sync",
+  );
 }
 
 function defaultRemoteReflectCommand(): string {
@@ -41,8 +47,7 @@ function defaultRemoteReflectCommand(): string {
 }
 
 const DEFAULT_REFLECT_HOME =
-  process.env.COCALC_REFLECT_HOME ??
-  defaultReflectHome();
+  process.env.COCALC_REFLECT_HOME ?? defaultReflectHome();
 
 const DEFAULT_REMOTE_REFLECT_COMMAND =
   process.env.COCALC_REFLECT_REMOTE_COMMAND ?? defaultRemoteReflectCommand();
@@ -52,10 +57,9 @@ let sessionDbPath: string | null = null;
 const schedulerChildren = new Map<number, ChildProcess>();
 let exitHookInstalled = false;
 let daemonLogger: { logger: any; close: () => void } | null = null;
-const dynamicImport = new Function(
-  "p",
-  "return import(p);",
-) as (p: string) => Promise<any>;
+const dynamicImport = new Function("p", "return import(p);") as (
+  p: string,
+) => Promise<any>;
 
 const LOG_LEVELS = ["debug", "info", "warn", "error"];
 
@@ -343,14 +347,7 @@ async function ensureRemoteRoot(
   port: number | null | undefined,
   root: string,
 ) {
-  const args = [
-    "-o",
-    "ConnectTimeout=5",
-    "-C",
-    "-T",
-    "-o",
-    "BatchMode=yes",
-  ];
+  const args = ["-o", "ConnectTimeout=5", "-C", "-T", "-o", "BatchMode=yes"];
   if (port != null) {
     args.push("-p", String(port));
   }
@@ -798,13 +795,13 @@ export async function terminateSessionUI(opts: {
       force: !!opts.force,
     });
   } catch (err: any) {
-    throw new Error(`reflect terminateSessionUI failed: ${err?.message || err}`);
+    throw new Error(
+      `reflect terminateSessionUI failed: ${err?.message || err}`,
+    );
   }
 }
 
-export async function stopSessionUI(opts: {
-  idOrName: string;
-}): Promise<void> {
+export async function stopSessionUI(opts: { idOrName: string }): Promise<void> {
   try {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
@@ -876,9 +873,10 @@ export async function editSessionUI(opts: {
       });
     }
     if (restartForPrefer) {
-      const refreshed = mod.loadSessionById(sessionDb, row.id) as
-        | SessionRow
-        | null;
+      const refreshed = mod.loadSessionById(
+        sessionDb,
+        row.id,
+      ) as SessionRow | null;
       if (refreshed) {
         await stopSession(mod, sessionDb, refreshed);
         await startSession(mod, sessionDb, refreshed);
@@ -968,9 +966,7 @@ export async function createSessionUI(opts: {
     for (const row of existing) {
       const other = normalizeLocalPath(row.alpha_root);
       if (isNestedPath(normalizedLocal, other)) {
-        throw new Error(
-          `Local path overlaps existing sync: ${row.alpha_root}`,
-        );
+        throw new Error(`Local path overlaps existing sync: ${row.alpha_root}`);
       }
     }
     const ignoreRules = [
@@ -1044,10 +1040,8 @@ export async function createForwardUI(opts: {
     const remoteSpec = `${host}${port ? `:${port}` : ""}:${remotePort}`;
     const localSpec = `127.0.0.1:${opts.localPort}`;
     const direction = opts.direction ?? "remote_to_local";
-    const left =
-      direction === "remote_to_local" ? remoteSpec : localSpec;
-    const right =
-      direction === "remote_to_local" ? localSpec : remoteSpec;
+    const left = direction === "remote_to_local" ? remoteSpec : localSpec;
+    const right = direction === "remote_to_local" ? localSpec : remoteSpec;
     await mod.createForward({
       sessionDb,
       name: opts.name,
@@ -1061,9 +1055,7 @@ export async function createForwardUI(opts: {
   }
 }
 
-export async function terminateForwardUI(opts: {
-  id: number;
-}): Promise<void> {
+export async function terminateForwardUI(opts: { id: number }): Promise<void> {
   try {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
@@ -1073,7 +1065,9 @@ export async function terminateForwardUI(opts: {
     });
     mod.terminateForward(sessionDb, opts.id, undefined);
   } catch (err: any) {
-    throw new Error(`reflect terminateForwardUI failed: ${err?.message || err}`);
+    throw new Error(
+      `reflect terminateForwardUI failed: ${err?.message || err}`,
+    );
   }
 }
 
@@ -1170,13 +1164,9 @@ export async function getSessionStatusUI(opts: {
       running: !!status?.state?.running,
       pending: !!status?.state?.pending,
       errors:
-        typeof status?.state?.errors === "number"
-          ? status.state.errors
-          : null,
+        typeof status?.state?.errors === "number" ? status.state.errors : null,
       cycles:
-        typeof status?.state?.cycles === "number"
-          ? status.state.cycles
-          : null,
+        typeof status?.state?.cycles === "number" ? status.state.cycles : null,
       last_cycle_ms:
         typeof status?.state?.last_cycle_ms === "number"
           ? status.state.last_cycle_ms
@@ -1191,7 +1181,9 @@ export async function getSessionStatusUI(opts: {
           : null,
     };
   } catch (err: any) {
-    throw new Error(`reflect getSessionStatusUI failed: ${err?.message || err}`);
+    throw new Error(
+      `reflect getSessionStatusUI failed: ${err?.message || err}`,
+    );
   }
 }
 
@@ -1238,7 +1230,8 @@ export async function listSessionLogsUI(opts: {
     }
     const order = opts.order === "desc" ? "DESC" : "ASC";
     const limit = Math.max(1, opts.limit ?? 200);
-    const stmt = db.prepare(`SELECT id, session_id, ts, level, scope, message, meta
+    const stmt =
+      db.prepare(`SELECT id, session_id, ts, level, scope, message, meta
        FROM session_logs
       WHERE ${where.join(" AND ")}
       ORDER BY id ${order}

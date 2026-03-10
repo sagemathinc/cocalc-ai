@@ -21,9 +21,7 @@ const manifestCache = new Map<string, Promise<RootfsImageEntry[]>>();
 function normalizeUrls(urls: string[]): string[] {
   return Array.from(
     new Set(
-      urls
-        .map((url) => url?.trim())
-        .filter((url) => url && url.length > 0),
+      urls.map((url) => url?.trim()).filter((url) => url && url.length > 0),
     ),
   );
 }
@@ -63,7 +61,9 @@ export async function loadRootfsImages(
   const pending = (async () => {
     const manifests = await Promise.all(urls.map(fetchManifest));
     return mergeRootfsManifests(
-      manifests.filter((manifest): manifest is RootfsImageManifest => !!manifest),
+      manifests.filter(
+        (manifest): manifest is RootfsImageManifest => !!manifest,
+      ),
     );
   })();
   manifestCache.set(key, pending);
@@ -106,4 +106,3 @@ export function useRootfsImages(manifestUrls: string[]): ManifestLoadState {
 
   return state;
 }
-

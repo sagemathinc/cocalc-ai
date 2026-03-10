@@ -27,8 +27,9 @@ const SANDBOX_WATCH_SOURCE = "backend:sandbox/watch";
 function sandboxWatchersActive(): number {
   const stats = getBackendWatcherDebugStats({ topN: 256 });
   return (
-    stats.activeBySourceTop.find(({ source }) => source === SANDBOX_WATCH_SOURCE)
-      ?.count ?? 0
+    stats.activeBySourceTop.find(
+      ({ source }) => source === SANDBOX_WATCH_SOURCE,
+    )?.count ?? 0
   );
 }
 

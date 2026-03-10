@@ -21,12 +21,12 @@ function escape_regexp(string: string) {
 function construct_regexp(
   string: string,
   flags: string,
-  is_regexp: false
+  is_regexp: false,
 ): RegExp;
 function construct_regexp(
   string: RegExp,
   flags: string,
-  is_regexp: true
+  is_regexp: true,
 ): RegExp;
 function construct_regexp(string, flags, is_regexp) {
   // return a Pseudo RegExp object that acts
@@ -51,7 +51,7 @@ export function find_matches(
   string: string,
   is_case_sensitive = false,
   is_regexp = false,
-  max_matches = 100
+  max_matches = 100,
 ): {
   matches?: Array<{ start: number; stop: number }>;
   abort?: boolean;

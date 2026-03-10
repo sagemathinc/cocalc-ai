@@ -134,7 +134,12 @@ function isRunningPid(pid: number): boolean {
 function normalizeLiteHost(host: unknown): string {
   if (typeof host !== "string") return "localhost";
   const trimmed = host.trim();
-  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
+  if (
+    !trimmed ||
+    trimmed === "0.0.0.0" ||
+    trimmed === "::" ||
+    trimmed === "[::]"
+  ) {
     return "localhost";
   }
   return trimmed;
@@ -155,7 +160,9 @@ async function readConnectionInfo(): Promise<ConnectionInfo | undefined> {
     if (err?.code === "ENOENT") {
       return undefined;
     }
-    throw startLiteServerMessage(`unable to read ${path}: ${err?.message ?? err}`);
+    throw startLiteServerMessage(
+      `unable to read ${path}: ${err?.message ?? err}`,
+    );
   }
 }
 
@@ -178,7 +185,10 @@ async function resolveBaseUrl(opts: Options): Promise<{
     const protocol =
       opts.protocol ?? (info?.protocol === "https" ? "https" : "http");
     const host = opts.host ?? normalizeLiteHost(info?.host);
-    return { base_url: `${protocol}://${host}:${opts.port}`, connection_info: info };
+    return {
+      base_url: `${protocol}://${host}:${opts.port}`,
+      connection_info: info,
+    };
   }
   if (!info) {
     throw startLiteServerMessage(`missing ${connectionInfoPath()}`);
@@ -247,9 +257,9 @@ function randomRunId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function parseRunDebugConsoleText(text: string):
-  | { event: string; payload: Record<string, any> }
-  | undefined {
+function parseRunDebugConsoleText(
+  text: string,
+): { event: string; payload: Record<string, any> } | undefined {
   const prefix = "[jupyter-run-debug] ";
   const at = text.indexOf(prefix);
   if (at < 0) return;
@@ -310,20 +320,17 @@ async function setCellInputCode({
 }): Promise<void> {
   const input = page.locator('[cocalc-test="cell-input"] .CodeMirror').first();
   await input.click();
-  await input.evaluate(
-    (element: any, value: string) => {
-      const cm = element?.CodeMirror;
-      if (!cm) {
-        throw new Error("CodeMirror editor not available");
-      }
-      cm.setValue(value);
-      cm.focus();
-      const line = Math.max(0, cm.lineCount() - 1);
-      const ch = cm.getLine(line)?.length ?? 0;
-      cm.setCursor({ line, ch });
-    },
-    code,
-  );
+  await input.evaluate((element: any, value: string) => {
+    const cm = element?.CodeMirror;
+    if (!cm) {
+      throw new Error("CodeMirror editor not available");
+    }
+    cm.setValue(value);
+    cm.focus();
+    const line = Math.max(0, cm.lineCount() - 1);
+    const ch = cm.getLine(line)?.length ?? 0;
+    cm.setCursor({ line, ch });
+  }, code);
 }
 
 async function readCellSnapshot(page: any): Promise<CellSnapshot> {
@@ -331,7 +338,9 @@ async function readCellSnapshot(page: any): Promise<CellSnapshot> {
   const cellText = await cell.innerText();
   let runButtonLabel: CellSnapshot["run_button_label"] = "Unknown";
   try {
-    const runStopButton = cell.getByRole("button", { name: /Run|Stop/ }).first();
+    const runStopButton = cell
+      .getByRole("button", { name: /Run|Stop/ })
+      .first();
     if ((await runStopButton.count()) > 0) {
       const text = (await runStopButton.innerText()).trim();
       if (/\bStop\b/i.test(text)) {
@@ -420,13 +429,18 @@ async function runCellViaRunButton({
             x.payload.perfNow >= clickPerfNow - 40,
         ) ??
         debugSlice.find(
-          (x) => x.event === "runCells.start" && typeof x.payload?.runId === "string",
+          (x) =>
+            x.event === "runCells.start" &&
+            typeof x.payload?.runId === "string",
         ) ??
         debugSlice.find(
-          (x) => x.event === "runCells.call" && typeof x.payload?.runId === "string",
+          (x) =>
+            x.event === "runCells.call" && typeof x.payload?.runId === "string",
         );
       const actualRunId = startedRunEvent?.payload?.runId ?? runId;
-      const runEvents = debugSlice.filter((x) => x.payload?.runId === actualRunId);
+      const runEvents = debugSlice.filter(
+        (x) => x.payload?.runId === actualRunId,
+      );
       const callPerf = payloadPerfNow(eventByName(runEvents, "runCells.call"));
       const runnerStartPerf = payloadPerfNow(
         eventByName(runEvents, "runCells.runner.start"),
@@ -440,7 +454,9 @@ async function runCellViaRunButton({
       const runnerDonePerf = payloadPerfNow(
         lastEventByName(runEvents, "runCells.runner.done"),
       );
-      const finallyPerf = payloadPerfNow(lastEventByName(runEvents, "runCells.finally"));
+      const finallyPerf = payloadPerfNow(
+        lastEventByName(runEvents, "runCells.finally"),
+      );
       const firstChunkRelativeMs = deltaMs(clickPerfNow, firstRunnerChunkPerf);
       const firstWriteRelativeMs = deltaMs(clickPerfNow, firstWritePerf);
       return {
@@ -451,8 +467,14 @@ async function runCellViaRunButton({
         to_exec_count_ms: toExecCountMs,
         click_to_call_ms: deltaMs(clickPerfNow, callPerf),
         call_to_runner_start_ms: deltaMs(callPerf, runnerStartPerf),
-        runner_start_to_first_chunk_ms: deltaMs(runnerStartPerf, firstRunnerChunkPerf),
-        first_chunk_to_first_write_ms: deltaMs(firstRunnerChunkPerf, firstWritePerf),
+        runner_start_to_first_chunk_ms: deltaMs(
+          runnerStartPerf,
+          firstRunnerChunkPerf,
+        ),
+        first_chunk_to_first_write_ms: deltaMs(
+          firstRunnerChunkPerf,
+          firstWritePerf,
+        ),
         first_write_to_first_obs_ms:
           firstWriteRelativeMs == null || firstObsMs == null
             ? null
@@ -547,7 +569,12 @@ async function runIterations({
   const total = warmup_iterations + iterations;
 
   for (let i = 0; i < total; i += 1) {
-    const metric = await runOneIteration({ page, code, timeout_ms, debugEvents });
+    const metric = await runOneIteration({
+      page,
+      code,
+      timeout_ms,
+      debugEvents,
+    });
     if (i >= warmup_iterations) {
       runs.push(metric);
     }
@@ -675,7 +702,11 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--port":
         opts.port = Number(next());
-        if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) {
+        if (
+          !Number.isInteger(opts.port) ||
+          opts.port < 1 ||
+          opts.port > 65535
+        ) {
           throw new Error(`invalid --port '${opts.port}'`);
         }
         break;
@@ -685,7 +716,9 @@ function parseArgs(argv: string[]): Options {
       case "--protocol": {
         const protocol = next();
         if (protocol !== "http" && protocol !== "https") {
-          throw new Error(`--protocol must be http or https, got '${protocol}'`);
+          throw new Error(
+            `--protocol must be http or https, got '${protocol}'`,
+          );
         }
         opts.protocol = protocol;
         break;
@@ -707,7 +740,10 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--warmup":
         opts.warmup_iterations = Number(next());
-        if (!Number.isInteger(opts.warmup_iterations) || opts.warmup_iterations < 0) {
+        if (
+          !Number.isInteger(opts.warmup_iterations) ||
+          opts.warmup_iterations < 0
+        ) {
           throw new Error(`invalid --warmup '${opts.warmup_iterations}'`);
         }
         break;
@@ -884,7 +920,8 @@ async function runBrowserBenchmark(
     to_stop_ms: toStopMs.length > 0 ? quantiles(toStopMs) : null,
     to_exec_count_ms:
       toExecCountMs.length > 0 ? quantiles(toExecCountMs) : null,
-    click_to_call_ms: clickToCallMs.length > 0 ? quantiles(clickToCallMs) : null,
+    click_to_call_ms:
+      clickToCallMs.length > 0 ? quantiles(clickToCallMs) : null,
     call_to_runner_start_ms:
       callToRunnerStartMs.length > 0 ? quantiles(callToRunnerStartMs) : null,
     runner_start_to_first_chunk_ms:
@@ -896,15 +933,21 @@ async function runBrowserBenchmark(
         ? quantiles(firstChunkToFirstWriteMs)
         : null,
     first_write_to_first_obs_ms:
-      firstWriteToFirstObsMs.length > 0 ? quantiles(firstWriteToFirstObsMs) : null,
+      firstWriteToFirstObsMs.length > 0
+        ? quantiles(firstWriteToFirstObsMs)
+        : null,
     first_chunk_to_first_obs_ms:
-      firstChunkToFirstObsMs.length > 0 ? quantiles(firstChunkToFirstObsMs) : null,
+      firstChunkToFirstObsMs.length > 0
+        ? quantiles(firstChunkToFirstObsMs)
+        : null,
     first_obs_to_finally_ms:
       firstObsToFinallyMs.length > 0 ? quantiles(firstObsToFinallyMs) : null,
     call_to_finally_ms:
       callToFinallyMs.length > 0 ? quantiles(callToFinallyMs) : null,
     runner_done_to_finally_ms:
-      runnerDoneToFinallyMs.length > 0 ? quantiles(runnerDoneToFinallyMs) : null,
+      runnerDoneToFinallyMs.length > 0
+        ? quantiles(runnerDoneToFinallyMs)
+        : null,
     runs,
     started_at,
     finished_at,
@@ -942,11 +985,26 @@ function printBreakdownTable(result: BrowserBenchmarkResult) {
   const rows: Array<[string, Quantiles | null]> = [
     ["Click -> runCells.call", result.click_to_call_ms],
     ["runCells.call -> runner.start", result.call_to_runner_start_ms],
-    ["runner.start -> first stream chunk", result.runner_start_to_first_chunk_ms],
-    ["first stream chunk -> first output write", result.first_chunk_to_first_write_ms],
-    ["first output write -> first observable DOM change", result.first_write_to_first_obs_ms],
-    ["first stream chunk -> first observable DOM change", result.first_chunk_to_first_obs_ms],
-    ["first observable DOM change -> runCells.finally", result.first_obs_to_finally_ms],
+    [
+      "runner.start -> first stream chunk",
+      result.runner_start_to_first_chunk_ms,
+    ],
+    [
+      "first stream chunk -> first output write",
+      result.first_chunk_to_first_write_ms,
+    ],
+    [
+      "first output write -> first observable DOM change",
+      result.first_write_to_first_obs_ms,
+    ],
+    [
+      "first stream chunk -> first observable DOM change",
+      result.first_chunk_to_first_obs_ms,
+    ],
+    [
+      "first observable DOM change -> runCells.finally",
+      result.first_obs_to_finally_ms,
+    ],
     ["runCells.call -> runCells.finally", result.call_to_finally_ms],
     ["runner.done -> runCells.finally", result.runner_done_to_finally_ms],
   ];

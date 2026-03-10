@@ -2002,9 +2002,8 @@ export class ChatActions extends Actions<ChatState> {
     ].join("\n\n");
 
     // do not import until needed -- it is HUGE!
-    const { truncateMessage, getMaxTokens, numTokensUpperBound } = await import(
-      "@cocalc/frontend/misc/llm"
-    );
+    const { truncateMessage, getMaxTokens, numTokensUpperBound } =
+      await import("@cocalc/frontend/misc/llm");
     const maxTokens = getMaxTokens(model);
     const txt = truncateMessage(txtFull, maxTokens);
     const m = returnInfo ? `@${modelToName(model)}` : modelToMention(model);

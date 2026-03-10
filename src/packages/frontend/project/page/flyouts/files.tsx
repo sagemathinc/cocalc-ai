@@ -63,7 +63,10 @@ import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
-import { evaluateHostOperational, hostLabel } from "@cocalc/frontend/projects/host-operational";
+import {
+  evaluateHostOperational,
+  hostLabel,
+} from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import {
   isHostRoutingUnavailableError,
@@ -244,7 +247,9 @@ export function FilesFlyout({
   const transientRoutingRetryRef = useRef<string>("");
   useEffect(() => {
     if (!effectiveError) return;
-    if (!shouldSuppressTransientRoutingError({ error: effectiveError, moveLro })) {
+    if (
+      !shouldSuppressTransientRoutingError({ error: effectiveError, moveLro })
+    ) {
       return;
     }
     const msg = `${(effectiveError as any)?.message ?? effectiveError}`;

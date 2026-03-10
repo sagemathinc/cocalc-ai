@@ -222,7 +222,9 @@ async function readConnectionInfo(): Promise<ConnectionInfo | undefined> {
     if (err?.code === "ENOENT") {
       return undefined;
     }
-    throw startLiteServerMessage(`unable to read ${path}: ${err?.message ?? err}`);
+    throw startLiteServerMessage(
+      `unable to read ${path}: ${err?.message ?? err}`,
+    );
   }
 }
 
@@ -245,7 +247,10 @@ async function resolveBaseUrl(opts: Options): Promise<{
     const protocol =
       opts.protocol ?? (info?.protocol === "https" ? "https" : "http");
     const host = opts.host ?? normalizeLiteHost(info?.host);
-    return { base_url: `${protocol}://${host}:${opts.port}`, connection_info: info };
+    return {
+      base_url: `${protocol}://${host}:${opts.port}`,
+      connection_info: info,
+    };
   }
   if (!info) {
     throw startLiteServerMessage(`missing ${connectionInfoPath()}`);
@@ -300,7 +305,10 @@ function notebookUrl({
   if (virtualization !== "keep") {
     url.searchParams.set("jupyter_virtualization", virtualization);
   }
-  url.searchParams.set("jupyter_lazy_render", render_mode === "lazy" ? "1" : "0");
+  url.searchParams.set(
+    "jupyter_lazy_render",
+    render_mode === "lazy" ? "1" : "0",
+  );
   return url.toString();
 }
 
@@ -607,7 +615,8 @@ async function probeFrontendInstrumentation(
         "data-cocalc-jupyter-windowed-list",
       ),
       has_mode_marker:
-        document.querySelector('[cocalc-test="jupyter-cell-list-mode"]') != null,
+        document.querySelector('[cocalc-test="jupyter-cell-list-mode"]') !=
+        null,
       has_virtuoso:
         document.querySelector("[data-virtuoso-scroller]") != null ||
         document.querySelector("[data-virtuoso-item-list]") != null,
@@ -671,7 +680,8 @@ async function measureScrollScenario({
 }): Promise<ScrollMetrics> {
   const result = await page.evaluate(
     async ({ cycles, scroll_steps, top_marker, bottom_marker, timeout_ms }) => {
-      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const sleep = (ms: number) =>
+        new Promise((resolve) => setTimeout(resolve, ms));
 
       function findScrollContainer(): HTMLElement | null {
         const start = document.querySelector(
@@ -707,7 +717,9 @@ async function measureScrollScenario({
 
       function countVisibleCellDomNodes(scroller: HTMLElement): number {
         const nodes = Array.from(
-          scroller.querySelectorAll<HTMLElement>('[cocalc-test="jupyter-cell"]'),
+          scroller.querySelectorAll<HTMLElement>(
+            '[cocalc-test="jupyter-cell"]',
+          ),
         );
         const ids = new Set<string>();
         for (const node of nodes) {
@@ -722,7 +734,10 @@ async function measureScrollScenario({
         return nodes.length;
       }
 
-      function markerVisible(marker: string, root?: ParentNode | null): boolean {
+      function markerVisible(
+        marker: string,
+        root?: ParentNode | null,
+      ): boolean {
         if (!marker) return false;
         const scope = (root ?? document.body) as ParentNode;
         const markerId = `jupyter-bench-marker-${marker.replace(
@@ -774,16 +789,26 @@ async function measureScrollScenario({
           1,
           notebookContentHeight - scroller.clientHeight,
         );
-        const notebookScrollTop = clamp(scroller.scrollTop, 0, maxNotebookScroll);
+        const notebookScrollTop = clamp(
+          scroller.scrollTop,
+          0,
+          maxNotebookScroll,
+        );
         const notebookRatio = notebookScrollTop / maxNotebookScroll;
         const maxMiniScroll = Math.max(0, contentHeight - railHeight);
         const miniScrollTop = notebookRatio * maxMiniScroll;
         const viewportHeightInTrack = Math.min(
           contentHeight,
-          Math.max(16, (scroller.clientHeight / notebookContentHeight) * contentHeight),
+          Math.max(
+            16,
+            (scroller.clientHeight / notebookContentHeight) * contentHeight,
+          ),
         );
         const expectedThumbHeight = Math.min(railHeight, viewportHeightInTrack);
-        const viewportTravelInTrack = Math.max(0, contentHeight - viewportHeightInTrack);
+        const viewportTravelInTrack = Math.max(
+          0,
+          contentHeight - viewportHeightInTrack,
+        );
         const viewportTopInTrack = notebookRatio * viewportTravelInTrack;
         const expectedThumbTop = clamp(
           viewportTopInTrack - miniScrollTop,
@@ -804,7 +829,8 @@ async function measureScrollScenario({
           top_error_px: topError,
           height_error_px: heightError,
           max_error_px: maxError,
-          alignment_ok: topError <= topTolerance && heightError <= heightTolerance,
+          alignment_ok:
+            topError <= topTolerance && heightError <= heightTolerance,
         };
       }
 
@@ -938,7 +964,10 @@ async function measureScrollScenario({
       await sleepChecked(140, "init");
       await tick("init");
 
-      let maxScrollSeen = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      let maxScrollSeen = Math.max(
+        0,
+        scroller.scrollHeight - scroller.clientHeight,
+      );
       const refreshMaxScroll = () => {
         const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
         if (max > maxScrollSeen) {
@@ -957,11 +986,7 @@ async function measureScrollScenario({
         modeNode?.getAttribute("data-jupyter-windowed-list") ??
         scroller.getAttribute("data-jupyter-windowed-list");
       const windowedListAttrFromMarker =
-        windowedAttrRaw === "1"
-          ? true
-          : windowedAttrRaw === "0"
-            ? false
-            : null;
+        windowedAttrRaw === "1" ? true : windowedAttrRaw === "0" ? false : null;
       const rootWindowedAttrRaw = document.documentElement.getAttribute(
         "data-cocalc-jupyter-windowed-list",
       );
@@ -976,7 +1001,8 @@ async function measureScrollScenario({
         document.querySelector("[data-virtuoso-item-list]") != null;
       const windowedListAttr = (() => {
         if (typeof runtimeWindowed === "boolean") return runtimeWindowed;
-        if (windowedListAttrFromMarker != null) return windowedListAttrFromMarker;
+        if (windowedListAttrFromMarker != null)
+          return windowedListAttrFromMarker;
         if (windowedListAttrFromRoot != null) return windowedListAttrFromRoot;
         if (hasVirtuoso) return true;
         return false;
@@ -993,9 +1019,9 @@ async function measureScrollScenario({
             ? "attr"
             : windowedListAttrFromRoot != null
               ? "root-attr"
-            : hasVirtuoso
-              ? "virtuoso"
-              : "unknown";
+              : hasVirtuoso
+                ? "virtuoso"
+                : "unknown";
       const rootLazyRenderRaw = document.documentElement.getAttribute(
         "data-cocalc-jupyter-lazy-render",
       );
@@ -1096,7 +1122,11 @@ async function measureScrollScenario({
       await recordPhase("scroll_cycles", async () => {
         for (let i = 0; i < cycles; i += 1) {
           const phase = `scroll_cycles.${i + 1}`;
-          await scrollTo({ target: 0, steps: scroll_steps, phase: `${phase}.up` });
+          await scrollTo({
+            target: 0,
+            steps: scroll_steps,
+            phase: `${phase}.up`,
+          });
           await sleepChecked(60, `${phase}.pause_up`);
           await scrollTo({
             target: refreshMaxScroll(),
@@ -1145,7 +1175,9 @@ async function measureScrollScenario({
         ? Math.max(...minimapSamples.map((sample) => sample.top_error_px ?? 0))
         : null;
       const minimapHeightErrorMax = minimapPresent
-        ? Math.max(...minimapSamples.map((sample) => sample.height_error_px ?? 0))
+        ? Math.max(
+            ...minimapSamples.map((sample) => sample.height_error_px ?? 0),
+          )
         : null;
       const minimapErrorMax = minimapPresent
         ? Math.max(...minimapSamples.map((sample) => sample.max_error_px ?? 0))
@@ -1220,7 +1252,8 @@ async function prepareTypingProbe(page: any): Promise<void> {
     if (root == null) {
       throw new Error("unable to find CodeMirror for typing probe");
     }
-    const target = (root.querySelector(".CodeMirror-code") as HTMLElement | null) ?? root;
+    const target =
+      (root.querySelector(".CodeMirror-code") as HTMLElement | null) ?? root;
     const state: {
       waiting: boolean;
       keyTs: number;
@@ -1280,7 +1313,9 @@ async function prepareTypingProbe(page: any): Promise<void> {
       focus() {
         const cm = getCM();
         cm?.focus?.();
-        const textarea = root.querySelector("textarea") as HTMLTextAreaElement | null;
+        const textarea = root.querySelector(
+          "textarea",
+        ) as HTMLTextAreaElement | null;
         textarea?.focus();
       },
       reset() {
@@ -1432,7 +1467,9 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
       run.name,
       run.virtualization_mode,
       run.render_mode,
-      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      run.virtualization_active == null
+        ? "n/a"
+        : yesNo(run.virtualization_active),
       run.metrics.windowed_list_source,
       run.lazy_render_once_active == null
         ? "n/a"
@@ -1508,7 +1545,9 @@ function printReliabilityMatrix(result: ScrollBenchmarkResult) {
       run.name,
       run.virtualization_mode,
       run.render_mode,
-      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      run.virtualization_active == null
+        ? "n/a"
+        : yesNo(run.virtualization_active),
       run.metrics.windowed_list_source,
       run.lazy_render_once_active == null
         ? "n/a"
@@ -1563,7 +1602,9 @@ function printInteractionTable(result: ScrollBenchmarkResult) {
       run.name,
       run.virtualization_mode,
       run.render_mode,
-      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      run.virtualization_active == null
+        ? "n/a"
+        : yesNo(run.virtualization_active),
       fmtMs(run.open_metrics.first_cell_ms),
       fmtMs(run.open_metrics.first_input_ms),
       fmtMs(run.open_metrics.ready_ms),
@@ -1669,7 +1710,11 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--port":
         opts.port = Number(next());
-        if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) {
+        if (
+          !Number.isInteger(opts.port) ||
+          opts.port < 1 ||
+          opts.port > 65535
+        ) {
           throw new Error(`invalid --port '${opts.port}'`);
         }
         break;
@@ -1679,7 +1724,9 @@ function parseArgs(argv: string[]): Options {
       case "--protocol": {
         const protocol = next();
         if (protocol !== "http" && protocol !== "https") {
-          throw new Error(`--protocol must be http or https, got '${protocol}'`);
+          throw new Error(
+            `--protocol must be http or https, got '${protocol}'`,
+          );
         }
         opts.protocol = protocol;
         break;
@@ -1780,7 +1827,9 @@ function parseArgs(argv: string[]): Options {
   return opts;
 }
 
-async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult> {
+async function runScrollBenchmark(
+  opts: Options,
+): Promise<ScrollBenchmarkResult> {
   const started_at = new Date().toISOString();
   const { base_url, connection_info } = await resolveBaseUrl(opts);
   const auth_token = opts.auth_token ?? connection_info?.token;
@@ -1804,18 +1853,21 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         virtualizationMode: "on" | "off" | "keep";
         renderMode: "eager" | "lazy";
       }) => {
-      try {
-        if (virtualizationMode !== "keep") {
-          localStorage.setItem("cocalc_jupyter_virtualization", virtualizationMode);
-          localStorage.setItem("jupyter_virtualization", virtualizationMode);
+        try {
+          if (virtualizationMode !== "keep") {
+            localStorage.setItem(
+              "cocalc_jupyter_virtualization",
+              virtualizationMode,
+            );
+            localStorage.setItem("jupyter_virtualization", virtualizationMode);
+          }
+          const lazyValue = renderMode === "lazy" ? "on" : "off";
+          localStorage.setItem("cocalc_jupyter_lazy_render", lazyValue);
+          localStorage.setItem("jupyter_lazy_render", lazyValue);
+        } catch {
+          // ignore storage failures in restricted contexts
         }
-        const lazyValue = renderMode === "lazy" ? "on" : "off";
-        localStorage.setItem("cocalc_jupyter_lazy_render", lazyValue);
-        localStorage.setItem("jupyter_lazy_render", lazyValue);
-      } catch {
-        // ignore storage failures in restricted contexts
-      }
-    },
+      },
       {
         virtualizationMode: opts.virtualization,
         renderMode: opts.render_mode,
@@ -1896,11 +1948,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       }
       const cycles =
         opts.cycles ??
-        (opts.profile === "full"
-          ? 4
-          : scenario.expected_cells >= 350
-            ? 0
-            : 2);
+        (opts.profile === "full" ? 4 : scenario.expected_cells >= 350 ? 0 : 2);
       const scroll_steps =
         scenario.expected_cells >= 350
           ? Math.max(10, Math.floor(opts.scroll_steps * 0.3))
@@ -1925,7 +1973,9 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       const virtualization_active = metrics.windowed_list_attr;
       const lazy_render_once_active = metrics.lazy_render_once_attr;
       const minimapAlignmentOk =
-        metrics.minimap_alignment_ok == null ? true : metrics.minimap_alignment_ok;
+        metrics.minimap_alignment_ok == null
+          ? true
+          : metrics.minimap_alignment_ok;
       const reliability_ok =
         metrics.top_marker_visible_after &&
         metrics.bottom_marker_visible_after &&
@@ -1961,14 +2011,18 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       }
 
       if (!opts.quiet) {
-        const fps = metrics.approx_fps == null ? "n/a" : metrics.approx_fps.toFixed(1);
+        const fps =
+          metrics.approx_fps == null ? "n/a" : metrics.approx_fps.toFixed(1);
         const typingP95 =
-          typing_metrics.p95_ms == null ? "n/a" : `${typing_metrics.p95_ms.toFixed(1)}ms`;
-        const mini = metrics.minimap_alignment_ok == null
-          ? "n/a"
-          : metrics.minimap_alignment_ok
-            ? `ok (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`
-            : `fail (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`;
+          typing_metrics.p95_ms == null
+            ? "n/a"
+            : `${typing_metrics.p95_ms.toFixed(1)}ms`;
+        const mini =
+          metrics.minimap_alignment_ok == null
+            ? "n/a"
+            : metrics.minimap_alignment_ok
+              ? `ok (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`
+              : `fail (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`;
         const status = reliability_ok ? "PASS" : "FAIL";
         console.log(
           `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}, render=${opts.render_mode}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, minimap=${mini}, status=${status}`,

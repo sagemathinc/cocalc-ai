@@ -439,7 +439,7 @@ function buildUsageTierMap(
     return Object.fromEntries(entries.map(([model]) => [model, "medium"]));
   }
   const lowMax = sorted[Math.floor((sorted.length - 1) / 3)];
-  const medMax = sorted[Math.floor((sorted.length - 1) * 2 / 3)];
+  const medMax = sorted[Math.floor(((sorted.length - 1) * 2) / 3)];
   const tiers: Record<string, UsageTier> = {};
   for (const [model, entry] of entries) {
     const score = getUsageScore(entry);
@@ -517,7 +517,11 @@ export function LLMModelPrice({
     props.style = { float: "right", marginLeft: "20px" };
   }
 
-  if (isOllamaLLM(model) || isCustomOpenAI(model) || isUserDefinedModel(model)) {
+  if (
+    isOllamaLLM(model) ||
+    isCustomOpenAI(model) ||
+    isUserDefinedModel(model)
+  ) {
     return <Tag {...props}>External</Tag>;
   }
 

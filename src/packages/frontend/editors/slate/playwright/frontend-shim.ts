@@ -12,9 +12,12 @@ export const Popover = (_props: any) => null;
 export const DropdownMenu = (_props: any) => null;
 export const ColorButton = (_props: any) => null;
 export const A = (props: any) => React.createElement("a", props);
-export const Paragraph = (props: any) => React.createElement("p", props, props?.children);
-export const Text = (props: any) => React.createElement("span", props, props?.children);
-export const Title = (props: any) => React.createElement("h3", props, props?.children);
+export const Paragraph = (props: any) =>
+  React.createElement("p", props, props?.children);
+export const Text = (props: any) =>
+  React.createElement("span", props, props?.children);
+export const Title = (props: any) =>
+  React.createElement("h3", props, props?.children);
 export const Avatar = (_props: any) => null;
 export const LanguageModelVendorAvatar = (_props: any) => null;
 export const LLMModelPrice = (_props: any) => null;
@@ -27,7 +30,10 @@ export const useFileContext = () => ({});
 export const FileContext = React.createContext({});
 export const useLanguageModelSetting = () => null;
 export const useUserDefinedLLM = () => [];
-export const useProjectContext = () => ({ project_id: "project-1", path: "chat-harness.chat" });
+export const useProjectContext = () => ({
+  project_id: "project-1",
+  path: "chat-harness.chat",
+});
 export const useProjectHasInternetAccess = () => true;
 export const matchProjectNavigationCommand = () => undefined;
 export const handoffProjectNavigationFromLocalOwner = () => undefined;
@@ -83,9 +89,13 @@ export const RunButton = (_props: any) => null;
 export const Cursor = (_props: any) => null;
 export const Complete = (_props: any) => null;
 export const Dropzone = (props: any) =>
-  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
+  props?.children
+    ? React.createElement(React.Fragment, null, props.children)
+    : null;
 export const BlobUpload = (props: any) =>
-  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
+  props?.children
+    ? React.createElement(React.Fragment, null, props.children)
+    : null;
 export const getProfile = () => ({});
 export const useMentionableUsers = () => {
   return () => [];
@@ -94,5 +104,7 @@ export const submit_mentions = () => undefined;
 export const markdown_to_html = async (_value: string) => "";
 
 const DefaultStub = (props: any) =>
-  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
+  props?.children
+    ? React.createElement(React.Fragment, null, props.children)
+    : null;
 export default DefaultStub;

@@ -56,7 +56,7 @@ export function getPosition(element: Element) {
 export function getPageSpan(
   elements: Element[],
   margin: number = 0,
-  presentation: boolean = false
+  presentation: boolean = false,
 ): {
   xMin: number;
   xMax: number;
@@ -78,7 +78,7 @@ export function getPageSpan(
           return { ...elt, z: 0 };
         }),
       margin,
-      false
+      false,
     );
   }
 
@@ -194,7 +194,7 @@ export function decompressPath(compressedPath: number[], scale = 1): Point[] {
 }
 
 export function decompressPathPairs(
-  compressedPath: number[]
+  compressedPath: number[],
 ): [number, number][] {
   const path: [number, number][] = [];
   for (let i = 0; i < compressedPath.length; i += 2) {
@@ -214,10 +214,10 @@ export function scalePath(path: Point[], scale): Point[] {
 // Returns subset of elements whose rect overlap with given rect
 export function getOverlappingElements(
   elements: Element[],
-  rect: Rect
+  rect: Rect,
 ): Element[] {
   return elements.filter((element) =>
-    areOverlappingRectangles(eltToRect(element), rect)
+    areOverlappingRectangles(eltToRect(element), rect),
   );
 }
 
@@ -283,7 +283,7 @@ export function midPoint(p0: Point, p1: Point): Point {
 
 export function drawEdge(
   r0: Rect,
-  r1: Rect
+  r1: Rect,
 ): {
   rect: Rect; // rectangle that contains the edge path
   path: Point[]; // path drawn using coordinates inside the rect.
@@ -359,7 +359,7 @@ export function getGroup(elements: Element[], group?: string): Element[] {
 // both don't have positive w and h...
 export function fitRectToRect(
   rect1: Rect,
-  rect2: Rect
+  rect2: Rect,
 ): { scale: number; translate: Point } {
   const scale_x = rect2.w / rect1.w;
   const scale_y = rect2.h / rect1.h;
@@ -384,7 +384,7 @@ export interface Transforms {
     // name includes "NoScale" just to emphasize this doesn't involve scaling.  It's just translating around.
     x: number,
     y: number,
-    z?: number
+    z?: number,
   ) => { x: number; y: number; z: number };
   windowToDataNoScale: (x: number, y: number) => { x: number; y: number };
   width: number;
@@ -401,7 +401,7 @@ export interface Transforms {
 export function getTransforms(
   elements,
   margin: number = 0,
-  presentation: boolean = false
+  presentation: boolean = false,
 ): Transforms {
   /*
   Consider the x and y coordinates of all elements, which could be anywhere in the "infinite canvas",
@@ -430,7 +430,7 @@ export function getTransforms(
             return { ...elt, z: 0 };
           }),
         margin,
-        false
+        false,
       ),
       zMap,
     };
@@ -492,7 +492,7 @@ export function roundRectParams(rect: Partial<Rect>) {
 export function moveRectAdjacent(
   rect: Rect,
   placement: Placement = "bottom",
-  gap = DEFAULT_EDGE_LENGTH
+  gap = DEFAULT_EDGE_LENGTH,
 ) {
   const p: string = placement.toLowerCase();
   if (p.includes("bottom")) {
@@ -515,7 +515,7 @@ export function moveUntilNotIntersectingAnything(
   rect: Rect,
   rects: Rect[],
   axis: "x" | "y",
-  dir: "+" | "-" | "best" = "best"
+  dir: "+" | "-" | "best" = "best",
 ): void {
   if (!rect.w || !rect.h || rect.x == null || rect.y == null) {
     // would infinite loop below otherwise... and there is nothing good to do,

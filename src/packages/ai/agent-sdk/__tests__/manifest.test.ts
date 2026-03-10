@@ -39,10 +39,7 @@ describe("buildCapabilityManifest", () => {
         handler: async () => ({}),
       },
     ]);
-    expect(manifest.map((x) => x.actionType)).toEqual([
-      "a.action",
-      "z.action",
-    ]);
+    expect(manifest.map((x) => x.actionType)).toEqual(["a.action", "z.action"]);
     expect(manifest[0]).toEqual(
       expect.objectContaining({
         actionType: "a.action",

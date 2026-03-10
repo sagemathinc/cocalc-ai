@@ -75,7 +75,10 @@ async function revertPlacementIfPossible(
   context: MoveProjectContext,
   progress: (update: MoveProjectProgressUpdate) => void,
 ) {
-  if (!context.project_host_id || context.project_host_id === context.dest_host_id) {
+  if (
+    !context.project_host_id ||
+    context.project_host_id === context.dest_host_id
+  ) {
     return;
   }
   const sourceHost = await loadHostFromRegistry(context.project_host_id);
@@ -106,7 +109,10 @@ async function cleanupDestinationOnFailure(
   context: MoveProjectContext,
   progress: (update: MoveProjectProgressUpdate) => void,
 ) {
-  if (!context.dest_host_id || context.dest_host_id === context.project_host_id) {
+  if (
+    !context.dest_host_id ||
+    context.dest_host_id === context.project_host_id
+  ) {
     return;
   }
   progress({
@@ -182,8 +188,7 @@ async function buildMoveProjectContext(
   if (!dest_host_id) {
     throw new Error("destination host id not available");
   }
-  const project_region =
-    parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
+  const project_region = parseR2Region(projectRow.region) ?? DEFAULT_R2_REGION;
   const dest_region = mapCloudRegionToR2Region(destHost.region);
   if (project_region !== dest_region) {
     throw new Error(
@@ -247,9 +252,10 @@ async function createFinalBackup({
     project_id,
     limit: MAX_BACKUPS_PER_PROJECT,
   });
-  const backupTime = backup.time instanceof Date
-    ? backup.time.toISOString()
-    : new Date(backup.time as any).toISOString();
+  const backupTime =
+    backup.time instanceof Date
+      ? backup.time.toISOString()
+      : new Date(backup.time as any).toISOString();
   return { id: backup.id, time: backupTime };
 }
 
@@ -321,7 +327,10 @@ export async function moveProjectToHost(
         progress({
           step: "cleanup-dest",
           message: "destination cleanup failed",
-          detail: { dest_host_id: context.dest_host_id, error: `${cleanupErr}` },
+          detail: {
+            dest_host_id: context.dest_host_id,
+            error: `${cleanupErr}`,
+          },
         });
       }
     }
@@ -333,333 +342,351 @@ export async function moveProjectToHost(
   };
 
   try {
-  progress({
-    step: "validate",
-    message: "validated move request",
-    detail: {
-      source_host_id: context.project_host_id ?? undefined,
-      dest_host_id: context.dest_host_id,
-    },
-  });
-  await checkCanceled("validate");
-  const sourceAvailable = isSourceHostAvailable(context);
-  if (!sourceAvailable) {
-    const status = context.source_host_status ?? "unknown";
     progress({
-      step: "stop-source",
-      message: "source host offline; skipping stop",
-      detail: { source_host_status: status },
+      step: "validate",
+      message: "validated move request",
+      detail: {
+        source_host_id: context.project_host_id ?? undefined,
+        dest_host_id: context.dest_host_id,
+      },
     });
-    if (context.provisioned === false) {
+    await checkCanceled("validate");
+    const sourceAvailable = isSourceHostAvailable(context);
+    if (!sourceAvailable) {
+      const status = context.source_host_status ?? "unknown";
+      progress({
+        step: "stop-source",
+        message: "source host offline; skipping stop",
+        detail: { source_host_status: status },
+      });
+      if (context.provisioned === false) {
+        progress({
+          step: "backup",
+          message: "source project not provisioned; backup not required",
+          detail: {
+            source_host_status: status,
+            provisioned: context.provisioned,
+            last_backup: context.last_backup,
+            last_edited: context.last_edited,
+          },
+        });
+      } else if (hasStaleBackup(context) && !input.allow_offline) {
+        throw offlineMoveConfirmationError(
+          makeOfflineMoveConfirmationPayload({
+            source_status: status,
+            last_backup: context.last_backup,
+            last_edited: context.last_edited,
+          }),
+        );
+      }
       progress({
         step: "backup",
-        message: "source project not provisioned; backup not required",
+        message: "source host offline; using existing backup",
         detail: {
           source_host_status: status,
-          provisioned: context.provisioned,
           last_backup: context.last_backup,
           last_edited: context.last_edited,
         },
-      });
-    } else if (hasStaleBackup(context) && !input.allow_offline) {
-      throw offlineMoveConfirmationError(
-        makeOfflineMoveConfirmationPayload({
-          source_status: status,
-          last_backup: context.last_backup,
-          last_edited: context.last_edited,
-        }),
-      );
-    }
-    progress({
-      step: "backup",
-      message: "source host offline; using existing backup",
-      detail: {
-        source_host_status: status,
-        last_backup: context.last_backup,
-        last_edited: context.last_edited,
-      },
-    });
-  } else {
-    progress({
-      step: "stop-source",
-      message: "stopping source project",
-      detail: { project_state: context.project_state },
-    });
-    log.info("moveProjectToHost stopping project before move", {
-      project_id: context.project_id,
-      project_state: context.project_state,
-    });
-    try {
-      await stopProjectOnHost(context.project_id, {
-        timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
-      });
-    } catch (err) {
-      log.error("moveProjectToHost failed to stop project", {
-        project_id: context.project_id,
-        project_state: context.project_state,
-        err,
-      });
-      throw err;
-    }
-    await checkCanceled("stop-source");
-
-    if (context.provisioned === false) {
-      progress({
-        step: "backup",
-        message: "project not provisioned; skipping final backup",
-        detail: { provisioned: context.provisioned },
-      });
-      log.info("moveProjectToHost skipping backup for unprovisioned project", {
-        project_id: context.project_id,
       });
     } else {
       progress({
-        step: "backup",
-        message: "creating final backup (always)",
+        step: "stop-source",
+        message: "stopping source project",
+        detail: { project_state: context.project_state },
       });
-      log.info("moveProjectToHost creating final backup", {
+      log.info("moveProjectToHost stopping project before move", {
         project_id: context.project_id,
+        project_state: context.project_state,
       });
       try {
-        const backupStart = Date.now();
-        const result = await createFinalBackup({
-          project_id: context.project_id,
-        });
-        const backup_id = result.id;
-        const backup_time = result.time;
-        const duration_ms = Date.now() - backupStart;
-        progress({
-          step: "backup",
-          message: "final backup created",
-          detail: {
-            backup_id,
-            backup_time,
-            duration_ms,
-          },
-        });
-        log.info("moveProjectToHost backup created", {
-          project_id: context.project_id,
-          backup_id,
-          duration_ms,
-        });
-      } catch (err) {
-        if (isMissingProjectVolumeError(err)) {
-          progress({
-            step: "backup",
-            message: "source volume missing; skipping final backup",
-            detail: { error: `${err}` },
-          });
-          log.warn("moveProjectToHost skipping backup because volume is missing", {
-            project_id: context.project_id,
-            err,
-          });
-        } else {
-          log.error("moveProjectToHost backup failed", {
-            project_id: context.project_id,
-            err,
-          });
-          throw err;
-        }
-      }
-    }
-    await checkCanceled("backup");
-  }
-
-  const destHost = await loadHostFromRegistry(context.dest_host_id);
-  if (!destHost) {
-    throw new Error(`host ${context.dest_host_id} not found`);
-  }
-  progress({
-    step: "placement",
-    message: "updating workspace placement",
-    detail: { dest_host_id: context.dest_host_id },
-  });
-  try {
-  await savePlacement(context.project_id, {
-    host_id: context.dest_host_id,
-  });
-    placementUpdated = true;
-    log.info("moveProjectToHost placement updated", {
-      project_id: context.project_id,
-      dest_host_id: context.dest_host_id,
-    });
-  } catch (err) {
-    log.error("moveProjectToHost placement update failed", {
-      project_id: context.project_id,
-      dest_host_id: context.dest_host_id,
-      err,
-    });
-    throw err;
-  }
-  await checkCanceled("placement");
-  if (startDest) {
-    progress({
-      step: "start-dest",
-      message: "starting workspace on destination host",
-      detail: { dest_host_id: context.dest_host_id },
-    });
-    try {
-      const startOp = await startProjectLro({
-        account_id: context.account_id,
-        project_id: context.project_id,
-        wait: false,
-      });
-      const summary = await waitForLroCompletion({
-        op_id: startOp.op_id,
-        scope_type: startOp.scope_type,
-        scope_id: startOp.scope_id,
-        client: conat(),
-        onProgress: (event) => {
-          progress({
-            step: "start-dest",
-            message: event.message ?? event.phase ?? "starting destination",
-            detail: event.detail,
-            progress: event.progress,
-          });
-        },
-      });
-      if (summary.status !== "succeeded") {
-        const reason = summary.error ?? summary.status;
-        throw new Error(`destination start failed: ${reason}`);
-      }
-      progress({
-        step: "start-dest",
-        message: "destination workspace started",
-        detail: { dest_host_id: context.dest_host_id },
-      });
-      log.info("moveProjectToHost started project on destination host", {
-        project_id: context.project_id,
-        dest_host_id: context.dest_host_id,
-      });
-
-      if (stopDestAfterStart) {
-        progress({
-          step: "start-dest",
-          message: "stopping destination workspace after restore",
-          detail: { dest_host_id: context.dest_host_id },
-        });
         await stopProjectOnHost(context.project_id, {
           timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
         });
-        progress({
-          step: "start-dest",
-          message: "destination workspace stopped after restore",
-          detail: { dest_host_id: context.dest_host_id },
-        });
-        log.info("moveProjectToHost stopped destination project after restore", {
+      } catch (err) {
+        log.error("moveProjectToHost failed to stop project", {
           project_id: context.project_id,
-          dest_host_id: context.dest_host_id,
+          project_state: context.project_state,
+          err,
         });
-      }
-    } catch (err) {
-      if ((err as any)?.code === MOVE_CANCELED_CODE) {
         throw err;
       }
-      log.warn("moveProjectToHost start failed after placement update", {
+      await checkCanceled("stop-source");
+
+      if (context.provisioned === false) {
+        progress({
+          step: "backup",
+          message: "project not provisioned; skipping final backup",
+          detail: { provisioned: context.provisioned },
+        });
+        log.info(
+          "moveProjectToHost skipping backup for unprovisioned project",
+          {
+            project_id: context.project_id,
+          },
+        );
+      } else {
+        progress({
+          step: "backup",
+          message: "creating final backup (always)",
+        });
+        log.info("moveProjectToHost creating final backup", {
+          project_id: context.project_id,
+        });
+        try {
+          const backupStart = Date.now();
+          const result = await createFinalBackup({
+            project_id: context.project_id,
+          });
+          const backup_id = result.id;
+          const backup_time = result.time;
+          const duration_ms = Date.now() - backupStart;
+          progress({
+            step: "backup",
+            message: "final backup created",
+            detail: {
+              backup_id,
+              backup_time,
+              duration_ms,
+            },
+          });
+          log.info("moveProjectToHost backup created", {
+            project_id: context.project_id,
+            backup_id,
+            duration_ms,
+          });
+        } catch (err) {
+          if (isMissingProjectVolumeError(err)) {
+            progress({
+              step: "backup",
+              message: "source volume missing; skipping final backup",
+              detail: { error: `${err}` },
+            });
+            log.warn(
+              "moveProjectToHost skipping backup because volume is missing",
+              {
+                project_id: context.project_id,
+                err,
+              },
+            );
+          } else {
+            log.error("moveProjectToHost backup failed", {
+              project_id: context.project_id,
+              err,
+            });
+            throw err;
+          }
+        }
+      }
+      await checkCanceled("backup");
+    }
+
+    const destHost = await loadHostFromRegistry(context.dest_host_id);
+    if (!destHost) {
+      throw new Error(`host ${context.dest_host_id} not found`);
+    }
+    progress({
+      step: "placement",
+      message: "updating workspace placement",
+      detail: { dest_host_id: context.dest_host_id },
+    });
+    try {
+      await savePlacement(context.project_id, {
+        host_id: context.dest_host_id,
+      });
+      placementUpdated = true;
+      log.info("moveProjectToHost placement updated", {
+        project_id: context.project_id,
+        dest_host_id: context.dest_host_id,
+      });
+    } catch (err) {
+      log.error("moveProjectToHost placement update failed", {
         project_id: context.project_id,
         dest_host_id: context.dest_host_id,
         err,
       });
-      progress({
-        step: "start-dest",
-        message: "destination start failed",
-        detail: { dest_host_id: context.dest_host_id, error: `${err}` },
-      });
-      try {
-        await revertPlacementIfPossible(context, progress);
-      } catch (revertErr) {
-        log.warn("moveProjectToHost placement revert failed", {
-          project_id: context.project_id,
-          source_host_id: context.project_host_id,
-          err: revertErr,
-        });
-        progress({
-          step: "revert-placement",
-          message: "source placement revert failed",
-          detail: { source_host_id: context.project_host_id, error: `${revertErr}` },
-        });
-      }
-      try {
-        await cleanupDestinationOnFailure(context, progress);
-      } catch (cleanupErr) {
-        log.warn("moveProjectToHost destination cleanup failed", {
-          project_id: context.project_id,
-          dest_host_id: context.dest_host_id,
-          err: cleanupErr,
-        });
-        progress({
-          step: "cleanup-dest",
-          message: "destination cleanup failed",
-          detail: { dest_host_id: context.dest_host_id, error: `${cleanupErr}` },
-        });
-      }
       throw err;
     }
-  } else {
-    progress({
-      step: "start-dest",
-      message: "destination start skipped by request",
-      detail: { dest_host_id: context.dest_host_id },
-      progress: 100,
-    });
-    log.info("moveProjectToHost skipped destination start", {
-      project_id: context.project_id,
-      dest_host_id: context.dest_host_id,
-    });
-  }
-  await checkCanceled("start-dest");
-  if (
-    context.project_host_id &&
-    context.project_host_id !== context.dest_host_id
-  ) {
-    await checkCanceled("cleanup");
-    if (!sourceAvailable) {
+    await checkCanceled("placement");
+    if (startDest) {
       progress({
-        step: "cleanup",
-        message: "source host offline; cleanup deferred",
-        detail: { source_host_id: context.project_host_id },
-      });
-    } else {
-      progress({
-        step: "cleanup",
-        message: "removing source data",
-        detail: { source_host_id: context.project_host_id },
+        step: "start-dest",
+        message: "starting workspace on destination host",
+        detail: { dest_host_id: context.dest_host_id },
       });
       try {
-        await deleteProjectDataOnHost({
+        const startOp = await startProjectLro({
+          account_id: context.account_id,
           project_id: context.project_id,
-          host_id: context.project_host_id,
+          wait: false,
         });
+        const summary = await waitForLroCompletion({
+          op_id: startOp.op_id,
+          scope_type: startOp.scope_type,
+          scope_id: startOp.scope_id,
+          client: conat(),
+          onProgress: (event) => {
+            progress({
+              step: "start-dest",
+              message: event.message ?? event.phase ?? "starting destination",
+              detail: event.detail,
+              progress: event.progress,
+            });
+          },
+        });
+        if (summary.status !== "succeeded") {
+          const reason = summary.error ?? summary.status;
+          throw new Error(`destination start failed: ${reason}`);
+        }
         progress({
-          step: "cleanup",
-          message: "source data removed",
-          detail: { source_host_id: context.project_host_id },
+          step: "start-dest",
+          message: "destination workspace started",
+          detail: { dest_host_id: context.dest_host_id },
         });
-      } catch (err) {
-        log.warn("moveProjectToHost cleanup failed", {
+        log.info("moveProjectToHost started project on destination host", {
           project_id: context.project_id,
-          source_host_id: context.project_host_id,
+          dest_host_id: context.dest_host_id,
+        });
+
+        if (stopDestAfterStart) {
+          progress({
+            step: "start-dest",
+            message: "stopping destination workspace after restore",
+            detail: { dest_host_id: context.dest_host_id },
+          });
+          await stopProjectOnHost(context.project_id, {
+            timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
+          });
+          progress({
+            step: "start-dest",
+            message: "destination workspace stopped after restore",
+            detail: { dest_host_id: context.dest_host_id },
+          });
+          log.info(
+            "moveProjectToHost stopped destination project after restore",
+            {
+              project_id: context.project_id,
+              dest_host_id: context.dest_host_id,
+            },
+          );
+        }
+      } catch (err) {
+        if ((err as any)?.code === MOVE_CANCELED_CODE) {
+          throw err;
+        }
+        log.warn("moveProjectToHost start failed after placement update", {
+          project_id: context.project_id,
+          dest_host_id: context.dest_host_id,
           err,
         });
         progress({
-          step: "cleanup",
-          message: "source cleanup failed",
-          detail: { source_host_id: context.project_host_id, error: `${err}` },
+          step: "start-dest",
+          message: "destination start failed",
+          detail: { dest_host_id: context.dest_host_id, error: `${err}` },
         });
+        try {
+          await revertPlacementIfPossible(context, progress);
+        } catch (revertErr) {
+          log.warn("moveProjectToHost placement revert failed", {
+            project_id: context.project_id,
+            source_host_id: context.project_host_id,
+            err: revertErr,
+          });
+          progress({
+            step: "revert-placement",
+            message: "source placement revert failed",
+            detail: {
+              source_host_id: context.project_host_id,
+              error: `${revertErr}`,
+            },
+          });
+        }
+        try {
+          await cleanupDestinationOnFailure(context, progress);
+        } catch (cleanupErr) {
+          log.warn("moveProjectToHost destination cleanup failed", {
+            project_id: context.project_id,
+            dest_host_id: context.dest_host_id,
+            err: cleanupErr,
+          });
+          progress({
+            step: "cleanup-dest",
+            message: "destination cleanup failed",
+            detail: {
+              dest_host_id: context.dest_host_id,
+              error: `${cleanupErr}`,
+            },
+          });
+        }
+        throw err;
       }
+    } else {
+      progress({
+        step: "start-dest",
+        message: "destination start skipped by request",
+        detail: { dest_host_id: context.dest_host_id },
+        progress: 100,
+      });
+      log.info("moveProjectToHost skipped destination start", {
+        project_id: context.project_id,
+        dest_host_id: context.dest_host_id,
+      });
     }
-  } else {
+    await checkCanceled("start-dest");
+    if (
+      context.project_host_id &&
+      context.project_host_id !== context.dest_host_id
+    ) {
+      await checkCanceled("cleanup");
+      if (!sourceAvailable) {
+        progress({
+          step: "cleanup",
+          message: "source host offline; cleanup deferred",
+          detail: { source_host_id: context.project_host_id },
+        });
+      } else {
+        progress({
+          step: "cleanup",
+          message: "removing source data",
+          detail: { source_host_id: context.project_host_id },
+        });
+        try {
+          await deleteProjectDataOnHost({
+            project_id: context.project_id,
+            host_id: context.project_host_id,
+          });
+          progress({
+            step: "cleanup",
+            message: "source data removed",
+            detail: { source_host_id: context.project_host_id },
+          });
+        } catch (err) {
+          log.warn("moveProjectToHost cleanup failed", {
+            project_id: context.project_id,
+            source_host_id: context.project_host_id,
+            err,
+          });
+          progress({
+            step: "cleanup",
+            message: "source cleanup failed",
+            detail: {
+              source_host_id: context.project_host_id,
+              error: `${err}`,
+            },
+          });
+        }
+      }
+    } else {
+      progress({
+        step: "cleanup",
+        message: "no source cleanup needed",
+        detail: { source_host_id: context.project_host_id ?? undefined },
+      });
+    }
     progress({
-      step: "cleanup",
-      message: "no source cleanup needed",
-      detail: { source_host_id: context.project_host_id ?? undefined },
+      step: "done",
+      message: "move complete",
+      detail: { dest_host_id: context.dest_host_id },
     });
-  }
-  progress({
-    step: "done",
-    message: "move complete",
-    detail: { dest_host_id: context.dest_host_id },
-  });
   } catch (err) {
     if ((err as any)?.code === MOVE_CANCELED_CODE) {
       await handleCancel((err as any).stage ?? "unknown");

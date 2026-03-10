@@ -18,10 +18,7 @@ function resolveRoot(): string {
   );
 }
 
-function parsePositiveInt(
-  raw: string | undefined,
-  fallback: number,
-): number {
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw?.trim()) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -69,7 +66,12 @@ async function getActiveSubscriptionHomes(): Promise<Set<string> | undefined> {
       .filter((x: any) => typeof x === "string" && x.length > 0);
     if (!ids.length) return new Set();
 
-    const inspectRaw = await execPodman(["inspect", ...ids, "--format", "json"]);
+    const inspectRaw = await execPodman([
+      "inspect",
+      ...ids,
+      "--format",
+      "json",
+    ]);
     const inspect = inspectRaw.trim() ? JSON.parse(inspectRaw) : [];
     const active = new Set<string>();
     for (const container of Array.isArray(inspect) ? inspect : []) {
@@ -164,7 +166,9 @@ async function sweepOnce(ttlMs: number): Promise<void> {
   }
 }
 
-export async function touchSubscriptionCacheUsage(codexHome: string): Promise<void> {
+export async function touchSubscriptionCacheUsage(
+  codexHome: string,
+): Promise<void> {
   await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
   const marker = join(codexHome, LAST_USED_MARKER);
   const now = new Date();
@@ -204,7 +208,8 @@ export function startCodexSubscriptionCacheGc(): () => void {
   };
 
   const maxJitter = Math.min(5 * 60 * 1000, Math.floor(sweepMs / 2));
-  const initialDelay = maxJitter > 0 ? Math.floor(Math.random() * maxJitter) : 0;
+  const initialDelay =
+    maxJitter > 0 ? Math.floor(Math.random() * maxJitter) : 0;
   const initial = setTimeout(() => {
     void tick();
   }, initialDelay);

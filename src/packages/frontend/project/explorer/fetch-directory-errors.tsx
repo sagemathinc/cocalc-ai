@@ -45,9 +45,7 @@ export function FetchDirectoryErrors({
       return (
         <ShowError
           message={`${projectLabel} still not running`}
-          error={
-            `The ${projectLabelLower} was not running when this listing was requested.  Please try again in a moment.`
-          }
+          error={`The ${projectLabelLower} was not running when this listing was requested.  Please try again in a moment.`}
         />
       );
     default:

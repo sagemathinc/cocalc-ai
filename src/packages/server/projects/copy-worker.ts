@@ -238,7 +238,6 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
         when: "set-succeeded",
       });
     }
-
   } catch (err) {
     const isCanceled = (err as any)?.code === COPY_CANCELED_CODE;
     if (isCanceled) {

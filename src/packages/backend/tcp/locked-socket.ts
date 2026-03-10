@@ -14,7 +14,7 @@ after 10 seconds), send back "n" and close the connection.
 
 export async function unlockSocket(
   socket: Socket,
-  token: string
+  token: string,
 ): Promise<void> {
   log.debug("unlockSocket: waiting for secret token...");
   try {
@@ -114,7 +114,7 @@ function connect(port, host, token, timeout, cb) {
       } else {
         socket.destroy();
         finish(
-          "Permission denied (invalid secret token) when connecting to the local hub."
+          "Permission denied (invalid secret token) when connecting to the local hub.",
         );
       }
     });
@@ -130,7 +130,7 @@ function connect(port, host, token, timeout, cb) {
   function timedOut() {
     timer = null;
     finish(
-      `connectToLockedSocket: timed out trying to connect to locked socket at ${host}:${port}`
+      `connectToLockedSocket: timed out trying to connect to locked socket at ${host}:${port}`,
     );
     socket.end();
   }

@@ -15,12 +15,7 @@ interface Props {
   gitMode?: boolean;
 }
 
-export function RevertFile({
-  actions,
-  version,
-  doc,
-  gitMode,
-}: Props) {
+export function RevertFile({ actions, version, doc, gitMode }: Props) {
   return (
     <Tooltip
       title={

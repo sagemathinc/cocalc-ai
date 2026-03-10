@@ -30,9 +30,7 @@ test("unindent moves first nested item out and carries remaining siblings", () =
   const editor = createEditor();
   editor.children = [
     bulletList([
-      listItem("foo", [
-        bulletList([listItem("xxx"), listItem("bar")]),
-      ]),
+      listItem("foo", [bulletList([listItem("xxx"), listItem("bar")])]),
     ]),
   ];
 
@@ -51,9 +49,7 @@ test("unindent last nested item keeps earlier siblings nested", () => {
   const editor = createEditor();
   editor.children = [
     bulletList([
-      listItem("foo", [
-        bulletList([listItem("xxx"), listItem("bar")]),
-      ]),
+      listItem("foo", [bulletList([listItem("xxx"), listItem("bar")])]),
     ]),
   ];
 

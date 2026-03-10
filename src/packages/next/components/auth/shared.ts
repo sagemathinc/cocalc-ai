@@ -19,4 +19,4 @@ export const BODY_STYLE: CSS = {
 export const AUTH_WRAPPER_STYLE: CSS = {
   maxWidth: "500px",
   margin: "auto",
-}
+};

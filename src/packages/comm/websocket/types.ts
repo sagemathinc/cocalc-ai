@@ -147,7 +147,6 @@ interface MesgQuery {
   opts: any;
 }
 
-
 export type Mesg =
   | MesgVersion
   | MesgExec
@@ -170,5 +169,4 @@ export type Mesg =
   | MesgNBGrader
   | MesgJupyterNbconvert
   | MesgJupyterRunNotebook
-  | MesgProjectInfo
-  ;
+  | MesgProjectInfo;

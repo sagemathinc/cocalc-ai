@@ -29,12 +29,7 @@ export interface AcpLoopConfig {
 
 export interface AcpLoopState {
   loop_id: string;
-  status:
-    | "running"
-    | "waiting_decision"
-    | "scheduled"
-    | "paused"
-    | "stopped";
+  status: "running" | "waiting_decision" | "scheduled" | "paused" | "stopped";
   started_at_ms: number;
   updated_at_ms: number;
   iteration: number;

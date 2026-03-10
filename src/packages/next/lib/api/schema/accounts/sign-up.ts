@@ -29,7 +29,9 @@ export const SignUpInputSchema = z
     publicPathId: z
       .string()
       .optional()
-      .describe("ID of a published document, used to resume a share flow after signup."),
+      .describe(
+        "ID of a published document, used to resume a share flow after signup.",
+      ),
     signupReason: z.string().optional(),
   })
   .describe(

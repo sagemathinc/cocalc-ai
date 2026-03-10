@@ -18,7 +18,8 @@ export interface BlobReference {
 }
 
 const BLOB_MARKDOWN = /!\[[^\]]*\]\(((?:https?:\/\/[^)]+)?\/blobs\/[^)]+)\)/gi;
-const BLOB_HTML = /<img[^>]+src=["']((?:https?:\/\/[^"']+)?\/blobs\/[^"']+)["'][^>]*>/gi;
+const BLOB_HTML =
+  /<img[^>]+src=["']((?:https?:\/\/[^"']+)?\/blobs\/[^"']+)["'][^>]*>/gi;
 
 export async function collectReferencedAssets({
   contents,
@@ -57,7 +58,9 @@ export async function collectReferencedAssets({
     });
   }
   return {
-    assets: Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path)),
+    assets: Array.from(byPath.values()).sort((a, b) =>
+      a.path.localeCompare(b.path),
+    ),
     index: Array.from(byOriginalRef.values()).sort((a, b) =>
       a.originalRef.localeCompare(b.originalRef),
     ),
@@ -71,13 +74,17 @@ export function buildRelativeBlobReplacementMap(
 ): Map<string, string> {
   const replacements = new Map<string, string>();
   for (const asset of assetRefs ?? []) {
-    const rel = pathPosix.relative(pathPosix.dirname(filePath), asset.path) || ".";
+    const rel =
+      pathPosix.relative(pathPosix.dirname(filePath), asset.path) || ".";
     replacements.set(asset.originalRef, rel);
   }
   return replacements;
 }
 
-export function rewriteBlobRefs(content: string, replacements: Map<string, string>): string {
+export function rewriteBlobRefs(
+  content: string,
+  replacements: Map<string, string>,
+): string {
   let next = `${content ?? ""}`;
   for (const [original, replacement] of replacements.entries()) {
     next = next.split(original).join(replacement);
@@ -112,7 +119,8 @@ function parseBlobReference(
 ): BlobReference | undefined {
   const trimmed = `${target ?? ""}`.trim();
   if (!trimmed) return undefined;
-  const absolute = trimmed.startsWith("http://") || trimmed.startsWith("https://");
+  const absolute =
+    trimmed.startsWith("http://") || trimmed.startsWith("https://");
   if (!absolute && !blobBaseUrl) {
     throw new Error(
       `relative blob reference requires --blob-base-url/COCALC_API_URL: ${trimmed}`,
@@ -140,11 +148,15 @@ async function fetchBlobAsset(
   }
   const response = await fetch(ref.fetchUrl, { headers });
   if (!response.ok) {
-    throw new Error(`failed to fetch blob ${ref.originalRef}: HTTP ${response.status}`);
+    throw new Error(
+      `failed to fetch blob ${ref.originalRef}: HTTP ${response.status}`,
+    );
   }
   const content = new Uint8Array(await response.arrayBuffer());
   const sha256 = createHash("sha256").update(content).digest("hex");
-  const headerContentType = normalizeContentType(response.headers.get("content-type"));
+  const headerContentType = normalizeContentType(
+    response.headers.get("content-type"),
+  );
   const sniffed = sniffBlobType(content);
   const contentType =
     headerContentType && headerContentType !== "application/octet-stream"
@@ -167,10 +179,14 @@ async function fetchBlobAsset(
 function sanitizeExtension(ext: string): string {
   const trimmed = `${ext ?? ""}`.trim().toLowerCase();
   if (!trimmed) return "";
-  return /^[.][a-z0-9._-]+$/.test(trimmed) && /[a-z]/.test(trimmed) ? trimmed : "";
+  return /^[.][a-z0-9._-]+$/.test(trimmed) && /[a-z]/.test(trimmed)
+    ? trimmed
+    : "";
 }
 
-function normalizeContentType(contentType: string | null | undefined): string | undefined {
+function normalizeContentType(
+  contentType: string | null | undefined,
+): string | undefined {
   const normalized = `${contentType ?? ""}`.trim().toLowerCase();
   if (!normalized) return undefined;
   const head = normalized.split(";")[0]?.trim();
@@ -203,7 +219,10 @@ function extensionForContentType(contentType: string | undefined): string {
   }
 }
 
-function sniffBlobType(content: Uint8Array): { contentType?: string; extension?: string } {
+function sniffBlobType(content: Uint8Array): {
+  contentType?: string;
+  extension?: string;
+} {
   if (
     content.length >= 8 &&
     content[0] === 0x89 &&
@@ -217,7 +236,12 @@ function sniffBlobType(content: Uint8Array): { contentType?: string; extension?:
   ) {
     return { contentType: "image/png", extension: ".png" };
   }
-  if (content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff) {
+  if (
+    content.length >= 3 &&
+    content[0] === 0xff &&
+    content[1] === 0xd8 &&
+    content[2] === 0xff
+  ) {
     return { contentType: "image/jpeg", extension: ".jpg" };
   }
   if (content.length >= 6) {
