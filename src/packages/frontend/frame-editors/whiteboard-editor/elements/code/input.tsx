@@ -58,7 +58,7 @@ export default function Input({
       element.id,
       setComplete,
       setLocalValue,
-      () => editorRef.current?.focus?.(),
+      () => editorRef.current,
       mergeHelperRef,
     );
   }, [element.id]); // frame can't change meaningfully.
@@ -154,18 +154,24 @@ class Actions implements EditorActions {
   private _complete: Map<string, any> | undefined = undefined;
   private setComplete: (complete: Map<string, any> | undefined) => void;
   private setLocalValue: (value: string) => void;
-  private focusEditor: () => void;
+  private getEditor: () => any;
   private introspect: Map<string, any> | undefined = undefined;
   private setIntrospect: (complete: Map<string, any> | undefined) => void;
   private jupyter_actions: JupyterActions | undefined = undefined;
   private mergeHelperRef;
+  private pendingCursor:
+    | {
+        x: number;
+        y: number;
+      }
+    | undefined = undefined;
 
   constructor(
     frame,
     id,
     setComplete,
     setLocalValue,
-    focusEditor,
+    getEditor,
     mergeHelperRef,
   ) {
     this.frame = frame;
@@ -175,7 +181,7 @@ class Actions implements EditorActions {
       setComplete(complete);
     };
     this.setLocalValue = setLocalValue;
-    this.focusEditor = focusEditor;
+    this.getEditor = getEditor;
     this.setIntrospect = (introspect) => {
       this.introspect = introspect;
       this.frame.actions.setState({ introspect });
@@ -248,6 +254,7 @@ class Actions implements EditorActions {
       remote:
         this.frame.actions.store.getIn(["elements", this.id, "str"]) ?? "",
     });
+    this.pendingCursor = indexToPos(starting + item);
     this.setLocalValue(new_input);
     this.set_cell_input(this.id, new_input);
   }
@@ -257,7 +264,12 @@ class Actions implements EditorActions {
   }
 
   focus_complete() {
-    this.focusEditor();
+    const editor = this.getEditor();
+    editor?.focus?.();
+    if (this.pendingCursor != null) {
+      editor?.set_cursor?.(this.pendingCursor);
+      this.pendingCursor = undefined;
+    }
   }
 
   async complete(
@@ -309,4 +321,12 @@ function getCMOptions(mode) {
   const editor_settings = immutable_editor_settings?.toJS() ?? {};
   const line_numbers = false; // always false, since scaling + line numbers is very broken.
   return fromJS(cm_options(mode, editor_settings, line_numbers, false));
+}
+
+function indexToPos(input: string): { x: number; y: number } {
+  const lines = input.split("\n");
+  return {
+    x: lines.at(-1)?.length ?? 0,
+    y: lines.length - 1,
+  };
 }

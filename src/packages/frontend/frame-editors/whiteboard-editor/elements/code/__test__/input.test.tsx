@@ -94,6 +94,8 @@ describe("whiteboard code input", () => {
 
   it("applies a selected completion to the local editor value immediately", () => {
     const setElement = jest.fn();
+    const focus = jest.fn();
+    const set_cursor = jest.fn();
     useFrameContext.mockReturnValue({
       id: "frame-1",
       project_id: "project-1",
@@ -118,6 +120,9 @@ describe("whiteboard code input", () => {
 
     const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
     act(() => {
+      props.registerEditor({ focus, set_cursor });
+    });
+    act(() => {
       props.actions.select_complete(
         "cell1",
         "input",
@@ -129,12 +134,17 @@ describe("whiteboard code input", () => {
         }),
       );
     });
+    act(() => {
+      props.actions.focus_complete();
+    });
 
     expect(setElement).toHaveBeenCalledWith({
       obj: { id: "cell1", str: "input" },
       commit: undefined,
     });
     expect(noteSaved).toHaveBeenCalledWith("input");
+    expect(focus).toHaveBeenCalled();
+    expect(set_cursor).toHaveBeenCalledWith({ x: 5, y: 0 });
     const latestProps = codeMirrorEditor.mock.calls.at(-1)?.[0] as any;
     expect(latestProps.value).toBe("input");
   });

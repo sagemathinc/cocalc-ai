@@ -125,8 +125,12 @@ export function Complete({ actions, id, complete }: Props) {
     }
     e.preventDefault();
     e.stopPropagation();
-    const item = $(nodeRef.current).find("a:focus").data("item");
-    select(item);
+    const item =
+      $(nodeRef.current).find("a:focus").data("item") ??
+      complete.get("matches", []).first();
+    if (item != null) {
+      select(item);
+    }
   }
 
   function getStyle(): CSSProperties {

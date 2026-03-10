@@ -58,4 +58,30 @@ describe("Jupyter completion menu", () => {
     expect(focus_complete).toHaveBeenCalled();
     jest.useRealTimers();
   });
+
+  it("falls back to the first completion on enter if focus lookup is lost", () => {
+    const select_complete = jest.fn();
+    const clear_complete = jest.fn();
+    const focus_complete = jest.fn();
+    jest.useFakeTimers();
+    const complete = fromJS({
+      matches: ["input", "int"],
+      offset: { top: 0, left: 0, gutter: 0 },
+    }) as Map<string, any>;
+
+    render(
+      <Complete
+        actions={{ select_complete, clear_complete, focus_complete }}
+        id="cell-1"
+        complete={complete}
+      />,
+    );
+
+    fireEvent.keyDown(screen.getByRole("list"), { keyCode: 13 });
+    jest.runAllTimers();
+
+    expect(select_complete).toHaveBeenCalledWith("cell-1", "input");
+    expect(focus_complete).toHaveBeenCalled();
+    jest.useRealTimers();
+  });
 });
