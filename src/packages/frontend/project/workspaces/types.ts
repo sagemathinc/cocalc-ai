@@ -33,6 +33,7 @@ export type ProjectWorkspaceState = {
     workspace_id: string,
     patch: WorkspaceUpdatePatch,
   ) => WorkspaceRecord | null;
+  reorderWorkspaces: (order: string[]) => void;
   deleteWorkspace: (workspace_id: string) => void;
   touchWorkspace: (workspace_id: string) => void;
 };

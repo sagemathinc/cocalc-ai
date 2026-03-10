@@ -25,6 +25,11 @@ import {
   TimeAgo,
   type IconName,
 } from "@cocalc/frontend/components";
+import {
+  DragHandle,
+  SortableItem,
+  SortableList,
+} from "@cocalc/frontend/components/sortable-list";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import {
   ensureWorkspaceChatDirectory,
@@ -45,6 +50,9 @@ import {
 } from "@cocalc/frontend/theme/types";
 
 const DEFAULT_ICON = "cube";
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type WorkspaceSectionKey = "pinned" | "today" | "last7" | "older";
 
 type Props = {
   project_id: string;
@@ -111,6 +119,57 @@ async function validateRootPath(rootPath: string): Promise<string | null> {
   return null;
 }
 
+function startOfToday(now: number): number {
+  const date = new Date(now);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function workspaceSection(
+  record: WorkspaceRecord,
+  now: number,
+): WorkspaceSectionKey {
+  if (record.pinned) return "pinned";
+  const used = record.last_used_at ?? 0;
+  const today = startOfToday(now);
+  if (used >= today) return "today";
+  if (used >= today - 6 * DAY_MS) return "last7";
+  return "older";
+}
+
+function sectionTitle(section: WorkspaceSectionKey): string {
+  switch (section) {
+    case "pinned":
+      return "Pinned";
+    case "today":
+      return "Today";
+    case "last7":
+      return "Last 7 days";
+    case "older":
+      return "Older";
+  }
+}
+
+function moveItem<T>(
+  items: readonly T[],
+  oldIndex: number,
+  newIndex: number,
+): T[] {
+  if (
+    oldIndex < 0 ||
+    newIndex < 0 ||
+    oldIndex >= items.length ||
+    newIndex >= items.length ||
+    oldIndex === newIndex
+  ) {
+    return [...items];
+  }
+  const next = [...items];
+  const [item] = next.splice(oldIndex, 1);
+  next.splice(newIndex, 0, item);
+  return next;
+}
+
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const { actions, active_project_tab, workspaces } = useProjectContext();
   const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
@@ -121,6 +180,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const isFlyout = layout === "flyout";
+  const now = Date.now();
 
   const defaultRootPath = useMemo(() => {
     const activePath = tab_to_path(active_project_tab ?? "");
@@ -287,11 +347,26 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             </div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <Space size={6} wrap>
-              <Typography.Text strong>{record.theme.title}</Typography.Text>
-              {record.pinned ? <Tag color="gold">Pinned</Tag> : null}
-              {selected ? <Tag color="green">Selected</Tag> : null}
-            </Space>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: 8,
+              }}
+            >
+              <Space size={6} wrap>
+                <Typography.Text strong>{record.theme.title}</Typography.Text>
+                {record.pinned ? <Tag color="gold">Pinned</Tag> : null}
+                {selected ? <Tag color="green">Selected</Tag> : null}
+              </Space>
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{ color: "#888", flex: "0 0 auto" }}
+              >
+                <DragHandle id={record.workspace_id} />
+              </div>
+            </div>
             <div>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {record.root_path}
@@ -363,6 +438,44 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     [workspaces.records],
   );
 
+  const sections = useMemo(() => {
+    const grouped: Record<WorkspaceSectionKey, WorkspaceRecord[]> = {
+      pinned: [],
+      today: [],
+      last7: [],
+      older: [],
+    };
+    for (const record of workspaces.records) {
+      grouped[workspaceSection(record, now)].push(record);
+    }
+    return grouped;
+  }, [now, workspaces.records]);
+
+  function reorderSection(
+    section: WorkspaceSectionKey,
+    oldIndex: number,
+    newIndex: number,
+  ): void {
+    const sectionRecords = sections[section];
+    if (
+      oldIndex < 0 ||
+      newIndex < 0 ||
+      oldIndex >= sectionRecords.length ||
+      newIndex >= sectionRecords.length ||
+      oldIndex === newIndex
+    ) {
+      return;
+    }
+    const originalIds = sectionRecords.map(({ workspace_id }) => workspace_id);
+    const reorderedIds = moveItem(originalIds, oldIndex, newIndex);
+    const inSection = new Set(originalIds);
+    let i = 0;
+    const nextOrder = workspaces.records.map(({ workspace_id }) =>
+      inSection.has(workspace_id) ? reorderedIds[i++] : workspace_id,
+    );
+    workspaces.reorderWorkspaces(nextOrder);
+  }
+
   const body = (
     <div style={{ paddingRight: isFlyout ? 4 : 0 }}>
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
@@ -429,7 +542,45 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           </Empty>
         ) : (
           <Space direction="vertical" size={10} style={{ width: "100%" }}>
-            {workspaces.records.map(renderRecord)}
+            {(
+              ["pinned", "today", "last7", "older"] as WorkspaceSectionKey[]
+            ).map((section) => {
+              const sectionRecords = sections[section];
+              if (sectionRecords.length === 0) return null;
+              return (
+                <div key={section}>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ display: "block", marginBottom: 8 }}
+                  >
+                    {sectionTitle(section)}
+                  </Typography.Text>
+                  <SortableList
+                    items={sectionRecords.map(
+                      ({ workspace_id }) => workspace_id,
+                    )}
+                    onDragStop={(oldIndex, newIndex) =>
+                      reorderSection(section, oldIndex, newIndex)
+                    }
+                  >
+                    <Space
+                      direction="vertical"
+                      size={10}
+                      style={{ width: "100%" }}
+                    >
+                      {sectionRecords.map((record) => (
+                        <SortableItem
+                          key={record.workspace_id}
+                          id={record.workspace_id}
+                        >
+                          {renderRecord(record)}
+                        </SortableItem>
+                      ))}
+                    </Space>
+                  </SortableList>
+                </div>
+              );
+            })}
           </Space>
         )}
       </Space>

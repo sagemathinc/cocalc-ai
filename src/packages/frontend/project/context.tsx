@@ -114,6 +114,7 @@ export const emptyProjectContext = {
       throw new Error("workspaces not initialized");
     },
     updateWorkspace: () => null,
+    reorderWorkspaces: () => {},
     deleteWorkspace: () => {},
     touchWorkspace: () => {},
   },
@@ -209,10 +210,12 @@ export function useProjectContextProvider({
     if (!activePath) return;
     const record = workspaces.resolveWorkspaceForPath(activePath);
     if (!record) return;
-    if (record.last_active_path === activePath) return;
-    workspaces.updateWorkspace(record.workspace_id, {
-      last_active_path: activePath,
-    });
+    if (record.last_active_path !== activePath) {
+      workspaces.updateWorkspace(record.workspace_id, {
+        last_active_path: activePath,
+        last_used_at: Date.now(),
+      });
+    }
   }, [
     active_project_tab,
     workspaces.resolveWorkspaceForPath,
@@ -233,7 +236,8 @@ export function useProjectContextProvider({
     if (workspaces.selection.kind !== "workspace") return;
     const current = workspaces.current;
     if (!current) return;
-    const orderedPaths: string[] = open_files_order?.toJS?.() ?? open_files_order ?? [];
+    const orderedPaths: string[] =
+      open_files_order?.toJS?.() ?? open_files_order ?? [];
     const previousActivePath = previousActivePathRef.current;
     const previousOpenPaths = previousOpenFilesOrderRef.current;
     const getFallbackPath = () => {
@@ -288,7 +292,9 @@ export function useProjectContextProvider({
       return;
     }
     const activePath = tab_to_path(active_project_tab ?? "");
-    const activePathIsOpen = activePath ? orderedPaths.includes(activePath) : false;
+    const activePathIsOpen = activePath
+      ? orderedPaths.includes(activePath)
+      : false;
     const previousActivePathClosed =
       !!previousActivePath &&
       previousActivePath !== activePath &&
