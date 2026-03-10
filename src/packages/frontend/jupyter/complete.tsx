@@ -18,6 +18,7 @@ export interface Actions {
     complete?: Map<string, any>,
   ) => void;
   clear_complete: () => void;
+  focus_complete?: () => void;
 }
 
 interface Props {
@@ -70,6 +71,7 @@ export function Complete({ actions, id, complete }: Props) {
 
     // Actually insert the completion:
     actions.select_complete(id, item);
+    setTimeout(() => actions.focus_complete?.(), 0);
   }
 
   function renderItem(item: string) {
@@ -79,7 +81,15 @@ export function Complete({ actions, id, complete }: Props) {
           role="menuitem"
           style={{ display: "flex", fontSize: "13px" }}
           tabIndex={-1}
-          onClick={() => select(item)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            select(item);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           data-item={item}
         >
           {item}
@@ -115,8 +125,12 @@ export function Complete({ actions, id, complete }: Props) {
     }
     e.preventDefault();
     e.stopPropagation();
-    const item = $(nodeRef.current).find("a:focus").data("item");
-    select(item);
+    const item =
+      $(nodeRef.current).find("a:focus").data("item") ??
+      complete.get("matches", []).first();
+    if (item != null) {
+      select(item);
+    }
   }
 
   function getStyle(): CSSProperties {

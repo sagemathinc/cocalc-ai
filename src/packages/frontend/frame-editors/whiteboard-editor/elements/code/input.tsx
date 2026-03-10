@@ -45,6 +45,7 @@ export default function Input({
 }: Props) {
   const frame = useFrameContext();
   const [localValue, setLocalValue] = useState<string>(element.str ?? "");
+  const editorRef = useRef<any>(undefined);
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(element.str ?? ""),
   );
@@ -52,7 +53,14 @@ export default function Input({
     undefined,
   );
   const actions = useMemo(() => {
-    return new Actions(frame, element.id, setComplete, mergeHelperRef);
+    return new Actions(
+      frame,
+      element.id,
+      setComplete,
+      setLocalValue,
+      () => editorRef.current,
+      mergeHelperRef,
+    );
   }, [element.id]); // frame can't change meaningfully.
 
   // Reset baseline when switching elements.
@@ -98,6 +106,12 @@ export default function Input({
         id={element.id}
         onFocus={onFocus}
         onBlur={onBlur}
+        registerEditor={(editor) => {
+          editorRef.current = editor;
+        }}
+        unregisterEditor={() => {
+          editorRef.current = undefined;
+        }}
         options={getCMOptions(mode)}
         value={localValue}
         complete={complete}
@@ -113,23 +127,12 @@ export default function Input({
             const str = cm.getValue();
             actions.set_cell_input(element.id, str, false);
             // evaluate in all cases
-            frame.actions.runCodeElement({ id: element.id, str });
+            void frame.actions.runCodeElement({ id: element.id, str });
             // TODO: handle these cases
             if (e.altKey || e.metaKey) {
               // this is "evaluate and make new cell"...?
             } else if (e.shiftKey) {
-              // This is super annoying.
-              /*
-              // this is "evaluate and move to next cell, making one if there isn't one."
-              const id = frame.actions.createAdjacentElement(
-                element.id,
-                "bottom"
-              );
-              if (!id) return;
-              frame.actions.setSelectedTool(frame.id, "select");
-              frame.actions.setSelection(frame.id, id);
-              frame.actions.scrollElementIntoView(id);
-              */
+              frame.actions.selectNextCodeCell(frame.id, element.id);
             } else if (e.ctrlKey) {
               // this is "evaluate keeping focus", so nothing further to do.
             }
@@ -150,18 +153,35 @@ class Actions implements EditorActions {
   private id: string;
   private _complete: Map<string, any> | undefined = undefined;
   private setComplete: (complete: Map<string, any> | undefined) => void;
+  private setLocalValue: (value: string) => void;
+  private getEditor: () => any;
   private introspect: Map<string, any> | undefined = undefined;
   private setIntrospect: (complete: Map<string, any> | undefined) => void;
   private jupyter_actions: JupyterActions | undefined = undefined;
   private mergeHelperRef;
+  private pendingCursor:
+    | {
+        x: number;
+        y: number;
+      }
+    | undefined = undefined;
 
-  constructor(frame, id, setComplete, mergeHelperRef) {
+  constructor(
+    frame,
+    id,
+    setComplete,
+    setLocalValue,
+    getEditor,
+    mergeHelperRef,
+  ) {
     this.frame = frame;
     this.id = id;
     this.setComplete = (complete) => {
       this._complete = complete;
       setComplete(complete);
     };
+    this.setLocalValue = setLocalValue;
+    this.getEditor = getEditor;
     this.setIntrospect = (introspect) => {
       this.introspect = introspect;
       this.frame.actions.setState({ introspect });
@@ -234,11 +254,22 @@ class Actions implements EditorActions {
       remote:
         this.frame.actions.store.getIn(["elements", this.id, "str"]) ?? "",
     });
+    this.pendingCursor = indexToPos(starting + item);
+    this.setLocalValue(new_input);
     this.set_cell_input(this.id, new_input);
   }
 
   clear_complete() {
     this.setComplete(undefined);
+  }
+
+  focus_complete() {
+    const editor = this.getEditor();
+    editor?.focus?.();
+    if (this.pendingCursor != null) {
+      editor?.set_cursor?.(this.pendingCursor);
+      this.pendingCursor = undefined;
+    }
   }
 
   async complete(
@@ -290,4 +321,12 @@ function getCMOptions(mode) {
   const editor_settings = immutable_editor_settings?.toJS() ?? {};
   const line_numbers = false; // always false, since scaling + line numbers is very broken.
   return fromJS(cm_options(mode, editor_settings, line_numbers, false));
+}
+
+function indexToPos(input: string): { x: number; y: number } {
+  const lines = input.split("\n");
+  return {
+    x: lines.at(-1)?.length ?? 0,
+    y: lines.length - 1,
+  };
 }

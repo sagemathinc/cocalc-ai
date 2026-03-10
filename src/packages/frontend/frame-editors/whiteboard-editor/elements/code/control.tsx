@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Tooltip } from "antd";
+import { Button, Switch, Tooltip } from "antd";
 import { delay } from "awaiting";
 
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -17,7 +17,21 @@ interface Props {
 }
 
 export default function CodeControlBar({ element }: Props) {
-  const { actions, project_id, path } = useFrameContext();
+  const { actions, project_id, path, id } = useFrameContext();
+  const actionButtonStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    height: "24px",
+  } as const;
+  const toggleLabelStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontWeight: 250,
+    lineHeight: 1,
+    marginTop: "4px",
+  } as const;
   return (
     <div
       style={{
@@ -25,7 +39,9 @@ export default function CodeControlBar({ element }: Props) {
         border: "1px solid #ccc",
         borderRadius: "3px",
         background: "white",
-        display: "inline-block",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "10px",
         boxShadow: "1px 5px 7px rgb(33 33 33 / 70%)",
         position: "absolute",
         top: "-34px",
@@ -61,47 +77,64 @@ export default function CodeControlBar({ element }: Props) {
         <Button
           disabled={element.data?.runState == "busy"}
           size="small"
+          style={actionButtonStyle}
           onClick={() => {
-            actions.runCodeElement({ id: element.id });
+            void actions.runCodeElement({ id: element.id });
           }}
         >
           <Icon name="play" /> Run
         </Button>
       </Tooltip>
+      <Tooltip title="Run the directed code-cell tree rooted at this cell">
+        <Button
+          disabled={element.data?.runState == "busy"}
+          size="small"
+          style={actionButtonStyle}
+          onClick={() => {
+            void actions.runCodeTree(id, element.id);
+          }}
+        >
+          <Icon name="play" /> Run Tree
+        </Button>
+      </Tooltip>
       {!element.locked && (
         <Tooltip title="Toggle display of input">
-          <Checkbox
-            checked={!element.data?.hideInput}
-            style={{ fontWeight: 250, marginLeft: "10px" }}
-            onChange={(e) => {
-              actions.setElementData({
-                element,
-                obj: { hideInput: !e.target.checked },
-              });
-            }}
-          >
-            Input
-          </Checkbox>
+          <label style={toggleLabelStyle}>
+            <span>Input</span>
+            <Switch
+              size="small"
+              aria-label="Toggle display of input"
+              checked={!element.data?.hideInput}
+              onChange={(checked) => {
+                actions.setElementData({
+                  element,
+                  obj: { hideInput: !checked },
+                });
+              }}
+            />
+          </label>
         </Tooltip>
       )}
       {!element.locked && (
         <Tooltip title="Toggle display of output">
-          <Checkbox
-            disabled={
-              element.data?.output == null ||
-              Object.keys(element.data?.output).length == 0
-            }
-            checked={!element.data?.hideOutput}
-            style={{ fontWeight: 250, marginLeft: "10px" }}
-            onChange={(e) => {
-              actions.setElementData({
-                element,
-                obj: { hideOutput: !e.target.checked },
-              });
-            }}
-          >
-            Output
-          </Checkbox>
+          <label style={toggleLabelStyle}>
+            <span>Output</span>
+            <Switch
+              size="small"
+              aria-label="Toggle display of output"
+              disabled={
+                element.data?.output == null ||
+                Object.keys(element.data?.output).length == 0
+              }
+              checked={!element.data?.hideOutput}
+              onChange={(checked) => {
+                actions.setElementData({
+                  element,
+                  obj: { hideOutput: !checked },
+                });
+              }}
+            />
+          </label>
         </Tooltip>
       )}
     </div>
