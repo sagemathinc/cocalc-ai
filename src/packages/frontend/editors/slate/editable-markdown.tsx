@@ -136,6 +136,47 @@ interface EditableMarkdownNavigationOptions {
   blurActiveElement?: Element | null;
 }
 
+interface ResolveMarkdownClipboardPayloadOptions {
+  plain?: string;
+  markdown?: string;
+  tagged?: string;
+  cached?: { text?: string; at?: number } | null;
+  now?: number;
+  forcePlainTextPaste?: boolean;
+}
+
+export function resolveMarkdownClipboardPayload({
+  plain,
+  markdown,
+  tagged,
+  cached,
+  now = Date.now(),
+  forcePlainTextPaste = false,
+}: ResolveMarkdownClipboardPayloadOptions): string | null {
+  if (forcePlainTextPaste) {
+    return null;
+  }
+  let resolved = markdown;
+  if (!resolved?.trim()) {
+    if (tagged && plain?.trim()) {
+      resolved = plain;
+    }
+  }
+  if (!resolved?.trim() && plain?.trim()) {
+    if (
+      cached &&
+      typeof cached.text === "string" &&
+      typeof cached.at === "number" &&
+      cached.text === plain &&
+      Number.isFinite(cached.at) &&
+      now - cached.at < 2 * 60 * 1000
+    ) {
+      resolved = plain;
+    }
+  }
+  return resolved?.trim() ? resolved : null;
+}
+
 export function handleEditableMarkdownProjectNavigationKeydown({
   event,
   projectId,
@@ -1711,25 +1752,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const types = Array.from(dt.types ?? []);
       if (types.includes("application/x-slate-fragment")) return false;
       const plain = dt.getData("text/plain");
-      let markdown = dt.getData("text/markdown");
-      if (!markdown?.trim()) {
-        const tagged = dt.getData("application/x-cocalc-markdown-copy");
-        if (tagged && plain?.trim()) {
-          markdown = plain;
-        }
-      }
-      if (!markdown?.trim() && plain?.trim() && typeof window !== "undefined") {
-        const cached = (window as any).__COCALC_LAST_MARKDOWN_COPY;
-        if (
-          cached &&
-          typeof cached.text === "string" &&
-          cached.text === plain &&
-          Number.isFinite(cached.at) &&
-          Date.now() - cached.at < 2 * 60 * 1000
-        ) {
-          markdown = plain;
-        }
-      }
+      const markdown = resolveMarkdownClipboardPayload({
+        plain,
+        markdown: dt.getData("text/markdown"),
+        tagged: dt.getData("application/x-cocalc-markdown-copy"),
+        cached:
+          typeof window !== "undefined"
+            ? (window as any).__COCALC_LAST_MARKDOWN_COPY
+            : null,
+        forcePlainTextPaste: !!(editor as any).__forcePlainTextPaste,
+      });
       if (
         externalMultilinePasteAsCodeBlock &&
         (!markdown || !markdown.trim()) &&
