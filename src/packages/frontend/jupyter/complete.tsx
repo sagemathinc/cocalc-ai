@@ -18,6 +18,7 @@ export interface Actions {
     complete?: Map<string, any>,
   ) => void;
   clear_complete: () => void;
+  focus_complete?: () => void;
 }
 
 interface Props {
@@ -70,6 +71,7 @@ export function Complete({ actions, id, complete }: Props) {
 
     // Actually insert the completion:
     actions.select_complete(id, item);
+    setTimeout(() => actions.focus_complete?.(), 0);
   }
 
   function renderItem(item: string) {

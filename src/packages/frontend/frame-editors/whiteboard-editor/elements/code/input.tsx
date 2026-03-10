@@ -45,6 +45,7 @@ export default function Input({
 }: Props) {
   const frame = useFrameContext();
   const [localValue, setLocalValue] = useState<string>(element.str ?? "");
+  const editorRef = useRef<any>(undefined);
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(element.str ?? ""),
   );
@@ -57,6 +58,7 @@ export default function Input({
       element.id,
       setComplete,
       setLocalValue,
+      () => editorRef.current?.focus?.(),
       mergeHelperRef,
     );
   }, [element.id]); // frame can't change meaningfully.
@@ -104,6 +106,12 @@ export default function Input({
         id={element.id}
         onFocus={onFocus}
         onBlur={onBlur}
+        registerEditor={(editor) => {
+          editorRef.current = editor;
+        }}
+        unregisterEditor={() => {
+          editorRef.current = undefined;
+        }}
         options={getCMOptions(mode)}
         value={localValue}
         complete={complete}
@@ -146,12 +154,20 @@ class Actions implements EditorActions {
   private _complete: Map<string, any> | undefined = undefined;
   private setComplete: (complete: Map<string, any> | undefined) => void;
   private setLocalValue: (value: string) => void;
+  private focusEditor: () => void;
   private introspect: Map<string, any> | undefined = undefined;
   private setIntrospect: (complete: Map<string, any> | undefined) => void;
   private jupyter_actions: JupyterActions | undefined = undefined;
   private mergeHelperRef;
 
-  constructor(frame, id, setComplete, setLocalValue, mergeHelperRef) {
+  constructor(
+    frame,
+    id,
+    setComplete,
+    setLocalValue,
+    focusEditor,
+    mergeHelperRef,
+  ) {
     this.frame = frame;
     this.id = id;
     this.setComplete = (complete) => {
@@ -159,6 +175,7 @@ class Actions implements EditorActions {
       setComplete(complete);
     };
     this.setLocalValue = setLocalValue;
+    this.focusEditor = focusEditor;
     this.setIntrospect = (introspect) => {
       this.introspect = introspect;
       this.frame.actions.setState({ introspect });
@@ -237,6 +254,10 @@ class Actions implements EditorActions {
 
   clear_complete() {
     this.setComplete(undefined);
+  }
+
+  focus_complete() {
+    this.focusEditor();
   }
 
   async complete(

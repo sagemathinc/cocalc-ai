@@ -24,6 +24,14 @@ export default function CodeControlBar({ element }: Props) {
     gap: "4px",
     height: "24px",
   } as const;
+  const toggleLabelStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontWeight: 250,
+    lineHeight: 1,
+    marginTop: "4px",
+  } as const;
   return (
     <div
       style={{
@@ -91,16 +99,7 @@ export default function CodeControlBar({ element }: Props) {
       </Tooltip>
       {!element.locked && (
         <Tooltip title="Toggle display of input">
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              fontWeight: 250,
-              lineHeight: 1,
-              height: "24px",
-            }}
-          >
+          <label style={toggleLabelStyle}>
             <span>Input</span>
             <Switch
               size="small"
@@ -118,16 +117,7 @@ export default function CodeControlBar({ element }: Props) {
       )}
       {!element.locked && (
         <Tooltip title="Toggle display of output">
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              fontWeight: 250,
-              lineHeight: 1,
-              height: "24px",
-            }}
-          >
+          <label style={toggleLabelStyle}>
             <span>Output</span>
             <Switch
               size="small"

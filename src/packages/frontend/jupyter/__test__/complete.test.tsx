@@ -35,6 +35,8 @@ describe("Jupyter completion menu", () => {
   it("selects a completion on mouse down before blur can clear the menu", () => {
     const select_complete = jest.fn();
     const clear_complete = jest.fn();
+    const focus_complete = jest.fn();
+    jest.useFakeTimers();
     const complete = fromJS({
       matches: ["input"],
       offset: { top: 0, left: 0, gutter: 0 },
@@ -42,15 +44,18 @@ describe("Jupyter completion menu", () => {
 
     render(
       <Complete
-        actions={{ select_complete, clear_complete }}
+        actions={{ select_complete, clear_complete, focus_complete }}
         id="cell-1"
         complete={complete}
       />,
     );
 
     fireEvent.mouseDown(screen.getByRole("menuitem", { name: "input" }));
+    jest.runAllTimers();
 
     expect(saveInputEditor).toHaveBeenCalledWith("cell-1");
     expect(select_complete).toHaveBeenCalledWith("cell-1", "input");
+    expect(focus_complete).toHaveBeenCalled();
+    jest.useRealTimers();
   });
 });
