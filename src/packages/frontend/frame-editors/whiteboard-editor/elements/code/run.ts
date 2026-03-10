@@ -24,10 +24,9 @@ export default async function run({ project_id, path, input, id, set }: Opts) {
     jupyter_actions.insert_cell_at(pos, false, id);
   }
   const previousEnd = cell?.get("end");
-  jupyter_actions.clear_outputs([id], false);
-  jupyter_actions.set_cell_input(id, input, false);
-  jupyter_actions.runCells([id]);
+  let finished = false;
   function onChange() {
+    if (finished) return;
     const cell = store.get("cells").get(id);
     if (cell == null) return;
 
@@ -44,6 +43,7 @@ export default async function run({ project_id, path, input, id, set }: Opts) {
       cell.get("end") &&
       cell.get("end") != previousEnd
     ) {
+      finished = true;
       store.removeListener("change", onChange);
       // Useful for debugging since can then open the ipynb and see.
       // However, NOT needed normally.  We might even come up with
@@ -53,4 +53,8 @@ export default async function run({ project_id, path, input, id, set }: Opts) {
     }
   }
   store.on("change", onChange);
+  jupyter_actions.clear_outputs([id], false);
+  jupyter_actions.set_cell_input(id, input, false);
+  jupyter_actions.runCells([id]);
+  onChange();
 }
