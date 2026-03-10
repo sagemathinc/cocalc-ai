@@ -71,6 +71,12 @@ export function selectionForPath(
   return selectionForWorkspacePathCore(records, path);
 }
 
+
+function sameSelection(a: WorkspaceSelection, b: WorkspaceSelection): boolean {
+  return a.kind === b.kind &&
+    (a.kind !== "workspace" || a.workspace_id === (b as WorkspaceSelection & { workspace_id?: string }).workspace_id);
+}
+
 export function useProjectWorkspaces(
   account_id: string | undefined,
   project_id: string,
@@ -87,6 +93,12 @@ export function useProjectWorkspaces(
   useEffect(() => {
     recordsRef.current = records;
   }, [records]);
+
+  useEffect(() => {
+    const nextSelection = readSelectionForProject(project_id, records);
+    if (sameSelection(selection, nextSelection)) return;
+    setSelectionState(nextSelection);
+  }, [project_id, records, selection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

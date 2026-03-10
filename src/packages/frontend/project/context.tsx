@@ -202,6 +202,8 @@ export function useProjectContextProvider({
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const workspaces = useProjectWorkspaces(account_id, project_id);
   const previousWorkspaceSelectionRef = useRef<string>("all");
+  const previousActivePathRef = useRef<string>("");
+  const previousOpenFilesOrderRef = useRef<string[]>([]);
 
   useEffect(() => {
     const activePath = tab_to_path(active_project_tab ?? "");
@@ -230,11 +232,46 @@ export function useProjectContextProvider({
 
     if (!actions) return;
     if (workspaces.selection.kind !== "workspace") return;
+    const current = workspaces.current;
+    if (!current) return;
+    const orderedPaths: string[] = open_files_order?.toJS?.() ?? open_files_order ?? [];
+    const previousActivePath = previousActivePathRef.current;
+    const previousOpenPaths = previousOpenFilesOrderRef.current;
+    const getFallbackPath = () => {
+      if (
+        current.last_active_path &&
+        orderedPaths.includes(current.last_active_path) &&
+        workspaces.matchesPath(current.last_active_path)
+      ) {
+        return current.last_active_path;
+      }
+      return orderedPaths.find((path) => {
+        return (
+          workspaces.resolveWorkspaceForPath(path)?.workspace_id ===
+          current.workspace_id
+        );
+      });
+    };
+    const openFallbackPath = (path: string) => {
+      if (orderedPaths.includes(path)) {
+        actions.set_active_tab(path_to_tab(path), { change_history: false });
+      } else {
+        void actions.open_file({
+          path,
+          foreground: true,
+          foreground_project: false,
+          change_history: false,
+        });
+      }
+    };
+
     if (active_project_tab && !active_project_tab.startsWith("editor-")) {
       if (active_project_tab !== "files") return;
-      const current = workspaces.current;
-      if (!current) return;
-      if (current_path_abs && pathMatchesRoot(current_path_abs, current.root_path)) {
+      if (
+        current_path_abs &&
+        pathMatchesRoot(current_path_abs, current.root_path) &&
+        !selectionChanged
+      ) {
         return;
       }
       if (current_path_abs && !selectionChanged) {
@@ -243,31 +280,41 @@ export function useProjectContextProvider({
         );
         return;
       }
+      const fallbackPath = getFallbackPath();
+      if (fallbackPath) {
+        openFallbackPath(fallbackPath);
+        return;
+      }
       void actions.open_directory(current.root_path, false, true);
       return;
     }
     const activePath = tab_to_path(active_project_tab ?? "");
-    if (activePath && workspaces.matchesPath(activePath)) return;
-    if (activePath && !selectionChanged) {
+    const activePathIsOpen = activePath ? orderedPaths.includes(activePath) : false;
+    const previousActivePathClosed =
+      !!previousActivePath &&
+      previousActivePath !== activePath &&
+      previousOpenPaths.includes(previousActivePath) &&
+      !orderedPaths.includes(previousActivePath);
+    if (activePath && workspaces.matchesPath(activePath) && activePathIsOpen) {
+      return;
+    }
+    if (activePath && workspaces.matchesPath(activePath) && !activePathIsOpen) {
+      openFallbackPath(activePath);
+      return;
+    }
+    if (
+      activePath &&
+      activePathIsOpen &&
+      !selectionChanged &&
+      !previousActivePathClosed
+    ) {
       workspaces.setSelection(selectionForPath(workspaces.records, activePath));
       return;
     }
-
-    const current = workspaces.current;
-    if (!current) return;
-    const orderedPaths: string[] = open_files_order?.toJS?.() ?? open_files_order ?? [];
-    const fallbackPath =
-      (current.last_active_path &&
-      orderedPaths.includes(current.last_active_path) &&
-      workspaces.matchesPath(current.last_active_path)
-        ? current.last_active_path
-        : null) ??
-      orderedPaths.find((path) => {
-        return workspaces.resolveWorkspaceForPath(path)?.workspace_id === current.workspace_id;
-      });
+    const fallbackPath = getFallbackPath();
 
     if (fallbackPath) {
-      actions.set_active_tab(path_to_tab(fallbackPath), { change_history: false });
+      openFallbackPath(fallbackPath);
       return;
     }
 
@@ -282,6 +329,12 @@ export function useProjectContextProvider({
     workspaces.records,
     workspaces.selection,
   ]);
+
+  useEffect(() => {
+    previousActivePathRef.current = tab_to_path(active_project_tab ?? "") ?? "";
+    previousOpenFilesOrderRef.current =
+      open_files_order?.toJS?.() ?? open_files_order ?? [];
+  }, [active_project_tab, open_files_order]);
 
   return {
     actions,
