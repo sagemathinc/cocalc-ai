@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   DiffBlock,
+  getCommitReviewIndicatorState,
   MarkdownHistoryInput,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -94,6 +95,25 @@ describe("git commit drawer merge commit formatting", () => {
     expect(latestMarkdownInputProps.saveDebounceMs).toBe(0);
     expect(latestMarkdownInputProps.undoMode).toBe("local");
     expect(latestMarkdownInputProps.redoMode).toBe("local");
+  });
+
+  it("treats missing review state as unknown instead of not reviewed", () => {
+    expect(getCommitReviewIndicatorState({}, "abc1234")).toEqual({
+      reviewed: false,
+      known: false,
+    });
+    expect(
+      getCommitReviewIndicatorState({ abc1234: false }, "abc1234"),
+    ).toEqual({
+      reviewed: false,
+      known: true,
+    });
+    expect(
+      getCommitReviewIndicatorState({ abc1234: true }, "abc1234"),
+    ).toEqual({
+      reviewed: true,
+      known: true,
+    });
   });
 
   it("preserves onModeChange forwarding for git review note/comment editors", () => {

@@ -72,6 +72,18 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
 }));
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
+
+export function getCommitReviewIndicatorState(
+  reviewedByCommit: Record<string, boolean>,
+  hash: string,
+): { reviewed: boolean; known: boolean } {
+  const known = Object.prototype.hasOwnProperty.call(reviewedByCommit, hash);
+  return {
+    reviewed: known ? Boolean(reviewedByCommit[hash]) : false,
+    known,
+  };
+}
+
 type GitShowFile = {
   path: string;
   lines: string[];
@@ -1463,9 +1475,12 @@ export function GitCommitDrawer({
 
   const logOptions = useMemo(() => {
     const makeOptionLabel = (entry: GitLogEntry, fallback = false) => {
-      const reviewed = Boolean(reviewedByCommit[entry.hash]);
+      const { reviewed, known } = getCommitReviewIndicatorState(
+        reviewedByCommit,
+        entry.hash,
+      );
       const highlightNeedsReview =
-        !fallback && !isHeadCommit(entry.hash) && !reviewed;
+        !fallback && !isHeadCommit(entry.hash) && known && !reviewed;
       return (
         <div
           style={{
