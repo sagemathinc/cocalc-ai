@@ -1,4 +1,28 @@
+DONE
+
 # Durable Codex Turns
+
+Status: complete for the intended product scope.
+
+The core durability goals in this plan are implemented and working in
+practice:
+
+- queued turns are backend-owned and durable
+- browser refresh/close no longer loses queued work
+- Lite API restarts no longer kill active turns
+- project-host API restarts no longer kill active turns
+- detached ACP workers exist in both Lite and project-host
+- interrupt and `Send immediately` semantics work through the durable path
+
+Remaining follow-up debt is minor and non-blocking:
+
+- `acp_turns` still exists as a lease/recovery compatibility layer instead of
+  being fully folded into `acp_jobs`
+- restart durability is validated by real testing, but not yet fully covered by
+  automated end-to-end tests
+
+If new bugs arise, reopen this plan around the specific regression instead of
+restarting the architecture work from scratch.
 
 Goal: make Codex turns durable across browser refresh/close and across Lite / project-host API restarts.
 
