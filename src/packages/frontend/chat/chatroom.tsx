@@ -246,6 +246,7 @@ export function ChatPanel({
   const unreadSeenRef = useRef<Map<string, number>>(new Map());
   const newestSeenRef = useRef<Map<string, number>>(new Map());
   const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
+  const combinedReadSignatureRef = useRef<string | null>(null);
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
     actions.frameTreeActions.set_frame_data({
@@ -654,7 +655,53 @@ export function ChatPanel({
     }
   }, [isCombinedFeedSelected, threads, composerTargetKey]);
 
-  const mark_as_read = () => markChatAsReadIfUnseen(project_id, path);
+  const combinedUnreadThreads = useMemo(
+    () => threads.filter((thread) => (thread.unreadCount ?? 0) > 0),
+    [threads],
+  );
+  const combinedReadSignature = useMemo(
+    () =>
+      combinedUnreadThreads
+        .map(
+          (thread) =>
+            `${thread.key}:${thread.unreadCount ?? 0}:${thread.messageCount ?? 0}:${Number.isFinite(thread.newestTime) ? thread.newestTime : 0}`,
+        )
+        .join("|"),
+    [combinedUnreadThreads],
+  );
+
+  useEffect(() => {
+    if (!isCombinedFeedSelected) {
+      combinedReadSignatureRef.current = null;
+    }
+  }, [isCombinedFeedSelected]);
+
+  const mark_as_read = useCallback(() => {
+    markChatAsReadIfUnseen(project_id, path);
+    if (!isCombinedFeedSelected || !actions?.markThreadRead) return;
+    if (
+      combinedUnreadThreads.length === 0 ||
+      combinedReadSignatureRef.current === combinedReadSignature
+    ) {
+      return;
+    }
+    combinedReadSignatureRef.current = combinedReadSignature;
+    for (let i = 0; i < combinedUnreadThreads.length; i++) {
+      const thread = combinedUnreadThreads[i];
+      actions.markThreadRead(
+        thread.key,
+        thread.messageCount,
+        i === combinedUnreadThreads.length - 1,
+      );
+    }
+  }, [
+    project_id,
+    path,
+    isCombinedFeedSelected,
+    actions,
+    combinedUnreadThreads,
+    combinedReadSignature,
+  ]);
 
   useEffect(() => {
     if (!singleThreadView || !selectedThreadKey) return;
