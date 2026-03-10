@@ -42,6 +42,7 @@ import {
   listAppMetrics as listAppMetricsState,
   recordAppWake,
 } from "./metrics";
+export { listAppTemplates } from "./template-catalog";
 
 const logger = getLogger("app-servers:control");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";

@@ -426,6 +426,246 @@ Template catalog should be broader, but structured:
    - SSH-forwarded app
 4. templates that are not installed should offer `Install with agent`.
 
+### 10.6 Curated Template Catalog Plan
+
+Template growth should not be hard coded only in frontend source. We want a curated catalog that CoCalc can ship centrally, while still allowing a site (or agent assisting a site admin) to override, extend, or fully replace that catalog.
+
+Design goals:
+
+1. Ship a default CoCalc-maintained template catalog from `https://software.cocalc.ai/...`.
+2. Let sites configure one or more additional catalog sources in admin settings.
+3. Merge catalogs with explicit priority rules so a site can:
+   - add its own templates,
+   - override selected CoCalc templates,
+   - or suppress templates it does not want to surface.
+4. Keep a small built-in fallback catalog in source so the Apps page still works if the remote catalog is unreachable.
+5. Treat template metadata, install recipes, detection, and launch defaults as data rather than hard-coded React conditionals.
+
+Recommended source model:
+
+1. built-in fallback catalog bundled with the product:
+   - minimal, stable core templates,
+   - used when remote fetch fails or is disabled.
+2. default remote CoCalc catalog:
+   - hosted under `https://software.cocalc.ai/software/cocalc/apps/templates/...`,
+   - contains richer template coverage, icons/images, install recipes, and example prompts.
+3. site/admin catalogs:
+   - configured as an ordered list of URLs or local paths,
+   - merged after the default catalog with higher priority.
+4. project-local catalogs:
+   - stored inside the project filesystem,
+   - intended for project-specific augmentation, experimentation, and agent-driven template development,
+   - merged last with highest priority for that project only.
+
+Recommended merge/priority rules:
+
+1. Templates are keyed by stable `id`.
+2. Later catalogs in the priority chain override earlier entries with the same `id`.
+3. A catalog entry may explicitly mark a template hidden/disabled.
+4. Sort order is an explicit numeric `priority`, not source-order alone.
+5. The UI should show the final merged catalog only, not every source separately.
+6. Project-local templates should be clearly labeled in the UI as project-scoped so users know they are not site/global defaults.
+
+Recommended format:
+
+Use versioned JSON, not ad hoc TypeScript literals.
+
+Why JSON:
+
+1. easy to host remotely,
+2. easy to cache,
+3. easy for agents/CLI/admin tooling to inspect,
+4. easy to validate with JSON schema,
+5. avoids executable source as catalog data.
+
+Recommended project-local location:
+
+1. `.local/share/cocalc/app-templates/*.json`
+2. or, if we later want a broader shared catalog namespace:
+   - `.local/share/cocalc/catalog/app-templates/*.json`
+
+The important requirement is that project-local template catalogs live alongside project data and clone naturally with the project, similar to app specs themselves.
+
+Suggested catalog shape:
+
+```json
+{
+  "version": 1,
+  "kind": "cocalc-app-template-catalog",
+  "source": "cocalc-default",
+  "published_at": "2026-03-09T00:00:00.000Z",
+  "templates": [
+    {
+      "id": "jupyterlab",
+      "title": "JupyterLab",
+      "category": "core",
+      "priority": 100,
+      "icon": "https://software.cocalc.ai/software/cocalc/apps/icons/jupyterlab.png",
+      "homepage": "https://jupyter.org/",
+      "description": "Interactive notebooks, terminals, and files.",
+      "supported_kinds": ["service"],
+      "detect": {
+        "commands": ["jupyter lab --version", "jupyter-lab --version"]
+      },
+      "install": {
+        "strategy": "curated",
+        "recipes": [
+          {
+            "id": "ubuntu-apt",
+            "match": { "os_family": ["debian", "ubuntu"] },
+            "commands": [
+              "apt-get update",
+              "apt-get install -y jupyterlab jupyter"
+            ],
+            "notes": "Preferred on maintained Ubuntu launchpad images."
+          }
+        ]
+      },
+      "launch": {
+        "preset_id": "jupyterlab"
+      },
+      "verify": {
+        "commands": ["jupyter lab --version"]
+      },
+      "agent_prompt_seed": "Install JupyterLab systemwide if possible, snapshot first, then verify the launch command."
+    }
+  ]
+}
+```
+
+Template entry responsibilities:
+
+1. product metadata:
+   - title,
+   - description,
+   - category,
+   - image/icon,
+   - docs/homepage link.
+2. detection metadata:
+   - how to decide `installed`, `missing`, or `unknown`.
+3. installation metadata:
+   - one or more curated recipes,
+   - environment matching hints,
+   - human notes.
+4. launch metadata:
+   - the app preset/spec fragment or preset id to instantiate.
+5. verification metadata:
+   - post-install checks we know should pass.
+6. agent prompt seed:
+   - a short template-specific hint for `Install with Codex`.
+
+Install strategy plan:
+
+1. Start with curated recipes for the top 20-30 templates.
+2. Prefer system-level install methods where sensible on launchpad:
+   - `apt-get` first on maintained Ubuntu images,
+   - language-native install only when that is the better real-world route.
+3. Explicitly mark unsupported install methods in prompts and metadata:
+   - no `snap` in launchpad/podman environments.
+4. Before agent-driven install:
+   - create a filesystem snapshot,
+   - record the snapshot name in the result message and logs.
+5. After install:
+   - run the template verify commands,
+   - then offer to instantiate the app spec.
+
+Admin configuration implications:
+
+1. admin settings should allow:
+   - enable/disable remote catalog fetch,
+   - configure an ordered list of catalog URLs/paths,
+   - optionally pin to a curated CoCalc catalog version.
+2. sites should be able to ship private/internal templates without forking frontend code.
+3. the merged catalog result should be cached locally with refresh/invalidation controls.
+4. admins should be able to enable/disable project-local catalogs if they want stricter control.
+
+Agent/admin extension workflow:
+
+Agents should understand that the template catalog is an operator-controlled artifact, not just fixed product data.
+
+Expected workflow:
+
+1. inspect the current merged catalog sources and priority order,
+2. determine whether the request should:
+   - extend the site catalog,
+   - override a CoCalc default template,
+   - or propose a core-catalog improvement upstream,
+3. add or modify the template entry in the highest-priority appropriate catalog,
+4. validate:
+   - install recipe,
+   - verify commands,
+   - app start,
+   - app open,
+5. publish/update the catalog,
+6. refresh catalog cache on the site,
+7. report back the exact template id, source, recipe used, and validation result.
+
+Common development path:
+
+1. prototype a new template first in the project-local catalog,
+2. test it in that project,
+3. if successful, promote it to a site/admin catalog or upstream CoCalc catalog later.
+
+Agent guidance implications:
+
+1. agents should prefer site-local catalog extension over patching core frontend code when the request is admin/site-specific,
+2. agents should know the catalog format and where the configured sources live,
+3. agents should treat template additions as data-first changes with validation, not ad hoc UI edits,
+4. a future dedicated skill should cover:
+   - launchpad installation assumptions,
+   - snapshot-before-install policy,
+   - catalog editing and publication,
+   - verification steps.
+
+Frontend implications:
+
+1. the Apps page template picker should render from the merged catalog, not a hard-coded array.
+2. each template card should support:
+   - image/icon,
+   - short description,
+   - docs link,
+   - install state,
+   - `Create`,
+   - `Install with Codex`.
+3. templates with known curated recipes should say so.
+4. templates with unknown installability should still be available via agent flow, but labeled accordingly.
+
+Validation plan:
+
+1. maintain a tested top-template matrix in the repo,
+2. periodically run install + start + open verification against the curated recipes,
+3. feed the working commands/examples back into the catalog and agent prompts.
+
+Broader catalog platform note:
+
+This catalog machinery should later generalize into a broader software catalog system, especially for Jupyter kernels.
+
+Principle:
+
+1. do not force apps and kernels into one identical schema immediately,
+2. do reuse the same catalog infrastructure:
+   - remote/local sources,
+   - merge rules,
+   - priority,
+   - detection,
+   - install recipes,
+   - verification,
+   - agent/admin extension workflow.
+
+Likely later catalog kinds:
+
+1. `app-template`
+2. `kernel-template`
+
+Kernel-specific metadata would differ, but the operator/agent/product problems are similar enough that the app-template work should be designed as the first instance of a broader catalog platform, not a dead-end one-off.
+
+Non-goals for the first slice:
+
+1. arbitrary user-authored template catalogs with executable code,
+2. full package-manager abstraction for every Linux distro,
+3. freeform unaudited remote templates that immediately execute without review.
+4. project-local catalogs that contain executable logic instead of pure versioned data.
+
 ## 11. CLI Plan (Agent-First)
 
 Introduce `cocalc project app` command group with JSON-first output.
@@ -987,9 +1227,11 @@ Existing components to reuse where possible:
 18. `[todo]` Add SSH port-forward fallback in CLI + UI for non-proxy-compatible apps.
 19. `[todo]` Audit managed-app XSS exposure specifically for CoCalc credentials/session material (cookie stripping, project-host session scope, private same-origin app behavior, static HTML assumptions).
 20. `[partial]` Add app portability workflows:
+
    - explicit CLI export/import/clone,
    - document that full project clone already carries app specs because they live in the project filesystem,
    - frontend download/upload/"copy to another project" UX still pending.
+
 21. `[todo]` Add scoped per-app metrics in project-host and surface them in CLI/UI.
 
 ## 19.1 Next Execution Order

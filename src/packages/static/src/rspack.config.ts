@@ -214,6 +214,10 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         // @cocalc/frontend  alias so we can write `import "@cocalc/frontend/..."`
         // anywhere in that library:
         "@cocalc/frontend": resolve("node_modules", "@cocalc/frontend"),
+        // @cocalc/util self-imports survive into compiled dist output, so make
+        // rspack resolve them through the workspace package root instead of
+        // trying to recurse from util/dist.
+        "@cocalc/util": resolve("node_modules", "@cocalc/util"),
         // This entities/maps alias is needed due to a weird markdown-it import
         // that webpack5 won't resolve:
         "entities/maps": resolve("node_modules/entities/lib/maps"),

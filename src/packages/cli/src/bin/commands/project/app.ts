@@ -85,6 +85,17 @@ type ManagedAppForwardRow = {
   last_error: string | null;
 };
 
+type AppTemplateRow = {
+  id: string;
+  title: string;
+  category: string;
+  description?: string;
+  homepage?: string;
+  template_source?: string;
+  template_scope?: "builtin" | "remote" | "project-local";
+  source_path?: string;
+};
+
 function parsePositiveIntOrThrow(value: string | undefined, context: string): number | undefined {
   if (value == null || `${value}`.trim() === "") return undefined;
   const n = Number(value);
@@ -200,6 +211,35 @@ function printManagedAppForwardRowsHuman(rows: ManagedAppForwardRow[]): void {
     }
     if (row.last_error) {
       console.log(`  Error:   ${row.last_error}`);
+    }
+  }
+}
+
+function printAppTemplateRowsHuman(rows: AppTemplateRow[]): void {
+  if (!rows.length) {
+    console.log("(no app templates)");
+    return;
+  }
+  for (const [index, row] of rows.entries()) {
+    if (index > 0) {
+      console.log("");
+    }
+    const parts = [row.id];
+    if (row.category) parts.push(row.category);
+    if (row.template_scope) parts.push(row.template_scope);
+    console.log(parts.join("  "));
+    console.log(`  Title:   ${row.title}`);
+    if (row.description) {
+      console.log(`  About:   ${row.description}`);
+    }
+    if (row.homepage) {
+      console.log(`  Docs:    ${row.homepage}`);
+    }
+    if (row.template_source) {
+      console.log(`  Source:  ${row.template_source}`);
+    }
+    if (row.source_path) {
+      console.log(`  Path:    ${row.source_path}`);
     }
   }
 }
@@ -663,6 +703,37 @@ export function registerProjectAppCommands(
           opts.project,
         );
         const rows = await api.apps.listAppStatuses();
+        return {
+          project_id: ws.project_id,
+          items: rows,
+        };
+      });
+    });
+
+  app
+    .command("templates")
+    .description("list merged app template catalog entries")
+    .option("-w, --project <project>", "project id or name")
+    .action(async (opts: { project?: string }, command: Command) => {
+      await withContext(command, "project app templates", async (ctx) => {
+        const { project: ws, api } = await resolveProjectProjectApi(
+          ctx,
+          opts.project,
+        );
+        const rows = (await api.apps.listAppTemplates()).map((row) => ({
+          id: row.id,
+          title: row.title,
+          category: row.category,
+          description: row.description,
+          homepage: row.homepage,
+          template_source: row.template_source,
+          template_scope: row.template_scope,
+          source_path: row.source_path,
+        }));
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          printAppTemplateRowsHuman(rows);
+          return null;
+        }
         return {
           project_id: ws.project_id,
           items: rows,
