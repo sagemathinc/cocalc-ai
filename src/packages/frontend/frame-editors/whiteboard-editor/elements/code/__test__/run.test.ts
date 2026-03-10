@@ -107,4 +107,75 @@ describe("whiteboard code run bridge", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
   });
+
+  it("syncs the final result after runCells resolves", async () => {
+    const store = new FakeStore({
+      cell1: {
+        id: "cell1",
+        pos: 0,
+        state: "idle",
+        exec_count: 0,
+        kernel: "python3",
+      },
+    });
+    const save = jest.fn();
+    const set = jest.fn();
+    let resolveRun: () => void;
+    let started!: () => void;
+    const runStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const jupyterActions = {
+      store,
+      clear_outputs: jest.fn(),
+      set_cell_input: jest.fn(),
+      runCells: jest.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveRun = () => {
+              store.updateCell("cell1", {
+                output: [
+                  {
+                    output_type: "execute_result",
+                    data: { "text/plain": "5" },
+                  },
+                ],
+                state: "done",
+                exec_count: 1,
+                kernel: "python3",
+                start: 10,
+                end: 11,
+              });
+              resolve();
+            };
+            started();
+          }),
+      ),
+      syncdb: { save },
+    };
+    getJupyterActions.mockResolvedValue(jupyterActions);
+
+    const promise = run({
+      project_id: "project-1",
+      path: "test.board",
+      input: "2+3",
+      id: "cell1",
+      set,
+    });
+    await runStarted;
+
+    resolveRun();
+    await promise;
+
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(set).toHaveBeenCalledWith({
+      output: [{ output_type: "execute_result", data: { "text/plain": "5" } }],
+      runState: "done",
+      execCount: 1,
+      kernel: "python3",
+      start: 10,
+      end: 11,
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
 });

@@ -55,6 +55,6 @@ export default async function run({ project_id, path, input, id, set }: Opts) {
   store.on("change", onChange);
   jupyter_actions.clear_outputs([id], false);
   jupyter_actions.set_cell_input(id, input, false);
-  jupyter_actions.runCells([id]);
+  await jupyter_actions.runCells([id]);
   onChange();
 }
