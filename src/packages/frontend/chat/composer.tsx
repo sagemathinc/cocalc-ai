@@ -523,7 +523,7 @@ export function ChatRoomComposer({
           minWidth: 0,
         }}
       >
-        {!IS_MOBILE && (hasInput || isInputFocused || isZenMode) && (
+        {!IS_MOBILE && hasInput && (
           <Tooltip
             title={
               isZenMode
