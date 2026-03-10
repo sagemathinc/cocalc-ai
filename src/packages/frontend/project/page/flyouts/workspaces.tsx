@@ -186,6 +186,20 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
   }
 
+  async function onDeleteFromEditor(): Promise<void> {
+    if (!editing?.workspace_id) return;
+    setSaving(true);
+    setError("");
+    try {
+      workspaces.deleteWorkspace(editing.workspace_id);
+      setEditing(null);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function openWorkspaceChat(record: WorkspaceRecord): Promise<void> {
     if (!actions) return;
     setOpeningChatId(record.workspace_id);
@@ -223,8 +237,15 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         style={{
           borderLeft: `4px solid ${record.theme.color ?? "#d9d9d9"}`,
           background: selected ? "#f6ffed" : undefined,
+          cursor: "pointer",
         }}
         bodyStyle={{ padding: isFlyout ? 10 : 12 }}
+        onClick={() =>
+          select({
+            kind: "workspace",
+            workspace_id: record.workspace_id,
+          })
+        }
       >
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
           {imageUrl ? (
@@ -279,45 +300,34 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
                 size="small"
-                type={selected ? "primary" : "default"}
-                onClick={() =>
-                  select({
-                    kind: "workspace",
-                    workspace_id: record.workspace_id,
-                  })
-                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openEdit(record);
+                }}
               >
-                Show tabs
-              </Button>
-              <Button size="small" onClick={() => openEdit(record)}>
                 Edit
               </Button>
               <Button
                 size="small"
                 loading={openingChatId === record.workspace_id}
-                onClick={() => void openWorkspaceChat(record)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void openWorkspaceChat(record);
+                }}
               >
                 Open workspace chat
               </Button>
               <Button
                 size="small"
-                onClick={() =>
+                onClick={(e) => {
+                  e.stopPropagation();
                   workspaces.updateWorkspace(record.workspace_id, {
                     pinned: !record.pinned,
-                  })
-                }
+                  });
+                }}
               >
                 {record.pinned ? "Unpin" : "Pin"}
               </Button>
-              <Popconfirm
-                title="Delete this workspace?"
-                description="Open tabs will stay open; this only removes the saved workspace record."
-                onConfirm={() => workspaces.deleteWorkspace(record.workspace_id)}
-              >
-                <Button size="small" danger>
-                  Delete
-                </Button>
-              </Popconfirm>
             </Space>
             <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>
               {record.last_used_at ? (
@@ -450,6 +460,17 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 />
               </div>
             </div>
+            {editing?.workspace_id ? (
+              <Popconfirm
+                title="Delete this workspace?"
+                description="Open tabs will stay open; this only removes the saved workspace record."
+                onConfirm={() => void onDeleteFromEditor()}
+              >
+                <Button danger loading={saving}>
+                  Delete workspace
+                </Button>
+              </Popconfirm>
+            ) : null}
           </Space>
         }
       />

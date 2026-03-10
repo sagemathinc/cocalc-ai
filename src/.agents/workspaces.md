@@ -2,9 +2,13 @@
 
 ### Bugs/Issues/TODO's
 
+- [ ] bug: it is not possible to drag-to-order tabs within a workspace
+  - right now they just snap back
+  - this is subtle because the tabs also exist all together without workspaces, so we have to make some design choices to even define this properly
+- bug: the last open tab _for each workspace_ must be remembered, so when you go back to that workspace, you see it again.  We don't even have this stored anywhere, of course.
 - [ ] feature: It would be EXTREMELY nice for the pinned workspaces to be sortable (i.e., drag-n-drop to reorder them), rather than ordering them by a mystery value.   In general, drag and drop is ideal for all of this.  We have some nice existing sortable list react components in the frontend already.  We can hopefully figure out where to store the sort order info (not localStorage - it should be in the dkv data; one option would be a position parameter that is part of the data, and we ensure positions are unique on sort end, another would be just an extra key in the dkv with the sorted list). 
-- [ ] Move the Delete button to be inside of "Edit" -- it's a very rare action.
-- [ ] Replace the "Show tabs" button by just clicking basically anywhere on the workspace card to select the entire card (except the drag handle).
+- [x] Move the Delete button to be inside of "Edit" -- it's a very rare action.
+- [x] Replace the "Show tabs" button by just clicking basically anywhere on the workspace card to select the entire card (except the drag handle).
 - [ ] File tabs have a way of surfacing activity, e.g. when a codex turn is running, a terminal is changing, a notebook is running, this gets pinged.  Some of this info should be surfaced clearly in the workspace cards.   Also, it would be extremely helpful to surface that no codex turn is running in any agent in a workspace... i.e., all codex turns are done.  This is extremely critical information for making best use of parallel codex sessions. 
 - [ ] In codex chat (in our chatrooms) make the **default** workspace root for a new thread be the workspace root of the .chat file itself, NOT the current directory of the chat file.  The user can change the default any time -- this is just a more sensible default.
   [ ] the workspace chat filename is random -- that's planned -- but the tab in the UI should be displayed in some special way in this case since right now opening the chat just shows that random filename. <img src="/blobs/paste-1oydcvxfrq0j.png?uuid=7963d4ea-ff3b-41ad-8f62-bc834200bc6d"   width="419.947px"  height="258.061px"  style="object-fit:cover"/>
