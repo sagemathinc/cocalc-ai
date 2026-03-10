@@ -19,8 +19,9 @@ import {
 } from "antd";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import type { ComponentProps } from "react";
+import { memo, type ComponentProps } from "react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -713,7 +714,7 @@ export function MarkdownHistoryInput({
   );
 }
 
-function DiffBlock({
+export const DiffBlock = memo(function DiffBlock({
   filePath,
   lines,
   languageHint,
@@ -1181,7 +1182,7 @@ function DiffBlock({
       })}
     </div>
   );
-}
+});
 
 export function GitCommitDrawer({
   projectId,
@@ -1770,25 +1771,28 @@ export function GitCommitDrawer({
     [unresolvedInlineComments],
   );
 
-  const mutateInlineComments = async (
-    mutate: (
-      comments: Record<string, GitReviewCommentV2>,
-    ) => Record<string, GitReviewCommentV2>,
-  ) => {
-    if (!accountId || !commit || isHeadCommit(commit)) return;
-    const normalizedCommit = normalizeCommitSha(commit);
-    if (!normalizedCommit) return;
-    const current = reviewRecord?.comments ?? {};
-    const next = mutate({ ...current });
-    saveReviewDraft(normalizedCommit, {
-      reviewed: Boolean(reviewed),
-      note: `${reviewNote ?? ""}`,
-      comments: next,
-    });
-    await saveReview({ comments: next, reviewed, note: reviewNote });
-  };
+  const mutateInlineComments = useCallback(
+    async (
+      mutate: (
+        comments: Record<string, GitReviewCommentV2>,
+      ) => Record<string, GitReviewCommentV2>,
+    ) => {
+      if (!accountId || !commit || isHeadCommit(commit)) return;
+      const normalizedCommit = normalizeCommitSha(commit);
+      if (!normalizedCommit) return;
+      const current = reviewRecord?.comments ?? {};
+      const next = mutate({ ...current });
+      saveReviewDraft(normalizedCommit, {
+        reviewed: Boolean(reviewed),
+        note: `${reviewNote ?? ""}`,
+        comments: next,
+      });
+      await saveReview({ comments: next, reviewed, note: reviewNote });
+    },
+    [accountId, commit, reviewRecord?.comments, reviewNote, reviewed, saveReview],
+  );
 
-  const createInlineComment = async (anchor: CommentAnchor, body: string) => {
+  const createInlineComment = useCallback(async (anchor: CommentAnchor, body: string) => {
     const trimmed = `${body ?? ""}`.trim();
     if (!trimmed) return;
     const now = Date.now();
@@ -1810,9 +1814,9 @@ export function GitCommitDrawer({
       };
       return comments;
     });
-  };
+  }, [mutateInlineComments]);
 
-  const updateInlineComment = async (id: string, body: string) => {
+  const updateInlineComment = useCallback(async (id: string, body: string) => {
     const trimmed = `${body ?? ""}`.trim();
     if (!id || !trimmed) return;
     const now = Date.now();
@@ -1828,9 +1832,9 @@ export function GitCommitDrawer({
       };
       return comments;
     });
-  };
+  }, [mutateInlineComments]);
 
-  const resolveInlineComment = async (id: string) => {
+  const resolveInlineComment = useCallback(async (id: string) => {
     if (!id) return;
     const now = Date.now();
     await mutateInlineComments((comments) => {
@@ -1844,9 +1848,9 @@ export function GitCommitDrawer({
       };
       return comments;
     });
-  };
+  }, [mutateInlineComments]);
 
-  const reopenInlineComment = async (id: string) => {
+  const reopenInlineComment = useCallback(async (id: string) => {
     if (!id) return;
     const now = Date.now();
     await mutateInlineComments((comments) => {
@@ -1862,7 +1866,17 @@ export function GitCommitDrawer({
       };
       return comments;
     });
-  };
+  }, [mutateInlineComments]);
+
+  const inlineCommentsByFile = useMemo(() => {
+    const byFile = new Map<string, GitReviewCommentV2[]>();
+    for (const comment of inlineComments) {
+      const existing = byFile.get(comment.file_path) ?? [];
+      existing.push(comment);
+      byFile.set(comment.file_path, existing);
+    }
+    return byFile;
+  }, [inlineComments]);
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
@@ -3077,9 +3091,7 @@ export function GitCommitDrawer({
             ) : (
               data.files.map((file, idx) => {
                 const languageHint = languageHintFromPath(file.path);
-                const fileComments = inlineComments.filter(
-                  (comment) => comment.file_path === file.path,
-                );
+                const fileComments = inlineCommentsByFile.get(file.path) ?? [];
                 return (
                   <div key={`${file.path}-${idx}`}>
                     <div
