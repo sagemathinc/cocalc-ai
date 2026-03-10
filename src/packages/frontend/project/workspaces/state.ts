@@ -12,6 +12,7 @@ import {
   pathMatchesWorkspaceRoot,
   readWorkspaceRecordsFromStore,
   resolveWorkspaceForPath as resolveWorkspaceForPathCore,
+  selectionForWorkspacePath as selectionForWorkspacePathCore,
   selectionMatchesWorkspacePath,
   touchWorkspaceRecords,
   updateWorkspaceRecords,
@@ -90,6 +91,13 @@ export function selectionMatchesPath(
   path: string,
 ): boolean {
   return selectionMatchesWorkspacePath(selection, records, path);
+}
+
+export function selectionForPath(
+  records: WorkspaceRecord[],
+  path: string,
+): WorkspaceSelection {
+  return selectionForWorkspacePathCore(records, path);
 }
 
 export function useProjectWorkspaces(

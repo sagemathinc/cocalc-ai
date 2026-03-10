@@ -225,6 +225,16 @@ export function selectionMatchesWorkspacePath(
   return resolved?.workspace_id === selection.workspace_id;
 }
 
+export function selectionForWorkspacePath(
+  records: WorkspaceRecord[],
+  path: string,
+): WorkspaceSelection {
+  const resolved = resolveWorkspaceForPath(records, path);
+  return resolved
+    ? { kind: "workspace", workspace_id: resolved.workspace_id }
+    : { kind: "unscoped" };
+}
+
 export function readWorkspaceRecordsFromStore(
   store: WorkspaceStore,
 ): WorkspaceRecord[] {

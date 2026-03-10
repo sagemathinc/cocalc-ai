@@ -1,6 +1,7 @@
 import {
   pathMatchesRoot,
   resolveWorkspaceForPath,
+  selectionForPath,
   selectionMatchesPath,
 } from "./state";
 import type { WorkspaceRecord } from "./types";
@@ -65,5 +66,16 @@ describe("project workspaces path matching", () => {
     expect(
       selectionMatchesPath({ kind: "unscoped" }, records, "/repo/b/file.ts"),
     ).toBe(true);
+  });
+
+  it("resolves selection for paths inside and outside workspaces", () => {
+    const records = [record("/repo/a", "a")];
+    expect(selectionForPath(records, "/repo/a/file.ts")).toEqual({
+      kind: "workspace",
+      workspace_id: "a",
+    });
+    expect(selectionForPath(records, "/repo/b/file.ts")).toEqual({
+      kind: "unscoped",
+    });
   });
 });
