@@ -182,3 +182,43 @@ describe("create a blank minimal string SyncDoc and call public methods on it", 
     expect(syncstring.get_state()).toBe("closed");
   });
 });
+
+describe("backend sync-fs watch policy", () => {
+  const project_id = "12345678-1234-4234-8234-123456789abc";
+  const client_id = "abcdefab-cdef-4def-8def-abcdefabcdef";
+
+  async function openDoc(path: string) {
+    const client = new Client({}, client_id);
+    const syncFsWatch = jest.fn(async () => undefined);
+    const fs1 = {
+      ...fs,
+      syncFsWatch,
+    } as any;
+    const doc = new SyncString({
+      project_id,
+      path,
+      client,
+      fs: fs1,
+    });
+    await once(doc, "ready");
+    return { doc, syncFsWatch };
+  }
+
+  it("enables backend sync-fs watch for ordinary text files", async () => {
+    const { doc, syncFsWatch } = await openDoc("ordinary.txt");
+    expect(syncFsWatch).toHaveBeenCalledWith(
+      "ordinary.txt",
+      true,
+      expect.objectContaining({
+        project_id,
+      }),
+    );
+    await doc.close();
+  });
+
+  it("disables backend sync-fs watch for chat documents", async () => {
+    const { doc, syncFsWatch } = await openDoc("conversation.chat");
+    expect(syncFsWatch).not.toHaveBeenCalled();
+    await doc.close();
+  });
+});
