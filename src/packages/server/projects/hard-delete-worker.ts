@@ -69,7 +69,10 @@ function progressEvent({
   );
 }
 
-async function publishSummarySafe(summary: LroSummary, context: string): Promise<void> {
+async function publishSummarySafe(
+  summary: LroSummary,
+  context: string,
+): Promise<void> {
   try {
     await publishSummary(summary);
   } catch (err) {
@@ -104,8 +107,12 @@ async function handleHardDeleteOp(op: LroSummary): Promise<void> {
   }
 
   const heartbeat = setInterval(() => {
-    touchLro({ op_id: op.op_id, owner_type: OWNER_TYPE, owner_id: WORKER_ID }).catch(
-      (err) => logger.debug("hard-delete heartbeat failed", { op_id: op.op_id, err }),
+    touchLro({
+      op_id: op.op_id,
+      owner_type: OWNER_TYPE,
+      owner_id: WORKER_ID,
+    }).catch((err) =>
+      logger.debug("hard-delete heartbeat failed", { op_id: op.op_id, err }),
     );
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
@@ -118,9 +125,11 @@ async function handleHardDeleteOp(op: LroSummary): Promise<void> {
     }
     lastProgressKey = key;
     progressEvent({ op, update });
-    touchLro({ op_id: op.op_id, owner_type: OWNER_TYPE, owner_id: WORKER_ID }).catch(
-      () => {},
-    );
+    touchLro({
+      op_id: op.op_id,
+      owner_type: OWNER_TYPE,
+      owner_id: WORKER_ID,
+    }).catch(() => {});
     const summary = await updateLro({
       op_id: op.op_id,
       progress_summary: {
@@ -223,7 +232,10 @@ export function startProjectHardDeleteWorker({
         inFlight += 1;
         void handleHardDeleteOp(op)
           .catch(async (err) => {
-            logger.warn("hard-delete handler failed", { op_id: op.op_id, err: `${err}` });
+            logger.warn("hard-delete handler failed", {
+              op_id: op.op_id,
+              err: `${err}`,
+            });
             const updated = await updateLro({
               op_id: op.op_id,
               status: "failed",
@@ -247,7 +259,9 @@ export function startProjectHardDeleteWorker({
         logger.info("processed deferred deleted-project backup purges", purge);
       }
     } catch (err) {
-      logger.warn("deleted-project backup purge pass failed", { err: `${err}` });
+      logger.warn("deleted-project backup purge pass failed", {
+        err: `${err}`,
+      });
     }
   };
 

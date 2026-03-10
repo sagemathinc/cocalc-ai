@@ -39,7 +39,7 @@ export const LicenseIdleTimeouts: {
 
 export const LicenseIdleTimeoutsKeysOrdered = sortBy(
   Object.keys(LicenseIdleTimeouts),
-  (v) => LicenseIdleTimeouts[v].mins
+  (v) => LicenseIdleTimeouts[v].mins,
 ) as Readonly<Keys[]>;
 
 export function requiresMemberhosting(key?: Uptime | string): boolean {

@@ -48,7 +48,10 @@ test("loadAuthConfig/saveAuthConfig round-trip", () => {
 
 test("selectedProfileName uses globals then env then current", () => {
   const config: AuthConfig = { current_profile: "saved", profiles: {} };
-  assert.equal(selectedProfileName({ profile: "flag" }, config, {} as any), "flag");
+  assert.equal(
+    selectedProfileName({ profile: "flag" }, config, {} as any),
+    "flag",
+  );
   assert.equal(
     selectedProfileName({}, config, { COCALC_PROFILE: "env" } as any),
     "env",
@@ -71,7 +74,10 @@ test("applyAuthProfile merges selected profile values", () => {
   assert.equal(result.fromProfile, true);
   assert.equal(result.profile, "default");
   assert.equal(result.globals.api, "http://localhost:9104");
-  assert.equal(result.globals.accountId, "00000000-1000-4000-8000-000000000001");
+  assert.equal(
+    result.globals.accountId,
+    "00000000-1000-4000-8000-000000000001",
+  );
   assert.equal(result.globals.apiKey, "abc");
 });
 

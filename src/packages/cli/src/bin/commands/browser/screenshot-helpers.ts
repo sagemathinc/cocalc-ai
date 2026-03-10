@@ -6,7 +6,10 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserScreenshotMetadata } from "@cocalc/conat/service/browser-session";
-import { resolveSpawnIpcDir, resolveSpawnStateByBrowserId } from "./spawn-state";
+import {
+  resolveSpawnIpcDir,
+  resolveSpawnStateByBrowserId,
+} from "./spawn-state";
 import type {
   SpawnStateRecord,
   SpawnedScreenshotRequest,
@@ -30,7 +33,9 @@ export async function readScreenshotMeta(
     throw new Error(`invalid JSON in screenshot meta file '${clean}': ${err}`);
   }
   if (!parsed || typeof parsed !== "object") {
-    throw new Error(`screenshot meta file '${clean}' must contain a JSON object`);
+    throw new Error(
+      `screenshot meta file '${clean}' must contain a JSON object`,
+    );
   }
   return parsed as BrowserScreenshotMetadata;
 }
@@ -325,7 +330,9 @@ export async function captureScreenshotViaSpawnedDaemon({
 }> {
   const spawned = resolveSpawnStateByBrowserId(browser_id);
   if (!spawned) {
-    throw new Error(`no local spawned browser daemon found for browser '${browser_id}'`);
+    throw new Error(
+      `no local spawned browser daemon found for browser '${browser_id}'`,
+    );
   }
   const ipcDir = resolveSpawnIpcDir(spawned);
   mkdirSync(ipcDir, { recursive: true });
@@ -362,7 +369,9 @@ export async function captureScreenshotViaSpawnedDaemon({
         throw new Error("invalid spawned screenshot response payload");
       }
       if (!parsed.ok) {
-        throw new Error(`${parsed.error || "spawned screenshot request failed"}`);
+        throw new Error(
+          `${parsed.error || "spawned screenshot request failed"}`,
+        );
       }
       return { result: parsed.result ?? {}, spawned };
     }

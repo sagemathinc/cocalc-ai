@@ -15,7 +15,7 @@ import siteURL from "@cocalc/database/settings/site-url";
 
 export default async function sendWelcomeEmail(
   email_address: string,
-  account_id: string
+  account_id: string,
 ): Promise<void> {
   if (!isValidEmailAddress(email_address)) {
     throw Error("invalid email address");
@@ -32,7 +32,7 @@ export default async function sendWelcomeEmail(
       categories: ["welcome"],
       asm_group: 147985,
     },
-    account_id
+    account_id,
   );
 }
 
@@ -52,7 +52,7 @@ export function randomOnboardingSubject(): string {
 }
 
 async function getWelcomeEmail(
-  email_address: string
+  email_address: string,
 ): Promise<{ text: string; html: string }> {
   const verify = await getVerifyEmail(email_address);
   const { help_email, site_name } = await getServerSettings();

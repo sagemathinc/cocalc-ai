@@ -132,7 +132,9 @@ const buttonsMask = (button: "left" | "middle" | "right"): number =>
 const targetAtPoint = (clientX: number, clientY: number): Element => {
   const target = document.elementFromPoint(clientX, clientY);
   if (!target) {
-    throw Error(`no element at point (${clientX.toFixed(2)}, ${clientY.toFixed(2)})`);
+    throw Error(
+      `no element at point (${clientX.toFixed(2)}, ${clientY.toFixed(2)})`,
+    );
   }
   return target;
 };
@@ -236,7 +238,11 @@ const dispatchDrag = async ({
   if (startTarget instanceof HTMLElement) {
     startTarget.focus({ preventScroll: true });
   }
-  dispatchPointerMouse({ target: startTarget, type: "pointerdown", init: downInit });
+  dispatchPointerMouse({
+    target: startTarget,
+    type: "pointerdown",
+    init: downInit,
+  });
   if (hold_ms > 0) {
     await sleepMs(hold_ms);
   }
@@ -258,7 +264,11 @@ const dispatchDrag = async ({
       screenX: x,
       screenY: y,
     };
-    dispatchPointerMouse({ target: moveTarget, type: "pointermove", init: moveInit });
+    dispatchPointerMouse({
+      target: moveTarget,
+      type: "pointermove",
+      init: moveInit,
+    });
     if (i < safeSteps) {
       await sleepMs(12);
     }
@@ -318,14 +328,23 @@ const resolveCoordinatePoint = async ({
       );
     }
   }
-  if (strict_meta && selectorFromMeta && selector && selectorFromMeta !== selector) {
+  if (
+    strict_meta &&
+    selectorFromMeta &&
+    selector &&
+    selectorFromMeta !== selector
+  ) {
     throw Error(
       `strict metadata mismatch: selector differs (meta='${selectorFromMeta}', request='${selector}')`,
     );
   }
 
   if (space === "viewport") {
-    return { clientX: x, clientY: y, ...(selectorUsed ? { selector_used: selectorUsed } : {}) };
+    return {
+      clientX: x,
+      clientY: y,
+      ...(selectorUsed ? { selector_used: selectorUsed } : {}),
+    };
   }
   if (space === "normalized") {
     return {
@@ -359,7 +378,10 @@ const resolveCoordinatePoint = async ({
         }
       : undefined;
   if (strict_meta && drift) {
-    const tol = Math.max(8, Math.min(Number(rect.width || 0), Number(rect.height || 0)) * 0.2);
+    const tol = Math.max(
+      8,
+      Math.min(Number(rect.width || 0), Number(rect.height || 0)) * 0.2,
+    );
     if (
       Math.abs(drift.dx) > tol ||
       Math.abs(drift.dy) > tol ||
@@ -603,18 +625,16 @@ export async function executeBrowserAction({
       if (!element) {
         throw Error(`selector '${selector}' not found`);
       }
-      const block =
-        `${action.block ?? "center"}`.trim().toLowerCase() as
-          | "start"
-          | "center"
-          | "end"
-          | "nearest";
-      const inline =
-        `${action.inline ?? "nearest"}`.trim().toLowerCase() as
-          | "start"
-          | "center"
-          | "end"
-          | "nearest";
+      const block = `${action.block ?? "center"}`.trim().toLowerCase() as
+        | "start"
+        | "center"
+        | "end"
+        | "nearest";
+      const inline = `${action.inline ?? "nearest"}`.trim().toLowerCase() as
+        | "start"
+        | "center"
+        | "end"
+        | "nearest";
       element.scrollIntoView({
         behavior,
         block:
@@ -630,7 +650,9 @@ export async function executeBrowserAction({
       const top = Number(action.top ?? window.scrollY ?? 0);
       const left = Number(action.left ?? window.scrollX ?? 0);
       if (!Number.isFinite(top) || !Number.isFinite(left)) {
-        throw Error("scroll_to requires finite top/left when selector is not provided");
+        throw Error(
+          "scroll_to requires finite top/left when selector is not provided",
+        );
       }
       window.scrollTo({ top, left, behavior });
     }
@@ -854,7 +876,9 @@ export async function executeBrowserAction({
       input: { x, y, space },
       resolved_point: { x: point.clientX, y: point.clientY },
       ...(point.selector_used ? { selector: point.selector_used } : {}),
-      ...(point.meta_rect_drift ? { meta_rect_drift: point.meta_rect_drift } : {}),
+      ...(point.meta_rect_drift
+        ? { meta_rect_drift: point.meta_rect_drift }
+        : {}),
       hit_tag: hit.tagName?.toLowerCase?.() ?? "",
       button,
       click_count,
@@ -917,9 +941,15 @@ export async function executeBrowserAction({
       input: { x1, y1, x2, y2, space },
       start_point: { x: startPoint.clientX, y: startPoint.clientY },
       end_point: { x: endPoint.clientX, y: endPoint.clientY },
-      ...(startPoint.selector_used ? { selector: startPoint.selector_used } : {}),
-      ...(startPoint.meta_rect_drift ? { meta_rect_drift_start: startPoint.meta_rect_drift } : {}),
-      ...(endPoint.meta_rect_drift ? { meta_rect_drift_end: endPoint.meta_rect_drift } : {}),
+      ...(startPoint.selector_used
+        ? { selector: startPoint.selector_used }
+        : {}),
+      ...(startPoint.meta_rect_drift
+        ? { meta_rect_drift_start: startPoint.meta_rect_drift }
+        : {}),
+      ...(endPoint.meta_rect_drift
+        ? { meta_rect_drift_end: endPoint.meta_rect_drift }
+        : {}),
       button,
       steps,
       hold_ms,

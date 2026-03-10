@@ -15,6 +15,10 @@ export const defaultFormat = OUCH_FORMATS.includes("tar.gz")
   ? "tar.gz"
   : OUCH_FORMATS[0];
 
+const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
+  (a, b) => b.length - a.length,
+);
+
 export default function CreateArchive({ clear }) {
   const [format, setFormat] = useState<string>("");
   const intl = useIntl();
@@ -105,14 +109,27 @@ export default function CreateArchive({ clear }) {
 
 export async function createArchive({ path, files, target, format, actions }) {
   const fs = actions.fs();
+  const archiveName = getArchiveTargetName(target, format);
   const { code, stderr } = await fs.ouch([
     "compress",
     ...files,
-    join(path, target + "." + format),
+    join(path, archiveName),
   ]);
   if (code) {
     throw Error(Buffer.from(stderr).toString());
   }
+}
+
+export function getArchiveTargetName(target: string, format: string): string {
+  let base = target.trim();
+  for (const suffix of ARCHIVE_SUFFIXES) {
+    const ext = `.${suffix}`;
+    if (base.toLowerCase().endsWith(ext)) {
+      base = base.slice(0, -ext.length);
+      break;
+    }
+  }
+  return `${base}.${format}`;
 }
 
 export function SelectFormat({ format, setFormat }) {

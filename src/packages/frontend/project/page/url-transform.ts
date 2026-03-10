@@ -9,12 +9,38 @@ interface Options {
 }
 // NOTE: there is a similar function in next/lib/share/url-transform.ts
 
+const WEB_ROUTE_PREFIXES = [
+  "/projects",
+  "/settings",
+  "/account",
+  "/admin",
+  "/software",
+  "/help",
+  "/blobs",
+  "/auth",
+  "/register",
+  "/about",
+  "/billing",
+];
+
+function isHostAbsoluteResource(href: string): boolean {
+  return WEB_ROUTE_PREFIXES.some(
+    (prefix) =>
+      href === prefix ||
+      href.startsWith(`${prefix}/`) ||
+      href.startsWith(`${prefix}?`),
+  );
+}
+
 export default function getUrlTransform({ project_id, path }: Options) {
   const dir = containingPath(path);
   return (href: string, tag: string) => {
     if (href.startsWith("data:")) return; // never change data: urls in any way.
     if (href.startsWith("/")) {
-      // Absolute paths are host-root resources; do not reinterpret as project files.
+      if (tag === "img" && !isHostAbsoluteResource(href)) {
+        return fileURL({ project_id, path: href.replace(/^\/+/, "") });
+      }
+      // Absolute paths that target CoCalc web routes stay host-root resources.
       return href;
     }
     if (tag == "a" || href.includes("://")) {

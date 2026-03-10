@@ -2,7 +2,6 @@ import { render } from "./register";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { List } from "antd";
 
-
 render({ type: "usersmap" }, ({ field, obj, viewOnly }) => {
   const users = obj[field];
   if (!users) return null;

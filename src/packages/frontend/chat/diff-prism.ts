@@ -16,7 +16,7 @@ export function isDiffContentLine(line: string): boolean {
 
 export function languageHintFromPath(path: string): string {
   const base = `${path ?? ""}`.trim().toLowerCase();
-  const ext = base.includes(".") ? base.split(".").pop() ?? "" : "";
+  const ext = base.includes(".") ? (base.split(".").pop() ?? "") : "";
   if (!ext) return "text";
   return ext;
 }
@@ -58,7 +58,9 @@ export function highlightPrismLines(
   const highlightedByCodeLine =
     codeBodies.length === 0
       ? []
-      : splitLinesPreserve(highlightCodeHtml(codeBodies.join("\n"), languageHint));
+      : splitLinesPreserve(
+          highlightCodeHtml(codeBodies.join("\n"), languageHint),
+        );
   let codeIndex = 0;
   return lineMetas.map((meta) => {
     if (!meta.isCode) {
@@ -69,4 +71,3 @@ export function highlightPrismLines(
     return `${escapeDiffHtml(meta.prefix)}${highlightedLine}`;
   });
 }
-

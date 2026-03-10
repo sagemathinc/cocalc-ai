@@ -57,17 +57,20 @@ function daemonRuntimeDir(env = process.env): string {
 }
 
 export function daemonSocketPath(env = process.env): string {
-  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  const uid =
+    typeof process.getuid === "function" ? String(process.getuid()) : "user";
   return join(daemonRuntimeDir(env), `cli-daemon-${uid}.sock`);
 }
 
 export function daemonPidPath(env = process.env): string {
-  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  const uid =
+    typeof process.getuid === "function" ? String(process.getuid()) : "user";
   return join(daemonRuntimeDir(env), `cli-daemon-${uid}.pid`);
 }
 
 export function daemonLogPath(env = process.env): string {
-  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  const uid =
+    typeof process.getuid === "function" ? String(process.getuid()) : "user";
   return join(daemonRuntimeDir(env), `cli-daemon-${uid}.log`);
 }
 
@@ -189,7 +192,9 @@ export async function sendDaemonRequest({
   });
 }
 
-export async function pingDaemon(socketPath = daemonSocketPath()): Promise<DaemonResponse> {
+export async function pingDaemon(
+  socketPath = daemonSocketPath(),
+): Promise<DaemonResponse> {
   return await sendDaemonRequest({
     socketPath,
     timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
@@ -206,7 +211,11 @@ export async function startDaemonProcess({
 }: {
   socketPath?: string;
   timeoutMs?: number;
-} = {}): Promise<{ started: boolean; pid?: number; already_running?: boolean }> {
+} = {}): Promise<{
+  started: boolean;
+  pid?: number;
+  already_running?: boolean;
+}> {
   try {
     const pong = await pingDaemon(socketPath);
     return {

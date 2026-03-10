@@ -16,7 +16,12 @@ interface Props {
   cancel: () => void;
 }
 
-export const Replace: React.FC<Props> = ({ cancel, editor, search, decorate }) => {
+export const Replace: React.FC<Props> = ({
+  cancel,
+  editor,
+  search,
+  decorate,
+}) => {
   const [replace, setReplace] = useState<string>("");
   const inputRef = useRef<any>(null);
   return (

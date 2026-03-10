@@ -1211,6 +1211,66 @@ else
 fi
 exit 1
 """
+    acp_status_script = """#!/usr/bin/env bash
+set -euo pipefail
+data_dir="${DATA:-${COCALC_DATA:-/btrfs/data}}"
+pid_file="$data_dir/acp-worker.pid"
+log_file="$data_dir/logs/acp-worker.log"
+
+echo "ACP worker status"
+echo "================="
+echo "data dir: $data_dir"
+echo "pid file: $pid_file"
+echo "log file: $log_file"
+echo
+
+if [ -f "$pid_file" ]; then
+  pid="$(tr -d '[:space:]' < "$pid_file")"
+  echo "worker pid: $pid"
+  if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+    echo "worker state: running"
+    ps -fp "$pid" || true
+  else
+    echo "worker state: pid file exists but process is not running"
+  fi
+else
+  echo "worker state: pid file missing"
+fi
+
+echo
+if [ -f "$log_file" ]; then
+  echo "worker log: present"
+  ls -lh "$log_file"
+  echo
+  echo "recent worker log lines:"
+  tail -n 20 "$log_file" || true
+else
+  echo "worker log: missing"
+fi
+
+echo
+if command -v podman >/dev/null 2>&1; then
+  echo "codex containers:"
+  podman ps -a --format "table {{.Names}}\\t{{.Status}}" | awk 'NR == 1 || $1 ~ /^codex-/'
+else
+  echo "podman not installed"
+fi
+"""
+    acp_logs_script = """#!/usr/bin/env bash
+set -euo pipefail
+data_dir="${DATA:-${COCALC_DATA:-/btrfs/data}}"
+log_file="$data_dir/logs/acp-worker.log"
+lines="${1:-80}"
+if ! [[ "$lines" =~ ^[0-9]+$ ]]; then
+  echo "usage: ${0} [lines]" >&2
+  exit 1
+fi
+if [ -f "$log_file" ]; then
+  exec tail -n "$lines" -f "$log_file"
+fi
+echo "ACP worker log not found: $log_file" >&2
+exit 1
+"""
     logs_cf_script = """#!/usr/bin/env bash
 set -euo pipefail
 service="cocalc-cloudflared.service"
@@ -1242,9 +1302,19 @@ esac
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
     (bin_dir / "logs").write_text(logs_script, encoding="utf-8")
+    (bin_dir / "acp-status").write_text(acp_status_script, encoding="utf-8")
+    (bin_dir / "acp-logs").write_text(acp_logs_script, encoding="utf-8")
     (bin_dir / "logs-cf").write_text(logs_cf_script, encoding="utf-8")
     (bin_dir / "ctl-cf").write_text(ctl_cf_script, encoding="utf-8")
-    for name in ["ctl", "start-project-host", "logs", "logs-cf", "ctl-cf"]:
+    for name in [
+        "ctl",
+        "start-project-host",
+        "logs",
+        "acp-status",
+        "acp-logs",
+        "logs-cf",
+        "ctl-cf",
+    ]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
@@ -1288,6 +1358,8 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
             "ctl",
             "start-project-host",
             "logs",
+            "acp-status",
+            "acp-logs",
             "logs-cf",
             "ctl-cf",
             "fetch-project-bundle.sh",

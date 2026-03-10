@@ -26,7 +26,7 @@ FROM purchases
 WHERE account_id = $1 AND (cost > 0 OR cost_per_hour IS NOT NULL)
 GROUP BY date_trunc('day', "time" AT TIME ZONE 'UTC')
 ORDER BY date DESC LIMIT ${limit ?? DEFAULT_LIMIT} OFFSET ${offset ?? 0}`,
-    [account_id]
+    [account_id],
   );
   return rows;
 }

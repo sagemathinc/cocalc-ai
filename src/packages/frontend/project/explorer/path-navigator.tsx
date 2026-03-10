@@ -13,7 +13,11 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { DropdownMenu, Icon, type MenuItems } from "@cocalc/frontend/components";
+import {
+  DropdownMenu,
+  Icon,
+  type MenuItems,
+} from "@cocalc/frontend/components";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
@@ -40,7 +44,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
   }: Readonly<Props>) => {
     const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
     const historyPathAbs = useTypedRedux({ project_id }, "history_path_abs");
-    const availableFeatures = useTypedRedux({ project_id }, "available_features");
+    const availableFeatures = useTypedRedux(
+      { project_id },
+      "available_features",
+    );
     const liteHome = availableFeatures?.get("homeDirectory");
     const homePath =
       lite && typeof liteHome === "string" && liteHome.length > 0
@@ -68,7 +75,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
       if (!path.startsWith("/")) {
         return { key: "home", rootPath: homePath };
       }
-      if (homePath !== "/" && (path === homePath || path.startsWith(`${homePath}/`))) {
+      if (
+        homePath !== "/" &&
+        (path === homePath || path.startsWith(`${homePath}/`))
+      ) {
         return { key: "home", rootPath: homePath };
       }
       if (path === "/tmp" || path.startsWith("/tmp/")) {
@@ -97,12 +107,8 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return path.split("/").filter(Boolean);
     };
 
-    const currentPath = normalizePathForNav(
-      currentPathAbs ?? homePath,
-    );
-    const historyPath = normalizePathForNav(
-      historyPathAbs ?? currentPath,
-    );
+    const currentPath = normalizePathForNav(currentPathAbs ?? homePath);
+    const historyPath = normalizePathForNav(historyPathAbs ?? currentPath);
     const currentSource = sourceForPath(currentPath);
     const historySource = sourceForPath(historyPath);
     const historyInSameRoot = currentSource.rootPath === historySource.rootPath;
@@ -145,7 +151,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
     function make_path() {
       const v: any[] = [];
 
-      const currentSegments = stripRootPrefix(currentPath, currentSource.rootPath);
+      const currentSegments = stripRootPrefix(
+        currentPath,
+        currentSource.rootPath,
+      );
       const historySegments = stripRootPrefix(
         historyInSameRoot ? historyPath : currentPath,
         currentSource.rootPath,

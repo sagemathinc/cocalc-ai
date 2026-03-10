@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { watch as chokidarWatch } from "chokidar";
-import { watch as nativeFsWatch, type FSWatcher as NativeFsWatcher } from "node:fs";
+import {
+  watch as nativeFsWatch,
+  type FSWatcher as NativeFsWatcher,
+} from "node:fs";
 import { join } from "node:path";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { type WatchOptions, type ChangeEvent } from "@cocalc/conat/files/watch";
@@ -182,7 +185,10 @@ class Watcher extends EventEmitter {
     const normalizedPath = normalizeWatchPath(path);
     const directoryListingWatch = isDirectoryListingWatch(options);
     const pseudoFsWatch = isPseudoFsPath(normalizedPath);
-    const highFanoutSystemWatch = isHighFanoutSystemDir(normalizedPath, options);
+    const highFanoutSystemWatch = isHighFanoutSystemDir(
+      normalizedPath,
+      options,
+    );
     const useNativeWatcher =
       directoryListingWatch || pseudoFsWatch || highFanoutSystemWatch;
     const trackerInfo: Record<string, unknown> = {

@@ -81,7 +81,11 @@ function ensureEditableDomSelection(target: HTMLElement): void {
   const selection = window.getSelection?.();
   if (selection == null) return;
   const anchorNode = selection.anchorNode;
-  if (selection.rangeCount > 0 && anchorNode != null && target.contains(anchorNode)) {
+  if (
+    selection.rangeCount > 0 &&
+    anchorNode != null &&
+    target.contains(anchorNode)
+  ) {
     return;
   }
   const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
@@ -179,7 +183,8 @@ export function ChatRoomComposer({
     label: stripHtml(thread.displayLabel ?? thread.label),
   }));
   const targetValue =
-    composerTargetKey && targetOptions.some((opt) => opt.value === composerTargetKey)
+    composerTargetKey &&
+    targetOptions.some((opt) => opt.value === composerTargetKey)
       ? composerTargetKey
       : undefined;
   const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
@@ -224,12 +229,7 @@ export function ChatRoomComposer({
       return model ? `Ask ${model}...` : "Ask AI...";
     }
     return "Write a message...";
-  }, [
-    combinedFeedSelected,
-    targetOptions.length,
-    contextThread,
-    actions,
-  ]);
+  }, [combinedFeedSelected, targetOptions.length, contextThread, actions]);
   const presenceThreadKey = useMemo(() => {
     if (combinedFeedSelected) {
       return composerTargetKey ?? null;
@@ -297,7 +297,8 @@ export function ChatRoomComposer({
   }, []);
 
   const defaultMaxHeight = useMemo(
-    () => Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * DEFAULT_MAX_VH)),
+    () =>
+      Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * DEFAULT_MAX_VH)),
     [viewportHeight],
   );
   const zenHeight = useMemo(
@@ -420,8 +421,7 @@ export function ChatRoomComposer({
 
   const handleSend = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
-      const effective =
-        typeof value === "string" ? value : input;
+      const effective = typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
       on_send(effective);
       setIsInputFocused(true);
@@ -489,7 +489,8 @@ export function ChatRoomComposer({
           LOOP_DEFAULTS.stop_on_repeated_blocker_count,
       ),
       sleep_ms_between_turns: Number(
-        loopDraft.sleep_ms_between_turns ?? LOOP_DEFAULTS.sleep_ms_between_turns,
+        loopDraft.sleep_ms_between_turns ??
+          LOOP_DEFAULTS.sleep_ms_between_turns,
       ),
     };
     onLoopConfigChange?.(normalized.enabled ? normalized : undefined);
@@ -523,7 +524,7 @@ export function ChatRoomComposer({
           minWidth: 0,
         }}
       >
-        {!IS_MOBILE && (hasInput || isInputFocused || isZenMode) && (
+        {!IS_MOBILE && hasInput && (
           <Tooltip
             title={
               isZenMode
@@ -645,7 +646,13 @@ export function ChatRoomComposer({
                 }}
               >
                 <Tooltip title="Enable autonomous loop for this Codex send">
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
                     <span style={{ fontSize: 12, color: "#666" }}>Loop</span>
                     <Switch
                       size="small"
@@ -685,7 +692,9 @@ export function ChatRoomComposer({
                 hasActiveAcpTurn && isSelectedThreadAI ? (
                   <FormattedMessage
                     id="chatroom.chat_input.queue_button.tooltip"
-                    defaultMessage={"Queue after current Codex turn (shift+enter)"}
+                    defaultMessage={
+                      "Queue after current Codex turn (shift+enter)"
+                    }
                   />
                 ) : (
                   <FormattedMessage
@@ -774,17 +783,15 @@ export function ChatRoomComposer({
                 1,
                 Math.round(
                   Number(
-                    loopDraft.max_wall_time_ms ?? LOOP_DEFAULTS.max_wall_time_ms,
+                    loopDraft.max_wall_time_ms ??
+                      LOOP_DEFAULTS.max_wall_time_ms,
                   ) / 60_000,
                 ),
               )}
               onChange={(value) =>
                 setLoopDraft((prev) => ({
                   ...prev,
-                  max_wall_time_ms: Math.max(
-                    1,
-                    Number(value ?? 30),
-                  ) * 60_000,
+                  max_wall_time_ms: Math.max(1, Number(value ?? 30)) * 60_000,
                 }))
               }
             />
@@ -840,10 +847,8 @@ export function ChatRoomComposer({
               onChange={(value) =>
                 setLoopDraft((prev) => ({
                   ...prev,
-                  sleep_ms_between_turns: Math.max(
-                    0,
-                    Number(value ?? 0),
-                  ) * 1000,
+                  sleep_ms_between_turns:
+                    Math.max(0, Number(value ?? 0)) * 1000,
                 }))
               }
             />

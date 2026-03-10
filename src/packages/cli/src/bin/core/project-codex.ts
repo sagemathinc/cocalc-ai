@@ -121,8 +121,12 @@ function summarizeCodexDeviceAuth(
     state: status.state,
     verification_url: status.verificationUrl ?? null,
     user_code: status.userCode ?? null,
-    started_at: status.startedAt ? new Date(status.startedAt).toISOString() : null,
-    updated_at: status.updatedAt ? new Date(status.updatedAt).toISOString() : null,
+    started_at: status.startedAt
+      ? new Date(status.startedAt).toISOString()
+      : null,
+    updated_at: status.updatedAt
+      ? new Date(status.updatedAt).toISOString()
+      : null,
     exit_code: status.exitCode ?? null,
     signal: status.signal ?? null,
     error: status.error ?? null,
@@ -191,10 +195,16 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     onMessage?: (message: AcpStreamMessage) => Promise<void> | void;
     cwd?: string;
   }): Promise<ProjectCodexExecResult> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     const routed = await getOrCreateRoutedProjectHostClient(ctx, project);
     if (!routed.client) {
-      throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+      throw new Error(
+        `internal error: routed client missing for host ${routed.host_id}`,
+      );
     }
 
     const request: AcpRequest = {
@@ -239,7 +249,10 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
         throw new Error(message.error || "codex exec failed");
       }
       if (message.type === "usage") {
-        usage = ((message as any).usage ?? null) as Record<string, unknown> | null;
+        usage = ((message as any).usage ?? null) as Record<
+          string,
+          unknown
+        > | null;
         continue;
       }
       if (message.type === "event") {
@@ -251,8 +264,12 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
       if (message.type === "summary") {
         sawSummary = true;
         finalResponse = `${message.finalResponse ?? ""}`;
-        threadId = typeof message.threadId === "string" ? message.threadId : null;
-        usage = ((message as any).usage ?? usage ?? null) as Record<string, unknown> | null;
+        threadId =
+          typeof message.threadId === "string" ? message.threadId : null;
+        usage = ((message as any).usage ?? usage ?? null) as Record<
+          string,
+          unknown
+        > | null;
       }
     }
 
@@ -288,7 +305,10 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     if (message.type === "event") {
       const event = (message as any).event;
       const kind = `${event?.type ?? "event"}`;
-      if ((kind === "thinking" || kind === "message") && typeof event?.text === "string") {
+      if (
+        (kind === "thinking" || kind === "message") &&
+        typeof event?.text === "string"
+      ) {
         process.stderr.write(event.text);
         if (!event.text.endsWith("\n")) {
           process.stderr.write("\n");
@@ -298,7 +318,11 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
       if (kind === "terminal") {
         const phase = `${event?.phase ?? "unknown"}`;
         const terminalId = `${event?.terminalId ?? "terminal"}`;
-        if (phase === "data" && typeof event?.chunk === "string" && event.chunk.length > 0) {
+        if (
+          phase === "data" &&
+          typeof event?.chunk === "string" &&
+          event.chunk.length > 0
+        ) {
           process.stderr.write(event.chunk);
           if (!event.chunk.endsWith("\n")) {
             process.stderr.write("\n");
@@ -309,7 +333,9 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
         return;
       }
       if (kind === "file") {
-        process.stderr.write(`[codex:file] ${event?.operation ?? "op"} ${event?.path ?? ""}\n`);
+        process.stderr.write(
+          `[codex:file] ${event?.operation ?? "op"} ${event?.path ?? ""}\n`,
+        );
         return;
       }
       if (kind === "diff") {
@@ -329,7 +355,9 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
       return;
     }
     if (message.type === "error") {
-      process.stderr.write(`[codex:error] ${message.error ?? "unknown error"}\n`);
+      process.stderr.write(
+        `[codex:error] ${message.error ?? "unknown error"}\n`,
+      );
     }
   }
 
@@ -342,10 +370,18 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     projectIdentifier?: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     const [paymentSource, keyStatus, subscriptionCreds] = (await Promise.all([
-      (ctx as any).hub.system.getCodexPaymentSource({ project_id: project.project_id }),
-      (ctx as any).hub.system.getOpenAiApiKeyStatus({ project_id: project.project_id }),
+      (ctx as any).hub.system.getCodexPaymentSource({
+        project_id: project.project_id,
+      }),
+      (ctx as any).hub.system.getOpenAiApiKeyStatus({
+        project_id: project.project_id,
+      }),
       (ctx as any).hub.system.listExternalCredentials({
         provider: "openai",
         kind: "codex-subscription-auth-json",
@@ -387,7 +423,11 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     pollMs: number;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     let status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
       ctx,
       project,
@@ -399,7 +439,9 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
       const deadline = Date.now() + Number((ctx as any).timeoutMs ?? 0);
       while (status.state === "pending") {
         if (Date.now() >= deadline) {
-          throw new Error(`timeout waiting for codex device auth completion (id=${status.id})`);
+          throw new Error(
+            `timeout waiting for codex device auth completion (id=${status.id})`,
+          );
         }
         await new Promise((resolve) => setTimeout(resolve, pollMs));
         status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
@@ -425,13 +467,18 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     id: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
-    const status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
+    const project = await resolveProjectFromArgOrContext(
       ctx,
-      project,
-      "projects.codexDeviceAuthStatus",
-      [{ project_id: project.project_id, id }],
+      projectIdentifier,
+      cwd,
     );
+    const status =
+      await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
+        ctx,
+        project,
+        "projects.codexDeviceAuthStatus",
+        [{ project_id: project.project_id, id }],
+      );
     return summarizeCodexDeviceAuth(project, status);
   }
 
@@ -446,19 +493,24 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     id: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
-    const canceled = await projectHostHubCallAccount<{ id: string; canceled: boolean }>(
+    const project = await resolveProjectFromArgOrContext(
       ctx,
-      project,
-      "projects.codexDeviceAuthCancel",
-      [{ project_id: project.project_id, id }],
+      projectIdentifier,
+      cwd,
     );
-    const status = await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
-      ctx,
-      project,
-      "projects.codexDeviceAuthStatus",
-      [{ project_id: project.project_id, id }],
-    );
+    const canceled = await projectHostHubCallAccount<{
+      id: string;
+      canceled: boolean;
+    }>(ctx, project, "projects.codexDeviceAuthCancel", [
+      { project_id: project.project_id, id },
+    ]);
+    const status =
+      await projectHostHubCallAccount<ProjectCodexDeviceAuthStatus>(
+        ctx,
+        project,
+        "projects.codexDeviceAuthStatus",
+        [{ project_id: project.project_id, id }],
+      );
     return {
       ...summarizeCodexDeviceAuth(project, status),
       canceled: canceled.canceled,
@@ -476,7 +528,11 @@ export function createProjectCodexOps<Ctx, Project extends ProjectIdentity>(
     localPath: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier, cwd);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+      cwd,
+    );
     const content = await readFileLocal(localPath, "utf8");
     const uploaded = await projectHostHubCallAccount<{
       ok: true;

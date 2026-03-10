@@ -6,7 +6,13 @@
 // It owns the per-block Slate editor instance, markdown<->slate conversion,
 // and block-specific selection/navigation behavior to keep the core lean.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Descendant,
   DecoratedRange,
@@ -147,7 +153,11 @@ export interface BlockRowEditorProps {
   actions?: Actions;
   id?: string;
   rowStyle: React.CSSProperties;
-  gapCursor?: { index: number; side: "before" | "after"; path?: number[] } | null;
+  gapCursor?: {
+    index: number;
+    side: "before" | "after";
+    path?: number[];
+  } | null;
   setGapCursor: (
     gap: { index: number; side: "before" | "after"; path?: number[] } | null,
   ) => void;
@@ -241,7 +251,9 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             withNormalize(
               withAutoFormat(
                 withIsInline(
-                  withIsVoid(withCodeLineInsertBreak(withReact(createEditor()))),
+                  withIsVoid(
+                    withCodeLineInsertBreak(withReact(createEditor())),
+                  ),
                 ),
               ),
             ),
@@ -455,8 +467,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (!Text.isText(node)) return searchRanges;
         const lineEntry = Editor.above(editor, {
           at: path,
-          match: (n) =>
-            SlateElement.isElement(n) && n.type === "code_line",
+          match: (n) => SlateElement.isElement(n) && n.type === "code_line",
         });
         if (!lineEntry) return searchRanges;
         const blockEntry = Editor.above(editor, {
@@ -474,7 +485,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const text = block.children.map((line) => Node.string(line)).join("\n");
         const info =
           block.type === "code_block"
-            ? (block as CodeBlock).info ?? ""
+            ? ((block as CodeBlock).info ?? "")
             : block.type === "html_block"
               ? "html"
               : "yaml";
@@ -524,13 +535,12 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       ],
     );
 
-    const activeGap =
-      USE_BLOCK_GAP_CURSOR
-        ? (gapCursor && gapCursor.index === index ? gapCursor : null) ??
-          (gapCursorRef.current && gapCursorRef.current.index === index
-            ? gapCursorRef.current
-            : null)
-        : null;
+    const activeGap = USE_BLOCK_GAP_CURSOR
+      ? ((gapCursor && gapCursor.index === index ? gapCursor : null) ??
+        (gapCursorRef.current && gapCursorRef.current.index === index
+          ? gapCursorRef.current
+          : null))
+      : null;
     const getActiveGap = () => {
       if (!USE_BLOCK_GAP_CURSOR) return null;
       const refGap = gapCursorRef.current;
@@ -550,11 +560,9 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (meaningful.length === 0) return false;
         let insertPath: number[];
         if (gap.path) {
-          insertPath =
-            gap.side === "before" ? gap.path : Path.next(gap.path);
+          insertPath = gap.side === "before" ? gap.path : Path.next(gap.path);
         } else {
-          insertPath =
-            gap.side === "before" ? [0] : [editor.children.length];
+          insertPath = gap.side === "before" ? [0] : [editor.children.length];
         }
         const paragraph = emptyParagraph();
         Transforms.insertNodes(editor, paragraph, { at: insertPath });
@@ -623,9 +631,13 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           // Guard against browser-native backspace behavior when Slate selection
           // is temporarily unavailable (e.g., during async remap/sync churn).
           const fallback =
-            blockSelectionPoint(editor, "end") ?? blockSelectionPoint(editor, "start");
+            blockSelectionPoint(editor, "end") ??
+            blockSelectionPoint(editor, "start");
           if (fallback) {
-            Transforms.setSelection(editor, { anchor: fallback, focus: fallback });
+            Transforms.setSelection(editor, {
+              anchor: fallback,
+              focus: fallback,
+            });
             ReactEditor.focus(editor);
           }
           event.preventDefault();
@@ -896,10 +908,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
 
         const moveCombo = IS_MACOS
           ? event.ctrlKey && event.metaKey && !event.altKey
-          : event.ctrlKey &&
-            event.shiftKey &&
-            !event.altKey &&
-            !event.metaKey;
+          : event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey;
         const isMoveUp = moveCombo && event.key === "ArrowUp";
         const isMoveDown = moveCombo && event.key === "ArrowDown";
         if (isMoveUp || isMoveDown) {
@@ -936,7 +945,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const selection =
           editor.selection ??
           (domSelection && domSelection.rangeCount > 0
-            ? ReactEditor.toSlateRange(editor, domSelection) ?? null
+            ? (ReactEditor.toSlateRange(editor, domSelection) ?? null)
             : null);
         const codeBlockIndex = editor.children.findIndex(
           (node) => SlateElement.isElement(node) && node.type === "code_block",
@@ -978,7 +987,10 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           if (!selection) return false;
           if (!codeBlockEntry) return false;
           if (direction === "up") return codeBlockEntry.lineIndex === 0;
-          const lastIndex = Math.max(0, codeBlockEntry.block.children.length - 1);
+          const lastIndex = Math.max(
+            0,
+            codeBlockEntry.block.children.length - 1,
+          );
           return codeBlockEntry.lineIndex === lastIndex;
         };
 
@@ -1211,8 +1223,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               event.stopPropagation();
               onSelectBlock?.(index, { shiftKey: event.shiftKey });
             }}
-          >
-          </div>
+          ></div>
         )}
         {USE_BLOCK_GAP_CURSOR && (
           <>
@@ -1239,9 +1250,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
                 style={{
                   position: "absolute",
                   top:
-                    activeGap?.path && gapCursorPos
-                      ? gapCursorPos.top - 2
-                      : -2,
+                    activeGap?.path && gapCursorPos ? gapCursorPos.top - 2 : -2,
                   left: 0,
                   right: 0,
                   height: 4,
@@ -1301,8 +1310,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
                     activeGap?.path && gapCursorPos
                       ? gapCursorPos.bottom - 2
                       : undefined,
-                  bottom:
-                    activeGap?.path && gapCursorPos ? undefined : -2,
+                  bottom: activeGap?.path && gapCursorPos ? undefined : -2,
                   left: 0,
                   right: 0,
                   height: 4,

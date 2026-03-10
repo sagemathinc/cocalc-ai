@@ -87,7 +87,9 @@ async function ensureHomeSubvolume(home: string): Promise<void> {
   if (!(await exists(home))) return;
   const isSubvolume = await isBtrfsSubvolume(home);
   if (!isSubvolume) {
-    throw new Error(`project home exists but is not a btrfs subvolume: ${home}`);
+    throw new Error(
+      `project home exists but is not a btrfs subvolume: ${home}`,
+    );
   }
 }
 

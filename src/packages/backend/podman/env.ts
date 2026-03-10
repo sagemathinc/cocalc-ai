@@ -13,14 +13,16 @@ function isUsableDir(dir: string): boolean {
 
 export function podmanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const uid =
+    typeof process.getuid === "function" ? process.getuid() : undefined;
   const configured = env.COCALC_PODMAN_RUNTIME_DIR || env.XDG_RUNTIME_DIR;
   const userRun =
     typeof uid === "number" ? `/run/user/${uid.toString()}` : undefined;
   // Podman (especially with crun) expects XDG_RUNTIME_DIR to exist and be writable.
   // On fresh boot, /run/user/<uid> only appears after a user login session, so we
   // rely on systemd linger to ensure it exists, otherwise we fail loudly.
-  let runtimeDir = configured && isUsableDir(configured) ? configured : undefined;
+  let runtimeDir =
+    configured && isUsableDir(configured) ? configured : undefined;
   if (!runtimeDir && userRun && isUsableDir(userRun)) {
     runtimeDir = userRun;
   }

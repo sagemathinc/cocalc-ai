@@ -46,7 +46,7 @@ export default function Cursors({ canvasScale, cursors }: Props) {
             {getName(account_id)}
           </div>
         )}
-      </div>
+      </div>,
     );
   }
 

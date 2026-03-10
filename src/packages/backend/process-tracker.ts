@@ -40,4 +40,3 @@ export function trackProcessRoot(meta: ProcessRootMeta): TrackedProcessRoot {
     return NOOP_TRACKED_ROOT;
   }
 }
-

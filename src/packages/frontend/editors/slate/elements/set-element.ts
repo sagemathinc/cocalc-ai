@@ -11,7 +11,7 @@ import { rangeAll } from "../slate-util";
 export function setElement(
   editor: Editor,
   element: Element,
-  obj: object
+  obj: object,
 ): Element | undefined {
   const setAtPath = (path: number[]): Element | undefined => {
     try {
@@ -92,7 +92,7 @@ export function setElement(
   console.warn(
     "WARNING: setElement unable to find element in document",
     element,
-    obj
+    obj,
   );
 }
 

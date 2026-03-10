@@ -3,7 +3,9 @@
 import { DraftController } from "../controller";
 import type { DraftStorageAdapter } from "../types";
 
-function makeAdapter(overrides?: Partial<DraftStorageAdapter>): DraftStorageAdapter {
+function makeAdapter(
+  overrides?: Partial<DraftStorageAdapter>,
+): DraftStorageAdapter {
   return {
     load: async () => undefined,
     save: async () => {},
@@ -96,9 +98,7 @@ describe("DraftController", () => {
 
     expect(save).toHaveBeenCalledTimes(1);
     const firstCall = (save as jest.Mock).mock.calls[0] as any[];
-    expect(firstCall[1]).toEqual(
-      expect.objectContaining({ text: "abc" }),
-    );
+    expect(firstCall[1]).toEqual(expect.objectContaining({ text: "abc" }));
   });
 
   it("clear removes persisted draft and resets local state", async () => {

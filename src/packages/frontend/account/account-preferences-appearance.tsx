@@ -211,7 +211,8 @@ export function AccountPreferencesAppearance() {
   }
 
   function renderUserInterfacePanel(): ReactElement {
-    const tabAccentMode = other_settings.get("file_tab_accent_mode") ?? "bright";
+    const tabAccentMode =
+      other_settings.get("file_tab_accent_mode") ?? "bright";
     return (
       <Panel
         size="small"

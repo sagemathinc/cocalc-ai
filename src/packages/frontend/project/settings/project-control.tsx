@@ -81,12 +81,11 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, hostId);
-  const displayStateValue =
-    normalizeProjectStateForDisplay({
-      projectState: project.getIn(["state", "state"]),
-      hostId,
-      hostInfo,
-    });
+  const displayStateValue = normalizeProjectStateForDisplay({
+    projectState: project.getIn(["state", "state"]),
+    hostId,
+    hostInfo,
+  });
   const displayProjectState = React.useMemo(() => {
     const rawState = project.get("state");
     if (!rawState) return rawState;

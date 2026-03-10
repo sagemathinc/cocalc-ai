@@ -39,7 +39,7 @@ async function getProjectStateSnapshot(
     );
     const rawState = rows[0]?.state;
     const parsed =
-      typeof rawState === "string" ? JSON.parse(rawState) : rawState ?? {};
+      typeof rawState === "string" ? JSON.parse(rawState) : (rawState ?? {});
     const state = parsed?.state;
     const timeMs =
       parsed?.time != null ? new Date(parsed.time).getTime() : undefined;
@@ -230,9 +230,12 @@ export async function startProjectOnHost(
   const task = (async () => {
     const snapshot = await getProjectStateSnapshot(project_id);
     if (snapshot.state === "starting") {
-      log.debug("startProjectOnHost skipping duplicate start for starting project", {
-        project_id,
-      });
+      log.debug(
+        "startProjectOnHost skipping duplicate start for starting project",
+        {
+          project_id,
+        },
+      );
       return;
     }
     if (snapshot.state === "running") {
@@ -240,10 +243,13 @@ export async function startProjectOnHost(
         snapshot.timeMs != null &&
         Date.now() - snapshot.timeMs <= RECENT_RUNNING_STATE_MS;
       if (isRecent) {
-        log.debug("startProjectOnHost skipping duplicate start for recently running project", {
-          project_id,
-          state_time: snapshot.timeMs,
-        });
+        log.debug(
+          "startProjectOnHost skipping duplicate start for recently running project",
+          {
+            project_id,
+            state_time: snapshot.timeMs,
+          },
+        );
         return;
       }
     }

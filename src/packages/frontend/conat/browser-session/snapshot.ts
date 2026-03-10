@@ -27,10 +27,9 @@ export function collectOpenProjects({
   maxOpenFilesPerProject?: number;
 } = {}): BrowserOpenProjectState[] {
   const projectsStore = redux.getStore("projects");
-  const openProjectIds = asStringArray(projectsStore?.get("open_projects")).slice(
-    0,
-    maxOpenProjects,
-  );
+  const openProjectIds = asStringArray(
+    projectsStore?.get("open_projects"),
+  ).slice(0, maxOpenProjects);
   const out: BrowserOpenProjectState[] = [];
   for (const project_id of openProjectIds) {
     if (!isValidUUID(project_id)) continue;
@@ -39,7 +38,8 @@ export function collectOpenProjects({
     const files = asStringArray(projectStore.get("open_files_order"))
       .map(toAbsolutePath)
       .slice(0, maxOpenFilesPerProject);
-    const title = `${projectsStore?.getIn(["project_map", project_id, "title"]) ?? ""}`.trim();
+    const title =
+      `${projectsStore?.getIn(["project_map", project_id, "title"]) ?? ""}`.trim();
     out.push({
       project_id,
       ...(title ? { title } : {}),
@@ -85,7 +85,9 @@ export function buildSessionSnapshot(
     open_projects.map((x) => x.project_id),
   );
   const session_name =
-    typeof document !== "undefined" ? document.title?.trim() || undefined : undefined;
+    typeof document !== "undefined"
+      ? document.title?.trim() || undefined
+      : undefined;
   const url = typeof location !== "undefined" ? location.href : undefined;
   return {
     browser_id: client.browser_id,

@@ -43,4 +43,3 @@ export function defaultPolicyEvaluator<TContext = unknown>({
   }
   return { allow: true, requiresConfirmation: false };
 }
-

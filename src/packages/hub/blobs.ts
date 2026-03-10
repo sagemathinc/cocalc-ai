@@ -38,8 +38,7 @@ export function save_blob(rawOpts: SaveBlobOpts): void {
     cb: required,
   }) as SaveBlobOpts;
 
-  const dbg = (m: string) =>
-    logger.debug(`save_blob(uuid=${opts.uuid}): ${m}`);
+  const dbg = (m: string) => logger.debug(`save_blob(uuid=${opts.uuid}): ${m}`);
   dbg("");
 
   let err: string | undefined;

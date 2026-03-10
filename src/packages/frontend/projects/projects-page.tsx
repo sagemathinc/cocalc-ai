@@ -147,8 +147,7 @@ export const ProjectsPage: React.FC = () => {
 
   const [createPanelWidth, setCreatePanelWidth] =
     useState(readCreatePanelWidth);
-  const [createPanelOpen, setCreatePanelOpen] =
-    useState(readCreatePanelOpen);
+  const [createPanelOpen, setCreatePanelOpen] = useState(readCreatePanelOpen);
 
   const [tableHeight, setTableHeight] = useState<number>(400);
 
@@ -335,9 +334,7 @@ export const ProjectsPage: React.FC = () => {
     }
   }
 
-  const contentCol = showCreatePanel
-    ? { span: 24 }
-    : { span: 20, offset: 2 };
+  const contentCol = showCreatePanel ? { span: 24 } : { span: 20, offset: 2 };
 
   return (
     <div className={"smc-vfill"} style={{ overflow: "hidden" }}>
@@ -394,33 +391,33 @@ export const ProjectsPage: React.FC = () => {
                     ref={titleRef}
                     style={{
                       marginTop: "20px",
-                display: "flex",
-                width: "100%",
-                gap: "10px",
-                alignItems: "center",
-              }}
-            >
-              <Title
-                level={3}
-                style={{
-                  flex: "0 1 auto",
-                  marginBottom: "15px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <Icon name="edit" /> {intl.formatMessage(labels.projects)}
-              </Title>
-              <Button
-                ref={createNewRef}
-                type="primary"
-                onClick={handleCreateProject}
-                icon={<Icon name="plus-circle" />}
-              >
-                {capitalize(intl.formatMessage(labels.create))}
-              </Button>
-              <div ref={starredBarRef} style={{ flex: "1 1 auto" }}>
-                <StarredProjectsBar />
-              </div>
+                      display: "flex",
+                      width: "100%",
+                      gap: "10px",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Title
+                      level={3}
+                      style={{
+                        flex: "0 1 auto",
+                        marginBottom: "15px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <Icon name="edit" /> {intl.formatMessage(labels.projects)}
+                    </Title>
+                    <Button
+                      ref={createNewRef}
+                      type="primary"
+                      onClick={handleCreateProject}
+                      icon={<Icon name="plus-circle" />}
+                    >
+                      {capitalize(intl.formatMessage(labels.create))}
+                    </Button>
+                    <div ref={starredBarRef} style={{ flex: "1 1 auto" }}>
+                      <StarredProjectsBar />
+                    </div>
                     {!narrow && (
                       <div ref={filenameSearchRef} style={{ flex: "0 1 auto" }}>
                         <FilenameSearch
@@ -450,11 +447,11 @@ export const ProjectsPage: React.FC = () => {
 
                   {/* Table Controls (Search, Filters, Create Button) */}
                   <div ref={controlsRef}>
-              <ProjectsTableControls
-                visible_projects={visible_projects}
-                searchRef={searchRef}
-                filtersRef={filtersRef}
-                tour={
+                    <ProjectsTableControls
+                      visible_projects={visible_projects}
+                      searchRef={searchRef}
+                      filtersRef={filtersRef}
+                      tour={
                         <ProjectsPageTour
                           searchRef={searchRef}
                           filtersRef={filtersRef}

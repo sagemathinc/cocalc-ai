@@ -7,7 +7,9 @@ import { moveListItemDown, moveListItemUp } from "../format/list-move";
 
 function listTexts(editor: Editor): string[] {
   const list = editor.children[0] as any;
-  return list.children.map((_: any, idx: number) => Editor.string(editor, [0, idx]));
+  return list.children.map((_: any, idx: number) =>
+    Editor.string(editor, [0, idx]),
+  );
 }
 
 test("moveListItemUp moves the current list item up", () => {
@@ -16,9 +18,18 @@ test("moveListItemUp moves the current list item up", () => {
     {
       type: "bullet_list",
       children: [
-        { type: "list_item", children: [{ type: "paragraph", children: [{ text: "first" }] }] },
-        { type: "list_item", children: [{ type: "paragraph", children: [{ text: "second" }] }] },
-        { type: "list_item", children: [{ type: "paragraph", children: [{ text: "third" }] }] },
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "first" }] }],
+        },
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "second" }] }],
+        },
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "third" }] }],
+        },
       ],
     },
   ];
@@ -37,9 +48,18 @@ test("moveListItemDown moves the current list item down", () => {
     {
       type: "bullet_list",
       children: [
-        { type: "list_item", children: [{ type: "paragraph", children: [{ text: "first" }] }] },
-        { type: "list_item", children: [{ type: "paragraph", children: [{ text: "second" }] }] },
-        { type: "list_item", children: [{ type: "paragraph", children: [{ text: "third" }] }] },
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "first" }] }],
+        },
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "second" }] }],
+        },
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "third" }] }],
+        },
       ],
     },
   ];

@@ -27,12 +27,41 @@ function threadStateActiveMessageKey(record: any): string | undefined {
   return `message:${messageId}`;
 }
 
-function chatRowToAcpState(state: unknown): string | undefined {
+function threadStateRecordLookupFromRows(rows: any[]): Map<string, any> {
+  const lookup = new Map<string, any>();
+  for (const row of rows) {
+    if ((row as any)?.event !== THREAD_STATE_EVENT) continue;
+    const threadId = (row as any)?.thread_id;
+    if (typeof threadId !== "string" || threadId.length === 0) continue;
+    lookup.set(threadId, row);
+  }
+  return lookup;
+}
+
+function chatRowToAcpState({
+  record,
+  getThreadStateRecord,
+}: {
+  record: any;
+  getThreadStateRecord?: (threadId: string) => any;
+}): string | undefined {
+  const state = (record as any)?.acp_state;
   switch (state) {
     case "queued":
       return "queue";
-    case "running":
-      return "running";
+    case "running": {
+      const threadId = `${(record as any)?.thread_id ?? ""}`.trim();
+      const messageId = `${(record as any)?.message_id ?? ""}`.trim();
+      if (!threadId || !messageId || !getThreadStateRecord) return undefined;
+      const threadState = getThreadStateRecord(threadId);
+      const threadStateName = `${(threadState as any)?.state ?? ""}`.trim();
+      const activeMessageId =
+        `${(threadState as any)?.active_message_id ?? ""}`.trim();
+      return activeMessageId === messageId &&
+        (threadStateName === "queued" || threadStateName === "running")
+        ? "running"
+        : undefined;
+    }
     default:
       return undefined;
   }
@@ -44,24 +73,28 @@ function chatMessageKey(record: any): string | undefined {
   return `message:${messageId}`;
 }
 
-function applyChatRowAcpState(acpState: any, record: any): any {
-  const mapped = chatRowToAcpState((record as any)?.acp_state);
+function applyChatRowAcpState(
+  acpState: any,
+  record: any,
+  getThreadStateRecord?: (threadId: string) => any,
+): any {
+  const mapped = chatRowToAcpState({
+    record,
+    getThreadStateRecord,
+  });
   const byMessageId = chatMessageKey(record);
   if (!byMessageId) return acpState;
-  return mapped ? acpState.set(byMessageId, mapped) : acpState.delete(byMessageId);
+  return mapped
+    ? acpState.set(byMessageId, mapped)
+    : acpState.delete(byMessageId);
 }
 
-export function initFromSyncDB({
-  syncdb,
-  store,
-}: {
-  syncdb: any;
-  store: any;
-}) {
+export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
   if (!syncdb || !store || typeof syncdb.get !== "function") return;
   const rows = syncdb.get();
   if (!Array.isArray(rows)) return;
-  let acpState = store.get("acpState") ?? iMap();
+  const threadStateLookup = threadStateRecordLookupFromRows(rows);
+  let acpState = iMap();
   for (const row of rows) {
     if ((row as any)?.event === THREAD_STATE_EVENT) {
       const mapped = threadStateToAcpState((row as any)?.state);
@@ -89,16 +122,53 @@ export function initFromSyncDB({
       continue;
     }
     if ((row as any)?.event === CHAT_EVENT) {
-      acpState = applyChatRowAcpState(acpState, row);
+      acpState = applyChatRowAcpState(acpState, row, (threadId) =>
+        threadStateLookup.get(threadId),
+      );
     }
   }
   store.setState({ acpState });
 }
 
-const ignoredChatEvents = new Set([
-  "chat-thread",
-  "chat-thread-config",
-]);
+function getThreadStateRecord(syncdb: any, threadId?: string): any {
+  const normalized = `${threadId ?? ""}`.trim();
+  if (!normalized) return undefined;
+  return syncdb?.get_one?.({
+    event: THREAD_STATE_EVENT,
+    thread_id: normalized,
+  });
+}
+
+function reconcileThreadChatRowAcpState({
+  acpState,
+  syncdb,
+  threadId,
+}: {
+  acpState: any;
+  syncdb: any;
+  threadId?: string;
+}): any {
+  const normalized = `${threadId ?? ""}`.trim();
+  if (!normalized) return acpState;
+  const rows =
+    typeof syncdb?.get === "function"
+      ? syncdb.get({ event: CHAT_EVENT, thread_id: normalized })
+      : [];
+  const records = Array.isArray(rows)
+    ? rows
+    : typeof rows?.toJS === "function"
+      ? rows.toJS()
+      : [];
+  let next = acpState;
+  for (const record of records) {
+    next = applyChatRowAcpState(next, record, (id) =>
+      getThreadStateRecord(syncdb, id),
+    );
+  }
+  return next;
+}
+
+const ignoredChatEvents = new Set(["chat-thread", "chat-thread-config"]);
 const warnedUnknownEvents = new Set<string>();
 
 export function handleSyncDBChange({
@@ -145,7 +215,9 @@ export function handleSyncDBChange({
       if (!record) continue;
       const { message } = normalizeChatMessage(record);
       let acpState = store.get("acpState") ?? iMap();
-      acpState = applyChatRowAcpState(acpState, record);
+      acpState = applyChatRowAcpState(acpState, record, (threadId) =>
+        getThreadStateRecord(syncdb, threadId),
+      );
       if (!activityReady || !message) {
         store.setState({ acpState });
         continue;
@@ -182,6 +254,12 @@ export function handleSyncDBChange({
           ? next.set(byMessageId, messageMapped)
           : next.delete(byMessageId);
       }
+      next = reconcileThreadChatRowAcpState({
+        acpState: next,
+        syncdb,
+        threadId:
+          syncdb?.get_one?.(where)?.thread_id ?? (record ?? obj)?.thread_id,
+      });
       store.setState({
         acpState: next,
       });

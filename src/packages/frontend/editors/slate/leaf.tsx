@@ -9,7 +9,9 @@ import { startswith } from "@cocalc/util/misc";
 
 // CODE_STYLE -- copied from GitHub
 const CODE_STYLE = {
-  padding: ".2em .4em",
+  // Do not reserve extra trailing space after inline code; it looks like a
+  // phantom space in prose and makes clicking "after" the code land inside it.
+  padding: ".2em 0 .2em .4em",
   margin: 0,
   fontSize: "85%",
   borderRadius: "6px",
@@ -101,7 +103,7 @@ const Leaf: React.FC<RenderLeafProps> = React.memo(
         {children}
       </span>
     );
-  }
+  },
 );
 
 export default Leaf;

@@ -9,7 +9,10 @@ export type OpCommandDeps = {
   waitForLro: any;
 };
 
-export function registerOpCommand(program: Command, deps: OpCommandDeps): Command {
+export function registerOpCommand(
+  program: Command,
+  deps: OpCommandDeps,
+): Command {
   const {
     withContext,
     resolveProject,
@@ -19,10 +22,11 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
     waitForLro,
   } = deps;
 
-  const op = program.command("op").description("long-running operation management");
+  const op = program
+    .command("op")
+    .description("long-running operation management");
 
-  op
-    .command("list")
+  op.command("list")
     .description("list operations for a scope")
     .option("--scope-type <type>", "scope type: project|account|host|hub")
     .option("--scope-id <id>", "scope id")
@@ -35,7 +39,8 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
         const haveExplicitScope = !!opts.scopeType || !!opts.scopeId;
         const haveProject = !!opts.project;
         const haveHost = !!opts.host;
-        const scopeModes = Number(haveExplicitScope) + Number(haveProject) + Number(haveHost);
+        const scopeModes =
+          Number(haveExplicitScope) + Number(haveProject) + Number(haveHost);
         if (scopeModes > 1) {
           throw new Error(
             "use only one scope selector: (--scope-type + --scope-id) OR --project OR --host",
@@ -55,7 +60,9 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
           scope_id = h.id;
         } else if (haveExplicitScope) {
           if (!opts.scopeType || !opts.scopeId) {
-            throw new Error("--scope-type and --scope-id must be used together");
+            throw new Error(
+              "--scope-type and --scope-id must be used together",
+            );
           }
           scope_type = parseLroScopeType(opts.scopeType);
           scope_id = opts.scopeId;
@@ -69,13 +76,17 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
           scope_id,
           include_completed: !!opts.includeCompleted,
         });
-        const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
-        return (rows ?? []).slice(0, limitNum).map((summary: any) => serializeLroSummary(summary));
+        const limitNum = Math.max(
+          1,
+          Math.min(10000, Number(opts.limit ?? "100") || 100),
+        );
+        return (rows ?? [])
+          .slice(0, limitNum)
+          .map((summary: any) => serializeLroSummary(summary));
       });
     });
 
-  op
-    .command("get <op-id>")
+  op.command("get <op-id>")
     .description("get one operation by id")
     .action(async (opId: string, command: Command) => {
       await withContext(command, "op get", async (ctx: any) => {
@@ -87,8 +98,7 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
       });
     });
 
-  op
-    .command("wait <op-id>")
+  op.command("wait <op-id>")
     .description("wait until an operation reaches a terminal state")
     .action(async (opId: string, command: Command) => {
       await withContext(command, "op wait", async (ctx: any) => {
@@ -97,7 +107,9 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
           pollMs: ctx.pollMs,
         });
         if (waited.timedOut) {
-          throw new Error(`timeout waiting for operation ${opId}; last status=${waited.status}`);
+          throw new Error(
+            `timeout waiting for operation ${opId}; last status=${waited.status}`,
+          );
         }
         const summary = await ctx.hub.lro.get({ op_id: opId });
         if (!summary) {
@@ -111,8 +123,7 @@ export function registerOpCommand(program: Command, deps: OpCommandDeps): Comman
       });
     });
 
-  op
-    .command("cancel <op-id>")
+  op.command("cancel <op-id>")
     .description("cancel an operation")
     .action(async (opId: string, command: Command) => {
       await withContext(command, "op cancel", async (ctx: any) => {

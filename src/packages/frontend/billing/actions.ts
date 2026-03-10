@@ -87,7 +87,6 @@ export class BillingActions extends Actions<BillingStoreState> {
     }
     this.setState({ selected_plan: plan });
   }
-
 }
 
 export const actions = redux.createActions("billing", BillingActions);

@@ -114,7 +114,10 @@ async function listBucketsCached(
     }
   }
   const names = new Set(await listBuckets(apiToken, accountId));
-  bucketListCache.set(accountId, { names, expires: now + BUCKET_LIST_CACHE_MS });
+  bucketListCache.set(accountId, {
+    names,
+    expires: now + BUCKET_LIST_CACHE_MS,
+  });
   return names;
 }
 
@@ -318,7 +321,9 @@ async function ensureExistingBucketRowIsUsable({
     return;
   }
   const region =
-    parseR2Region(bucket.region) ?? inferBucketRegion(bucket.name) ?? fallbackRegion;
+    parseR2Region(bucket.region) ??
+    inferBucketRegion(bucket.name) ??
+    fallbackRegion;
   await ensureBucketExistsInR2({
     accountId,
     apiToken,
@@ -536,8 +541,10 @@ async function buildSelfHostLocalBackupConfig(): Promise<{
     return { toml: "", ttl_seconds: 0 };
   }
   const tunnelLocalPort =
-    Number.parseInt(process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "", 10) ||
-    ONPREM_REST_TUNNEL_LOCAL_PORT;
+    Number.parseInt(
+      process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "",
+      10,
+    ) || ONPREM_REST_TUNNEL_LOCAL_PORT;
   const root = DEFAULT_BACKUP_ROOT;
   try {
     await mkdir(join(config.backup_root, root), { recursive: true });
@@ -606,9 +613,10 @@ export async function getBackupConfig({
   const { rows } = await pool().query<{
     region: string | null;
     metadata: any;
-  }>("SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
-    host_id,
-  ]);
+  }>(
+    "SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    [host_id],
+  );
   if (!rows[0]) {
     throw new Error("host not found");
   }
@@ -674,10 +682,9 @@ export async function getProjectBackupConfigForDeletion({
   const { rows } = await pool().query<{
     host_id: string | null;
     backup_bucket_id: string | null;
-  }>(
-    "SELECT host_id, backup_bucket_id FROM projects WHERE project_id=$1",
-    [project_id],
-  );
+  }>("SELECT host_id, backup_bucket_id FROM projects WHERE project_id=$1", [
+    project_id,
+  ]);
   const row = rows[0];
   if (!row) {
     throw new Error("project not found");

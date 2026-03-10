@@ -66,4 +66,3 @@ describe("getAddress", () => {
     );
   });
 });
-

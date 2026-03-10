@@ -129,9 +129,7 @@ export function StartButton({
       hostInfo,
     });
     const state =
-      rawState != null &&
-      displayState &&
-      rawState.get("state") !== displayState
+      rawState != null && displayState && rawState.get("state") !== displayState
         ? rawState.set("state", displayState)
         : rawState;
     if (state != null) {
@@ -239,9 +237,7 @@ export function StartButton({
       !state?.get("state") ||
       (!hostUnavailable &&
         allowed &&
-        ["opened", "closed", "archived"].includes(
-          state?.get("state"),
-        ));
+        ["opened", "closed", "archived"].includes(state?.get("state")));
 
     const txt = intl.formatMessage(
       {
@@ -324,7 +320,11 @@ export function StartButton({
             }}
           >
             <Space>
-              {starting ? <Icon name="cocalc-ring" spin /> : <Icon name="play" />}
+              {starting ? (
+                <Icon name="cocalc-ring" spin />
+              ) : (
+                <Icon name="play" />
+              )}
               {txt}
             </Space>
           </Button>
@@ -381,9 +381,9 @@ export function StartButton({
                 }}
               >
                 This {projectLabel.toLowerCase()} is assigned to{" "}
-                {assignedHostLabel} ({hostUnavailableReason}). Wait for this host
-                to come online, or move this {projectLabel.toLowerCase()} to an
-                available host.
+                {assignedHostLabel} ({hostUnavailableReason}). Wait for this
+                host to come online, or move this {projectLabel.toLowerCase()}{" "}
+                to an available host.
               </div>
               <div style={{ marginTop: "10px" }}>
                 <MoveProject
@@ -424,9 +424,9 @@ export function StartButton({
                   color: COLORS.GRAY_D,
                 }}
               >
-                {assignedHostLabel} is unavailable ({hostUnavailableReason}). Open
-                Settings and move this project to an available host, or start
-                the assigned host.
+                {assignedHostLabel} is unavailable ({hostUnavailableReason}).
+                Open Settings and move this project to an available host, or
+                start the assigned host.
               </div>
             )}
             {render_not_allowed()}

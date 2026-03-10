@@ -5,7 +5,7 @@ import sortedElements from "./sorted-elements";
 
 export default function parseTableOfContents(
   elementsMap: ElementsMap,
-  sortedPageIds?: SortedPageList
+  sortedPageIds?: SortedPageList,
 ): Entry[] {
   const entries: Entry[] = [];
   const state: any = {};

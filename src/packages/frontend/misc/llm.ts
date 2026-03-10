@@ -29,7 +29,6 @@ export function numTokensUpperBound(
   content: string,
   maxTokens: number,
 ): number {
-
   return (
     tokenizer.encode(content.slice(0, maxTokens * APPROX_CHARACTERS_PER_TOKEN))
       .text.length +

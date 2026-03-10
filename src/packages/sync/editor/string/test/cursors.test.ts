@@ -26,8 +26,22 @@ describe("cursor presence emits cursor_activity", () => {
   let handlerCalls = 0;
 
   beforeAll(async () => {
-    syncA = new SyncString({ project_id, path, client: clientA, fs, cursors: true, string_id });
-    syncB = new SyncString({ project_id, path, client: clientB, fs, cursors: true, string_id });
+    syncA = new SyncString({
+      project_id,
+      path,
+      client: clientA,
+      fs,
+      cursors: true,
+      string_id,
+    });
+    syncB = new SyncString({
+      project_id,
+      path,
+      client: clientB,
+      fs,
+      cursors: true,
+      string_id,
+    });
     await waitForReady(syncA);
     await waitForReady(syncB);
     expect(syncA.get_string_id()).toBe(string_id);
@@ -72,6 +86,8 @@ async function waitForReady(doc: SyncString): Promise<void> {
   if (doc.get_state() === "ready") return;
   await Promise.race([
     once(doc as any, "ready"),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("ready timeout")), 2000)),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("ready timeout")), 2000),
+    ),
   ]);
 }

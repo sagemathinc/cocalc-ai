@@ -17,7 +17,7 @@ import { copy } from "@cocalc/util/misc";
 
 export function query_function(
   client_query: Function,
-  table: string
+  table: string,
 ): Function {
   const s = SCHEMA[table];
   if (s == null) {

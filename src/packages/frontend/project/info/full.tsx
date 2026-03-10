@@ -7,7 +7,16 @@
 
 declare let DEBUG;
 
-import { Alert, Button, Card, Form, Modal, Popover, Table, Tooltip } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Modal,
+  Popover,
+  Table,
+  Tooltip,
+} from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -90,7 +99,9 @@ function sparklinePoints(values: number[], width = 240, height = 56): string {
     return height - ((value - min) / (max - min)) * (height - 4) - 2;
   };
   const dx = width / (values.length - 1);
-  return values.map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+  return values
+    .map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`)
+    .join(" ");
 }
 
 function HistoryCard({
@@ -120,7 +131,12 @@ function HistoryCard({
         </span>
       }
     >
-      <svg width="100%" height="64" viewBox="0 0 240 56" preserveAspectRatio="none">
+      <svg
+        width="100%"
+        height="64"
+        viewBox="0 0 240 56"
+        preserveAspectRatio="none"
+      >
         <polyline
           fill="none"
           stroke={color}
@@ -283,7 +299,10 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
   const historyByProcessId = useMemo(() => {
-    const byId = new Map<string, { cpu: number[]; mem: number[]; timestamps: number[] }>();
+    const byId = new Map<
+      string,
+      { cpu: number[]; mem: number[]; timestamps: number[] }
+    >();
     for (const sample of history?.samples ?? []) {
       for (const proc of Object.values(sample.processes ?? {})) {
         const cur = byId.get(proc.id) ?? { cpu: [], mem: [], timestamps: [] };
@@ -348,19 +367,18 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     return (
       <div style={{ maxWidth: "560px" }}>
         <p>
-          This panel shows <strong>real-time information about this project</strong>{" "}
-          and its resource usage. In particular, you can see which processes are
+          This panel shows{" "}
+          <strong>real-time information about this project</strong> and its
+          resource usage. In particular, you can see which processes are
           running, and if available, also get a button to <SiteName /> specific
           information or links to the associated file.
         </p>
-        <p>
-          {scopeDescription}
-        </p>
+        <p>{scopeDescription}</p>
         <p>
           Use the checkboxes on the left to select one or more processes (or use
-          the header checkbox to select all visible rows). Then use{" "}
-          "{DETAILS_BTN_TEXT}" for detailed process information, or send a
-          signal to the selected process(es).
+          the header checkbox to select all visible rows). Then use "
+          {DETAILS_BTN_TEXT}" for detailed process information, or send a signal
+          to the selected process(es).
         </p>
         <p>
           Sub-processes are shown as a tree. When you collapse a branch, the
@@ -443,7 +461,8 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
           <Col md={12}>
             <div style={{ color: COLORS.GRAY_D, fontSize: "85%" }}>
               X-axis: oldest to newest sample, covering {coveredLabel} (
-              {samples.length} samples, about every {sampleSeconds.toFixed(0)}s).
+              {samples.length} samples, about every {sampleSeconds.toFixed(0)}
+              s).
             </div>
           </Col>
         </Row>
@@ -549,7 +568,9 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
   }
 
   function render_modals() {
-    const renderModalFileLink = (proc: Process): React.JSX.Element | undefined => {
+    const renderModalFileLink = (
+      proc: Process,
+    ): React.JSX.Element | undefined => {
       const cocalc = proc.cocalc;
       if (cocalc == null) return;
       if (
@@ -561,8 +582,9 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
       }
       const openPath = cocalc.path;
       const sourcePath = proc.origin?.path ?? openPath;
-      const displayPath =
-        sourcePath.startsWith("/") ? sourcePath : `/${sourcePath}`;
+      const displayPath = sourcePath.startsWith("/")
+        ? sourcePath
+        : `/${sourcePath}`;
       const icon =
         cocalc.type === "jupyter"
           ? "ipynb"
@@ -632,7 +654,9 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
         );
       default:
         if (modal != null && typeof modal !== "string") {
-          const processes: Processes = info?.processes ?? { [modal.pid]: modal };
+          const processes: Processes = info?.processes ?? {
+            [modal.pid]: modal,
+          };
           const signalControls = (
             <div style={{ marginBottom: "8px" }}>
               <SignalButtons

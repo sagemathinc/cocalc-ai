@@ -137,9 +137,10 @@ function getJupyterDataDirs(): string[] {
   });
 }
 
-async function getKernelResources(
-  kernelInfo: { name: string; resourceDir: string },
-): Promise<KernelResources | undefined> {
+async function getKernelResources(kernelInfo: {
+  name: string;
+  resourceDir: string;
+}): Promise<KernelResources | undefined> {
   try {
     const files = await readdir(kernelInfo.resourceDir);
     if (!files.includes("kernel.json")) {
@@ -197,9 +198,7 @@ export async function findAllKernelSpecs(): Promise<
   );
 }
 
-export async function findKernelSpec(
-  name: string,
-): Promise<KernelResources> {
+export async function findKernelSpec(name: string): Promise<KernelResources> {
   const specs = await findAllKernelSpecs();
   const spec = specs[name];
   if (!spec) {

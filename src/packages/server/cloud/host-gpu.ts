@@ -14,11 +14,7 @@ export function normalizeMachineGpuInPlace(
   const gpuType = gpuTypeRaw.toLowerCase();
   const gpuCount = machine.gpu_count ?? 0;
   const gpuEnabled =
-    wantsGpu === true
-      ? true
-      : wantsGpu === false
-        ? false
-        : gpuCount > 0;
+    wantsGpu === true ? true : wantsGpu === false ? false : gpuCount > 0;
 
   if (!gpuEnabled) {
     delete machine.gpu_type;

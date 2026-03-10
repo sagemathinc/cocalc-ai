@@ -45,7 +45,10 @@ import {
 } from "@cocalc/util/db-schema/subscriptions";
 import { capitalize, currency } from "@cocalc/util/misc";
 import { moneyRound2Up } from "@cocalc/util/money";
-import { cancelSubscription, getSubscriptions as getSubscriptionsUsingApi } from "./api";
+import {
+  cancelSubscription,
+  getSubscriptions as getSubscriptionsUsingApi,
+} from "./api";
 import Export from "./export";
 import Refresh from "./refresh";
 import UnpaidSubscriptions from "./unpaid-subscriptions";
@@ -509,9 +512,7 @@ function SubscriptionModal({ subscription, getSubscriptions, onClose }) {
       onCancel={onClose}
     >
       <Space style={{ width: "100%" }} orientation="vertical">
-        <SubscriptionDescription
-          metadata={subscription.metadata}
-        />
+        <SubscriptionDescription metadata={subscription.metadata} />
         <div>
           Status: <SubscriptionStatus status={subscription.status} />
         </div>

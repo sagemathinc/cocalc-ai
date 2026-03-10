@@ -34,16 +34,25 @@ export function compactBuildTimestamp(input?: Date | string | number): string {
   return iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
-export function shortGitCommit(commit?: string | null, length = 12): string | undefined {
+export function shortGitCommit(
+  commit?: string | null,
+  length = 12,
+): string | undefined {
   const normalized = `${commit ?? ""}`.trim().toLowerCase();
   if (!normalized) return;
   return normalized.slice(0, Math.max(4, length));
 }
 
-export function normalizeHashFragment(value?: string | null, length = 8): string | undefined {
+export function normalizeHashFragment(
+  value?: string | null,
+  length = 8,
+): string | undefined {
   const normalized = `${value ?? ""}`.trim().toLowerCase();
   if (!normalized) return;
-  return normalized.replace(/[^a-z0-9]/g, "").slice(0, Math.max(4, length)) || undefined;
+  return (
+    normalized.replace(/[^a-z0-9]/g, "").slice(0, Math.max(4, length)) ||
+    undefined
+  );
 }
 
 export function makeBuildId(opts: BuildIdentityInput = {}): string {
@@ -61,7 +70,9 @@ export function makeBuildId(opts: BuildIdentityInput = {}): string {
   return parts.join("-");
 }
 
-export function createBuildIdentity(opts: BuildIdentityInput = {}): BuildIdentity {
+export function createBuildIdentity(
+  opts: BuildIdentityInput = {},
+): BuildIdentity {
   const built_at =
     opts.builtAt instanceof Date
       ? opts.builtAt.toISOString()

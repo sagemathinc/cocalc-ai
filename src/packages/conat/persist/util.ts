@@ -43,7 +43,11 @@ Also getAll using start_seq:
 import { assertHasWritePermission } from "./auth";
 import { pstream, PersistentStream } from "./storage";
 import { join } from "path";
-import { syncFiles, ensureContainingDirectoryExists, statSync } from "./context";
+import {
+  syncFiles,
+  ensureContainingDirectoryExists,
+  statSync,
+} from "./context";
 
 // this is per-server -- and "user" means where the resource is, usually
 // a given project.  E.g., 500 streams in a project, across many users.
@@ -113,11 +117,7 @@ function resolveLocalPath(
   if (hostMatch) {
     const [, hostId, rest = ""] = hostMatch;
     if (syncFiles.localHosts) {
-      const base = resolveTemplateBase(
-        syncFiles.localHosts,
-        "host_id",
-        hostId,
-      );
+      const base = resolveTemplateBase(syncFiles.localHosts, "host_id", hostId);
       return rest ? join(base, rest) : base;
     }
   }

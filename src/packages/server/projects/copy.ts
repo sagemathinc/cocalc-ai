@@ -135,9 +135,7 @@ function normalizeBackupPath({
   return normalized;
 }
 
-async function getHostIds(
-  project_ids: string[],
-): Promise<Map<string, string>> {
+async function getHostIds(project_ids: string[]): Promise<Map<string, string>> {
   const { rows } = await getPool().query<{
     project_id: string;
     host_id: string | null;
@@ -282,11 +280,7 @@ export async function copyProjectFiles({
   let localCount = 0;
 
   if (remoteDests.length && !skip_queue) {
-    if (
-      srcPaths.some(
-        (p) => p === "/scratch" || p.startsWith("/scratch/"),
-      )
-    ) {
+    if (srcPaths.some((p) => p === "/scratch" || p.startsWith("/scratch/"))) {
       throw new Error(
         "copying from /scratch across hosts is not supported because /scratch is not backed up",
       );

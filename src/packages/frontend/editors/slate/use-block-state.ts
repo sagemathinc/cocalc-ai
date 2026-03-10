@@ -22,10 +22,7 @@ export function useBlockState({
   blockChunkTargetChars,
 }: UseBlockStateOptions) {
   const nextBlockIdRef = useRef<number>(1);
-  const newBlockId = useCallback(
-    () => `b${nextBlockIdRef.current++}`,
-    [],
-  );
+  const newBlockId = useCallback(() => `b${nextBlockIdRef.current++}`, []);
   const [blocks, setBlocks] = useState<string[]>(() =>
     splitMarkdownToBlocks(initialValue, { targetChars: blockChunkTargetChars }),
   );
@@ -39,7 +36,9 @@ export function useBlockState({
   const syncRemoteVersionLength = useCallback((nextBlocks: string[]) => {
     const prevVersions = remoteVersionRef.current;
     if (prevVersions.length === nextBlocks.length) return;
-    remoteVersionRef.current = nextBlocks.map((_, idx) => prevVersions[idx] ?? 0);
+    remoteVersionRef.current = nextBlocks.map(
+      (_, idx) => prevVersions[idx] ?? 0,
+    );
   }, []);
 
   const bumpRemoteVersionAt = useCallback((index: number, length: number) => {
@@ -59,24 +58,21 @@ export function useBlockState({
     blockIdsRef.current = blockIds;
   }, [blockIds]);
 
-  const bumpRemoteVersions = useCallback(
-    (nextBlocks: string[]) => {
-      const prevBlocks = blocksRef.current;
-      const prevVersions = remoteVersionRef.current;
-      if (nextBlocks.length !== prevBlocks.length) {
-        remoteVersionRef.current = nextBlocks.map(
-          (_, idx) => (prevVersions[idx] ?? 0) + 1,
-        );
-        return;
-      }
-      const nextVersions = nextBlocks.map((block, idx) => {
-        if (block !== prevBlocks[idx]) return (prevVersions[idx] ?? 0) + 1;
-        return prevVersions[idx] ?? 0;
-      });
-      remoteVersionRef.current = nextVersions;
-    },
-    [],
-  );
+  const bumpRemoteVersions = useCallback((nextBlocks: string[]) => {
+    const prevBlocks = blocksRef.current;
+    const prevVersions = remoteVersionRef.current;
+    if (nextBlocks.length !== prevBlocks.length) {
+      remoteVersionRef.current = nextBlocks.map(
+        (_, idx) => (prevVersions[idx] ?? 0) + 1,
+      );
+      return;
+    }
+    const nextVersions = nextBlocks.map((block, idx) => {
+      if (block !== prevBlocks[idx]) return (prevVersions[idx] ?? 0) + 1;
+      return prevVersions[idx] ?? 0;
+    });
+    remoteVersionRef.current = nextVersions;
+  }, []);
 
   const updateBlockIdsForRemote = useCallback(
     (nextBlocks: string[]) => {
@@ -104,9 +100,14 @@ export function useBlockState({
       valueRef.current = markdown;
       const nextBlocks =
         prevBlocks.length > 0 && prevMarkdown.length > 0
-          ? splitMarkdownToBlocksIncremental(prevMarkdown, markdown, prevBlocks, {
-              targetChars: blockChunkTargetChars,
-            })
+          ? splitMarkdownToBlocksIncremental(
+              prevMarkdown,
+              markdown,
+              prevBlocks,
+              {
+                targetChars: blockChunkTargetChars,
+              },
+            )
           : splitMarkdownToBlocks(markdown, {
               targetChars: blockChunkTargetChars,
             });
@@ -115,7 +116,12 @@ export function useBlockState({
       setBlocks(nextBlocks);
       updateBlockIdsForRemote(nextBlocks);
     },
-    [bumpRemoteVersions, blockChunkTargetChars, updateBlockIdsForRemote, valueRef],
+    [
+      bumpRemoteVersions,
+      blockChunkTargetChars,
+      updateBlockIdsForRemote,
+      valueRef,
+    ],
   );
 
   return {

@@ -142,7 +142,7 @@ export function getRender(slateType: string): React.FC<RenderElementProps> {
       return staticRenderer[slateType];
     }
     console.log(
-      `WARNING -- getRender: using generic plugin for type '${slateType}'; this is NOT likely to work.`
+      `WARNING -- getRender: using generic plugin for type '${slateType}'; this is NOT likely to work.`,
     );
     return renderer["generic"];
   }
@@ -154,12 +154,12 @@ interface StaticRenderElementProps extends RenderElementProps {
 }
 
 export function getStaticRender(
-  slateType: string
+  slateType: string,
 ): React.FC<StaticRenderElementProps> {
   //console.log("getStaticRender", slateType);
   if (staticRenderer[slateType] == null) {
     console.log(
-      `WARNING -- getStaticRender: using generic plugin for type '${slateType}'; this is NOT likely to work.`
+      `WARNING -- getStaticRender: using generic plugin for type '${slateType}'; this is NOT likely to work.`,
     );
     return renderer["generic"];
   }
@@ -167,11 +167,11 @@ export function getStaticRender(
 }
 
 export function getMarkdownToSlate(
-  tokenType: string = ""
+  tokenType: string = "",
 ): markdownToSlateFunction {
   if (markdownToSlate[tokenType] == null) {
     console.log(
-      `getMarkdownToSlate: using generic plugin for type '${tokenType}'`
+      `getMarkdownToSlate: using generic plugin for type '${tokenType}'`,
     );
     return markdownToSlate["generic"];
   }
@@ -179,11 +179,11 @@ export function getMarkdownToSlate(
 }
 
 export function getSlateToMarkdown(
-  slateType: string = ""
+  slateType: string = "",
 ): slateToMarkdownFunction {
   if (slateToMarkdown[slateType] == null) {
     console.log(
-      `getSlateToMarkdown: using generic plugin for type '${slateType}'`
+      `getSlateToMarkdown: using generic plugin for type '${slateType}'`,
     );
     return slateToMarkdown["generic"];
   }
@@ -191,7 +191,7 @@ export function getSlateToMarkdown(
 }
 
 export function getChildInfoHook(
-  slateType: string
+  slateType: string,
 ): childInfoHookFunction | undefined {
   return childInfoHooks[slateType];
 }

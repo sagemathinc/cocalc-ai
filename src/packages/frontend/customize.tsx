@@ -186,15 +186,14 @@ export interface CustomizeState {
   project_rootfs_default_image_gpu?: string;
   project_rootfs_prepull_images?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
-  "project_hosts_hyperstack_enabled"?: boolean;
-  "project_hosts_lambda_enabled"?: boolean;
+  project_hosts_hyperstack_enabled?: boolean;
+  project_hosts_lambda_enabled?: boolean;
 
   ollama?: TypedMap<{ [key: string]: TypedMap<CustomLLMPublic> }>;
   custom_openai?: TypedMap<{ [key: string]: TypedMap<CustomLLMPublic> }>;
   selectable_llms: List<string>;
   default_llm?: string;
   user_defined_llm: boolean;
-
 
   i18n?: List<Locale>;
 
@@ -238,8 +237,7 @@ export class CustomizeStore extends Store<CustomizeState> {
 
 export class CustomizeActions extends Actions<CustomizeState> {
   disableCommercializationParameters = () => {
-    this.setState({
-    });
+    this.setState({});
   };
 
   reload = async () => {

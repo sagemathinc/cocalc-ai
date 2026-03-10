@@ -180,7 +180,7 @@ CodeMirror.defineExtension(
           } else {
             // do the wrapping
             src = `${left}${space ? " " : ""}${
-              src ? src : how.default ?? ""
+              src ? src : (how.default ?? "")
             }${right}`;
           }
           return src;

@@ -11,8 +11,10 @@ import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-m
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { TaskActions } from "./actions";
 
-export interface ReactTasksMarkdownSurface
-  extends Omit<TasksMarkdownSurface, "MarkdownEditor" | "StaticMarkdown" | "MostlyStaticMarkdown"> {
+export interface ReactTasksMarkdownSurface extends Omit<
+  TasksMarkdownSurface,
+  "MarkdownEditor" | "StaticMarkdown" | "MostlyStaticMarkdown"
+> {
   MarkdownEditor: ComponentType<TasksMarkdownEditorProps>;
   StaticMarkdown: ComponentType<TasksStaticMarkdownProps>;
   MostlyStaticMarkdown: ComponentType<TasksMostlyStaticMarkdownProps>;
@@ -21,7 +23,8 @@ export interface ReactTasksMarkdownSurface
 export const defaultTasksMarkdownSurface: ReactTasksMarkdownSurface = {
   MarkdownEditor:
     MarkdownInput as unknown as ComponentType<TasksMarkdownEditorProps>,
-  StaticMarkdown: StaticMarkdown as unknown as ComponentType<TasksStaticMarkdownProps>,
+  StaticMarkdown:
+    StaticMarkdown as unknown as ComponentType<TasksStaticMarkdownProps>,
   MostlyStaticMarkdown:
     MostlyStaticMarkdown as unknown as ComponentType<TasksMostlyStaticMarkdownProps>,
 };

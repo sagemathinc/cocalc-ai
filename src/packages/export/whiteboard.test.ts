@@ -23,8 +23,24 @@ describe("whiteboard export", () => {
     await writeJsonl(boardPath, [
       { type: "page", id: "page-a", data: { pos: 0 } },
       { type: "page", id: "page-b", data: { pos: 1 } },
-      { id: "elt-1", type: "text", page: "page-a", x: 0, y: 0, z: 1, str: "# First page" },
-      { id: "elt-2", type: "note", page: "page-b", x: 0, y: 10, z: 1, str: "Second page" },
+      {
+        id: "elt-1",
+        type: "text",
+        page: "page-a",
+        x: 0,
+        y: 0,
+        z: 1,
+        str: "# First page",
+      },
+      {
+        id: "elt-2",
+        type: "note",
+        page: "page-b",
+        x: 0,
+        y: 10,
+        z: 1,
+        str: "Second page",
+      },
     ]);
 
     const bundle = await collectWhiteboardExport({
@@ -33,14 +49,19 @@ describe("whiteboard export", () => {
     });
 
     expect(bundle.manifest.kind).toBe("board");
-    expect((bundle.manifest as any).entrypoints.machine_index).toBe("pages/index.json");
+    expect((bundle.manifest as any).entrypoints.machine_index).toBe(
+      "pages/index.json",
+    );
     const readme = `${bundle.files.find((file) => file.path === "README.md")?.content ?? ""}`;
     expect(readme).toContain("canonical reconstructable document stream");
     const pageIndex = JSON.parse(
       `${bundle.files.find((file) => file.path === "pages/index.json")?.content ?? "[]"}`,
     );
     expect(pageIndex).toHaveLength(2);
-    expect(pageIndex[0]).toMatchObject({ page_id: "page-a", title: "First page" });
+    expect(pageIndex[0]).toMatchObject({
+      page_id: "page-a",
+      title: "First page",
+    });
     const content = `${bundle.files.find((file) => file.path === "pages/0001-page-a/content.md")?.content ?? ""}`;
     expect(content).toContain("# First page");
     const documentMd = `${bundle.files.find((file) => file.path === "document.md")?.content ?? ""}`;
@@ -53,7 +74,15 @@ describe("whiteboard export", () => {
     const slidesPath = path.join(tmp, "deck.slides");
     await writeJsonl(slidesPath, [
       { type: "page", id: "slide-a", data: { pos: 0 } },
-      { id: "elt-1", type: "text", page: "slide-a", x: 0, y: 0, z: 1, str: "# Intro" },
+      {
+        id: "elt-1",
+        type: "text",
+        page: "slide-a",
+        x: 0,
+        y: 0,
+        z: 1,
+        str: "# Intro",
+      },
       {
         id: "notes-1",
         type: "speaker_notes",

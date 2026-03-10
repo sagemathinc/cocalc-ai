@@ -53,7 +53,8 @@ function extensionOptions(): Option[] {
       value: id,
       label: (
         <span>
-          <Icon name={icon} /> {label} <span style={{ opacity: 0.65 }}>({id})</span>
+          <Icon name={icon} /> {label}{" "}
+          <span style={{ opacity: 0.65 }}>({id})</span>
         </span>
       ),
     });

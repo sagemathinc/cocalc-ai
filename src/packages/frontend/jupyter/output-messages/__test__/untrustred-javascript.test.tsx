@@ -11,7 +11,7 @@ describe("basic test", () => {
   it("checks the output", () => {
     render(<UntrustedJavascript />);
     expect(
-      screen.getByText(/not running untrusted Javascript/i)
+      screen.getByText(/not running untrusted Javascript/i),
     ).toBeInTheDocument();
   });
 });

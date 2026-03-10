@@ -313,8 +313,10 @@ export interface ChatMessageRecordV2 extends ChatMessage {
   schema_version: number;
 }
 
-export interface BuildChatMessageRecordV2Options
-  extends Omit<BuildChatMessageOptions, "schema_version"> {
+export interface BuildChatMessageRecordV2Options extends Omit<
+  BuildChatMessageOptions,
+  "schema_version"
+> {
   message_id: string;
   thread_id: string;
   schema_version?: number;

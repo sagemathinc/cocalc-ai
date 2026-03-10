@@ -188,7 +188,7 @@ export async function x11_channel(
   primus: any,
   logger: any,
   path: string,
-  display: number
+  display: number,
 ): Promise<string> {
   const name = `x11:${path}`;
   if (x11_channels[name] === undefined) {

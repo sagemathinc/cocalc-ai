@@ -51,10 +51,13 @@ export default function Memberships() {
   const tiersList = tierConfig?.tiers ?? [];
   const tierById = useMemo(
     () =>
-      tiersList.reduce((acc, tier) => {
-        acc[tier.id] = tier;
-        return acc;
-      }, {} as Record<string, MembershipTier>),
+      tiersList.reduce(
+        (acc, tier) => {
+          acc[tier.id] = tier;
+          return acc;
+        },
+        {} as Record<string, MembershipTier>,
+      ),
     [tiersList],
   );
   const currentTier = tierById[currentClass];
@@ -146,11 +149,7 @@ export default function Memberships() {
         elsewhere.
       </Paragraph>
       {error && (
-        <Alert
-          type="error"
-          message={error}
-          style={{ marginBottom: "15px" }}
-        />
+        <Alert type="error" message={error} style={{ marginBottom: "15px" }} />
       )}
       <div style={{ marginBottom: "20px" }}>
         <Radio.Group

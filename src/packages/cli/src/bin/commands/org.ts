@@ -4,11 +4,16 @@ export type OrgCommandDeps = {
   withContext: any;
 };
 
-export function registerOrgCommand(program: Command, deps: OrgCommandDeps): Command {
+export function registerOrgCommand(
+  program: Command,
+  deps: OrgCommandDeps,
+): Command {
   const { withContext } = deps;
 
   const org = program.command("org").description("organization operations");
-  const orgToken = org.command("token").description("organization user auth tokens");
+  const orgToken = org
+    .command("token")
+    .description("organization user auth tokens");
 
   orgToken
     .command("create")
@@ -40,7 +45,9 @@ export function registerOrgCommand(program: Command, deps: OrgCommandDeps): Comm
             throw new Error("--expire-seconds must be a positive number");
           }
           const expire =
-            expireSeconds == null ? undefined : Date.now() + expireSeconds * 1000;
+            expireSeconds == null
+              ? undefined
+              : Date.now() + expireSeconds * 1000;
 
           const issued = await ctx.hub.org.createToken({
             user,
@@ -83,4 +90,3 @@ export function registerOrgCommand(program: Command, deps: OrgCommandDeps): Comm
 
   return org;
 }
-

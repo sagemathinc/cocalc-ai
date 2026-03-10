@@ -15,8 +15,7 @@ import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { path_split } from "@cocalc/util/misc";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
-export const NAVIGATOR_SUBMIT_PROMPT_EVENT =
-  "cocalc:navigator:submit-prompt";
+export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
 const NAVIGATOR_SYNC_READY_TIMEOUT_MS = 12_000;
 const NAVIGATOR_THREAD_IDENTITY_TIMEOUT_MS = 15_000;
 let navigatorIntentQueueMemory: NavigatorSubmitPromptDetail[] = [];
@@ -107,7 +106,10 @@ async function waitForThreadReady(opts: {
   threadKey?: string;
   timeoutMs?: number;
 }): Promise<boolean> {
-  const timeoutMs = Math.max(500, opts.timeoutMs ?? NAVIGATOR_SYNC_READY_TIMEOUT_MS);
+  const timeoutMs = Math.max(
+    500,
+    opts.timeoutMs ?? NAVIGATOR_SYNC_READY_TIMEOUT_MS,
+  );
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     const state = opts.actions?.syncdb?.get_state?.();
@@ -142,8 +144,7 @@ function pickNavigatorSession({
     if (match) return match;
   }
   return (
-    candidates.find((record) => record.status !== "archived") ??
-    candidates[0]
+    candidates.find((record) => record.status !== "archived") ?? candidates[0]
   );
 }
 
@@ -275,7 +276,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
     const basePrompt = `${opts.prompt ?? ""}`.trim();
     if (!project_id || !basePrompt) return false;
     const input = basePrompt;
-    const account_id = `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+    const account_id =
+      `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
     const workspaceTarget =
       opts.path && account_id
         ? await ensureWorkspaceChatForPath({
@@ -284,7 +286,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
             path: opts.path,
           })
         : null;
-    const targetChatPath = workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
+    const targetChatPath =
+      workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
 
     const preferredThreadKey = workspaceTarget
       ? undefined
@@ -340,7 +343,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
 
     await ensureNavigatorChatDirectory(project_id, session.chat_path);
 
-    const threadKey = `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
+    const threadKey =
+      `${preferredThreadKey ?? session.thread_key ?? ""}`.trim();
 
     const instanceKey = "navigator-intent-dispatch";
     const actions =
@@ -403,9 +407,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
 
     const nextThreadKey =
       replyThreadKey ||
-      (typeof timeStamp === "string"
-        ? `${new Date(timeStamp).valueOf()}`
-        : "");
+      (typeof timeStamp === "string" ? `${new Date(timeStamp).valueOf()}` : "");
     if (nextThreadKey && !workspaceTarget) {
       saveNavigatorSelectedThreadKey(nextThreadKey);
     }
@@ -437,7 +439,8 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
           project_id,
           account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
           chat_path: resolveNavigatorChatPath(project_id),
-          thread_key: `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
+          thread_key:
+            `${loadNavigatorSelectedThreadKey(project_id) ?? ""}`.trim(),
           title: "Navigator",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

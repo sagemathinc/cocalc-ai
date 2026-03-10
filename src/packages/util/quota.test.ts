@@ -364,28 +364,22 @@ describe("main quota functionality", () => {
       always_running: false,
     });
   });
-
 });
 
 describe("test pay-you-go-quota inclusion", () => {
   it("combines with all the others being empty", () => {
-    const z = quota(
-      { memory: 8000 },
-      {},
-      undefined,
-      {
-        quota: {
-          memory: 5000,
-          cores: 2,
-          mintime: 3600,
-          disk_quota: 5500,
-          network: 1,
-          always_running: 1,
-          member_host: 1,
-        },
-        account_id: "752be8c3-ff74-41d8-ad1c-b2fb92c3e7eb",
+    const z = quota({ memory: 8000 }, {}, undefined, {
+      quota: {
+        memory: 5000,
+        cores: 2,
+        mintime: 3600,
+        disk_quota: 5500,
+        network: 1,
+        always_running: 1,
+        member_host: 1,
       },
-    );
+      account_id: "752be8c3-ff74-41d8-ad1c-b2fb92c3e7eb",
+    });
     expect(z).toStrictEqual({
       always_running: true,
       cpu_limit: 2,

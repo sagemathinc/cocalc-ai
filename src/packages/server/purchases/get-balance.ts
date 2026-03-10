@@ -1,6 +1,10 @@
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
-import { moneyToDbString, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToDbString,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 
 /*
 compute the sum of the following, over all rows of the table for a given account_id:

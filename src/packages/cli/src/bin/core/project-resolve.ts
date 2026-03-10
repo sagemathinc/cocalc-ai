@@ -49,9 +49,15 @@ function setCachedProject<W extends ProjectLike>(
   projectCacheTtlMs: number,
 ): void {
   const expiresAt = Date.now() + projectCacheTtlMs;
-  ctx.projectCache.set(projectCacheKey(project.project_id), { project, expiresAt });
+  ctx.projectCache.set(projectCacheKey(project.project_id), {
+    project,
+    expiresAt,
+  });
   if (project.title) {
-    ctx.projectCache.set(projectCacheKey(project.title), { project, expiresAt });
+    ctx.projectCache.set(projectCacheKey(project.title), {
+      project,
+      expiresAt,
+    });
   }
 }
 
@@ -155,7 +161,9 @@ export async function resolveProject<W extends ProjectLike = ProjectLike>(
   return rows[0];
 }
 
-export async function resolveProjectFromArgOrContext<W extends ProjectLike = ProjectLike>({
+export async function resolveProjectFromArgOrContext<
+  W extends ProjectLike = ProjectLike,
+>({
   ctx,
   identifier,
   cwd,
@@ -167,7 +175,9 @@ export async function resolveProjectFromArgOrContext<W extends ProjectLike = Pro
   identifier?: string;
   cwd?: string;
   projectCacheTtlMs: number;
-  readProjectContext: (cwd?: string) => { project_id?: string; title?: string } | undefined;
+  readProjectContext: (
+    cwd?: string,
+  ) => { project_id?: string; title?: string } | undefined;
   projectContextPath: (cwd?: string) => string;
 }): Promise<W> {
   const value = identifier?.trim();
@@ -221,7 +231,9 @@ export async function resolveAccountByIdentifier(
     if (`${row.account_id}`.toLowerCase() === lowerValue) return true;
     if (`${row.email_address ?? ""}`.toLowerCase() === lowerValue) return true;
     if (`${row.name ?? ""}`.toLowerCase() === lowerValue) return true;
-    const full = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim().toLowerCase();
+    const full = `${row.first_name ?? ""} ${row.last_name ?? ""}`
+      .trim()
+      .toLowerCase();
     return full === lowerValue;
   });
 
@@ -261,14 +273,20 @@ export async function resolveHost<H extends HostLike = HostLike>(
     throw new Error(`host '${identifier}' not found`);
   }
   if (matches.length > 1) {
-    throw new Error(`host name '${identifier}' is ambiguous: ${matches.map((x) => x.id).join(", ")}`);
+    throw new Error(
+      `host name '${identifier}' is ambiguous: ${matches.map((x) => x.id).join(", ")}`,
+    );
   }
   return matches[0];
 }
 
 export async function listHosts<H extends HostLike = HostLike>(
   ctx: ProjectCacheContext,
-  opts: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean } = {},
+  opts: {
+    include_deleted?: boolean;
+    catalog?: boolean;
+    admin_view?: boolean;
+  } = {},
 ): Promise<H[]> {
   const hosts = (await ctx.hub.hosts.listHosts({
     include_deleted: !!opts.include_deleted,

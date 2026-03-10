@@ -108,7 +108,7 @@ export async function init_gitconfig(winston: {
       return;
     } catch {}
     winston.debug(
-      `git: writing '${EXCLUDES_FN}' file and setting global git config`
+      `git: writing '${EXCLUDES_FN}' file and setting global git config`,
     );
     await writeFile(EXCLUDES_FN, EXCLUDES, "utf8");
     await executeCode({

@@ -25,9 +25,8 @@ export default async function find(
   let selectedOptions = options ?? [];
   let printfFormat: string | undefined;
   if (platform() === "darwin") {
-    ({ options: selectedOptions, printfFormat } = rewriteDarwinPrintf(
-      selectedOptions,
-    ));
+    ({ options: selectedOptions, printfFormat } =
+      rewriteDarwinPrintf(selectedOptions));
   }
   const output = await exec({
     cmd: "find",
@@ -96,7 +95,9 @@ function applyPrintfProjection(
     return line;
   });
   const projected =
-    lines.length === 0 ? "" : lines.filter((line) => line.length > 0).join("\n") + "\n";
+    lines.length === 0
+      ? ""
+      : lines.filter((line) => line.length > 0).join("\n") + "\n";
   return { ...output, stdout: Buffer.from(projected) };
 }
 

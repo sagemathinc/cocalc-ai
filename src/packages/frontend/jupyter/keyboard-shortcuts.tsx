@@ -418,8 +418,8 @@ const CommandList: React.FC<CommandListProps> = React.memo(
           m == null
             ? capitalize_each_word(x.name)
             : isIntlMessage(m)
-            ? intl.formatMessage(m)
-            : m;
+              ? intl.formatMessage(m)
+              : m;
         if (desc == null) {
           continue;
         }
@@ -482,8 +482,8 @@ export const KeyboardShortcuts: React.FC<KeyboardShortcutsProps> = React.memo(
           const title = !m
             ? name
             : isIntlMessage(m)
-            ? intl.formatMessage(m)
-            : m;
+              ? intl.formatMessage(m)
+              : m;
           taken[json(s)!] = title;
         }
       }

@@ -101,9 +101,7 @@ function stripAnsi(text: string): string {
 }
 
 function extractModelNotFound(text: string): string | undefined {
-  const m = text.match(
-    /The requested model ['"]([^'"]+)['"] does not exist/i,
-  );
+  const m = text.match(/The requested model ['"]([^'"]+)['"] does not exist/i);
   return m?.[1];
 }
 
@@ -245,13 +243,11 @@ export class CodexExecAgent implements AcpAgent {
       }
     }
     const siteKeyGovernor = getCodexSiteKeyGovernor();
-    const executeAttempt = async (
-      {
-        forceRefreshSiteKey = false,
-      }: {
-        forceRefreshSiteKey?: boolean;
-      } = {},
-    ): Promise<{
+    const executeAttempt = async ({
+      forceRefreshSiteKey = false,
+    }: {
+      forceRefreshSiteKey?: boolean;
+    } = {}): Promise<{
       errors: string[];
       finalResponse: string;
       latestUsage?: Usage;
@@ -393,7 +389,10 @@ export class CodexExecAgent implements AcpAgent {
       proc.stdin?.end();
 
       if (siteKeyEnforced && siteKeyGovernor && accountId && projectId) {
-        const pollMs = Math.max(30_000, siteKeyGovernor.pollIntervalMs ?? 120_000);
+        const pollMs = Math.max(
+          30_000,
+          siteKeyGovernor.pollIntervalMs ?? 120_000,
+        );
         quotaPollTimer = setInterval(() => {
           if (quotaCheckInFlight || quotaStopReason) return;
           quotaCheckInFlight = true;
@@ -619,7 +618,8 @@ export class CodexExecAgent implements AcpAgent {
       result = await executeAttempt({ forceRefreshSiteKey: true });
     }
 
-    const errorText = result.errors.length > 0 ? formatCodexError(result.errors) : "";
+    const errorText =
+      result.errors.length > 0 ? formatCodexError(result.errors) : "";
     if (errorText) {
       await stream({ type: "error", error: errorText });
     }
@@ -843,6 +843,10 @@ export class CodexExecAgent implements AcpAgent {
           cwd,
           preContentCache,
         );
+        const commandFinished =
+          item.exit_code !== undefined ||
+          item.aggregated_output !== undefined ||
+          item.status === "completed";
         {
           const readInfo = this.parseReadOnlyCommand(item.command, cwd);
           if (readInfo) {
@@ -871,7 +875,7 @@ export class CodexExecAgent implements AcpAgent {
           const writePaths = this.parseWriteCommand(item.command, cwd);
           const commandSucceeded =
             item.exit_code == null || item.exit_code === 0;
-          if (commandSucceeded) {
+          if (commandFinished && commandSucceeded) {
             for (const pathAbs of writePaths) {
               // Keep write heuristics conservative: only emit when the command
               // appears successful and the target resolves to an actual file.

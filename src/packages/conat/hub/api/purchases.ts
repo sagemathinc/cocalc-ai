@@ -47,7 +47,9 @@ export interface LLMUsageStatus {
 export interface Purchases {
   getBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   getMinBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
-  getMembership: (opts?: { account_id?: string }) => Promise<MembershipResolution>;
+  getMembership: (opts?: {
+    account_id?: string;
+  }) => Promise<MembershipResolution>;
   getMembershipDetails: (opts?: {
     account_id?: string;
     user_account_id?: string;

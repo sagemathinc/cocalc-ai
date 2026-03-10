@@ -11,7 +11,10 @@ type PaymentSourceCacheEntry = {
 };
 
 const paymentSourceCache = new Map<string, PaymentSourceCacheEntry>();
-const paymentSourceInflight = new Map<string, Promise<PaymentSourceCacheEntry>>();
+const paymentSourceInflight = new Map<
+  string,
+  Promise<PaymentSourceCacheEntry>
+>();
 
 function cacheKey(projectId?: string): string {
   return projectId?.trim() || "";
@@ -78,6 +81,9 @@ export function getCodexPaymentSourceShortLabel(
       source === "site-api-key"
     ) {
       return "OpenAI API Key";
+    }
+    if (source === "shared-home") {
+      return "Local Codex auth";
     }
     return "Unconfigured";
   }

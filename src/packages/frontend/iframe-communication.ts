@@ -72,21 +72,19 @@ function all_opened_files(): undefined | object {
       const ps = redux.getProjectStore(project_id);
       const files = ps.get("open_files").keySeq().toArray();
       return [project_id, files];
-    })
+    }),
   );
   return all_files.filter((files) => files.length > 0).toJS();
 }
 
 // this gets and saves a list of allowed origin hosts.
 // they're configured via site-settings (db-schema/site-defaults.ts)
-const get_allowed_hosts = memoizeOne(
-  async (): Promise<string[]> => {
-    const customize_store = redux.getStore("customize");
-    await customize_store.until_configured();
-    const hosts = customize_store.get_iframe_comm_hosts();
-    return hosts;
-  }
-);
+const get_allowed_hosts = memoizeOne(async (): Promise<string[]> => {
+  const customize_store = redux.getStore("customize");
+  await customize_store.until_configured();
+  const hosts = customize_store.get_iframe_comm_hosts();
+  return hosts;
+});
 
 // there are two cases: an allowed host starts with a "." or not
 // a "." implies the domain and all subdomains are allowed (i.e. origin ends with it)

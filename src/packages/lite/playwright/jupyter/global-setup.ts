@@ -28,11 +28,11 @@ function run(
     const stderr =
       typeof err?.stderr === "string"
         ? err.stderr
-        : err?.stderr?.toString?.() ?? "";
+        : (err?.stderr?.toString?.() ?? "");
     const stdout =
       typeof err?.stdout === "string"
         ? err.stdout
-        : err?.stdout?.toString?.() ?? "";
+        : (err?.stdout?.toString?.() ?? "");
     const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
     const rendered = detail ? `\n${detail}` : "";
     throw new Error(
@@ -43,21 +43,16 @@ function run(
 
 function detectPython(): string {
   const preferred = process.env.COCALC_JUPYTER_E2E_PYTHON?.trim();
-  const candidates = [
-    preferred,
-    "python3",
-    "python",
-  ].filter((x): x is string => typeof x === "string" && x.length > 0);
+  const candidates = [preferred, "python3", "python"].filter(
+    (x): x is string => typeof x === "string" && x.length > 0,
+  );
 
   const tried = new Set<string>();
   for (const candidate of candidates) {
     if (tried.has(candidate)) continue;
     tried.add(candidate);
     try {
-      run(candidate, [
-        "-c",
-        "import sys; print(sys.executable)",
-      ]);
+      run(candidate, ["-c", "import sys; print(sys.executable)"]);
       return candidate;
     } catch {
       // try next

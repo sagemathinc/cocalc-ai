@@ -42,7 +42,7 @@ const state: { [key: string]: PathState } = {};
 export function failing_to_save(
   path: string,
   hash: number,
-  expected_hash?: number
+  expected_hash?: number,
 ): boolean {
   if (expected_hash == null) {
     return false;

@@ -40,7 +40,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
         {" "}
         Tight
       </span>
-    </Checkbox>
+    </Checkbox>,
   );
 
   v.push(
@@ -63,7 +63,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
       }}
     >
       <Icon name={"list-ul"} />
-    </Button>
+    </Button>,
   );
 
   v.push(
@@ -86,7 +86,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
       }}
     >
       <Icon name={"list-ol"} />
-    </Button>
+    </Button>,
   );
 
   if (listProperties.start != null) {
@@ -99,7 +99,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
         min={0}
         value={listProperties.start}
         onChange={(value) => {
-          let start = typeof value == "string" ? parseInt(value) : value ?? 1;
+          let start = typeof value == "string" ? parseInt(value) : (value ?? 1);
           if (isNaN(start)) {
             start = 1;
           }
@@ -110,7 +110,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
           });
           ReactEditor.focus(editor);
         }}
-      />
+      />,
     );
   }
 
@@ -126,7 +126,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
       }}
     >
       <Icon name={"arrow-up"} />
-    </Button>
+    </Button>,
   );
 
   v.push(
@@ -141,7 +141,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
       }}
     >
       <Icon name={"arrow-down"} />
-    </Button>
+    </Button>,
   );
 
   v.push(
@@ -156,7 +156,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
       }}
     >
       <Icon name={"indent"} />
-    </Button>
+    </Button>,
   );
 
   v.push(
@@ -171,7 +171,7 @@ export const ListEdit: React.FC<Props> = ({ listProperties, editor }) => {
       }}
     >
       <Icon name={"outdent"} />
-    </Button>
+    </Button>,
   );
 
   return <div style={{ display: "flex" }}>{v}</div>;

@@ -28,7 +28,10 @@ describe("project host methods", () => {
     ]);
   }
 
-  async function insertProjectHost(host_id: string, name?: string): Promise<void> {
+  async function insertProjectHost(
+    host_id: string,
+    name?: string,
+  ): Promise<void> {
     await getPool().query(
       "INSERT INTO project_hosts (id, name, created, updated) VALUES ($1, $2, NOW(), NOW())",
       [host_id, name ?? `host-${host_id.slice(0, 8)}`],
@@ -103,7 +106,6 @@ describe("project host methods", () => {
       expect(assigned2.getTime()).toBeGreaterThan(assigned1.getTime());
       expect(await getProjectHost({ project_id: projectId })).toBe(hostId2);
     });
-
   });
 
   describe("unset_project_host", () => {

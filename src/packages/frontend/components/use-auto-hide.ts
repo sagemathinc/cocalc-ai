@@ -29,7 +29,7 @@ export default function useAutoHide({
         setVisible(false);
       }, hideDelay);
     }, 1000),
-    [enabled]
+    [enabled],
   );
 
   useEffect(() => {

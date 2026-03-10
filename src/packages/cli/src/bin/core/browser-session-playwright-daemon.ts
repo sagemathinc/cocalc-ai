@@ -110,7 +110,9 @@ function writeState(
   };
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   ensureParentDir(file);
-  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
+  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, {
+    encoding: "utf8",
+  });
   renameSync(tmp, file);
   return next;
 }
@@ -172,7 +174,9 @@ function readConfig(configPath: string): SpawnDaemonConfig {
 function writeJsonAtomic(path: string, value: unknown): void {
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   ensureParentDir(path);
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8" });
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: "utf8",
+  });
   renameSync(tmp, path);
 }
 
@@ -204,7 +208,10 @@ function parsePngDimensions(
   return { width, height };
 }
 
-async function waitForDomIdle(page: any, waitForIdleMs: number): Promise<boolean> {
+async function waitForDomIdle(
+  page: any,
+  waitForIdleMs: number,
+): Promise<boolean> {
   const idleMs =
     Number.isFinite(waitForIdleMs) && waitForIdleMs > 0
       ? Math.floor(waitForIdleMs)
@@ -289,7 +296,9 @@ async function main(): Promise<void> {
     target_url: config.target_url,
     created_at: nowIso(),
     started_at: nowIso(),
-    ...(config.executable_path ? { executable_path: config.executable_path } : {}),
+    ...(config.executable_path
+      ? { executable_path: config.executable_path }
+      : {}),
     ...(config.session_name ? { session_name: config.session_name } : {}),
     ipc_dir: ipcDir,
   });
@@ -347,7 +356,9 @@ async function main(): Promise<void> {
         throw new Error(`unsupported action '${request?.action ?? ""}'`);
       }
       const selector = `${request.selector ?? "body"}`.trim() || "body";
-      const timeoutMsRaw = Number(request.timeout_ms ?? config.timeout_ms ?? 30_000);
+      const timeoutMsRaw = Number(
+        request.timeout_ms ?? config.timeout_ms ?? 30_000,
+      );
       const timeoutMs =
         Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
           ? Math.floor(timeoutMsRaw)
@@ -369,7 +380,9 @@ async function main(): Promise<void> {
           ? Math.floor(viewportHeightRaw)
           : undefined;
       if ((viewportWidth == null) !== (viewportHeight == null)) {
-        throw new Error("viewport_width and viewport_height must be provided together");
+        throw new Error(
+          "viewport_width and viewport_height must be provided together",
+        );
       }
       if (viewportWidth != null && viewportHeight != null) {
         await page.setViewportSize({
@@ -408,7 +421,12 @@ async function main(): Promise<void> {
       }, selector)) as {
         page_url: string;
         selector: string;
-        selector_rect_css: { left: number; top: number; width: number; height: number };
+        selector_rect_css: {
+          left: number;
+          top: number;
+          width: number;
+          height: number;
+        };
         viewport_css: { width: number; height: number };
         device_pixel_ratio: number;
         scroll_x: number;

@@ -24,7 +24,9 @@ export const withNonfatalRange = (editor) => {
       const safeAt = normalizeLocation(editor, at);
       if (safeAt == null) {
         const selection =
-          editor.selection == null ? null : ensureRange(editor, editor.selection);
+          editor.selection == null
+            ? null
+            : ensureRange(editor, editor.selection);
         if (selection) {
           return selection;
         }

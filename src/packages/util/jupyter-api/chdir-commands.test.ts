@@ -9,7 +9,7 @@ describe("chdir-commands", () => {
   test("python", () => {
     expect(cdcmd("python", "/home/")).toBe("import os; os.chdir('/home/')");
     expect(cdcmd("python", "/home/foo'bar")).toBe(
-      "import os; os.chdir('/home/foo\\'bar')"
+      "import os; os.chdir('/home/foo\\'bar')",
     );
   });
 });

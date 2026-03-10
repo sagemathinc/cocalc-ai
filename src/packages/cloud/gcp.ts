@@ -5,7 +5,12 @@ import {
   ZoneOperationsClient,
 } from "@google-cloud/compute";
 import logger from "./logger";
-import type { CloudProvider, HostRuntime, HostSpec, RemoteInstance } from "./types";
+import type {
+  CloudProvider,
+  HostRuntime,
+  HostSpec,
+  RemoteInstance,
+} from "./types";
 
 type GcpCredentials = {
   service_account_json?: string;
@@ -46,7 +51,13 @@ function parseCredentials(creds: GcpCredentials) {
 
 function isNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
-  const anyErr = err as { code?: number; status?: number; statusCode?: number; message?: string; details?: string };
+  const anyErr = err as {
+    code?: number;
+    status?: number;
+    statusCode?: number;
+    message?: string;
+    details?: string;
+  };
   const code = anyErr.code ?? anyErr.status ?? anyErr.statusCode;
   if (code === 404 || code === 5) return true;
   const msg = String(anyErr.message ?? anyErr.details ?? "");
@@ -815,7 +826,8 @@ async function ensureSshMetadata(
       });
       return;
     } catch (err) {
-      const retryable = isFingerprintConflictError(err) && attempt < maxAttempts;
+      const retryable =
+        isFingerprintConflictError(err) && attempt < maxAttempts;
       if (!retryable) throw err;
       logger.warn("gcp.ensureSshMetadata retry after fingerprint conflict", {
         instance_id: runtime.instance_id,
@@ -868,14 +880,18 @@ async function ensureStartupScriptMetadata(
       });
       return;
     } catch (err) {
-      const retryable = isFingerprintConflictError(err) && attempt < maxAttempts;
+      const retryable =
+        isFingerprintConflictError(err) && attempt < maxAttempts;
       if (!retryable) throw err;
-      logger.warn("gcp.ensureStartupScriptMetadata retry after fingerprint conflict", {
-        instance_id: runtime.instance_id,
-        zone,
-        attempt,
-        err: String(err),
-      });
+      logger.warn(
+        "gcp.ensureStartupScriptMetadata retry after fingerprint conflict",
+        {
+          instance_id: runtime.instance_id,
+          zone,
+          attempt,
+          err: String(err),
+        },
+      );
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   }

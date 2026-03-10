@@ -66,7 +66,7 @@ CodeMirror.defineMode("gfm2", function (config) {
   }
   return (CodeMirror as any).multiplexingMode(
     CodeMirror.getMode(config, "gfm"),
-    ...options
+    ...options,
   );
 });
 
@@ -86,7 +86,7 @@ CodeMirror.defineMode("htmlmixed2", function (config) {
   }
   return (CodeMirror as any).multiplexingMode(
     CodeMirror.getMode(config, "htmlmixed"),
-    ...options
+    ...options,
   );
 });
 
@@ -106,7 +106,7 @@ CodeMirror.defineMode("stex2", function (config) {
   });
   return (CodeMirror as any).multiplexingMode(
     CodeMirror.getMode(config, "stex"),
-    ...options
+    ...options,
   );
 });
 
@@ -124,7 +124,7 @@ CodeMirror.defineMode("rnw", function (config) {
   return (CodeMirror as any).multiplexingMode(
     CodeMirror.getMode(config, "stex2"),
     block,
-    inline
+    inline,
   );
 });
 
@@ -143,7 +143,7 @@ CodeMirror.defineMode("rtex", function (config) {
   return (CodeMirror as any).multiplexingMode(
     CodeMirror.getMode(config, "stex2"),
     block,
-    inline
+    inline,
   );
 });
 
@@ -151,7 +151,7 @@ CodeMirror.defineMode("cython", (config) => {
   // FUTURE: need to figure out how to do this so that the name
   // of the mode is cython
   return (CodeMirror as any).multiplexingMode(
-    CodeMirror.getMode(config, "python")
+    CodeMirror.getMode(config, "python"),
   );
 });
 
@@ -159,7 +159,7 @@ CodeMirror.defineMode("mojo", (config) => {
   // FUTURE: need to figure out how to do this so that the name
   // of the mode is mojo or modular
   return (CodeMirror as any).multiplexingMode(
-    CodeMirror.getMode(config, "python")
+    CodeMirror.getMode(config, "python"),
   );
 });
 
@@ -208,6 +208,6 @@ CodeMirror.defineMode("rmd", function (config) {
 
   return (CodeMirror as any).multiplexingMode(
     CodeMirror.getMode(config, "yaml-frontmatter"),
-    ...options
+    ...options,
   );
 });

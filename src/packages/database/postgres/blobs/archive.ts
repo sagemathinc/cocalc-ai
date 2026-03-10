@@ -99,4 +99,3 @@ export async function exportPatches(string_id: string) {
   );
   return rows;
 }
-

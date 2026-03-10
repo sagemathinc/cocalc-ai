@@ -53,59 +53,59 @@ export function ProjectServerTiles({
       <Row gutter={gutter} style={newRowStyle}>
         {!student_project_functionality.disableJupyterLabServer &&
           isVisible("jupyterlab") && (
-          <Col sm={sm} md={md}>
-            <NewFileButton
-              name={<span style={{ fontSize: "14pt" }}>JupyterLab</span>}
-              icon={"ipynb"}
-              active={showNamedServer === "jupyterlab"}
-              on_click={() => toggleShowNamedServer("jupyterlab")}
-            />
-          </Col>
-        )}
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>JupyterLab</span>}
+                icon={"ipynb"}
+                active={showNamedServer === "jupyterlab"}
+                on_click={() => toggleShowNamedServer("jupyterlab")}
+              />
+            </Col>
+          )}
         {!student_project_functionality.disableVSCodeServer &&
           isVisible("code") && (
-          <Col sm={sm} md={md}>
-            <NewFileButton
-              name={<span style={{ fontSize: "14pt" }}>VS Code</span>}
-              icon={"vscode"}
-              active={showNamedServer === "code"}
-              on_click={() => toggleShowNamedServer("code")}
-            />
-          </Col>
-        )}
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>VS Code</span>}
+                icon={"vscode"}
+                active={showNamedServer === "code"}
+                on_click={() => toggleShowNamedServer("code")}
+              />
+            </Col>
+          )}
         {!student_project_functionality.disablePlutoServer &&
           isVisible("pluto") && (
-          <Col sm={sm} md={md}>
-            <NewFileButton
-              name={<span style={{ fontSize: "14pt" }}>Pluto (Julia)</span>}
-              icon={"julia"}
-              active={showNamedServer === "pluto"}
-              on_click={() => toggleShowNamedServer("pluto")}
-            />
-          </Col>
-        )}
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>Pluto (Julia)</span>}
+                icon={"julia"}
+                active={showNamedServer === "pluto"}
+                on_click={() => toggleShowNamedServer("pluto")}
+              />
+            </Col>
+          )}
         {!student_project_functionality.disableRServer &&
           isVisible("rserver") && (
-          <Col sm={sm} md={md}>
-            <NewFileButton
-              name={<span style={{ fontSize: "14pt" }}>{R_IDE}</span>}
-              icon={"r"}
-              active={showNamedServer === "rserver"}
-              on_click={() => toggleShowNamedServer("rserver")}
-            />
-          </Col>
-        )}
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>{R_IDE}</span>}
+                icon={"r"}
+                active={showNamedServer === "rserver"}
+                on_click={() => toggleShowNamedServer("rserver")}
+              />
+            </Col>
+          )}
         {!student_project_functionality.disableJupyterClassicServer &&
           isVisible("jupyter") && (
-          <Col sm={sm} md={md}>
-            <NewFileButton
-              name={<span style={{ fontSize: "14pt" }}>Jupyter Classic</span>}
-              icon={"ipynb"}
-              active={showNamedServer === "jupyter"}
-              on_click={() => toggleShowNamedServer("jupyter")}
-            />
-          </Col>
-        )}
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>Jupyter Classic</span>}
+                icon={"ipynb"}
+                active={showNamedServer === "jupyter"}
+                on_click={() => toggleShowNamedServer("jupyter")}
+              />
+            </Col>
+          )}
         {serversDisabled && (
           <Col sm={sm} md={md}>
             <NewFileButton

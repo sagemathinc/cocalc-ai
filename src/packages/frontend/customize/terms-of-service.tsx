@@ -10,7 +10,10 @@ export const TermsOfService: React.FC<{ style?: React.CSSProperties }> = ({
   style,
 }) => {
   const terms_of_service = useTypedRedux("customize", "terms_of_service");
-  const terms_of_service_url = useTypedRedux("customize", "terms_of_service_url");
+  const terms_of_service_url = useTypedRedux(
+    "customize",
+    "terms_of_service_url",
+  );
   if (terms_of_service?.length > 0) {
     return (
       <div

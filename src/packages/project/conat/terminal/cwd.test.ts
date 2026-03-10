@@ -1,7 +1,4 @@
-import {
-  parseDarwinCwdFromLsofOutput,
-  toHomeRelativePath,
-} from "./cwd";
+import { parseDarwinCwdFromLsofOutput, toHomeRelativePath } from "./cwd";
 
 describe("terminal cwd helpers", () => {
   test("parseDarwinCwdFromLsofOutput extracts cwd path from lsof output", () => {
@@ -19,7 +16,8 @@ describe("terminal cwd helpers", () => {
   });
 
   test("parseDarwinCwdFromLsofOutput supports CRLF", () => {
-    const stdout = "p9\r\nfcwd\r\nn/Users/bob/Library/Application Support/cocalc\r\n";
+    const stdout =
+      "p9\r\nfcwd\r\nn/Users/bob/Library/Application Support/cocalc\r\n";
     expect(parseDarwinCwdFromLsofOutput(stdout)).toBe(
       "/Users/bob/Library/Application Support/cocalc",
     );
@@ -40,4 +38,3 @@ describe("terminal cwd helpers", () => {
     expect(toHomeRelativePath("/tmp", "/Users/alice")).toBe("/tmp");
   });
 });
-

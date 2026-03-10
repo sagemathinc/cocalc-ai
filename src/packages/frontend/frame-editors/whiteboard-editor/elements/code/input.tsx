@@ -4,13 +4,7 @@
  */
 
 import { fromJS, Map } from "immutable";
-import {
-  MutableRefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
 import { three_way_merge as threeWayMerge } from "@cocalc/sync/editor/generic/util";
 import { redux } from "@cocalc/frontend/app-framework";
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";

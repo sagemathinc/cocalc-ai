@@ -65,7 +65,7 @@ register({
 
     const [width, setWidth] = useState<number | undefined>(toFloat(node.width));
     const [height, setHeight] = useState<number | undefined>(
-      toFloat(node.height)
+      toFloat(node.height),
     );
 
     useEffect(() => {
@@ -130,7 +130,7 @@ register({
                 setHeight(height);
               }}
               ref={imageRef}
-              src={urlTransform?.(src, 'img') ?? src}
+              src={urlTransform?.(src, "img") ?? src}
               alt={alt}
               title={title}
               style={{

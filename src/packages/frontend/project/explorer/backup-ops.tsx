@@ -112,7 +112,9 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
 
   return (
     <div style={{ marginBottom: "6px" }}>
-      <div style={{ fontSize: "12px", marginBottom: "2px" }}>Backup operation</div>
+      <div style={{ fontSize: "12px", marginBottom: "2px" }}>
+        Backup operation
+      </div>
       <Space size="small" align="center">
         {percent == null ? (
           <Spin size="small" />
@@ -170,14 +172,18 @@ function BackupOpTimeline({ op }: { op: BackupLroState }) {
       children: (
         <div>
           <div style={{ fontWeight: 600 }}>{entry.label}</div>
-          <div style={{ color: "#666", fontSize: "11px" }}>{entry.description}</div>
+          <div style={{ color: "#666", fontSize: "11px" }}>
+            {entry.description}
+          </div>
         </div>
       ),
     }));
   }, [activeIndex, status]);
 
   const tags = Array.isArray(summary?.input?.tags)
-    ? summary.input.tags.filter((tag) => typeof tag === "string" && tag.length > 0)
+    ? summary.input.tags.filter(
+        (tag) => typeof tag === "string" && tag.length > 0,
+      )
     : [];
 
   return (
@@ -206,7 +212,12 @@ function BackupOpTimeline({ op }: { op: BackupLroState }) {
         <Space size="small" wrap style={{ fontSize: "12px" }}>
           {summary?.created_by ? (
             <span>
-              Initiated by <User account_id={summary.created_by} show_avatar avatarSize={16} />
+              Initiated by{" "}
+              <User
+                account_id={summary.created_by}
+                show_avatar
+                avatarSize={16}
+              />
             </span>
           ) : null}
           {summary?.created_at ? (
@@ -261,10 +272,7 @@ function phaseIndex(phase: BackupPhaseKey): number {
   return idx < 0 ? 0 : idx;
 }
 
-function formatStatusLine(
-  op: BackupLroState,
-  detailOverride?: string,
-): string {
+function formatStatusLine(op: BackupLroState, detailOverride?: string): string {
   const summary = op.summary;
   if (summary?.status === "failed") {
     return summary.error ? `failed: ${summary.error}` : "failed";

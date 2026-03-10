@@ -47,7 +47,7 @@ async function too_many_free_projects(): Promise<boolean> {
 }
 
 export async function allow_project_to_run(
-  project_id: string
+  project_id: string,
 ): Promise<boolean> {
   function log(..._args) {
     // console.log("allow_project_to_run", project_id, ..._args);
@@ -92,7 +92,7 @@ export async function allow_project_to_run(
 }
 
 export function useAllowedFreeProjectToRun(
-  project_id: string
+  project_id: string,
 ): boolean | undefined {
   const [allowed, setAllowed] = useState<boolean | undefined>(undefined);
   useEffect(() => {

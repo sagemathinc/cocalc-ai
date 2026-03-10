@@ -5,6 +5,7 @@ import {
   CURRENT_CHAT_MESSAGE_VERSION,
 } from "../normalize";
 import { handleSyncDBChange, initFromSyncDB } from "../sync";
+import { Map as iMap } from "immutable";
 
 class MockStore {
   state: any = {};
@@ -130,7 +131,9 @@ describe("handleSyncDBChange", () => {
     handleSyncDBChange({
       syncdb,
       store,
-      changes: [{ event: "chat-thread-state", sender_id: "__thread_state__", date }],
+      changes: [
+        { event: "chat-thread-state", sender_id: "__thread_state__", date },
+      ],
     });
     expect(store.state.acpState?.get(`${date.valueOf()}`)).toBeUndefined();
     expect(store.state.acpState?.get("thread:thread-1")).toBe("running");
@@ -197,9 +200,15 @@ describe("initFromSyncDB", () => {
     ]);
 
     initFromSyncDB({ syncdb, store });
-    expect(store.state.acpState?.get(`${runningDate.valueOf()}`)).toBeUndefined();
-    expect(store.state.acpState?.get(`${queuedDate.valueOf()}`)).toBeUndefined();
-    expect(store.state.acpState?.get(`${completeDate.valueOf()}`)).toBeUndefined();
+    expect(
+      store.state.acpState?.get(`${runningDate.valueOf()}`),
+    ).toBeUndefined();
+    expect(
+      store.state.acpState?.get(`${queuedDate.valueOf()}`),
+    ).toBeUndefined();
+    expect(
+      store.state.acpState?.get(`${completeDate.valueOf()}`),
+    ).toBeUndefined();
     expect(store.state.acpState?.get("thread:thread-running")).toBe("running");
     expect(store.state.acpState?.get("thread:thread-queued")).toBe("queue");
     expect(store.state.acpState?.get("thread:thread-complete")).toBeUndefined();
@@ -233,6 +242,14 @@ describe("initFromSyncDB", () => {
     const store = new MockStore();
     const syncdb = new MockSyncDB([
       {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: "2024-01-02T03:04:06.000Z",
+        thread_id: "thread-running",
+        active_message_id: "msg-user-running",
+        state: "running",
+      },
+      {
         event: "chat",
         sender_id: "user-1",
         date: "2024-01-02T03:04:05.000Z",
@@ -248,6 +265,85 @@ describe("initFromSyncDB", () => {
 
     initFromSyncDB({ syncdb, store });
     expect(store.state.acpState?.get("message:msg-user-running")).toBe(
+      "running",
+    );
+  });
+
+  it("drops stale running chat-row state once thread-state no longer points at that message", () => {
+    const store = new MockStore();
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2024-01-02T03:04:05.000Z",
+        message_id: "msg-user-running",
+        thread_id: "thread-running",
+        acp_state: "running",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: "2024-01-02T03:04:06.000Z",
+        thread_id: "thread-running",
+        active_message_id: "msg-assistant-running",
+        state: "running",
+      },
+    ]);
+
+    initFromSyncDB({ syncdb, store });
+    expect(
+      store.state.acpState?.get("message:msg-user-running"),
+    ).toBeUndefined();
+    expect(store.state.acpState?.get("message:msg-assistant-running")).toBe(
+      "running",
+    );
+  });
+
+  it("removes stale running chat-row state when thread-state updates to a different active message", () => {
+    const store = new MockStore();
+    store.state.acpState = iMap().set("message:msg-user-running", "running");
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2024-01-02T03:04:05.000Z",
+        message_id: "msg-user-running",
+        thread_id: "thread-running",
+        acp_state: "running",
+        history: [],
+        editing: {},
+        feedback: {},
+        schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: "2024-01-02T03:04:06.000Z",
+        thread_id: "thread-running",
+        active_message_id: "msg-assistant-running",
+        state: "running",
+      },
+    ]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        {
+          event: "chat-thread-state",
+          sender_id: "__thread_state__",
+          date: "2024-01-02T03:04:06.000Z",
+        },
+      ],
+    });
+    expect(store.state.acpState?.get("message:msg-user-running")).toBe(
+      undefined,
+    );
+    expect(store.state.acpState?.get("message:msg-assistant-running")).toBe(
       "running",
     );
   });

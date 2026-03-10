@@ -13,7 +13,7 @@ import getProxyProjectId from "lib/share/proxy/project";
 // TODO: take into account redirects for when name is changed.
 export default async function getProjectId(
   owner: string,
-  project: string
+  project: string,
 ): Promise<string> {
   if (owner == "github") {
     return await getProxyProjectId();
@@ -28,7 +28,7 @@ export default async function getProjectId(
   // though it is NOT user supplied so that's safe.
   const result = await pool.query(
     `SELECT project_id FROM projects WHERE LOWER(name)=$1 AND users ? $2 AND users#>>'{${owner_id},group}' = 'owner'`,
-    [project.toLowerCase(), owner_id]
+    [project.toLowerCase(), owner_id],
   );
   if (result.rows.length > 0) {
     return result.rows[0].project_id;

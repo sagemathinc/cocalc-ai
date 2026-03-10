@@ -46,7 +46,9 @@ function registerPidFile(
 }
 
 export async function main(): Promise<void> {
-  const conatPassword = readRequiredEnv("COCALC_LITE_ACP_WORKER_CONAT_PASSWORD");
+  const conatPassword = readRequiredEnv(
+    "COCALC_LITE_ACP_WORKER_CONAT_PASSWORD",
+  );
   const pidFile = readRequiredEnv("COCALC_LITE_ACP_WORKER_PID_FILE");
   const conatServer = readRequiredEnv("CONAT_SERVER");
   setConatPassword(conatPassword);

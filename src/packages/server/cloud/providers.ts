@@ -161,9 +161,7 @@ export function getProviderPrefix(
   return (key && settings[key]) || DEFAULT_PREFIX;
 }
 
-function getGcpCatalogFetchOptions(
-  settings: ProviderCredsContext["settings"],
-) {
+function getGcpCatalogFetchOptions(settings: ProviderCredsContext["settings"]) {
   const { google_cloud_service_account_json } = settings;
   if (!google_cloud_service_account_json) {
     return undefined;
@@ -338,9 +336,7 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
   },
 };
 
-function buildServerProvider(
-  entry: ProviderEntry,
-): ServerProviderEntry {
+function buildServerProvider(entry: ProviderEntry): ServerProviderEntry {
   const overrides = SERVER_PROVIDER_OVERRIDES[entry.id];
   return {
     id: entry.id,
@@ -353,10 +349,12 @@ function buildServerProvider(
   };
 }
 
-export const SERVER_PROVIDERS: Record<ProviderId, ServerProviderEntry | undefined> =
-  Object.fromEntries(
-    listProviderEntries().map((entry) => [entry.id, buildServerProvider(entry)]),
-  ) as Record<ProviderId, ServerProviderEntry | undefined>;
+export const SERVER_PROVIDERS: Record<
+  ProviderId,
+  ServerProviderEntry | undefined
+> = Object.fromEntries(
+  listProviderEntries().map((entry) => [entry.id, buildServerProvider(entry)]),
+) as Record<ProviderId, ServerProviderEntry | undefined>;
 
 export function getServerProvider(
   providerId: ProviderId,

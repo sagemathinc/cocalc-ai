@@ -38,8 +38,8 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
       <Title level={5}>Keyboard shortcuts</Title>
       <ul style={{ paddingLeft: 22 }}>
         <li>
-          <KB>{MOD}+B</KB> bold, <KB>{MOD}+I</KB> italic,{" "}
-          <KB>{MOD}+U</KB> underline
+          <KB>{MOD}+B</KB> bold, <KB>{MOD}+I</KB> italic, <KB>{MOD}+U</KB>{" "}
+          underline
         </li>
         <li>
           <KB>{MOD}+Shift+X</KB> strikethrough, <KB>{MOD}+Shift+C</KB> code
@@ -55,14 +55,9 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
           <KB>Tab</KB> / <KB>Shift+Tab</KB> indent / outdent list items
         </li>
         <li>
-          <KB>
-            {IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↑
-          </KB>{" "}
-          /{" "}
-          <KB>
-            {IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↓
-          </KB>{" "}
-          move list item up/down
+          <KB>{IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↑</KB> /{" "}
+          <KB>{IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↓</KB> move list item
+          up/down
         </li>
         <li>
           <KB>{IS_MACOS ? "Ctrl" : MOD}+D</KB> forward delete
@@ -84,7 +79,9 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
         <li>Emojis (e.g., :smile:)</li>
         <li>Inline and display math</li>
         <li>Fenced code blocks and inline code</li>
-        <li>Mermaid diagrams via <Text code>```mermaid</Text></li>
+        <li>
+          Mermaid diagrams via <Text code>```mermaid</Text>
+        </li>
         <li>Jupyter execution for code blocks</li>
         <li>HTML blocks (when present in Markdown)</li>
         <li>Metadata YAML headings</li>

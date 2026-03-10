@@ -107,7 +107,7 @@ export const normalizeDOMPoint = (domPoint: DOMPoint): DOMPoint => {
 export const getEditableChild = (
   parent: DOMElement,
   index: number,
-  direction: "forward" | "backward"
+  direction: "forward" | "backward",
 ): DOMNode => {
   const { childNodes } = parent;
   let child = childNodes[index];
@@ -168,7 +168,11 @@ export const getPlainText = (domNode: DOMNode) => {
 
     const display = getComputedStyle(domNode).getPropertyValue("display");
 
-    if (display === "block" || display === "list" || domNode?.tagName === "BR") {
+    if (
+      display === "block" ||
+      display === "list" ||
+      domNode?.tagName === "BR"
+    ) {
       text += "\n";
     }
   }

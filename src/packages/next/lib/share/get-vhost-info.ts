@@ -31,7 +31,7 @@ const cache = new LRU<string, HostInfo | null>({
 });
 
 export default async function getVirtualHostInfo(
-  vhost: string
+  vhost: string,
 ): Promise<HostInfo | null | undefined> {
   if (cache.has(vhost)) {
     //logger.debug("using cache");

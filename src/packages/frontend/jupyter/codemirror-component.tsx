@@ -76,7 +76,7 @@ export const CodeMirror: React.FC<CodeMirrorProps> = React.memo(
       unregisterEditor,
       getValueRef,
       setShowAICellGen,
-      onSetCellInput
+      onSetCellInput,
     } = props;
     const is_mounted = useIsMountedRef();
 

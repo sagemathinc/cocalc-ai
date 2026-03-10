@@ -7,7 +7,7 @@ export default function useHiddenFields({
   id: string; // id of a view of a given dbtable.
 }): [
   hiddenFields: Set<string>,
-  setHiddenField: (field: string, hide: boolean) => void
+  setHiddenField: (field: string, hide: boolean) => void,
 ] {
   const [record, setRecord] = useRecord<{
     fields?: string[];
@@ -39,7 +39,7 @@ export default function useHiddenFields({
       }
       setRecord({ fields: Array.from(hiddenFields) });
     },
-    [hiddenFields, setRecord]
+    [hiddenFields, setRecord],
   );
 
   return [hiddenFields, setHiddenField];

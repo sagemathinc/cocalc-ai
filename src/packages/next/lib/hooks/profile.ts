@@ -43,7 +43,7 @@ export function useProfileWithReload(opts: Options = {}): {
   const { account_id, noCache } = opts;
   const isMounted = useIsMounted();
   const [profile, setProfile] = useState<Profile | undefined>(
-    noCache ? undefined : cache.get(account_id ?? "")
+    noCache ? undefined : cache.get(account_id ?? ""),
   );
 
   async function getProfile(): Promise<void> {
@@ -51,7 +51,7 @@ export function useProfileWithReload(opts: Options = {}): {
       const { profile } = await apiPost(
         "/accounts/profile",
         { account_id, noCache },
-        DEFAULT_CACHE_S
+        DEFAULT_CACHE_S,
       );
       if (!isMounted.current) return;
       setProfile(profile);

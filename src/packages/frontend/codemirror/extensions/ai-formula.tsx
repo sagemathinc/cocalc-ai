@@ -97,9 +97,8 @@ function AiGenFormula({ mode, text = "", project_id, locale, cb }: Props) {
       async () => {
         const { input, history, system } = getPrompt() ?? "";
         // compute the number of tokens (this MUST be a lazy import):
-        const { getMaxTokens, numTokensUpperBound } = await import(
-          "@cocalc/frontend/misc/llm"
-        );
+        const { getMaxTokens, numTokensUpperBound } =
+          await import("@cocalc/frontend/misc/llm");
 
         const all = [
           input,

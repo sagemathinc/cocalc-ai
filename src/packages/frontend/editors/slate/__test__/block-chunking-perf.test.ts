@@ -15,11 +15,7 @@ test("incremental chunking keeps the middle slice small for a local edit", () =>
     const prevBlocks = splitMarkdownToBlocks(original);
     const next = `Z${original}`;
 
-    const slices = computeIncrementalSlices(
-      original,
-      next,
-      prevBlocks,
-    );
+    const slices = computeIncrementalSlices(original, next, prevBlocks);
 
     expect(slices).not.toBeNull();
     if (!slices) return;

@@ -33,7 +33,7 @@ export default function IntegerSlider({
     return typeof x === "number" ? x : min;
   }
   const [val, setVal] = useState<number>(
-    value ?? initialValue ?? defaultValue ?? min
+    value ?? initialValue ?? defaultValue ?? min,
   );
 
   return (

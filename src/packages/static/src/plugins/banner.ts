@@ -18,6 +18,6 @@ See ${params.COCALC_GITHUB_REPO} for its ${params.COCALC_LICENSE} licensed code.
     new BannerPlugin({
       banner,
       entryOnly: true,
-    })
+    }),
   );
 }

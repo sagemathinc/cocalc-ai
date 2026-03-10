@@ -25,7 +25,7 @@ interface Props {
 export const HeadingToggle: React.FC<Props> = ({ element }) => {
   const editor = useSlate();
   const [collapsed, setCollapsed] = useState<boolean>(
-    editor.collapsedSections.has(element)
+    editor.collapsedSections.has(element),
   );
 
   useEffect(() => {

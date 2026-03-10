@@ -64,7 +64,7 @@ export default function IndexList({ title, description, dataSource }: Props) {
               : item.description,
           link:
             typeof item.link === "function"
-              ? item.link(customize) ?? ""
+              ? (item.link(customize) ?? "")
               : item.link,
         };
       });

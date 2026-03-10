@@ -32,7 +32,8 @@ jest.mock("antd", () => {
   const Typography = {
     Text: ({ children }: any) => <span>{children}</span>,
   };
-  const Modal = ({ children, open }: any) => (open ? <div>{children}</div> : null);
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
   Modal.confirm = jest.fn();
 
   return {

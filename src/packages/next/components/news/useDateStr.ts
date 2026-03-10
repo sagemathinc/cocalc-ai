@@ -11,7 +11,7 @@ import { NewsItem } from "@cocalc/util/types/news";
 export function useDateStr(
   news?: Omit<NewsItem, "text">,
   minutes = false,
-  format="YYYY-MM-DD"
+  format = "YYYY-MM-DD",
 ): string {
   const f = minutes ? "YYYY-MM-DD HH:mm" : format;
   return useMemo(() => {

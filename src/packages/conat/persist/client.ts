@@ -121,7 +121,9 @@ function topCounters(map: CounterByStorage, limit: number) {
     .map(([storage, count]) => ({ storage, count }));
 }
 
-export function getPersistClientDebugStats({ topN = 8 }: { topN?: number } = {}) {
+export function getPersistClientDebugStats({
+  topN = 8,
+}: { topN?: number } = {}) {
   const top = Math.max(1, topN);
   return {
     ...stats,

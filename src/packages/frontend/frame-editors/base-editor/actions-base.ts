@@ -3053,8 +3053,7 @@ export class BaseEditorActions<
             : [];
       if (
         before &&
-        (before.get("command") != command ||
-          !isEqual(beforeArgs, args ?? []))
+        (before.get("command") != command || !isEqual(beforeArgs, args ?? []))
       ) {
         // reset it if there was something before so it doesn't
         // have the wrong command/args running

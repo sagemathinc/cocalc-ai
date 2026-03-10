@@ -4,7 +4,7 @@ import { search_match, search_split } from "@cocalc/util/misc";
 export default function sortedElements(
   elementsMap: ElementsMap,
   sortedPageIds?: SortedPageList,
-  search?: string
+  search?: string,
 ): Element[] {
   // We only include elements with a str attribute for now,
   // e.g., notes, code, text.  If change to use more, need
@@ -30,10 +30,14 @@ export default function sortedElements(
   }
 
   v?.sort((elt1, elt2) => {
-    if ((idToNumber[elt1.page ?? ""] ?? 1) < (idToNumber[elt2.page ?? ""] ?? 1)) {
+    if (
+      (idToNumber[elt1.page ?? ""] ?? 1) < (idToNumber[elt2.page ?? ""] ?? 1)
+    ) {
       return -1;
     }
-    if ((idToNumber[elt1.page ?? ""] ?? 1) > (idToNumber[elt2.page ?? ""] ?? 1)) {
+    if (
+      (idToNumber[elt1.page ?? ""] ?? 1) > (idToNumber[elt2.page ?? ""] ?? 1)
+    ) {
       return 1;
     }
     if (elt1.y < elt2.y) return -1;

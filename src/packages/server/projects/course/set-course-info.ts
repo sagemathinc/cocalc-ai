@@ -44,7 +44,7 @@ export default async function setCourseInfo({
 }: Options): Promise<{ course: CourseInfo }> {
   if (!noCheck && !(await isCollaborator({ account_id, project_id }))) {
     throw Error(
-      "you must be a collaborator on the the project to set the course info"
+      "you must be a collaborator on the the project to set the course info",
     );
   }
   if (typeof course != "object") {
@@ -56,7 +56,7 @@ export default async function setCourseInfo({
   // get current value of course:
   const { rows } = await pool.query(
     "SELECT course FROM projects WHERE project_id=$1",
-    [project_id]
+    [project_id],
   );
   if (rows.length == 0) {
     // shouldn't happen due to isCollaborator check above
@@ -72,7 +72,7 @@ export default async function setCourseInfo({
       }))
     ) {
       throw Error(
-        "you must be a collaborator on the the project the contains the course (i.e., only TA's and instructors can set the course field)"
+        "you must be a collaborator on the the project the contains the course (i.e., only TA's and instructors can set the course field)",
       );
     }
   }

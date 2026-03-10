@@ -88,7 +88,9 @@ test("autoformat inline math preserves trailing text in the same paragraph", () 
     (child) => child?.["type"] === "math_inline",
   );
   expect(mathIndex).toBeGreaterThanOrEqual(0);
-  expect(paragraph?.children?.some((child) => child?.text?.includes("y"))).toBe(true);
+  expect(paragraph?.children?.some((child) => child?.text?.includes("y"))).toBe(
+    true,
+  );
 
   focusSpy.mockRestore();
 });

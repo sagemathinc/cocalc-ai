@@ -24,7 +24,10 @@ function resolveFsPath(input: string, cwd?: string): string {
 
 export function createImportApi<Ctx>(): ImportApi<Ctx> {
   return {
-    async tasks(_ctx: Ctx, options: BackendTaskImportOptions): Promise<TaskImportResult> {
+    async tasks(
+      _ctx: Ctx,
+      options: BackendTaskImportOptions,
+    ): Promise<TaskImportResult> {
       return await importTaskBundle({
         sourcePath: resolveFsPath(options.sourcePath, options.cwd),
         targetPath: options.targetPath

@@ -202,9 +202,7 @@ async function maybeRestoreFromBackup({
     });
     throw err;
   } finally {
-    await fs
-      .releaseRestoreStaging({ handle, cleanupStaging })
-      .catch(() => {});
+    await fs.releaseRestoreStaging({ handle, cleanupStaging }).catch(() => {});
   }
 }
 
@@ -299,7 +297,9 @@ async function forceKillContainerProcesses(
   for (const pid of pids) {
     tryKillPid(pid, "SIGKILL");
   }
-  await new Promise((resolve) => setTimeout(resolve, STOP_FORCE_KILL_SETTLE_MS));
+  await new Promise((resolve) =>
+    setTimeout(resolve, STOP_FORCE_KILL_SETTLE_MS),
+  );
 }
 
 interface ScriptResolution {
@@ -490,8 +490,7 @@ export function networkArgument() {
   }
   if (defaultNetwork === "pasta") {
     const pastaOptionsRaw = `${
-      process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
-      "--map-gw"
+      process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ?? "--map-gw"
     }`.trim();
     if (!pastaOptionsRaw) {
       return "--network=pasta";
@@ -500,9 +499,10 @@ export function networkArgument() {
   }
   // Rootless pods need host loopback access so project containers can reach
   // host-local conat (mapped as host.containers.internal in env.ts).
-  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
-    .trim()
-    .toLowerCase();
+  const allowHostLoopbackRaw =
+    `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
+      .trim()
+      .toLowerCase();
   const allowHostLoopback = !(
     allowHostLoopbackRaw === "0" ||
     allowHostLoopbackRaw === "false" ||
@@ -514,14 +514,14 @@ export function networkArgument() {
 }
 
 function pastaConatHost(): string | undefined {
-  const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`
-    .trim();
+  const host =
+    `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`.trim();
   return host || undefined;
 }
 
 function slirpConatHost(): string {
-  const host = `${process.env.COCALC_PROJECT_RUNNER_SLIRP_CONAT_HOST ?? "10.0.2.2"}`
-    .trim();
+  const host =
+    `${process.env.COCALC_PROJECT_RUNNER_SLIRP_CONAT_HOST ?? "10.0.2.2"}`.trim();
   return host || "10.0.2.2";
 }
 
@@ -617,17 +617,19 @@ function getUrlHostname(value: string): string | undefined {
 }
 
 export function publishHost(): string {
-  const value = `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
-    .trim()
-    .toLowerCase();
+  const value =
+    `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
+      .trim()
+      .toLowerCase();
   if (!value) return "127.0.0.1";
   if (value === "127.0.0.1" || value === "localhost" || value === "::1") {
     return value === "localhost" ? "127.0.0.1" : value;
   }
   if (value === "0.0.0.0" || value === "::") {
-    const allowInsecurePublishHostRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST ?? "false"}`
-      .trim()
-      .toLowerCase();
+    const allowInsecurePublishHostRaw =
+      `${process.env.COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST ?? "false"}`
+        .trim()
+        .toLowerCase();
     const allowInsecurePublishHost =
       allowInsecurePublishHostRaw === "1" ||
       allowInsecurePublishHostRaw === "true" ||

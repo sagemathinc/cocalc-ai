@@ -15,7 +15,7 @@ import { RefObject } from "react";
 
 export default function useScrollWheel(
   divRef: RefObject<HTMLDivElement>,
-  always: boolean = false
+  always: boolean = false,
 ) {
   useWheel(
     (state) => {
@@ -34,6 +34,6 @@ export default function useScrollWheel(
     {
       target: divRef,
       eventOptions: { passive: false, capture: true },
-    }
+    },
   );
 }

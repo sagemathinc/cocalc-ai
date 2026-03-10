@@ -22,7 +22,7 @@ function addBlankTokens(
   tokens: any[],
   Token: any,
   startLine: number,
-  endLine: number
+  endLine: number,
 ): void {
   for (let line = startLine; line < endLine; line++) {
     const blank = new Token("blank_line", "p", 0);

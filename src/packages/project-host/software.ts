@@ -29,7 +29,10 @@ function versionFromCurrentPath(currentPath: string): string | undefined {
 function readBuildIdFromCurrentPath(currentPath: string): string | undefined {
   try {
     const realPath = fs.realpathSync(currentPath);
-    const raw = fs.readFileSync(path.join(realPath, "build-identity.json"), "utf8");
+    const raw = fs.readFileSync(
+      path.join(realPath, "build-identity.json"),
+      "utf8",
+    );
     const parsed = JSON.parse(raw);
     const build_id = `${parsed?.build_id ?? ""}`.trim();
     return build_id || undefined;
@@ -39,14 +42,12 @@ function readBuildIdFromCurrentPath(currentPath: string): string | undefined {
 }
 
 function getProjectBundleVersion(): string | undefined {
-  const bundlesRoot =
-    process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT;
+  const bundlesRoot = process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT;
   return versionFromCurrentPath(path.join(bundlesRoot, "current"));
 }
 
 function getToolsVersion(): string | undefined {
-  const toolsPath =
-    process.env.COCALC_PROJECT_TOOLS ?? DEFAULT_TOOLS_CURRENT;
+  const toolsPath = process.env.COCALC_PROJECT_TOOLS ?? DEFAULT_TOOLS_CURRENT;
   return versionFromCurrentPath(toolsPath);
 }
 

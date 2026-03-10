@@ -101,7 +101,6 @@ export class BaseProject extends EventEmitter {
     }
   }
 
-
   async saveStateToDatabase(state: ProjectState): Promise<void> {
     await callback2(db().set_project_state, {
       ...state,
@@ -278,8 +277,8 @@ export class BaseProject extends EventEmitter {
     run_quota: Quota | null,
     account_id?: string,
   ): Promise<void> => {
-  // If null we compute it based on membership + settings for the user who
-  // started the project (or best available fallback).
+    // If null we compute it based on membership + settings for the user who
+    // started the project (or best available fallback).
     if (run_quota == null) {
       const { settings, users, last_active, last_started_by } = await query({
         db: db(),
@@ -295,9 +294,8 @@ export class BaseProject extends EventEmitter {
         last_active,
         last_started_by,
       });
-      const membershipDefaults = await getMembershipProjectDefaultsForAccount(
-        selected_account_id,
-      );
+      const membershipDefaults =
+        await getMembershipProjectDefaultsForAccount(selected_account_id);
       const settingsWithMembership = mergeProjectSettingsWithMembership(
         settings,
         membershipDefaults,

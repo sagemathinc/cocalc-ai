@@ -23,12 +23,12 @@ export default function useSyncdbRecord<T>({
   const { syncdb } = useSyncdbContext();
   if (syncdb == null) {
     throw Error(
-      "useSyncdbRecord hook MUST be used inside SyncdbContext.Provider"
+      "useSyncdbRecord hook MUST be used inside SyncdbContext.Provider",
     );
   }
 
   const [value, setValue0] = useState<T>(
-    syncdb?.get_one(key)?.toJS() ?? { ...defaultValue, ...key }
+    syncdb?.get_one(key)?.toJS() ?? { ...defaultValue, ...key },
   );
 
   const lastCommitRef = useRef<T | null>(null);
@@ -42,7 +42,7 @@ export default function useSyncdbRecord<T>({
         syncdb.commit();
       }
     }, debounceMs),
-    [syncdb, jkey]
+    [syncdb, jkey],
   );
 
   const setValue = useCallback(
@@ -50,7 +50,7 @@ export default function useSyncdbRecord<T>({
       setValue0(value);
       save(value);
     },
-    [setValue0, save]
+    [setValue0, save],
   );
 
   useEffect(() => {

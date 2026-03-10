@@ -38,7 +38,10 @@ const progressSteps: Record<string, number> = {
 };
 
 const progressRanges: Record<string, { start: number; end: number }> = {
-  "start-dest": { start: progressSteps["start-dest"], end: progressSteps.cleanup },
+  "start-dest": {
+    start: progressSteps["start-dest"],
+    end: progressSteps.cleanup,
+  },
 };
 
 let running = false;
@@ -107,7 +110,10 @@ function progressEvent({
   );
 }
 
-async function updateProgressSummary(op: LroSummary, update: MoveProjectProgressUpdate) {
+async function updateProgressSummary(
+  op: LroSummary,
+  update: MoveProjectProgressUpdate,
+) {
   const updated = await updateLro({
     op_id: op.op_id,
     progress_summary: {
@@ -249,7 +255,11 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
       op_id,
       when: "failed",
     });
-    await progress({ step: "done", message: "failed", detail: { error: `${err}` } });
+    await progress({
+      step: "done",
+      message: "failed",
+      detail: { error: `${err}` },
+    });
   } finally {
     clearInterval(heartbeat);
     logger.info("move op done", { op_id });
@@ -266,11 +276,14 @@ async function markMoveOpFailedFromWorker({
   try {
     const current = await getLro(op_id);
     if (current?.status === "succeeded" || current?.status === "canceled") {
-      logger.warn("move op worker error ignored because op is already terminal", {
-        op_id,
-        status: current.status,
-        err,
-      });
+      logger.warn(
+        "move op worker error ignored because op is already terminal",
+        {
+          op_id,
+          status: current.status,
+          err,
+        },
+      );
       return;
     }
     const updated = await updateLro({

@@ -2,7 +2,10 @@
 Build machine-readable capability manifests for planner grounding.
 */
 
-import type { AgentCapabilityDescriptor, AgentCapabilityRegistry } from "./capabilities";
+import type {
+  AgentCapabilityDescriptor,
+  AgentCapabilityRegistry,
+} from "./capabilities";
 import type { AgentActionScope, AgentRiskLevel } from "./types";
 
 export type AgentCapabilityManifestEntry = {

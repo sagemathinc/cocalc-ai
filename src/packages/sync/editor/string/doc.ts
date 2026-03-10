@@ -3,13 +3,18 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { StringDocument as PFStringDocument, type CompressedPatch } from "patchflow";
+import {
+  StringDocument as PFStringDocument,
+  type CompressedPatch,
+} from "patchflow";
 import type { Document } from "../generic/types";
 
 // Thin wrapper around patchflow's StringDocument to satisfy the legacy interface.
 export class StringDocument extends PFStringDocument implements Document {
   private wrap(doc: PFStringDocument): StringDocument {
-    return doc instanceof StringDocument ? (doc as StringDocument) : new StringDocument(doc.toString());
+    return doc instanceof StringDocument
+      ? (doc as StringDocument)
+      : new StringDocument(doc.toString());
   }
 
   public to_str(): string {

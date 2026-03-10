@@ -214,7 +214,9 @@ async function handleUploadToProject({
       key,
       errors: errors[key],
     });
-    const serviceUnavailable = errors[key].some((e) => e.includes("Error: 503"));
+    const serviceUnavailable = errors[key].some((e) =>
+      e.includes("Error: 503"),
+    );
     res
       .status(500)
       .send(

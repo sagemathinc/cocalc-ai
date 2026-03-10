@@ -257,12 +257,13 @@ describe("AgentTimeTravelRecorder", () => {
   });
 
   it("skips missing files without creating a syncdoc", async () => {
-    const syncFactory = jest.fn(async () =>
-      new FakeSyncDoc({
-        content: "",
-        versions: [],
-        versionMap: new Map(),
-      }),
+    const syncFactory = jest.fn(
+      async () =>
+        new FakeSyncDoc({
+          content: "",
+          versions: [],
+          versionMap: new Map(),
+        }),
     );
     const { map, store } = makeStore();
     const recorder = new AgentTimeTravelRecorder({
@@ -322,12 +323,13 @@ describe("AgentTimeTravelRecorder", () => {
   });
 
   it("ignores reads after dispose", async () => {
-    const syncFactory = jest.fn(async () =>
-      new FakeSyncDoc({
-        content: "",
-        versions: [],
-        versionMap: new Map(),
-      }),
+    const syncFactory = jest.fn(
+      async () =>
+        new FakeSyncDoc({
+          content: "",
+          versions: [],
+          versionMap: new Map(),
+        }),
     );
     const { store } = makeStore();
     const recorder = new AgentTimeTravelRecorder({

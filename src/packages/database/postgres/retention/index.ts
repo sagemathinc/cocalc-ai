@@ -46,7 +46,7 @@ export async function updateRetentionData({
   const pool = getPool();
   const current = await pool.query(
     "SELECT last_start_time, NOW() - $4::interval - $4::interval AS required_last_start_time FROM crm_retention WHERE start=$1 AND stop=$2 AND model=$3 AND period=$4",
-    [start, stop, model, period]
+    [start, stop, model, period],
   );
   log.debug(current);
 
@@ -64,7 +64,7 @@ export async function updateRetentionData({
   // computation.  This could easily happen, e.g., when playing around in the crm.
   const { rows } = await pool.query(
     "SELECT extract(epoch FROM $1::interval) AS seconds",
-    [period]
+    [period],
   );
   if (rows[0].seconds < 3600) {
     throw Error("period must be at least one hour long");

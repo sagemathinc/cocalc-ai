@@ -22,12 +22,10 @@ export const GuesslangInputSchema = z
 export const GuesslangOutputSchema = z.union([
   FailedAPIOperationSchema,
   z.object({
-    result: z
-      .array(z.string())
-      .describe(
-        `List of likely guesses for the type of code, from most likely to least 
+    result: z.array(z.string()).describe(
+      `List of likely guesses for the type of code, from most likely to least 
         likely.`,
-      ),
+    ),
   }),
 ]);
 

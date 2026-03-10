@@ -16,7 +16,10 @@ import type {
   BrowserExecPolicyV1,
 } from "@cocalc/conat/service/browser-session";
 import { browserScreenshotDomScript } from "./screenshot-helpers";
-import { readExecScriptFromStdin, withBrowserExecStaleSessionHint } from "./exec-helpers";
+import {
+  readExecScriptFromStdin,
+  withBrowserExecStaleSessionHint,
+} from "./exec-helpers";
 import { sessionMatchesSpawnMarker, spawnMarkerFromUrl } from "./spawn-state";
 import type {
   BrowserCommandDeps,
@@ -162,7 +165,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function clampNonNegativeInt(value: unknown, fallback: number, label: string): number {
+function clampNonNegativeInt(
+  value: unknown,
+  fallback: number,
+  label: string,
+): number {
   if (value == null || `${value}`.trim() === "") return fallback;
   const num = Number(value);
   if (!Number.isFinite(num) || num < 0) {
@@ -171,15 +178,24 @@ function clampNonNegativeInt(value: unknown, fallback: number, label: string): n
   return Math.floor(num);
 }
 
-function parseRecoveryMode(value: unknown, fallback: HarnessRecoveryMode): HarnessRecoveryMode {
+function parseRecoveryMode(
+  value: unknown,
+  fallback: HarnessRecoveryMode,
+): HarnessRecoveryMode {
   const clean = `${value ?? ""}`.trim().toLowerCase();
   if (!clean) return fallback;
   if (clean === "none") return "none";
   if (clean === "reload") return "reload";
-  if (clean === "hard_reload" || clean === "hard-reload" || clean === "hardreload") {
+  if (
+    clean === "hard_reload" ||
+    clean === "hard-reload" ||
+    clean === "hardreload"
+  ) {
     return "hard_reload";
   }
-  throw new Error(`invalid recovery mode '${value}'; expected none|reload|hard-reload`);
+  throw new Error(
+    `invalid recovery mode '${value}'; expected none|reload|hard-reload`,
+  );
 }
 
 function parseCapturePolicy(
@@ -214,7 +230,10 @@ async function loadHarnessPlan(planFile: string): Promise<HarnessPlan> {
   if (!clean) {
     throw new Error("--plan <path> is required");
   }
-  const raw = clean === "-" ? await readExecScriptFromStdin() : await readFile(clean, "utf8");
+  const raw =
+    clean === "-"
+      ? await readExecScriptFromStdin()
+      : await readFile(clean, "utf8");
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -318,7 +337,11 @@ async function normalizePlan({
   const resolvedDefaultTimeout =
     plan.default_timeout_ms == null
       ? defaultTimeoutMs
-      : clampNonNegativeInt(plan.default_timeout_ms, defaultTimeoutMs ?? 0, "default_timeout_ms");
+      : clampNonNegativeInt(
+          plan.default_timeout_ms,
+          defaultTimeoutMs ?? 0,
+          "default_timeout_ms",
+        );
   const resolvedDefaultPause = clampNonNegativeInt(
     plan.default_pause_ms,
     defaultPauseMs,
@@ -328,7 +351,10 @@ async function normalizePlan({
     plan.default_recovery,
     defaultRecovery,
   );
-  const resolvedCaptureDefaults = parseCapturePolicy(plan.capture, captureDefaults);
+  const resolvedCaptureDefaults = parseCapturePolicy(
+    plan.capture,
+    captureDefaults,
+  );
   const planMaxFailures =
     plan.max_failures == null
       ? undefined
@@ -392,7 +418,8 @@ async function normalizePlan({
         if (!isObject(raw.action)) {
           throw new Error(`${label}.action must be an object`);
         }
-        const actionName = `${(raw.action as Record<string, unknown>).name ?? ""}`.trim();
+        const actionName =
+          `${(raw.action as Record<string, unknown>).name ?? ""}`.trim();
         if (!actionName) {
           throw new Error(`${label}.action.name is required`);
         }
@@ -471,14 +498,22 @@ async function normalizePlan({
   const beforeRaw = Array.isArray(plan.before_all) ? plan.before_all : [];
   const mainRaw = Array.isArray(plan.steps) ? plan.steps : [];
   const afterRaw = Array.isArray(plan.after_all) ? plan.after_all : [];
-  const beforeSteps = await normalizeStepList({ list: beforeRaw, phase: "before_all" });
+  const beforeSteps = await normalizeStepList({
+    list: beforeRaw,
+    phase: "before_all",
+  });
   const steps = await normalizeStepList({ list: mainRaw, phase: "main" });
-  const afterSteps = await normalizeStepList({ list: afterRaw, phase: "after_all" });
+  const afterSteps = await normalizeStepList({
+    list: afterRaw,
+    phase: "after_all",
+  });
 
   return {
     name: `${plan.name ?? "browser-harness"}`,
     continue_on_error: resolvedContinue,
-    ...(resolvedMaxFailures != null ? { max_failures: resolvedMaxFailures } : {}),
+    ...(resolvedMaxFailures != null
+      ? { max_failures: resolvedMaxFailures }
+      : {}),
     before_steps: beforeSteps,
     steps,
     after_steps: afterSteps,
@@ -635,12 +670,17 @@ export function registerBrowserHarnessCommands({
 
   const harness = browser
     .command("harness")
-    .description("run scripted browser automation plans with retries and reporting");
+    .description(
+      "run scripted browser automation plans with retries and reporting",
+    );
 
   harness
     .command("run")
     .description("run a JSON harness plan and write a structured report")
-    .requiredOption("--plan <path>", "JSON harness plan file path (or '-' for stdin)")
+    .requiredOption(
+      "--plan <path>",
+      "JSON harness plan file path (or '-' for stdin)",
+    )
     .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
@@ -668,8 +708,15 @@ export function registerBrowserHarnessCommands({
       "--report-dir <path>",
       "directory to write harness artifacts/report (default ./.cocalc-browser-harness/<ts>)",
     )
-    .option("--continue-on-error", "override plan to continue after failing steps")
-    .option("--default-retries <n>", "default retries for steps missing retries", "1")
+    .option(
+      "--continue-on-error",
+      "override plan to continue after failing steps",
+    )
+    .option(
+      "--default-retries <n>",
+      "default retries for steps missing retries",
+      "1",
+    )
     .option(
       "--max-failures <n>",
       "halt run after this many failed steps (0 means unlimited; overrides plan.max_failures)",
@@ -699,9 +746,20 @@ export function registerBrowserHarnessCommands({
       "30s",
     )
     .option("--screenshot-on-fail", "capture screenshot on failed attempts")
-    .option("--no-screenshot-on-fail", "disable screenshot capture on failed attempts")
-    .option("--logs-on-fail <n>", "capture latest runtime events on failed attempts", "120")
-    .option("--network-on-fail <n>", "capture latest network trace events on failed attempts", "120")
+    .option(
+      "--no-screenshot-on-fail",
+      "disable screenshot capture on failed attempts",
+    )
+    .option(
+      "--logs-on-fail <n>",
+      "capture latest runtime events on failed attempts",
+      "120",
+    )
+    .option(
+      "--network-on-fail <n>",
+      "capture latest network trace events on failed attempts",
+      "120",
+    )
     .option(
       "--network-include-decoded",
       "include decoded previews in network failure captures",
@@ -747,7 +805,8 @@ export function registerBrowserHarnessCommands({
       ) => {
         await deps.withContext(command, "browser harness run", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const projectIdHint =
+            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
           const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
@@ -762,44 +821,52 @@ export function registerBrowserHarnessCommands({
             activeOnly: !!opts.activeOnly,
           });
           let targetBrowserId = `${sessionInfo.browser_id ?? ""}`.trim();
-          const pinnedSpawnMarker = spawnMarkerFromUrl(`${sessionInfo.url ?? ""}`) ?? "";
+          const pinnedSpawnMarker =
+            spawnMarkerFromUrl(`${sessionInfo.url ?? ""}`) ?? "";
           const pinTarget = opts.pinTarget !== false;
 
-          const assertPinnedSessionActive = async (): Promise<BrowserSessionInfo> => {
-            const sessions = await ctx.hub.system.listBrowserSessions({
-              include_stale: true,
-            });
-            const row = (sessions ?? []).find(
-              (x) => `${x?.browser_id ?? ""}`.trim() === targetBrowserId,
-            );
-            if (!row) {
-              if (pinnedSpawnMarker) {
-                const remapped = (sessions ?? []).find(
-                  (x) => !x?.stale && sessionMatchesSpawnMarker(x, pinnedSpawnMarker),
-                );
-                if (remapped) {
-                  targetBrowserId = `${remapped.browser_id ?? ""}`.trim();
-                  return remapped;
-                }
-              }
-              throw new Error(`pinned browser session '${targetBrowserId}' is no longer present`);
-            }
-            if (row.stale) {
-              if (pinnedSpawnMarker) {
-                const remapped = (sessions ?? []).find(
-                  (x) => !x?.stale && sessionMatchesSpawnMarker(x, pinnedSpawnMarker),
-                );
-                if (remapped) {
-                  targetBrowserId = `${remapped.browser_id ?? ""}`.trim();
-                  return remapped;
-                }
-              }
-              throw new Error(
-                `pinned browser session '${targetBrowserId}' is stale/inactive`,
+          const assertPinnedSessionActive =
+            async (): Promise<BrowserSessionInfo> => {
+              const sessions = await ctx.hub.system.listBrowserSessions({
+                include_stale: true,
+              });
+              const row = (sessions ?? []).find(
+                (x) => `${x?.browser_id ?? ""}`.trim() === targetBrowserId,
               );
-            }
-            return row;
-          };
+              if (!row) {
+                if (pinnedSpawnMarker) {
+                  const remapped = (sessions ?? []).find(
+                    (x) =>
+                      !x?.stale &&
+                      sessionMatchesSpawnMarker(x, pinnedSpawnMarker),
+                  );
+                  if (remapped) {
+                    targetBrowserId = `${remapped.browser_id ?? ""}`.trim();
+                    return remapped;
+                  }
+                }
+                throw new Error(
+                  `pinned browser session '${targetBrowserId}' is no longer present`,
+                );
+              }
+              if (row.stale) {
+                if (pinnedSpawnMarker) {
+                  const remapped = (sessions ?? []).find(
+                    (x) =>
+                      !x?.stale &&
+                      sessionMatchesSpawnMarker(x, pinnedSpawnMarker),
+                  );
+                  if (remapped) {
+                    targetBrowserId = `${remapped.browser_id ?? ""}`.trim();
+                    return remapped;
+                  }
+                }
+                throw new Error(
+                  `pinned browser session '${targetBrowserId}' is stale/inactive`,
+                );
+              }
+              return row;
+            };
 
           if (pinTarget) {
             await assertPinnedSessionActive();
@@ -832,7 +899,10 @@ export function registerBrowserHarnessCommands({
           const defaultTimeoutMs = `${opts.defaultTimeout ?? ""}`.trim()
             ? Math.max(1_000, durationToMs(opts.defaultTimeout, ctx.timeoutMs))
             : undefined;
-          const recoveryWaitMs = Math.max(0, durationToMs(opts.recoveryWait, 1_000));
+          const recoveryWaitMs = Math.max(
+            0,
+            durationToMs(opts.recoveryWait, 1_000),
+          );
           const rpcTimeoutBurstThreshold = Math.max(
             1,
             clampNonNegativeInt(
@@ -845,11 +915,18 @@ export function registerBrowserHarnessCommands({
             1_000,
             durationToMs(opts.rpcTimeoutRecoveryTimeout, 30_000),
           );
-          const defaultRecovery = parseRecoveryMode(opts.defaultRecovery, "reload");
+          const defaultRecovery = parseRecoveryMode(
+            opts.defaultRecovery,
+            "reload",
+          );
           const continueOnError = !!opts.continueOnError;
           const captureDefaults: HarnessCapturePolicy = {
             screenshot_on_fail: opts.screenshotOnFail !== false,
-            logs_on_fail: clampNonNegativeInt(opts.logsOnFail, 120, "--logs-on-fail"),
+            logs_on_fail: clampNonNegativeInt(
+              opts.logsOnFail,
+              120,
+              "--logs-on-fail",
+            ),
             network_on_fail: clampNonNegativeInt(
               opts.networkOnFail,
               120,
@@ -922,7 +999,8 @@ export function registerBrowserHarnessCommands({
                 let probeBrowserId = targetBrowserId;
                 if (pinTarget) {
                   const pinned = await assertPinnedSessionActive();
-                  probeBrowserId = `${pinned.browser_id ?? ""}`.trim() || probeBrowserId;
+                  probeBrowserId =
+                    `${pinned.browser_id ?? ""}`.trim() || probeBrowserId;
                 }
                 const probe = deps.createBrowserSessionClient({
                   account_id: ctx.accountId,
@@ -967,7 +1045,10 @@ export function registerBrowserHarnessCommands({
                 if (pinTarget) {
                   await assertPinnedSessionActive();
                 }
-                const stepTimeout = Math.max(1_000, step.timeout_ms ?? ctx.timeoutMs);
+                const stepTimeout = Math.max(
+                  1_000,
+                  step.timeout_ms ?? ctx.timeoutMs,
+                );
                 const browserClient = deps.createBrowserSessionClient({
                   account_id: ctx.accountId,
                   browser_id: targetBrowserId,
@@ -1045,7 +1126,9 @@ export function registerBrowserHarnessCommands({
                     }
                     result = { assertion_ok: true, value: got };
                   } else {
-                    await new Promise((resolve) => setTimeout(resolve, step.sleep_ms));
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, step.sleep_ms),
+                    );
                     result = { slept_ms: step.sleep_ms };
                   }
                   row.ok = true;
@@ -1066,7 +1149,9 @@ export function registerBrowserHarnessCommands({
                         ...(burstRecovery.browser_id
                           ? { browser_id: burstRecovery.browser_id }
                           : {}),
-                        ...(burstRecovery.error ? { error: burstRecovery.error } : {}),
+                        ...(burstRecovery.error
+                          ? { error: burstRecovery.error }
+                          : {}),
                       };
                       if (burstRecovery.ok) {
                         consecutiveRpcTimeouts = 0;
@@ -1110,9 +1195,12 @@ export function registerBrowserHarnessCommands({
                 const prev = signatureMap.get(failureSignature);
                 if (prev) {
                   prev.count += 1;
-                  if (!prev.phases.includes(step.phase)) prev.phases.push(step.phase);
-                  if (!prev.step_names.includes(step.name)) prev.step_names.push(step.name);
-                  if (!prev.errors.includes(finalError)) prev.errors.push(finalError);
+                  if (!prev.phases.includes(step.phase))
+                    prev.phases.push(step.phase);
+                  if (!prev.step_names.includes(step.name))
+                    prev.step_names.push(step.name);
+                  if (!prev.errors.includes(finalError))
+                    prev.errors.push(finalError);
                 } else {
                   signatureMap.set(failureSignature, {
                     signature: failureSignature,
@@ -1133,7 +1221,9 @@ export function registerBrowserHarnessCommands({
                 ok: stepOk,
                 attempts: attemptReports.length,
                 ...(stepOk ? {} : { final_error: finalError || "step failed" }),
-                ...(failureSignature ? { failure_signature: failureSignature } : {}),
+                ...(failureSignature
+                  ? { failure_signature: failureSignature }
+                  : {}),
                 attempt_reports: attemptReports,
               });
               reportIndex += 1;
@@ -1150,23 +1240,34 @@ export function registerBrowserHarnessCommands({
                 }
               }
               if (step.pause_ms > 0) {
-                await new Promise((resolve) => setTimeout(resolve, step.pause_ms));
+                await new Promise((resolve) =>
+                  setTimeout(resolve, step.pause_ms),
+                );
               }
             }
           };
 
-          await runStepList({ list: normalized.before_steps, forceContinue: false });
+          await runStepList({
+            list: normalized.before_steps,
+            forceContinue: false,
+          });
           if (!halted) {
             await runStepList({ list: normalized.steps, forceContinue: false });
           }
-          await runStepList({ list: normalized.after_steps, forceContinue: true });
+          await runStepList({
+            list: normalized.after_steps,
+            forceContinue: true,
+          });
 
           const finishedAtMs = Date.now();
           const passed = stepReports.filter((x) => x.ok).length;
           const failed = stepReports.length - passed;
           const ok = failed === 0 && !halted;
           const failureSignatures = Array.from(signatureMap.values())
-            .sort((a, b) => b.count - a.count || a.signature.localeCompare(b.signature))
+            .sort(
+              (a, b) =>
+                b.count - a.count || a.signature.localeCompare(b.signature),
+            )
             .map((x) => ({
               signature: x.signature,
               count: x.count,

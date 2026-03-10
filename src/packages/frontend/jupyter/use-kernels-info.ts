@@ -20,8 +20,14 @@ import {
 // ATTN: this is only valid inside the context of a specific project!
 export function useJupyterKernelsInfo(): {
   kernel_selection;
-  kernels_by_name: immutable.OrderedMap<string, immutable.Map<string, string>> | null;
-  kernels_by_language: immutable.OrderedMap<string, immutable.List<string>> | null;
+  kernels_by_name: immutable.OrderedMap<
+    string,
+    immutable.Map<string, string>
+  > | null;
+  kernels_by_language: immutable.OrderedMap<
+    string,
+    immutable.List<string>
+  > | null;
   refresh: Function;
   error: string;
 } {

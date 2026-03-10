@@ -1178,7 +1178,10 @@ export class Actions extends BaseActions<LatexEditorState> {
     // files, lexical absolute fallback otherwise).
     const api = await project_api(this.project_id);
     const home = normalizeAbsolutePath(await api.getHomeDirectory());
-    const baseDir = normalizeAbsolutePath(path_split(this.path).head || home, home);
+    const baseDir = normalizeAbsolutePath(
+      path_split(this.path).head || home,
+      home,
+    );
     let files2: string[];
     try {
       files2 = await Promise.all(

@@ -20,7 +20,8 @@ export function useBlockLayout({ minimal, divRef }: UseBlockLayoutOptions) {
       if (typeof divRef === "function") {
         divRef(node);
       } else if (divRef && "current" in divRef) {
-        (divRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        (divRef as React.MutableRefObject<HTMLDivElement | null>).current =
+          node;
       }
     },
     [divRef],

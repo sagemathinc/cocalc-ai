@@ -84,7 +84,9 @@ export async function extraInfo(description: Description, account_id?: string) {
   const balance = toDecimal(await getBalance({ account_id }));
   const balanceAfterPay = balance.sub(cost);
   const { pay_as_you_go_min_payment } = await getServerSettings();
-  let due = moneyRound2Up(balanceAfterPay.neg().gt(0) ? balanceAfterPay.neg() : 0);
+  let due = moneyRound2Up(
+    balanceAfterPay.neg().gt(0) ? balanceAfterPay.neg() : 0,
+  );
   let minPayment = "";
   const minPaymentValue = toDecimal(pay_as_you_go_min_payment ?? 0);
   if (due.gt(0) && due.lt(minPaymentValue)) {

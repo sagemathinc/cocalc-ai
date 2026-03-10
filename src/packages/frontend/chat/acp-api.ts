@@ -88,7 +88,7 @@ export function resetAcpThreadState({
 
   const normalizedThreadId = `${threadId ?? ""}`.trim();
   const threadMessages = normalizedThreadId
-    ? actions.getMessagesInThread(normalizedThreadId) ?? []
+    ? (actions.getMessagesInThread(normalizedThreadId) ?? [])
     : [];
   let nextState = store.get("acpState");
   for (const msg of threadMessages) {
@@ -367,7 +367,16 @@ export async function sendQueuedAcpTurnImmediately({
     user_message_id: messageId,
     action: "send_immediately",
   });
-  return result?.ok === true;
+  if (!result?.ok) {
+    return false;
+  }
+  store.setState({
+    acpState: (store.get("acpState") ?? new Map()).set(
+      `message:${messageId}`,
+      "sent",
+    ),
+  });
+  return true;
 }
 
 function normalizeCodexMention(model?: string): string | undefined {
@@ -399,7 +408,8 @@ function buildAcpConfig({
   const opts: CodexSessionConfig = {
     workingDirectory,
   };
-  const defaultModel = DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+  const defaultModel =
+    DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
   const selectedModel = config?.model ?? model ?? defaultModel;
   if (selectedModel) {
     opts.model = selectedModel;

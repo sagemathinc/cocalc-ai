@@ -10,11 +10,11 @@ import { join } from "path";
 
 export default async function getProxiedPublicPathInfo(
   url: string,
-  segments?: string[]
+  segments?: string[],
 ) {
   if (url.startsWith("github/")) {
     return await getPublicPathInfoGithub(
-      segments == null ? url : join(url, ...segments.slice(1))
+      segments == null ? url : join(url, ...segments.slice(1)),
     );
   }
   if (url.startsWith("gist/")) {
@@ -28,6 +28,6 @@ export default async function getProxiedPublicPathInfo(
   //     return await getPublicPathInfoUrl(url);
   //   }
   throw Error(
-    `unsupported proxy url schema -- "${url}" -- url must be hosted on GitHub`
+    `unsupported proxy url schema -- "${url}" -- url must be hosted on GitHub`,
   );
 }

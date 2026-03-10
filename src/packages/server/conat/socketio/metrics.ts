@@ -47,10 +47,7 @@ export async function initMetrics(server: ConatServer) {
   }
 }
 
-export async function handleMetrics(
-  req: IncomingMessage,
-  res: ServerResponse,
-) {
+export async function handleMetrics(req: IncomingMessage, res: ServerResponse) {
   try {
     const settings = await getServerSettings();
     if (!settings.prometheus_metrics) {

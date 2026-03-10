@@ -30,7 +30,7 @@ function cleanup_error(out: string, tmpfn: string): string {
 export async function rust_format(
   input: string,
   options: Options,
-  logger: any
+  logger: any,
 ): Promise<string> {
   // create input temp file
   const input_path: string = await callback(tmp.file);

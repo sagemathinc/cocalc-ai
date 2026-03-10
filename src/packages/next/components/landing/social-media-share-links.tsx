@@ -12,18 +12,13 @@ import A from "components/misc/A";
 
 interface SocialMediaShareLinksProps {
   title: string;
-  url: string,
+  url: string;
   showText?: boolean;
   standalone?: boolean; // default false
 }
 
 export function SocialMediaShareLinks(props: SocialMediaShareLinksProps) {
-  const {
-    title,
-    url,
-    standalone = false,
-    showText = false,
-  } = props;
+  const { title, url, standalone = false, showText = false } = props;
 
   const bottomLinkStyle: CSS = {
     color: COLORS.ANTD_LINK_BLUE,

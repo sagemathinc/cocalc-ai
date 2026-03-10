@@ -21,7 +21,7 @@ export function renderMarkdown(text: string): string {
 }
 
 export function extractID(
-  param: string | string[] | undefined
+  param: string | string[] | undefined,
 ): number | undefined {
   // if id is null or does not start with an integer, return 404
   if (param == null || typeof param !== "string") return;

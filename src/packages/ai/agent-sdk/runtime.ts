@@ -7,7 +7,11 @@ import { AgentCapabilityRegistry as Registry } from "./capabilities";
 import { AgentExecutor, type AgentExecutorOptions } from "./executor";
 import { buildCapabilityManifest } from "./manifest";
 import { registerBasicCapabilities } from "./packs";
-import type { AgentActionEnvelope, AgentActionResult, AgentActor } from "./types";
+import type {
+  AgentActionEnvelope,
+  AgentActionResult,
+  AgentActor,
+} from "./types";
 import type {
   AgentHubAdapter,
   AgentProjectFsAdapter,
@@ -108,10 +112,13 @@ function hubAdapterFromClient(client: HubClientLike): AgentHubAdapter {
   };
 }
 
-function projectAdapterFromClient(client: ProjectClientLike): AgentProjectAdapter {
+function projectAdapterFromClient(
+  client: ProjectClientLike,
+): AgentProjectAdapter {
   return {
     listing: (opts) => client.system.listing(opts),
-    writeTextFileToProject: (opts) => client.system.writeTextFileToProject(opts),
+    writeTextFileToProject: (opts) =>
+      client.system.writeTextFileToProject(opts),
     apps: {
       start: (name: string) => client.apps.start(name),
       stop: (name: string) => client.apps.stop(name),
@@ -122,14 +129,13 @@ function projectAdapterFromClient(client: ProjectClientLike): AgentProjectAdapte
 
 function fsAdapterFromClient(client: FsClientLike): AgentProjectFsAdapter {
   return {
-    readFile: (path: string, encoding?: string) => client.readFile(path, encoding),
-    writeFile: (
-      path: string,
-      data: string | Buffer,
-      saveLast?: boolean,
-    ) => client.writeFile(path, data, saveLast),
+    readFile: (path: string, encoding?: string) =>
+      client.readFile(path, encoding),
+    writeFile: (path: string, data: string | Buffer, saveLast?: boolean) =>
+      client.writeFile(path, data, saveLast),
     readdir: (path: string, options?: unknown) => client.readdir(path, options),
-    rename: (oldPath: string, newPath: string) => client.rename(oldPath, newPath),
+    rename: (oldPath: string, newPath: string) =>
+      client.rename(oldPath, newPath),
     move: (
       src: string | string[],
       dest: string,

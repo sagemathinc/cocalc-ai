@@ -13,10 +13,7 @@ interface Props {
   hasFullHistory?: boolean;
 }
 
-export function LoadMoreHistory({
-  actions,
-  hasFullHistory,
-}: Props) {
+export function LoadMoreHistory({ actions, hasFullHistory }: Props) {
   const [loading, setLoading] = useState<boolean>(false);
 
   const disabled = !!hasFullHistory;

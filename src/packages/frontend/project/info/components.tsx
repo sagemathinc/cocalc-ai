@@ -61,7 +61,9 @@ function sparklinePoints(values: number[], width = 240, height = 56): string {
     return height - ((value - min) / (max - min)) * (height - 4) - 2;
   };
   const dx = width / (values.length - 1);
-  return values.map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+  return values
+    .map((v, i) => `${(i * dx).toFixed(2)},${y(v).toFixed(2)}`)
+    .join(" ");
 }
 
 function ProcessTrendChart({
@@ -85,7 +87,12 @@ function ProcessTrendChart({
       <div style={{ fontWeight: 600 }}>
         {title}: {latest.toFixed(1)} {unit}
       </div>
-      <svg width="100%" height="96" viewBox="0 0 360 96" preserveAspectRatio="none">
+      <svg
+        width="100%"
+        height="96"
+        viewBox="0 0 360 96"
+        preserveAspectRatio="none"
+      >
         <polyline
           fill="none"
           stroke={color}
@@ -144,7 +151,8 @@ export const AboutContent: React.FC<AboutContentProps> = ({
             const start = t.timestamps[0];
             const end = t.timestamps[t.timestamps.length - 1];
             const coveredMinutes = Math.max(0, (end - start) / (60 * 1000));
-            const cadence = (end - start) / 1000 / Math.max(1, t.timestamps.length - 1);
+            const cadence =
+              (end - start) / 1000 / Math.max(1, t.timestamps.length - 1);
             return `X-axis: oldest to newest sample, ${t.timestamps.length} samples covering ${coveredMinutes.toFixed(
               1,
             )} minutes (about every ${cadence.toFixed(0)}s).`;

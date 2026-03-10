@@ -3,12 +3,12 @@ import { generate } from "random-key";
 import siteURL from "@cocalc/database/settings/site-url";
 
 export async function getVerifyEmail(
-  email_address: string
+  email_address: string,
 ): Promise<{ html: string; text: string }> {
   const token = await getToken(email_address);
   const site_url = await siteURL();
   const url = `${site_url}/auth/verify/${token}?email=${encodeURIComponent(
-    email_address
+    email_address,
   )}`;
   return body(url);
 }
@@ -17,7 +17,7 @@ async function getToken(email_address: string): Promise<string> {
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT account_id, email_address_challenge FROM accounts WHERE email_address=$1",
-    [email_address]
+    [email_address],
   );
   if (rows.length == 0) {
     throw Error(`no account with email address "${email_address}"`);
@@ -34,7 +34,7 @@ async function getToken(email_address: string): Promise<string> {
   const data = { email: email_address, token, time: new Date() };
   await pool.query(
     "UPDATE accounts SET email_address_challenge = $1::JSONB WHERE account_id = $2::UUID",
-    [data, account_id]
+    [data, account_id],
   );
   return token;
 }

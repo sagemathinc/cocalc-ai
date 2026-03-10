@@ -128,7 +128,12 @@ function localPlusRootDir(): string {
   const explicitData = `${process.env.COCALC_DATA_DIR ?? ""}`.trim();
   if (explicitData) return path.dirname(explicitData);
   if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "cocalc-plus");
+    return path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "cocalc-plus",
+    );
   }
   return path.join(os.homedir(), ".local", "share", "cocalc-plus");
 }
@@ -301,7 +306,10 @@ function shouldAutoPrune(nowMs: number): boolean {
   try {
     const raw = JSON.parse(fs.readFileSync(file, "utf8"));
     const lastRunMs = Number(raw?.lastRunMs ?? 0);
-    if (Number.isFinite(lastRunMs) && nowMs - lastRunMs < AUTO_PRUNE_INTERVAL_MS) {
+    if (
+      Number.isFinite(lastRunMs) &&
+      nowMs - lastRunMs < AUTO_PRUNE_INTERVAL_MS
+    ) {
       return false;
     }
   } catch {
@@ -321,7 +329,9 @@ function markAutoPruned(nowMs: number): void {
 }
 
 export function parseDurationMs(value: string): number {
-  const raw = String(value ?? "").trim().toLowerCase();
+  const raw = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (!raw) {
     throw new Error("Duration is empty");
   }
@@ -560,7 +570,12 @@ export function sshRunAsync(
   opts: SshOptions,
   cmd: string,
   execOpts: SshExecOptions = {},
-): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+): Promise<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+}> {
   const sshArgs = buildSshArgs(opts);
   const finalArgs = sshArgs.concat(execOpts.extraArgs || [], [opts.host, cmd]);
   const stdio = execOpts.inherit ? "inherit" : "pipe";
@@ -580,10 +595,7 @@ export function sshRunAsync(
         stderr += chunk.toString();
       });
     }
-    const finalize = (
-      status: number | null,
-      error?: Error,
-    ) => {
+    const finalize = (status: number | null, error?: Error) => {
       if (finished) return;
       finished = true;
       if (timeout) {
@@ -714,7 +726,10 @@ function getLocalVersion(): string {
   return "unknown";
 }
 
-function getCachedRemoteStatus(target: string, maxAgeMs = REMOTE_STATUS_CACHE_MS) {
+function getCachedRemoteStatus(
+  target: string,
+  maxAgeMs = REMOTE_STATUS_CACHE_MS,
+) {
   const cached = remoteStatusCache.get(target);
   if (!cached) return null;
   if (Date.now() - cached.ts > maxAgeMs) return null;
@@ -736,22 +751,26 @@ function getSoftwareBaseUrl() {
 function normalizeOsArch() {
   const platform = os.platform();
   const osName =
-    platform === "darwin" ? "darwin" : platform === "linux" ? "linux" : platform;
+    platform === "darwin"
+      ? "darwin"
+      : platform === "linux"
+        ? "linux"
+        : platform;
   const archRaw = os.arch();
   const arch =
-    archRaw === "x64"
-      ? "amd64"
-      : archRaw === "arm64"
-        ? "arm64"
-        : archRaw;
+    archRaw === "x64" ? "amd64" : archRaw === "arm64" ? "arm64" : archRaw;
   return { os: osName, arch };
 }
 
 function compareVersions(a?: string, b?: string): number {
   if (!a || !b) return 0;
   const norm = (v: string) => v.split(/[+-]/)[0];
-  const partsA = norm(a).split(".").map((n) => parseInt(n, 10));
-  const partsB = norm(b).split(".").map((n) => parseInt(n, 10));
+  const partsA = norm(a)
+    .split(".")
+    .map((n) => parseInt(n, 10));
+  const partsB = norm(b)
+    .split(".")
+    .map((n) => parseInt(n, 10));
   const len = Math.max(partsA.length, partsB.length);
   for (let i = 0; i < len; i += 1) {
     const va = partsA[i] ?? 0;
@@ -764,9 +783,7 @@ function compareVersions(a?: string, b?: string): number {
 
 function extractVersion(raw?: string): string | null {
   if (!raw) return null;
-  const match = raw.match(
-    /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/,
-  );
+  const match = raw.match(/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/);
   return match?.[1] ?? null;
 }
 
@@ -824,7 +841,10 @@ async function readRemoteVersionInfo(
 ): Promise<VersionInfo | null> {
   try {
     const { remoteVersionPath } = await resolveRemotePaths(opts, target);
-    const content = await sshExecAsync(opts, `cat ${shellQuote(remoteVersionPath)}`);
+    const content = await sshExecAsync(
+      opts,
+      `cat ${shellQuote(remoteVersionPath)}`,
+    );
     const parsed = JSON.parse(content);
     if (parsed?.version && parsed?.os && parsed?.arch) {
       return {
@@ -844,12 +864,11 @@ async function readRemoteVersionInfo(
     const version = extractVersion(versionRaw) ?? "unknown";
     const unameOs = await sshExecAsync(opts, "uname -s");
     const unameArch = await sshExecAsync(opts, "uname -m");
-    const osName =
-      unameOs.toLowerCase().includes("darwin")
-        ? "darwin"
-        : unameOs.toLowerCase().includes("linux")
-          ? "linux"
-          : unameOs.toLowerCase();
+    const osName = unameOs.toLowerCase().includes("darwin")
+      ? "darwin"
+      : unameOs.toLowerCase().includes("linux")
+        ? "linux"
+        : unameOs.toLowerCase();
     let arch = unameArch.trim();
     if (arch === "x86_64" || arch === "amd64") arch = "amd64";
     if (arch === "aarch64" || arch === "arm64") arch = "arm64";
@@ -865,9 +884,9 @@ async function readRemoteVersionInfo(
   }
 }
 
-export async function getLocalUpgradeInfo(
-  opts?: { force?: boolean },
-): Promise<UpgradeInfo> {
+export async function getLocalUpgradeInfo(opts?: {
+  force?: boolean;
+}): Promise<UpgradeInfo> {
   if (!opts?.force && localUpgradeCache.info && localUpgradeCache.ts) {
     if (Date.now() - localUpgradeCache.ts < UPGRADE_CACHE_MS) {
       return localUpgradeCache.info;
@@ -958,9 +977,10 @@ export async function getUpgradeInfo(opts?: {
   scope?: "local" | "remote" | "all";
 }): Promise<{ local?: UpgradeInfo; remotes: Record<string, UpgradeInfo> }> {
   const scope = opts?.scope ?? "all";
-  const result: { local?: UpgradeInfo; remotes: Record<string, UpgradeInfo> } = {
-    remotes: {},
-  };
+  const result: { local?: UpgradeInfo; remotes: Record<string, UpgradeInfo> } =
+    {
+      remotes: {},
+    };
   if (scope === "local" || scope === "all") {
     result.local = await getLocalUpgradeInfo({ force: opts?.force });
   }
@@ -1321,7 +1341,10 @@ export async function connectSession(
 
   let info: ConnectionInfo | null = null;
   if (options.forwardOnly) {
-    const content = await sshExecAsync(sshOpts, `cat ${shellQuote(remoteInfoPath)}`);
+    const content = await sshExecAsync(
+      sshOpts,
+      `cat ${shellQuote(remoteInfoPath)}`,
+    );
     info = JSON.parse(content) as ConnectionInfo;
   } else {
     let reused = false;
@@ -1368,9 +1391,10 @@ export async function connectSession(
     throw new Error("Failed to retrieve remote connection info");
   }
 
-  const remotePort = options.remotePort && options.remotePort !== "auto"
-    ? parseInt(options.remotePort, 10)
-    : info.port;
+  const remotePort =
+    options.remotePort && options.remotePort !== "auto"
+      ? parseInt(options.remotePort, 10)
+      : info.port;
 
   const url = `http://localhost:${localPort}?auth_token=${encodeURIComponent(
     info.token || "",
@@ -1415,10 +1439,7 @@ export async function connectSession(
     }
   });
   if (options.waitForReady) {
-    const ready = await waitForLocalUrl(
-      url,
-      options.readyTimeoutMs ?? 8000,
-    );
+    const ready = await waitForLocalUrl(url, options.readyTimeoutMs ?? 8000);
     if (!ready) {
       tunnel.kill();
       throw new Error("Remote server did not respond in time");

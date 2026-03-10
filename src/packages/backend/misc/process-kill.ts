@@ -17,7 +17,7 @@ export default function processKill(pid: number, signal: 2 | 3 | 9) {
       break;
     default:
       logger.debug(
-        "WARNING -- process_kill: only signals 2 (SIGINT), 3 (SIGQUIT), and 9 (SIGKILL) are supported"
+        "WARNING -- process_kill: only signals 2 (SIGINT), 3 (SIGQUIT), and 9 (SIGKILL) are supported",
       );
       return;
   }

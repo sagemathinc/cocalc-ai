@@ -9,8 +9,7 @@ const MIN_SWEEP_MS = 30 * 1000;
 
 const PRIVATE_DIRS = ["secrets", "cache", "sync", "rustic", "backup-index"];
 const PRIVATE_FILES = ["log", "daemon.pid"];
-const SQLITE_PATTERN =
-  /^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$/;
+const SQLITE_PATTERN = /^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$/;
 
 function enabled(): boolean {
   const raw = `${process.env.COCALC_HARDEN_DATA_PERMISSIONS ?? "yes"}`
@@ -86,4 +85,3 @@ export function startDataPermissionHardener(dataDir: string): () => void {
 
   return () => clearInterval(interval);
 }
-

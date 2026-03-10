@@ -14,7 +14,9 @@ export type RestoreLroState = LroOpState;
 
 export type RestoreOpsManagerOptions = {
   project_id: string;
-  setState: (state: { restore_ops?: ImmutableMap<string, RestoreLroState> }) => void;
+  setState: (state: {
+    restore_ops?: ImmutableMap<string, RestoreLroState>;
+  }) => void;
   isClosed: () => boolean;
   listLro: (opts: {
     scope_type: "project";

@@ -15,7 +15,7 @@ function toggleCollapsedSections(editor): void {
   })) {
     editor.collapsedSections.set(
       element,
-      !editor.collapsedSections.get(element)
+      !editor.collapsedSections.get(element),
     );
     changed = true;
   }

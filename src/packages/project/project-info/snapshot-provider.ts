@@ -5,7 +5,10 @@
 
 import { uptime } from "node:os";
 import { ProcessStats } from "@cocalc/backend/process-stats";
-import type { Processes, ProjectInfoScope } from "@cocalc/util/types/project-info/types";
+import type {
+  Processes,
+  ProjectInfoScope,
+} from "@cocalc/util/types/project-info/types";
 import { OwnedDarwinProcessSnapshotProvider } from "./owned-darwin-snapshot-provider";
 import { OwnedLinuxProcessSnapshotProvider } from "./owned-linux-snapshot-provider";
 
@@ -43,7 +46,8 @@ class AllProcessSnapshotProvider implements ProcessSnapshotProvider {
   }
 
   async snapshot(timestamp: number): Promise<ProcessSnapshot> {
-    const { procs, uptime, boottime } = await this.processStats.processes(timestamp);
+    const { procs, uptime, boottime } =
+      await this.processStats.processes(timestamp);
     const visible = Object.keys(procs).length;
     return {
       scope: this.scope,

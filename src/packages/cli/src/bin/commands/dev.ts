@@ -117,7 +117,11 @@ function hubSoftwareBaseUrl(apiBaseUrl: string): string {
   return `${apiBaseUrl.replace(/\/+$/, "")}/software`;
 }
 
-function runSyncText(command: string, args: string[], cwd: string): string | null {
+function runSyncText(
+  command: string,
+  args: string[],
+  cwd: string,
+): string | null {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
@@ -152,7 +156,12 @@ function localRuntimeSummary(): Record<string, unknown> {
   const srcRoot = repoSrcRoot();
   const packagesRoot = join(srcRoot, "packages");
   const staticDist = join(packagesRoot, "static", "dist", "app.html");
-  const projectHostBundleRoot = join(packagesRoot, "project-host", "build", "bundle");
+  const projectHostBundleRoot = join(
+    packagesRoot,
+    "project-host",
+    "build",
+    "bundle",
+  );
   const projectBundleRoot = join(packagesRoot, "project", "build", "bundle");
   return {
     git: gitSummary(resolve(srcRoot, "..")),
@@ -225,10 +234,10 @@ function tryParseProjectAppPath(pathname: string): {
   };
 }
 
-function resolveUpgradeTarget(opts: {
-  host?: string;
-  project?: string;
-}): { hostIdentifier?: string; projectIdentifier?: string } {
+function resolveUpgradeTarget(opts: { host?: string; project?: string }): {
+  hostIdentifier?: string;
+  projectIdentifier?: string;
+} {
   const hostIdentifier = `${opts.host ?? ""}`.trim() || undefined;
   const projectIdentifier = `${opts.project ?? ""}`.trim() || undefined;
   if (!hostIdentifier && !projectIdentifier) {
@@ -267,7 +276,10 @@ async function buildLocalArtifact({
   };
 }
 
-export function registerDevCommand(program: Command, deps: DevCommandDeps): Command {
+export function registerDevCommand(
+  program: Command,
+  deps: DevCommandDeps,
+): Command {
   const {
     runLocalCommand,
     withContext,
@@ -278,7 +290,9 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
   } = deps;
 
   const dev = program.command("dev").description("developer workflow commands");
-  const sync = dev.command("sync").description("build and deploy changed runtime layers");
+  const sync = dev
+    .command("sync")
+    .description("build and deploy changed runtime layers");
 
   sync
     .command("hub")
@@ -297,19 +311,29 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           const steps: Record<string, unknown>[] = [];
 
           if (opts.build !== false) {
-            const built = await runOrThrow("pnpm", ["--dir", packageRoot, "build"], srcRoot);
+            const built = await runOrThrow(
+              "pnpm",
+              ["--dir", packageRoot, "build"],
+              srcRoot,
+            );
             steps.push({
               step: "build",
               command: `pnpm --dir ${packageRoot} build`,
               stdout_tail: tailLines(built.stdout),
               stderr_tail: tailLines(built.stderr),
               package_json_version:
-                JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).version ?? null,
+                JSON.parse(
+                  readFileSync(join(packageRoot, "package.json"), "utf8"),
+                ).version ?? null,
             });
           }
 
           if (opts.restart !== false) {
-            const restarted = await runOrThrow("bash", [daemonScript, "restart"], srcRoot);
+            const restarted = await runOrThrow(
+              "bash",
+              [daemonScript, "restart"],
+              srcRoot,
+            );
             steps.push({
               step: "restart",
               command: `bash ${daemonScript} restart`,
@@ -329,10 +353,16 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
 
   sync
     .command("project-host")
-    .description("build the local project-host bundle and roll it out to a host")
+    .description(
+      "build the local project-host bundle and roll it out to a host",
+    )
     .option("--host <host>", "host id or name")
     .option("--project <project>", "project id or name (to infer the host)")
-    .option("--channel <channel>", "software channel: latest or staging", "latest")
+    .option(
+      "--channel <channel>",
+      "software channel: latest or staging",
+      "latest",
+    )
     .option("--version <version>", "explicit version override")
     .option("--no-build", "skip local bundle build")
     .option("--no-wait", "queue the rollout without waiting")
@@ -359,7 +389,10 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           );
           const target = resolveUpgradeTarget(opts);
           const project = target.projectIdentifier
-            ? await resolveProjectFromArgOrContext(ctx, target.projectIdentifier)
+            ? await resolveProjectFromArgOrContext(
+                ctx,
+                target.projectIdentifier,
+              )
             : undefined;
           const host = await resolveHost(
             ctx,
@@ -373,7 +406,11 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                 label: "project-host bundle",
                 cwd: srcRoot,
                 command: "pnpm",
-                args: ["--dir", join(srcRoot, "packages", "project-host"), "build:bundle"],
+                args: [
+                  "--dir",
+                  join(srcRoot, "packages", "project-host"),
+                  "build:bundle",
+                ],
                 artifactPath: bundlePath,
               }),
             );
@@ -384,8 +421,14 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             throw new Error("--channel must be one of: latest, staging");
           }
           const targetSpec = opts.version?.trim()
-            ? { artifact: "project-host" as const, version: opts.version.trim() }
-            : { artifact: "project-host" as const, channel: channelRaw as "latest" | "staging" };
+            ? {
+                artifact: "project-host" as const,
+                version: opts.version.trim(),
+              }
+            : {
+                artifact: "project-host" as const,
+                channel: channelRaw as "latest" | "staging",
+              };
 
           const op = await ctx.hub.hosts.upgradeHostSoftware({
             id: host.id,
@@ -435,14 +478,23 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
 
   sync
     .command("project")
-    .description("build the local project bundle and roll it out to a project host")
+    .description(
+      "build the local project bundle and roll it out to a project host",
+    )
     .option("--host <host>", "host id or name")
     .option("--project <project>", "project id or name")
-    .option("--channel <channel>", "software channel: latest or staging", "latest")
+    .option(
+      "--channel <channel>",
+      "software channel: latest or staging",
+      "latest",
+    )
     .option("--version <version>", "explicit version override")
     .option("--no-build", "skip local bundle build")
     .option("--no-wait", "queue the rollout without waiting")
-    .option("--no-restart-project", "do not restart the target project after rollout")
+    .option(
+      "--no-restart-project",
+      "do not restart the target project after rollout",
+    )
     .action(
       async (
         opts: {
@@ -467,7 +519,10 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           );
           const target = resolveUpgradeTarget(opts);
           const project = target.projectIdentifier
-            ? await resolveProjectFromArgOrContext(ctx, target.projectIdentifier)
+            ? await resolveProjectFromArgOrContext(
+                ctx,
+                target.projectIdentifier,
+              )
             : undefined;
           const host = await resolveHost(
             ctx,
@@ -481,7 +536,11 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                 label: "project bundle",
                 cwd: srcRoot,
                 command: "pnpm",
-                args: ["--dir", join(srcRoot, "packages", "project"), "build:bundle"],
+                args: [
+                  "--dir",
+                  join(srcRoot, "packages", "project"),
+                  "build:bundle",
+                ],
                 artifactPath: bundlePath,
               }),
             );
@@ -493,7 +552,10 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           }
           const targetSpec = opts.version?.trim()
             ? { artifact: "project" as const, version: opts.version.trim() }
-            : { artifact: "project" as const, channel: channelRaw as "latest" | "staging" };
+            : {
+                artifact: "project" as const,
+                channel: channelRaw as "latest" | "staging",
+              };
 
           const op = await ctx.hub.hosts.upgradeHostSoftware({
             id: host.id,
@@ -567,7 +629,8 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             op_id: op.op_id,
             status: summary.status,
             target: targetSpec,
-            deployed_project_bundle_version: refreshed.project_bundle_version ?? null,
+            deployed_project_bundle_version:
+              refreshed.project_bundle_version ?? null,
             project_restart: restartResult,
             steps,
           };
@@ -575,7 +638,9 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
       },
     );
 
-  const runtime = dev.command("runtime").description("inspect dev/runtime state");
+  const runtime = dev
+    .command("runtime")
+    .description("inspect dev/runtime state");
 
   runtime
     .command("versions")
@@ -583,10 +648,7 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
     .option("--host <host>", "host id or name")
     .option("--project <project>", "project id or name")
     .action(
-      async (
-        opts: { host?: string; project?: string },
-        command: Command,
-      ) => {
+      async (opts: { host?: string; project?: string }, command: Command) => {
         await withContext(command, "dev runtime versions", async (ctx) => {
           const local = localRuntimeSummary();
           const remote: Record<string, unknown> = {
@@ -616,7 +678,10 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
               }
             | undefined;
           if (opts.project?.trim()) {
-            const ws = await resolveProjectFromArgOrContext(ctx, opts.project.trim());
+            const ws = await resolveProjectFromArgOrContext(
+              ctx,
+              opts.project.trim(),
+            );
             project = ws;
             remote.project = {
               project_id: ws.project_id,
@@ -627,7 +692,9 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
           }
 
           const hostIdentifier =
-            `${opts.host ?? ""}`.trim() || `${project?.host_id ?? ""}`.trim() || undefined;
+            `${opts.host ?? ""}`.trim() ||
+            `${project?.host_id ?? ""}`.trim() ||
+            undefined;
           if (hostIdentifier) {
             const host = await resolveHost(ctx, hostIdentifier);
             const connection = await ctx.hub.hosts.resolveHostConnection({
@@ -697,8 +764,12 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
             host == null
               ? null
               : await ctx.hub.hosts.resolveHostConnection({ host_id: host.id });
-          const appBasePath = normalizePathPrefix(`${(publicTrace as any).base_path ?? "/"}`);
-          const canonicalProjectPath = normalizePathPrefix(`${projectId}${appBasePath}`);
+          const appBasePath = normalizePathPrefix(
+            `${(publicTrace as any).base_path ?? "/"}`,
+          );
+          const canonicalProjectPath = normalizePathPrefix(
+            `${projectId}${appBasePath}`,
+          );
           return {
             ...result,
             kind: "public-app-subdomain",
@@ -718,7 +789,8 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
                     version: host.version ?? null,
                     project_host_build_id: host.project_host_build_id ?? null,
                     project_bundle_version: host.project_bundle_version ?? null,
-                    project_bundle_build_id: host.project_bundle_build_id ?? null,
+                    project_bundle_build_id:
+                      host.project_bundle_build_id ?? null,
                     tools_version: host.tools_version ?? null,
                   },
             host_connection:
@@ -771,8 +843,14 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
 
         const appPath = tryParseProjectAppPath(pathname);
         if (appPath) {
-          const ws = await resolveProjectFromArgOrContext(ctx, appPath.project_id);
-          const { api } = await resolveProjectProjectApi(ctx, appPath.project_id);
+          const ws = await resolveProjectFromArgOrContext(
+            ctx,
+            appPath.project_id,
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            appPath.project_id,
+          );
           const spec = await api.apps.getAppSpec(appPath.app_id);
           const status = await api.apps.statusApp(appPath.app_id);
           const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
@@ -805,10 +883,18 @@ export function registerDevCommand(program: Command, deps: DevCommandDeps): Comm
 
         const proxyPath = tryParseProjectProxyPath(pathname);
         if (proxyPath) {
-          const ws = await resolveProjectFromArgOrContext(ctx, proxyPath.project_id);
-          const { api } = await resolveProjectProjectApi(ctx, proxyPath.project_id);
+          const ws = await resolveProjectFromArgOrContext(
+            ctx,
+            proxyPath.project_id,
+          );
+          const { api } = await resolveProjectProjectApi(
+            ctx,
+            proxyPath.project_id,
+          );
           const statuses = await api.apps.listAppStatuses();
-          const candidates = statuses.filter((item) => item.port === proxyPath.port);
+          const candidates = statuses.filter(
+            (item) => item.port === proxyPath.port,
+          );
           const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
           return {
             ...result,

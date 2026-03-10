@@ -5,7 +5,12 @@
 
 // Kernel display
 
-import { CSS, React, useActions, useRedux } from "@cocalc/frontend/app-framework";
+import {
+  CSS,
+  React,
+  useActions,
+  useRedux,
+} from "@cocalc/frontend/app-framework";
 import { A, Icon, IconName, Loading } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import type {
@@ -88,7 +93,10 @@ const MIN_KERNEL_DRAWER_WIDTH = 360;
 const MAX_KERNEL_DRAWER_WIDTH = 960;
 
 function clampKernelDrawerWidth(width: number): number {
-  return Math.min(MAX_KERNEL_DRAWER_WIDTH, Math.max(MIN_KERNEL_DRAWER_WIDTH, width));
+  return Math.min(
+    MAX_KERNEL_DRAWER_WIDTH,
+    Math.max(MIN_KERNEL_DRAWER_WIDTH, width),
+  );
 }
 
 function readKernelDrawerWidth(): number | undefined {
@@ -184,7 +192,8 @@ export function Kernel({
       setIsSpawarning(true);
     }
   }, [backend_state]);
-  const [kernelDrawerOpen, setKernelDrawerOpen] = React.useState<boolean>(false);
+  const [kernelDrawerOpen, setKernelDrawerOpen] =
+    React.useState<boolean>(false);
   const [defaultKernelOnSelect, setDefaultKernelOnSelect] =
     React.useState<boolean>(false);
   const [kernelDrawerWidth, setKernelDrawerWidth] = React.useState<
@@ -262,10 +271,7 @@ export function Kernel({
       }
       const style = { ...KERNEL_NAME_STYLE, maxWidth: "20em" };
       return (
-        <div
-          style={style}
-          onClick={openKernelDrawer}
-        >
+        <div style={style} onClick={openKernelDrawer}>
           {display_name}
         </div>
       );
@@ -530,8 +536,8 @@ export function Kernel({
         ""
       ) : (
         <>
-          Backend is {BACKEND_STATE_HUMAN[backend_state] ?? backend_state} in the
-          project.
+          Backend is {BACKEND_STATE_HUMAN[backend_state] ?? backend_state} in
+          the project.
           <br />
         </>
       );

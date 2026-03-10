@@ -185,7 +185,9 @@ export interface Apps {
   upsertAppSpec: (
     spec: unknown,
   ) => Promise<{ id: string; path: string; spec: AppSpec }>;
-  deleteApp: (id: string) => Promise<{ id: string; deleted: boolean; path: string }>;
+  deleteApp: (
+    id: string,
+  ) => Promise<{ id: string; deleted: boolean; path: string }>;
 
   startApp: (id: string) => Promise<ManagedAppStatus>;
   stopApp: (id: string) => Promise<void>;
@@ -218,9 +220,7 @@ export interface Apps {
     id: string,
     opts?: { minutes?: number },
   ) => Promise<AppMetricsSummary>;
-  listAppMetrics: (
-    opts?: { minutes?: number },
-  ) => Promise<AppMetricsSummary[]>;
+  listAppMetrics: (opts?: { minutes?: number }) => Promise<AppMetricsSummary[]>;
 
   detectApps: (opts?: {
     include_managed?: boolean;

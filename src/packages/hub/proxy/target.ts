@@ -53,8 +53,16 @@ interface Options {
   parsed?: ReturnType<typeof parseReq>;
 }
 
-function shouldAutoStartForProxyRoute(type: string, port_desc: string): boolean {
-  if (type === "port" || type === "proxy" || type === "server" || type === "apps") {
+function shouldAutoStartForProxyRoute(
+  type: string,
+  port_desc: string,
+): boolean {
+  if (
+    type === "port" ||
+    type === "proxy" ||
+    type === "server" ||
+    type === "apps"
+  ) {
     return true;
   }
   return (

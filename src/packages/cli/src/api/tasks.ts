@@ -71,7 +71,10 @@ export interface BoundTasksDocument<Project extends ProjectIdentity> {
     task?: TaskRecord;
   }>;
 
-  setDone(taskId: string, done: boolean): Promise<{
+  setDone(
+    taskId: string,
+    done: boolean,
+  ): Promise<{
     project: Project;
     path: string;
     changedTaskIds: readonly string[];
@@ -79,7 +82,10 @@ export interface BoundTasksDocument<Project extends ProjectIdentity> {
     task?: TaskRecord;
   }>;
 
-  appendToDescription(taskId: string, text: string): Promise<{
+  appendToDescription(
+    taskId: string,
+    text: string,
+  ): Promise<{
     project: Project;
     path: string;
     changedTaskIds: readonly string[];
@@ -87,7 +93,10 @@ export interface BoundTasksDocument<Project extends ProjectIdentity> {
     task?: TaskRecord;
   }>;
 
-  updateTask(taskId: string, changes: Partial<TaskMutableFields>): Promise<{
+  updateTask(
+    taskId: string,
+    changes: Partial<TaskMutableFields>,
+  ): Promise<{
     project: Project;
     path: string;
     changedTaskIds: readonly string[];
@@ -154,18 +163,15 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
     return {
       ...binding,
       async getSnapshot(query?: TaskQuery) {
-        return await withSession(
-          async ({ project, session, path }) => {
-            const snapshot = await session.getSnapshot(query);
-            return {
-              project,
-              path,
-              tasks: [...snapshot.tasks],
-              revision: snapshot.revision ?? null,
-            };
-          },
-          true,
-        );
+        return await withSession(async ({ project, session, path }) => {
+          const snapshot = await session.getSnapshot(query);
+          return {
+            project,
+            path,
+            tasks: [...snapshot.tasks],
+            revision: snapshot.revision ?? null,
+          };
+        }, true);
       },
       async getTask(taskId: string) {
         return await withSession(

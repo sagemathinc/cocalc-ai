@@ -178,7 +178,10 @@ export function registerBasicCapabilities(
     summary: "Ping the hub and return current server time",
     argsSchema: {
       description: "No arguments required",
-      oneOf: [{ type: "null" }, { type: "object", additionalProperties: false }],
+      oneOf: [
+        { type: "null" },
+        { type: "object", additionalProperties: false },
+      ],
     },
     riskLevel: "read",
     sideEffectScope: "system",
@@ -245,7 +248,11 @@ export function registerBasicCapabilities(
     validateArgs: parseWriteTextArgs,
     handler: async ({ path, content }, { context, dryRun }) => {
       if (dryRun) {
-        return { dryRun: true, path, bytes: Buffer.byteLength(content, "utf8") };
+        return {
+          dryRun: true,
+          path,
+          bytes: Buffer.byteLength(content, "utf8"),
+        };
       }
       const project = requireProjectAdapter(context);
       await project.writeTextFileToProject({ path, content });
@@ -351,7 +358,11 @@ export function registerBasicCapabilities(
     validateArgs: parseFsWriteTextArgs,
     handler: async ({ path, content, saveLast }, { context, dryRun }) => {
       if (dryRun) {
-        return { dryRun: true, path, bytes: Buffer.byteLength(content, "utf8") };
+        return {
+          dryRun: true,
+          path,
+          bytes: Buffer.byteLength(content, "utf8"),
+        };
       }
       const fs = requireFsAdapter(context);
       await fs.writeFile(path, content, saveLast);

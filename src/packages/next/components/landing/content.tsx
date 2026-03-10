@@ -203,7 +203,7 @@ export default function Content(props: Props) {
             <div style={{ marginTop: "15px" }}>
               <LiveDemo
                 context={
-                  typeof title == "string" ? title : alt ?? "Feature Page"
+                  typeof title == "string" ? title : (alt ?? "Feature Page")
                 }
               />
             </div>

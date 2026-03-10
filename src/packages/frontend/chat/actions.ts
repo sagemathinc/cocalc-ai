@@ -7,7 +7,6 @@ import { fromJS } from "immutable";
 import { debounce } from "lodash";
 import { setDefaultLLM } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { Actions, redux } from "@cocalc/frontend/app-framework";
-import { lite } from "@cocalc/frontend/lite";
 import { History as LanguageModelHistory } from "@cocalc/frontend/client/types";
 import type { BaseEditorActions as CodeEditorActions } from "@cocalc/frontend/frame-editors/base-editor/actions-base";
 import {
@@ -64,10 +63,7 @@ import {
   orderLinearThreadMessages,
   stableDraftKeyFromThreadKey,
 } from "./utils";
-import type {
-  AcpChatContext,
-  AcpLoopConfig,
-} from "@cocalc/conat/ai/acp/types";
+import type { AcpChatContext, AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import {
   field,
   historyArray,
@@ -78,6 +74,7 @@ import {
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processLLM as processLLMExternal } from "./actions/llm";
+import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { isAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type {
   ChatArchiveExportOptions,
@@ -210,7 +207,9 @@ export function resolveThreadAgentModel({
       if (!messages || !date) return undefined;
       const msg = messages.get(`${date.valueOf()}`);
       const id = field<string>(msg, "thread_id");
-      return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
+      return typeof id === "string" && id.trim().length > 0
+        ? id.trim()
+        : undefined;
     })();
   if (!derivedThreadId) return false;
   const metadata = getThreadMetadata(derivedThreadId, {
@@ -577,9 +576,7 @@ export class ChatActions extends Actions<ChatState> {
         threadConfigPatch.agent_mode = null;
       } else if (agentMode === "codex") {
         const model = agentModel || DEFAULT_CODEX_MODEL_NAME;
-        const defaultSessionMode: CodexSessionMode = lite
-          ? "read-only"
-          : "workspace-write";
+        const defaultSessionMode = getDefaultCodexSessionMode();
         const codexConfig = {
           ...(threadAgent?.codexConfig ?? {}),
           model,
@@ -599,11 +596,10 @@ export class ChatActions extends Actions<ChatState> {
         threadConfigPatch.agent_model = agentModel;
         threadConfigPatch.agent_mode = "single_turn";
       }
-      this.setThreadConfigRecord(
-        threadKey,
-        threadConfigPatch,
-        { threadId: thread_id, date: time_stamp },
-      );
+      this.setThreadConfigRecord(threadKey, threadConfigPatch, {
+        threadId: thread_id,
+        date: time_stamp,
+      });
     }
     let selectedThreadKey: string;
     if (!explicitReplyThreadId) {
@@ -1024,7 +1020,9 @@ export class ChatActions extends Actions<ChatState> {
       const isCanonical =
         field<string>(row as any, "sender_id") === canonical.sender_id &&
         field<string>(row as any, "date") === canonical.date;
-      const updatedAt = Date.parse(`${field<string>(row as any, "updated_at") ?? ""}`);
+      const updatedAt = Date.parse(
+        `${field<string>(row as any, "updated_at") ?? ""}`,
+      );
       const rowDate = Date.parse(`${field<string>(row as any, "date") ?? ""}`);
       return (
         (isCanonical ? 1_000_000_000_000_000 : 0) +
@@ -1083,9 +1081,7 @@ export class ChatActions extends Actions<ChatState> {
         }) ?? null
       );
     }
-    return (
-      this.messageCache?.getThreadConfigPreviewById?.(threadId) ?? null
-    );
+    return this.messageCache?.getThreadConfigPreviewById?.(threadId) ?? null;
   };
 
   private setThreadConfigRecord = (
@@ -1197,7 +1193,10 @@ export class ChatActions extends Actions<ChatState> {
     if (agent_mode == null && acp_config) {
       agent_mode = "interactive";
     }
-    const normalizedThreadId = this.normalizeThreadId(threadKey, opts?.threadId);
+    const normalizedThreadId = this.normalizeThreadId(
+      threadKey,
+      opts?.threadId,
+    );
     return {
       thread_date: this.getThreadRootDateIso(normalizedThreadId),
       name: readString("name"),
@@ -1357,7 +1356,6 @@ export class ChatActions extends Actions<ChatState> {
     }, 1);
   };
 
-
   // Exports the currently visible chats to a markdown file and opens it.
   export_to_markdown = async (): Promise<void> => {
     if (!this.syncdb || !this.store) return;
@@ -1463,7 +1461,6 @@ export class ChatActions extends Actions<ChatState> {
       .open_file({ path: outputPath, foreground: true });
   };
 
-
   help = () => {
     open_new_tab("https://doc.cocalc.com/chat.html");
   };
@@ -1497,7 +1494,9 @@ export class ChatActions extends Actions<ChatState> {
         if (!date) return undefined;
         const msg = this.getMessageByDate(date);
         const id = field<string>(msg, "thread_id");
-        return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
+        return typeof id === "string" && id.trim().length > 0
+          ? id.trim()
+          : undefined;
       })();
     if (!derivedThreadId) return false;
     return resolveThreadAgentModel({
@@ -1639,10 +1638,9 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) return;
     const normalizedThreadId = this.normalizeThreadId(threadId);
     if (!normalizedThreadId) {
-      console.warn(
-        "chat recordThreadAgentModel skipped: missing thread_id",
-        { threadId },
-      );
+      console.warn("chat recordThreadAgentModel skipped: missing thread_id", {
+        threadId,
+      });
       return;
     }
     const { agent_kind, agent_mode } = identityFromModel(model);
@@ -1743,7 +1741,8 @@ export class ChatActions extends Actions<ChatState> {
       void this.saveSyncdb();
       return;
     }
-    const current = this.getThreadMetadata(threadKey, { threadId }).acp_config ?? {};
+    const current =
+      this.getThreadMetadata(threadKey, { threadId }).acp_config ?? {};
     const next: CodexThreadConfig = {
       ...current,
       ...patch,
@@ -1859,7 +1858,8 @@ export class ChatActions extends Actions<ChatState> {
     if (latestIso) {
       (newMessage as any).forked_from_latest_message_date = latestIso;
     }
-    const newThreadId = `${field<string>(newMessage, "thread_id") ?? ""}`.trim();
+    const newThreadId =
+      `${field<string>(newMessage, "thread_id") ?? ""}`.trim();
     if (!newThreadId) {
       throw new Error("Failed to create thread id for fork");
     }
@@ -1872,7 +1872,7 @@ export class ChatActions extends Actions<ChatState> {
       agent_kind:
         nextConfig != null
           ? "acp"
-          : sourceMetadata.agent_kind ?? (isAI ? "acp" : "none"),
+          : (sourceMetadata.agent_kind ?? (isAI ? "acp" : "none")),
       agent_model:
         nextConfig?.model ??
         sourceMetadata.agent_model ??
@@ -1880,17 +1880,16 @@ export class ChatActions extends Actions<ChatState> {
       agent_mode:
         nextConfig != null
           ? "interactive"
-          : sourceMetadata.agent_mode ?? (isAI ? "interactive" : null),
+          : (sourceMetadata.agent_mode ?? (isAI ? "interactive" : null)),
       acp_config: nextConfig ?? null,
       loop_config: sourceMetadata.loop_config ?? null,
       loop_state: null,
     };
     if (
-      !this.setThreadConfigRecord(
-        newThreadId,
-        configPatch,
-        { threadId: newThreadId, date: newRootIso },
-      )
+      !this.setThreadConfigRecord(newThreadId, configPatch, {
+        threadId: newThreadId,
+        date: newRootIso,
+      })
     ) {
       return newThreadId;
     }
@@ -2003,9 +2002,8 @@ export class ChatActions extends Actions<ChatState> {
     ].join("\n\n");
 
     // do not import until needed -- it is HUGE!
-    const { truncateMessage, getMaxTokens, numTokensUpperBound } = await import(
-      "@cocalc/frontend/misc/llm"
-    );
+    const { truncateMessage, getMaxTokens, numTokensUpperBound } =
+      await import("@cocalc/frontend/misc/llm");
     const maxTokens = getMaxTokens(model);
     const txt = truncateMessage(txtFull, maxTokens);
     const m = returnInfo ? `@${modelToName(model)}` : modelToMention(model);
@@ -2034,7 +2032,9 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     const obj = this.toImmutableRecord(raw);
-    const { message } = normalizeChatMessage((obj.toJS?.() ?? obj) as ChatMessage);
+    const { message } = normalizeChatMessage(
+      (obj.toJS?.() ?? obj) as ChatMessage,
+    );
     if (message == null) {
       return;
     }
@@ -2063,7 +2063,6 @@ export class ChatActions extends Actions<ChatState> {
   clearAllFilters = () => {
     // Filtering is no longer supported; keep this for older call sites.
   };
-
 
   setFragment = (date?) => {
     let fragmentId;

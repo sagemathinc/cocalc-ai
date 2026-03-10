@@ -31,7 +31,8 @@ function templateRoots(): string[] {
 }
 
 function templateSources(file: string): string[] {
-  const platforms = process.platform === "linux" ? ["linux"] : [process.platform, "linux"];
+  const platforms =
+    process.platform === "linux" ? ["linux"] : [process.platform, "linux"];
   const sources: string[] = [];
   for (const base of templateRoots()) {
     for (const platform of platforms) {

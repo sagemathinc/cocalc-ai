@@ -735,7 +735,9 @@ export function PDFJS({
         }}
         onScroll={(e: any) => {
           const offset =
-            e?.currentTarget?.scrollTop ?? scrollerElRef.current?.scrollTop ?? 0;
+            e?.currentTarget?.scrollTop ??
+            scrollerElRef.current?.scrollTop ??
+            0;
           const index = virtuosoRangeRef.current.startIndex ?? 0;
           const scrollState = { index, offset };
           actions.save_editor_state(id, { scrollState });

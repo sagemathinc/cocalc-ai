@@ -10,7 +10,7 @@ import KaTeXCompatHacks from "./katex-compat-hacks";
 export default function mathToHtml(
   math: string, // latex expression
   isInline: boolean,
-  _ignore: Set<string> | undefined = undefined // used internally to avoid infinite recursion.
+  _ignore: Set<string> | undefined = undefined, // used internally to avoid infinite recursion.
 ): { __html: string; err?: string } {
   if (!math.trim()) {
     // don't let it be empty, since then it is not possible to see/select.
@@ -51,7 +51,7 @@ export default function mathToHtml(
         return mathToHtml(
           math,
           isInline,
-          _ignore != null ? _ignore.add(name) : new Set([name])
+          _ignore != null ? _ignore.add(name) : new Set([name]),
         );
       }
     }
@@ -63,8 +63,8 @@ export function latexMathToHtml(s: string): string {
   const { __html, err } = s.startsWith("$$")
     ? mathToHtml(s.slice(2, s.length - 2), false)
     : s.startsWith("$")
-    ? mathToHtml(s.slice(1, s.length - 1), true)
-    : mathToHtml(s, false);
+      ? mathToHtml(s.slice(1, s.length - 1), true)
+      : mathToHtml(s, false);
   if (err) {
     return `<span style="color:#ff6666">${err}</span>`;
   } else {
@@ -79,6 +79,6 @@ export function latexMathToHtmlOrError(s: string): {
   return s.startsWith("$$")
     ? mathToHtml(s.slice(2, s.length - 2), false)
     : s.startsWith("$")
-    ? mathToHtml(s.slice(1, s.length - 1), true)
-    : mathToHtml(s, false);
+      ? mathToHtml(s.slice(1, s.length - 1), true)
+      : mathToHtml(s, false);
 }

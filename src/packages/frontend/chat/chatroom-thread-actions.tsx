@@ -64,7 +64,9 @@ export function ChatRoomThreadActions({
               : trimmedLabel
             : null;
         Modal.confirm({
-          title: displayLabel ? `Delete chat "${displayLabel}"?` : "Delete chat?",
+          title: displayLabel
+            ? `Delete chat "${displayLabel}"?`
+            : "Delete chat?",
           content:
             "This removes all messages in this chat for everyone. This can only be undone using 'Edit --> Undo', or by browsing TimeTravel.",
           okText: "Delete",

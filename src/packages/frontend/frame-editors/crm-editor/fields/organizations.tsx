@@ -44,7 +44,7 @@ function EditOrganizations({ obj, field, organizations }) {
         setAdding(false);
       }
     },
-    [save0, obj, field]
+    [save0, obj, field],
   );
 
   return (

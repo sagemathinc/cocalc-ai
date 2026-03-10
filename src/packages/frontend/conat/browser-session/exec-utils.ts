@@ -87,7 +87,9 @@ export function normalizePolicy(
   };
 }
 
-export function isAllowedActionName(value: unknown): value is BrowserActionName {
+export function isAllowedActionName(
+  value: unknown,
+): value is BrowserActionName {
   const clean = `${value ?? ""}`.trim();
   return (
     clean === "click" ||
@@ -260,7 +262,9 @@ export function sanitizeTerminalSpawnOptions(
     handleFlowControl?: unknown;
   };
   const command =
-    row.command == null ? undefined : `${row.command ?? ""}`.trim() || undefined;
+    row.command == null
+      ? undefined
+      : `${row.command ?? ""}`.trim() || undefined;
   const args = Array.isArray(row.args)
     ? row.args.map((x) => `${x ?? ""}`)
     : undefined;
@@ -304,9 +308,7 @@ export function sanitizeTerminalHistoryOptions(
   };
 }
 
-export function sanitizeNotifyOptions(
-  opts: unknown,
-): {
+export function sanitizeNotifyOptions(opts: unknown): {
   type?: BrowserNotifyType;
   title?: string;
   timeout?: number;
@@ -330,7 +332,8 @@ export function sanitizeNotifyOptions(
     maybeType === "warning"
       ? maybeType
       : undefined;
-  const title = row.title == null ? undefined : `${row.title}`.trim() || undefined;
+  const title =
+    row.title == null ? undefined : `${row.title}`.trim() || undefined;
   const timeout = asOptionalFiniteNumber(row.timeout);
   const block = row.block == null ? undefined : !!row.block;
   return {
@@ -400,14 +403,10 @@ export function simplifyNotebookOutput(output: any): unknown {
 
 export function sanitizeCellIdList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((x) => `${x ?? ""}`.trim())
-    .filter((x) => x.length > 0);
+  return value.map((x) => `${x ?? ""}`.trim()).filter((x) => x.length > 0);
 }
 
-export function sanitizeCellUpdates(
-  value: unknown,
-): {
+export function sanitizeCellUpdates(value: unknown): {
   id: string;
   input: string;
 }[] {

@@ -76,7 +76,10 @@ describe("sendChat identity fields", () => {
 
     const chatSet = actions.syncdb.set.mock.calls
       .map((x) => x[0])
-      .find((row: any) => row?.event === "chat" && row?.history?.[0]?.content === "hello world");
+      .find(
+        (row: any) =>
+          row?.event === "chat" && row?.history?.[0]?.content === "hello world",
+      );
     expect(chatSet).toBeTruthy();
     expect(typeof chatSet.message_id).toBe("string");
     expect(chatSet.message_id.length).toBeGreaterThan(0);
@@ -116,7 +119,8 @@ describe("sendChat identity fields", () => {
       .map((x) => x[0])
       .find(
         (row: any) =>
-          row?.event === "chat" && row?.history?.[0]?.content === "collision check",
+          row?.event === "chat" &&
+          row?.history?.[0]?.content === "collision check",
       );
     expect(chatSet).toBeTruthy();
     const writtenMs = new Date(chatSet.date).valueOf();
@@ -242,7 +246,11 @@ describe("sendChat identity fields", () => {
 
     const replySet = actions.syncdb.set.mock.calls
       .map((x) => x[0])
-      .find((row: any) => row?.event === "chat" && row?.history?.[0]?.content === "reply content");
+      .find(
+        (row: any) =>
+          row?.event === "chat" &&
+          row?.history?.[0]?.content === "reply content",
+      );
     expect(replySet).toBeTruthy();
     expect(replySet.thread_id).toBe("thread-abc-1");
     expect(replySet.parent_message_id).toBe("root-msg-1");
@@ -303,7 +311,10 @@ describe("thread-config by thread_id", () => {
     const threadId = "11111111-1111-4111-8111-111111111111";
     const actions = makeActions();
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return {
           event: "chat-thread-config",
           sender_id: "__thread_config__",
@@ -383,7 +394,10 @@ describe("thread-config by thread_id", () => {
     };
     const actions = makeActions();
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return existing;
       }
       return undefined;
@@ -394,7 +408,10 @@ describe("thread-config by thread_id", () => {
     expect(actions.syncdb.commit).toHaveBeenCalled();
     const setRow = actions.syncdb.set.mock.calls
       .map((x) => x[0])
-      .find((row: any) => row?.event === "chat-thread-config" && row?.thread_id === threadId);
+      .find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === threadId,
+      );
     expect(setRow).toBeTruthy();
     expect(setRow.date).toBe(CHAT_THREAD_META_ROW_DATE);
     expect(setRow.name).toBe("After");
@@ -411,7 +428,10 @@ describe("thread-config by thread_id", () => {
     };
     const actions = makeActions();
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return existing;
       }
       return undefined;
@@ -455,7 +475,10 @@ describe("thread-config by thread_id", () => {
     };
     const actions = makeActions();
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return existing;
       }
       return undefined;
@@ -484,7 +507,10 @@ describe("thread-config by thread_id", () => {
     };
     const actions = makeActions();
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return existing;
       }
       return undefined;
@@ -519,7 +545,10 @@ describe("thread-config by thread_id", () => {
     };
     const actions = makeActions();
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return existing;
       }
       return undefined;
@@ -614,7 +643,8 @@ describe("deleteThread identity targeting", () => {
     ).toBeTruthy();
     expect(
       deletes.find(
-        (row: any) => row?.event === "chat-thread-state" && row?.thread_id === threadA,
+        (row: any) =>
+          row?.event === "chat-thread-state" && row?.thread_id === threadA,
       ),
     ).toBeTruthy();
   });
@@ -672,7 +702,9 @@ describe("deleteThread identity targeting", () => {
     });
     (webapp_client as any).conat_client = {
       ...(webapp_client as any).conat_client,
-      forkAcpSession: jest.fn().mockResolvedValue({ sessionId: "session-fork-1" }),
+      forkAcpSession: jest
+        .fn()
+        .mockResolvedValue({ sessionId: "session-fork-1" }),
     };
 
     const newThreadId = await actions.forkThread({
@@ -785,7 +817,9 @@ describe("deleteThread identity targeting", () => {
     });
     (webapp_client as any).conat_client = {
       ...(webapp_client as any).conat_client,
-      forkAcpSession: jest.fn().mockResolvedValue({ sessionId: "session-fork-2" }),
+      forkAcpSession: jest
+        .fn()
+        .mockResolvedValue({ sessionId: "session-fork-2" }),
     };
 
     const newThreadId = await actions.forkThread({
@@ -915,7 +949,10 @@ describe("deleteThread identity targeting", () => {
     const thread = "legacy-thread-1769012000306";
     const actions = makeActions(new Map());
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === thread) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === thread
+      ) {
         return {
           event: "chat-thread-config",
           sender_id: "__thread_config__",
@@ -976,7 +1013,10 @@ describe("markThreadRead with UUID keys", () => {
     ]);
     const actions = makeActions(messages);
     actions.syncdb.get_one.mockImplementation((where: any) => {
-      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
         return {
           event: "chat-thread-config",
           sender_id: "__thread_config__",

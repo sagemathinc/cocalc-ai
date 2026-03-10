@@ -27,7 +27,11 @@ import { Restrict, Optionals } from "./types";
  **/
 export function fill<T extends object, U extends Optionals<T>>(
   props: T,
-  defaults: Restrict<U, Optionals<T>, "Defaults cannot contain required values">
+  defaults: Restrict<
+    U,
+    Optionals<T>,
+    "Defaults cannot contain required values"
+  >,
 ): Assign<T, U> {
   const ret: U = {} as any;
   for (const key in defaults) {

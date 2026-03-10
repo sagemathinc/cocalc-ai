@@ -82,9 +82,7 @@ export const getBalance = shortCache(async (): Promise<MoneyValue> => {
 
 // Admins can get balance for any specified user -- error if called by non-admin.
 // account_id is required.
-export async function getBalanceAdmin(
-  account_id: string,
-): Promise<MoneyValue> {
+export async function getBalanceAdmin(account_id: string): Promise<MoneyValue> {
   return await api("purchases/get-balance-admin", { account_id });
 }
 
@@ -110,7 +108,10 @@ export async function resetClosingDate() {
 export async function setQuota(
   service: Service,
   value: number,
-): Promise<{ minBalance: MoneyValue; services: { [service: string]: MoneyValue } }> {
+): Promise<{
+  minBalance: MoneyValue;
+  services: { [service: string]: MoneyValue };
+}> {
   return await api("purchases/set-quota", { service, value });
 }
 
@@ -183,9 +184,7 @@ type PurchasesFunction = (
 
 export const getPurchases: PurchasesFunction = shortCache(
   async (opts: PurchasesOptions) => {
-    return parsePurchaseDates(
-      await api("purchases/get-purchases", opts),
-    );
+    return parsePurchaseDates(await api("purchases/get-purchases", opts));
   },
   "get-purchases",
 );
@@ -417,7 +416,9 @@ export async function applyMembershipChange(opts: {
   class: string;
   interval: "month" | "year";
   allow_downgrade?: boolean;
-}): Promise<MembershipChangeQuote & { subscription_id: number; purchase_id: number }> {
+}): Promise<
+  MembershipChangeQuote & { subscription_id: number; purchase_id: number }
+> {
   return await api("purchases/membership-change", opts);
 }
 

@@ -5,7 +5,7 @@
 
 import { createContext } from "react";
 
-export interface StoreBalance  {
+export interface StoreBalance {
   balance?: number;
   refreshBalance: () => Promise<void>;
   loading?: boolean;

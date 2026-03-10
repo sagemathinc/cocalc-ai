@@ -22,7 +22,7 @@ export function SelectField({
 }: Props) {
   const keys = useMemo(
     () => allFields(query, type, hiddenFields),
-    [query, hiddenFields]
+    [query, hiddenFields],
   );
   const options = keys.map((key) => {
     return { value: key, label: fieldToLabel(key) };
@@ -59,7 +59,7 @@ function allFields(query: object, type: string, hiddenFields: Set<string>) {
 export function defaultField(
   query: object,
   type: string,
-  hiddenFields: Set<string>
+  hiddenFields: Set<string>,
 ): string | undefined {
   const table = Object.keys(query)[0];
   const schema = SCHEMA[table];

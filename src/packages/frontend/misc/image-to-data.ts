@@ -8,7 +8,7 @@ export default async function imageToDataURL(
   width: number,
   height: number,
   type?: string, // use "image/png" if you want a png
-  encoderOptions?: number // 0 - 1; impacts compression -- see https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toDataURL
+  encoderOptions?: number, // 0 - 1; impacts compression -- see https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toDataURL
 ): Promise<string> {
   const img = new Image();
   img.src = src;

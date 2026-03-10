@@ -33,7 +33,7 @@ export default async function setVoucherCodeNote({
   // and is better than making two queries.
   const { rows } = await pool.query(
     "SELECT vouchers.created_by as created_by FROM vouchers INNER JOIN voucher_codes ON vouchers.id=voucher_codes.id WHERE voucher_codes.code=$1",
-    [code]
+    [code],
   );
   if (rows.length == 0) {
     throw Error(`no voucher code "${code}"`);
@@ -41,7 +41,7 @@ export default async function setVoucherCodeNote({
   const { created_by } = rows[0];
   if (created_by != account_id && !(await userIsInGroup(account_id, "admin"))) {
     throw Error(
-      "only the user that created a voucher can edit the notes field"
+      "only the user that created a voucher can edit the notes field",
     );
   }
 

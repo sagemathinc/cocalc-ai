@@ -18,7 +18,7 @@ export default function useDebounceEffect<T extends DependencyList>(
     wait,
     options,
   }: { func: (T) => void | (() => void); wait: number; options? },
-  deps: T
+  deps: T,
 ) {
   const f = useMemo(() => debounce(func, wait, options), []);
 

@@ -117,7 +117,11 @@ async function ensureReversePort(host_id: string): Promise<number> {
   return port;
 }
 
-async function spawnReverseTunnel(host_id: string, target: SshTarget, port: number) {
+async function spawnReverseTunnel(
+  host_id: string,
+  target: SshTarget,
+  port: number,
+) {
   const config = getLaunchpadLocalConfig("local");
   if (!config.sshd_port) {
     throw new Error("local network sshd is not configured");
@@ -166,7 +170,11 @@ async function restartTunnel(state: TunnelState) {
   for (const delay of delays) {
     await new Promise((resolve) => setTimeout(resolve, delay));
     try {
-      const child = await spawnReverseTunnel(state.host_id, state.target, state.port);
+      const child = await spawnReverseTunnel(
+        state.host_id,
+        state.target,
+        state.port,
+      );
       const nextState: TunnelState = { ...state, child, restarting: false };
       tunnels.set(state.host_id, nextState);
       attachTunnelHandlers(nextState);
@@ -191,7 +199,10 @@ function attachTunnelHandlers(state: TunnelState) {
     const current = tunnels.get(state.host_id);
     if (current && current.child === state.child) {
       restartTunnel(state).catch((err) => {
-        logger.warn("self-host tunnel restart failed", { host_id: state.host_id, err });
+        logger.warn("self-host tunnel restart failed", {
+          host_id: state.host_id,
+          err,
+        });
       });
     }
   });
@@ -206,7 +217,11 @@ export async function ensureSelfHostReverseTunnel(opts: {
     throw new Error("self-host ssh target is empty");
   }
   const existing = tunnels.get(opts.host_id);
-  if (existing && existing.target.raw === target.raw && existing.child.exitCode == null) {
+  if (
+    existing &&
+    existing.target.raw === target.raw &&
+    existing.child.exitCode == null
+  ) {
     return existing.port;
   }
   const port = await ensureReversePort(opts.host_id);
@@ -259,7 +274,10 @@ export async function ensureSelfHostReverseTunnelsOnStartup(): Promise<void> {
       continue;
     }
     try {
-      await ensureSelfHostReverseTunnel({ host_id: row.id, ssh_target: sshTarget });
+      await ensureSelfHostReverseTunnel({
+        host_id: row.id,
+        ssh_target: sshTarget,
+      });
     } catch (err) {
       logger.warn("self-host reverse tunnel startup failed", {
         host_id: row.id,

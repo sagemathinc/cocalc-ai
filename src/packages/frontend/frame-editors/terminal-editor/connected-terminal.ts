@@ -461,7 +461,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       });
 
       pty.on("resize", ({ rows, cols }) => {
-        this.terminal.resize(cols, rows);
+        this.terminal_resize({ rows, cols });
       });
 
       pty.on("leave", () => {
@@ -766,7 +766,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             ? ((this.actions as any) ?? undefined)
             : undefined;
         const activeElement =
-          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
         handoffProjectNavigationFromLocalOwner(
           navigationCommand,
           this.project_id,
@@ -1106,7 +1108,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       return;
     }
     if (this.isClosed()) return;
-    this.terminal.resize(cols, rows);
+    this.terminal_resize({ rows, cols });
     try {
       await this.resizeToFitAllClients();
     } catch (err) {

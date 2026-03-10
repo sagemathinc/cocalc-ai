@@ -26,7 +26,8 @@ export default async function handle(req: Request, res: Response) {
 
 async function doIt(req: Request) {
   // date and until are unix timestamps in seconds
-  const { id, title, text, date, channel, url, tags, hide, until } = getParams(req);
+  const { id, title, text, date, channel, url, tags, hide, until } =
+    getParams(req);
 
   const account_id = await getAccountId(req);
 

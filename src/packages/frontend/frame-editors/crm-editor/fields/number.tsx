@@ -59,7 +59,7 @@ function EditNumber({ field, obj, spec }) {
 
   const { displayFormatter, formatter, parser } = useMemo(
     () => getFormat(spec),
-    [spec.format]
+    [spec.format],
   );
 
   if (edit) {

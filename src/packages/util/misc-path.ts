@@ -1,7 +1,7 @@
 // lower case extension of the path
 export function getExtension(path: string): string {
   const v = path.split(".");
-  return (v.length <= 1 ? "" : v.pop() ?? "").toLowerCase();
+  return (v.length <= 1 ? "" : (v.pop() ?? "")).toLowerCase();
 }
 
 export function containingPath(path: string): string {
@@ -15,7 +15,7 @@ export function containingPath(path: string): string {
 
 export function splitFirst(
   path: string,
-  symbol: string = "/"
+  symbol: string = "/",
 ): [string, string] {
   const i = path.indexOf(symbol);
   if (i == -1) {
@@ -26,7 +26,7 @@ export function splitFirst(
 
 export function splitLast(
   path: string,
-  symbol: string = "/"
+  symbol: string = "/",
 ): [string, string] {
   const i = path.lastIndexOf(symbol);
   if (i == -1) {
@@ -34,5 +34,3 @@ export function splitLast(
   }
   return [path.slice(0, i), path.slice(i + 1)];
 }
-
-

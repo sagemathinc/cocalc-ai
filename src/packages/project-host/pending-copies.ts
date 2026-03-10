@@ -101,11 +101,7 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   await mkdir(path.dirname(destAbs), { recursive: true });
 
   const stagingId = randomUUID();
-  const stagingRel = path.posix.join(
-    COPY_STAGING_DIR,
-    stagingId,
-    destPath,
-  );
+  const stagingRel = path.posix.join(COPY_STAGING_DIR, stagingId, destPath);
   const stagingRoot = path.join(projectRoot, COPY_STAGING_DIR, stagingId);
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
 

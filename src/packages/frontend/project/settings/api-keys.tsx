@@ -21,7 +21,7 @@ export function ApiKeys({ project_id, mode = "project" }: Props) {
         project_id,
       });
     },
-    [project_id]
+    [project_id],
   );
 
   if (mode === "flyout") {

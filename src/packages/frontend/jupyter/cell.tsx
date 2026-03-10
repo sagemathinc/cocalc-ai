@@ -93,9 +93,11 @@ function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
   if (nextProps.is_focused !== props.is_focused) reasons.push("is_focused");
   if (nextProps.is_visible !== props.is_visible) reasons.push("is_visible");
   if (nextProps.more_output !== props.more_output) reasons.push("more_output");
-  if (nextProps.cell_toolbar !== props.cell_toolbar) reasons.push("cell_toolbar");
+  if (nextProps.cell_toolbar !== props.cell_toolbar)
+    reasons.push("cell_toolbar");
   if (nextProps.trust !== props.trust) reasons.push("trust");
-  if (nextProps.is_scrolling !== props.is_scrolling) reasons.push("is_scrolling");
+  if (nextProps.is_scrolling !== props.is_scrolling)
+    reasons.push("is_scrolling");
   if (nextProps.height !== props.height) reasons.push("height");
   if (nextProps.isFirst !== props.isFirst) reasons.push("isFirst");
   if (nextProps.isLast !== props.isLast) reasons.push("isLast");
@@ -108,9 +110,7 @@ function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
   ) {
     reasons.push("complete(current)");
   }
-  if (
-    (nextProps.dragHandle == null) !== (props.dragHandle == null)
-  ) {
+  if ((nextProps.dragHandle == null) !== (props.dragHandle == null)) {
     reasons.push("dragHandle.present");
   }
   if (nextProps.read_only !== props.read_only) reasons.push("read_only");
@@ -335,8 +335,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
 
     const style: React.CSSProperties = {
       borderLeft: `5px solid ${color}`,
-      boxShadow:
-        color === "transparent" ? undefined : `0 0 0 2px ${color}`,
+      boxShadow: color === "transparent" ? undefined : `0 0 0 2px ${color}`,
       borderRadius: "5px",
       position: "relative",
       padding: "2px 2px 5px 2px",

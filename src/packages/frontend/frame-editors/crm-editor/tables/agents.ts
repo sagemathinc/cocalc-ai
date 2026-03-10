@@ -6,7 +6,7 @@ register({
   title: "Agents",
 
   icon: "user-secret",
-  
+
   query: {
     crm_agents: [
       {

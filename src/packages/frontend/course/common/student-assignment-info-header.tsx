@@ -180,7 +180,7 @@ export function StudentAssignmentInfoHeader({
         return intl.formatMessage(course.assignment);
       case "Handout":
         return intl.formatMessage(course.handout);
-        case "Student":
+      case "Student":
         return intl.formatMessage(course.student);
       default:
         return title;

@@ -193,7 +193,10 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       lazyHeightRefreshScheduledRef.current = false;
       setLazyHydrationVersion((n) => n + 1);
     };
-    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.requestAnimationFrame === "function"
+    ) {
       window.requestAnimationFrame(() => run());
       return;
     }
@@ -208,7 +211,11 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       lazyHydratedIdsRef.current.add(id);
       changed = true;
     };
-    for (let i = 0; i < Math.min(LAZY_RENDER_INITIAL_CELLS, cell_list.size); i += 1) {
+    for (
+      let i = 0;
+      i < Math.min(LAZY_RENDER_INITIAL_CELLS, cell_list.size);
+      i += 1
+    ) {
       add(cell_list.get(i));
     }
     add(cur_id);

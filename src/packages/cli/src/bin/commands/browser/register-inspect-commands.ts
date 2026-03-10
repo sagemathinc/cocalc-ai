@@ -20,7 +20,11 @@ type RegisterInspectDeps = {
   utils: BrowserInspectRegisterUtils;
 };
 
-function parsePositiveInt(value: unknown, label: string, fallback: number): number {
+function parsePositiveInt(
+  value: unknown,
+  label: string,
+  fallback: number,
+): number {
   const clean = `${value ?? ""}`.trim();
   if (!clean) return fallback;
   const num = Number(clean);
@@ -30,7 +34,11 @@ function parsePositiveInt(value: unknown, label: string, fallback: number): numb
   return Math.floor(num);
 }
 
-function parseNonNegativeInt(value: unknown, label: string, fallback: number): number {
+function parseNonNegativeInt(
+  value: unknown,
+  label: string,
+  fallback: number,
+): number {
   const clean = `${value ?? ""}`.trim();
   if (!clean) return fallback;
   const num = Number(clean);
@@ -40,7 +48,11 @@ function parseNonNegativeInt(value: unknown, label: string, fallback: number): n
   return Math.floor(num);
 }
 
-function buildSlateInspectScript({ previewChars }: { previewChars: number }): string {
+function buildSlateInspectScript({
+  previewChars,
+}: {
+  previewChars: number;
+}): string {
   return `return (() => {
   const selection = window.getSelection ? window.getSelection() : null;
   const nodes = Array.from(document.querySelectorAll('[data-slate-editor="true"]'));
@@ -516,7 +528,9 @@ export function registerBrowserInspectCommands({
     durationToMs,
   } = utils;
 
-  const inspect = browser.command("inspect").description("runtime inspection helpers");
+  const inspect = browser
+    .command("inspect")
+    .description("runtime inspection helpers");
 
   const withInspectTarget = async ({
     ctx,
@@ -538,7 +552,8 @@ export function registerBrowserInspectCommands({
     };
   }) => {
     const profileSelection = loadProfileSelection(deps, command);
-    const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+    const projectIdHint =
+      `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
     const browserHint = browserHintFromOption(opts.browser) ?? "";
     const projectHint = `${opts.project ?? ""}`.trim();
     const sessionInfo = await chooseBrowserSession({
@@ -565,7 +580,10 @@ export function registerBrowserInspectCommands({
       allowRawExec: opts.allowRawExec,
       apiBaseUrl: ctx.apiBaseUrl,
     });
-    const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+    const timeoutMs = Math.max(
+      1_000,
+      durationToMs(opts.timeout, ctx.timeoutMs),
+    );
     const browserClient = deps.createBrowserSessionClient({
       account_id: ctx.accountId,
       browser_id: sessionInfo.browser_id,
@@ -584,7 +602,9 @@ export function registerBrowserInspectCommands({
 
   inspect
     .command("slate")
-    .description("discover mounted Slate editors and identify active/focused editor")
+    .description(
+      "discover mounted Slate editors and identify active/focused editor",
+    )
     .option("--project <project>", "project id or name")
     .option(
       "--project-id <id>",
@@ -620,39 +640,47 @@ export function registerBrowserInspectCommands({
         },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser inspect slate", async (ctx) => {
-          const previewChars = parsePositiveInt(
-            opts.previewChars,
-            "--preview-chars",
-            220,
-          );
-          const target = await withInspectTarget({ ctx, command, opts });
-          const script = buildSlateInspectScript({ previewChars });
-          let response;
-          try {
-            response = await target.browserClient.exec({
+        await deps.withContext(
+          command,
+          "browser inspect slate",
+          async (ctx) => {
+            const previewChars = parsePositiveInt(
+              opts.previewChars,
+              "--preview-chars",
+              220,
+            );
+            const target = await withInspectTarget({ ctx, command, opts });
+            const script = buildSlateInspectScript({ previewChars });
+            let response;
+            try {
+              response = await target.browserClient.exec({
+                project_id: target.project_id,
+                code: script,
+                posture: target.posture,
+                policy: target.policy,
+              });
+            } catch (err) {
+              throw withBrowserExecStaleSessionHint({
+                err,
+                posture: target.posture,
+                policy: target.policy,
+                browserId: target.sessionInfo.browser_id,
+              });
+            }
+            return {
+              browser_id: target.sessionInfo.browser_id,
               project_id: target.project_id,
-              code: script,
               posture: target.posture,
-              policy: target.policy,
-            });
-          } catch (err) {
-            throw withBrowserExecStaleSessionHint({
-              err,
-              posture: target.posture,
-              policy: target.policy,
-              browserId: target.sessionInfo.browser_id,
-            });
-          }
-          return {
-            browser_id: target.sessionInfo.browser_id,
-            project_id: target.project_id,
-            posture: target.posture,
-            ok: true,
-            result: response?.result ?? null,
-            ...sessionTargetContext(ctx, target.sessionInfo, target.project_id),
-          };
-        });
+              ok: true,
+              result: response?.result ?? null,
+              ...sessionTargetContext(
+                ctx,
+                target.sessionInfo,
+                target.project_id,
+              ),
+            };
+          },
+        );
       },
     );
 
@@ -696,47 +724,55 @@ export function registerBrowserInspectCommands({
         },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser inspect react-roots", async (ctx) => {
-          const maxDomNodes = parsePositiveInt(
-            opts.maxDomNodes,
-            "--max-dom-nodes",
-            20000,
-          );
-          const maxFibers = parsePositiveInt(
-            opts.maxFibers,
-            "--max-fibers",
-            400,
-          );
-          const target = await withInspectTarget({ ctx, command, opts });
-          const script = buildReactRootsInspectScript({
-            maxDomNodes,
-            maxFibers,
-          });
-          let response;
-          try {
-            response = await target.browserClient.exec({
+        await deps.withContext(
+          command,
+          "browser inspect react-roots",
+          async (ctx) => {
+            const maxDomNodes = parsePositiveInt(
+              opts.maxDomNodes,
+              "--max-dom-nodes",
+              20000,
+            );
+            const maxFibers = parsePositiveInt(
+              opts.maxFibers,
+              "--max-fibers",
+              400,
+            );
+            const target = await withInspectTarget({ ctx, command, opts });
+            const script = buildReactRootsInspectScript({
+              maxDomNodes,
+              maxFibers,
+            });
+            let response;
+            try {
+              response = await target.browserClient.exec({
+                project_id: target.project_id,
+                code: script,
+                posture: target.posture,
+                policy: target.policy,
+              });
+            } catch (err) {
+              throw withBrowserExecStaleSessionHint({
+                err,
+                posture: target.posture,
+                policy: target.policy,
+                browserId: target.sessionInfo.browser_id,
+              });
+            }
+            return {
+              browser_id: target.sessionInfo.browser_id,
               project_id: target.project_id,
-              code: script,
               posture: target.posture,
-              policy: target.policy,
-            });
-          } catch (err) {
-            throw withBrowserExecStaleSessionHint({
-              err,
-              posture: target.posture,
-              policy: target.policy,
-              browserId: target.sessionInfo.browser_id,
-            });
-          }
-          return {
-            browser_id: target.sessionInfo.browser_id,
-            project_id: target.project_id,
-            posture: target.posture,
-            ok: true,
-            result: response?.result ?? null,
-            ...sessionTargetContext(ctx, target.sessionInfo, target.project_id),
-          };
-        });
+              ok: true,
+              result: response?.result ?? null,
+              ...sessionTargetContext(
+                ctx,
+                target.sessionInfo,
+                target.project_id,
+              ),
+            };
+          },
+        );
       },
     );
 
@@ -783,42 +819,62 @@ export function registerBrowserInspectCommands({
         },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser inspect redux", async (ctx) => {
-          const maxDepth = parseNonNegativeInt(opts.maxDepth, "--max-depth", 4);
-          const maxEntries = parsePositiveInt(opts.maxEntries, "--max-entries", 60);
-          const maxString = parsePositiveInt(opts.maxString, "--max-string", 400);
-          const target = await withInspectTarget({ ctx, command, opts });
-          const script = buildReduxInspectScript({
-            slicePath: `${slice ?? ""}`.trim() || undefined,
-            maxDepth,
-            maxEntries,
-            maxString,
-          });
-          let response;
-          try {
-            response = await target.browserClient.exec({
+        await deps.withContext(
+          command,
+          "browser inspect redux",
+          async (ctx) => {
+            const maxDepth = parseNonNegativeInt(
+              opts.maxDepth,
+              "--max-depth",
+              4,
+            );
+            const maxEntries = parsePositiveInt(
+              opts.maxEntries,
+              "--max-entries",
+              60,
+            );
+            const maxString = parsePositiveInt(
+              opts.maxString,
+              "--max-string",
+              400,
+            );
+            const target = await withInspectTarget({ ctx, command, opts });
+            const script = buildReduxInspectScript({
+              slicePath: `${slice ?? ""}`.trim() || undefined,
+              maxDepth,
+              maxEntries,
+              maxString,
+            });
+            let response;
+            try {
+              response = await target.browserClient.exec({
+                project_id: target.project_id,
+                code: script,
+                posture: target.posture,
+                policy: target.policy,
+              });
+            } catch (err) {
+              throw withBrowserExecStaleSessionHint({
+                err,
+                posture: target.posture,
+                policy: target.policy,
+                browserId: target.sessionInfo.browser_id,
+              });
+            }
+            return {
+              browser_id: target.sessionInfo.browser_id,
               project_id: target.project_id,
-              code: script,
               posture: target.posture,
-              policy: target.policy,
-            });
-          } catch (err) {
-            throw withBrowserExecStaleSessionHint({
-              err,
-              posture: target.posture,
-              policy: target.policy,
-              browserId: target.sessionInfo.browser_id,
-            });
-          }
-          return {
-            browser_id: target.sessionInfo.browser_id,
-            project_id: target.project_id,
-            posture: target.posture,
-            ok: true,
-            result: response?.result ?? null,
-            ...sessionTargetContext(ctx, target.sessionInfo, target.project_id),
-          };
-        });
+              ok: true,
+              result: response?.result ?? null,
+              ...sessionTargetContext(
+                ctx,
+                target.sessionInfo,
+                target.project_id,
+              ),
+            };
+          },
+        );
       },
     );
 }

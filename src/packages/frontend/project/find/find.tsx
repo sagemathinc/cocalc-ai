@@ -9,11 +9,7 @@ import { FindScopeBar } from "./find-scope-bar";
 import { FilesTab } from "./find-tab-files";
 import { SnapshotsTab } from "./find-tab-snapshots";
 import { BackupsTab } from "./find-tab-backups";
-import {
-  type FindPrefill,
-  type FindScopeMode,
-  type FindTab,
-} from "./types";
+import { type FindPrefill, type FindScopeMode, type FindTab } from "./types";
 import { getScopeContext } from "./utils";
 
 const LITE_TABS: FindTab[] = ["contents", "files"];
@@ -53,14 +49,8 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
     "find_scope_history",
   ) as string[] | undefined;
   const userInput = useTypedRedux({ project_id }, "user_input");
-  const mostRecentSearch = useTypedRedux(
-    { project_id },
-    "most_recent_search",
-  );
-  const mostRecentPath = useTypedRedux(
-    { project_id },
-    "most_recent_path",
-  );
+  const mostRecentSearch = useTypedRedux({ project_id }, "most_recent_search");
+  const mostRecentPath = useTypedRedux({ project_id }, "most_recent_path");
 
   const availableTabs = lite ? LITE_TABS : FULL_TABS;
   const scopeMode: FindScopeMode = storedScopeMode ?? "current";
@@ -70,10 +60,10 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
     (scopeMode === "workspace" && workspaceRoot
       ? workspaceRoot
       : scopeMode === "home"
-      ? homePath
-      : scopeMode === "current"
-        ? currentPath
-        : homePath);
+        ? homePath
+        : scopeMode === "current"
+          ? currentPath
+          : homePath);
   const scopePinned = Boolean(storedScopePinned);
   const scopeHistory = storedScopeHistory ?? [];
 
@@ -183,9 +173,9 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
 
   useEffect(() => {
     if (!prefillStore || !actions) return;
-    const nextTab = (availableTabs.includes(prefillStore.tab)
-      ? prefillStore.tab
-      : "contents") as FindTab;
+    const nextTab = (
+      availableTabs.includes(prefillStore.tab) ? prefillStore.tab : "contents"
+    ) as FindTab;
     setPrefill({ ...prefillStore, tab: nextTab });
     actions.setState({ find_prefill: undefined, find_tab: nextTab });
     if (prefillStore.scope_path != null) {
@@ -238,7 +228,8 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
 
   const tabItems = availableTabs.map((tab) => ({
     key: tab,
-    label: tab === "contents" ? "Contents" : tab[0].toUpperCase() + tab.slice(1),
+    label:
+      tab === "contents" ? "Contents" : tab[0].toUpperCase() + tab.slice(1),
     disabled: restrictedTab ? tab !== restrictedTab : false,
   }));
 
@@ -292,7 +283,9 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
             scopePath={scopedPath}
             prefill={prefill}
             snapshotName={
-              scopeContext.kind === "snapshots" ? scopeContext.snapshotName : undefined
+              scopeContext.kind === "snapshots"
+                ? scopeContext.snapshotName
+                : undefined
             }
           />
         );
@@ -303,7 +296,9 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
             scopePath={scopedPath}
             prefill={prefill}
             backupName={
-              scopeContext.kind === "backups" ? scopeContext.backupName : undefined
+              scopeContext.kind === "backups"
+                ? scopeContext.backupName
+                : undefined
             }
           />
         );
@@ -330,7 +325,11 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
       />
       {scopeAlert}
       <div style={{ marginTop: "10px" }}>
-        <Tabs activeKey={normalizedTab} onChange={onTabChange} items={tabItems} />
+        <Tabs
+          activeKey={normalizedTab}
+          onChange={onTabChange}
+          items={tabItems}
+        />
       </div>
       <div className="smc-vfill" style={{ minHeight: 0, marginTop: "10px" }}>
         {renderTabContent()}

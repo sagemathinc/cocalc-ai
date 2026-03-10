@@ -29,9 +29,7 @@ describe("file-server sandbox policy", () => {
     await expect(fs.writeFile("/tmp/rootfs.txt", "blocked")).rejects.toThrow(
       "rootfs is not mounted; cannot access absolute path '/tmp/rootfs.txt'. Start the workspace and try again.",
     );
-    await expect(
-      fs.writeFile("/scratch/data.txt", "blocked"),
-    ).rejects.toThrow(
+    await expect(fs.writeFile("/scratch/data.txt", "blocked")).rejects.toThrow(
       "scratch is not mounted; cannot access absolute path '/scratch/data.txt'. Start the workspace and try again.",
     );
   });

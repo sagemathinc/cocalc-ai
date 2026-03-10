@@ -229,9 +229,8 @@ export default function CloudflareConfigWizard({
     setR2TestError("");
     setR2TestResult(null);
     try {
-      const result = await webapp_client.conat_client.hub.system.testR2Credentials(
-        {},
-      );
+      const result =
+        await webapp_client.conat_client.hub.system.testR2Credentials({});
       setR2TestResult(result);
     } catch (err) {
       setR2TestError(`${err}`);
@@ -481,7 +480,8 @@ If the link above does not work, search in Cloudflare for **Managed Transforms**
                           <div>
                             <b>City:</b>{" "}
                             <code>
-                              {locationHeadersResult.details.city || "(missing)"}
+                              {locationHeadersResult.details.city ||
+                                "(missing)"}
                             </code>
                           </div>
                           <div>
@@ -670,7 +670,9 @@ Required R2 token permissions:
                         <div style={{ display: "grid", rowGap: "4px" }}>
                           <div>
                             <b>Account:</b>{" "}
-                            <code>{r2TestResult.account_id || "(missing)"}</code>
+                            <code>
+                              {r2TestResult.account_id || "(missing)"}
+                            </code>
                           </div>
                           <div>
                             <b>Endpoint:</b>{" "}

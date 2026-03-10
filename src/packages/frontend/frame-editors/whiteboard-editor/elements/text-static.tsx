@@ -14,7 +14,11 @@ export default function Text({ element }: Props) {
   const isEmpty = !element.str?.trim();
   return (
     <StaticMarkdown
-      value={isEmpty ? element.data?.placeholder ?? PLACEHOLDER : element.str ?? ""}
+      value={
+        isEmpty
+          ? (element.data?.placeholder ?? PLACEHOLDER)
+          : (element.str ?? "")
+      }
       style={getFullStyle(element, isEmpty)}
     />
   );
@@ -27,7 +31,7 @@ export function getStyle(
     fontSize?: number;
     fontFamily?: string;
     background?: string;
-  }
+  },
 ) {
   let fontFamily =
     element.data?.fontFamily ?? defaults?.fontFamily ?? DEFAULT_FONT_FAMILY;
@@ -45,7 +49,7 @@ export function getStyle(
 
 export function getFullStyle(
   element: Element,
-  isEmpty: boolean
+  isEmpty: boolean,
 ): CSSProperties {
   return {
     opacity: isEmpty ? 0.5 : undefined, // similar to what antd input does: https://stackoverflow.com/questions/56095371/how-can-i-change-the-placeholder-color-in-ant-designs-select-component; they use 0.4 which is really too light.

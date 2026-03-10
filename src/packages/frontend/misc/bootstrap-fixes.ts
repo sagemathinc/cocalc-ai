@@ -23,8 +23,8 @@ $("html").on("hide.bs.modal", "body > .modal", function () {
 $("body").on("show.bs.tooltip", (e) =>
   setTimeout(
     () => ($(e.target).parent().find(".tooltip") as any)?.tooltip("hide"),
-    3000
-  )
+    3000,
+  ),
 );
 
-export {}
+export {};

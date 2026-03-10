@@ -59,14 +59,17 @@ export async function initHostStatusService() {
         const effectiveSelfHostMode =
           machine?.cloud === "self-host" && !selfHostMode
             ? "local"
-            : selfHostMode ?? (hasConnector ? "local" : undefined);
+            : (selfHostMode ?? (hasConnector ? "local" : undefined));
         if (!isSelfHost) {
-          logger.warn("local tunnel registration rejected (host not self-hosted)", {
-            host_id,
-            machine_cloud: machine?.cloud,
-            self_host_mode: selfHostMode,
-            has_connector: hasConnector,
-          });
+          logger.warn(
+            "local tunnel registration rejected (host not self-hosted)",
+            {
+              host_id,
+              machine_cloud: machine?.cloud,
+              self_host_mode: selfHostMode,
+              has_connector: hasConnector,
+            },
+          );
           throw Error("host is not self-hosted");
         }
         if (effectiveSelfHostMode !== "local") {
@@ -77,7 +80,8 @@ export async function initHostStatusService() {
           public_key,
         });
         const reversePort =
-          sshTarget && Number(rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0);
+          sshTarget &&
+          Number(rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0);
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
@@ -128,14 +132,16 @@ export async function initHostStatusService() {
           }
         }
         const stateObj =
-          typeof state === "string" ? { state, time: new Date().toISOString() } : state;
+          typeof state === "string"
+            ? { state, time: new Date().toISOString() }
+            : state;
         // NOTE: Do not mutate host/placement here; host assignment is explicit
         // via move/start flows. Updating host_id/host from heartbeat reports
         // can cause split-brain if multiple hosts still have a local row.
-        await pool.query("UPDATE projects SET state=$2::jsonb WHERE project_id=$1", [
-          project_id,
-          stateObj,
-        ]);
+        await pool.query(
+          "UPDATE projects SET state=$2::jsonb WHERE project_id=$1",
+          [project_id, stateObj],
+        );
       },
       async reportProjectProvisioned({
         project_id,
@@ -167,7 +173,11 @@ export async function initHostStatusService() {
           [project_id, provisioned, checkedAt],
         );
       },
-      async reportHostProvisionedInventory({ host_id, project_ids, checked_at }) {
+      async reportHostProvisionedInventory({
+        host_id,
+        project_ids,
+        checked_at,
+      }) {
         if (!host_id || !Array.isArray(project_ids)) {
           throw Error("host_id and project_ids are required");
         }
@@ -194,7 +204,9 @@ export async function initHostStatusService() {
           [normalizedProjectIds],
         );
         const delete_project_ids = rows
-          .filter((row) => !row.current_host_id || row.current_host_id !== host_id)
+          .filter(
+            (row) => !row.current_host_id || row.current_host_id !== host_id,
+          )
           .map((row) => row.project_id);
         await pool.query(
           `

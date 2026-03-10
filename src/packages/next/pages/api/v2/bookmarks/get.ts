@@ -19,9 +19,7 @@ async function handle(req, res) {
   }
 }
 
-async function get(
-  req: Request,
-): Promise<{
+async function get(req: Request): Promise<{
   status: "success" | "error";
   stars?: string[];
   type?: string;

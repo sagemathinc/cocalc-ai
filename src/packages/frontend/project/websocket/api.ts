@@ -199,9 +199,7 @@ export class API {
   // Convert a notebook to some other format.
   // --to options are listed in packages/frontend/jupyter/nbconvert.tsx
   // and implemented in packages/project/jupyter/convert/index.ts
-  jupyter_nbconvert = async (
-    opts: NbconvertParams,
-  ): Promise<any> => {
+  jupyter_nbconvert = async (opts: NbconvertParams): Promise<any> => {
     const api = this.getApi({
       timeout: (opts.timeout ?? 60) * 1000 + 5000,
     });
@@ -209,9 +207,7 @@ export class API {
   };
 
   // Get contents of an ipynb file, but with output and attachments removed (to save space)
-  jupyter_strip_notebook = async (
-    ipynb_path: string,
-  ): Promise<any> => {
+  jupyter_strip_notebook = async (ipynb_path: string): Promise<any> => {
     const api = this.getApi();
     return await api.jupyter.stripNotebook(ipynb_path);
   };
@@ -221,9 +217,7 @@ export class API {
   // and run time is bounded to avoid the output being HUGE, even if the
   // input is dumb.
 
-  jupyter_run_notebook = async (
-    opts: RunNotebookOptions,
-  ): Promise<string> => {
+  jupyter_run_notebook = async (opts: RunNotebookOptions): Promise<string> => {
     const max_total_time_ms = opts.limits?.max_total_time_ms ?? 20 * 60 * 1000;
     // a bit of extra time -- it's better to let the internal project
     // timer do the job, than have to wait for this generic timeout here,
@@ -247,5 +241,4 @@ export class API {
     log("x11_channel");
     return this.getChannel(channel_name);
   };
-
 }

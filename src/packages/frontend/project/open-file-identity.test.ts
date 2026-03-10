@@ -29,7 +29,9 @@ describe("canonicalPath", () => {
   });
 
   it("normalizes relative paths to absolute using project home", () => {
-    expect(canonicalPath("notes/todo.md", HOME)).toBe("/home/wstein/work/notes/todo.md");
+    expect(canonicalPath("notes/todo.md", HOME)).toBe(
+      "/home/wstein/work/notes/todo.md",
+    );
   });
 });
 
@@ -58,7 +60,11 @@ describe("findOpenDisplayPathForSyncPath", () => {
       "/root/link.txt": { sync_path: "/root/real.txt" },
     });
     expect(
-      findOpenDisplayPathForSyncPath(actions, "/root/real.txt", "/root/link.txt"),
+      findOpenDisplayPathForSyncPath(
+        actions,
+        "/root/real.txt",
+        "/root/link.txt",
+      ),
     ).toBeUndefined();
   });
 
@@ -67,7 +73,9 @@ describe("findOpenDisplayPathForSyncPath", () => {
       "/root/link.txt": { ext: "txt" },
       "/root/other.txt": { sync_path: "/root/other.txt" },
     });
-    expect(findOpenDisplayPathForSyncPath(actions, "/root/real.txt")).toBeUndefined();
+    expect(
+      findOpenDisplayPathForSyncPath(actions, "/root/real.txt"),
+    ).toBeUndefined();
   });
 });
 
@@ -84,7 +92,9 @@ describe("open-file logging updates", () => {
     const mark_file = jest.fn();
     jest.spyOn(redux as any, "getProjectActions").mockReturnValue({ log });
     jest.spyOn(redux as any, "getActions").mockReturnValue({ mark_file });
-    jest.spyOn(webapp_client.file_client as any, "is_deleted").mockReturnValue(false);
+    jest
+      .spyOn(webapp_client.file_client as any, "is_deleted")
+      .mockReturnValue(false);
 
     log_file_open(PROJECT_ID, PATH);
     mark_open_phase(PROJECT_ID, PATH, "optimistic_ready", { bytes: 12 });

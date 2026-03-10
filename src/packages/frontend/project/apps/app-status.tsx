@@ -21,13 +21,12 @@ const INSTALL_HINTS: Record<
   },
   pluto: {
     title: "Install Pluto.jl",
-    commands: ['julia -e \'import Pkg; Pkg.add("Pluto")\''],
+    commands: ["julia -e 'import Pkg; Pkg.add(\"Pluto\")'"],
     note: "Requires Julia to be installed.",
   },
   rserver: {
     title: "Install R IDE Server",
-    note:
-      "R IDE requires the rserver binary (Posit/RStudio Server). Ask an administrator to install it.",
+    note: "R IDE requires the rserver binary (Posit/RStudio Server). Ask an administrator to install it.",
   },
 };
 
@@ -58,7 +57,9 @@ export default function AppStatus({
           title={hint.title}
           description={
             <div>
-              {hint.note ? <div style={{ marginBottom: "6px" }}>{hint.note}</div> : null}
+              {hint.note ? (
+                <div style={{ marginBottom: "6px" }}>{hint.note}</div>
+              ) : null}
               {hint.commands && hint.commands.length > 0 ? (
                 <StaticMarkdown
                   value={`\`\`\`sh\n${hint.commands.join("\n")}\n\`\`\``}

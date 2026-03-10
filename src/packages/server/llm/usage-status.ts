@@ -83,7 +83,9 @@ async function getUsageWindow({
     analytics_cookie,
   });
   const remaining =
-    limit != null && Number.isFinite(limit) ? Math.max(0, limit - used) : undefined;
+    limit != null && Number.isFinite(limit)
+      ? Math.max(0, limit - used)
+      : undefined;
   const reset_in = reset_at
     ? formatDuration(Math.max(0, reset_at.getTime() - Date.now()))
     : undefined;

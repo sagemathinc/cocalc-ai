@@ -13,7 +13,7 @@ interface Props {
 export default function EmailStatement({ statement_id, style }: Props) {
   const email_address: string | undefined = useTypedRedux(
     "account",
-    "email_address"
+    "email_address",
   );
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);

@@ -2606,6 +2606,7 @@ export class SyncDoc extends EventEmitter {
       console.warn("patchflow commit failed", err?.message ?? err);
       console.warn(err?.stack ?? "");
       this.dbg("commitWithPatchflow")(`commit failed -- ${err}`);
+      this.notifyPatchflowWriteFailure(err);
     }
     const latest = this.patchflowSession.versions().slice(-1)[0];
     if (latest != null) {
@@ -2654,6 +2655,34 @@ export class SyncDoc extends EventEmitter {
 
   private hasUnsavedChanges = (): boolean => {
     return this.valueOnDisk != this.to_str() || this.isDeleted;
+  };
+
+  private lastPatchflowWriteAlert?:
+    | {
+        message: string;
+        time: number;
+      }
+    | undefined;
+
+  private notifyPatchflowWriteFailure = (err: unknown): void => {
+    const raw =
+      err instanceof Error
+        ? err.message || err.toString()
+        : typeof err === "string"
+          ? err
+          : JSON.stringify(err);
+    const message = `Unable to save changes to the database for ${this.path}. Your recent edits may not be safely stored yet. ${raw}`;
+    const now = Date.now();
+    const last = this.lastPatchflowWriteAlert;
+    if (last != null && last.message === message && now - last.time < 30000) {
+      return;
+    }
+    this.lastPatchflowWriteAlert = { message, time: now };
+    this.client.alert_message?.({
+      title: "Unable to save changes",
+      message,
+      type: "error",
+    });
   };
 
   writeFile = async () => {

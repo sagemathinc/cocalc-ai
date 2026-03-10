@@ -104,5 +104,4 @@ export default class API implements API_Interface {
     const timeout_ms = opts.timeout * 1000 + 2000;
     return await this.call({ cmd: "query", opts }, timeout_ms);
   }
-
 }

@@ -94,9 +94,9 @@ export function SelectNewHost({
           </div>
         </Card>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Select where this will run. Choose one of your hosts, a
-          collaborator’s host, or leave it on auto to use the shared pool in the
-          nearest region.
+          Select where this will run. Choose one of your hosts, a collaborator’s
+          host, or leave it on auto to use the shared pool in the nearest
+          region.
         </Paragraph>
       </Space>
       <HostPickerModal

@@ -59,7 +59,9 @@ export function wireSystemApi(): void {
     preferred_label?: string;
     random_subdomain?: boolean;
   }) => {
-    return await forwardSystem("system.reserveProjectAppPublicSubdomain", [opts]);
+    return await forwardSystem("system.reserveProjectAppPublicSubdomain", [
+      opts,
+    ]);
   };
 
   hubApi.system.releaseProjectAppPublicSubdomain = async (opts: {
@@ -68,6 +70,8 @@ export function wireSystemApi(): void {
     host_id?: string;
     app_id: string;
   }) => {
-    return await forwardSystem("system.releaseProjectAppPublicSubdomain", [opts]);
+    return await forwardSystem("system.releaseProjectAppPublicSubdomain", [
+      opts,
+    ]);
   };
 }

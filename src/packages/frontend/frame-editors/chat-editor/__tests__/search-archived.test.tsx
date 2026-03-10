@@ -8,8 +8,9 @@ jest.mock("@cocalc/frontend/frame-editors/frame-tree/frame-context", () => ({
   useFrameContext: jest.fn(),
 }));
 
-jest.mock("@cocalc/frontend/frame-editors/generic/search/use-search-index", () =>
-  jest.fn(),
+jest.mock(
+  "@cocalc/frontend/frame-editors/generic/search/use-search-index",
+  () => jest.fn(),
 );
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -32,11 +33,7 @@ jest.mock("@cocalc/frontend/components", () => ({
 
 jest.mock("antd", () => {
   const InputBase = ({ value, onChange, allowClear, ...props }: any) => (
-    <input
-      value={value ?? ""}
-      onChange={(e) => onChange?.(e)}
-      {...props}
-    />
+    <input value={value ?? ""} onChange={(e) => onChange?.(e)} {...props} />
   );
   const InputSearch = ({
     value,
@@ -78,9 +75,8 @@ jest.mock("antd", () => {
 describe("chat search archived integration", () => {
   const useFrameContextMock = useFrameContext as jest.Mock;
   const useSearchIndexMock = useSearchIndex as jest.Mock;
-  const chatStoreSearchMock = (
-    webapp_client.conat_client?.hub?.projects as any
-  )?.chatStoreSearch as jest.Mock;
+  const chatStoreSearchMock = (webapp_client.conat_client?.hub?.projects as any)
+    ?.chatStoreSearch as jest.Mock;
   const chatStoreReadArchivedMock = (
     webapp_client.conat_client?.hub?.projects as any
   )?.chatStoreReadArchived as jest.Mock;
@@ -180,7 +176,9 @@ describe("chat search archived integration", () => {
       );
     });
 
-    expect((await screen.findAllByText(/stored on backend/i)).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText(/stored on backend/i)).length,
+    ).toBeGreaterThan(0);
     expect(await screen.findByText("archived match")).toBeTruthy();
   });
 

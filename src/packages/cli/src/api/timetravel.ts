@@ -25,7 +25,11 @@ type SyncDocDescriptor =
     };
 
 const EXTENSION_DOCTYPES: Record<string, SyncDocDescriptor> = {
-  tasks: { doctype: "syncdb", primary_keys: ["task_id"], string_cols: ["desc"] },
+  tasks: {
+    doctype: "syncdb",
+    primary_keys: ["task_id"],
+    string_cols: ["desc"],
+  },
   board: { doctype: "syncdb", primary_keys: ["id"], string_cols: ["str"] },
   slides: { doctype: "syncdb", primary_keys: ["id"], string_cols: ["str"] },
   chat: {
@@ -38,7 +42,11 @@ const EXTENSION_DOCTYPES: Record<string, SyncDocDescriptor> = {
     primary_keys: ["date", "sender_id", "event", "message_id", "thread_id"],
     string_cols: ["input"],
   },
-  "cocalc-crm": { doctype: "syncdb", primary_keys: ["table", "id"], string_cols: [] },
+  "cocalc-crm": {
+    doctype: "syncdb",
+    primary_keys: ["table", "id"],
+    string_cols: [],
+  },
 };
 
 function filenameExtension(path: string): string {
@@ -83,7 +91,10 @@ type SyncDocLike = {
   close(): void | Promise<void>;
 };
 
-type WithProjectTimeTravelSession<Ctx, Project extends TimeTravelProjectIdentity> = <T>(
+type WithProjectTimeTravelSession<
+  Ctx,
+  Project extends TimeTravelProjectIdentity,
+> = <T>(
   ctx: Ctx,
   options: TimeTravelDocumentBindingOptions,
   fn: (args: {
@@ -94,7 +105,9 @@ type WithProjectTimeTravelSession<Ctx, Project extends TimeTravelProjectIdentity
   }) => Promise<T>,
 ) => Promise<T>;
 
-export interface BoundTimeTravelDocument<Project extends TimeTravelProjectIdentity> {
+export interface BoundTimeTravelDocument<
+  Project extends TimeTravelProjectIdentity,
+> {
   readonly projectIdentifier?: string;
   readonly path: string;
   readonly cwd?: string;
@@ -200,7 +213,10 @@ function listVersionRecords(session: SyncDocLike): TimeTravelVersionRecord[] {
   return versions.map((id, index) => versionRecord(session, id, index));
 }
 
-export function createTimeTravelApi<Ctx, Project extends TimeTravelProjectIdentity>({
+export function createTimeTravelApi<
+  Ctx,
+  Project extends TimeTravelProjectIdentity,
+>({
   withProjectTimeTravelSession,
 }: {
   withProjectTimeTravelSession: WithProjectTimeTravelSession<Ctx, Project>;
@@ -222,57 +238,66 @@ export function createTimeTravelApi<Ctx, Project extends TimeTravelProjectIdenti
         path: string;
         doctype: TimeTravelDocumentDoctype;
       }) => Promise<T>,
-    ): Promise<T> =>
-      await withProjectTimeTravelSession(ctx, binding, fn);
+    ): Promise<T> => await withProjectTimeTravelSession(ctx, binding, fn);
 
     return {
       ...binding,
       async listVersions() {
-        return await withSession(async ({ project, session, path, doctype }) => ({
-          project,
-          path,
-          doctype,
-          hasFullHistory: session.hasFullHistory(),
-          versions: listVersionRecords(session),
-        }));
-      },
-      async loadMoreHistory() {
-        return await withSession(async ({ project, session, path, doctype }) => {
-          await session.loadMoreHistory();
-          return {
+        return await withSession(
+          async ({ project, session, path, doctype }) => ({
             project,
             path,
             doctype,
             hasFullHistory: session.hasFullHistory(),
             versions: listVersionRecords(session),
-          };
-        });
+          }),
+        );
+      },
+      async loadMoreHistory() {
+        return await withSession(
+          async ({ project, session, path, doctype }) => {
+            await session.loadMoreHistory();
+            return {
+              project,
+              path,
+              doctype,
+              hasFullHistory: session.hasFullHistory(),
+              versions: listVersionRecords(session),
+            };
+          },
+        );
       },
       async readVersion(versionId: string) {
-        return await withSession(async ({ project, session, path, doctype }) => {
-          const versions = session.versions();
-          const index = versions.indexOf(versionId);
-          if (index === -1 || !session.hasVersion(versionId)) {
-            throw new Error(`unknown or not-yet-loaded version '${versionId}'`);
-          }
-          const doc = session.version(versionId);
-          return {
+        return await withSession(
+          async ({ project, session, path, doctype }) => {
+            const versions = session.versions();
+            const index = versions.indexOf(versionId);
+            if (index === -1 || !session.hasVersion(versionId)) {
+              throw new Error(
+                `unknown or not-yet-loaded version '${versionId}'`,
+              );
+            }
+            const doc = session.version(versionId);
+            return {
+              project,
+              path,
+              doctype,
+              version: versionRecord(session, versionId, index),
+              text: doc.to_str(),
+            };
+          },
+        );
+      },
+      async readLive() {
+        return await withSession(
+          async ({ project, session, path, doctype }) => ({
             project,
             path,
             doctype,
-            version: versionRecord(session, versionId, index),
-            text: doc.to_str(),
-          };
-        });
-      },
-      async readLive() {
-        return await withSession(async ({ project, session, path, doctype }) => ({
-          project,
-          path,
-          doctype,
-          text: session.to_str(),
-          latestVersionId: session.historyLastVersion() ?? null,
-        }));
+            text: session.to_str(),
+            latestVersionId: session.historyLastVersion() ?? null,
+          }),
+        );
       },
       async withSession<T>(
         fn: (args: {

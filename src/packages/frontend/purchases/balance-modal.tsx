@@ -85,7 +85,13 @@ export default function BalanceModal({
             <LLMUsageHelpContent />
           </HelpIcon>
         </div>
-        <div style={{ marginTop: "6px", display: "flex", justifyContent: "center" }}>
+        <div
+          style={{
+            marginTop: "6px",
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
           <LLMUsageStatus variant="compact" showHelp={false} />
         </div>
       </div>

@@ -80,9 +80,7 @@ export default function Projects({ account_id }) {
               <Project {...project} />
             </div>
           ))}
-          {recentProjects.length == 0 && (
-            <>No recent {projectsLabelLower}</>
-          )}
+          {recentProjects.length == 0 && <>No recent {projectsLabelLower}</>}
         </div>
       )}{" "}
       {allProjects && (
@@ -106,13 +104,7 @@ export default function Projects({ account_id }) {
   );
 }
 
-function Project({
-  project_id,
-  title,
-  last_edited,
-  created,
-  users,
-}) {
+function Project({ project_id, title, last_edited, created, users }) {
   return (
     <div
       style={{

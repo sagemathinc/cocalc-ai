@@ -31,7 +31,9 @@ const DEFAULT_STATE: FindBackupsState = {
 };
 
 function isHiddenPath(path: string): boolean {
-  return path.split("/").some((segment) => segment.startsWith(".") && segment !== ".");
+  return path
+    .split("/")
+    .some((segment) => segment.startsWith(".") && segment !== ".");
 }
 
 type BackupTimeValue =
@@ -88,7 +90,10 @@ export function BackupsTab({
   const fieldWidth = mode === "flyout" ? "100%" : "50%";
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
-  const available_features = useTypedRedux({ project_id }, "available_features");
+  const available_features = useTypedRedux(
+    { project_id },
+    "available_features",
+  );
   const homeFromFeatures =
     (available_features as any)?.homeDirectory ??
     (available_features as any)?.get?.("homeDirectory");
@@ -193,8 +198,7 @@ export function BackupsTab({
             indexed_only: true,
           });
         const matched = backups.filter(
-          (backup) =>
-            new Date(backup.time).toISOString() === backupName,
+          (backup) => new Date(backup.time).toISOString() === backupName,
         );
         if (!cancelled) {
           setBackupIds(matched.map((backup) => backup.id));
@@ -351,10 +355,7 @@ export function BackupsTab({
         const next =
           prev == null
             ? 0
-            : Math.min(
-                Math.max(prev + delta, 0),
-                filteredResults.length - 1,
-              );
+            : Math.min(Math.max(prev + delta, 0), filteredResults.length - 1);
         return next;
       });
     },
@@ -384,7 +385,13 @@ export function BackupsTab({
         setState({ filter: "" });
       }
     },
-    [filteredResults.length, moveSelection, openResult, selectedIndex, setState],
+    [
+      filteredResults.length,
+      moveSelection,
+      openResult,
+      selectedIndex,
+      setState,
+    ],
   );
 
   const performRestore = useCallback(
@@ -397,13 +404,12 @@ export function BackupsTab({
           mode === "scratch"
             ? posix.join("/scratch", restoreTarget.path || "")
             : undefined;
-        const op =
-          await webapp_client.conat_client.hub.projects.restoreBackup({
-            project_id,
-            id: restoreTarget.id,
-            path: restoreTarget.path || undefined,
-            dest,
-          });
+        const op = await webapp_client.conat_client.hub.projects.restoreBackup({
+          project_id,
+          id: restoreTarget.id,
+          path: restoreTarget.path || undefined,
+          dest,
+        });
         actions?.trackRestoreOp?.(op);
         message.success("Restore started");
         setRestoreTarget(null);

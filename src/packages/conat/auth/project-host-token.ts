@@ -98,7 +98,9 @@ function getPrivateKey(private_key: string) {
 function getPublicKey(public_key: string) {
   const value = `${public_key ?? ""}`.trim();
   if (!value) {
-    throw new Error("project-host auth verification public key is not configured");
+    throw new Error(
+      "project-host auth verification public key is not configured",
+    );
   }
   return createPublicKey(value);
 }
@@ -221,12 +223,7 @@ export function verifyProjectHostAuthToken({
     throw new Error("invalid token header");
   }
 
-  const ok = cryptoVerify(
-    null,
-    Buffer.from(signingInput),
-    key,
-    signature,
-  );
+  const ok = cryptoVerify(null, Buffer.from(signingInput), key, signature);
   if (!ok) {
     throw new Error("invalid token signature");
   }
@@ -241,10 +238,16 @@ export function verifyProjectHostAuthToken({
     throw new Error("invalid token jti");
   }
   const nowSec = Math.floor(now_ms / 1000);
-  if (typeof claims.iat !== "number" || claims.iat > nowSec + CLOCK_TOLERANCE_SECONDS) {
+  if (
+    typeof claims.iat !== "number" ||
+    claims.iat > nowSec + CLOCK_TOLERANCE_SECONDS
+  ) {
     throw new Error("token not yet valid");
   }
-  if (typeof claims.exp !== "number" || claims.exp < nowSec - CLOCK_TOLERANCE_SECONDS) {
+  if (
+    typeof claims.exp !== "number" ||
+    claims.exp < nowSec - CLOCK_TOLERANCE_SECONDS
+  ) {
     throw new Error("token expired");
   }
 

@@ -40,8 +40,10 @@ export default function SelectUsers({ autoFocus, exclude, onChange }: Props) {
   );
 }
 
-interface DebounceSelectProps
-  extends Omit<SelectProps<any>, "options" | "children"> {
+interface DebounceSelectProps extends Omit<
+  SelectProps<any>,
+  "options" | "children"
+> {
   fetchOptions: (search: string, exclude?: Set<string>) => Promise<any[]>;
   debounceTimeout?: number;
   exclude?: Set<string>;
@@ -104,7 +106,7 @@ interface UserValue {
 
 async function fetchUserList(
   query: string,
-  exclude?: Set<string>
+  exclude?: Set<string>,
 ): Promise<UserValue[]> {
   const v: User[] = await apiPost("/accounts/search", { query });
   const list: UserValue[] = [];

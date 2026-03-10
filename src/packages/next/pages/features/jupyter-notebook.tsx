@@ -266,8 +266,9 @@ export default function JupyterNotebook({ customize }) {
               .
             </Paragraph>
             <Paragraph>
-              Look at our <A href="/features/linux">list of available software</A> for
-              more about what is available.
+              Look at our{" "}
+              <A href="/features/linux">list of available software</A> for more
+              about what is available.
             </Paragraph>
           </Info>
 
@@ -294,7 +295,8 @@ export default function JupyterNotebook({ customize }) {
               they get emailed.
             </Paragraph>
             <Paragraph>
-              Chat fully supports markdown formatting and <LaTeX /> formulas.{" "}
+              Chat fully supports markdown formatting and <LaTeX />{" "}
+              formulas.{" "}
             </Paragraph>
           </Info>
 

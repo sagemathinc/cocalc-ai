@@ -7,11 +7,7 @@ import { Card, Typography } from "antd";
 import { List } from "immutable";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import {
-  React,
-  Rendered,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   Icon,
   Loading,
@@ -34,12 +30,7 @@ interface Props {
 }
 
 export const UpgradeUsage: React.FC<Props> = React.memo(
-  ({
-    project_id,
-    project,
-    gpu,
-    mode,
-  }: Readonly<Props>) => {
+  ({ project_id, project, gpu, mode }: Readonly<Props>) => {
     const intl = useIntl();
     const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
     const account_groups: List<string> =

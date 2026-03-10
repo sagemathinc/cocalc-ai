@@ -20,6 +20,6 @@ export default function computeHash({
       kernel.toLowerCase().trim(),
       project_id,
       path,
-    ])
+    ]),
   );
 }

@@ -75,11 +75,15 @@ function inviteTrustSignals(invite: ProjectCollabInviteRow): string[] {
   }
   const accepted = invite.prior_invites_accepted ?? 0;
   if (accepted > 0) {
-    out.push(`You previously accepted ${accepted} invite${accepted === 1 ? "" : "s"} from this user.`);
+    out.push(
+      `You previously accepted ${accepted} invite${accepted === 1 ? "" : "s"} from this user.`,
+    );
   }
   const declined = invite.prior_invites_declined ?? 0;
   if (declined > 0) {
-    out.push(`You previously declined ${declined} invite${declined === 1 ? "" : "s"} from this user.`);
+    out.push(
+      `You previously declined ${declined} invite${declined === 1 ? "" : "s"} from this user.`,
+    );
   }
   return out;
 }
@@ -145,7 +149,10 @@ export const InviteInboxPanel: React.FC<Props> = ({
     set_busy(`${invite_id}:${action}`);
     set_error("");
     try {
-      await webapp_client.project_collaborators.respond_invite({ invite_id, action });
+      await webapp_client.project_collaborators.respond_invite({
+        invite_id,
+        action,
+      });
       await load();
     } catch (err) {
       set_error(`${err}`);
@@ -158,7 +165,9 @@ export const InviteInboxPanel: React.FC<Props> = ({
     set_busy(`unblock:${blocked_account_id}`);
     set_error("");
     try {
-      await webapp_client.project_collaborators.unblock_inviter({ blocked_account_id });
+      await webapp_client.project_collaborators.unblock_inviter({
+        blocked_account_id,
+      });
       await load();
     } catch (err) {
       set_error(`${err}`);
@@ -201,7 +210,13 @@ export const InviteInboxPanel: React.FC<Props> = ({
               style={{ marginBottom: "8px" }}
               styles={{ body: { padding: "10px" } }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                }}
+              >
                 <div>
                   <div>
                     <strong>{project}</strong>
@@ -231,7 +246,10 @@ export const InviteInboxPanel: React.FC<Props> = ({
                     </div>
                   )}
                   {inviteTrustSignals(invite).map((signal, i) => (
-                    <div key={`${invite.invite_id}:signal:${i}`} style={{ fontSize: "12px", opacity: 0.9 }}>
+                    <div
+                      key={`${invite.invite_id}:signal:${i}`}
+                      style={{ fontSize: "12px", opacity: 0.9 }}
+                    >
                       {signal}
                     </div>
                   ))}
@@ -302,7 +320,13 @@ export const InviteInboxPanel: React.FC<Props> = ({
               style={{ marginBottom: "8px" }}
               styles={{ body: { padding: "10px" } }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                }}
+              >
                 <div>
                   <div>
                     <strong>{project}</strong>
@@ -379,7 +403,13 @@ export const InviteInboxPanel: React.FC<Props> = ({
               style={{ marginBottom: "8px" }}
               styles={{ body: { padding: "10px" } }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                }}
+              >
                 <div>
                   <div>
                     <strong>{blocked}</strong>
@@ -403,8 +433,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
     );
   }
 
-  const title =
-    mode === "project" ? "Project Invitations" : "Invitation Inbox";
+  const title = mode === "project" ? "Project Invitations" : "Invitation Inbox";
   const subtitle =
     mode === "project"
       ? "Manage pending invitations for this project."
@@ -412,7 +441,13 @@ export const InviteInboxPanel: React.FC<Props> = ({
 
   return (
     <SettingBox title={title} icon="mail">
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: "8px",
+        }}
+      >
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           {subtitle}
         </Paragraph>

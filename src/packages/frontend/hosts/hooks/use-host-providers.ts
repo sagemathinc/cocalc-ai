@@ -13,19 +13,13 @@ type UseHostProvidersArgs = {
   form: FormInstance;
 };
 
-export const useHostProviders = ({
-  form,
-  flags,
-}: UseHostProvidersArgs) => {
+export const useHostProviders = ({ form, flags }: UseHostProvidersArgs) => {
   const [refreshProvider, setRefreshProvider] = useState<HostProvider>("none");
   const selectedProvider = Form.useWatch("provider", form) as
     | HostProvider
     | undefined;
 
-  const providerOptions = useMemo(
-    () => getProviderOptionsList(flags),
-    [flags],
-  );
+  const providerOptions = useMemo(() => getProviderOptionsList(flags), [flags]);
 
   const catalogProvider = useMemo(() => {
     if (selectedProvider && selectedProvider !== "none") {
@@ -34,10 +28,7 @@ export const useHostProviders = ({
     return providerOptions[0]?.value;
   }, [selectedProvider, providerOptions]);
 
-  const refreshProviders = useMemo(
-    () => getRefreshProviders(flags),
-    [flags],
-  );
+  const refreshProviders = useMemo(() => getRefreshProviders(flags), [flags]);
 
   useEffect(() => {
     if (selectedProvider && !isProviderEnabled(selectedProvider, flags)) {
@@ -45,12 +36,7 @@ export const useHostProviders = ({
     } else if (!selectedProvider) {
       form.setFieldsValue({ provider: providerOptions[0]?.value ?? "none" });
     }
-  }, [
-    selectedProvider,
-    flags,
-    providerOptions,
-    form,
-  ]);
+  }, [selectedProvider, flags, providerOptions, form]);
 
   useEffect(() => {
     if (!isProviderEnabled(refreshProvider, flags)) {

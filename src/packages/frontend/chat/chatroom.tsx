@@ -28,7 +28,7 @@ import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
 import {
-  DEFAULT_NEW_THREAD_SETUP,
+  getDefaultNewThreadSetup,
   type NewThreadSetup,
 } from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
@@ -57,6 +57,8 @@ import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
+import { resolveCombinedComposerTargetKey } from "./combined-composer-target";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -207,7 +209,10 @@ export function ChatPanel({
     showThreadImagePreviewRaw === false || showThreadImagePreviewRaw === "false"
       ? false
       : true;
-  const hideChatTypeSelectorRaw = getDescValue(desc, "data-hideChatTypeSelector");
+  const hideChatTypeSelectorRaw = getDescValue(
+    desc,
+    "data-hideChatTypeSelector",
+  );
   const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const preferLatestThreadFromDescRaw = getDescValue(
@@ -241,6 +246,7 @@ export function ChatPanel({
   const unreadSeenRef = useRef<Map<string, number>>(new Map());
   const newestSeenRef = useRef<Map<string, number>>(new Map());
   const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
+  const combinedReadSignatureRef = useRef<string | null>(null);
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
     actions.frameTreeActions.set_frame_data({
@@ -249,14 +255,15 @@ export function ChatPanel({
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
 
-  const { threads, archivedThreads, combinedThread, threadSections } = useThreadSections({
-    messages,
-    threadIndex,
-    activity,
-    accountId: account_id,
-    actions,
-    version: docVersion,
-  });
+  const { threads, archivedThreads, combinedThread, threadSections } =
+    useThreadSections({
+      messages,
+      threadIndex,
+      activity,
+      accountId: account_id,
+      actions,
+      version: docVersion,
+    });
 
   const {
     selectedThreadKey,
@@ -292,32 +299,61 @@ export function ChatPanel({
     actions?.frameId,
   ]);
 
-  const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (actions?.frameTreeActions?.set_frame_data && actions?.frameId) return;
+    const persistedSelectedThreadKey =
+      selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
+        ? selectedThreadKey
+        : null;
+    persistExternalSideChatSelectedThreadKey({
+      project_id,
+      path,
+      selectedThreadKey: persistedSelectedThreadKey,
+    });
+  }, [
+    project_id,
+    path,
+    selectedThreadKey,
+    actions?.frameTreeActions,
+    actions?.frameId,
+  ]);
+
+  const [composerTargetKey, setComposerTargetKey] = useState<string | null>(
+    null,
+  );
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
-    const title = asTrimmedString(getDescValue(desc, "data-newThreadTitleDefault"));
-    const icon = asTrimmedString(getDescValue(desc, "data-newThreadIconDefault"));
-    const color = asTrimmedString(getDescValue(desc, "data-newThreadColorDefault"));
+    const title = asTrimmedString(
+      getDescValue(desc, "data-newThreadTitleDefault"),
+    );
+    const icon = asTrimmedString(
+      getDescValue(desc, "data-newThreadIconDefault"),
+    );
+    const color = asTrimmedString(
+      getDescValue(desc, "data-newThreadColorDefault"),
+    );
     const navigatorWorkingDirectory = asTrimmedString(
       getDescValue(desc, "data-navigatorNewThreadWorkingDirectoryDefault"),
     );
+    const baseNewThreadSetup = getDefaultNewThreadSetup();
     return {
-      ...DEFAULT_NEW_THREAD_SETUP,
-      title: title ?? DEFAULT_NEW_THREAD_SETUP.title,
-      icon: icon ?? DEFAULT_NEW_THREAD_SETUP.icon,
-      color: color ?? DEFAULT_NEW_THREAD_SETUP.color,
+      ...baseNewThreadSetup,
+      title: title ?? baseNewThreadSetup.title,
+      icon: icon ?? baseNewThreadSetup.icon,
+      color: color ?? baseNewThreadSetup.color,
       agentMode: "codex",
       codexConfig: {
-        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        ...baseNewThreadSetup.codexConfig,
         workingDirectory:
           navigatorWorkingDirectory ??
-          DEFAULT_NEW_THREAD_SETUP.codexConfig.workingDirectory,
+          baseNewThreadSetup.codexConfig.workingDirectory,
       },
     };
   }, [desc]);
-  const [newThreadSetup, setNewThreadSetup] =
-    useState<NewThreadSetup>(defaultNewThreadSetup);
+  const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
+    defaultNewThreadSetup,
+  );
   const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
@@ -339,12 +375,13 @@ export function ChatPanel({
     return stableDraftKeyFromThreadKey(selectedThreadKey);
   }, [singleThreadView, selectedThreadKey]);
 
-  const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
-    account_id,
-    project_id,
-    path,
-    composerDraftKey,
-  });
+  const { input, setInput, clearInput, clearComposerDraft } =
+    useChatComposerDraft({
+      account_id,
+      project_id,
+      path,
+      composerDraftKey,
+    });
   const inputRef = useRef<string>(input);
   const composerSessionRef = useRef<number>(composerSession);
   useEffect(() => {
@@ -355,10 +392,7 @@ export function ChatPanel({
   }, [composerSession]);
   const setComposerInput = useCallback(
     (value: string, sessionToken?: number) => {
-      if (
-        sessionToken != null &&
-        sessionToken !== composerSessionRef.current
-      ) {
+      if (sessionToken != null && sessionToken !== composerSessionRef.current) {
         return;
       }
       if (value === inputRef.current) {
@@ -375,6 +409,9 @@ export function ChatPanel({
     AcpLoopConfig | undefined
   >(undefined);
   const [composerLoopConfigDirty, setComposerLoopConfigDirty] = useState(false);
+  const [suppressedLoopThreads, setSuppressedLoopThreads] = useState<
+    Set<string>
+  >(new Set());
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
@@ -398,22 +435,40 @@ export function ChatPanel({
     () => enabledLoopConfig(selectedThreadMetadata?.loop_config),
     [selectedThreadMetadata?.loop_config],
   );
+  const visiblePersistedLoopConfig = useMemo(() => {
+    if (
+      selectedThreadKey != null &&
+      suppressedLoopThreads.has(selectedThreadKey.trim())
+    ) {
+      return undefined;
+    }
+    return persistedLoopConfig;
+  }, [persistedLoopConfig, selectedThreadKey, suppressedLoopThreads]);
 
   useEffect(() => {
     // When switching threads, reflect persisted loop state for that thread.
-    setComposerLoopConfig(persistedLoopConfig);
+    setComposerLoopConfig(visiblePersistedLoopConfig);
     setComposerLoopConfigDirty(false);
-  }, [selectedThreadKey, persistedLoopConfig]);
+  }, [selectedThreadKey, visiblePersistedLoopConfig]);
 
   useEffect(() => {
     // Once a local override has been consumed/reset, re-sync the switch from
     // persisted thread metadata so the UI matches backend loop behavior.
     if (composerLoopConfigDirty) return;
-    setComposerLoopConfig(persistedLoopConfig);
-  }, [persistedLoopConfig, composerLoopConfigDirty]);
+    setComposerLoopConfig(visiblePersistedLoopConfig);
+  }, [visiblePersistedLoopConfig, composerLoopConfigDirty]);
 
   const handleLoopConfigChange = useCallback(
     (config?: AcpLoopConfig) => {
+      const threadKey = selectedThreadKey?.trim();
+      if (threadKey) {
+        setSuppressedLoopThreads((prev) => {
+          if (!prev.has(threadKey)) return prev;
+          const next = new Set(prev);
+          next.delete(threadKey);
+          return next;
+        });
+      }
       if (config?.enabled !== true) {
         clearThreadLoopRuntime(actions, selectedThreadKey);
         setComposerLoopConfig(undefined);
@@ -430,7 +485,7 @@ export function ChatPanel({
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookupKey != null
-        ? actions.getMessagesInThread(selectedThreadLookupKey) ?? []
+        ? (actions.getMessagesInThread(selectedThreadLookupKey) ?? [])
         : [],
     [actions, selectedThreadLookupKey, messages],
   );
@@ -481,10 +536,11 @@ export function ChatPanel({
       });
       const threadDateRaw =
         metadata?.thread_date ??
-        (thread.newestTime ? new Date(thread.newestTime).toISOString() : undefined);
+        (thread.newestTime
+          ? new Date(thread.newestTime).toISOString()
+          : undefined);
       const createdAt =
-        parseDateISOString(threadDateRaw) ??
-        new Date().toISOString();
+        parseDateISOString(threadDateRaw) ?? new Date().toISOString();
       const updatedAt =
         parseDateISOString(thread.newestTime) ??
         parseDateISOString(threadDateRaw) ??
@@ -528,11 +584,15 @@ export function ChatPanel({
             ? acpConfig.reasoning
             : undefined,
         thread_color:
-          typeof thread.threadColor === "string" ? thread.threadColor : undefined,
+          typeof thread.threadColor === "string"
+            ? thread.threadColor
+            : undefined,
         thread_icon:
           typeof thread.threadIcon === "string" ? thread.threadIcon : undefined,
         thread_image:
-          typeof thread.threadImage === "string" ? thread.threadImage : undefined,
+          typeof thread.threadImage === "string"
+            ? thread.threadImage
+            : undefined,
         thread_pin: thread.isPinned === true,
       });
     }
@@ -543,7 +603,9 @@ export function ChatPanel({
     if (!agentSessionRecords.length) return;
     for (const record of agentSessionRecords) {
       const serialized = JSON.stringify(record);
-      if (indexedAgentSessionsRef.current.get(record.session_id) === serialized) {
+      if (
+        indexedAgentSessionsRef.current.get(record.session_id) === serialized
+      ) {
         continue;
       }
       void upsertAgentSessionRecord(record)
@@ -604,29 +666,63 @@ export function ChatPanel({
   }, [project_id, path, selectedThreadKey]);
 
   useEffect(() => {
-    if (!isCombinedFeedSelected) {
-      if (composerTargetKey != null) {
-        setComposerTargetKey(null);
-      }
-      return;
-    }
-    if (threads.length === 0) {
-      if (composerTargetKey != null) {
-        setComposerTargetKey(null);
-      }
-      return;
-    }
-    if (composerTargetKey == null) {
-      setComposerTargetKey(threads[0].key);
-      return;
-    }
-    const exists = threads.some((thread) => thread.key === composerTargetKey);
-    if (!exists) {
-      setComposerTargetKey(threads[0].key);
+    const nextTargetKey = resolveCombinedComposerTargetKey(
+      composerTargetKey,
+      threads,
+      isCombinedFeedSelected,
+    );
+    if (nextTargetKey !== composerTargetKey) {
+      setComposerTargetKey(nextTargetKey);
     }
   }, [isCombinedFeedSelected, threads, composerTargetKey]);
 
-  const mark_as_read = () => markChatAsReadIfUnseen(project_id, path);
+  const combinedUnreadThreads = useMemo(
+    () => threads.filter((thread) => (thread.unreadCount ?? 0) > 0),
+    [threads],
+  );
+  const combinedReadSignature = useMemo(
+    () =>
+      combinedUnreadThreads
+        .map(
+          (thread) =>
+            `${thread.key}:${thread.unreadCount ?? 0}:${thread.messageCount ?? 0}:${Number.isFinite(thread.newestTime) ? thread.newestTime : 0}`,
+        )
+        .join("|"),
+    [combinedUnreadThreads],
+  );
+
+  useEffect(() => {
+    if (!isCombinedFeedSelected) {
+      combinedReadSignatureRef.current = null;
+    }
+  }, [isCombinedFeedSelected]);
+
+  const mark_as_read = useCallback(() => {
+    markChatAsReadIfUnseen(project_id, path);
+    if (!isCombinedFeedSelected || !actions?.markThreadRead) return;
+    if (
+      combinedUnreadThreads.length === 0 ||
+      combinedReadSignatureRef.current === combinedReadSignature
+    ) {
+      return;
+    }
+    combinedReadSignatureRef.current = combinedReadSignature;
+    for (let i = 0; i < combinedUnreadThreads.length; i++) {
+      const thread = combinedUnreadThreads[i];
+      actions.markThreadRead(
+        thread.key,
+        thread.messageCount,
+        i === combinedUnreadThreads.length - 1,
+      );
+    }
+  }, [
+    project_id,
+    path,
+    isCombinedFeedSelected,
+    actions,
+    combinedUnreadThreads,
+    combinedReadSignature,
+  ]);
 
   useEffect(() => {
     if (!singleThreadView || !selectedThreadKey) return;
@@ -721,8 +817,9 @@ export function ChatPanel({
         };
       }
       const thread_id = normalizeThreadKey(threadKey);
-      const threadMessages =
-        thread_id ? actions.getMessagesInThread(thread_id) ?? [] : [];
+      const threadMessages = thread_id
+        ? (actions.getMessagesInThread(thread_id) ?? [])
+        : [];
       const latestMessageId =
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim() ||
         undefined;
@@ -752,8 +849,9 @@ export function ChatPanel({
       actions,
       threadId: thread_id,
       threadKey: thread_id ?? "",
-      persistedSessionId:
-        thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined,
+      persistedSessionId: thread_id
+        ? actions.getCodexConfig(thread_id)?.sessionId
+        : undefined,
     });
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
@@ -767,7 +865,8 @@ export function ChatPanel({
         (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
         acpState?.get?.(`${msgDate.valueOf()}`);
       const isActive =
-        (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
+        (typeof threadState === "string" &&
+          ACP_ACTIVE_STATES.has(threadState)) ||
         (typeof msgState === "string" && ACP_ACTIVE_STATES.has(msgState));
       if (!isActive) continue;
       const interruptTargetThreadId =
@@ -834,9 +933,9 @@ export function ChatPanel({
             return next;
           })()
         : reply_thread_id && existingThreadMetadata?.agent_kind === "acp"
-          ? existingThreadMetadata.acp_config ??
+          ? (existingThreadMetadata.acp_config ??
             actions.getCodexConfig?.(reply_thread_id) ??
-            undefined
+            undefined)
           : undefined;
 
     const timeStamp = actions.sendChat({
@@ -867,18 +966,16 @@ export function ChatPanel({
                   : undefined,
             }
           : undefined,
-      threadAppearance:
-        !reply_thread_id
-          ? {
-              color: newThreadSetup.color?.trim(),
-              icon: newThreadSetup.icon?.trim(),
-              image: newThreadSetup.image?.trim(),
-            }
-          : undefined,
+      threadAppearance: !reply_thread_id
+        ? {
+            color: newThreadSetup.color?.trim(),
+            icon: newThreadSetup.icon?.trim(),
+            image: newThreadSetup.image?.trim(),
+          }
+        : undefined,
       // Replies sent from Combined should keep Combined selected.
       // Brand new threads should always switch to the newly created thread.
-      preserveSelectedThread:
-        isCombinedFeedSelected && reply_thread_id != null,
+      preserveSelectedThread: isCombinedFeedSelected && reply_thread_id != null,
       acp_loop_config:
         composerLoopConfig?.enabled === true &&
         (isSelectedThreadCodex ||
@@ -894,10 +991,6 @@ export function ChatPanel({
       setInput(rawSendingText);
       return;
     }
-    // Clear local override; persisted thread metadata (if any) will re-sync
-    // the switch when ACP/backend writes loop state for the thread.
-    setComposerLoopConfig(undefined);
-    setComposerLoopConfigDirty(false);
     const threadKey =
       !reply_thread_id && timeStamp
         ? (() => {
@@ -906,6 +999,19 @@ export function ChatPanel({
             return threadId?.trim() || null;
           })()
         : null;
+    const consumedLoopThreadKey = (reply_thread_id ?? threadKey)?.trim();
+    if (composerLoopConfig?.enabled === true && consumedLoopThreadKey) {
+      setSuppressedLoopThreads((prev) => {
+        if (prev.has(consumedLoopThreadKey)) return prev;
+        const next = new Set(prev);
+        next.add(consumedLoopThreadKey);
+        return next;
+      });
+    }
+    // Clear local override; per-thread suppression keeps the one-shot loop
+    // toggle off after a successful send until the user explicitly re-enables it.
+    setComposerLoopConfig(undefined);
+    setComposerLoopConfigDirty(false);
     if (!reply_thread_id && threadKey) {
       setAllowAutoSelectThread(false);
       setSelectedThreadKey(threadKey);
@@ -1145,16 +1251,13 @@ export function ChatPanel({
             combinedThread={combinedThread}
             openRenameModal={
               modalHandlers?.openRenameModal ??
-              ((
-                _threadKey,
-                _label,
-                _useCurrentLabel,
-                _color,
-                _icon,
-              ) => undefined)
+              ((_threadKey, _label, _useCurrentLabel, _color, _icon) =>
+                undefined)
             }
             openGitBrowser={openGitBrowserForThread}
-            openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
+            openExportModal={
+              modalHandlers?.openExportModal ?? (() => undefined)
+            }
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
             confirmDeleteThread={
               threadActionHandlers?.confirmDeleteThread ?? (() => undefined)

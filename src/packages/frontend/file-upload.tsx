@@ -118,10 +118,7 @@ function Header({ close_preview }: { close_preview?: Function }) {
   );
 }
 
-function postUrl(
-  project_id: string,
-  path: string,
-): string {
+function postUrl(project_id: string, path: string): string {
   if (!project_id) {
     return join(appBasePath, "blobs");
   }
@@ -542,9 +539,11 @@ export function BlobUpload(props) {
           });
           return;
         }
-        const url = `${join(appBasePath, "blobs", encodeURIComponent(
-          file.upload.filename,
-        ))}?uuid=${uuid}`;
+        const url = `${join(
+          appBasePath,
+          "blobs",
+          encodeURIComponent(file.upload.filename),
+        )}?uuid=${uuid}`;
         props.event_handlers?.complete({ ...file, uuid, url });
       } else {
         // e.g., if there was an error

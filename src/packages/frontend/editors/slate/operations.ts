@@ -9,7 +9,7 @@ import { getScrollState, setScrollState } from "./scroll";
 
 export function applyOperations(
   editor: SlateEditor,
-  operations: Operation[]
+  operations: Operation[],
 ): void {
   if (operations.length == 0) return;
 
@@ -41,14 +41,14 @@ export function applyOperations(
             editor.apply(op);
           } catch (err) {
             console.warn(
-              `WARNING: Slate issue -- unable to apply an operation to the document -- err=${err}, op=${op}`
+              `WARNING: Slate issue -- unable to apply an operation to the document -- err=${err}, op=${op}`,
             );
           }
         }
       });
     } catch (err) {
       console.warn(
-        `WARNING: Slate issue -- unable to apply operations to the document -- err=${err} -- could create invalid state`
+        `WARNING: Slate issue -- unable to apply operations to the document -- err=${err} -- could create invalid state`,
       );
     }
 
@@ -111,7 +111,7 @@ function skipCursor(cursor: { focus: Point | null }, op): boolean {
 // scrolling should be happening anyways.
 export function preserveScrollPosition(
   editor: SlateEditor,
-  operations: Operation[]
+  operations: Operation[],
 ): void {
   const scroll = getScrollState(editor);
   if (scroll == null) return;

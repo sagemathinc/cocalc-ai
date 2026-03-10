@@ -73,6 +73,7 @@ import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
+import { formatTurnDuration } from "./turn-duration";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -105,12 +106,10 @@ export function resolveThreadMetadataLookup({
     };
   }
   return {
-    threadLookupKey:
-      threadRootMs != null ? `${threadRootMs}` : undefined,
+    threadLookupKey: threadRootMs != null ? `${threadRootMs}` : undefined,
     threadId: undefined,
   };
 }
-
 
 const THREAD_STYLE_SINGLE: CSS = {
   marginLeft: "15px",
@@ -220,9 +219,7 @@ export function computeAcpStateToRender({
   showViewerRunning?: boolean;
 }): string {
   const state =
-    acpState === "running" && latestThreadInterrupted
-      ? ""
-      : acpState;
+    acpState === "running" && latestThreadInterrupted ? "" : acpState;
   if (!state) return "";
   if (VIEWER_ONLY_STATES.has(state)) {
     return isViewersMessage ? state : "";
@@ -419,8 +416,9 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
-  const [openActivityDrawerToken, setOpenActivityDrawerToken] =
-    useState<number | undefined>(undefined);
+  const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
+    number | undefined
+  >(undefined);
   const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
@@ -506,7 +504,9 @@ export default function Message({
 
   const messageThreadId = useMemo(() => {
     const id = field<string>(message, "thread_id");
-    return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
+    return typeof id === "string" && id.trim().length > 0
+      ? id.trim()
+      : undefined;
   }, [message]);
 
   const threadMessages = useMemo(() => {
@@ -570,7 +570,8 @@ export default function Message({
   // Resolve log identifiers deterministically (shared with backend) so we never
   // invent subjects/keys in multiple places.
   const fallbackLogRefs = useMemo(() => {
-    const turn_message_id = `${field<string>(message, "message_id") ?? ""}`.trim();
+    const turn_message_id =
+      `${field<string>(message, "message_id") ?? ""}`.trim();
     const normalizedThreadId = `${messageThreadId ?? ""}`.trim();
 
     const derived =
@@ -632,7 +633,10 @@ export default function Message({
     enabled: loadLogBody,
   });
   const codexBodyValue = useMemo(() => {
-    if (!Array.isArray(codexBodyLog.events) || codexBodyLog.events.length === 0) {
+    if (
+      !Array.isArray(codexBodyLog.events) ||
+      codexBodyLog.events.length === 0
+    ) {
       return undefined;
     }
     if (effectiveGenerating) {
@@ -683,18 +687,15 @@ export default function Message({
   // Prefer the persisted sessionId from the thread_id-indexed thread config;
   // fall back to the latest assistant-row acp_thread_id, then the message
   // payload, then the legacy date-key/thread key.
-  const sessionIdForInterrupt = useMemo(
-    () => {
-      const resolved = resolveAgentSessionIdForThread({
-        actions,
-        threadId: threadLookup.threadId,
-        threadKey: threadLookup.threadLookupKey ?? "",
-        persistedSessionId: threadCodexConfig?.sessionId,
-      });
-      return acpThreadId ?? resolved;
-    },
-    [actions, threadCodexConfig, acpThreadId, threadLookup],
-  );
+  const sessionIdForInterrupt = useMemo(() => {
+    const resolved = resolveAgentSessionIdForThread({
+      actions,
+      threadId: threadLookup.threadId,
+      threadKey: threadLookup.threadLookupKey ?? "",
+      persistedSessionId: threadCodexConfig?.sessionId,
+    });
+    return acpThreadId ?? resolved;
+  }, [actions, threadCodexConfig, acpThreadId, threadLookup]);
 
   const activityBasePath = useMemo(
     () => threadCodexConfig?.workingDirectory,
@@ -1087,8 +1088,8 @@ export default function Message({
           key="edit"
           title={
             <>
-              Edit this message. You can edit <b>any</b> past message using
-              this button. Fix other people's typos. All versions are stored.
+              Edit this message. You can edit <b>any</b> past message using this
+              button. Fix other people's typos. All versions are stored.
             </>
           }
           placement="bottom"
@@ -1099,8 +1100,7 @@ export default function Message({
             style={{ color: COLORS.GRAY_M }}
             onClick={edit_message}
             icon={<Icon name="pencil" />}
-          >
-          </Button>
+          ></Button>
         </Tip>,
       );
     }
@@ -1132,11 +1132,7 @@ export default function Message({
       );
     }
     buttons.push(
-      <Tooltip
-        key="focus"
-        placement="top"
-        title="Focus this message"
-      >
+      <Tooltip key="focus" placement="top" title="Focus this message">
         <Button
           size="small"
           type="text"
@@ -1210,7 +1206,10 @@ export default function Message({
 
   function renderMessageBody({ message_class }) {
     const value = renderedMessageMarkdown;
-    const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
+    const inlineCodeLinks = field<InlineCodeLink[]>(
+      message,
+      "inline_code_links",
+    );
     const openCommitFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -1258,9 +1257,7 @@ export default function Message({
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
-        <div
-          onClickCapture={openCommitFromMessage}
-        >
+        <div onClickCapture={openCommitFromMessage}>
           <StaticMarkdown
             style={MARKDOWN_STYLE}
             value={value}
@@ -1279,7 +1276,10 @@ export default function Message({
   function renderZenMessageDrawer() {
     if (!showZenMessage) return null;
     const value = renderedMessageMarkdown;
-    const inlineCodeLinks = field<InlineCodeLink[]>(message, "inline_code_links");
+    const inlineCodeLinks = field<InlineCodeLink[]>(
+      message,
+      "inline_code_links",
+    );
     const openCommitFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -1298,7 +1298,9 @@ export default function Message({
         width="100vw"
         destroyOnHidden
       >
-        <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 8px 24px 8px" }}>
+        <div
+          style={{ maxWidth: 960, margin: "0 auto", padding: "0 8px 24px 8px" }}
+        >
           <div onClickCapture={openCommitFromMessage}>
             <StaticMarkdown
               style={{ fontSize: `${font_size ?? 14}px` }}
@@ -1509,10 +1511,7 @@ export default function Message({
             <Name sender_name={get_user_name(field(message, "sender_id"))} />
           ) : undefined}
         </div>
-        <div
-          style={messageStyle}
-          className="smc-chat-message"
-        >
+        <div style={messageStyle} className="smc-chat-message">
           {renderMessageHeader(lighten)}
           {isEditing
             ? renderEditMessage()
@@ -1858,7 +1857,7 @@ export default function Message({
             ? "waiting for Codex"
             : acpStateToRender === "running" && is_viewers_message
               ? "Codex is starting"
-            : acpStateToRender}
+              : acpStateToRender}
       </Tag>
     );
   };
@@ -1891,46 +1890,6 @@ export default function Message({
       ) : undefined}
     </Row>
   );
-}
-
-function formatTurnDuration({
-  startMs,
-  history,
-}: {
-  startMs?: number;
-  history?: any;
-}): string {
-  if (!startMs || !history) return "";
-  const entries = Array.isArray(history)
-    ? history
-    : typeof history?.toArray === "function"
-      ? history.toArray()
-      : typeof history?.toJS === "function"
-        ? history.toJS()
-        : [];
-  if (!entries.length) return "";
-  const last = entries[entries.length - 1];
-  const endDate =
-    last?.date ??
-    (typeof last?.get === "function" ? last.get("date") : undefined);
-  const endMs =
-    endDate instanceof Date
-      ? endDate.valueOf()
-      : typeof endDate === "number"
-        ? endDate
-        : new Date(endDate ?? 0).valueOf();
-  if (!Number.isFinite(endMs) || endMs <= 0) return "";
-  const elapsed = Math.max(0, endMs - startMs);
-  if (!Number.isFinite(elapsed) || elapsed <= 0) return "";
-  const totalSeconds = Math.floor(elapsed / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  if (hours > 0) {
-    return `${hours}:${pad(minutes)}:${pad(seconds)}`;
-  }
-  return `${minutes}:${pad(seconds)}`;
 }
 
 // Used for exporting chat to markdown file

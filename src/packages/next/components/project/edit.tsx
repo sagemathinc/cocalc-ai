@@ -55,13 +55,7 @@ interface Info {
   description: string;
 }
 
-function EditFields({
-  info,
-  onClose,
-}: {
-  info: Info;
-  onClose: () => void;
-}) {
+function EditFields({ info, onClose }: { info: Info; onClose: () => void }) {
   const [edited, setEdited] = useState<Info>(info);
   const [original, setOriginal] = useState<Info>(info);
   return (
@@ -75,8 +69,12 @@ function EditFields({
     >
       <div>
         <Space style={{ float: "right" }}>
-          <SaveButton edited={edited} original={original} setOriginal={setOriginal} table="projects" 
-            />
+          <SaveButton
+            edited={edited}
+            original={original}
+            setOriginal={setOriginal}
+            table="projects"
+          />
           <Button style={{ float: "right" }} onClick={onClose}>
             Close
           </Button>

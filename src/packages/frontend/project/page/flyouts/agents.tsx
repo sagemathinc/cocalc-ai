@@ -164,12 +164,18 @@ function loadWorkspaceOnly(project_id: string): boolean {
 }
 
 function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
-  set_local_storage(workspaceOnlyStorageKey(project_id), enabled ? "true" : "false");
+  set_local_storage(
+    workspaceOnlyStorageKey(project_id),
+    enabled ? "true" : "false",
+  );
 }
 
 interface AgentsFlyoutProps {
   project_id: string;
-  wrap: (content: React.JSX.Element, style?: React.CSSProperties) => React.JSX.Element;
+  wrap: (
+    content: React.JSX.Element,
+    style?: React.CSSProperties,
+  ) => React.JSX.Element;
 }
 
 interface AgentsPanelProps {
@@ -216,11 +222,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     setError("");
     setLoading(true);
 
-    void watchAgentSessionsForProject({ project_id }, (records: AgentSessionRecord[]) => {
+    void watchAgentSessionsForProject(
+      { project_id },
+      (records: AgentSessionRecord[]) => {
         if (closed) return;
         setSessions(records);
         setLoading(false);
-      })
+      },
+    )
       .then((cleanup) => {
         if (closed) {
           cleanup();
@@ -326,7 +335,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [actions, knownChatPaths, project_id]);
 
   const sessionsWithExistingChat = useMemo(() => {
-    return sessions.filter((session) => !missingChatPaths.has(session.chat_path));
+    return sessions.filter(
+      (session) => !missingChatPaths.has(session.chat_path),
+    );
   }, [sessions, missingChatPaths]);
 
   const inlineSession = useMemo(() => {
@@ -340,8 +351,14 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   const scopedSessions = useMemo(() => {
     let filtered = sessionsWithExistingChat;
-    if (scope === "mine" && typeof account_id === "string" && account_id.trim()) {
-      filtered = filtered.filter((session) => session.account_id === account_id);
+    if (
+      scope === "mine" &&
+      typeof account_id === "string" &&
+      account_id.trim()
+    ) {
+      filtered = filtered.filter(
+        (session) => session.account_id === account_id,
+      );
     }
     if (workspaceOnly && workspaces.current) {
       const workspaceId = workspaces.current.workspace_id;
@@ -349,7 +366,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         const chatPath = session.chat_path;
         if (typeof chatPath !== "string" || !chatPath.trim()) return false;
         return (
-          workspaces.resolveWorkspaceForPath(chatPath)?.workspace_id === workspaceId
+          workspaces.resolveWorkspaceForPath(chatPath)?.workspace_id ===
+          workspaceId
         );
       });
     }
@@ -375,7 +393,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       .map((record) => ({
         key: `${record.chat_path}::${record.thread_key}`,
         label: normalizedTitle(record),
-        newestTime: Math.max(dateMs(record.updated_at), dateMs(record.created_at)),
+        newestTime: Math.max(
+          dateMs(record.updated_at),
+          dateMs(record.created_at),
+        ),
         messageCount: 1,
         isPinned: record.thread_pin === true,
         record,
@@ -446,7 +467,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return () => {
       mounted = false;
       if (chatActions && ownsChatInstance) {
-        setInlineActions((current) => (current === chatActions ? null : current));
+        setInlineActions((current) =>
+          current === chatActions ? null : current,
+        );
         removeChatWithInstance(chatPath, redux, project_id, {
           instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
         });
@@ -588,7 +611,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  function renderInlineSessionMenu(record: AgentSessionRecord): React.JSX.Element {
+  function renderInlineSessionMenu(
+    record: AgentSessionRecord,
+  ): React.JSX.Element {
     const resumeLabel =
       record.entrypoint === "global" ? "Go to Home Chat" : "Go to Chat";
     const items: MenuProps["items"] = [
@@ -687,7 +712,9 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
-  async function resolveChatActionsForRecord(record: AgentSessionRecord): Promise<{
+  async function resolveChatActionsForRecord(
+    record: AgentSessionRecord,
+  ): Promise<{
     chatActions: ChatActions;
     cleanup?: () => void;
   }> {
@@ -748,9 +775,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const nextPinned = record.thread_pin !== true;
     let cleanup: (() => void) | undefined;
     try {
-      const { chatActions, cleanup: removeTemp } = await resolveChatActionsForRecord(
-        record,
-      );
+      const { chatActions, cleanup: removeTemp } =
+        await resolveChatActionsForRecord(record);
       cleanup = removeTemp;
       const ok = chatActions.setThreadPin?.(record.thread_key, nextPinned);
       if (!ok) {
@@ -980,7 +1006,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         <Space
           wrap
           size={[8, 8]}
-          style={{ marginBottom: 8, width: "100%", justifyContent: "space-between" }}
+          style={{
+            marginBottom: 8,
+            width: "100%",
+            justifyContent: "space-between",
+          }}
         >
           <Space size={[6, 6]} wrap style={{ minWidth: 0 }}>
             <Button
@@ -1001,7 +1031,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           </Space>
         </Space>
         {error ? (
-          <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />
+          <Alert
+            type="error"
+            showIcon
+            message={error}
+            style={{ marginBottom: 8 }}
+          />
         ) : null}
         {inlineError ? (
           <Alert
@@ -1113,7 +1148,8 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           </Space>
         </div>
       </div>
-      {visibleSections.length === 0 && (!showArchived || archivedSessions.length === 0) ? (
+      {visibleSections.length === 0 &&
+      (!showArchived || archivedSessions.length === 0) ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description={"No indexed sessions yet"}
@@ -1126,7 +1162,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         >
           {visibleSections.map((section) => (
             <div key={section.key}>
-              <Typography.Text type="secondary" strong style={{ display: "block", marginBottom: 6 }}>
+              <Typography.Text
+                type="secondary"
+                strong
+                style={{ display: "block", marginBottom: 6 }}
+              >
                 {section.title}
               </Typography.Text>
               <div

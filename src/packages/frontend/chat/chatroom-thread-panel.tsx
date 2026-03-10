@@ -14,7 +14,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
-import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
 import {
   DEFAULT_CODEX_MODEL_NAME,
@@ -47,6 +46,7 @@ import type {
   ChatStoreSearchHit,
 } from "@cocalc/conat/hub/api/projects";
 import { ChatIconPicker } from "./chat-icon-picker";
+import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
@@ -61,9 +61,6 @@ const CHAT_LOG_STYLE: React.CSSProperties = {
 
 const DEFAULT_CODEX_MODEL =
   DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
-const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
-  ? "read-only"
-  : "workspace-write";
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
@@ -84,19 +81,25 @@ export interface NewThreadSetup {
   codexConfig: Partial<CodexThreadConfig>;
 }
 
-export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup = {
-  title: "",
-  icon: undefined,
-  color: undefined,
-  image: "",
-  agentMode: "codex",
-  model: DEFAULT_CODEX_MODEL,
-  codexConfig: {
+export function getDefaultNewThreadSetup(): NewThreadSetup {
+  const defaultSessionMode = getDefaultCodexSessionMode();
+  return {
+    title: "",
+    icon: undefined,
+    color: undefined,
+    image: "",
+    agentMode: "codex",
     model: DEFAULT_CODEX_MODEL,
-    sessionMode: DEFAULT_CODEX_SESSION_MODE,
-    reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
-  },
-};
+    codexConfig: {
+      model: DEFAULT_CODEX_MODEL,
+      sessionMode: defaultSessionMode,
+      reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
+    },
+  };
+}
+
+export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
+  getDefaultNewThreadSetup();
 
 export function applyNewThreadSetupPatch(
   current: NewThreadSetup,
@@ -172,30 +175,31 @@ export function ChatRoomThreadPanel({
   activityJumpDate,
   activityJumpToken,
 }: ChatRoomThreadPanelProps) {
+  const defaultSessionMode = getDefaultCodexSessionMode();
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [threadSearchInput, setThreadSearchInput] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
   const [threadSearchJumpToken, setThreadSearchJumpToken] = useState(0);
   const [archivedSearchLoading, setArchivedSearchLoading] = useState(false);
-  const [archivedSearchHits, setArchivedSearchHits] = useState<ChatStoreSearchHit[]>(
-    [],
-  );
+  const [archivedSearchHits, setArchivedSearchHits] = useState<
+    ChatStoreSearchHit[]
+  >([]);
   const [archivedSearchTotal, setArchivedSearchTotal] = useState(0);
   const [archivedSearchError, setArchivedSearchError] = useState("");
   const [archivedHistoryOpen, setArchivedHistoryOpen] = useState(false);
   const [archivedHistoryLoading, setArchivedHistoryLoading] = useState(false);
-  const [archivedHistoryRows, setArchivedHistoryRows] = useState<ChatStoreArchivedRow[]>(
-    [],
-  );
+  const [archivedHistoryRows, setArchivedHistoryRows] = useState<
+    ChatStoreArchivedRow[]
+  >([]);
   const [archivedHistoryError, setArchivedHistoryError] = useState("");
   const [archivedHistoryNextOffset, setArchivedHistoryNextOffset] = useState<
     number | undefined
   >(undefined);
   const [archivedLoadInProgress, setArchivedLoadInProgress] = useState(false);
-  const [archivedLoadMode, setArchivedLoadMode] = useState<"more" | "all" | null>(
-    null,
-  );
+  const [archivedLoadMode, setArchivedLoadMode] = useState<
+    "more" | "all" | null
+  >(null);
   const [archivedLoadError, setArchivedLoadError] = useState("");
   const [archivedLoadOffsetByThread, setArchivedLoadOffsetByThread] = useState<
     Record<string, number>
@@ -208,9 +212,8 @@ export function ChatRoomThreadPanel({
   const [maintenanceBusy, setMaintenanceBusy] = useState<string | null>(null);
   const [maintenanceError, setMaintenanceError] = useState("");
   const [maintenanceStatus, setMaintenanceStatus] = useState("");
-  const [maintenanceStats, setMaintenanceStats] = useState<ChatStoreStats | null>(
-    null,
-  );
+  const [maintenanceStats, setMaintenanceStats] =
+    useState<ChatStoreStats | null>(null);
   const [maintenanceDeleteDays, setMaintenanceDeleteDays] = useState("30");
   const [threadNearTop, setThreadNearTop] = useState(false);
   const anyOverlayOpen = useAnyChatOverlayOpen();
@@ -221,7 +224,9 @@ export function ChatRoomThreadPanel({
   );
   const selectedThreadMeta =
     selectedThreadId != null
-      ? actions.getThreadMetadata(selectedThreadId, { threadId: selectedThreadId })
+      ? actions.getThreadMetadata(selectedThreadId, {
+          threadId: selectedThreadId,
+        })
       : undefined;
   const archivedRowsCount = (() => {
     const value = selectedThreadMeta?.archived_chat_rows;
@@ -232,7 +237,7 @@ export function ChatRoomThreadPanel({
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookup != null
-        ? actions.getMessagesInThread(selectedThreadLookup) ?? []
+        ? (actions.getMessagesInThread(selectedThreadLookup) ?? [])
         : [],
     [actions, selectedThreadLookup, messages],
   );
@@ -314,94 +319,97 @@ export function ChatRoomThreadPanel({
     [project_id, path, selectedThreadId],
   );
 
-  const loadArchivedIntoThread = useCallback(async (mode: "more" | "all" = "more") => {
-    if (!project_id || !path || !selectedThreadId) {
+  const loadArchivedIntoThread = useCallback(
+    async (mode: "more" | "all" = "more") => {
+      if (!project_id || !path || !selectedThreadId) {
+        setArchivedLoadError("");
+        return;
+      }
+      const hubProjects = webapp_client.conat_client?.hub?.projects;
+      if (!hubProjects) {
+        setArchivedLoadError("Conat project API is unavailable.");
+        return;
+      }
+      if (archivedLoadInProgress) return;
+      const anchorDateMs = (() => {
+        const oldestVisible = selectedThreadMessages[0];
+        const d = oldestVisible ? dateValue(oldestVisible) : undefined;
+        return d ? d.valueOf() : undefined;
+      })();
+      const startOffset = archivedLoadOffsetByThread[selectedThreadId] ?? 0;
+      let offset = startOffset;
+      let totalRows = 0;
+      let totalApplied = 0;
+      let finished = false;
+      setArchivedLoadInProgress(true);
+      setArchivedLoadMode(mode);
       setArchivedLoadError("");
-      return;
-    }
-    const hubProjects = webapp_client.conat_client?.hub?.projects;
-    if (!hubProjects) {
-      setArchivedLoadError("Conat project API is unavailable.");
-      return;
-    }
-    if (archivedLoadInProgress) return;
-    const anchorDateMs = (() => {
-      const oldestVisible = selectedThreadMessages[0];
-      const d = oldestVisible ? dateValue(oldestVisible) : undefined;
-      return d ? d.valueOf() : undefined;
-    })();
-    const startOffset = archivedLoadOffsetByThread[selectedThreadId] ?? 0;
-    let offset = startOffset;
-    let totalRows = 0;
-    let totalApplied = 0;
-    let finished = false;
-    setArchivedLoadInProgress(true);
-    setArchivedLoadMode(mode);
-    setArchivedLoadError("");
-    try {
-      for (let i = 0; i < 200; i++) {
-        const result = await hubProjects.chatStoreReadArchived({
-          project_id,
-          chat_path: path,
-          thread_id: selectedThreadId,
-          limit: ARCHIVED_HISTORY_LIMIT,
-          offset,
-        });
-        const rows = result.rows ?? [];
-        const hydrate = actions.hydrateArchivedRows(
-          rows.map((row) => row.row).filter((row) => row != null),
-        );
-        totalRows += rows.length;
-        totalApplied += hydrate.applied;
-        if (rows.length === 0 || result.next_offset == null) {
-          finished = true;
-          break;
+      try {
+        for (let i = 0; i < 200; i++) {
+          const result = await hubProjects.chatStoreReadArchived({
+            project_id,
+            chat_path: path,
+            thread_id: selectedThreadId,
+            limit: ARCHIVED_HISTORY_LIMIT,
+            offset,
+          });
+          const rows = result.rows ?? [];
+          const hydrate = actions.hydrateArchivedRows(
+            rows.map((row) => row.row).filter((row) => row != null),
+          );
+          totalRows += rows.length;
+          totalApplied += hydrate.applied;
+          if (rows.length === 0 || result.next_offset == null) {
+            finished = true;
+            break;
+          }
+          offset = result.next_offset;
+          if (mode !== "all") break;
         }
-        offset = result.next_offset;
-        if (mode !== "all") break;
+        if (totalRows > 0) {
+          const nextOffset = startOffset + totalRows;
+          setArchivedLoadOffsetByThread((prev) => ({
+            ...prev,
+            [selectedThreadId]: nextOffset,
+          }));
+        }
+        if (finished) {
+          setArchivedLoadDoneByThread((prev) => ({
+            ...prev,
+            [selectedThreadId]: true,
+          }));
+        }
+        if (totalRows > 0 && totalApplied === 0) {
+          setArchivedLoadError(
+            "No additional backend-stored messages were loaded.",
+          );
+        }
+        if (
+          totalApplied > 0 &&
+          typeof anchorDateMs === "number" &&
+          Number.isFinite(anchorDateMs)
+        ) {
+          setTimeout(() => {
+            actions.scrollToDate(anchorDateMs);
+          }, 0);
+        }
+      } catch (err) {
+        setArchivedLoadError(`${err}`);
+      } finally {
+        setArchivedLoadInProgress(false);
+        setArchivedLoadMode(null);
       }
-      if (totalRows > 0) {
-        const nextOffset = startOffset + totalRows;
-        setArchivedLoadOffsetByThread((prev) => ({
-          ...prev,
-          [selectedThreadId]: nextOffset,
-        }));
-      }
-      if (finished) {
-        setArchivedLoadDoneByThread((prev) => ({
-          ...prev,
-          [selectedThreadId]: true,
-        }));
-      }
-      if (totalRows > 0 && totalApplied === 0) {
-        setArchivedLoadError(
-          "No additional backend-stored messages were loaded.",
-        );
-      }
-      if (
-        totalApplied > 0 &&
-        typeof anchorDateMs === "number" &&
-        Number.isFinite(anchorDateMs)
-      ) {
-        setTimeout(() => {
-          actions.scrollToDate(anchorDateMs);
-        }, 0);
-      }
-    } catch (err) {
-      setArchivedLoadError(`${err}`);
-    } finally {
-      setArchivedLoadInProgress(false);
-      setArchivedLoadMode(null);
-    }
-  }, [
-    actions,
-    archivedLoadInProgress,
-    archivedLoadOffsetByThread,
-    path,
-    project_id,
-    selectedThreadMessages,
-    selectedThreadId,
-  ]);
+    },
+    [
+      actions,
+      archivedLoadInProgress,
+      archivedLoadOffsetByThread,
+      path,
+      project_id,
+      selectedThreadMessages,
+      selectedThreadId,
+    ],
+  );
 
   const openArchivedSearchHit = useCallback(
     async (hit: ChatStoreSearchHit) => {
@@ -627,14 +635,17 @@ export function ChatRoomThreadPanel({
         applyNewThreadSetupPatch(current, patch),
       );
     const codexModel = newThreadSetup.codexConfig.model ?? DEFAULT_CODEX_MODEL;
-    const codexModelOptions: ModelOption[] = DEFAULT_CODEX_MODELS.map((model) => ({
-      value: model.name,
-      label: model.name,
-      description: model.description,
-      reasoning: model.reasoning,
-    }));
+    const codexModelOptions: ModelOption[] = DEFAULT_CODEX_MODELS.map(
+      (model) => ({
+        value: model.name,
+        label: model.name,
+        description: model.description,
+        reasoning: model.reasoning,
+      }),
+    );
     const codexReasoningOptions = (
-      codexModelOptions.find((model) => model.value === codexModel)?.reasoning ?? []
+      codexModelOptions.find((model) => model.value === codexModel)
+        ?.reasoning ?? []
     ).map((r) => ({
       value: r.id,
       label: r.label,
@@ -663,8 +674,8 @@ export function ChatRoomThreadPanel({
         >
           <div style={{ fontWeight: 600, marginBottom: 6 }}>New chat setup</div>
           <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
-            All fields are optional and can be edited later from settings.
-            Codex is selected by default.
+            All fields are optional and can be edited later from settings. Codex
+            is selected by default.
           </div>
           <div
             style={{
@@ -704,8 +715,9 @@ export function ChatRoomThreadPanel({
                             ...newThreadSetup.codexConfig,
                             model,
                             sessionMode:
-                              normalizeSessionMode(newThreadSetup.codexConfig) ??
-                              DEFAULT_CODEX_SESSION_MODE,
+                              normalizeSessionMode(
+                                newThreadSetup.codexConfig,
+                              ) ?? defaultSessionMode,
                             reasoning: getReasoningForModel({
                               modelValue: model,
                               desired: newThreadSetup.codexConfig.reasoning,
@@ -728,7 +740,9 @@ export function ChatRoomThreadPanel({
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
               <ChatIconPicker
                 value={newThreadSetup.icon}
-                onChange={(value) => update({ icon: value ? String(value) : undefined })}
+                onChange={(value) =>
+                  update({ icon: value ? String(value) : undefined })
+                }
                 modalTitle="Select Chat Icon"
                 placeholder="Optional icon"
               />
@@ -833,7 +847,7 @@ export function ChatRoomThreadPanel({
                 <Select
                   value={
                     normalizeSessionMode(newThreadSetup.codexConfig) ??
-                    DEFAULT_CODEX_SESSION_MODE
+                    defaultSessionMode
                   }
                   style={{ width: "100%" }}
                   options={MODE_OPTIONS}
@@ -883,10 +897,10 @@ export function ChatRoomThreadPanel({
 
   const shouldShowCodexConfig = Boolean(
     selectedThreadId &&
-      (selectedThreadMeta?.agent_kind === "acp" ||
-        selectedThreadMeta?.acp_config != null ||
-        isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
-        actions?.getCodexConfig?.(selectedThreadId) != null),
+    (selectedThreadMeta?.agent_kind === "acp" ||
+      selectedThreadMeta?.acp_config != null ||
+      isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
+      actions?.getCodexConfig?.(selectedThreadId) != null),
   );
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
@@ -945,7 +959,12 @@ export function ChatRoomThreadPanel({
           <img
             src={threadImagePreview}
             alt="Chat image"
-            style={{ width: 84, height: 84, objectFit: "cover", display: "block" }}
+            style={{
+              width: 84,
+              height: 84,
+              objectFit: "cover",
+              display: "block",
+            }}
           />
         </div>
       ) : null}
@@ -1060,7 +1079,9 @@ export function ChatRoomThreadPanel({
               flexWrap: "wrap",
             }}
           >
-            <div style={{ display: "inline-flex", gap: 8, whiteSpace: "nowrap" }}>
+            <div
+              style={{ display: "inline-flex", gap: 8, whiteSpace: "nowrap" }}
+            >
               <Button
                 size="small"
                 disabled={!selectedThreadId || !matchCount}
@@ -1151,31 +1172,36 @@ export function ChatRoomThreadPanel({
                 archivedSearchHits
                   .slice(0, ARCHIVED_INLINE_PREVIEW_LIMIT)
                   .map((hit) => {
-                  const when =
-                    typeof hit.date_ms === "number"
-                      ? new Date(hit.date_ms).toLocaleString()
-                      : "";
-                  const text = (hit.snippet ?? hit.excerpt ?? "")
-                    .replace(/<[^>]*>/g, " ")
-                    .replace(/\s+/g, " ")
-                    .trim();
-                  return (
-                    <div
-                      key={`${hit.segment_id}:${hit.row_id}`}
-                      style={{
-                        marginBottom: 6,
-                        lineHeight: "16px",
-                        cursor: typeof hit.date_ms === "number" ? "pointer" : "default",
-                      }}
-                      onClick={() => {
-                        void openArchivedSearchHit(hit);
-                      }}
-                    >
-                      <div style={{ fontSize: 11, color: "#888" }}>{when}</div>
-                      <div>{text || "(no preview)"}</div>
-                    </div>
-                  );
-                })
+                    const when =
+                      typeof hit.date_ms === "number"
+                        ? new Date(hit.date_ms).toLocaleString()
+                        : "";
+                    const text = (hit.snippet ?? hit.excerpt ?? "")
+                      .replace(/<[^>]*>/g, " ")
+                      .replace(/\s+/g, " ")
+                      .trim();
+                    return (
+                      <div
+                        key={`${hit.segment_id}:${hit.row_id}`}
+                        style={{
+                          marginBottom: 6,
+                          lineHeight: "16px",
+                          cursor:
+                            typeof hit.date_ms === "number"
+                              ? "pointer"
+                              : "default",
+                        }}
+                        onClick={() => {
+                          void openArchivedSearchHit(hit);
+                        }}
+                      >
+                        <div style={{ fontSize: 11, color: "#888" }}>
+                          {when}
+                        </div>
+                        <div>{text || "(no preview)"}</div>
+                      </div>
+                    );
+                  })
               )}
             </div>
           ) : null}
@@ -1196,7 +1222,9 @@ export function ChatRoomThreadPanel({
               if (archivedHistoryNextOffset == null) return;
               void loadArchivedHistory(archivedHistoryNextOffset, true);
             }}
-            disabled={archivedHistoryLoading || archivedHistoryNextOffset == null}
+            disabled={
+              archivedHistoryLoading || archivedHistoryNextOffset == null
+            }
           >
             Load more
           </Button>,
@@ -1208,7 +1236,9 @@ export function ChatRoomThreadPanel({
           ) : archivedHistoryError ? (
             <div style={{ color: "#b71c1c" }}>{archivedHistoryError}</div>
           ) : archivedHistoryRows.length === 0 ? (
-            <div style={{ color: "#666" }}>No backend-stored rows for this thread.</div>
+            <div style={{ color: "#666" }}>
+              No backend-stored rows for this thread.
+            </div>
           ) : (
             archivedHistoryRows.map((row) => {
               const when =
@@ -1251,7 +1281,8 @@ export function ChatRoomThreadPanel({
                     backend SQLite chat store for scalability.
                   </div>
                   <div style={{ marginBottom: 8 }}>
-                    <b>Head</b> stats are what remains in the chat file right now.
+                    <b>Head</b> stats are what remains in the chat file right
+                    now.
                     <b> Stored</b> stats are historical rows kept in backend
                     storage.
                   </div>
@@ -1259,28 +1290,36 @@ export function ChatRoomThreadPanel({
                     <b>Actions</b>:
                   </div>
                   <div>Refresh Stats: reload current counts/bytes.</div>
-                  <div>Rotate Now: move older head rows into backend storage.</div>
-                  <div>Vacuum: compact the SQLite file and reclaim disk space.</div>
                   <div>
-                    Delete This Chat (Stored): delete backend-stored rows for the
-                    selected chat thread only.
+                    Rotate Now: move older head rows into backend storage.
                   </div>
                   <div>
-                    Delete Older Than N Days: delete backend-stored rows older than
-                    a cutoff date.
+                    Vacuum: compact the SQLite file and reclaim disk space.
                   </div>
                   <div>
-                    Delete All Stored Rows: delete all backend-stored rows for this
-                    chat file.
+                    Delete This Chat (Stored): delete backend-stored rows for
+                    the selected chat thread only.
+                  </div>
+                  <div>
+                    Delete Older Than N Days: delete backend-stored rows older
+                    than a cutoff date.
+                  </div>
+                  <div>
+                    Delete All Stored Rows: delete all backend-stored rows for
+                    this chat file.
                   </div>
                   <div style={{ marginTop: 8 }}>
-                    These actions only affect backend-stored rows; they do not edit
-                    currently loaded head messages in the chat file.
+                    These actions only affect backend-stored rows; they do not
+                    edit currently loaded head messages in the chat file.
                   </div>
                 </div>
               }
             >
-              <Button size="small" shape="circle" style={{ width: 20, minWidth: 20 }}>
+              <Button
+                size="small"
+                shape="circle"
+                style={{ width: 20, minWidth: 20 }}
+              >
                 ?
               </Button>
             </Popover>
@@ -1306,17 +1345,19 @@ export function ChatRoomThreadPanel({
             }}
           >
             <span>Head rows: {maintenanceStats?.head_rows ?? "?"}</span>
-            <span>Head chat rows: {maintenanceStats?.head_chat_rows ?? "?"}</span>
-            <span>Head bytes: {formatBytes(maintenanceStats?.head_bytes)}</span>
             <span>
-              Stored rows: {maintenanceStats?.archived_rows ?? "?"}
+              Head chat rows: {maintenanceStats?.head_chat_rows ?? "?"}
             </span>
+            <span>Head bytes: {formatBytes(maintenanceStats?.head_bytes)}</span>
+            <span>Stored rows: {maintenanceStats?.archived_rows ?? "?"}</span>
             <span>
               Stored bytes: {formatBytes(maintenanceStats?.archived_bytes)}
             </span>
             <span>Segments: {maintenanceStats?.segments ?? "?"}</span>
             {maintenanceStats?.pending_rotate_status ? (
-              <span>Pending rotate: {maintenanceStats.pending_rotate_status}</span>
+              <span>
+                Pending rotate: {maintenanceStats.pending_rotate_status}
+              </span>
             ) : null}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -1422,7 +1463,9 @@ export function ChatRoomThreadPanel({
               onClick={() => {
                 const days = Number(maintenanceDeleteDays);
                 if (!Number.isFinite(days) || days <= 0) {
-                  setMaintenanceError("Delete older: days must be a positive number.");
+                  setMaintenanceError(
+                    "Delete older: days must be a positive number.",
+                  );
                   return;
                 }
                 if (
@@ -1476,17 +1519,23 @@ export function ChatRoomThreadPanel({
             </Button>
           </div>
           {maintenanceStatus ? (
-            <div style={{ color: "#1b5e20", fontSize: 12 }}>{maintenanceStatus}</div>
+            <div style={{ color: "#1b5e20", fontSize: 12 }}>
+              {maintenanceStatus}
+            </div>
           ) : null}
           {maintenanceError ? (
-            <div style={{ color: "#b71c1c", fontSize: 12 }}>{maintenanceError}</div>
+            <div style={{ color: "#b71c1c", fontSize: 12 }}>
+              {maintenanceError}
+            </div>
           ) : null}
         </div>
       </Modal>
       {showArchivedBanner ? (
         <div
           style={{
-            margin: shouldShowCodexConfig ? "44px 12px 0 12px" : "8px 12px 0 12px",
+            margin: shouldShowCodexConfig
+              ? "44px 12px 0 12px"
+              : "8px 12px 0 12px",
             padding: "8px 10px",
             border: "1px solid #ffe58f",
             background: "#fffbe6",
@@ -1499,14 +1548,13 @@ export function ChatRoomThreadPanel({
             zIndex: 1,
           }}
         >
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
             {archivedRowsCount.toLocaleString()} older message
             {archivedRowsCount === 1 ? "" : "s"} stored on backend
             {archivedLoadedOffset > 0 ? (
-              <>
-                {" "}
-                ({archivedLoadedOffset.toLocaleString()} loaded)
-              </>
+              <> ({archivedLoadedOffset.toLocaleString()} loaded)</>
             ) : (
               "."
             )}
@@ -1596,7 +1644,8 @@ function parseArchivedTotalCount(
   fallback: number,
 ): number {
   const totalHits = Number(response?.total_hits);
-  if (Number.isFinite(totalHits) && totalHits >= 0) return Math.floor(totalHits);
+  if (Number.isFinite(totalHits) && totalHits >= 0)
+    return Math.floor(totalHits);
   const legacyTotal = Number(response?.total);
   if (Number.isFinite(legacyTotal) && legacyTotal >= 0) {
     return Math.floor(legacyTotal);

@@ -57,18 +57,21 @@ function normalizeExposureState(input: unknown): AppExposureState {
   const mode: AppExposureMode = obj.mode === "public" ? "public" : "private";
   const auth_front: AppExposureFrontAuth =
     obj.auth_front === "token" ? "token" : "none";
-  const token = typeof obj.token === "string" && obj.token.trim().length > 0
-    ? obj.token.trim()
-    : undefined;
+  const token =
+    typeof obj.token === "string" && obj.token.trim().length > 0
+      ? obj.token.trim()
+      : undefined;
   const exposed_at_ms = Number(obj.exposed_at_ms);
   const expires_at_ms = Number(obj.expires_at_ms);
   const ttl_s = Number(obj.ttl_s);
   const random_subdomain =
-    typeof obj.random_subdomain === "string" && obj.random_subdomain.trim().length > 0
+    typeof obj.random_subdomain === "string" &&
+    obj.random_subdomain.trim().length > 0
       ? obj.random_subdomain.trim()
       : undefined;
   const public_hostname =
-    typeof obj.public_hostname === "string" && obj.public_hostname.trim().length > 0
+    typeof obj.public_hostname === "string" &&
+    obj.public_hostname.trim().length > 0
       ? obj.public_hostname.trim()
       : undefined;
   const public_url =
@@ -98,7 +101,9 @@ function normalizeState(input: unknown): RuntimeStateV1 {
     return { ...DEFAULT_STATE };
   }
   const exposuresIn =
-    obj.exposures && typeof obj.exposures === "object" && !Array.isArray(obj.exposures)
+    obj.exposures &&
+    typeof obj.exposures === "object" &&
+    !Array.isArray(obj.exposures)
       ? (obj.exposures as Record<string, unknown>)
       : {};
   const runningServicesIn =
@@ -113,9 +118,10 @@ function normalizeState(input: unknown): RuntimeStateV1 {
     exposures[key] = normalizeExposureState(value);
   }
   for (const [key, value] of Object.entries(runningServicesIn)) {
-    const obj = value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, any>)
-      : undefined;
+    const obj =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, any>)
+        : undefined;
     const port = Number(obj?.port);
     if (Number.isInteger(port) && port > 0) {
       running_services[key] = { port };
@@ -186,7 +192,9 @@ export async function getAppExposureState(
   return exposure;
 }
 
-export async function listAppExposureStates(): Promise<Record<string, AppExposureState>> {
+export async function listAppExposureStates(): Promise<
+  Record<string, AppExposureState>
+> {
   const state = await readStateRaw();
   let changed = false;
   for (const [app_id, exposure] of Object.entries(state.exposures)) {
@@ -258,7 +266,8 @@ export async function exposeApp({
     expires_at_ms: expires,
     ttl_s: ttl,
     random_subdomain:
-      subdomain_label ?? (random_subdomain ? randomSubdomainLabel() : undefined),
+      subdomain_label ??
+      (random_subdomain ? randomSubdomainLabel() : undefined),
     public_hostname,
     public_url,
     token: auth_front === "token" ? randomToken() : undefined,

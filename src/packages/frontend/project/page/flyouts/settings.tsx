@@ -12,12 +12,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import {
-  Icon,
-  IconName,
-  Loading,
-  Title,
-} from "@cocalc/frontend/components";
+import { Icon, IconName, Loading, Title } from "@cocalc/frontend/components";
 import { getStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -153,7 +148,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
       </div>
     );
   }
-
 
   function setExpandedPanelsHandler(keys: string[]) {
     setExpandedPanels(keys);

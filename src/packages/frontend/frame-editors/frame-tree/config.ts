@@ -6,4 +6,4 @@
 import type { IconName } from "@cocalc/frontend/components/icon";
 
 // the icon we use for formatting sources throughout the UI
-export const FORMAT_SOURCE_ICON : IconName = "sitemap";
+export const FORMAT_SOURCE_ICON: IconName = "sitemap";

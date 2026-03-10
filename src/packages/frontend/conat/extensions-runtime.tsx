@@ -187,7 +187,9 @@ export class BrowserExtensionsRuntime {
     const existing = this.installed.get(id);
     if (existing) {
       if (!replace) {
-        throw Error(`extension '${id}' is already installed; set replace=true to reinstall`);
+        throw Error(
+          `extension '${id}' is already installed; set replace=true to reinstall`,
+        );
       }
       existing.uninstall();
       this.installed.delete(id);

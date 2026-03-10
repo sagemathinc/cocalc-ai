@@ -19,7 +19,9 @@ describe("projects nav shortcut", () => {
   }
 
   it("opens from shell-level focus", () => {
-    expect(shouldOpenProjectsNavShortcut(keydownEvent(document.body))).toBe(true);
+    expect(shouldOpenProjectsNavShortcut(keydownEvent(document.body))).toBe(
+      true,
+    );
   });
 
   it("does not open inside a keyboard boundary", () => {

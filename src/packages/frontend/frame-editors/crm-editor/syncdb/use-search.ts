@@ -23,7 +23,7 @@ export default function useSearch({
   id: string; // id of a view of the given dbtable.
 }): [
   search: AtomicSearch[],
-  setSearch: (n: number, search: AtomicSearch | null) => void
+  setSearch: (n: number, search: AtomicSearch | null) => void,
 ] {
   const [record, setRecord] = useRecord<{
     search?: AtomicSearch[];
@@ -57,7 +57,7 @@ export default function useSearch({
       }
       setRecord({ search: [...search] });
     },
-    [setRecord, search]
+    [setRecord, search],
   );
 
   return [search, setSearch];

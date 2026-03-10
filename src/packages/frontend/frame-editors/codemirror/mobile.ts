@@ -19,7 +19,7 @@ export function extra_alt_keys(
   extraKeys: any,
   actions: any,
   frame_id: string,
-  opts?: any
+  opts?: any,
 ): void {
   merge(extraKeys, {
     "Shift-Alt-L": (cm) => cm.align_assignments(),

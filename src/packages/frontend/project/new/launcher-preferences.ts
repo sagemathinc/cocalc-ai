@@ -85,9 +85,7 @@ export function getProjectLauncherDefaults(
   const hiddenQuickCreate = normalizeList(obj.hiddenQuickCreate);
   const hiddenApps = normalizeList(obj.hiddenApps);
   return {
-    quickCreate: quickCreate.length
-      ? quickCreate
-      : undefined,
+    quickCreate: quickCreate.length ? quickCreate : undefined,
     apps: apps.length ? apps : undefined,
     hiddenQuickCreate: hiddenQuickCreate.length ? hiddenQuickCreate : undefined,
     hiddenApps: hiddenApps.length ? hiddenApps : undefined,
@@ -155,12 +153,16 @@ export function getUserLauncherPrefs(
   const { account, project } = getUserLauncherLayers(settings, project_id);
   if (project_id) {
     return {
-      quickCreate: project.quickCreate?.length ? project.quickCreate : account.quickCreate,
+      quickCreate: project.quickCreate?.length
+        ? project.quickCreate
+        : account.quickCreate,
       apps: project.apps?.length ? project.apps : account.apps,
       hiddenQuickCreate: project.hiddenQuickCreate?.length
         ? project.hiddenQuickCreate
         : account.hiddenQuickCreate,
-      hiddenApps: project.hiddenApps?.length ? project.hiddenApps : account.hiddenApps,
+      hiddenApps: project.hiddenApps?.length
+        ? project.hiddenApps
+        : account.hiddenApps,
     };
   }
   return account;
@@ -205,7 +207,10 @@ export function updateUserLauncherPrefs(
   };
 }
 
-function filterKnown(list: string[], catalog: Record<string, unknown>): string[] {
+function filterKnown(
+  list: string[],
+  catalog: Record<string, unknown>,
+): string[] {
   return list.filter((id) => catalog[id] != null);
 }
 

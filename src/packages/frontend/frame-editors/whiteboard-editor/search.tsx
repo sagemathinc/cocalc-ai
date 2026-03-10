@@ -88,7 +88,7 @@ export default function Search() {
                 <div
                   onClick={() => {
                     const frameId = actions.show_focused_frame_of_type(
-                      actions.mainFrameType
+                      actions.mainFrameType,
                     );
                     if (frameId) {
                       actions.scrollElementIntoView(element.id, frameId, "top");

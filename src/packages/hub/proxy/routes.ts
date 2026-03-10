@@ -73,7 +73,9 @@ const ROUTES: Record<ProxyType, ProxyRouteDefinition> = {
 
 export const PROXY_TYPE_SEGMENTS = new Set<string>(Object.keys(ROUTES));
 
-export function getProxyRouteDefinition(type: string): ProxyRouteDefinition | undefined {
+export function getProxyRouteDefinition(
+  type: string,
+): ProxyRouteDefinition | undefined {
   if (!PROXY_TYPE_SEGMENTS.has(type)) {
     return;
   }

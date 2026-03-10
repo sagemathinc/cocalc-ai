@@ -87,11 +87,7 @@ function getWriteSubject({ project_id }: { project_id: string }) {
 }
 
 let subs: { [name: string]: Subscription } = {};
-export async function close({
-  project_id,
-}: {
-  project_id: string;
-}) {
+export async function close({ project_id }: { project_id: string }) {
   const subject = getWriteSubject({ project_id });
   if (subs[subject] == null) {
     return;

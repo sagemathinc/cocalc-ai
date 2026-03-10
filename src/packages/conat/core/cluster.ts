@@ -1,9 +1,6 @@
 import { type Client, connect } from "./client";
 import { Patterns } from "./patterns";
-import {
-  updateInterest,
-  type InterestUpdate,
-} from "@cocalc/conat/core/server";
+import { updateInterest, type InterestUpdate } from "@cocalc/conat/core/server";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { server as createPersistServer } from "@cocalc/conat/persist/server";
 import { getLogger } from "@cocalc/conat/client";
@@ -164,7 +161,7 @@ class ClusterLink {
     return false;
   };
 
-  hash = (): { interest: number;  } => {
+  hash = (): { interest: number } => {
     return {
       interest: hashInterest(this.interest),
     };
@@ -248,7 +245,7 @@ export async function trimClusterStreams(
   },
   // don't delete anything that isn't at lest minAge ms old.
   minAge: number,
-): Promise<{ seqsInterest: number[];  }> {
+): Promise<{ seqsInterest: number[] }> {
   const { interest } = streams;
   // First deal with interst
   // we iterate over the interest stream checking for subjects
@@ -276,7 +273,7 @@ export async function trimClusterStreams(
     await interest.delete({ seqs });
     logger.debug("trimClusterStream: successfully trimmed interest", { seqs });
   }
-  return { seqsInterest: seqs};
+  return { seqsInterest: seqs };
 }
 
 function hashSet(X: Set<string>): number {
@@ -300,4 +297,3 @@ export function hashInterest(
 ): number {
   return interest.hash(hashInterestValue);
 }
-

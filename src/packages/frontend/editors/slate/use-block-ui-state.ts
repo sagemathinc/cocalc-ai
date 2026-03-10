@@ -41,9 +41,7 @@ export function useBlockUiState() {
 
   const setGapCursorState = useCallback(
     (
-      next:
-        | { index: number; side: "before" | "after"; path?: number[] }
-        | null,
+      next: { index: number; side: "before" | "after"; path?: number[] } | null,
     ) => {
       gapCursorRef.current = next;
       setGapCursor(next);

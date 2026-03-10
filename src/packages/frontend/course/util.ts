@@ -181,8 +181,8 @@ export function immutable_to_list<T, P>(
 ): T extends TypedMap<infer S>
   ? S[]
   : T extends Map<string, infer S>
-  ? S[]
-  : any;
+    ? S[]
+    : any;
 export function immutable_to_list(x: any, primary_key?): any {
   if (x == null || x == undefined) {
     return;

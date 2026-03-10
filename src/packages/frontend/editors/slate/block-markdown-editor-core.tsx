@@ -241,7 +241,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     getSelectionGlobalRange,
   });
 
-
   useBlockEditorControl({
     actions,
     id,
@@ -322,7 +321,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     splitMarkdownToBlocks: splitMarkdown,
   });
 
-
   const showPendingRemoteIndicator =
     ignoreRemoteWhileFocused && pendingRemoteIndicator;
 
@@ -335,11 +333,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [flushPendingRemoteMerge],
   );
 
-  const activeEditorIndex =
-    focusedIndex ?? lastFocusedIndex ?? null;
+  const activeEditorIndex = focusedIndex ?? lastFocusedIndex ?? null;
   const activeEditor =
     activeEditorIndex != null
-      ? editorMapRef.current.get(activeEditorIndex) ?? null
+      ? (editorMapRef.current.get(activeEditorIndex) ?? null)
       : null;
   const editBarKey = activeEditorIndex ?? "none";
   const hideSearch = false;

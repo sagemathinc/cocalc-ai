@@ -201,10 +201,7 @@ function PaymentIntentsTable({ paymentIntents, onFinished, account_id }) {
       dataIndex: "amount",
       key: "amount",
       render: (amount, { intent }) => {
-        return moneyToString(
-          stripeToMoney(amount).toNumber(),
-          intent.currency,
-        );
+        return moneyToString(stripeToMoney(amount).toNumber(), intent.currency);
       },
     },
     {

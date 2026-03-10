@@ -3,7 +3,13 @@ import TTLCache from "@isaacs/ttlcache";
 
 const dustCache = new TTLCache<string, any>({ ttl: 1000 * 60 });
 
-export function key({ project_id, path }: { project_id: string; path: string }) {
+export function key({
+  project_id,
+  path,
+}: {
+  project_id: string;
+  path: string;
+}) {
   return `${project_id}-0-${path}`;
 }
 

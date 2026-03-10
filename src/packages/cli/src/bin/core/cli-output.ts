@@ -25,7 +25,8 @@ export function asObject(value: unknown): Record<string, unknown> {
 function formatValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   return JSON.stringify(value);
 }
 
@@ -113,7 +114,8 @@ export function emitError(
       api = ctx.globals.api;
     }
   }
-  const accountId = ctx.accountId ?? ctx.globals?.accountId ?? ctx.globals?.account_id;
+  const accountId =
+    ctx.accountId ?? ctx.globals?.accountId ?? ctx.globals?.account_id;
 
   if (ctx.globals?.json || ctx.globals?.output === "json") {
     const payload = {

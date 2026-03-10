@@ -27,7 +27,9 @@ export function changefeed({
   account_id: string;
 }) {
   if (!isValidUUID(account_id)) {
-    throw new ConatError(`invalid account_id -- '${account_id}'`, { code: 400 });
+    throw new ConatError(`invalid account_id -- '${account_id}'`, {
+      code: 400,
+    });
   }
   const table = Object.keys(query)[0];
   const socket = client.socket.connect(changefeedSubject({ account_id }), {

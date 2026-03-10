@@ -48,7 +48,7 @@ export function serializeElement(node: Element, info: Info): string {
       serialize(node.children[index], {
         ...childInfo,
         ...{ index, lastChild: index == node.children.length - 1 },
-      })
+      }),
     );
   }
 

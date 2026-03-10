@@ -15,7 +15,8 @@ function generatePassword(): string {
 }
 
 export function getOrCreateProjectHostConatPassword(): string {
-  const fromEnv = `${process.env.COCALC_PROJECT_HOST_CONAT_PASSWORD ?? ""}`.trim();
+  const fromEnv =
+    `${process.env.COCALC_PROJECT_HOST_CONAT_PASSWORD ?? ""}`.trim();
   if (fromEnv) {
     return fromEnv;
   }
@@ -47,4 +48,3 @@ export function getOrCreateProjectHostConatPassword(): string {
   }
   return password;
 }
-

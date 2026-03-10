@@ -29,7 +29,10 @@ type UseHostListViewModelArgs = {
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
   selfHost?: {
-    connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
+    connectorMap: Map<
+      string,
+      { id: string; name?: string; last_seen?: string }
+    >;
     isConnectorOnline: (connectorId?: string) => boolean;
     onSetup: (host: Host) => void;
   };

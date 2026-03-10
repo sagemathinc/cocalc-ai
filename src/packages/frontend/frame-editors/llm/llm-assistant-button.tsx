@@ -639,7 +639,10 @@ export default function LanguageModelTitleBarButton({
 
   function renderContent() {
     return (
-      <Space orientation="vertical" style={{ width: "800px", maxWidth: "50vw" }}>
+      <Space
+        orientation="vertical"
+        style={{ width: "800px", maxWidth: "50vw" }}
+      >
         <Paragraph>
           Describe what you want the language model{" "}
           <LLMNameLink model={model} /> to do. Be specific!
@@ -688,11 +691,7 @@ export default function LanguageModelTitleBarButton({
           </Paragraph>
         )}
         {renderSubmit()}
-        {error ? (
-          <Alert type="error" title={error} />
-        ) : (
-          renderCostEstimation()
-        )}
+        {error ? <Alert type="error" title={error} /> : renderCostEstimation()}
       </Space>
     );
   }
@@ -777,9 +776,8 @@ async function updateMessage({
     await createChatMessage(actions, id, options, context);
 
   // compute the number of tokens (this MUST be a lazy import):
-  const { getMaxTokens, numTokensUpperBound } = await import(
-    "@cocalc/frontend/misc/llm"
-  );
+  const { getMaxTokens, numTokensUpperBound } =
+    await import("@cocalc/frontend/misc/llm");
 
   const tokens = numTokensUpperBound(message, getMaxTokens(model));
   return { message, tokens, inputOriginalLen, inputTruncatedLen };

@@ -100,9 +100,7 @@ export type BrowserExecApi = {
     ) => Promise<{ ok: true; selection: WorkspaceSelection }>;
   };
   notebook: {
-    listCells: (
-      path: string,
-    ) => Promise<
+    listCells: (path: string) => Promise<
       {
         id: string;
         cell_type: string;
@@ -148,7 +146,11 @@ export type BrowserExecApi = {
       encoding?: string,
       lock?: number,
     ) => Promise<string | Buffer>;
-    writeFile: (path: string, data: string | Buffer, saveLast?: boolean) => Promise<void>;
+    writeFile: (
+      path: string,
+      data: string | Buffer,
+      saveLast?: boolean,
+    ) => Promise<void>;
     readdir: (
       path: string,
       options?: { withFileTypes?: boolean },
@@ -189,21 +191,40 @@ export type BrowserExecApi = {
       dest: string,
       options?: { overwrite?: boolean },
     ) => Promise<void>;
-    find: (path: string, options?: BrowserFsFindOptions) => Promise<BrowserFsExecOutput>;
-    fd: (path: string, options?: BrowserFsFdOptions) => Promise<BrowserFsExecOutput>;
+    find: (
+      path: string,
+      options?: BrowserFsFindOptions,
+    ) => Promise<BrowserFsExecOutput>;
+    fd: (
+      path: string,
+      options?: BrowserFsFdOptions,
+    ) => Promise<BrowserFsExecOutput>;
     ripgrep: (
       path: string,
       pattern: string,
       options?: BrowserFsRipgrepOptions,
     ) => Promise<BrowserFsExecOutput>;
-    dust: (path: string, options?: BrowserFsDustOptions) => Promise<BrowserFsExecOutput>;
+    dust: (
+      path: string,
+      options?: BrowserFsDustOptions,
+    ) => Promise<BrowserFsExecOutput>;
   };
   bash: {
-    run: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
-    start: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
+    run: (
+      script: string,
+      options?: BrowserBashOptions,
+    ) => Promise<BrowserExecOutput>;
+    start: (
+      script: string,
+      options?: BrowserBashOptions,
+    ) => Promise<BrowserExecOutput>;
     get: (
       job_id: string,
-      options?: { async_stats?: boolean; async_await?: boolean; timeout?: number },
+      options?: {
+        async_stats?: boolean;
+        async_await?: boolean;
+        timeout?: number;
+      },
     ) => Promise<BrowserExecOutput>;
     wait: (
       job_id: string,

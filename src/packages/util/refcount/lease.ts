@@ -18,10 +18,7 @@ export class RefcountLeaseManager<K> {
   private timers = new Map<K, NodeJS.Timeout>();
   private locks = new Map<K, Promise<void>>();
 
-  constructor(opts: {
-    delayMs?: number;
-    disposer: (key: K) => Promise<void>;
-  }) {
+  constructor(opts: { delayMs?: number; disposer: (key: K) => Promise<void> }) {
     this.delayMs = opts.delayMs ?? 30_000;
     this.disposer = opts.disposer;
   }

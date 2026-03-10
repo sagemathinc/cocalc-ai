@@ -57,12 +57,12 @@ function uintToString(uintArray: Uint8Array): string {
     if (!slice) {
       s += String.fromCharCode.apply(
         null,
-        uintArray.subarray(i, Math.min(i + skip, len))
+        uintArray.subarray(i, Math.min(i + skip, len)),
       );
     } else {
       s += String.fromCharCode.apply(
         null,
-        uintArray.slice(i, Math.min(i + skip, len))
+        uintArray.slice(i, Math.min(i + skip, len)),
       );
     }
   }

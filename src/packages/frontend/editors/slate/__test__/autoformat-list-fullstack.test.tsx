@@ -48,7 +48,9 @@ test("full stack: '> -x' then space keeps x", () => {
 
 test("full stack: '-x' then space keeps x", () => {
   const editor = makeProdLikeEditor();
-  editor.children = [{ type: "paragraph", children: [{ text: "-x" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "-x" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: 1 });
@@ -62,7 +64,9 @@ test("full stack: '-x' then space keeps x", () => {
 
 test("full stack: '1.x' then space keeps x", () => {
   const editor = makeProdLikeEditor();
-  editor.children = [{ type: "paragraph", children: [{ text: "1.x" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "1.x" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: 2 });
@@ -76,7 +80,9 @@ test("full stack: '1.x' then space keeps x", () => {
 
 test("full stack: typing '- ' at start of top-level text keeps trailing text", () => {
   const editor = makeProdLikeEditor();
-  editor.children = [{ type: "paragraph", children: [{ text: "foo" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "foo" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: 0 });
@@ -91,7 +97,9 @@ test("full stack: typing '- ' at start of top-level text keeps trailing text", (
 
 test("full stack: typing '1. ' at start of top-level text keeps trailing text", () => {
   const editor = makeProdLikeEditor();
-  editor.children = [{ type: "paragraph", children: [{ text: "foo" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "foo" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: 0 });
@@ -109,7 +117,10 @@ test("full stack: typing '1. ' at start of top-level text keeps trailing text", 
 test("full stack: typing '- ' at start of quoted text keeps trailing text", () => {
   const editor = makeProdLikeEditor();
   editor.children = [
-    { type: "blockquote", children: [{ type: "paragraph", children: [{ text: "foo" }] }] },
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo" }] }],
+    },
   ] as Descendant[];
   editor.selection = null;
 
@@ -126,7 +137,10 @@ test("full stack: typing '- ' at start of quoted text keeps trailing text", () =
 test("full stack: typing '1. ' at start of quoted text keeps trailing text", () => {
   const editor = makeProdLikeEditor();
   editor.children = [
-    { type: "blockquote", children: [{ type: "paragraph", children: [{ text: "foo" }] }] },
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo" }] }],
+    },
   ] as Descendant[];
   editor.selection = null;
 
@@ -145,7 +159,10 @@ test("full stack: typing '1. ' at start of quoted text keeps trailing text", () 
 test("full stack: unsafe paragraph selection still preserves quoted trailing text", () => {
   const editor = makeProdLikeEditor();
   editor.children = [
-    { type: "blockquote", children: [{ type: "paragraph", children: [{ text: "foo" }] }] },
+    {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ text: "foo" }] }],
+    },
   ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0] as any, offset: 0 },
@@ -163,7 +180,9 @@ test("full stack: unsafe paragraph selection still preserves quoted trailing tex
 
 test("full stack: unsafe paragraph selection still preserves top-level trailing text", () => {
   const editor = makeProdLikeEditor();
-  editor.children = [{ type: "paragraph", children: [{ text: "foo" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "foo" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0] as any, offset: 0 },
     focus: { path: [0] as any, offset: 0 },

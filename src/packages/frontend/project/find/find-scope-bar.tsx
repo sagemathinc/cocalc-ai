@@ -94,13 +94,7 @@ export function FindScopeBar({
     }
     onScopePathChange(parent);
     setPathWarning(null);
-  }, [
-    currentPath,
-    homePath,
-    onScopeModeChange,
-    onScopePathChange,
-    scopePath,
-  ]);
+  }, [currentPath, homePath, onScopeModeChange, onScopePathChange, scopePath]);
 
   const setGitRoot = useCallback(async () => {
     setGitLoading(true);
@@ -156,7 +150,14 @@ export function FindScopeBar({
         setCheckingPath(false);
       }
     },
-    [currentPath, fs, homePath, onScopeModeChange, onScopePathChange, scopePath],
+    [
+      currentPath,
+      fs,
+      homePath,
+      onScopeModeChange,
+      onScopePathChange,
+      scopePath,
+    ],
   );
 
   return (

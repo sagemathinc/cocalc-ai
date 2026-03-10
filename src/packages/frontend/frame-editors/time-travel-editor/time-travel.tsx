@@ -10,10 +10,7 @@ import { Map, List } from "immutable";
 import { debounce } from "lodash";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
-import {
-  useAsyncEffect,
-  useEditorRedux,
-} from "@cocalc/frontend/app-framework";
+import { useAsyncEffect, useEditorRedux } from "@cocalc/frontend/app-framework";
 import { Loading, TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { lite } from "@cocalc/frontend/lite";
@@ -82,7 +79,12 @@ export function TimeTravel(props: Props) {
     "timetravel" | "git" | "snapshots" | "backups"
   >(() => {
     const s = props.desc?.get("source");
-    if (s === "git" || s === "timetravel" || s === "snapshots" || s === "backups") {
+    if (
+      s === "git" ||
+      s === "timetravel" ||
+      s === "snapshots" ||
+      s === "backups"
+    ) {
       return s;
     }
     if (props.desc?.get("gitMode")) {
@@ -128,8 +130,8 @@ export function TimeTravel(props: Props) {
         : backupsMode
           ? backupVersions
           : snapshotsMode
-          ? snapshotVersions
-          : versions,
+            ? snapshotVersions
+            : versions,
     [
       gitMode,
       snapshotsMode,
@@ -248,8 +250,8 @@ export function TimeTravel(props: Props) {
       : backupsMode
         ? (v: number | string) => props.actions.backupWallTime(v)
         : snapshotsMode
-        ? (v: number | string) => props.actions.snapshotWallTime(v)
-        : (v: number | string) => props.actions.wallTime(v as string);
+          ? (v: number | string) => props.actions.snapshotWallTime(v)
+          : (v: number | string) => props.actions.wallTime(v as string);
   }, [gitMode, snapshotsMode, backupsMode, props.actions]);
 
   const toPatchId = (v?: number | string) =>
@@ -343,14 +345,7 @@ export function TimeTravel(props: Props) {
       setDoc0(v0);
       setDoc1(v1);
     }
-  }, [
-    version,
-    version0,
-    version1,
-    changesMode,
-    source,
-    activeVersions,
-  ]);
+  }, [version, version0, version1, changesMode, source, activeVersions]);
 
   useAsyncEffect(async () => {
     if (!gitMode || changesMode || version == null) {
@@ -458,12 +453,8 @@ export function TimeTravel(props: Props) {
             >
               {commit.shortHash}
             </Button>{" "}
-            ·{" "}
-            {commit.authorName} ·{" "}
-            <TimeAgo
-              date={new Date(commit.timestampMs)}
-              time_ago_absolute
-            />
+            · {commit.authorName} ·{" "}
+            <TimeAgo date={new Date(commit.timestampMs)} time_ago_absolute />
           </span>
         );
       }
@@ -478,8 +469,8 @@ export function TimeTravel(props: Props) {
             )}
             {t != null && (
               <>
-                {" "}·{" "}
-                <TimeAgo date={new Date(t)} time_ago_absolute />
+                {" "}
+                · <TimeAgo date={new Date(t)} time_ago_absolute />
               </>
             )}
           </span>
@@ -496,8 +487,8 @@ export function TimeTravel(props: Props) {
             )}
             {t != null && (
               <>
-                {" "}·{" "}
-                <TimeAgo date={new Date(t)} time_ago_absolute />
+                {" "}
+                · <TimeAgo date={new Date(t)} time_ago_absolute />
               </>
             )}
           </span>
@@ -608,10 +599,7 @@ export function TimeTravel(props: Props) {
     };
   };
 
-  const canStepRangeEdge = (
-    edge: "start" | "end",
-    delta: -1 | 1,
-  ): boolean => {
+  const canStepRangeEdge = (edge: "start" | "end", delta: -1 | 1): boolean => {
     if (!changesMode) return false;
     const selected = edge === "start" ? version0 : version1;
     const other = edge === "start" ? version1 : version0;
@@ -1000,10 +988,7 @@ export function TimeTravel(props: Props) {
       return null;
     }
     return (
-      <Button
-        size="small"
-        onClick={() => setShowChangedFiles(true)}
-      >
+      <Button size="small" onClick={() => setShowChangedFiles(true)}>
         Also changed ({files.length})
       </Button>
     );

@@ -25,7 +25,9 @@ export async function createSnapshot({
   name?: string;
 }) {
   await assertCollab({ account_id, project_id });
-  await (await projectClient(project_id)).createSnapshot({
+  await (
+    await projectClient(project_id)
+  ).createSnapshot({
     project_id,
     name,
     limit: MAX_SNAPSHOTS_PER_PROJECT,
@@ -55,7 +57,9 @@ export async function updateSnapshots({
   counts?: Partial<SnapshotCounts>;
 }) {
   await assertCollab({ account_id, project_id });
-  await (await projectClient(project_id)).updateSnapshots({
+  await (
+    await projectClient(project_id)
+  ).updateSnapshots({
     project_id,
     counts,
     limit: MAX_SNAPSHOTS_PER_PROJECT,
@@ -81,7 +85,9 @@ export async function allSnapshotUsage({
   project_id: string;
 }) {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).allSnapshotUsage({
+  return await (
+    await projectClient(project_id)
+  ).allSnapshotUsage({
     project_id,
   });
 }
@@ -100,7 +106,9 @@ export async function getSnapshotFileText({
   max_bytes?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await (await projectClient(project_id)).getSnapshotFileText({
+  return await (
+    await projectClient(project_id)
+  ).getSnapshotFileText({
     project_id,
     snapshot,
     path,

@@ -8,10 +8,7 @@ import { randomId } from "@cocalc/conat/names";
 import { join } from "path";
 import { debounce } from "lodash";
 import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
-import {
-  supportsTerminalCwdLookup,
-  terminalCwdForPid,
-} from "./terminal/cwd";
+import { supportsTerminalCwdLookup, terminalCwdForPid } from "./terminal/cwd";
 
 const logger = getLogger("project:conat:terminal-server");
 

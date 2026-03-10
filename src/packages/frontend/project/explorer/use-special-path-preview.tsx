@@ -23,7 +23,9 @@ export function useSpecialPathPreview({
   actions?: ProjectActions | null;
   current_path: string;
 }) {
-  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(
+    null,
+  );
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
@@ -88,11 +90,10 @@ export function useSpecialPathPreview({
       if (backupIdRef.current && backupNameRef.current === backupName) {
         return backupIdRef.current;
       }
-      const backups =
-        await webapp_client.conat_client.hub.projects.getBackups({
-          project_id,
-          indexed_only: indexedOnly ? true : undefined,
-        });
+      const backups = await webapp_client.conat_client.hub.projects.getBackups({
+        project_id,
+        indexed_only: indexedOnly ? true : undefined,
+      });
       const match = backups.find(
         (backup) => new Date(backup.time).toISOString() === backupName,
       );

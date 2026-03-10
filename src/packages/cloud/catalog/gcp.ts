@@ -47,9 +47,7 @@ export function normalizeGcpCatalog(opts: {
   const regions: GcpRegion[] = opts.regions.map((region) => ({
     name: region.name ?? "",
     status: region.status,
-    zones: (region.zones ?? [])
-      .map((z) => shortName(z) ?? "")
-      .filter(Boolean),
+    zones: (region.zones ?? []).map((z) => shortName(z) ?? "").filter(Boolean),
   }));
 
   const zones: GcpZone[] = opts.zones.map((zone) => ({
@@ -272,8 +270,7 @@ async function listImages(
       architecture: img.architecture,
       status: img.status,
       deprecated: img.deprecated,
-      diskSizeGb:
-        img.diskSizeGb == null ? null : safeDiskGb(img.diskSizeGb),
+      diskSizeGb: img.diskSizeGb == null ? null : safeDiskGb(img.diskSizeGb),
       creationTimestamp: img.creationTimestamp,
       gpuReady,
     });
@@ -282,7 +279,9 @@ async function listImages(
   return images;
 }
 
-export async function fetchGcpCatalog(opts: GcpCatalogOptions): Promise<GcpCatalog> {
+export async function fetchGcpCatalog(
+  opts: GcpCatalogOptions,
+): Promise<GcpCatalog> {
   logger.info("fetchGcpCatalog start", { projectId: opts.projectId });
   const regions = await listRegions(opts);
   logger.debug("fetchGcpCatalog regions", { count: regions.length });
@@ -295,19 +294,15 @@ export async function fetchGcpCatalog(opts: GcpCatalogOptions): Promise<GcpCatal
 
   const MAX_PARALLEL = 15;
 
-  await map(
-    zoneNames,
-    MAX_PARALLEL,
-    async (zone) => {
-      logger.debug("fetchGcpCatalog zone details", { zone });
-      const [machineTypes, gpus] = await Promise.all([
-        listMachineTypes(opts, zone),
-        listGpuTypes(opts, zone),
-      ]);
-      machine_types_by_zone[zone] = machineTypes;
-      gpu_types_by_zone[zone] = gpus;
-    },
-  );
+  await map(zoneNames, MAX_PARALLEL, async (zone) => {
+    logger.debug("fetchGcpCatalog zone details", { zone });
+    const [machineTypes, gpus] = await Promise.all([
+      listMachineTypes(opts, zone),
+      listGpuTypes(opts, zone),
+    ]);
+    machine_types_by_zone[zone] = machineTypes;
+    gpu_types_by_zone[zone] = gpus;
+  });
 
   const images = [
     ...(await listImages(opts, "ubuntu-os-cloud", false)),

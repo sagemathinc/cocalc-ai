@@ -28,7 +28,7 @@ export function isListElement(element: SlateElement): boolean {
 
 export function bullet_list(
   children = defaultChildren(),
-  tight: boolean = true
+  tight: boolean = true,
 ): Element {
   if (!tight && children.length == 1) {
     // Annoying special case -- our parser based on markdown-it views completely empty
@@ -42,7 +42,7 @@ export function bullet_list(
 export function ordered_list(
   children = defaultChildren(),
   start,
-  tight: boolean = true
+  tight: boolean = true,
 ): Element {
   if (!tight && children.length == 1) {
     // See comment above in bullet_list.
@@ -81,7 +81,7 @@ register({
           ? "cocalc-slate-tight-list"
           : "cocalc-slate-nontight-list",
       },
-      children
+      children,
     );
   },
 });

@@ -71,28 +71,32 @@ interface Props {
 function ChatSearch({ font_size: fontSize, desc }: Props) {
   const { actions, path, id, project_id } = useFrameContext();
   const chatActions = ((actions &&
-    "getChatActions" in actions &&
-    typeof (actions as any).getChatActions === "function"
+  "getChatActions" in actions &&
+  typeof (actions as any).getChatActions === "function"
     ? (actions as any).getChatActions()
     : actions) ?? undefined) as ChatActions | undefined;
-  const [search, setSearch] = useState<string>(desc?.get?.("data-search") ?? "");
+  const [search, setSearch] = useState<string>(
+    desc?.get?.("data-search") ?? "",
+  );
   const [searchInput, setSearchInput] = useState<string>(
     desc?.get?.("data-search") ?? "",
   );
   const externalSearch = `${desc?.get?.("data-search") ?? ""}`;
-  const externalSearchThread = `${desc?.get?.("data-searchThread") ?? ""}`.trim();
+  const externalSearchThread =
+    `${desc?.get?.("data-searchThread") ?? ""}`.trim();
   const { error, setError, index, doRefresh, fragmentKey, isIndexing } =
     useSearchIndex();
   const messageCache = chatActions?.messageCache;
   const [cacheVersion, setCacheVersion] = useState<number>(0);
-  const [selectedThreadKey, setSelectedThreadKey] = useState<string | undefined>(
-    externalSearchThread || undefined,
-  );
+  const [selectedThreadKey, setSelectedThreadKey] = useState<
+    string | undefined
+  >(externalSearchThread || undefined);
   const [result, setResult] = useState<MatchHit[]>([]);
   const [archivedResult, setArchivedResult] = useState<MatchHit[]>([]);
   const [archivedTotalCount, setArchivedTotalCount] = useState<number>(0);
   const [archivedSearchError, setArchivedSearchError] = useState<string>("");
-  const [archivedSearchLoading, setArchivedSearchLoading] = useState<boolean>(false);
+  const [archivedSearchLoading, setArchivedSearchLoading] =
+    useState<boolean>(false);
   const saveSearch = useMemo(
     () =>
       throttle((value) => {
@@ -114,8 +118,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const threadOptions: ThreadOption[] = useMemo(() => {
     const archivedByThreadId = new Map<string, boolean>();
     for (const row0 of chatActions?.listThreadConfigRows?.() ?? []) {
-      const row =
-        row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
+      const row = row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
       const threadId = `${row?.thread_id ?? ""}`.trim();
       if (!threadId) continue;
       archivedByThreadId.set(threadId, asArchivedFlag(row?.archived));
@@ -124,8 +127,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     for (const entry of threadIndex?.values() ?? []) {
       if (archivedByThreadId.get(entry.key) === true) continue;
       const rootMessage =
-        entry.rootMessage ??
-        (messages ? messages.get(entry.key) : undefined);
+        entry.rootMessage ?? (messages ? messages.get(entry.key) : undefined);
       byKey.set(entry.key, {
         key: entry.key,
         label: deriveThreadLabel(rootMessage, entry.key),
@@ -134,8 +136,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     }
     const configRows = chatActions?.listThreadConfigRows?.() ?? [];
     for (const row0 of configRows) {
-      const row =
-        row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
+      const row = row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
       const threadId = `${row?.thread_id ?? ""}`.trim();
       if (
         !threadId ||
@@ -173,8 +174,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const archivedThreadIds = useMemo(() => {
     const out = new Set<string>();
     for (const row0 of chatActions?.listThreadConfigRows?.() ?? []) {
-      const row =
-        row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
+      const row = row0 && typeof row0?.toJS === "function" ? row0.toJS() : row0;
       const threadId = `${row?.thread_id ?? ""}`.trim();
       if (!threadId) continue;
       if (asArchivedFlag(row?.archived)) out.add(threadId);
@@ -368,9 +368,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         if (cancelled) return;
         const mapped = (response?.hits ?? []).map(mapArchivedHitToMatchHit);
         setArchivedResult(mapped);
-        setArchivedTotalCount(
-          parseArchivedTotalCount(response, mapped.length),
-        );
+        setArchivedTotalCount(parseArchivedTotalCount(response, mapped.length));
       } catch (err) {
         if (cancelled) return;
         setArchivedSearchError(`${err}`);
@@ -429,8 +427,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         chatActions.hydrateArchivedRows([row]);
       }
       const dateValue =
-        Number(response?.row?.date_ms) ||
-        Number((row as any)?.date_ms);
+        Number(response?.row?.date_ms) || Number((row as any)?.date_ms);
       if (Number.isFinite(dateValue)) return dateValue;
       const parsedHitDate = Number.parseFloat(hit.id);
       if (Number.isFinite(parsedHitDate)) return parsedHitDate;
@@ -443,10 +440,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
     async (hit: MatchHit) => {
       const key = fragmentKey ?? "chat";
       let dateMs = Number.parseFloat(hit.id);
-      if (
-        hit.source === "archived" &&
-        hit.threadId
-      ) {
+      if (hit.source === "archived" && hit.threadId) {
         // In cross-thread scopes, lock onto the hit's thread first so follow-up
         // navigation/search context is coherent.
         if (
@@ -569,7 +563,9 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
         <div style={{ overflow: "auto", padding: "15px" }}>
           <div style={{ color: "#888", textAlign: "center", fontSize }}>
             {!search?.trim() && <span>Enter a search above</span>}
-            {combinedResult.length === 0 && search?.trim() && <span>No Matches</span>}
+            {combinedResult.length === 0 && search?.trim() && (
+              <span>No Matches</span>
+            )}
           </div>
           {combinedResult.map((hit) => (
             <SearchResult
@@ -657,7 +653,8 @@ function parseArchivedTotalCount(
   fallback: number,
 ): number {
   const totalHits = Number(response?.total_hits);
-  if (Number.isFinite(totalHits) && totalHits >= 0) return Math.floor(totalHits);
+  if (Number.isFinite(totalHits) && totalHits >= 0)
+    return Math.floor(totalHits);
   const legacyTotal = Number(response?.total);
   if (Number.isFinite(legacyTotal) && legacyTotal >= 0) {
     return Math.floor(legacyTotal);

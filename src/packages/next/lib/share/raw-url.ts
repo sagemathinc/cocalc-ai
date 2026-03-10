@@ -16,7 +16,7 @@ interface Options {
 export default function rawURL({ id, path, relativePath }: Options): string {
   return join(
     ROOT_PATH,
-    `share/raw/${id}/${encodePath(join(path, relativePath))}`
+    `share/raw/${id}/${encodePath(join(path, relativePath))}`,
   );
 }
 

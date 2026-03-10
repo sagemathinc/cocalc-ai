@@ -46,7 +46,7 @@ export default function SSO(props: SSOProps) {
   const ssoHREF = useSSOHref("sso");
 
   const havePrivateSSO: boolean = useMemo(() => {
-    return showAll ? false : strategies?.some((s) => !s.public) ?? false;
+    return showAll ? false : (strategies?.some((s) => !s.public) ?? false);
   }, [strategies]);
 
   if (strategies == null) {

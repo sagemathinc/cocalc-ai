@@ -156,9 +156,11 @@ async function withCatalogLock<T>(
   }
 }
 
-export async function refreshCloudCatalogNow(opts: {
-  provider?: ProviderId;
-} = {}) {
+export async function refreshCloudCatalogNow(
+  opts: {
+    provider?: ProviderId;
+  } = {},
+) {
   const providers = opts.provider
     ? [getServerProvider(opts.provider)].filter(
         (entry): entry is ServerProviderEntry => !!entry,

@@ -17,7 +17,10 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
 import HelpMeFixButton from "./help-me-fix-button";
-import { createMessage, createNavigatorIntentMessage } from "./help-me-fix-utils";
+import {
+  createMessage,
+  createNavigatorIntentMessage,
+} from "./help-me-fix-utils";
 
 // Re-export getHelp for backward compatibility
 export { getHelp } from "./help-me-fix-utils";
@@ -87,10 +90,10 @@ export default function HelpMeFix({
     "course",
     "student_project_functionality",
   ]);
-  const disableChatGPTInProject = !!studentProjectSettings?.get("disableChatGPT");
-  const disableSomeChatGPTInProject = !!studentProjectSettings?.get(
-    "disableSomeChatGPT",
-  );
+  const disableChatGPTInProject =
+    !!studentProjectSettings?.get("disableChatGPT");
+  const disableSomeChatGPTInProject =
+    !!studentProjectSettings?.get("disableSomeChatGPT");
 
   // Keep existing policy limits, but allow Codex availability as an alternate
   // capability signal when legacy LLM-vendor checks are false.
@@ -136,9 +139,8 @@ export default function HelpMeFix({
       return;
     }
     // compute the number of tokens (this MUST be a lazy import):
-    const { getMaxTokens, numTokensUpperBound } = await import(
-      "@cocalc/frontend/misc/llm"
-    );
+    const { getMaxTokens, numTokensUpperBound } =
+      await import("@cocalc/frontend/misc/llm");
 
     setSolutionTokens(numTokensUpperBound(solutionText, getMaxTokens(model)));
     setHintTokens(numTokensUpperBound(hintText, getMaxTokens(model)));

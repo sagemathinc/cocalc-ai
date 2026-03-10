@@ -57,7 +57,7 @@ class PassportCache {
   async getAsync(key: string): Promise<string | null> {
     const { rows } = await this.pool.query<RowType>(
       `SELECT value, expire FROM passport_store WHERE key = $1`,
-      [this.getKey(key)]
+      [this.getKey(key)],
     );
     if (rows.length === 0) {
       return null;
@@ -83,7 +83,7 @@ const samlCaches: { [name: string]: PassportCache } = {};
 
 export function getPassportCache(
   name: string,
-  cachedMS: number
+  cachedMS: number,
 ): PassportCache {
   if (!samlCaches[name]) {
     samlCaches[name] = new PassportCache(name, cachedMS);

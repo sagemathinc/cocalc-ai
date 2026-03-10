@@ -8,8 +8,7 @@ import { Table } from "./types";
 Table({
   name: "account_profiles",
   rules: {
-    desc:
-      "(Virtual) Table that provides access to the profiles of all users; the profile is their *publicly visible* avatar.",
+    desc: "(Virtual) Table that provides access to the profiles of all users; the profile is their *publicly visible* avatar.",
     virtual: "accounts",
     anonymous: false,
     user_query: {

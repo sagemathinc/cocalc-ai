@@ -21,18 +21,12 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
-import {
-  defaults,
-  is_valid_uuid_string,
-} from "@cocalc/util/misc";
+import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
 import { load_all_projects, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { defaultOpenProjectTarget } from "./open-project-default";
-import {
-  evaluateHostOperational,
-  hostLabel,
-} from "./host-operational";
+import { evaluateHostOperational, hostLabel } from "./host-operational";
 import {
   buildOfflineMoveConfirmationDialog,
   parseOfflineMoveConfirmationError,
@@ -176,6 +170,39 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return await this.have_project(project_id);
   }
 
+  private setProjectLocalScalarField = (
+    project_id: string,
+    field: "title" | "description" | "name",
+    value: string | undefined,
+  ): void => {
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    this.setState({
+      project_map: project_map.setIn([project_id, field], value),
+    } as ProjectsState);
+  };
+
+  private updateProjectScalarField = async (
+    project_id: string,
+    field: "title" | "description" | "name",
+    value: string,
+    before: string | undefined,
+  ): Promise<void> => {
+    this.setProjectLocalScalarField(project_id, field, value);
+    try {
+      await this.projects_query_set({ project_id, [field]: value });
+    } catch (err) {
+      this.setProjectLocalScalarField(project_id, field, before);
+      throw err;
+    }
+    await this.redux.getProjectActions(project_id).async_log({
+      event: "set",
+      [field]: value,
+    });
+  };
+
   set_project_title = async (
     project_id: string,
     title: string,
@@ -186,23 +213,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
       return;
     }
-    const before = store.get_title(project_id);
+    const before = store.getIn(["project_map", project_id, "title"]);
     if (before === title) {
       // title is already set as requested; nothing to do
       return;
     }
-    try {
-      // set in the Table
-      await this.projects_table_set({ project_id, title });
-      // create entry in the project's log
-      await this.redux.getProjectActions(project_id).async_log({
-        event: "set",
-        title,
-      });
-    } catch (err) {
-      this.projects_table_set({ project_id, title: before });
-      throw err;
-    }
+    await this.updateProjectScalarField(project_id, "title", title, before);
   };
 
   set_project_description = async (
@@ -215,23 +231,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
       return;
     }
-    const before = store.get_description(project_id);
+    const before = store.getIn(["project_map", project_id, "description"]);
     if (before === description) {
       // description is already set as requested; nothing to do
       return;
     }
-    try {
-      // set in the Table
-      await this.projects_table_set({ project_id, description });
-      // create entry in the project's log
-      await this.redux.getProjectActions(project_id).async_log({
-        event: "set",
-        description,
-      });
-    } catch (err) {
-      this.projects_table_set({ project_id, description: before });
-      throw err;
-    }
+    await this.updateProjectScalarField(
+      project_id,
+      "description",
+      description,
+      before,
+    );
   };
 
   set_project_name = async (
@@ -246,18 +256,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     const before = store.getIn(["project_map", project_id, "name"]);
     if (before == name) return;
-    try {
-      // set in the Table
-      await this.projects_table_set({ project_id, name });
-      // create entry in the project's log
-      await this.redux.getProjectActions(project_id).async_log({
-        event: "set",
-        name,
-      });
-    } catch (err) {
-      this.projects_table_set({ project_id, name: before });
-      throw err;
-    }
+    await this.updateProjectScalarField(project_id, "name", name, before);
   };
 
   set_project_settings = async (
@@ -270,10 +269,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
       return;
     }
-    await this.projects_table_set(
-      { project_id, settings },
-      "deep",
-    );
+    await this.projects_table_set({ project_id, settings }, "deep");
   };
 
   set_project_launcher = async (
@@ -803,68 +799,74 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   // return true, if it actually started the project
-  start_project = reuseInFlight(async (project_id: string): Promise<boolean> => {
-    if (
-      !(await allow_project_to_run(project_id)) ||
-      !store.getIn(["project_map", project_id])
-    ) {
-      return false;
-    }
-    const lifecycleState = store.getIn([
-      "project_map",
-      project_id,
-      "state",
-      "state",
-    ]) as string | undefined;
-    if (lifecycleState === "starting" || lifecycleState === "running") {
-      return false;
-    }
-    const assignedHostId = store.getIn(["project_map", project_id, "host_id"]) as
-      | string
-      | undefined;
-    if (assignedHostId) {
-      const hostInfo = await this.ensure_host_info(assignedHostId);
-      const hostState = evaluateHostOperational(hostInfo as any);
-      if (hostState.state === "unavailable") {
-        const hostName = hostLabel(hostInfo as any, assignedHostId);
-        const reason = hostState.reason ?? "Assigned host is unavailable.";
-        const message =
-          `Cannot start project because ${hostName} is unavailable (${reason}). ` +
-          "Open Settings and move this project to an available host, or start the assigned host.";
-        redux.getProjectActions(project_id)?.setState({ control_error: message });
-        alert_message({ type: "error", message, timeout: 20 });
+  start_project = reuseInFlight(
+    async (project_id: string): Promise<boolean> => {
+      if (
+        !(await allow_project_to_run(project_id)) ||
+        !store.getIn(["project_map", project_id])
+      ) {
         return false;
       }
-    }
-
-    const t0 = webapp_client.server_time().getTime();
-    // make an action request:
-    this.project_log(project_id, {
-      event: "project_start_requested",
-    });
-
-    webapp_client.project_client.touch_project(project_id);
-    const actions = redux.getProjectActions(project_id);
-    try {
-      const resp = await webapp_client.conat_client.hub.projects.start({
+      const lifecycleState = store.getIn([
+        "project_map",
         project_id,
-        wait: false,
+        "state",
+        "state",
+      ]) as string | undefined;
+      if (lifecycleState === "starting" || lifecycleState === "running") {
+        return false;
+      }
+      const assignedHostId = store.getIn([
+        "project_map",
+        project_id,
+        "host_id",
+      ]) as string | undefined;
+      if (assignedHostId) {
+        const hostInfo = await this.ensure_host_info(assignedHostId);
+        const hostState = evaluateHostOperational(hostInfo as any);
+        if (hostState.state === "unavailable") {
+          const hostName = hostLabel(hostInfo as any, assignedHostId);
+          const reason = hostState.reason ?? "Assigned host is unavailable.";
+          const message =
+            `Cannot start project because ${hostName} is unavailable (${reason}). ` +
+            "Open Settings and move this project to an available host, or start the assigned host.";
+          redux
+            .getProjectActions(project_id)
+            ?.setState({ control_error: message });
+          alert_message({ type: "error", message, timeout: 20 });
+          return false;
+        }
+      }
+
+      const t0 = webapp_client.server_time().getTime();
+      // make an action request:
+      this.project_log(project_id, {
+        event: "project_start_requested",
       });
-      actions.trackStartOp(resp);
-    } catch (err) {
-      actions.setState({ control_error: `Error starting project -- ${err}` });
-      throw err;
-    }
-    actions.setState({ control_error: "" });
 
-    this.project_log(project_id, {
-      event: "project_started",
-      duration_ms: webapp_client.server_time().getTime() - t0,
-      ...store.classify_project(project_id),
-    });
+      webapp_client.project_client.touch_project(project_id);
+      const actions = redux.getProjectActions(project_id);
+      try {
+        const resp = await webapp_client.conat_client.hub.projects.start({
+          project_id,
+          wait: false,
+        });
+        actions.trackStartOp(resp);
+      } catch (err) {
+        actions.setState({ control_error: `Error starting project -- ${err}` });
+        throw err;
+      }
+      actions.setState({ control_error: "" });
 
-    return true;
-  });
+      this.project_log(project_id, {
+        event: "project_started",
+        duration_ms: webapp_client.server_time().getTime() - t0,
+        ...store.classify_project(project_id),
+      });
+
+      return true;
+    },
+  );
 
   // allow UI elements to open the move modal via project actions
   open_move_modal?: (project_id: string) => void;
@@ -935,11 +937,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!scope_id && op.scope_type !== "hub") {
       return;
     }
-    void webapp_client.conat_client.lroWait({
-      op_id: op.op_id,
-      scope_type: op.scope_type,
-      scope_id,
-    })
+    void webapp_client.conat_client
+      .lroWait({
+        op_id: op.op_id,
+        scope_type: op.scope_type,
+        scope_id,
+      })
       .then((summary) => {
         if (summary.status !== "succeeded") {
           const reason = summary.error ?? summary.status;
@@ -952,9 +955,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           dest_host_id: logInfo.dest_host_id,
         });
         actions.setState({ control_error: "" });
-        redux
-          .getProjectActions(logInfo.project_id)
-          ?.clearFilesystemClient?.();
+        redux.getProjectActions(logInfo.project_id)?.clearFilesystemClient?.();
         if (logInfo.dest_host_id) {
           const project_map = store.get("project_map");
           const project = project_map?.get(logInfo.project_id);
@@ -1009,14 +1010,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
-  }): Promise<
-    | {
-        op_id?: string;
-        scope_type?: LroSummary["scope_type"];
-        scope_id?: string;
-      }
-    | null
-  > => {
+  }): Promise<{
+    op_id?: string;
+    scope_type?: LroSummary["scope_type"];
+    scope_id?: string;
+  } | null> => {
     try {
       return await webapp_client.conat_client.hub.projects.moveProject({
         project_id,
@@ -1171,10 +1169,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   });
 
   move_project_to_host = reuseInFlight(
-    async (
-      project_id: string,
-      dest_host_id: string,
-    ): Promise<boolean> => {
+    async (project_id: string, dest_host_id: string): Promise<boolean> => {
       const current_host = store.getIn(["project_map", project_id, "host_id"]);
       if (dest_host_id === current_host) return true;
       const actions = redux.getProjectActions(project_id);

@@ -34,11 +34,16 @@ export function stringifyJsonlRows(rows: any[]): string {
 export function sanitizeExportName(value: string, fallback: string): string {
   const trimmed = `${value ?? ""}`.trim();
   if (!trimmed) return fallback;
-  const sanitized = trimmed.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const sanitized = trimmed
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return sanitized || fallback;
 }
 
-export function defaultExportRootDir(filePath: string, fallback: string): string {
+export function defaultExportRootDir(
+  filePath: string,
+  fallback: string,
+): string {
   return sanitizeExportName(path.parse(filePath).name, fallback);
 }
 

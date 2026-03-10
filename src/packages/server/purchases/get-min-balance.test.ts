@@ -30,7 +30,7 @@ describe("test that getMinBalance works", () => {
     expect(toDecimal(await getMinBalance(account_id)).toNumber()).toBe(0);
     // have to pass in pool to avoid cache...
     expect(toDecimal(await getMinBalance(account_id, pool)).toNumber()).toBe(
-      -100
+      -100,
     );
   });
 });

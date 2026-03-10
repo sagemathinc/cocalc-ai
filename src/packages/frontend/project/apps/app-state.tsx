@@ -43,10 +43,11 @@ export default function AppState({
         if (!canceled) setUrl(undefined);
         return;
       }
-      const authedUrl = await webapp_client.conat_client.addProjectHostAuthToUrl({
-        project_id,
-        url: rawUrl,
-      });
+      const authedUrl =
+        await webapp_client.conat_client.addProjectHostAuthToUrl({
+          project_id,
+          url: rawUrl,
+        });
       if (!canceled) {
         setUrl(authedUrl);
       }

@@ -9,7 +9,6 @@
  *
  */
 
-
 import * as Immutable from "immutable";
 import { expectType } from "tsd";
 

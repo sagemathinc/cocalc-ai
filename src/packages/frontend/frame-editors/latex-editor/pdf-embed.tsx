@@ -26,11 +26,7 @@ export const PDFEmbed: React.FC<Props> = React.memo((props: Props) => {
   const embedRef = React.useRef<any>(null);
 
   function render_embed(): React.JSX.Element {
-    let src = raw_url(
-      project_id,
-      pdf_path(path),
-      `param=${reload}`,
-    );
+    let src = raw_url(project_id, pdf_path(path), `param=${reload}`);
     return (
       <embed
         ref={embedRef}

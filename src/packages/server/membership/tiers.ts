@@ -83,8 +83,7 @@ export function getMembershipPrice(
   if (!tier) {
     throw Error("membership tier not configured");
   }
-  const price =
-    interval == "month" ? tier.price_monthly : tier.price_yearly;
+  const price = interval == "month" ? tier.price_monthly : tier.price_yearly;
   const priceValue = toDecimal(price ?? 0);
   if (
     price == null ||

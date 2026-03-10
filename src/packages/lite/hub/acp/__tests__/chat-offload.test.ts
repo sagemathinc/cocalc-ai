@@ -77,7 +77,10 @@ describe("chat offload sqlite store", () => {
       "utf8",
     );
 
-    const before = await getChatStoreStats({ chat_path: chatPath, db_path: dbPath });
+    const before = await getChatStoreStats({
+      chat_path: chatPath,
+      db_path: dbPath,
+    });
     expect(before.head_chat_rows).toBe(4);
     expect(before.archived_rows).toBe(0);
 
@@ -92,7 +95,10 @@ describe("chat offload sqlite store", () => {
     expect(rotated.rotated).toBe(true);
     expect(rotated.archived_rows).toBe(2);
 
-    const segments = listChatStoreSegments({ chat_path: chatPath, db_path: dbPath });
+    const segments = listChatStoreSegments({
+      chat_path: chatPath,
+      db_path: dbPath,
+    });
     expect(segments.segments.length).toBe(1);
 
     const archived = readChatStoreArchived({
@@ -194,7 +200,9 @@ describe("chat offload sqlite store", () => {
   });
 
   it("resumes pending rotate rewrite after transient rename failure", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "chat-offload-resume-"));
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-offload-resume-"),
+    );
     const chatPath = path.join(tmp, "resume.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const rows = [
@@ -250,7 +258,9 @@ describe("chat offload sqlite store", () => {
   });
 
   it("keeps thread root anchor when a reply remains in head", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "chat-offload-anchor-"));
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-offload-anchor-"),
+    );
     const chatPath = path.join(tmp, "anchor.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const threadId = "thread-anchor-1";
@@ -317,7 +327,9 @@ describe("chat offload sqlite store", () => {
   });
 
   it("preserves thread-config rows and records archived message counts", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "chat-offload-threadcfg-"));
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chat-offload-threadcfg-"),
+    );
     const chatPath = path.join(tmp, "threadcfg.chat");
     const dbPath = path.join(tmp, "offload.sqlite3");
     const threadId = "thread-cfg-1";

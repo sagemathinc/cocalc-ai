@@ -41,4 +41,3 @@ describe("shouldIgnoreSentEcho", () => {
     ).toBe(false);
   });
 });
-

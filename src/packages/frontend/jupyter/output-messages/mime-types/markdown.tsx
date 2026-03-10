@@ -8,4 +8,3 @@ register("text/markdown", 4, ({ value }) => {
     </div>
   );
 });
-

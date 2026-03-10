@@ -9,7 +9,7 @@ export default async function handle(req, res) {
     const account_id = await getAccountId(req);
     if (account_id == null) {
       throw Error(
-        "must be signed in to save public path (have to be collab on project)"
+        "must be signed in to save public path (have to be collab on project)",
       );
     }
     const { id } = getParams(req);

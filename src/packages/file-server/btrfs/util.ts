@@ -21,7 +21,10 @@ function envEnabled(name: string): boolean {
 }
 
 function directFallbackAllowed(): boolean {
-  return envEnabled("COCALC_RUNTIME_STORAGE_ALLOW_DIRECT") || process.env.NODE_ENV === "test";
+  return (
+    envEnabled("COCALC_RUNTIME_STORAGE_ALLOW_DIRECT") ||
+    process.env.NODE_ENV === "test"
+  );
 }
 
 function wrapperEnabled(): boolean {

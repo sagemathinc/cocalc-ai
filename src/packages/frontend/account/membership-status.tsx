@@ -149,11 +149,12 @@ export function MembershipStatusPanel({
       setLoading(true);
       setError("");
       try {
-        const [membershipResult, tiersResult, detailsResult] = await Promise.all([
-          api("purchases/get-membership"),
-          api("purchases/get-membership-tiers"),
-          webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
-        ]);
+        const [membershipResult, tiersResult, detailsResult] =
+          await Promise.all([
+            api("purchases/get-membership"),
+            api("purchases/get-membership-tiers"),
+            webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
+          ]);
         if (!isMounted()) return;
         setMembership(membershipResult as MembershipResolution);
         setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
@@ -222,7 +223,10 @@ export function MembershipStatusPanel({
       return {
         key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
         tier: tierLabel,
-        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
+        source:
+          candidate.source === "subscription"
+            ? "Subscription"
+            : "Admin assigned",
         priority: candidate.priority,
         expires: candidate.expires,
         subscription_id: candidate.subscription_id,

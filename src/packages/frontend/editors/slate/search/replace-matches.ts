@@ -19,7 +19,7 @@ export function replaceOne(
   editor: ReactEditor,
   decorate,
   replace: string,
-  noScroll: boolean = false
+  noScroll: boolean = false,
 ): boolean {
   // collapse selection to the starting edge
   if (editor.selection) {
@@ -64,7 +64,7 @@ export function replaceOne(
 export function replaceAll(
   editor: ReactEditor,
   decorate,
-  replace: string
+  replace: string,
 ): void {
   // Keep replacing until nothing left to replace.  However, we also keep
   // of focus points after doing selection so that if for some crazy reason

@@ -23,7 +23,7 @@ export default function SelectWithDefault({
   style,
 }: Props) {
   const [val, setVal] = useState<string>(
-    value ?? initialValue ?? defaultValue ?? keys(options)[0] ?? ""
+    value ?? initialValue ?? defaultValue ?? keys(options)[0] ?? "",
   );
 
   const v: ReactNode[] = [];
@@ -33,7 +33,7 @@ export default function SelectWithDefault({
       v.push(
         <Option key={value} value={value}>
           {value}
-        </Option>
+        </Option>,
       );
     }
   } else {
@@ -41,7 +41,7 @@ export default function SelectWithDefault({
       v.push(
         <Option key={value} value={value}>
           {options[value]}
-        </Option>
+        </Option>,
       );
     }
   }
@@ -72,7 +72,10 @@ export default function SelectWithDefault({
           {(value ?? val) == defaultValue ? (
             "Default"
           ) : (
-            <>Changed from {is_array(options) ? defaultValue : options[defaultValue]}</>
+            <>
+              Changed from{" "}
+              {is_array(options) ? defaultValue : options[defaultValue]}
+            </>
           )}
         </Button>
       )}

@@ -37,13 +37,13 @@ export function define<T extends object, U extends Optionals<T>>(
   props: unknown,
   definition: Assign<Definition<T>, U>,
   allow_extra?: boolean,
-  strict?: boolean
+  strict?: boolean,
 ): Assign<U, Requireds<T>>;
 export function define<T extends object, U extends Optionals<T>>(
   props: unknown,
   definition: Assign<Definition<T>, U>,
   allow_extra = false,
-  strict = false
+  strict = false,
 ): Assign<U, Requireds<T>> {
   // We put explicit traces before the errors in this function,
   // since otherwise they can be very hard to debug.
@@ -65,7 +65,7 @@ export function define<T extends object, U extends Optionals<T>>(
   // Checking here makes TS work as expected below
   if (typeof props !== "object" || props == undefined) {
     return maybe_error(
-      `BUG -- Traceback -- misc.defaults -- TypeError: function takes inputs as an object`
+      `BUG -- Traceback -- misc.defaults -- TypeError: function takes inputs as an object`,
     );
   }
   const result: Assign<U, Requireds<T>> = {} as any;
@@ -73,14 +73,14 @@ export function define<T extends object, U extends Optionals<T>>(
     if (props.hasOwnProperty(key) && props[key] != undefined) {
       if (definition[key] === required && props[key] == undefined) {
         return maybe_error(
-          `misc.defaults -- TypeError: property '${key}' must be specified on props:`
+          `misc.defaults -- TypeError: property '${key}' must be specified on props:`,
         );
       }
       result[key] = props[key];
     } else if (definition[key] != undefined) {
       if (definition[key] == required) {
         maybe_error(
-          `misc.defaults -- TypeError: property '${key}' must be specified:`
+          `misc.defaults -- TypeError: property '${key}' must be specified:`,
         );
       } else {
         result[key] = definition[key];
@@ -92,7 +92,7 @@ export function define<T extends object, U extends Optionals<T>>(
     for (const key in props) {
       if (!definition.hasOwnProperty(key)) {
         return maybe_error(
-          `misc.defaults -- TypeError: got an unexpected argument '${key}'`
+          `misc.defaults -- TypeError: got an unexpected argument '${key}'`,
         );
       }
     }
@@ -104,7 +104,7 @@ function error_addendum(props: unknown, definition: unknown) {
   try {
     return `(obj1=${exports.trunc(
       exports.to_json(props),
-      1024
+      1024,
     )}, obj2=${exports.trunc(exports.to_json(definition), 1024)})`;
   } catch (err) {
     return "";

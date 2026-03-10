@@ -16,8 +16,14 @@ import {
   getOwnedProcessRegistry,
   type OwnedRootProcess,
 } from "./owned-process-registry";
-import { collectDescendantsByRoot, staleRootIds } from "./owned-linux-snapshot-provider";
-import type { ProcessSnapshot, ProcessSnapshotProvider } from "./snapshot-provider";
+import {
+  collectDescendantsByRoot,
+  staleRootIds,
+} from "./owned-linux-snapshot-provider";
+import type {
+  ProcessSnapshot,
+  ProcessSnapshotProvider,
+} from "./snapshot-provider";
 import { ensureJupyterOwnedRootBridge } from "./jupyter-owned-roots";
 import { ensureBackendOwnedRootBridge } from "./backend-owned-roots";
 
@@ -47,9 +53,7 @@ function parseEtimeSeconds(etime: string): number {
     ? value.split("-", 2)
     : [undefined, value];
   const days = daysPart == null ? 0 : Number.parseInt(daysPart, 10) || 0;
-  const parts = clockPart
-    .split(":")
-    .map((part) => Number.parseInt(part, 10));
+  const parts = clockPart.split(":").map((part) => Number.parseInt(part, 10));
   if (parts.some((n) => !Number.isFinite(n))) {
     return 0;
   }
@@ -75,9 +79,11 @@ export function normalizeState(state: string): State {
 }
 
 export function parsePsLine(line: string): PsProc | undefined {
-  const m = line.trim().match(
-    /^(\d+)\s+(\d+)\s+([0-9.]+)\s+(\d+)\s+(\S+)\s+(-?\d+)\s+(\S+)\s+(\S+)\s*(.*)$/,
-  );
+  const m = line
+    .trim()
+    .match(
+      /^(\d+)\s+(\d+)\s+([0-9.]+)\s+(\d+)\s+(\S+)\s+(-?\d+)\s+(\S+)\s+(\S+)\s*(.*)$/,
+    );
   if (m == null) return;
   return {
     pid: Number.parseInt(m[1], 10),
@@ -164,7 +170,10 @@ export class OwnedDarwinProcessSnapshotProvider implements ProcessSnapshotProvid
     const rows = await this.readPsRows();
     const rowByPid = new Map(rows.map((row) => [row.pid, row]));
     const alive = new Set(rowByPid.keys());
-    for (const root_id of staleRootIds({ roots: trackedRoots, alivePids: alive })) {
+    for (const root_id of staleRootIds({
+      roots: trackedRoots,
+      alivePids: alive,
+    })) {
       this.registry.markExited(root_id);
     }
     const liveRoots = roots.filter((root) => rowByPid.has(root.pid));

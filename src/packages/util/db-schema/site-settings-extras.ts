@@ -1121,15 +1121,13 @@ export const EXTRAS: SettingsExtras = {
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 20,
-    required_when: [
-      { key: "cloudflare_mode", equals: "self" },
-    ],
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
     show: cloudflare_self_mode,
     hidden: true,
   },
   project_hosts_cloudflare_tunnel_api_token: {
     name: "Project Hosts: Cloudflare Tunnel - API Token",
-    desc: 'Cloudflare API token with permissions for Cloudflare Tunnel and DNS (Account:Cloudflare Tunnel:Edit, Zone:DNS:Edit).',
+    desc: "Cloudflare API token with permissions for Cloudflare Tunnel and DNS (Account:Cloudflare Tunnel:Edit, Zone:DNS:Edit).",
     default: "",
     password: true,
     to_val: to_trimmed_str,
@@ -1137,9 +1135,7 @@ export const EXTRAS: SettingsExtras = {
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 30,
-    required_when: [
-      { key: "cloudflare_mode", equals: "self" },
-    ],
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
     show: cloudflare_self_mode,
     hidden: true,
   },

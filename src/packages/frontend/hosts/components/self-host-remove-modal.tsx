@@ -66,8 +66,9 @@ multipass purge`;
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph>
-          Run the commands below on your computer to remove the connector and (optionally)
-          delete the VM. After that, click “Mark removed in CoCalc”.
+          Run the commands below on your computer to remove the connector and
+          (optionally) delete the VM. After that, click “Mark removed in
+          CoCalc”.
         </Typography.Paragraph>
         <Divider style={{ margin: "8px 0" }} />
         <Tabs
@@ -94,7 +95,8 @@ multipass purge`;
           ]}
         />
         <Typography.Paragraph type="secondary">
-          If you no longer have access to the computer, use “Force deprovision” instead.
+          If you no longer have access to the computer, use “Force deprovision”
+          instead.
         </Typography.Paragraph>
       </Space>
     </Modal>

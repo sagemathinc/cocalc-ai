@@ -562,7 +562,10 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
                   </Tag>
                 ))}
               </Space>
-              <Button size="small" onClick={() => setShowLauncherCustomize(true)}>
+              <Button
+                size="small"
+                onClick={() => setShowLauncherCustomize(true)}
+              >
                 Customize
               </Button>
             </div>

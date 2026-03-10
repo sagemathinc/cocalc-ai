@@ -6,9 +6,7 @@ sanitization, and serializable conversions).
 export function asStringArray(value: any): string[] {
   if (!value) return [];
   if (Array.isArray(value)) {
-    return value
-      .map((v) => `${v ?? ""}`.trim())
-      .filter((v) => v.length > 0);
+    return value.map((v) => `${v ?? ""}`.trim()).filter((v) => v.length > 0);
   }
   if (typeof value.toArray === "function") {
     return asStringArray(value.toArray());
@@ -126,7 +124,11 @@ export function safeStringifyForRuntimeLog(value: unknown): string {
     if (typeof value === "string") {
       return value;
     }
-    if (typeof value === "number" || typeof value === "boolean" || value == null) {
+    if (
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      value == null
+    ) {
       return `${value}`;
     }
     const seen = new WeakSet<object>();
@@ -150,7 +152,9 @@ export function safeStringifyForRuntimeLog(value: unknown): string {
   }
 }
 
-export function normalizeTerminalFrameCommand(value: unknown): string | undefined {
+export function normalizeTerminalFrameCommand(
+  value: unknown,
+): string | undefined {
   const command = `${value ?? ""}`.trim();
   return command.length > 0 ? command : undefined;
 }

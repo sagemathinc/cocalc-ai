@@ -76,7 +76,9 @@ function normalizeCloudflareMode(
 
 function cloudflareTunnelEnabled(settings: Record<string, any>): boolean {
   const mode = normalizeCloudflareMode(settings.cloudflare_mode);
-  const tunnelEnabled = isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  const tunnelEnabled = isEnabled(
+    settings.project_hosts_cloudflare_tunnel_enabled,
+  );
   if (mode === "self") return tunnelEnabled;
   if (mode === "managed") return false;
   if (mode === "none") return tunnelEnabled;
@@ -188,7 +190,9 @@ export default async function init(opts: Options): Promise<{
   const settings = await getServerSettings();
   let strictCloudflareProxy = false;
   const applyTrustProxy = () => {
-    const nextStrict = cloudflareTunnelEnabled(settings.all as Record<string, any>);
+    const nextStrict = cloudflareTunnelEnabled(
+      settings.all as Record<string, any>,
+    );
     strictCloudflareProxy = nextStrict;
     if (nextStrict) {
       app.set("trust proxy", (ip: string) => isTrustedCloudflareProxyPeer(ip));

@@ -17,7 +17,7 @@ register(
   ({ extra }) => {
     extra?.actions.save?.(true);
     return true;
-  }
+  },
 );
 
 register(
@@ -32,7 +32,7 @@ register(
   ({ extra }) => {
     extra?.actions.change_font_size?.(-1);
     return true;
-  }
+  },
 );
 
 register(
@@ -47,7 +47,7 @@ register(
   ({ extra }) => {
     extra?.actions.change_font_size?.(+1);
     return true;
-  }
+  },
 );
 
 register(
@@ -65,7 +65,7 @@ register(
     editor.resetHasUnsavedChanges();
     //ReactEditor.focus(editor);
     return true;
-  }
+  },
 );
 
 register(
@@ -83,5 +83,5 @@ register(
     editor.resetHasUnsavedChanges();
     //ReactEditor.focus(editor);
     return true;
-  }
+  },
 );
