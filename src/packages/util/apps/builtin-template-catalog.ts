@@ -24,8 +24,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       install: {
         strategy: "curated",
         command: "apt-get update && apt-get install -y jupyterlab jupyter",
-        hint:
-          "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
+        hint: "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
         agent_prompt:
           "Install JupyterLab in the current project so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
         recipes: [
@@ -34,7 +33,10 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
             match: {
               os_family: ["debian", "ubuntu"],
             },
-            commands: ["apt-get update", "apt-get install -y jupyterlab jupyter"],
+            commands: [
+              "apt-get update",
+              "apt-get install -y jupyterlab jupyter",
+            ],
             notes: "Preferred on maintained Ubuntu launchpad images.",
           },
         ],
@@ -68,8 +70,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       install: {
         strategy: "curated",
         command: "curl -fsSL https://code-server.dev/install.sh | sh",
-        hint:
-          "code-server is not installed in this project image yet. The upstream installer works well on most Linux systems.",
+        hint: "code-server is not installed in this project image yet. The upstream installer works well on most Linux systems.",
         agent_prompt:
           "Install code-server in the current project so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
       },
@@ -79,7 +80,8 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         kind: "service",
         preferred_port: "6004",
         service_open_mode: "proxy",
-        command: "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
+        command:
+          "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
       },
       verify: {
         commands: ["code-server --version"],
@@ -93,11 +95,13 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       homepage: "https://plutojl.org/",
       description: "Reactive Julia notebooks.",
       detect: {
-        commands: ['julia -e \'Base.find_package("Pluto") |> isnothing && exit(1)\''],
+        commands: [
+          "julia -e 'Base.find_package(\"Pluto\") |> isnothing && exit(1)'",
+        ],
       },
       install: {
         strategy: "curated",
-        command: 'julia -e \'using Pkg; Pkg.add("Pluto")\'',
+        command: "julia -e 'using Pkg; Pkg.add(\"Pluto\")'",
         hint: "Pluto needs Julia plus the Pluto package in this project environment.",
         agent_prompt:
           "Install Pluto for the current project so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
@@ -112,7 +116,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
           'julia -e \'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,"HOST","127.0.0.1"), port=parse(Int, ENV["PORT"]))\'',
       },
       verify: {
-        commands: ['julia -e \'Base.find_package("Pluto") |> isnothing && exit(1)\''],
+        commands: [
+          "julia -e 'Base.find_package(\"Pluto\") |> isnothing && exit(1)'",
+        ],
       },
     },
     {
@@ -125,8 +131,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       description: "Browser IDE for R and data science workflows.",
       install: {
         strategy: "agent",
-        hint:
-          "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
+        hint: "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
         agent_prompt:
           "Set up RStudio Server (rserver) in the current Linux project or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
       },
@@ -145,7 +150,8 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       title: "Python Hello World",
       category: "core",
       priority: 40,
-      description: "Minimal HTTP hello-world app for testing the managed app flow.",
+      description:
+        "Minimal HTTP hello-world app for testing the managed app flow.",
       preset: {
         id: "python-hello",
         title: "Python Hello World",
@@ -154,7 +160,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         service_open_mode: "proxy",
         health_path: "/",
         command:
-          'python3 -c "import os, pathlib, http.server; host=os.getenv(\'HOST\',\'127.0.0.1\'); port=int(os.getenv(\'PORT\',\'8080\')); root=pathlib.Path(\'/tmp/cocalc-python-hello\'); root.mkdir(parents=True, exist_ok=True); (root/\'index.html\').write_text(\'<h1>Hello from Python</h1>\\\\n\', encoding=\'utf-8\'); os.chdir(root); server=http.server.ThreadingHTTPServer((host,port), http.server.SimpleHTTPRequestHandler); print(f\'listening on http://{host}:{port}\', flush=True); server.serve_forever()"',
+          "python3 -c \"import os, pathlib, http.server; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); root=pathlib.Path('/tmp/cocalc-python-hello'); root.mkdir(parents=True, exist_ok=True); (root/'index.html').write_text('<h1>Hello from Python</h1>\\\\n', encoding='utf-8'); os.chdir(root); server=http.server.ThreadingHTTPServer((host,port), http.server.SimpleHTTPRequestHandler); print(f'listening on http://{host}:{port}', flush=True); server.serve_forever()\"",
       },
     },
     {
@@ -170,7 +176,7 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         preferred_port: "8080",
         service_open_mode: "proxy",
         command:
-          'node -e "const http=require(\'http\');const host=process.env.HOST||\'127.0.0.1\';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body=\'hello from node\\\\n\';res.writeHead(200,{\'content-type\':\'text/plain; charset=utf-8\',\'content-length\':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log(\'listening on http://\'+host+\':\'+port));"',
+          "node -e \"const http=require('http');const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body='hello from node\\\\n';res.writeHead(200,{'content-type':'text/plain; charset=utf-8','content-length':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log('listening on http://'+host+':'+port));\"",
       },
     },
     {
@@ -178,7 +184,8 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       title: "Static Hello World",
       category: "core",
       priority: 30,
-      description: "Minimal static site example with optional refresh/bootstrap logic.",
+      description:
+        "Minimal static site example with optional refresh/bootstrap logic.",
       preset: {
         id: "static-hello",
         title: "Static Hello World",
@@ -186,13 +193,11 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
         static_root_relative: "static-hello",
         static_index: "index.html",
         static_cache_control: "public,max-age=3600",
-        static_refresh_command:
-          `mkdir -p "$APP_STATIC_ROOT" && [ -f "$APP_STATIC_ROOT/index.html" ] || printf '<h1>Hello from static app</h1>\\n' > "$APP_STATIC_ROOT/index.html"`,
+        static_refresh_command: `mkdir -p "$APP_STATIC_ROOT" && [ -f "$APP_STATIC_ROOT/index.html" ] || printf '<h1>Hello from static app</h1>\\n' > "$APP_STATIC_ROOT/index.html"`,
         static_refresh_stale_after: "3600",
         static_refresh_timeout: "120",
         static_refresh_on_hit: true,
-        note:
-          "Optional refresh job can bootstrap or periodically update generated static content on first/stale hits.",
+        note: "Optional refresh job can bootstrap or periodically update generated static content on first/stale hits.",
       },
     },
   ],

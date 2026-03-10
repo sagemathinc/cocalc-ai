@@ -93,7 +93,9 @@ export function appServerPresetsFromCatalogEntries(
   ]).map((template) => toPreset(template, homeDirectory));
 }
 
-export function builtinAppServerPresets(homeDirectory: string): AppServerPreset[] {
+export function builtinAppServerPresets(
+  homeDirectory: string,
+): AppServerPreset[] {
   return appServerPresetsFromCatalogEntries(
     builtinAppTemplateCatalog().templates,
     homeDirectory,

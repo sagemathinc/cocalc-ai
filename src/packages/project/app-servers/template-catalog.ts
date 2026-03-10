@@ -27,7 +27,10 @@ let remoteCatalogCache:
   | undefined;
 
 async function fetchRemoteCatalog() {
-  if (remoteCatalogCache && Date.now() - remoteCatalogCache.at < REMOTE_CATALOG_TTL_MS) {
+  if (
+    remoteCatalogCache &&
+    Date.now() - remoteCatalogCache.at < REMOTE_CATALOG_TTL_MS
+  ) {
     return remoteCatalogCache.catalog;
   }
   const controller = new AbortController();
@@ -57,7 +60,8 @@ async function fetchRemoteCatalog() {
 }
 
 function isTemplateEntry(value: unknown): value is AppTemplateCatalogEntryV1 {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (value == null || typeof value !== "object" || Array.isArray(value))
+    return false;
   const entry = value as Record<string, unknown>;
   const preset = entry.preset;
   return (
@@ -68,7 +72,9 @@ function isTemplateEntry(value: unknown): value is AppTemplateCatalogEntryV1 {
   );
 }
 
-async function loadProjectLocalTemplateEntries(): Promise<AppTemplateCatalogEntry[]> {
+async function loadProjectLocalTemplateEntries(): Promise<
+  AppTemplateCatalogEntry[]
+> {
   let names: string[];
   try {
     names = (await readdir(PROJECT_LOCAL_CATALOG_DIR))
@@ -136,7 +142,8 @@ export async function listAppTemplates(): Promise<AppTemplateCatalogEntry[]> {
           version: 1,
           kind: "cocalc-app-template-catalog",
           source: remoteCatalog?.source || REMOTE_CATALOG_URL,
-          published_at: remoteCatalog?.published_at || new Date(0).toISOString(),
+          published_at:
+            remoteCatalog?.published_at || new Date(0).toISOString(),
           templates: remote,
         }
       : undefined,

@@ -75,9 +75,9 @@ export interface AppTemplateCatalogSourceV1 {
   catalog: AppTemplateCatalogV1;
 }
 
-export function sortAppTemplateCatalogEntries<T extends { priority?: number; title?: string }>(
-  entries: T[],
-): T[] {
+export function sortAppTemplateCatalogEntries<
+  T extends { priority?: number; title?: string },
+>(entries: T[]): T[] {
   return [...entries].sort((a, b) => {
     const byPriority = Number(b.priority ?? 0) - Number(a.priority ?? 0);
     if (byPriority !== 0) return byPriority;
@@ -89,7 +89,9 @@ export function builtinAppTemplateCatalog(): AppTemplateCatalogV1 {
   return builtinCatalog;
 }
 
-export function isAppTemplateCatalogV1(value: unknown): value is AppTemplateCatalogV1 {
+export function isAppTemplateCatalogV1(
+  value: unknown,
+): value is AppTemplateCatalogV1 {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }

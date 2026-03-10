@@ -430,7 +430,9 @@ export class ConatClient extends EventEmitter {
     const isAbsolute = /^https?:\/\//i.test(routedUrl);
     const parsed = new URL(
       routedUrl,
-      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "http://localhost",
     );
     parsed.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, token);
     if (isAbsolute) {
@@ -484,7 +486,7 @@ export class ConatClient extends EventEmitter {
     });
     this.routedHubClients[host_id] = { address, client: routed };
     return routed;
-  }
+  };
 
   private permanentlyDisconnected = false;
   permanentlyDisconnect = () => {
@@ -726,7 +728,10 @@ export class ConatClient extends EventEmitter {
     let cn = this.conat();
     if (routeToProjectHost) {
       const routing = await this.ensureProjectRoutingInfo(project_id!);
-      if (!routing && !PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name)) {
+      if (
+        !routing &&
+        !PROJECT_HOST_ROUTED_HUB_METHODS_WITH_HUB_FALLBACK.has(name)
+      ) {
         throw Error(
           `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
         );
