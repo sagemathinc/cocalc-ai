@@ -120,7 +120,7 @@ describe("whiteboard code run bridge", () => {
     });
     const save = jest.fn();
     const set = jest.fn();
-    let resolveRun: () => void;
+    let resolveRun!: () => void;
     let started!: () => void;
     const runStarted = new Promise<void>((resolve) => {
       started = resolve;
