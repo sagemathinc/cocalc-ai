@@ -3,7 +3,11 @@ import {
   buildCreateHostPayload,
   type FieldOptionsMap,
 } from "../providers/registry";
-import type { Host, HostCatalog, HostLroResponse } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostCatalog,
+  HostLroResponse,
+} from "@cocalc/conat/hub/api/hosts";
 
 type HubClient = {
   hosts: {

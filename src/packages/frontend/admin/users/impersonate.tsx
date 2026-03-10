@@ -27,9 +27,8 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
 
   async function get_token(): Promise<void> {
     try {
-      const auth_token = await webapp_client.admin_client.get_user_auth_token(
-        account_id,
-      );
+      const auth_token =
+        await webapp_client.admin_client.get_user_auth_token(account_id);
       set_auth_token(auth_token);
       set_err(null);
     } catch (err) {

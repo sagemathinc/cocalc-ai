@@ -46,7 +46,10 @@ const MAX_HEAD_MESSAGES = 500;
 let timer: NodeJS.Timeout | undefined;
 let running = false;
 
-const lastCheckByPath = new Map<string, { checkedAt: number; mtimeMs: number }>();
+const lastCheckByPath = new Map<
+  string,
+  { checkedAt: number; mtimeMs: number }
+>();
 type ChatRegistryRow = { chat_path?: string };
 
 function clampInt(
@@ -74,7 +77,14 @@ function resolveDbPath(): string {
       "offload-v1.sqlite3",
     );
   }
-  return path.join(home, ".local", "share", "cocalc", "chats", "offload-v1.sqlite3");
+  return path.join(
+    home,
+    ".local",
+    "share",
+    "cocalc",
+    "chats",
+    "offload-v1.sqlite3",
+  );
 }
 
 function listKnownChats(): string[] {

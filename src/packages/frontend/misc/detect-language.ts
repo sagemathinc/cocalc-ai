@@ -37,7 +37,10 @@ const POPULAR_LANGS: Array<{
     hints: [
       [/^#!.*\b(bash|sh|zsh)\b/m, 6],
       [/^\s*[$#]\s+\S/m, 3],
-      [/\b(sudo|apt|brew|yum|dnf|pacman|ls|cd|pwd|grep|awk|sed|curl|wget|git|pip)\b/g, 1],
+      [
+        /\b(sudo|apt|brew|yum|dnf|pacman|ls|cd|pwd|grep|awk|sed|curl|wget|git|pip)\b/g,
+        1,
+      ],
     ],
   },
   {

@@ -75,7 +75,10 @@ function loadWorkspaceOnly(project_id: string): boolean {
 }
 
 function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
-  set_local_storage(workspaceOnlyStorageKey(project_id), enabled ? "true" : "false");
+  set_local_storage(
+    workspaceOnlyStorageKey(project_id),
+    enabled ? "true" : "false",
+  );
 }
 
 export function getTime(a): number {
@@ -320,11 +323,7 @@ export function LogFlyout({
     const workspaceId = workspaces.current.workspace_id;
     return (path: string) =>
       workspaces.resolveWorkspaceForPath(path)?.workspace_id === workspaceId;
-  }, [
-    workspaceOnly,
-    workspaces.current,
-    workspaces.resolveWorkspaceForPath,
-  ]);
+  }, [workspaceOnly, workspaces.current, workspaces.resolveWorkspaceForPath]);
 
   // restore the logFilter from local storage (mode is similar, restored in the LogHeader)
   useEffect(() => {
@@ -345,14 +344,20 @@ export function LogFlyout({
       case "files":
         return deriveFiles(log, search, max, deduplicate, workspacePathMatches);
       case "history":
-        return deriveHistory(log, search, max, {
-          showOpenFiles,
-          showFileActions,
-          showProject,
-          showShare,
-          showUser,
-          showOther,
-        }, workspacePathMatches);
+        return deriveHistory(
+          log,
+          search,
+          max,
+          {
+            showOpenFiles,
+            showFileActions,
+            showProject,
+            showShare,
+            showUser,
+            showOther,
+          },
+          workspacePathMatches,
+        );
       default:
         unreachable(mode);
     }
@@ -773,7 +778,11 @@ export function LogFlyout({
           />
           {workspaces.current ? (
             <Space size={6}>
-              <Switch size="small" checked={workspaceOnly} onChange={setWorkspaceOnly} />
+              <Switch
+                size="small"
+                checked={workspaceOnly}
+                onChange={setWorkspaceOnly}
+              />
               <span style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
                 Only current workspace
               </span>

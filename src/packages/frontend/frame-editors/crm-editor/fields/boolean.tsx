@@ -33,7 +33,7 @@ render({ type: "boolean", editable: true }, ({ field, obj, spec }) => {
             e.target.checked,
             spec.whenField // set this field to timestamp or clear it.
               ? { [spec.whenField]: e.target.checked ? "NOW()" : null }
-              : undefined
+              : undefined,
           );
         }}
       />

@@ -156,7 +156,13 @@ export class ContainerExecutor {
       cwd,
       timeoutMs,
     });
-    logger.debug("podman exec result", { code, signal, stdout, stderr, timeoutMs });
+    logger.debug("podman exec result", {
+      code,
+      signal,
+      stdout,
+      stderr,
+      timeoutMs,
+    });
     return { stdout, stderr, exitCode: code, signal };
   }
 

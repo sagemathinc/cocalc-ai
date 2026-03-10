@@ -74,12 +74,17 @@ async function ensureProductInstalled(
   }
 
   console.error(`Installing ${spec.binary} ...`);
-  const code = await deps.runCommand("bash", ["-lc", `curl -fsSL ${spec.installUrl} | bash`]);
+  const code = await deps.runCommand("bash", [
+    "-lc",
+    `curl -fsSL ${spec.installUrl} | bash`,
+  ]);
   if (code !== 0) {
     throw new Error(`failed installing '${spec.binary}' (exit ${code})`);
   }
   if (!deps.commandExists(spec.binary)) {
-    throw new Error(`installation completed but '${spec.binary}' is still not available in PATH`);
+    throw new Error(
+      `installation completed but '${spec.binary}' is still not available in PATH`,
+    );
   }
 }
 

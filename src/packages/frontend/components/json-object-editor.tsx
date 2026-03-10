@@ -8,7 +8,15 @@ Generic JSON object editor with a structured view and an advanced raw JSON
 toggle. Intended for admin/config use.
 */
 
-import { Button, Input, InputNumber, Select, Space, Switch, Typography } from "antd";
+import {
+  Button,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Typography,
+} from "antd";
 import jsonic from "jsonic";
 
 import { React } from "@cocalc/frontend/app-framework";
@@ -42,7 +50,12 @@ function objectToRows(value: unknown): JsonRow[] {
   return Object.keys(value).map((key) => {
     const val = (value as Record<string, unknown>)[key];
     if (typeof val === "boolean") {
-      return { id: `${key}-${Math.random()}`, key, type: "boolean", value: val };
+      return {
+        id: `${key}-${Math.random()}`,
+        key,
+        type: "boolean",
+        value: val,
+      };
     }
     if (typeof val === "number") {
       return { id: `${key}-${Math.random()}`, key, type: "number", value: val };
@@ -117,10 +130,7 @@ export function JsonObjectEditor({
   const lastErrorRef = React.useRef<string>("");
   const structuredSupported =
     value == null || (typeof value === "object" && !Array.isArray(value));
-  const valueSignature = React.useMemo(
-    () => toJsonText(value) ?? "",
-    [value],
-  );
+  const valueSignature = React.useMemo(() => toJsonText(value) ?? "", [value]);
 
   React.useEffect(() => {
     if (!structuredSupported) {
@@ -299,9 +309,7 @@ export function JsonObjectEditor({
                 <Input.TextArea
                   rows={2}
                   value={String(row.value ?? "")}
-                  onChange={(e) =>
-                    updateRow(row.id, { value: e.target.value })
-                  }
+                  onChange={(e) => updateRow(row.id, { value: e.target.value })}
                 />
               )}
             </div>

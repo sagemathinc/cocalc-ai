@@ -73,7 +73,6 @@ describe("creates an account, then creates purchases and statements", () => {
     const purchaseTotal = toDecimal(purchases[0].cost!).add(purchases[1].cost!);
     expect(purchaseTotal.toNumber()).toBe(-3);
   });
-
 });
 
 describe("creates an account, then creates purchases and statements and ensures that there aren't multiple statements per day", () => {

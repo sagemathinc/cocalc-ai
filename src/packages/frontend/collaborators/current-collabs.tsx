@@ -40,7 +40,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     const project_id = project.get("project_id");
     redux.getActions("projects").remove_collaborator(project_id, account_id);
     if (account_id === get_account_id()) {
-      (redux.getActions("page") as any).close_project_tab(project_id); 
+      (redux.getActions("page") as any).close_project_tab(project_id);
       // TODO: better types
     }
   }

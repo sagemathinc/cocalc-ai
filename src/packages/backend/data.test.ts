@@ -8,25 +8,27 @@ import {
 } from "./data";
 
 enum TestString {
-  SSL="tRuE",
-  SSL_CA_FILE="test_ca_path",
-  SSL_CLIENT_CERT_FILE="test_client_cert",
-  SSL_CLIENT_KEY_FILE="test_client_key",
-  SSL_CLIENT_KEY_PASSPHRASE="test_client_key_passphrase",
+  SSL = "tRuE",
+  SSL_CA_FILE = "test_ca_path",
+  SSL_CLIENT_CERT_FILE = "test_client_cert",
+  SSL_CLIENT_KEY_FILE = "test_client_key",
+  SSL_CLIENT_KEY_PASSPHRASE = "test_client_key_passphrase",
 }
 
 const mockFileContents = {
   [TestString.SSL_CA_FILE]: "ca-file-stuff",
   [TestString.SSL_CLIENT_CERT_FILE]: "client-cert-file-stuff",
   [TestString.SSL_CLIENT_KEY_FILE]: "client-key-file-stuff",
-}
+};
 
 jest.mock("fs");
 const mockReadFileSync = jest.mocked(readFileSync);
 
 describe("#sslConfigFromCoCalcEnv", () => {
   beforeEach(() => {
-    mockReadFileSync.mockImplementation((fileName) => mockFileContents[fileName as TestString]);
+    mockReadFileSync.mockImplementation(
+      (fileName) => mockFileContents[fileName as TestString],
+    );
   });
 
   afterEach(() => {
@@ -79,7 +81,6 @@ describe("#sslConfigFromCoCalcEnv", () => {
     expect(pgssl).toEqual<SSLConfig>(expected);
   });
 
-
   it("sets SSL config fields when provided", async () => {
     // Arrange
     //
@@ -100,7 +101,7 @@ describe("#sslConfigFromCoCalcEnv", () => {
       SMC_DB_SSL_CLIENT_CERT_FILE: TestString.SSL_CLIENT_CERT_FILE,
       SMC_DB_SSL_CLIENT_KEY_FILE: TestString.SSL_CLIENT_KEY_FILE,
       SMC_DB_SSL_CLIENT_KEY_PASSPHRASE: TestString.SSL_CLIENT_KEY_PASSPHRASE,
-    })
+    });
 
     // Assert
     //
@@ -145,7 +146,7 @@ describe("#sslConfigFromCoCalcEnv", () => {
       SMC_DB_SSL_CLIENT_CERT_FILE: TestString.SSL_CLIENT_CERT_FILE,
       SMC_DB_SSL_CLIENT_KEY_FILE: TestString.SSL_CLIENT_KEY_FILE,
       SMC_DB_SSL_CLIENT_KEY_PASSPHRASE: TestString.SSL_CLIENT_KEY_PASSPHRASE,
-    }
+    };
 
     // Act
     //
@@ -166,9 +167,11 @@ describe("#sslConfigFromCoCalcEnv", () => {
 
     // Act/Assert
     //
-    expect(() => sslConfigFromCoCalcEnv({
-      SMC_DB_SSL_CA_FILE: TestString.SSL_CA_FILE,
-    })).toThrow(readError);
+    expect(() =>
+      sslConfigFromCoCalcEnv({
+        SMC_DB_SSL_CA_FILE: TestString.SSL_CA_FILE,
+      }),
+    ).toThrow(readError);
   });
 
   it("throws error when client cert file cannot be read", async () => {
@@ -181,9 +184,11 @@ describe("#sslConfigFromCoCalcEnv", () => {
 
     // Act/Assert
     //
-    expect(() => sslConfigFromCoCalcEnv({
-      SMC_DB_SSL_CLIENT_CERT_FILE: TestString.SSL_CLIENT_CERT_FILE,
-    })).toThrow(readError);
+    expect(() =>
+      sslConfigFromCoCalcEnv({
+        SMC_DB_SSL_CLIENT_CERT_FILE: TestString.SSL_CLIENT_CERT_FILE,
+      }),
+    ).toThrow(readError);
   });
 
   it("throws error when client key file cannot be read", async () => {
@@ -196,9 +201,11 @@ describe("#sslConfigFromCoCalcEnv", () => {
 
     // Act/Assert
     //
-    expect(() => sslConfigFromCoCalcEnv({
-      SMC_DB_SSL_CLIENT_KEY_FILE: TestString.SSL_CLIENT_KEY_FILE,
-    })).toThrow(readError);
+    expect(() =>
+      sslConfigFromCoCalcEnv({
+        SMC_DB_SSL_CLIENT_KEY_FILE: TestString.SSL_CLIENT_KEY_FILE,
+      }),
+    ).toThrow(readError);
   });
 });
 

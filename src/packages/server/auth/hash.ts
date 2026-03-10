@@ -7,12 +7,12 @@ export default function hash(
   algorithm: string,
   salt: string,
   iterations: number,
-  password: string
+  password: string,
 ): string {
   // there are cases where createHmac throws an error, because "salt" is undefined
   if (algorithm == null || salt == null) {
     throw new Error(
-      `undefined arguments: algorithm='${algorithm}' salt='${salt}'`
+      `undefined arguments: algorithm='${algorithm}' salt='${salt}'`,
     );
   }
   iterations = iterations || 1;

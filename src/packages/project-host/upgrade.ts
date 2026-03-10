@@ -96,10 +96,7 @@ function describeError(err: any): string {
   const cause = err?.cause;
   if (cause) {
     const detail =
-      cause?.code ??
-      cause?.errno ??
-      cause?.message ??
-      JSON.stringify(cause);
+      cause?.code ?? cause?.errno ?? cause?.message ?? JSON.stringify(cause);
     parts.push(`cause=${detail}`);
   }
   return parts.join(": ");
@@ -330,7 +327,11 @@ async function resolveArtifact(
         `manifest OS mismatch (${canonicalArtifact}): expected ${os}, got ${manifestOs}`,
       );
     }
-    if (canonicalArtifact === "tools" && manifestArch && manifestArch !== arch) {
+    if (
+      canonicalArtifact === "tools" &&
+      manifestArch &&
+      manifestArch !== arch
+    ) {
       throw new Error(
         `manifest arch mismatch (${canonicalArtifact}): expected ${arch}, got ${manifestArch}`,
       );
@@ -359,18 +360,20 @@ async function resolveArtifact(
     version = extractVersionFromUrl(url, canonicalArtifact) ?? "unknown";
   }
   const projectHostPaths =
-    canonicalArtifact === "project-host" ? resolveProjectHostPaths() : undefined;
+    canonicalArtifact === "project-host"
+      ? resolveProjectHostPaths()
+      : undefined;
   const root =
     canonicalArtifact === "project-host"
-      ? projectHostPaths?.root ?? PROJECT_HOST_ROOT
+      ? (projectHostPaths?.root ?? PROJECT_HOST_ROOT)
       : canonicalArtifact === "project"
-        ? process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT
+        ? (process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT)
         : process.env.COCALC_PROJECT_TOOLS
           ? path.dirname(process.env.COCALC_PROJECT_TOOLS)
           : DEFAULT_TOOLS_ROOT;
   const stripComponents =
     canonicalArtifact === "project-host"
-      ? projectHostPaths?.stripComponents ?? 2
+      ? (projectHostPaths?.stripComponents ?? 2)
       : 1;
   const versionDir =
     canonicalArtifact === "project-host"
@@ -380,7 +383,7 @@ async function resolveArtifact(
       : path.join(root, version);
   const currentLink =
     canonicalArtifact === "project-host"
-      ? projectHostPaths?.currentLink ?? path.join(root, "current")
+      ? (projectHostPaths?.currentLink ?? path.join(root, "current"))
       : path.join(root, "current");
   return {
     artifact,
@@ -472,12 +475,20 @@ async function downloadAndInstall(
     version: resolved.version,
     current: resolved.currentLink,
   });
-  return { artifact: resolved.artifact, version: resolved.version, status: "updated" };
+  return {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    status: "updated",
+  };
 }
 
 async function scheduleHostRestart() {
   const override = process.env.COCALC_PROJECT_HOST_BIN;
-  const candidate = path.join(PROJECT_HOST_ROOT, "current", "cocalc-project-host");
+  const candidate = path.join(
+    PROJECT_HOST_ROOT,
+    "current",
+    "cocalc-project-host",
+  );
   const bin = override
     ? override
     : fs.existsSync(candidate)
@@ -492,7 +503,9 @@ async function scheduleHostRestart() {
   logger.info("upgrade: scheduled project-host restart");
 }
 
-function orderTargets(targets: SoftwareUpgradeTarget[]): SoftwareUpgradeTarget[] {
+function orderTargets(
+  targets: SoftwareUpgradeTarget[],
+): SoftwareUpgradeTarget[] {
   const order: SoftwareArtifact[] = [
     "tools",
     "project",
@@ -516,17 +529,17 @@ export async function upgradeSoftware(
     const results: UpgradeSoftwareResult[] = [];
     let restartHost = false;
     for (const target of targets) {
-  const resolved = await resolveArtifact(target, baseUrl);
-  logger.info("upgrade: resolved artifact", {
-    artifact: resolved.artifact,
-    version: resolved.version,
-    url: resolved.url,
-    root: resolved.root,
-    versionDir: resolved.versionDir,
-    currentLink: resolved.currentLink,
-    stripComponents: resolved.stripComponents,
-  });
-  const result = await downloadAndInstall(resolved);
+      const resolved = await resolveArtifact(target, baseUrl);
+      logger.info("upgrade: resolved artifact", {
+        artifact: resolved.artifact,
+        version: resolved.version,
+        url: resolved.url,
+        root: resolved.root,
+        versionDir: resolved.versionDir,
+        currentLink: resolved.currentLink,
+        stripComponents: resolved.stripComponents,
+      });
+      const result = await downloadAndInstall(resolved);
       results.push(result);
       if (resolved.artifact === "project-host" && result.status === "updated") {
         restartHost = true;

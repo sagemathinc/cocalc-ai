@@ -128,14 +128,11 @@ export async function ensureWorkspaceChatForPath(opts: {
   project_id: string;
   account_id: string;
   path: string;
-}): Promise<
-  | {
-      workspace: WorkspaceRecord;
-      chat_path: string;
-      assigned: boolean;
-    }
-  | null
-> {
+}): Promise<{
+  workspace: WorkspaceRecord;
+  chat_path: string;
+  assigned: boolean;
+} | null> {
   const workspace = await resolveStoredWorkspaceForPath(opts);
   if (!workspace) return null;
   return await ensureWorkspaceChatPath({

@@ -49,7 +49,7 @@ describe(`explicitly build a cluster with ${clusterSize} nodes and ensure state 
   it("check that interest data is *eventually* consistent", async () => {
     await waitForConsistentState(servers, TIMEOUT);
   });
-  
+
   it("check again that interest data is *eventually* consistent", async () => {
     await delay(1000);
     await waitForConsistentState(servers, TIMEOUT);

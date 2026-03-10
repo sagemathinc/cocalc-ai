@@ -19,7 +19,10 @@ import editURL from "lib/share/edit-url";
 import { Icon } from "@cocalc/frontend/components/icon";
 import RunApp from "components/app/path";
 import useCustomize from "lib/use-customize";
-import { WORKSPACE_LABEL, WORKSPACES_LABEL } from "@cocalc/util/i18n/terminology";
+import {
+  WORKSPACE_LABEL,
+  WORKSPACES_LABEL,
+} from "@cocalc/util/i18n/terminology";
 
 interface Props {
   id;

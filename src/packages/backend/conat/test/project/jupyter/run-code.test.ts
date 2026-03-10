@@ -595,7 +595,12 @@ describe("lifecycle messages are explicit and survive limit/disconnect flows", (
       .map((x) => x.lifecycle ?? x.msg_type)
       .filter((x) => typeof x == "string");
     expect(lifecycle).toEqual(
-      expect.arrayContaining(["run_start", "cell_start", "cell_done", "run_done"]),
+      expect.arrayContaining([
+        "run_start",
+        "cell_start",
+        "cell_done",
+        "run_done",
+      ]),
     );
     const streamIndex = outputs.findIndex((x) => x.msg_type === "stream");
     const cellDoneIndex = outputs.findIndex(

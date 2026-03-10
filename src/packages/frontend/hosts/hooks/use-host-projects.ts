@@ -45,7 +45,9 @@ export function useHostProjects({
           risk_only: riskOnly,
         });
         setState((prev) => ({
-          rows: append ? prev.rows.concat(response.rows ?? []) : response.rows ?? [],
+          rows: append
+            ? prev.rows.concat(response.rows ?? [])
+            : (response.rows ?? []),
           summary: response.summary,
           nextCursor: response.next_cursor,
           hostLastSeen: response.host_last_seen,

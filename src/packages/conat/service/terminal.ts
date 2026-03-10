@@ -42,10 +42,7 @@ interface TerminalApi {
   close: (browser_id: string) => Promise<void>;
 }
 
-export function createTerminalClient({
-  project_id,
-  termPath,
-}) {
+export function createTerminalClient({ project_id, termPath }) {
   return createServiceClient<TerminalApi>({
     project_id,
     path: termPath,

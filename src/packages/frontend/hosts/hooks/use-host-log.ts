@@ -12,7 +12,10 @@ export type HostLogEntry = {
 
 type HubClient = {
   hosts: {
-    getHostLog: (opts: { id: string; limit?: number }) => Promise<HostLogEntry[]>;
+    getHostLog: (opts: {
+      id: string;
+      limit?: number;
+    }) => Promise<HostLogEntry[]>;
   };
 };
 

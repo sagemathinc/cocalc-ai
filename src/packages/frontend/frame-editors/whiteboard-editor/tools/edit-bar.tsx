@@ -260,7 +260,7 @@ function Radius(props: ButtonProps) {
           // For code cell the default is "no border", but for a pen it might be something else.
           setDataField(
             { elements, actions },
-            { radius: !radius ? null : radius }
+            { radius: !radius ? null : radius },
           );
         }}
       />
@@ -296,7 +296,7 @@ function Opacity(props: ButtonProps) {
           // For code cell the default is "no border", but for a pen it might be something else.
           setDataField(
             { elements, actions },
-            { opacity: opacity == 1 ? null : opacity }
+            { opacity: opacity == 1 ? null : opacity },
           );
         }}
       />
@@ -352,7 +352,7 @@ export function SelectFontFamily(opts: SFFOpts) {
         >
           {fontFamily}
         </span>
-      </Option>
+      </Option>,
     );
   }
 

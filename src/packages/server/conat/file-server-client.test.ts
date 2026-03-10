@@ -5,7 +5,8 @@ let fileServerClientMock: jest.Mock;
 
 jest.mock("./route-project", () => ({
   __esModule: true,
-  materializeProjectHost: (...args: any[]) => materializeProjectHostMock(...args),
+  materializeProjectHost: (...args: any[]) =>
+    materializeProjectHostMock(...args),
 }));
 
 jest.mock("@cocalc/conat/files/file-server", () => ({

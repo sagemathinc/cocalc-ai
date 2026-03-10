@@ -271,7 +271,9 @@ describe("SmartAnchorTag", () => {
       </SmartAnchorTag>,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "src/workspaces.py%3A77" }));
+    fireEvent.click(
+      screen.getByRole("link", { name: "src/workspaces.py%3A77" }),
+    );
     await waitFor(() => {
       expect(loadTarget).toHaveBeenCalledWith(
         "files/home/wstein/project/src/workspaces.py",

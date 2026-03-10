@@ -44,7 +44,12 @@ const MASTER_CONAT_ROTATE_WINDOW_MS = Math.max(
       30 * 24 * 60 * 60 * 1000,
   ),
 );
-const MASTER_CONAT_RETRY_STEPS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+const MASTER_CONAT_RETRY_STEPS_MS = [
+  60_000,
+  5 * 60_000,
+  15 * 60_000,
+  60 * 60_000,
+];
 const MASTER_CONAT_MISSING_PROBE_MS = Math.max(
   5_000,
   Number(process.env.COCALC_MASTER_CONAT_TOKEN_MISSING_PROBE_MS ?? 30_000),
@@ -167,7 +172,10 @@ function listPublicKeys(lines: string[]): string[] {
   return keys;
 }
 
-async function writeAuthorizedKeysFile(path: string, lines: string[]): Promise<void> {
+async function writeAuthorizedKeysFile(
+  path: string,
+  lines: string[],
+): Promise<void> {
   const dir = dirname(path);
   await fsPromises.mkdir(dir, { recursive: true, mode: 0o700 });
   const normalized = [...lines];
@@ -305,7 +313,9 @@ async function readProjectRuntimeLogTail(project_id: string, lines?: number) {
     container,
   ]);
   if (inspect.exit_code !== 0) {
-    const inspectMessage = String(inspect.stderr ?? inspect.stdout ?? "").trim();
+    const inspectMessage = String(
+      inspect.stderr ?? inspect.stdout ?? "",
+    ).trim();
     if (containerMissingError(inspectMessage)) {
       return {
         project_id,
@@ -321,7 +331,10 @@ async function readProjectRuntimeLogTail(project_id: string, lines?: number) {
     );
   }
 
-  const running = String(inspect.stdout ?? "").trim().toLowerCase() === "true";
+  const running =
+    String(inspect.stdout ?? "")
+      .trim()
+      .toLowerCase() === "true";
   if (!running) {
     return {
       project_id,
@@ -406,10 +419,10 @@ export async function startMasterRegistration({
   const isSelfHostLocal = selfHostMode === "local";
   const public_url = isSelfHostLocal
     ? undefined
-    : process.env.PROJECT_HOST_PUBLIC_URL ?? `http://${host}:${port}`;
+    : (process.env.PROJECT_HOST_PUBLIC_URL ?? `http://${host}:${port}`);
   const internal_url = isSelfHostLocal
     ? undefined
-    : process.env.PROJECT_HOST_INTERNAL_URL ?? `http://${host}:${port}`;
+    : (process.env.PROJECT_HOST_INTERNAL_URL ?? `http://${host}:${port}`);
   const ssh_server =
     process.env.PROJECT_HOST_SSH_SERVER ??
     process.env.COCALC_SSH_SERVER ??
@@ -421,7 +434,8 @@ export async function startMasterRegistration({
 
   logger.info("registering with master", { masterAddress, id, public_url });
   let currentMasterConatToken = `${masterConatToken ?? ""}`.trim();
-  const pinnedMasterConatToken = `${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim();
+  const pinnedMasterConatToken =
+    `${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim();
   const bootstrapSource = getProjectHostBootstrapConatSource({
     fallbackConatUrl: masterAddress,
   });
@@ -489,11 +503,14 @@ export async function startMasterRegistration({
           masterConatToken: next,
         });
       } catch (err) {
-        logger.warn("failed recovering master conat token before registration", {
-          reason,
-          expectedPath: expectedTokenPath,
-          err,
-        });
+        logger.warn(
+          "failed recovering master conat token before registration",
+          {
+            reason,
+            expectedPath: expectedTokenPath,
+            err,
+          },
+        );
       } finally {
         inFlight = false;
       }
@@ -823,11 +840,14 @@ export async function startMasterRegistration({
       });
       return true;
     } catch (err) {
-      logger.warn("failed recovering master conat token via bootstrap endpoint", {
-        reason,
-        token_path: getProjectHostMasterConatTokenPath(),
-        err,
-      });
+      logger.warn(
+        "failed recovering master conat token via bootstrap endpoint",
+        {
+          reason,
+          token_path: getProjectHostMasterConatTokenPath(),
+          err,
+        },
+      );
       return false;
     }
   };
@@ -939,7 +959,9 @@ export async function startMasterRegistration({
   })();
 
   let ensureInFlight: Promise<boolean> | undefined;
-  const runEnsureMasterConatToken = async (reason: string): Promise<boolean> => {
+  const runEnsureMasterConatToken = async (
+    reason: string,
+  ): Promise<boolean> => {
     if (ensureInFlight) {
       return await ensureInFlight;
     }

@@ -98,9 +98,7 @@ function loadEnvFromFile(envFile: string): Record<string, string> {
   }
 }
 
-function normalizeEnv(
-  env: NodeJS.ProcessEnv,
-): Record<string, string> {
+function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const normalized: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined) {

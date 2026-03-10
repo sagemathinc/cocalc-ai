@@ -65,7 +65,13 @@ export async function close({
   await sub.drain();
 }
 
-function getSubject({ project_id, name = "" }: { project_id: string; name?: string }) {
+function getSubject({
+  project_id,
+  name = "",
+}: {
+  project_id: string;
+  name?: string;
+}) {
   return projectSubject({
     project_id,
     service: `files:read${name ?? ""}`,

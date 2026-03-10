@@ -14,7 +14,9 @@ export type BackupLroState = LroOpState;
 
 export type BackupOpsManagerOptions = {
   project_id: string;
-  setState: (state: { backup_ops?: ImmutableMap<string, BackupLroState> }) => void;
+  setState: (state: {
+    backup_ops?: ImmutableMap<string, BackupLroState>;
+  }) => void;
   isClosed: () => boolean;
   listLro: (opts: {
     scope_type: "project";

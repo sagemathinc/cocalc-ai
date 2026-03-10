@@ -44,7 +44,10 @@ export class PurchasesClient {
   async setQuota(
     service: Service,
     value: number,
-  ): Promise<{ minBalance: MoneyValue; services: { [service: string]: MoneyValue } }> {
+  ): Promise<{
+    minBalance: MoneyValue;
+    services: { [service: string]: MoneyValue };
+  }> {
     return await purchasesApi.setQuota(service, value);
   }
 

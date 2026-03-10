@@ -28,7 +28,7 @@ function compute_checksum(cell: Map<string, any>): string {
   const nbgrader = cell.getIn(["metadata", "nbgrader"]) as any;
   if (nbgrader == null)
     throw Error(
-      "bug -- compute_checksum should only be called on nbgrader cells"
+      "bug -- compute_checksum should only be called on nbgrader cells",
     );
 
   // add whether it's a grade cell and/or solution cell

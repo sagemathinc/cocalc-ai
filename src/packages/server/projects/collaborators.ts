@@ -52,7 +52,11 @@ function normalizeInviteDirection(
   value?: ProjectCollabInviteDirection,
 ): ProjectCollabInviteDirection {
   const direction = `${value ?? "all"}`.trim().toLowerCase();
-  if (direction === "inbound" || direction === "outbound" || direction === "all") {
+  if (
+    direction === "inbound" ||
+    direction === "outbound" ||
+    direction === "all"
+  ) {
     return direction;
   }
   throw new Error(
@@ -274,7 +278,9 @@ export async function createCollabInvite({
   const includeEmail = await isAdmin(account_id);
   await expirePendingCollabInvites(pool);
   const trimmedMessage = `${message ?? ""}`.trim();
-  const normalizedMessage = trimmedMessage ? trimmedMessage.slice(0, 512) : null;
+  const normalizedMessage = trimmedMessage
+    ? trimmedMessage.slice(0, 512)
+    : null;
 
   const { rows: accountRows } = await pool.query<{ account_id: string }>(
     "SELECT account_id FROM accounts WHERE account_id=$1 LIMIT 1",
@@ -307,7 +313,9 @@ export async function createCollabInvite({
     [invitee_account_id, account_id],
   );
   if (blockedRows[0]?.blocked) {
-    throw new Error("invite rejected: target account has blocked invites from you");
+    throw new Error(
+      "invite rejected: target account has blocked invites from you",
+    );
   }
 
   if (direct) {
@@ -320,7 +328,10 @@ export async function createCollabInvite({
       account_id: invitee_account_id,
       group: "collaborator",
     });
-    await syncProjectUsersOnHostBestEffort(project_id, "create-collab-invite-direct");
+    await syncProjectUsersOnHostBestEffort(
+      project_id,
+      "create-collab-invite-direct",
+    );
     const syntheticId = uuid();
     const now = new Date();
     const expires = new Date(

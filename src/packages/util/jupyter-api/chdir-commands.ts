@@ -29,7 +29,7 @@ export default function createChdirCommand(lang: string, path: string): string {
   } else {
     // e.g., "gap" -- I got stumped on that.
     throw Error(
-      `unable to change directory: chdir for language ${lang} is not implemented.`
+      `unable to change directory: chdir for language ${lang} is not implemented.`,
     );
   }
 }

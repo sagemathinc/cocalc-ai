@@ -58,12 +58,15 @@ function cookieNameFor(apiUrl: string, name: string): string {
   return basePathCookieName({ basePath, name });
 }
 
-export function spawnMarkerFromUrl(url: string | undefined): string | undefined {
+export function spawnMarkerFromUrl(
+  url: string | undefined,
+): string | undefined {
   const clean = `${url ?? ""}`.trim();
   if (!clean) return undefined;
   try {
     const parsed = new URL(clean);
-    const marker = `${parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) ?? ""}`.trim();
+    const marker =
+      `${parsed.searchParams.get(SPAWN_MARKER_QUERY_PARAM) ?? ""}`.trim();
     return marker || undefined;
   } catch {
     const match = clean.match(
@@ -127,11 +130,16 @@ export function readSpawnState(path: string): SpawnStateRecord | undefined {
 export function writeSpawnState(path: string, value: SpawnStateRecord): void {
   ensureSpawnStateDir();
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8" });
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: "utf8",
+  });
   renameSync(tmp, path);
 }
 
-export function writeDaemonConfig(path: string, value: PlaywrightDaemonConfig): void {
+export function writeDaemonConfig(
+  path: string,
+  value: PlaywrightDaemonConfig,
+): void {
   ensureSpawnStateDir();
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, {
@@ -173,7 +181,9 @@ export function parseDiscoveryTimeout(
   return clean ? Math.max(1_000, durationToMs(clean, fallbackMs)) : fallbackMs;
 }
 
-export function resolveChromiumExecutablePath(preferred?: string): string | undefined {
+export function resolveChromiumExecutablePath(
+  preferred?: string,
+): string | undefined {
   const explicit = `${preferred ?? ""}`.trim();
   if (explicit) return explicit;
   const envHint =
@@ -188,10 +198,14 @@ export function resolveChromiumExecutablePath(preferred?: string): string | unde
     "chrome",
   ];
   for (const command of candidates) {
-    const probe = spawnSync("bash", ["-lc", `command -v ${JSON.stringify(command)}`], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    const probe = spawnSync(
+      "bash",
+      ["-lc", `command -v ${JSON.stringify(command)}`],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
     if (probe.status === 0) {
       const path = `${probe.stdout ?? ""}`.trim().split(/\r?\n/)[0]?.trim();
       if (path) return path;
@@ -217,7 +231,10 @@ export function resolveSpawnTargetUrl({
   const base = new URL(apiUrl);
   if (projectId) {
     const basePath = base.pathname.replace(/\/+$/, "");
-    base.pathname = `${basePath}/projects/${projectId}/files`.replace(/\/+/g, "/");
+    base.pathname = `${basePath}/projects/${projectId}/files`.replace(
+      /\/+/g,
+      "/",
+    );
   }
   return base.toString();
 }
@@ -282,7 +299,9 @@ export async function waitForSpawnStateReady({
       throw new Error(state.error || "spawn daemon failed");
     }
     if (Date.now() - started > timeoutMs) {
-      const suffix = lastState?.status ? ` (last status=${lastState.status})` : "";
+      const suffix = lastState?.status
+        ? ` (last status=${lastState.status})`
+        : "";
       throw new Error(`timed out waiting for spawned browser daemon${suffix}`);
     }
     await sleep(250);
@@ -308,7 +327,9 @@ export async function waitForSpawnedSession({
     );
     if (match) return match;
     if (Date.now() - started > timeoutMs) {
-      throw new Error("timed out waiting for spawned browser session heartbeat");
+      throw new Error(
+        "timed out waiting for spawned browser session heartbeat",
+      );
     }
     await sleep(1_000);
   }
@@ -443,10 +464,15 @@ export async function reapSpawnStates({
   return rows;
 }
 
-export function listSpawnStates(): Array<{ file: string; state: SpawnStateRecord }> {
+export function listSpawnStates(): Array<{
+  file: string;
+  state: SpawnStateRecord;
+}> {
   ensureSpawnStateDir();
   const entries: Array<{ file: string; state: SpawnStateRecord }> = [];
-  for (const name of (existsSync(SPAWN_STATE_DIR) ? readdirSync(SPAWN_STATE_DIR) : [])) {
+  for (const name of existsSync(SPAWN_STATE_DIR)
+    ? readdirSync(SPAWN_STATE_DIR)
+    : []) {
     if (!name.endsWith(".json")) continue;
     const file = join(SPAWN_STATE_DIR, name);
     const state = readSpawnState(file);
@@ -471,7 +497,9 @@ export function resolveSpawnStateById(
   } catch {
     // ignore invalid spawn-id format and continue searching by browser id
   }
-  return listSpawnStates().find((x) => `${x.state.browser_id ?? ""}`.trim() === clean);
+  return listSpawnStates().find(
+    (x) => `${x.state.browser_id ?? ""}`.trim() === clean,
+  );
 }
 
 export function resolveSpawnIpcDir({

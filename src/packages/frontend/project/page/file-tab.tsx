@@ -450,11 +450,7 @@ export function FileTab(props: Readonly<Props>) {
         name={icon}
       />
       {showLabel ? (
-        <DisplayedLabel
-          path={path}
-          label={label}
-          inline={!isFixedTab}
-        />
+        <DisplayedLabel path={path} label={label} inline={!isFixedTab} />
       ) : null}
       {tags}
     </>

@@ -9,7 +9,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { encode_path } from "@cocalc/util/misc";
 
 export const IS_EMBEDDED = new URL(location.href).pathname.endsWith(
-  "embed.html"
+  "embed.html",
 );
 
 function handleTarget(): string {

@@ -40,9 +40,7 @@ export function normalizeRootfsEntry(
   entry: RootfsImageEntry,
   source?: string,
 ): RootfsImageEntry {
-  const baseTags = (entry.tags ?? [])
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+  const baseTags = (entry.tags ?? []).map((tag) => tag.trim()).filter(Boolean);
   const tags = source
     ? Array.from(new Set([...baseTags, `source:${source}`]))
     : baseTags;

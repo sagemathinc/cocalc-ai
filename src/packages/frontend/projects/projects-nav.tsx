@@ -5,13 +5,7 @@
 
 import type { TabsProps } from "antd";
 import { Avatar, Button, Divider, Popover, Select, Tabs, Tooltip } from "antd";
-import {
-  CSSProperties,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CSS,
@@ -116,8 +110,8 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     hostId,
     hostInfo,
   });
-  const projectStateKey =
-    (project_state ?? "opened") as keyof typeof COMPUTE_STATES;
+  const projectStateKey = (project_state ??
+    "opened") as keyof typeof COMPUTE_STATES;
 
   const icon =
     any_alerts && project_state === "running" ? (
@@ -280,9 +274,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
   );
   const { bookmarkedProjects } = useBookmarkedProjects();
   //const project_map = useTypedRedux("projects", "project_map");
-  const [mode, setMode] = useState<ProjectsNavMode>(
-    getStoredProjectsNavMode,
-  );
+  const [mode, setMode] = useState<ProjectsNavMode>(getStoredProjectsNavMode);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const selectRef = useRef<any>(null);
@@ -582,9 +574,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
         }}
       >
         <Tooltip
-          title={
-            mode === "tabs" ? "Switch to project list" : "Switch to tabs"
-          }
+          title={mode === "tabs" ? "Switch to project list" : "Switch to tabs"}
         >
           <Button
             size="small"
@@ -629,9 +619,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
                       >
                         {group.label}
                       </div>
-                      {group.options.map((option) =>
-                        renderOptionItem(option),
-                      )}
+                      {group.options.map((option) => renderOptionItem(option))}
                     </div>
                   ))
                 ) : (
@@ -685,9 +673,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
             >
               <Button
                 size="small"
-                onClick={() =>
-                  setMode(mode === "tabs" ? "dropdown" : "tabs")
-                }
+                onClick={() => setMode(mode === "tabs" ? "dropdown" : "tabs")}
               >
                 {mode === "tabs" ? "Tabs" : "List"}
               </Button>

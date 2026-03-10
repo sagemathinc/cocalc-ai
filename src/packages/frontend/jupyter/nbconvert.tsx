@@ -123,8 +123,7 @@ const Error: React.FC<ErrorProps> = (props: ErrorProps) => {
         {error.toLowerCase().includes("exporter") ? (
           <>
             You probably need to <b>restart your {projectLabelLower}</b> in
-            {projectLabelLower}{" "}
-            settings.
+            {projectLabelLower} settings.
           </>
         ) : (
           <>

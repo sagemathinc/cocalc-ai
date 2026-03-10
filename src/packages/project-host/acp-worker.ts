@@ -4,9 +4,13 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { setConatClient } from "@cocalc/conat/client";
-import { disposeAcpAgents, runDetachedAcpQueueWorker } from "@cocalc/lite/hub/acp";
+import {
+  disposeAcpAgents,
+  runDetachedAcpQueueWorker,
+} from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
+import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/filesystem";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
@@ -84,7 +88,9 @@ function connectMasterClient() {
   }
   const currentToken = getProjectHostMasterConatToken();
   if (!`${currentToken ?? ""}`.trim()) {
-    logger.warn("starting ACP worker without master token; hub-backed Codex auth/metering may be unavailable");
+    logger.warn(
+      "starting ACP worker without master token; hub-backed Codex auth/metering may be unavailable",
+    );
   }
   const client = connect({
     address,
@@ -124,6 +130,7 @@ export async function main(): Promise<void> {
     getLogger,
   });
   const client = createConatClient();
+  initProjectRunnerFilesystem({ client });
   const masterClient = connectMasterClient();
   registerPidFile(pidFile, async () => {
     await disposeAcpAgents();

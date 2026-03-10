@@ -22,15 +22,7 @@ between them.
 
 const SHARE_HELP_URL = "https://doc.cocalc.com/share.html";
 
-import {
-  Alert,
-  Button,
-  Col,
-  Input,
-  Radio,
-  Row,
-  Space,
-} from "antd";
+import { Alert, Button, Col, Input, Radio, Row, Space } from "antd";
 import { useMemo, useState } from "react";
 import { CSS, redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {

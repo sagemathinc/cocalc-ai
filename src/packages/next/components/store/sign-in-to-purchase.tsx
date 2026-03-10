@@ -11,7 +11,7 @@ interface SignInToPurchaseProps {
 }
 
 export const SignInToPurchase: React.FC<SignInToPurchaseProps> = (
-  props: SignInToPurchaseProps
+  props: SignInToPurchaseProps,
 ) => {
   const { noAccount = false } = props;
 
@@ -20,8 +20,11 @@ export const SignInToPurchase: React.FC<SignInToPurchaseProps> = (
   function body() {
     return (
       <div>
-        Feel free to explore pricing, but you must be <A href="/auth/sign-in" external>signed in</A>
-        {" "} with a regular account in order to purchase a license.
+        Feel free to explore pricing, but you must be{" "}
+        <A href="/auth/sign-in" external>
+          signed in
+        </A>{" "}
+        with a regular account in order to purchase a license.
       </div>
     );
   }

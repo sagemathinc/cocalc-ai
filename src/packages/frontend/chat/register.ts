@@ -20,11 +20,11 @@ interface ChatInstanceOptions {
 export function isChatActions(actions: any): actions is ChatActions {
   return Boolean(
     actions &&
-      typeof actions.sendChat === "function" &&
-      typeof actions.getMessagesInThread === "function" &&
-      typeof actions.clearAllFilters === "function" &&
-      typeof actions.setSelectedThread === "function" &&
-      actions.messageCache != null,
+    typeof actions.sendChat === "function" &&
+    typeof actions.getMessagesInThread === "function" &&
+    typeof actions.clearAllFilters === "function" &&
+    typeof actions.setSelectedThread === "function" &&
+    actions.messageCache != null,
   );
 }
 

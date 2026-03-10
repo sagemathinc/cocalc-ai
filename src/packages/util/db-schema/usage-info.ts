@@ -32,8 +32,7 @@ Table({
   },
   rules: {
     durability: "ephemeral", // won't be stored in the database at all ever.
-    desc:
-      "Resource usage information for processes associated with a specific file (e.g. jupyter notbeook)",
+    desc: "Resource usage information for processes associated with a specific file (e.g. jupyter notbeook)",
     primary_key: ["project_id", "path"],
     user_query: {
       get: {

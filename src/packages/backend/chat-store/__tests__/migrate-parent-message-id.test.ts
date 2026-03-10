@@ -21,7 +21,9 @@ function createDb(dbPath: string): DatabaseSync {
 
 describe("migrateArchivedParentMessageIds", () => {
   it("canonicalizes archived legacy rows to parent_message_id", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "archived-parent-ids-"));
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), "archived-parent-ids-"),
+    );
     const dbPath = path.join(tmp, "offload.sqlite3");
     const db = createDb(dbPath);
     const root = {
@@ -30,7 +32,13 @@ describe("migrateArchivedParentMessageIds", () => {
       date: "2026-02-20T00:00:00.000Z",
       message_id: "root-1",
       thread_id: "thread-1",
-      history: [{ author_id: "user-1", content: "root", date: "2026-02-20T00:00:00.000Z" }],
+      history: [
+        {
+          author_id: "user-1",
+          content: "root",
+          date: "2026-02-20T00:00:00.000Z",
+        },
+      ],
     };
     const reply = {
       event: "chat",
@@ -40,13 +48,31 @@ describe("migrateArchivedParentMessageIds", () => {
       thread_id: "thread-1",
       reply_to: "2026-02-20T00:00:00.000Z",
       reply_to_message_id: "root-1",
-      history: [{ author_id: "user-2", content: "reply", date: "2026-02-20T00:01:00.000Z" }],
+      history: [
+        {
+          author_id: "user-2",
+          content: "reply",
+          date: "2026-02-20T00:01:00.000Z",
+        },
+      ],
     };
     const insert = db.prepare(
       "INSERT INTO archived_rows(chat_id, thread_id, message_id, date_ms, row_json) VALUES(?, ?, ?, ?, ?)",
     );
-    insert.run("chat-1", "thread-1", "root-1", Date.parse(root.date), JSON.stringify(root));
-    insert.run("chat-1", "thread-1", "reply-1", Date.parse(reply.date), JSON.stringify(reply));
+    insert.run(
+      "chat-1",
+      "thread-1",
+      "root-1",
+      Date.parse(root.date),
+      JSON.stringify(root),
+    );
+    insert.run(
+      "chat-1",
+      "thread-1",
+      "reply-1",
+      Date.parse(reply.date),
+      JSON.stringify(reply),
+    );
     db.close();
 
     const report = await migrateArchivedParentMessageIds({
@@ -59,7 +85,9 @@ describe("migrateArchivedParentMessageIds", () => {
 
     const verifyDb = new DatabaseSync(dbPath);
     const rows = verifyDb
-      .prepare("SELECT message_id, row_json FROM archived_rows ORDER BY row_id ASC")
+      .prepare(
+        "SELECT message_id, row_json FROM archived_rows ORDER BY row_id ASC",
+      )
       .all() as Array<{ message_id: string; row_json: string }>;
     const rootRow = JSON.parse(rows[0].row_json);
     const replyRow = JSON.parse(rows[1].row_json);

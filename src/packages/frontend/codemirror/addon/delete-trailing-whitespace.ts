@@ -27,7 +27,7 @@ defineExtension(
     if (text1.length !== text2.length) {
       // invariant: the number of lines cannot change!
       console.log(
-        "Internal error -- there is a bug in delete_trailing_whitespace; please report."
+        "Internal error -- there is a bug in delete_trailing_whitespace; please report.",
       );
       return;
     }
@@ -74,5 +74,5 @@ defineExtension(
         }
       });
     }
-  }
+  },
 );

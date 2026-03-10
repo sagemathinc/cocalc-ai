@@ -90,7 +90,9 @@ export function registerBrowserSessionCommands({
             throw new Error("--max-age-ms must be a positive number");
           }
           if (opts.includeStale && opts.activeOnly) {
-            throw new Error("--include-stale and --active-only cannot both be set");
+            throw new Error(
+              "--include-stale and --active-only cannot both be set",
+            );
           }
           const projectId = `${opts.projectId ?? ""}`.trim();
           const sessions = (await ctx.hub.system.listBrowserSessions({
@@ -101,14 +103,14 @@ export function registerBrowserSessionCommands({
             .filter((s) => (opts.activeOnly ? !s.stale : true))
             .filter((s) => sessionMatchesProject(s, projectId))
             .map((s) => ({
-            browser_id: s.browser_id,
-            session_name: s.session_name ?? "",
-            active_project_id: s.active_project_id ?? "",
-            open_projects: s.open_projects?.length ?? 0,
-            stale: !!s.stale,
-            updated_at: s.updated_at,
-            created_at: s.created_at,
-            url: s.url ?? "",
+              browser_id: s.browser_id,
+              session_name: s.session_name ?? "",
+              active_project_id: s.active_project_id ?? "",
+              open_projects: s.open_projects?.length ?? 0,
+              stale: !!s.stale,
+              updated_at: s.updated_at,
+              created_at: s.created_at,
+              url: s.url ?? "",
             }));
         });
       },
@@ -123,27 +125,34 @@ export function registerBrowserSessionCommands({
       "--api-url <url>",
       "explicit API URL scope for saved default (defaults to active context API URL)",
     )
-    .action(async (browserHint: string, opts: { apiUrl?: string }, command: Command) => {
-      await deps.withContext(command, "browser session use", async (ctx) => {
-        const sessions = (await ctx.hub.system.listBrowserSessions({
-          include_stale: true,
-        })) as BrowserSessionInfo[];
-        const selected = resolveBrowserSession(sessions, browserHint);
-        const scopedApiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
-        const saved = saveProfileBrowserId({
-          deps,
-          command,
-          browser_id: selected.browser_id,
-          apiBaseUrl: scopedApiUrl,
+    .action(
+      async (
+        browserHint: string,
+        opts: { apiUrl?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser session use", async (ctx) => {
+          const sessions = (await ctx.hub.system.listBrowserSessions({
+            include_stale: true,
+          })) as BrowserSessionInfo[];
+          const selected = resolveBrowserSession(sessions, browserHint);
+          const scopedApiUrl =
+            `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+          const saved = saveProfileBrowserId({
+            deps,
+            command,
+            browser_id: selected.browser_id,
+            apiBaseUrl: scopedApiUrl,
+          });
+          return {
+            profile: saved.profile,
+            browser_id: selected.browser_id,
+            stale: !!selected.stale,
+            api_scope: scopedApiUrl ?? null,
+          };
         });
-        return {
-          profile: saved.profile,
-          browser_id: selected.browser_id,
-          stale: !!selected.stale,
-          api_scope: scopedApiUrl ?? null,
-        };
-      });
-    });
+      },
+    );
 
   session
     .command("clear")
@@ -156,7 +165,8 @@ export function registerBrowserSessionCommands({
     )
     .action(async (opts: { apiUrl?: string }, command: Command) => {
       await deps.withContext(command, "browser session clear", async (ctx) => {
-        const scopedApiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+        const scopedApiUrl =
+          `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
         const saved = saveProfileBrowserId({
           deps,
           command,
@@ -176,8 +186,14 @@ export function registerBrowserSessionCommands({
     .description(
       "spawn a dedicated Playwright-backed Chromium browser session for automation",
     )
-    .option("--api-url <url>", "CoCalc API/base URL (defaults to active CLI context)")
-    .option("--target-url <url>", "exact URL to open in spawned Chromium session")
+    .option(
+      "--api-url <url>",
+      "CoCalc API/base URL (defaults to active CLI context)",
+    )
+    .option(
+      "--target-url <url>",
+      "exact URL to open in spawned Chromium session",
+    )
     .option("--project <project>", "project id or name to open")
     .option(
       "--project-id <id>",
@@ -187,22 +203,13 @@ export function registerBrowserSessionCommands({
       "--session-name <name>",
       "set document.title for easier identification in browser session list",
     )
-    .option(
-      "--spawn-id <id>",
-      "explicit spawn id (defaults to generated id)",
-    )
+    .option("--spawn-id <id>", "explicit spawn id (defaults to generated id)")
     .option(
       "--chromium <path>",
       "explicit Chromium executable path (defaults to auto-detect from PATH)",
     )
-    .option(
-      "--headless",
-      "launch Chromium in headless mode (default)",
-    )
-    .option(
-      "--headed",
-      "launch Chromium in visible headed mode",
-    )
+    .option("--headless", "launch Chromium in headless mode (default)")
+    .option("--headed", "launch Chromium in visible headed mode")
     .option(
       "--ready-timeout <duration>",
       "timeout for daemon startup readiness (e.g. 10s, 1m)",
@@ -240,162 +247,181 @@ export function registerBrowserSessionCommands({
             "browser session spawn is unsupported in standalone SEA binary; use JS CLI (e.g. node ./packages/cli/dist/bin/cocalc.js ...).",
           );
         }
-        await deps.withContext(command, "browser session spawn", async (ctx) => {
-          const profileSelection = loadProfileSelection(deps, command);
-          const globals = deps.globalsFrom(command);
-          const apiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim();
-          if (!apiUrl) {
-            throw new Error("api url is required; pass --api-url or configure COCALC_API_URL");
-          }
-          let parsedApiUrl: string;
-          try {
-            parsedApiUrl = new URL(apiUrl).toString();
-          } catch {
-            throw new Error(`invalid --api-url '${apiUrl}'`);
-          }
-          await reapSpawnStates({
-            timeoutMs: 1_500,
-            stopRunning: false,
-            removeStateFiles: true,
-          });
-          const projectHint = `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-          const project_id = !projectHint
-            ? undefined
-            : isValidUUID(projectHint)
-              ? projectHint
-              : (await deps.resolveProject(ctx, projectHint)).project_id;
-          const spawnId = `${opts.spawnId ?? ""}`.trim() || randomSpawnId();
-          const stateFile = spawnStateFile(spawnId);
-          const existing = readSpawnState(stateFile);
-          if (existing?.pid && isProcessRunning(existing.pid)) {
-            throw new Error(
-              `spawn id '${spawnId}' is already active (pid ${existing.pid}); destroy it first`,
+        await deps.withContext(
+          command,
+          "browser session spawn",
+          async (ctx) => {
+            const profileSelection = loadProfileSelection(deps, command);
+            const globals = deps.globalsFrom(command);
+            const apiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim();
+            if (!apiUrl) {
+              throw new Error(
+                "api url is required; pass --api-url or configure COCALC_API_URL",
+              );
+            }
+            let parsedApiUrl: string;
+            try {
+              parsedApiUrl = new URL(apiUrl).toString();
+            } catch {
+              throw new Error(`invalid --api-url '${apiUrl}'`);
+            }
+            await reapSpawnStates({
+              timeoutMs: 1_500,
+              stopRunning: false,
+              removeStateFiles: true,
+            });
+            const projectHint =
+              `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+            const project_id = !projectHint
+              ? undefined
+              : isValidUUID(projectHint)
+                ? projectHint
+                : (await deps.resolveProject(ctx, projectHint)).project_id;
+            const spawnId = `${opts.spawnId ?? ""}`.trim() || randomSpawnId();
+            const stateFile = spawnStateFile(spawnId);
+            const existing = readSpawnState(stateFile);
+            if (existing?.pid && isProcessRunning(existing.pid)) {
+              throw new Error(
+                `spawn id '${spawnId}' is already active (pid ${existing.pid}); destroy it first`,
+              );
+            }
+            const marker = `${spawnId}-${Math.random().toString(36).slice(2, 8)}`;
+            const targetUrl = resolveSpawnTargetUrl({
+              apiUrl: parsedApiUrl,
+              projectId: project_id,
+              explicitTargetUrl: opts.targetUrl,
+            });
+            const markedTargetUrl = withSpawnMarker(targetUrl, marker);
+            const chromiumPath = resolveChromiumExecutablePath(opts.chromium);
+            if (!chromiumPath) {
+              throw new Error(
+                "unable to find Chromium executable; pass --chromium <path> or set COCALC_CHROMIUM_BIN",
+              );
+            }
+            const hubPassword = resolveSecret(
+              globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
             );
-          }
-          const marker = `${spawnId}-${Math.random().toString(36).slice(2, 8)}`;
-          const targetUrl = resolveSpawnTargetUrl({
-            apiUrl: parsedApiUrl,
-            projectId: project_id,
-            explicitTargetUrl: opts.targetUrl,
-          });
-          const markedTargetUrl = withSpawnMarker(targetUrl, marker);
-          const chromiumPath = resolveChromiumExecutablePath(opts.chromium);
-          if (!chromiumPath) {
-            throw new Error(
-              "unable to find Chromium executable; pass --chromium <path> or set COCALC_CHROMIUM_BIN",
+            const apiKey = resolveSecret(
+              globals.apiKey ?? process.env.COCALC_API_KEY,
             );
-          }
-          const hubPassword = resolveSecret(globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD);
-          const apiKey = resolveSecret(globals.apiKey ?? process.env.COCALC_API_KEY);
-          const cookies = buildSpawnCookies({
-            apiUrl: parsedApiUrl,
-            hubPassword,
-            apiKey,
-          });
-          const sessionName =
-            `${opts.sessionName ?? ""}`.trim() || `CoCalc Agent Session (${spawnId})`;
-          const daemonConfigPath = join(
-            SPAWN_STATE_DIR,
-            `${spawnId}.config-${process.pid}-${Date.now()}.json`,
-          );
-          const daemonScript = resolvePath(
-            __dirname,
-            "..",
-            "..",
-            "core",
-            "browser-session-playwright-daemon.js",
-          );
-          if (!existsSync(daemonScript)) {
-            throw new Error(
-              `missing daemon script '${daemonScript}' (build @cocalc/cli first)`,
+            const cookies = buildSpawnCookies({
+              apiUrl: parsedApiUrl,
+              hubPassword,
+              apiKey,
+            });
+            const sessionName =
+              `${opts.sessionName ?? ""}`.trim() ||
+              `CoCalc Agent Session (${spawnId})`;
+            const daemonConfigPath = join(
+              SPAWN_STATE_DIR,
+              `${spawnId}.config-${process.pid}-${Date.now()}.json`,
             );
-          }
-          if (opts.headless && opts.headed) {
-            throw new Error("choose only one of --headless or --headed");
-          }
-          const spawnHeadless = opts.headed ? false : true;
-          writeDaemonConfig(daemonConfigPath, {
-            spawn_id: spawnId,
-            state_file: stateFile,
-            target_url: markedTargetUrl,
-            headless: spawnHeadless,
-            timeout_ms: parseDiscoveryTimeout(opts.readyTimeout, DEFAULT_READY_TIMEOUT_MS),
-            executable_path: chromiumPath,
-            session_name: sessionName,
-            cookies,
-          });
-          const child = spawnProcess(process.execPath, [daemonScript, daemonConfigPath], {
-            detached: true,
-            stdio: "ignore",
-            env: process.env,
-          });
-          child.unref();
-          const daemonPid = child.pid;
-          if (!daemonPid || daemonPid <= 0) {
-            throw new Error("failed to start browser spawn daemon");
-          }
-
-          try {
-            await waitForSpawnStateReady({
-              stateFile,
-              timeoutMs: parseDiscoveryTimeout(
+            const daemonScript = resolvePath(
+              __dirname,
+              "..",
+              "..",
+              "core",
+              "browser-session-playwright-daemon.js",
+            );
+            if (!existsSync(daemonScript)) {
+              throw new Error(
+                `missing daemon script '${daemonScript}' (build @cocalc/cli first)`,
+              );
+            }
+            if (opts.headless && opts.headed) {
+              throw new Error("choose only one of --headless or --headed");
+            }
+            const spawnHeadless = opts.headed ? false : true;
+            writeDaemonConfig(daemonConfigPath, {
+              spawn_id: spawnId,
+              state_file: stateFile,
+              target_url: markedTargetUrl,
+              headless: spawnHeadless,
+              timeout_ms: parseDiscoveryTimeout(
                 opts.readyTimeout,
                 DEFAULT_READY_TIMEOUT_MS,
               ),
-            });
-            const sessionInfo = await waitForSpawnedSession({
-              ctx,
-              marker,
-              timeoutMs: parseDiscoveryTimeout(
-                opts.timeout,
-                DEFAULT_DISCOVERY_TIMEOUT_MS,
-              ),
-            });
-            const latest = readSpawnState(stateFile);
-            if (latest) {
-              writeSpawnState(stateFile, {
-                ...latest,
-                browser_id: sessionInfo.browser_id,
-                session_url: `${sessionInfo.url ?? ""}`.trim() || undefined,
-                updated_at: nowIso(),
-              });
-            }
-            if (opts.use) {
-              saveProfileBrowserId({
-                deps,
-                command,
-                browser_id: sessionInfo.browser_id,
-                apiBaseUrl: ctx.apiBaseUrl,
-              });
-            }
-            return {
-              spawn_id: spawnId,
-              pid: daemonPid,
-              browser_id: sessionInfo.browser_id,
-              state_file: stateFile,
-              target_url: targetUrl,
-              launched_url: markedTargetUrl,
+              executable_path: chromiumPath,
               session_name: sessionName,
-              project_id: project_id ?? "",
-              profile: profileSelection.profile,
-              profile_default_set: !!opts.use,
-              mode: "playwright-spawned",
-              ...sessionTargetContext(ctx, sessionInfo, project_id),
-            };
-          } catch (err) {
-            await terminateSpawnedProcess({
-              pid: daemonPid,
-              timeoutMs: 2_500,
+              cookies,
             });
-            throw err;
-          } finally {
-            try {
-              unlinkSync(daemonConfigPath);
-            } catch {
-              // best-effort cleanup
+            const child = spawnProcess(
+              process.execPath,
+              [daemonScript, daemonConfigPath],
+              {
+                detached: true,
+                stdio: "ignore",
+                env: process.env,
+              },
+            );
+            child.unref();
+            const daemonPid = child.pid;
+            if (!daemonPid || daemonPid <= 0) {
+              throw new Error("failed to start browser spawn daemon");
             }
-          }
-        });
+
+            try {
+              await waitForSpawnStateReady({
+                stateFile,
+                timeoutMs: parseDiscoveryTimeout(
+                  opts.readyTimeout,
+                  DEFAULT_READY_TIMEOUT_MS,
+                ),
+              });
+              const sessionInfo = await waitForSpawnedSession({
+                ctx,
+                marker,
+                timeoutMs: parseDiscoveryTimeout(
+                  opts.timeout,
+                  DEFAULT_DISCOVERY_TIMEOUT_MS,
+                ),
+              });
+              const latest = readSpawnState(stateFile);
+              if (latest) {
+                writeSpawnState(stateFile, {
+                  ...latest,
+                  browser_id: sessionInfo.browser_id,
+                  session_url: `${sessionInfo.url ?? ""}`.trim() || undefined,
+                  updated_at: nowIso(),
+                });
+              }
+              if (opts.use) {
+                saveProfileBrowserId({
+                  deps,
+                  command,
+                  browser_id: sessionInfo.browser_id,
+                  apiBaseUrl: ctx.apiBaseUrl,
+                });
+              }
+              return {
+                spawn_id: spawnId,
+                pid: daemonPid,
+                browser_id: sessionInfo.browser_id,
+                state_file: stateFile,
+                target_url: targetUrl,
+                launched_url: markedTargetUrl,
+                session_name: sessionName,
+                project_id: project_id ?? "",
+                profile: profileSelection.profile,
+                profile_default_set: !!opts.use,
+                mode: "playwright-spawned",
+                ...sessionTargetContext(ctx, sessionInfo, project_id),
+              };
+            } catch (err) {
+              await terminateSpawnedProcess({
+                pid: daemonPid,
+                timeoutMs: 2_500,
+              });
+              throw err;
+            } finally {
+              try {
+                unlinkSync(daemonConfigPath);
+              } catch {
+                // best-effort cleanup
+              }
+            }
+          },
+        );
       },
     );
 
@@ -437,77 +463,81 @@ export function registerBrowserSessionCommands({
         opts: { timeout?: string; keepState?: boolean },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser session destroy", async (ctx) => {
-          const resolved = resolveSpawnStateById(id);
-          if (!resolved) {
-            throw new Error(
-              `spawned browser session '${id}' not found (try 'cocalc browser session spawned')`,
-            );
-          }
-          const { file, state } = resolved;
-          const pid = Number(state.pid);
-          const shutdown = await terminateSpawnedProcess({
-            pid,
-            timeoutMs: parseDiscoveryTimeout(
-              opts.timeout,
-              DEFAULT_DESTROY_TIMEOUT_MS,
-            ),
-          });
-          const browserPid = Number(state.browser_pid ?? 0);
-          const browserShutdown =
-            browserPid > 0 && isProcessRunning(browserPid)
-              ? await terminateSpawnedProcess({
-                  pid: browserPid,
-                  timeoutMs: parseDiscoveryTimeout(
-                    opts.timeout,
-                    DEFAULT_DESTROY_TIMEOUT_MS,
-                  ),
-                })
-              : { terminated: true, killed: false };
-          let removedRemoteSession = false;
-          const browserId = `${state.browser_id ?? ""}`.trim();
-          if (browserId) {
-            try {
-              const removed = await ctx.hub.system.removeBrowserSession({
-                browser_id: browserId,
-              });
-              removedRemoteSession = !!removed?.removed;
-            } catch {
-              removedRemoteSession = false;
+        await deps.withContext(
+          command,
+          "browser session destroy",
+          async (ctx) => {
+            const resolved = resolveSpawnStateById(id);
+            if (!resolved) {
+              throw new Error(
+                `spawned browser session '${id}' not found (try 'cocalc browser session spawned')`,
+              );
             }
-          }
-          const stoppedState: SpawnStateRecord = {
-            ...state,
-            status: "stopped",
-            reason: "destroy-command",
-            stopped_at: nowIso(),
-            updated_at: nowIso(),
-          };
-          let stateFileRemoved = false;
-          if (opts.keepState) {
-            writeSpawnState(file, stoppedState);
-          } else {
-            try {
-              unlinkSync(file);
-              stateFileRemoved = true;
-            } catch {
+            const { file, state } = resolved;
+            const pid = Number(state.pid);
+            const shutdown = await terminateSpawnedProcess({
+              pid,
+              timeoutMs: parseDiscoveryTimeout(
+                opts.timeout,
+                DEFAULT_DESTROY_TIMEOUT_MS,
+              ),
+            });
+            const browserPid = Number(state.browser_pid ?? 0);
+            const browserShutdown =
+              browserPid > 0 && isProcessRunning(browserPid)
+                ? await terminateSpawnedProcess({
+                    pid: browserPid,
+                    timeoutMs: parseDiscoveryTimeout(
+                      opts.timeout,
+                      DEFAULT_DESTROY_TIMEOUT_MS,
+                    ),
+                  })
+                : { terminated: true, killed: false };
+            let removedRemoteSession = false;
+            const browserId = `${state.browser_id ?? ""}`.trim();
+            if (browserId) {
+              try {
+                const removed = await ctx.hub.system.removeBrowserSession({
+                  browser_id: browserId,
+                });
+                removedRemoteSession = !!removed?.removed;
+              } catch {
+                removedRemoteSession = false;
+              }
+            }
+            const stoppedState: SpawnStateRecord = {
+              ...state,
+              status: "stopped",
+              reason: "destroy-command",
+              stopped_at: nowIso(),
+              updated_at: nowIso(),
+            };
+            let stateFileRemoved = false;
+            if (opts.keepState) {
               writeSpawnState(file, stoppedState);
+            } else {
+              try {
+                unlinkSync(file);
+                stateFileRemoved = true;
+              } catch {
+                writeSpawnState(file, stoppedState);
+              }
             }
-          }
-          return {
-            spawn_id: state.spawn_id,
-            pid,
-            browser_pid: browserPid || undefined,
-            browser_id: state.browser_id ?? "",
-            terminated: shutdown.terminated,
-            force_killed: shutdown.killed,
-            browser_terminated: browserShutdown.terminated,
-            browser_force_killed: browserShutdown.killed,
-            remote_session_removed: removedRemoteSession,
-            state_file: file,
-            state_file_removed: stateFileRemoved,
-          };
-        });
+            return {
+              spawn_id: state.spawn_id,
+              pid,
+              browser_pid: browserPid || undefined,
+              browser_id: state.browser_id ?? "",
+              terminated: shutdown.terminated,
+              force_killed: shutdown.killed,
+              browser_terminated: browserShutdown.terminated,
+              browser_force_killed: browserShutdown.killed,
+              remote_session_removed: removedRemoteSession,
+              state_file: file,
+              state_file_removed: stateFileRemoved,
+            };
+          },
+        );
       },
     );
 
@@ -546,9 +576,13 @@ export function registerBrowserSessionCommands({
           return {
             scanned: rows.length,
             stop_running: !!opts.stopRunning,
-            removed_state_files: rows.filter((x) => x.state_file_removed).length,
-            daemon_processes_terminated: rows.filter((x) => x.daemon_terminated).length,
-            browser_processes_terminated: rows.filter((x) => x.browser_terminated).length,
+            removed_state_files: rows.filter((x) => x.state_file_removed)
+              .length,
+            daemon_processes_terminated: rows.filter((x) => x.daemon_terminated)
+              .length,
+            browser_processes_terminated: rows.filter(
+              (x) => x.browser_terminated,
+            ).length,
             rows,
           };
         });

@@ -29,7 +29,16 @@ is itself  deep, being based on diff-match-patch, and using numerous
 heuristics.
 */
 
-import { Editor, Element, Node, Path, Point, Range, Text, Transforms } from "slate";
+import {
+  Editor,
+  Element,
+  Node,
+  Path,
+  Point,
+  Range,
+  Text,
+  Transforms,
+} from "slate";
 import { ReactEditor } from "../slate-react";
 import { markdownAutoformat } from "./auto-format";
 import { ensureRange, pointAtPath, slateDebug } from "../slate-util";
@@ -62,7 +71,10 @@ function moveSelectionAfterInlineMath(editor, selection): Range | null {
         [nextNode] = Editor.node(editor, nextPath);
       }
       if (Text.isText(nextNode)) {
-        const point = { path: nextPath, offset: continueTypingOffset(nextNode.text) };
+        const point = {
+          path: nextPath,
+          offset: continueTypingOffset(nextNode.text),
+        };
         return { anchor: point, focus: point };
       }
     }
@@ -79,7 +91,10 @@ function ensureTrailingTextAfterInlineMath(
   if (!selectionBlockPath) return null;
   try {
     const [paragraphNode] = Editor.node(editor, selectionBlockPath);
-    if (!Element.isElement(paragraphNode) || paragraphNode.type !== "paragraph") {
+    if (
+      !Element.isElement(paragraphNode) ||
+      paragraphNode.type !== "paragraph"
+    ) {
       return null;
     }
     const children = paragraphNode.children ?? [];
@@ -278,7 +293,10 @@ export const withInsertText = (editor) => {
             }
           }
           if (pendingSelection) {
-            pendingSelection = moveSelectionAfterInlineMath(editor, pendingSelection);
+            pendingSelection = moveSelectionAfterInlineMath(
+              editor,
+              pendingSelection,
+            );
           }
           if (!pendingSelection && isSingleParagraph) {
             try {
@@ -289,7 +307,10 @@ export const withInsertText = (editor) => {
             }
           }
           if (pendingSelection) {
-            pendingSelection = moveSelectionAfterInlineMath(editor, pendingSelection);
+            pendingSelection = moveSelectionAfterInlineMath(
+              editor,
+              pendingSelection,
+            );
           }
           const inlineMathSelection = ensureTrailingTextAfterInlineMath(
             editor,

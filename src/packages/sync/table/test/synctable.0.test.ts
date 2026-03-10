@@ -88,7 +88,7 @@ describe("tests public API of a system_notifications SyncTable", () => {
 
   test("making change to invalid field raises error", () => {
     expect(() => synctable.set({ foobar: "medium" })).toThrow(
-      "Cannot coerce: no field 'foobar' in table 'system_notifications'"
+      "Cannot coerce: no field 'foobar' in table 'system_notifications'",
     );
   });
 
@@ -153,7 +153,7 @@ describe("tests public API of a system_notifications SyncTable", () => {
 
   test("closed synctable -- most public API functions throw an error", async () => {
     expect(() => synctable.set({ priority: "medium" })).toThrow(
-      "can't set until table is initialized"
+      "can't set until table is initialized",
     );
     expect(() => synctable.get()).toThrow("closed");
     expect(() => synctable.get_one()).toThrow("table not yet initialized");
@@ -179,7 +179,7 @@ describe("tests public API of a system_notifications SyncTable", () => {
       system_notifications: [{ time: null, text: null, priority: null }],
     };
     expect(() => new SyncTable(invalid_query, [], client, 0)).toThrow(
-      "primary key"
+      "primary key",
     );
   });
 
@@ -191,7 +191,7 @@ describe("tests public API of a system_notifications SyncTable", () => {
       ],
     };
     expect(() => new SyncTable(invalid_query, [], client, 0)).toThrow(
-      "field in the schema"
+      "field in the schema",
     );
   });
 });

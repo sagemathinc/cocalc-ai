@@ -12,9 +12,7 @@ export default function HideButton({ elements }: Props) {
   const { id: frameId, actions } = useFrameContext();
   let hidden = isHidden(elements);
   return (
-    <Tooltip
-      title={`${hidden ? "Show" : "Hide"} selected objects`}
-    >
+    <Tooltip title={`${hidden ? "Show" : "Hide"} selected objects`}>
       <Button
         style={BUTTON_STYLE}
         onClick={() => {

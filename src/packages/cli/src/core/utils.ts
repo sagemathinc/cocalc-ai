@@ -1,4 +1,7 @@
-export function durationToMs(value: string | undefined, fallbackMs: number): number {
+export function durationToMs(
+  value: string | undefined,
+  fallbackMs: number,
+): number {
   if (!value) return fallbackMs;
   const raw = value.trim().toLowerCase();
   if (!raw) return fallbackMs;
@@ -26,7 +29,10 @@ export function normalizeUrl(url: string): string {
   return `http://${trimmed.replace(/\/+$/, "")}`;
 }
 
-export function parseSshServer(sshServer: string): { host: string; port?: number } {
+export function parseSshServer(sshServer: string): {
+  host: string;
+  port?: number;
+} {
   const value = sshServer.trim();
   if (!value) {
     throw new Error("host has no ssh_server configured");
@@ -58,5 +64,11 @@ export function extractCookie(
 }
 
 export function isRedirect(status: number): boolean {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+  return (
+    status === 301 ||
+    status === 302 ||
+    status === 303 ||
+    status === 307 ||
+    status === 308
+  );
 }

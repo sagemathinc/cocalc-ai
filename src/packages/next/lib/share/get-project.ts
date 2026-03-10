@@ -22,7 +22,7 @@ export default async function getProjectInfo(
   project_id: string,
   columns: string[] = ["title", "description", "name"],
   // not cached by default since editing then reloading is confusing with this cached.
-  cache?: "short" | "medium" | "long"
+  cache?: "short" | "medium" | "long",
 ): Promise<Partial<ProjectInfo>> {
   const pool = getPool(cache);
   if (!isUUID(project_id)) {
@@ -30,7 +30,7 @@ export default async function getProjectInfo(
   }
   const project = await pool.query(
     `SELECT ${columns.join(",")} FROM projects WHERE project_id=$1`,
-    [project_id]
+    [project_id],
   );
   if (project.rows.length == 0) {
     throw Error(`no project with id ${project_id}`);

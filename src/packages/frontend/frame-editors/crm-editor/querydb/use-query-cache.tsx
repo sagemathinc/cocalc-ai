@@ -26,7 +26,7 @@ export function QueryCache({ children }) {
 
 export function useQueryCache<KeyType, ValueType>(
   table: string,
-  ttl: number = DEFAULT_TTL // in ms; only first value given matters (can't change)
+  ttl: number = DEFAULT_TTL, // in ms; only first value given matters (can't change)
 ): TTL<KeyType, ValueType> {
   const { caches } = useContext(CacheContext);
   if (caches[table] == null) {

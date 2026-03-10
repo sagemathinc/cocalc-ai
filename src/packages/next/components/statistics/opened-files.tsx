@@ -167,7 +167,8 @@ export default function OpenedFiles({
         <Switch checked={distinct} onChange={setDistinct} /> Distinct
       </Paragraph>
       <Title level={2}>
-        {distinct ? "Distinct " : ""}Files Used in the Last Hour: {lastHour}{" "}
+        {distinct ? "Distinct " : ""}Files Used in the Last Hour:{" "}
+        {lastHour}{" "}
       </Title>
       <Paragraph>
         Track the number of {distinct ? "distinct" : ""} files of each type that

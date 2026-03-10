@@ -18,7 +18,7 @@ interface AccountInfo {
 
 export default async function getAccountInfo(
   account_id: string,
-  req
+  req,
 ): Promise<AccountInfo> {
   return {
     account_id,
@@ -56,7 +56,7 @@ export async function getName(account_id: string): Promise<{
 
 async function getPublicPaths(
   account_id: string,
-  req // used to get account_id of requester to see if we should include unlisted and disabled public_paths
+  req, // used to get account_id of requester to see if we should include unlisted and disabled public_paths
 ): Promise<PublicPath[]> {
   if (!isUUID(account_id)) {
     // VERY important to check this because we substitute the account_id
@@ -74,7 +74,7 @@ async function getPublicPaths(
   public_paths.counter::INT AS counter,
   ${timeInSeconds(
     "public_paths.last_edited",
-    "last_edited"
+    "last_edited",
   )} FROM public_paths, projects WHERE public_paths.project_id = projects.project_id AND projects.last_active ? '${account_id}' AND projects.users ? '${account_id}'  ORDER BY stars DESC, public_paths.last_edited DESC`;
   const { rows } = await pool.query(query);
   // If there are any disabled or unlisted public_paths, we also get the id of the requestor so we can filter them out.
@@ -84,7 +84,7 @@ async function getPublicPaths(
 async function filterNonPublicAndNotAuthenticated(
   rows: PublicPath[],
   account_id: string,
-  req
+  req,
 ): Promise<PublicPath[]> {
   const v: any[] = [];
   let client_id: string | undefined = undefined;

@@ -94,9 +94,7 @@ export function ProjectWarningBanner() {
     if (!showNoInternetBanner()) return null;
 
     return (
-      <NoInternetModal
-        isPaidStudentPayProject={isPaidStudentPayProject}
-      />
+      <NoInternetModal isPaidStudentPayProject={isPaidStudentPayProject} />
     );
   }
 

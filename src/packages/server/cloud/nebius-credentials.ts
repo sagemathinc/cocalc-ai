@@ -56,7 +56,10 @@ function normalizeRegionEntry(entry: any): NebiusRegionConfigEntry | null {
     entry.credentials ??
     entry.nebius_credentials;
   const parent =
-    entry.nebius_parent_id ?? entry.parent_id ?? entry.project_id ?? entry.project;
+    entry.nebius_parent_id ??
+    entry.parent_id ??
+    entry.project_id ??
+    entry.project;
   const subnet = entry.nebius_subnet_id ?? entry.subnet_id ?? entry.subnet;
   if (!creds || !parent || !subnet) return null;
   return {

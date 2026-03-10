@@ -134,7 +134,11 @@ describe("projects.copyProjectFiles", () => {
       snapshot_id: "snap-existing",
     });
 
-    expect(result).toEqual({ queued: 1, local: 0, snapshot_id: "snap-existing" });
+    expect(result).toEqual({
+      queued: 1,
+      local: 0,
+      snapshot_id: "snap-existing",
+    });
     expect(upsertMock).toHaveBeenCalledTimes(1);
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -151,7 +155,10 @@ describe("projects.copyProjectFiles", () => {
 
   it("expands multi-source queue destinations using source basenames", async () => {
     queryMock = makeHostQuery({ src: "h1", dest: "h2" });
-    getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }, { name: "b.txt" }]);
+    getBackupFilesMock.mockResolvedValue([
+      { name: "a.txt" },
+      { name: "b.txt" },
+    ]);
     const { copyProjectFiles } = await import("./copy");
     const result = await copyProjectFiles({
       account_id: "acct",
@@ -161,7 +168,11 @@ describe("projects.copyProjectFiles", () => {
       snapshot_id: "snap-existing",
     });
 
-    expect(result).toEqual({ queued: 2, local: 0, snapshot_id: "snap-existing" });
+    expect(result).toEqual({
+      queued: 2,
+      local: 0,
+      snapshot_id: "snap-existing",
+    });
     expect(upsertMock).toHaveBeenCalledTimes(2);
     expect(upsertMock).toHaveBeenNthCalledWith(
       1,
@@ -192,7 +203,11 @@ describe("projects.copyProjectFiles", () => {
       snapshot_id: "snap-existing",
     });
 
-    expect(result).toEqual({ queued: 1, local: 0, snapshot_id: "snap-existing" });
+    expect(result).toEqual({
+      queued: 1,
+      local: 0,
+      snapshot_id: "snap-existing",
+    });
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         src_path: "x.py",

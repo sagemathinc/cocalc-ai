@@ -14,10 +14,8 @@ function _done(n, ...args): Function | void {
     }
     // do nothing
     console.log(
-      `*** TOTALLY DONE! (${
-        (Date.now() - start_time) / 1000
-      }s since start) `,
-      ...Array.from(args)
+      `*** TOTALLY DONE! (${(Date.now() - start_time) / 1000}s since start) `,
+      ...Array.from(args),
     );
   };
   if (args.length > 0) {

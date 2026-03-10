@@ -52,7 +52,9 @@ export interface JupyterRuntimeShape {
   user?: JupyterRuntimeUserState;
 }
 
-export type JupyterRuntimeState = DKO<JupyterRuntimeShape[keyof JupyterRuntimeShape]>;
+export type JupyterRuntimeState = DKO<
+  JupyterRuntimeShape[keyof JupyterRuntimeShape]
+>;
 
 export function jupyterRuntimeCellKey(id: string): string {
   return `${JUPYTER_RUNTIME_CELL_KEY_PREFIX}${id}`;

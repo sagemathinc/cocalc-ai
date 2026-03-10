@@ -32,7 +32,7 @@ export function useOrganization(id: number): OrganizationType | undefined {
 }
 
 async function organizationsSearch(
-  query: string
+  query: string,
 ): Promise<OrganizationType[] | null> {
   query = query.trim();
   if (!query) {

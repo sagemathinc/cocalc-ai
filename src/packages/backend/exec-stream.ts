@@ -109,19 +109,19 @@ export async function executeStream(
           const result = event.data as ExecuteCodeOutputAsync;
           // Include accumulated stats in final result
           result.stats = truncStats(stats);
-           stream({
-             type: "done",
-             data: result,
-           });
-           done = true;
-           stream(null); // End the stream
+          stream({
+            type: "done",
+            data: result,
+          });
+          done = true;
+          stream(null); // End the stream
           break;
 
         case "error":
           logger.debug(`executeStream: processing error event`);
-           stream({ error: event.data as string });
-           done = true;
-           stream(null);
+          stream({ error: event.data as string });
+          done = true;
+          stream(null);
           break;
 
         default:

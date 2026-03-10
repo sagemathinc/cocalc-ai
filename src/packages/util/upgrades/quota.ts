@@ -371,11 +371,7 @@ function quota_v2(opts: OptsV2): Quota {
   // the "settings" object is the "admin upgrade", which isn't capped by the maximum.
   return ensure_minimum(
     round_quota(
-      calc_oc(
-        max_quotas(quota, settings),
-        site_settings,
-        max_upgrades,
-      ),
+      calc_oc(max_quotas(quota, settings), site_settings, max_upgrades),
     ),
     max_upgrades,
   );

@@ -30,7 +30,7 @@ export function parseSyncdbFileUsingPageNumbers(content: string): Element[][] {
 // the new page format.
 function parseSyncdbFileUsingPageIds(
   content: string,
-  fixedElements: Element[]
+  fixedElements: Element[],
 ): Element[][] {
   const v: { pos: number; id: string }[] = [];
   const pageMap: { [id: string]: Element[] } = {};
@@ -77,7 +77,7 @@ function isOldPageFormat(content: string): boolean {
 
 export function parseSyncdbFile(
   content: string,
-  fixedElements: Element[] = []
+  fixedElements: Element[] = [],
 ): Element[][] {
   if (isOldPageFormat(content)) {
     return parseSyncdbFileUsingPageNumbers(content);

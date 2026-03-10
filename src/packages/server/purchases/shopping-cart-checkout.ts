@@ -190,7 +190,8 @@ async function membershipCostFromCart(account_id: string, cartItem) {
   const priceValue = toDecimal(price);
   const monthly =
     description.interval == "month" ? priceValue : priceValue.div(12);
-  const yearly = description.interval == "year" ? priceValue : priceValue.mul(12);
+  const yearly =
+    description.interval == "year" ? priceValue : priceValue.mul(12);
   const period = description.interval == "month" ? "monthly" : "yearly";
   const cost: CostInputPeriod = {
     cost: charge,

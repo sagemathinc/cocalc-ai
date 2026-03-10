@@ -108,7 +108,7 @@ export default function useViews(dbtable: string): {
             ...syncdb
               .get({ table: "views" })
               .filter((x) => x.get("dbtable") == dbtable)
-              .map((x) => x.get("pos"))
+              .map((x) => x.get("pos")),
           ) + 1;
       }
 

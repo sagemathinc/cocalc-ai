@@ -19,7 +19,7 @@ const log = getLogger("jupyter:html-to-pdf");
 
 export default async function htmlToPDF(
   path: string,
-  timeout: number = 30
+  timeout: number = 30,
 ): Promise<string> {
   const { dir, name } = parse(path);
   const outfile = join(dir, name + ".pdf");
@@ -67,6 +67,6 @@ async function getCommand(): Promise<string> {
     } catch (_err) {}
   }
   throw Error(
-    `one of ${COMMANDS.join(" or ")} must be installed to convert to PDF`
+    `one of ${COMMANDS.join(" or ")} must be installed to convert to PDF`,
   );
 }

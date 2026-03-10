@@ -2,7 +2,10 @@ import "../elements/types";
 
 import { createEditor } from "slate";
 import { withReact } from "../slate-react";
-import { withAutoFormat, insertPlainTextInCodeBlock } from "../format/auto-format";
+import {
+  withAutoFormat,
+  insertPlainTextInCodeBlock,
+} from "../format/auto-format";
 import { getCodeBlockText, toCodeLines } from "../elements/code-block/utils";
 
 test("plain text paste inside code block keeps caret at insert point", () => {

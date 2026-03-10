@@ -70,7 +70,11 @@ export function MarkdownInputModeSwitch({
   return (
     <div
       data-markdown-mode-switch="true"
-      style={layout === "inline" ? { display: "flex", alignItems: "center" } : undefined}
+      style={
+        layout === "inline"
+          ? { display: "flex", alignItems: "center" }
+          : undefined
+      }
       onMouseDownCapture={onInteractionStart}
       onMouseUp={onInteractionEnd}
       onTouchStartCapture={onInteractionStart}

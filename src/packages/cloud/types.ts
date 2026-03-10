@@ -62,7 +62,11 @@ export interface CloudProvider {
     creds: any,
     opts?: { preserveDataDisk?: boolean },
   ): Promise<void>;
-  resizeDisk(runtime: HostRuntime, newSizeGb: number, creds: any): Promise<void>;
+  resizeDisk(
+    runtime: HostRuntime,
+    newSizeGb: number,
+    creds: any,
+  ): Promise<void>;
   getStatus(
     runtime: HostRuntime,
     creds: any,

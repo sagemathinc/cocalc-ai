@@ -5,7 +5,8 @@
 
 export const MINIMAP_SETTINGS_CHANGED_EVENT =
   "cocalc-jupyter-minimap-settings-changed";
-export const MINIMAP_OPEN_SETTINGS_EVENT = "cocalc-jupyter-open-minimap-settings";
+export const MINIMAP_OPEN_SETTINGS_EVENT =
+  "cocalc-jupyter-open-minimap-settings";
 
 export const MINIMAP_DEFAULT_ENABLED = true;
 export const MINIMAP_DEFAULT_WIDTH = 120;
@@ -23,20 +24,10 @@ export interface MinimapSettings {
 function parseBooleanOverride(raw: string | null): boolean | undefined {
   if (raw == null) return;
   const value = raw.trim().toLowerCase();
-  if (
-    value === "1" ||
-    value === "true" ||
-    value === "on" ||
-    value === "yes"
-  ) {
+  if (value === "1" || value === "true" || value === "on" || value === "yes") {
     return true;
   }
-  if (
-    value === "0" ||
-    value === "false" ||
-    value === "off" ||
-    value === "no"
-  ) {
+  if (value === "0" || value === "false" || value === "off" || value === "no") {
     return false;
   }
 }
@@ -49,14 +40,19 @@ function parseNumberOverride(raw: string | null): number | undefined {
 }
 
 export function clampMinimapWidth(width: number): number {
-  return Math.max(MINIMAP_MIN_WIDTH, Math.min(MINIMAP_MAX_WIDTH, Math.round(width)));
+  return Math.max(
+    MINIMAP_MIN_WIDTH,
+    Math.min(MINIMAP_MAX_WIDTH, Math.round(width)),
+  );
 }
 
 function readEnabledFromStorage(): boolean {
   if (typeof window === "undefined") return MINIMAP_DEFAULT_ENABLED;
   const storage = window.localStorage;
   if (storage == null) return MINIMAP_DEFAULT_ENABLED;
-  const override = parseBooleanOverride(storage.getItem(MINIMAP_ENABLED_STORAGE_KEY));
+  const override = parseBooleanOverride(
+    storage.getItem(MINIMAP_ENABLED_STORAGE_KEY),
+  );
   if (override != null) return override;
   return MINIMAP_DEFAULT_ENABLED;
 }
@@ -65,7 +61,9 @@ function readWidthFromStorage(): number {
   if (typeof window === "undefined") return MINIMAP_DEFAULT_WIDTH;
   const storage = window.localStorage;
   if (storage == null) return MINIMAP_DEFAULT_WIDTH;
-  const override = parseNumberOverride(storage.getItem(MINIMAP_WIDTH_STORAGE_KEY));
+  const override = parseNumberOverride(
+    storage.getItem(MINIMAP_WIDTH_STORAGE_KEY),
+  );
   if (override != null) return override;
   return MINIMAP_DEFAULT_WIDTH;
 }

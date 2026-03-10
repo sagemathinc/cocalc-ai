@@ -12,9 +12,15 @@ import { getRender } from "../elements/register";
 import "../elements/types";
 import { withIsVoid } from "../plugins";
 
-const renderElement = ({ attributes, children, element }: RenderElementProps) => {
+const renderElement = ({
+  attributes,
+  children,
+  element,
+}: RenderElementProps) => {
   const Element = getRender(element.type as string);
-  return <Element attributes={attributes} element={element} children={children} />;
+  return (
+    <Element attributes={attributes} element={element} children={children} />
+  );
 };
 
 test("math inline toggles void state when selection enters/leaves", async () => {

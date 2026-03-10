@@ -21,7 +21,7 @@ export default async function getRecentlyCreatedVouchers({
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT id, title, count, created FROM vouchers WHERE created_by=$1 AND created >= NOW()- $2::interval ORDER BY created DESC`,
-    [account_id, recent ?? "1 week"]
+    [account_id, recent ?? "1 week"],
   );
   return rows;
 }

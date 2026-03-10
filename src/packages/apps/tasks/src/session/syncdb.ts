@@ -50,8 +50,7 @@ export interface SyncDBTasksSessionOptions {
 }
 
 export interface OpenSyncDBTasksSessionOptions
-  extends OpenTasksSessionOptions,
-    SyncDBTasksSessionProviderOptions {}
+  extends OpenTasksSessionOptions, SyncDBTasksSessionProviderOptions {}
 
 export interface SyncDBTasksSessionProviderOptions {
   client: ConatClient;
@@ -220,9 +219,13 @@ export class SyncDBTasksSessionProvider implements TasksSessionProvider {
       persistent: this.options.persistent,
       fileUseInterval: this.options.fileUseInterval,
     });
-    return await SyncDBTasksSession.open(syncdb, {
-      readOnly: options.readOnly,
-    }, options.openTimeoutMs);
+    return await SyncDBTasksSession.open(
+      syncdb,
+      {
+        readOnly: options.readOnly,
+      },
+      options.openTimeoutMs,
+    );
   }
 }
 
@@ -259,9 +262,7 @@ export function createTasksSyncDB({
     ...(service ? { service } : {}),
     ...(changeThrottle != null ? { change_throttle: changeThrottle } : {}),
     ...(persistent != null ? { persistent } : {}),
-    ...(fileUseInterval != null
-      ? { file_use_interval: fileUseInterval }
-      : {}),
+    ...(fileUseInterval != null ? { file_use_interval: fileUseInterval } : {}),
   };
   return createConatSyncDB(options);
 }
@@ -329,9 +330,7 @@ function normalizeTaskRecord(value: unknown): TaskRecord | undefined {
       ? { last_edited: task.last_edited }
       : {}),
     ...(typeof task.color === "string" ? { color: task.color } : {}),
-    ...(typeof task.hideBody === "boolean"
-      ? { hideBody: task.hideBody }
-      : {}),
+    ...(typeof task.hideBody === "boolean" ? { hideBody: task.hideBody } : {}),
   };
 }
 

@@ -100,7 +100,7 @@ defineExtension("fill_paragraph", function (opts: { cols?: number }): void {
         cm.replaceRange(
           before + after,
           { line, ch: 0 },
-          { line, ch: cm.getLine(line).length }
+          { line, ch: cm.getLine(line).length },
         );
         cm.setCursor({ ch, line });
         break;

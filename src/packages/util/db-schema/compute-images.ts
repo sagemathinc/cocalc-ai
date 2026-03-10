@@ -57,8 +57,7 @@ Table({
     },
     path: {
       type: "string",
-      desc:
-        "(optional) point user to either a filename like index.ipynb or a directory/",
+      desc: "(optional) point user to either a filename like index.ipynb or a directory/",
     },
     disabled: {
       type: "boolean",

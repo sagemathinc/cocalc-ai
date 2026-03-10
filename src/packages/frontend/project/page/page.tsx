@@ -101,7 +101,12 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     project_id,
     "deleted",
   ]);
-  const project_color = useRedux(["projects", "project_map", project_id, "color"]);
+  const project_color = useRedux([
+    "projects",
+    "project_map",
+    project_id,
+    "color",
+  ]);
   const projectCtx = useProjectContextProvider({
     project_id,
     is_active,
@@ -533,7 +538,9 @@ You can wait for this host to become available again, or move this project to an
         {...{ [PROJECT_PAGE_ATTRIBUTE]: project_id }}
         style={{
           ...PAGE_STYLE,
-          borderLeft: project_color ? `2.5px solid ${project_color}` : undefined,
+          borderLeft: project_color
+            ? `2.5px solid ${project_color}`
+            : undefined,
         }}
       >
         <StudentPayUpgrade project_id={project_id} />

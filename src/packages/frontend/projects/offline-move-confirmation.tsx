@@ -60,7 +60,9 @@ export function parseOfflineMoveConfirmationError(
   const message = `${err ?? ""}`;
   const idx = message.indexOf(OFFLINE_MOVE_CONFIRM_CODE);
   if (idx < 0) return null;
-  const detail = trimPrefix(message.slice(idx + OFFLINE_MOVE_CONFIRM_CODE.length));
+  const detail = trimPrefix(
+    message.slice(idx + OFFLINE_MOVE_CONFIRM_CODE.length),
+  );
   if (!detail) return parseLegacyDetail("");
   const clean = stripCallHub(detail);
   if (clean.startsWith("{")) {
@@ -182,7 +184,9 @@ export function buildOfflineMoveConfirmationDialog(
           <Tag color={noBackup ? "red" : "orange"}>
             {noBackup ? "No backup available" : "Backup stale"}
           </Tag>
-          {sourceDeprovisioned && <Tag color="default">Source deprovisioned</Tag>}
+          {sourceDeprovisioned && (
+            <Tag color="default">Source deprovisioned</Tag>
+          )}
         </div>
         <Timeline items={items} />
       </Space>

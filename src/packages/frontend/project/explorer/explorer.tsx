@@ -15,7 +15,11 @@ import {
   useState,
 } from "react";
 import { useIntl } from "react-intl";
-import { ActivityDisplay, ErrorDisplay, Loading } from "@cocalc/frontend/components";
+import {
+  ActivityDisplay,
+  ErrorDisplay,
+  Loading,
+} from "@cocalc/frontend/components";
 import { CustomSoftwareReset } from "@cocalc/frontend/custom-software/reset-bar";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { FileUploadWrapper } from "@cocalc/frontend/file-upload";
@@ -219,7 +223,10 @@ export function Explorer() {
       const status = op?.summary?.status;
       if (!status) return;
       next.set(op_id, status);
-      if (status === "succeeded" && prevBackupStatuses.current.get(op_id) !== status) {
+      if (
+        status === "succeeded" &&
+        prevBackupStatuses.current.get(op_id) !== status
+      ) {
         shouldRefresh = true;
       }
     });
@@ -277,15 +284,15 @@ export function Explorer() {
         return;
       }
       if (flyout && $(":focus").length > 0) {
-          return;
+        return;
+      }
+      if (e.key == "ArrowUp") {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          const path = dirname(effective_current_path);
+          actions.open_directory(path == "." ? "/" : path);
+        } else {
+          actions.decrement_selected_file_index();
         }
-        if (e.key == "ArrowUp") {
-          if (e.shiftKey || e.ctrlKey || e.metaKey) {
-            const path = dirname(effective_current_path);
-            actions.open_directory(path == "." ? "/" : path);
-          } else {
-            actions.decrement_selected_file_index();
-          }
       } else if (e.key == "ArrowDown") {
         actions.increment_selected_file_index();
       } else if (e.key == "Enter") {
@@ -406,9 +413,7 @@ export function Explorer() {
     return (
       <div style={{ margin: "30px auto", textAlign: "center" }}>
         <ShowError
-          message={
-            `Permission Issues: You are probably using the wrong account to access this ${projectLabelLower}.`
-          }
+          message={`Permission Issues: You are probably using the wrong account to access this ${projectLabelLower}.`}
           error={listingError}
           style={{ textAlign: "left" }}
         />
@@ -439,7 +444,9 @@ export function Explorer() {
   const transientRoutingRetryRef = useRef<string>("");
   useEffect(() => {
     if (!listingError) return;
-    if (!shouldSuppressTransientRoutingError({ error: listingError, moveLro })) {
+    if (
+      !shouldSuppressTransientRoutingError({ error: listingError, moveLro })
+    ) {
       return;
     }
     const msg = `${(listingError as any)?.message ?? listingError}`;

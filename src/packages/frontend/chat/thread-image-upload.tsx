@@ -54,7 +54,11 @@ export function ThreadImageUpload({
             <img
               src={value}
               alt="Chat image preview"
-              style={{ width: `${size}px`, height: `${size}px`, objectFit: "cover" }}
+              style={{
+                width: `${size}px`,
+                height: `${size}px`,
+                objectFit: "cover",
+              }}
             />
           ) : (
             <p className="ant-upload-drag-icon">
@@ -105,7 +109,9 @@ async function uploadCroppedImage({
         : "chat-image.png";
     const formData = new FormData();
     formData.append("file", blob, filename);
-    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    const query = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : "";
     const response = await fetch(`${join(appBasePath, "blobs")}${query}`, {
       method: "POST",
       body: formData,
@@ -119,9 +125,11 @@ async function uploadCroppedImage({
     if (!uuid) {
       throw Error("missing upload uuid");
     }
-    const url = `${join(appBasePath, "blobs", encodeURIComponent(
-      filename,
-    ))}?uuid=${uuid}`;
+    const url = `${join(
+      appBasePath,
+      "blobs",
+      encodeURIComponent(filename),
+    )}?uuid=${uuid}`;
     onChange(url);
   } catch (err) {
     setError(`Image upload failed: ${err}`);

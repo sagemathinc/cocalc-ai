@@ -72,7 +72,9 @@ describe("owned linux snapshot helpers", () => {
       ],
       childrenByPid,
     });
-    expect(Array.from(pids).sort((a, b) => a - b)).toEqual([10, 11, 12, 20, 21]);
+    expect(Array.from(pids).sort((a, b) => a - b)).toEqual([
+      10, 11, 12, 20, 21,
+    ]);
     expect(rootByPid.get(12)?.root_id).toBe("r1");
     expect(rootByPid.get(21)?.root_id).toBe("r2");
   });

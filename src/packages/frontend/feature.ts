@@ -149,7 +149,6 @@ if (typeof window != "undefined" && typeof navigator != "undefined") {
   // IS_TOUCH for us means multitouch tablet or mobile, the point being that it
   // is mostly *only* touch, so not something like a Chromebook with a touch screen.
   IS_TOUCH = isMobile.tablet() || IS_MOBILE || isMobile.any() || IS_IPAD;
-
 } else {
   // Backend.
 

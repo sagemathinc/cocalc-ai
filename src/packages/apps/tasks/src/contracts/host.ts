@@ -14,6 +14,7 @@ export interface TasksNavigationServices {
 }
 
 export interface TasksHostServices
-  extends TasksKeyboardServices,
+  extends
+    TasksKeyboardServices,
     TasksDocumentCommandServices,
     TasksNavigationServices {}

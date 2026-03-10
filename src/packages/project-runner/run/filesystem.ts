@@ -162,14 +162,21 @@ export async function localPath({
         });
       }
       scratch = scratchVol.path;
-      logger.debug("localPath: ensured scratch volume", { project_id, scratch });
+      logger.debug("localPath: ensured scratch volume", {
+        project_id,
+        scratch,
+      });
     } else {
       logger.debug("localPath: scratch disabled for this call", {
         project_id,
         scratchQuota,
       });
     }
-    logger.debug("localPath: done (local btrfs)", { project_id, home, scratch });
+    logger.debug("localPath: done (local btrfs)", {
+      project_id,
+      home,
+      scratch,
+    });
     return { home, scratch };
   } else if (process.env.COCALC_PROJECT_PATH) {
     const path = join(process.env.COCALC_PROJECT_PATH, project_id);
@@ -204,7 +211,10 @@ export async function localPath({
     logger.debug("localPath: ensuring remote home volume", { project_id });
     await c.ensureVolume({ project_id });
     if (disk != null) {
-      logger.debug("localPath: setting remote home quota", { project_id, disk });
+      logger.debug("localPath: setting remote home quota", {
+        project_id,
+        disk,
+      });
       await c.setQuota({ project_id, size: disk });
     } else {
       logger.debug("localPath: leaving remote home quota unchanged", {
@@ -225,10 +235,13 @@ export async function localPath({
             scratchQuotaSource = "home";
           }
         } catch (err) {
-          logger.warn("localPath: failed to read remote home quota for scratch", {
-            project_id,
-            err: `${err}`,
-          });
+          logger.warn(
+            "localPath: failed to read remote home quota for scratch",
+            {
+              project_id,
+              err: `${err}`,
+            },
+          );
         }
       }
       if (effectiveScratchQuota != null) {

@@ -104,7 +104,10 @@ export interface ReflectApi {
     direction?: "remote_to_local" | "local_to_remote";
     name?: string;
   }) => Promise<void>;
-  terminateSessionUI: (opts: { idOrName: string; force?: boolean }) => Promise<void>;
+  terminateSessionUI: (opts: {
+    idOrName: string;
+    force?: boolean;
+  }) => Promise<void>;
   startSessionUI: (opts: { idOrName: string }) => Promise<void>;
   stopSessionUI: (opts: { idOrName: string }) => Promise<void>;
   editSessionUI: (opts: {

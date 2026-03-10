@@ -5,7 +5,10 @@
  * and the long-running UNIX-socket daemon lifecycle used by CLI file commands.
  */
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { createServer as createNetServer, type Server as NetServer } from "node:net";
+import {
+  createServer as createNetServer,
+  type Server as NetServer,
+} from "node:net";
 import { dirname } from "node:path";
 
 import {
@@ -101,7 +104,10 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
   ): Promise<DaemonResponse> {
     const meta = {
       pid: process.pid,
-      uptime_s: Math.max(0, Math.floor((Date.now() - state.startedAtMs) / 1000)),
+      uptime_s: Math.max(
+        0,
+        Math.floor((Date.now() - state.startedAtMs) / 1000),
+      ),
       started_at: new Date(state.startedAtMs).toISOString(),
     };
     try {
@@ -114,10 +120,16 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
             closeDaemonServerState(state);
             process.exit(0);
           }, 10);
-          return { id: request.id, ok: true, data: { status: "shutting_down" }, meta };
+          return {
+            id: request.id,
+            ok: true,
+            data: { status: "shutting_down" },
+            meta,
+          };
         case "project.file.list": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
           const ctx = await getDaemonContext(state, globals);
           const data = await projectFileListData({
             ctx,
@@ -125,7 +137,10 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
               typeof request.payload?.project === "string"
                 ? request.payload.project
                 : undefined,
-            path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
+            path:
+              typeof request.payload?.path === "string"
+                ? request.payload.path
+                : undefined,
             cwd,
           });
           return {
@@ -140,8 +155,12 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.cat": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-          const path = typeof request.payload?.path === "string" ? request.payload.path : "";
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const path =
+            typeof request.payload?.path === "string"
+              ? request.payload.path
+              : "";
           if (!path) {
             throw new Error("project file cat requires path");
           }
@@ -167,8 +186,12 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.put": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-          const dest = typeof request.payload?.dest === "string" ? request.payload.dest : "";
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const dest =
+            typeof request.payload?.dest === "string"
+              ? request.payload.dest
+              : "";
           const contentBase64 =
             typeof request.payload?.content_base64 === "string"
               ? request.payload.content_base64
@@ -201,8 +224,10 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.get": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-          const src = typeof request.payload?.src === "string" ? request.payload.src : "";
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const src =
+            typeof request.payload?.src === "string" ? request.payload.src : "";
           if (!src) {
             throw new Error("project file get requires src");
           }
@@ -228,8 +253,12 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.rm": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-          const path = typeof request.payload?.path === "string" ? request.payload.path : "";
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const path =
+            typeof request.payload?.path === "string"
+              ? request.payload.path
+              : "";
           if (!path) {
             throw new Error("project file rm requires path");
           }
@@ -257,8 +286,12 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.mkdir": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-          const path = typeof request.payload?.path === "string" ? request.payload.path : "";
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const path =
+            typeof request.payload?.path === "string"
+              ? request.payload.path
+              : "";
           if (!path) {
             throw new Error("project file mkdir requires path");
           }
@@ -285,20 +318,27 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.rg": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
           const pattern =
-            typeof request.payload?.pattern === "string" ? request.payload.pattern : "";
+            typeof request.payload?.pattern === "string"
+              ? request.payload.pattern
+              : "";
           if (!pattern) {
             throw new Error("project file rg requires pattern");
           }
-          const timeoutMs =
-            Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
+          const timeoutMs = Math.max(
+            1,
+            Number(request.payload?.timeout_ms ?? 30_000) || 30_000,
+          );
           const maxBytes = Math.max(
             1024,
             Number(request.payload?.max_bytes ?? 20000000) || 20000000,
           );
           const rgOptions = Array.isArray(request.payload?.rg_options)
-            ? request.payload?.rg_options.filter((x): x is string => typeof x === "string")
+            ? request.payload?.rg_options.filter(
+                (x): x is string => typeof x === "string",
+              )
             : undefined;
           const ctx = await getDaemonContext(state, globals);
           const data = await projectFileRgData({
@@ -308,7 +348,10 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
                 ? request.payload.project
                 : undefined,
             pattern,
-            path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
+            path:
+              typeof request.payload?.path === "string"
+                ? request.payload.path
+                : undefined,
             timeoutMs,
             maxBytes,
             options: rgOptions,
@@ -326,15 +369,20 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
         }
         case "project.file.fd": {
           const globals = request.globals ?? {};
-          const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-          const timeoutMs =
-            Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
+          const cwd =
+            typeof request.cwd === "string" ? request.cwd : process.cwd();
+          const timeoutMs = Math.max(
+            1,
+            Number(request.payload?.timeout_ms ?? 30_000) || 30_000,
+          );
           const maxBytes = Math.max(
             1024,
             Number(request.payload?.max_bytes ?? 20000000) || 20000000,
           );
           const fdOptions = Array.isArray(request.payload?.fd_options)
-            ? request.payload?.fd_options.filter((x): x is string => typeof x === "string")
+            ? request.payload?.fd_options.filter(
+                (x): x is string => typeof x === "string",
+              )
             : undefined;
           const ctx = await getDaemonContext(state, globals);
           const data = await projectFileFdData({
@@ -347,7 +395,10 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
               typeof request.payload?.pattern === "string"
                 ? request.payload.pattern
                 : undefined,
-            path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
+            path:
+              typeof request.payload?.path === "string"
+                ? request.payload.path
+                : undefined,
             timeoutMs,
             maxBytes,
             options: fdOptions,

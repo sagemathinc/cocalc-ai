@@ -7,7 +7,7 @@ import { redux } from "../../app-framework";
 
 export function account_id_to_username(
   account_id: string,
-  project_id: string
+  project_id: string,
 ): string {
   if (account_id == project_id) return "The Project";
   const users = redux.getStore("users");

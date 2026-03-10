@@ -74,11 +74,7 @@ function parseIPv6(ip: string): bigint | null {
       : 0;
   if (missing < 0) return null;
 
-  const full = [
-    ...headNums,
-    ...Array(missing).fill(0),
-    ...tailNums,
-  ];
+  const full = [...headNums, ...Array(missing).fill(0), ...tailNums];
   if (full.length !== IPV6_BITS / 16) return null;
 
   let value = 0n;

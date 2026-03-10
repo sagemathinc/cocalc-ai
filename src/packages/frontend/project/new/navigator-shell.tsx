@@ -13,10 +13,7 @@ import {
 } from "antd";
 import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  useActions,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { ChatIconPicker } from "@cocalc/frontend/chat/chat-icon-picker";
 import {
@@ -33,10 +30,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { lite } from "@cocalc/frontend/lite";
-import {
-  getChatActions,
-  initChat,
-} from "@cocalc/frontend/chat/register";
+import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
@@ -89,7 +83,8 @@ function navigatorChatPath(accountId?: string): string {
 
 function getLiteHomeDirectory(availableFeatures: any): string {
   const homeFromFeatures =
-    availableFeatures?.homeDirectory ?? availableFeatures?.get?.("homeDirectory");
+    availableFeatures?.homeDirectory ??
+    availableFeatures?.get?.("homeDirectory");
   if (typeof homeFromFeatures === "string" && homeFromFeatures.length > 0) {
     return normalizeAbsolutePath(homeFromFeatures);
   }
@@ -234,7 +229,8 @@ function buildSessionRecord({
   defaultWorkingDirectory?: string;
 }): AgentSessionRecord {
   const rootMessage: any = thread?.rootMessage ?? {};
-  const acpConfig: any = threadMetadata?.acp_config ?? rootMessage?.acp_config ?? {};
+  const acpConfig: any =
+    threadMetadata?.acp_config ?? rootMessage?.acp_config ?? {};
   const titleFromMetadata =
     typeof threadMetadata?.name === "string" ? threadMetadata.name.trim() : "";
   const sessionIdRaw =
@@ -272,7 +268,9 @@ function buildSessionRecord({
         : undefined,
     model: typeof acpConfig?.model === "string" ? acpConfig.model : undefined,
     reasoning:
-      typeof acpConfig?.reasoning === "string" ? acpConfig.reasoning : undefined,
+      typeof acpConfig?.reasoning === "string"
+        ? acpConfig.reasoning
+        : undefined,
     thread_color:
       typeof threadMetadata?.thread_color === "string"
         ? threadMetadata.thread_color
@@ -302,7 +300,10 @@ export function NavigatorShell({
   const projectActions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
-  const available_features = useTypedRedux({ project_id }, "available_features");
+  const available_features = useTypedRedux(
+    { project_id },
+    "available_features",
+  );
 
   const homeDirectory = useMemo(() => {
     if (!lite) {
@@ -327,14 +328,20 @@ export function NavigatorShell({
     );
   });
   const [error, setError] = useState<string>("");
-  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(
+    null,
+  );
   const [cacheVersion, setCacheVersion] = useState(0);
   const [isArchiving, setIsArchiving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsName, setSettingsName] = useState("");
-  const [settingsColor, setSettingsColor] = useState<string | undefined>(undefined);
-  const [settingsIcon, setSettingsIcon] = useState<string | undefined>(undefined);
+  const [settingsColor, setSettingsColor] = useState<string | undefined>(
+    undefined,
+  );
+  const [settingsIcon, setSettingsIcon] = useState<string | undefined>(
+    undefined,
+  );
   const [settingsImage, setSettingsImage] = useState("");
   const [sessionIndexRetry, setSessionIndexRetry] = useState(0);
   const [intentRetryTick, setIntentRetryTick] = useState(0);
@@ -359,7 +366,9 @@ export function NavigatorShell({
       instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
     });
     if (sharedActions) {
-      setActions((current) => (current === sharedActions ? current : sharedActions));
+      setActions((current) =>
+        current === sharedActions ? current : sharedActions,
+      );
       return () => {
         mounted = false;
       };
@@ -455,8 +464,9 @@ export function NavigatorShell({
     if (typeof window === "undefined") return;
     const onThreadRequested = (evt: Event) => {
       const threadKey =
-        (evt as CustomEvent<{ threadKey?: string }>).detail?.threadKey?.trim() ||
-        null;
+        (
+          evt as CustomEvent<{ threadKey?: string }>
+        ).detail?.threadKey?.trim() || null;
       if (!threadKey) {
         preferredThreadKeyRef.current = undefined;
         return;
@@ -598,7 +608,8 @@ export function NavigatorShell({
 
   useEffect(() => {
     if (!actions || !selectedThreadKey) return;
-    const acpConfig = selectedThreadMetadata?.acp_config ?? selectedRootMessage?.acp_config;
+    const acpConfig =
+      selectedThreadMetadata?.acp_config ?? selectedRootMessage?.acp_config;
     if (!acpConfig) return;
     if (acpConfig.workingDirectory === homeDirectory) return;
     actions.setThreadAgentMode(selectedThreadKey, "codex", {
@@ -629,15 +640,25 @@ export function NavigatorShell({
       color?: string;
       icon?: string;
     } = {};
-    if (!(typeof metadata?.name === "string" && metadata.name.trim().length > 0)) {
+    if (
+      !(typeof metadata?.name === "string" && metadata.name.trim().length > 0)
+    ) {
       patch.name = NAVIGATOR_DEFAULT_THREAD_TITLE;
     }
     if (
-      !(typeof metadata?.thread_color === "string" && metadata.thread_color.trim().length > 0)
+      !(
+        typeof metadata?.thread_color === "string" &&
+        metadata.thread_color.trim().length > 0
+      )
     ) {
       patch.color = NAVIGATOR_DEFAULT_THREAD_COLOR;
     }
-    if (!(typeof metadata?.thread_icon === "string" && metadata.thread_icon.trim().length > 0)) {
+    if (
+      !(
+        typeof metadata?.thread_icon === "string" &&
+        metadata.thread_icon.trim().length > 0
+      )
+    ) {
       patch.icon = NAVIGATOR_DEFAULT_THREAD_ICON;
     }
     if (Object.keys(patch).length > 0) {
@@ -890,7 +911,8 @@ export function NavigatorShell({
     if (!actions || !selectedThreadKey) return;
     const deleted = actions.deleteThread(selectedThreadKey);
     if (deleted <= 0) return;
-    const next = chooseNonArchivedThreadKey(actions) ?? chooseThreadKey(actions);
+    const next =
+      chooseNonArchivedThreadKey(actions) ?? chooseThreadKey(actions);
     setSelectedThreadKey(next);
     actions.setSelectedThread?.(next);
   }
@@ -930,9 +952,7 @@ export function NavigatorShell({
     [isArchiving, selectedSessionRecord, selectedThreadKey],
   );
 
-  const onActionMenuClick = useCallback<
-    NonNullable<MenuProps["onClick"]>
-  >(
+  const onActionMenuClick = useCallback<NonNullable<MenuProps["onClick"]>>(
     ({ key }) => {
       if (key === "new") {
         startNewThread();
@@ -961,7 +981,13 @@ export function NavigatorShell({
         openChatFile();
       }
     },
-    [archiveCurrentSession, clearCurrentThread, openChatFile, openThreadSettings, startNewThread],
+    [
+      archiveCurrentSession,
+      clearCurrentThread,
+      openChatFile,
+      openThreadSettings,
+      startNewThread,
+    ],
   );
 
   if (!navigatorPath) {
@@ -1117,7 +1143,12 @@ export function NavigatorShell({
         </div>
       </Modal>
       {error ? (
-        <Alert type="error" message={error} showIcon style={{ marginBottom: 8 }} />
+        <Alert
+          type="error"
+          message={error}
+          showIcon
+          style={{ marginBottom: 8 }}
+        />
       ) : null}
       <div
         style={{

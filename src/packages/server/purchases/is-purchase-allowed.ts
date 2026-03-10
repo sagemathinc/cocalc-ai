@@ -121,7 +121,9 @@ export async function isPurchaseAllowed({
 
   if (!isPaygService(service)) {
     // for non-PAYG, we only allow credit toward a purchase if your balance is positive.
-    const balance = moneyRound2Down(toDecimal(await getBalance({ account_id, client })));
+    const balance = moneyRound2Down(
+      toDecimal(await getBalance({ account_id, client })),
+    );
     const required = moneyRound2Up(
       costValue.sub(balance.gt(0) ? balance : toDecimal(0)),
     );
@@ -132,12 +134,11 @@ export async function isPurchaseAllowed({
       // allowed means "without making any payment at all"
       allowed: chargeAmount.lte(0),
       chargeAmount: chargeAmount.toNumber(),
-      reason:
-        required.lt(chargeAmount)
-          ? `The minimum payment is ${moneyToCurrency(
-              minPayment,
-            )}, so a payment of ${moneyToCurrency(required)} is not allowed.`
-          : `Please pay ${moneyToCurrency(chargeAmount)}.`,
+      reason: required.lt(chargeAmount)
+        ? `The minimum payment is ${moneyToCurrency(
+            minPayment,
+          )}, so a payment of ${moneyToCurrency(required)} is not allowed.`
+        : `Please pay ${moneyToCurrency(chargeAmount)}.`,
     };
   }
 
@@ -147,18 +148,16 @@ export async function isPurchaseAllowed({
   // First check that making purchase won't reduce our balance below the minBalance.
   // Also, we round balance down since fractional pennies don't count, and
   // can cause required to be off by 1 below.
-  const balance = moneyRound2Down(toDecimal(await getBalance({ account_id, client }))).add(
-    marginValue,
-  );
+  const balance = moneyRound2Down(
+    toDecimal(await getBalance({ account_id, client })),
+  ).add(marginValue);
   const balanceAfterPurchase = balance.sub(costValue);
   // add 0.01 due to potential rounding errors
   const minBalanceValue = toDecimal(minBalance);
   if (balanceAfterPurchase.add("0.01").lt(minBalanceValue)) {
     // You do not have enough money, so obviously deny the purchase.
 
-    const required = moneyRound2Up(
-      costValue.sub(balance.sub(minBalanceValue)),
-    );
+    const required = moneyRound2Up(costValue.sub(balance.sub(minBalanceValue)));
     const chargeAmount = max(minPayment, required);
     const v: string[] = [];
     if (!balance.eq(0)) {
@@ -187,9 +186,7 @@ export async function isPurchaseAllowed({
   // This is a self-imposed limit by the user to control what they
   // explicitly authorized.
   if (!QUOTA_SPEC[service]?.noSet) {
-    const quotaForService = toDecimal(services[service] ?? 0).add(
-      marginValue,
-    );
+    const quotaForService = toDecimal(services[service] ?? 0).add(marginValue);
     if (quotaForService.lte(0)) {
       return {
         allowed: true,

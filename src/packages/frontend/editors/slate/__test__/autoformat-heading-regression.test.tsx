@@ -11,7 +11,9 @@ test("autoformat heading prefix at line start does not duplicate trailing text",
   const editor = withAutoFormat(
     withNormalize(withIsInline(withIsVoid(withReact(createEditor())))),
   );
-  editor.children = [{ type: "paragraph", children: [{ text: "#foo b" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "#foo b" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: 0 });

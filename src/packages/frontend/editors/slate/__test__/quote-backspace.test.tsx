@@ -13,7 +13,9 @@ import { withCodeLineInsertBreak } from "../elements/code-block/with-code-line-i
 function makeEditor() {
   return withNormalize(
     withAutoFormat(
-      withIsInline(withIsVoid(withCodeLineInsertBreak(withReact(createEditor())))),
+      withIsInline(
+        withIsVoid(withCodeLineInsertBreak(withReact(createEditor()))),
+      ),
     ),
   );
 }
@@ -31,7 +33,11 @@ function findFirstTextPath(editor: Editor, value: string): number[] {
 test("backspace before x after multiline quote appends to final quoted line", () => {
   const editor: any = makeEditor();
   editor.preserveBlankLines = false;
-  editor.children = markdown_to_slate("> foo\n>\n> bar\n\nx", false, {}) as Descendant[];
+  editor.children = markdown_to_slate(
+    "> foo\n>\n> bar\n\nx",
+    false,
+    {},
+  ) as Descendant[];
   Editor.normalize(editor, { force: true });
 
   const xPath = findFirstTextPath(editor, "x");
@@ -52,7 +58,11 @@ test("backspace before x after multiline quote appends to final quoted line", ()
 test("backspace before x after multiline quote with preserveBlankLines=true appends to final quoted line", () => {
   const editor: any = makeEditor();
   editor.preserveBlankLines = true;
-  editor.children = markdown_to_slate("> foo\n>\n> bar\n\nx", false, {}) as Descendant[];
+  editor.children = markdown_to_slate(
+    "> foo\n>\n> bar\n\nx",
+    false,
+    {},
+  ) as Descendant[];
   Editor.normalize(editor, { force: true });
 
   const xPath = findFirstTextPath(editor, "x");
@@ -109,8 +119,18 @@ test("backspace before x with softbreak quote lines appends to last line", () =>
           type: "paragraph",
           children: [
             { text: "foo" },
-            { type: "softbreak", isInline: true, isVoid: true, children: [{ text: "" }] },
-            { type: "softbreak", isInline: true, isVoid: true, children: [{ text: "" }] },
+            {
+              type: "softbreak",
+              isInline: true,
+              isVoid: true,
+              children: [{ text: "" }],
+            },
+            {
+              type: "softbreak",
+              isInline: true,
+              isVoid: true,
+              children: [{ text: "" }],
+            },
             { text: "bar" },
           ],
         },

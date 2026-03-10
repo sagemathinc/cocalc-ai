@@ -20,7 +20,10 @@ async function writeJsonl(filePath: string, rows: any[]): Promise<void> {
 
 async function writeBundleDirectory(
   dirPath: string,
-  bundle: { manifest: any; files: Array<{ path: string; content: string | Uint8Array }> },
+  bundle: {
+    manifest: any;
+    files: Array<{ path: string; content: string | Uint8Array }>;
+  },
 ): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
   await fs.writeFile(
@@ -110,7 +113,9 @@ describe("tasks import", () => {
       desc: "Done task",
       done: true,
     });
-    expect(rows.find((row) => row.desc === "New task from import\n\n#report")).toBeTruthy();
+    expect(
+      rows.find((row) => row.desc === "New task from import\n\n#report"),
+    ).toBeTruthy();
   });
 
   it("detects conflicting live edits and does not write the target file", async () => {
@@ -125,7 +130,9 @@ describe("tasks import", () => {
     await writeJsonl(taskPath, [original]);
 
     const bundle = await collectTaskExport({ taskPath });
-    const desiredFile = bundle.files.find((file) => file.path === "tasks.jsonl");
+    const desiredFile = bundle.files.find(
+      (file) => file.path === "tasks.jsonl",
+    );
     if (desiredFile == null) {
       throw new Error("missing tasks.jsonl in test bundle");
     }
@@ -139,7 +146,13 @@ describe("tasks import", () => {
     const zipPath = path.join(tmp, "todo.tasks.cocalc-export.zip");
     await fs.writeFile(zipPath, bundleToZipBuffer(bundle));
 
-    const currentRows = [{ ...original, desc: "Live edited task", last_edited: Date.UTC(2026, 2, 5, 14, 0, 0) }];
+    const currentRows = [
+      {
+        ...original,
+        desc: "Live edited task",
+        last_edited: Date.UTC(2026, 2, 5, 14, 0, 0),
+      },
+    ];
     await writeJsonl(taskPath, currentRows);
 
     const dryRun = await importTaskBundle({

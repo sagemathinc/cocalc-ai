@@ -129,9 +129,13 @@ export function HostProjectsTable({
 
     if (compact) {
       return base.filter((col) =>
-        ["title", "state", "last_edited", "last_backup", "needs_backup"].includes(
-          String(col.key),
-        ),
+        [
+          "title",
+          "state",
+          "last_edited",
+          "last_backup",
+          "needs_backup",
+        ].includes(String(col.key)),
       );
     }
     return base;
@@ -159,9 +163,7 @@ export function HostProjectsTable({
           Last seen: {formatDate(hostLastSeen)}
         </Typography.Text>
       )}
-      {error && (
-        <Typography.Text type="danger">{error}</Typography.Text>
-      )}
+      {error && <Typography.Text type="danger">{error}</Typography.Text>}
       <Table
         size="small"
         rowKey="project_id"

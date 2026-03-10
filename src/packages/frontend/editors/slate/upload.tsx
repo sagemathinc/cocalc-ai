@@ -97,7 +97,8 @@ export default function useUpload(
           // probably an error
           return;
         }
-        const uploadGeneration = file?.upload?.chunks?.[0]?.file?._slateUploadGeneration;
+        const uploadGeneration =
+          file?.upload?.chunks?.[0]?.file?._slateUploadGeneration;
         const currentUploadGeneration = (editor as any).__uploadGeneration ?? 0;
         if (
           uploadGeneration != null &&
@@ -120,9 +121,7 @@ export default function useUpload(
             filename: upload?.filename,
             ...(await loadImageDimensions(file?.dataURL ?? url)),
             devicePixelRatio:
-              typeof window === "undefined"
-                ? 1
-                : window.devicePixelRatio,
+              typeof window === "undefined" ? 1 : window.devicePixelRatio,
           });
           node = {
             type: "image",

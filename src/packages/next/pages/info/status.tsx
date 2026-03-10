@@ -42,7 +42,9 @@ export default function Stats({ customize, stats }) {
                 <Icon name="dashboard" style={{ marginRight: "30px" }} />
                 {siteName} - System Activity Monitor
               </Title>
-              <Paragraph>See how much {siteName} is being used right now.</Paragraph>
+              <Paragraph>
+                See how much {siteName} is being used right now.
+              </Paragraph>
             </div>
             {stats != null ? <Statistics stats={stats} /> : "(not available)"}
           </div>

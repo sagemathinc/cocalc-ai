@@ -1,6 +1,10 @@
 import { Drawer, Space } from "antd";
 import { useIntl } from "react-intl";
-import { useActions, useState, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  useActions,
+  useState,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectRowExpandedContent } from "./project-row-expanded-content";

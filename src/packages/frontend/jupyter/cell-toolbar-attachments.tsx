@@ -20,7 +20,7 @@ interface AttachmentsProps {
 }
 
 export const Attachments: React.FC<AttachmentsProps> = (
-  props: AttachmentsProps
+  props: AttachmentsProps,
 ) => {
   const { actions, cell } = props;
 

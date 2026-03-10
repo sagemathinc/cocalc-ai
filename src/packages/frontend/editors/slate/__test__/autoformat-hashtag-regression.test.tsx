@@ -11,7 +11,9 @@ test("autoformat hashtag at paragraph start still works after heading-prefix gua
   const editor = withAutoFormat(
     withNormalize(withIsInline(withIsVoid(withReact(createEditor())))),
   );
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: 0 });
@@ -27,7 +29,9 @@ test("autoformat hashtag before existing trailing words in same line", () => {
   const editor = withAutoFormat(
     withNormalize(withIsInline(withIsVoid(withReact(createEditor())))),
   );
-  editor.children = [{ type: "paragraph", children: [{ text: "#x foo bar" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "#x foo bar" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   Transforms.select(editor, { path: [0, 0], offset: "#x".length });

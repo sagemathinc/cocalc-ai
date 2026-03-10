@@ -33,9 +33,13 @@ export async function runCommand(
 }
 
 export function commandExists(command: string): boolean {
-  const probe = spawnSync("bash", ["-lc", `command -v ${JSON.stringify(command)}`], {
-    stdio: "ignore",
-  });
+  const probe = spawnSync(
+    "bash",
+    ["-lc", `command -v ${JSON.stringify(command)}`],
+    {
+      stdio: "ignore",
+    },
+  );
   return probe.status === 0;
 }
 
@@ -54,7 +58,9 @@ export function resolveCloudflaredBinary(): string {
   const configured = `${process.env.COCALC_CLI_CLOUDFLARED ?? ""}`.trim();
   if (configured) {
     if (!commandExists(configured)) {
-      throw new Error(`COCALC_CLI_CLOUDFLARED is set but not executable: ${configured}`);
+      throw new Error(
+        `COCALC_CLI_CLOUDFLARED is set but not executable: ${configured}`,
+      );
     }
     return configured;
   }
@@ -76,7 +82,11 @@ export async function runSshCheck(
     });
     let stderr = "";
     let done = false;
-    const finish = (result: { code: number; stderr: string; timed_out: boolean }) => {
+    const finish = (result: {
+      code: number;
+      stderr: string;
+      timed_out: boolean;
+    }) => {
       if (done) return;
       done = true;
       clearTimeout(timer);

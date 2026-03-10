@@ -37,7 +37,7 @@ register({
     const focused = useFocused();
     const selected = useSelected();
     const isEditing = focused && selected;
-  // meta is always non-void to allow multiline editing like code blocks
+    // meta is always non-void to allow multiline editing like code blocks
     const value = element.value ?? Node.string(element);
 
     useEffect(() => {

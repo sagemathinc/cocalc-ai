@@ -4,7 +4,11 @@
  */
 
 import { CSS, React } from "../app-framework";
-import { is_different_array, len, trunc as trunc_string } from "@cocalc/util/misc";
+import {
+  is_different_array,
+  len,
+  trunc as trunc_string,
+} from "@cocalc/util/misc";
 import { Icon } from "./icon";
 import { CloseX } from "./close-x";
 
@@ -62,5 +66,5 @@ export const ActivityDisplay: React.FC<Props> = React.memo(
       return <></>;
     }
   },
-  (prev, next) => !is_different_array(prev.activity, next.activity)
+  (prev, next) => !is_different_array(prev.activity, next.activity),
 );

@@ -43,4 +43,3 @@ describe("resolveRenderedMessageValue", () => {
     ).toBe("row text");
   });
 });
-

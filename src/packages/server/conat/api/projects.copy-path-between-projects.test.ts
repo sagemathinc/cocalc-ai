@@ -163,7 +163,10 @@ describe("projects.copyPathBetweenProjects", () => {
         created_by: "acct-1",
         routing: "hub",
         input: {
-          src: { project_id: "src-project", path: ["/root/a.txt", "/tmp/b.txt"] },
+          src: {
+            project_id: "src-project",
+            path: ["/root/a.txt", "/tmp/b.txt"],
+          },
           dests: [{ project_id: "dest-project", path: "/root/out" }],
           options: { force: true },
         },

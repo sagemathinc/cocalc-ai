@@ -35,7 +35,7 @@ export interface ShallowTypedMap<TProps extends Record<string, any>> {
   set<K extends keyof TProps>(key: K, value: TProps[K]): this;
   update<K extends keyof TProps>(
     key: K,
-    updater: (value: TProps[K]) => TProps[K]
+    updater: (value: TProps[K]) => TProps[K],
   ): this;
   merge(...collections: Array<Partial<TProps> | Iterable<[string, any]>>): this;
   mergeDeep(

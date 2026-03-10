@@ -111,4 +111,3 @@ export const ConnectionIndicator: React.FC<Props> = React.memo(
     );
   },
 );
-

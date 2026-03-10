@@ -52,10 +52,7 @@ export type AgentActionHandler<
   TArgs = unknown,
   TResult = unknown,
   TContext = unknown,
-> = (
-  args: TArgs,
-  context: AgentHandlerContext<TContext>,
-) => Promise<TResult>;
+> = (args: TArgs, context: AgentHandlerContext<TContext>) => Promise<TResult>;
 
 export type AgentActionResult<TResult = unknown> = {
   status: AgentExecutionStatus;
@@ -69,7 +66,11 @@ export type AgentActionResult<TResult = unknown> = {
   idempotentReplay?: boolean;
 };
 
-export type AgentAuditEventStatus = "started" | "completed" | "failed" | "blocked";
+export type AgentAuditEventStatus =
+  | "started"
+  | "completed"
+  | "failed"
+  | "blocked";
 
 export type AgentAuditEvent = {
   requestId: string;
@@ -79,4 +80,3 @@ export type AgentAuditEvent = {
   actor?: AgentActor;
   details?: Record<string, unknown>;
 };
-

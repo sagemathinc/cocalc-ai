@@ -32,12 +32,12 @@ export default async function reCaptcha(req): Promise<string | null> {
 
   if (!result.success) {
     throw Error(
-      `reCaptcha may be misconfigured. ${JSON.stringify(result["error-codes"])}`
+      `reCaptcha may be misconfigured. ${JSON.stringify(result["error-codes"])}`,
     );
   }
   if (!result.score || result.score < THRESH) {
     throw Error(
-      `Only humans are allowed to use this feature. Your score is ${result.score}, which is below the human threshold of ${THRESH}.  Please move your mouse around, type like a human, etc., and try again.`
+      `Only humans are allowed to use this feature. Your score is ${result.score}, which is below the human threshold of ${THRESH}.  Please move your mouse around, type like a human, etc., and try again.`,
     );
   }
 

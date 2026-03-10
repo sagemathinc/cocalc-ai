@@ -94,5 +94,5 @@ export const SpellCheck: React.FC<Props> = React.memo(
       );
     }
   },
-  (prev, next) => !is_different(prev, next, ["value", "available"])
+  (prev, next) => !is_different(prev, next, ["value", "available"]),
 );

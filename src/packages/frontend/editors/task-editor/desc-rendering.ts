@@ -30,14 +30,14 @@ export function toggle_checkbox(s, index, checked): string {
       } else {
         return cur;
       }
-    })
+    }),
   );
 }
 
 // assumes value is the text output by remove_math!
 export function process_hashtags(
   value: string,
-  selected_hashtags?: SelectedHashtags
+  selected_hashtags?: SelectedHashtags,
 ): string {
   // replace hashtags by a span with appropriate class
   const v = parse_hashtags(value);
@@ -72,12 +72,14 @@ export function process_checkboxes(value) {
   value = replace_all_function(
     value,
     "[ ]",
-    (index) => `<span data-index='${index}' data-checkbox='false' style='cursor:pointer'>☐<span>`
+    (index) =>
+      `<span data-index='${index}' data-checkbox='false' style='cursor:pointer'>☐<span>`,
   );
   value = replace_all_function(
     value,
     "[x]",
-    (index) => `<span data-index='${index}' data-checkbox='true' style='cursor:pointer'>☑<span>`
+    (index) =>
+      `<span data-index='${index}' data-checkbox='true' style='cursor:pointer'>☑<span>`,
   );
   return value;
 }

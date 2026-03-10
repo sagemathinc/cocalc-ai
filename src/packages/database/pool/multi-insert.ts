@@ -27,7 +27,7 @@ function expand(rowCount: number, columnCount: number, startAt = 1): string {
         `(${Array(columnCount)
           .fill(0)
           .map(() => `$${index++}`)
-          .join(", ")})`
+          .join(", ")})`,
     )
     .join(", ");
 }
@@ -41,7 +41,7 @@ function flatten(arr: any[][]): any[] {
 
 export default function format(
   query: string, // the usual query, but without the VALUES part, e.g., "INSERT INTO videos (title, author)".
-  values: any[][] // the values as an array of arrays (the rows)
+  values: any[][], // the values as an array of arrays (the rows)
 ): { query: string; values: any[] } {
   return {
     query: `${query} VALUES ${expand(values.length, values?.[0].length ?? 0)}`,

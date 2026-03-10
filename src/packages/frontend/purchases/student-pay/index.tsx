@@ -82,11 +82,7 @@ export default function StudentPayUpgrade({
     } else {
       body = (
         <>
-          <PaySoon
-            when={when}
-            purchaseInfo={purchaseInfo}
-            setOpen={setOpen}
-          />
+          <PaySoon when={when} purchaseInfo={purchaseInfo} setOpen={setOpen} />
           <PayNow
             open={open}
             setOpen={setOpen}

@@ -18,7 +18,10 @@ import {
   getOwnedProcessRegistry,
   type OwnedRootProcess,
 } from "./owned-process-registry";
-import type { ProcessSnapshot, ProcessSnapshotProvider } from "./snapshot-provider";
+import type {
+  ProcessSnapshot,
+  ProcessSnapshotProvider,
+} from "./snapshot-provider";
 import { ensureJupyterOwnedRootBridge } from "./jupyter-owned-roots";
 import { ensureBackendOwnedRootBridge } from "./backend-owned-roots";
 
@@ -188,7 +191,10 @@ export class OwnedLinuxProcessSnapshotProvider implements ProcessSnapshotProvide
       await this.loadChildrenGraph(root.pid, childrenByPid, alive);
     }
 
-    for (const root_id of staleRootIds({ roots: trackedRoots, alivePids: alive })) {
+    for (const root_id of staleRootIds({
+      roots: trackedRoots,
+      alivePids: alive,
+    })) {
       this.registry.markExited(root_id);
     }
 

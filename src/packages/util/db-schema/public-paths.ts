@@ -189,7 +189,6 @@ Table({
         editable: true,
       },
     },
-
   },
   rules: {
     primary_key: "id",

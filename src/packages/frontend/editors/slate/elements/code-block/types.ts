@@ -20,4 +20,3 @@ export interface CodeBlock extends SlateElement {
   value?: string;
   children: CodeLine[];
 }
-

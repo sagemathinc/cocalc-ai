@@ -276,11 +276,7 @@ export function getProjectTableColumns(
       sortDirections: SORT_DIRECTIONS,
       sortOrder: sortState.columnKey === "host" ? sortState.order : null,
       render: (host?: string) =>
-        host ? (
-          <Text>{host}</Text>
-        ) : (
-          <Text type="secondary">—</Text>
-        ),
+        host ? <Text>{host}</Text> : <Text type="secondary">—</Text>,
     },
     ...(narrow
       ? []

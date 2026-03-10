@@ -67,9 +67,8 @@ function Body({ siteName }): JSX.Element {
           {WORKSPACES_LABEL.toLowerCase()}
         </A>
         . They form your personal workspaces, where you privately store your
-        files,
-        computational worksheets, and data. You typically run computations
-        through a web browser, either via a{" "}
+        files, computational worksheets, and data. You typically run
+        computations through a web browser, either via a{" "}
         <A href="https://doc.cocalc.com/jupyter.html">Jupyter Notebook</A> or by
         executing a program in a{" "}
         <A href="https://doc.cocalc.com/terminal.html">terminal</A>. You can
@@ -123,8 +122,8 @@ function Body({ siteName }): JSX.Element {
         applied to {WORKSPACES_LABEL.toLowerCase()}. One license key can upgrade
         up to a certain number of{" "}
         <b>simultaneously running {WORKSPACES_LABEL.toLowerCase()}</b> with the
-        given upgrade schema. You can apply a single license key to an
-        unlimited number of {WORKSPACES_LABEL.toLowerCase()}.
+        given upgrade schema. You can apply a single license key to an unlimited
+        number of {WORKSPACES_LABEL.toLowerCase()}.
       </Paragraph>
       <Paragraph>
         The following parameters determine the price:
@@ -133,9 +132,9 @@ function Body({ siteName }): JSX.Element {
           <li>If you qualify for an academic discount</li>
           <li>
             Upgrade schema per {WORKSPACE_LABEL.toLowerCase()}: a small 2 GB
-            memory / 1 shared CPU upgrade is fine for basic calculations, but
-            we find that many data and computational science workloads run
-            better with additional RAM and CPU.
+            memory / 1 shared CPU upgrade is fine for basic calculations, but we
+            find that many data and computational science workloads run better
+            with additional RAM and CPU.
           </li>
           <li>
             Duration: monthly/yearly subscription or explicit start and end
@@ -176,11 +175,11 @@ function Body({ siteName }): JSX.Element {
       </Title>
       <Paragraph>
         Alternatively, without committing to a full license and an ongoing
-        subscription, you can upgrade a {WORKSPACE_LABEL.toLowerCase()} just
-        for the period of time when you actually use it. You are only charged
-        for the time when the {WORKSPACE_LABEL.toLowerCase()} is actually
-        running. You can tweak the resource configuration any time you are
-        about to start the {WORKSPACE_LABEL.toLowerCase()}.
+        subscription, you can upgrade a {WORKSPACE_LABEL.toLowerCase()} just for
+        the period of time when you actually use it. You are only charged for
+        the time when the {WORKSPACE_LABEL.toLowerCase()} is actually running.
+        You can tweak the resource configuration any time you are about to start
+        the {WORKSPACE_LABEL.toLowerCase()}.
       </Paragraph>
       <Paragraph>
         Learn more about{" "}

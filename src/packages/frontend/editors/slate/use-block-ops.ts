@@ -62,7 +62,9 @@ export function useBlockOps({
   saveBlocksDebounced: () => void;
   newBlockId: () => string;
   is_current?: boolean;
-  virtuosoRef: React.MutableRefObject<{ scrollToIndex: (opts: any) => void } | null>;
+  virtuosoRef: React.MutableRefObject<{
+    scrollToIndex: (opts: any) => void;
+  } | null>;
 }) {
   const insertBlockAtGap = useCallback(
     (

@@ -15,8 +15,8 @@ export function ServersFlyout({ project_id, wrap }) {
           <Icon name="server" /> Managed Applications
         </Title>
         <Paragraph>
-          Create and manage private or deployable applications for this
-          project from one panel.
+          Create and manage private or deployable applications for this project
+          from one panel.
         </Paragraph>
         <AppServerPanel project_id={project_id} />
       </div>

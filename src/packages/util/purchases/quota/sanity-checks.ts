@@ -52,7 +52,7 @@ function sanity_check_start_end(info: PurchaseInfo) {
     if (info.subscription == "no") {
       if (start == null || end == null) {
         throw Error(
-          "start and end dates must both be given if not a subscription"
+          "start and end dates must both be given if not a subscription",
         );
       }
 
@@ -85,7 +85,7 @@ function sanity_check_quota(info: PurchaseInfo) {
   ) {
     const tos = Object.keys(LicenseIdleTimeouts).join(", ");
     throw new Error(
-      `field "custom_uptime" must be one of ${tos} or "always_running"`
+      `field "custom_uptime" must be one of ${tos} or "always_running"`,
     );
   }
 

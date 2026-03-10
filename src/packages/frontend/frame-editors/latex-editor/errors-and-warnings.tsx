@@ -219,8 +219,7 @@ export const ErrorsAndWarnings: React.FC<ErrorsAndWarningsProps> = React.memo(
     const status: string = useRedux([name, "status"]) ?? "";
     const knitr: boolean = useRedux([name, "knitr"]);
     const includeError: string = useRedux([name, "includeError"]) ?? "";
-    
-    
+
     function render_status(): Rendered {
       if (status) {
         return (

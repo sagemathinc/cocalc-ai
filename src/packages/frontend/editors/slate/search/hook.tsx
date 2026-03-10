@@ -147,7 +147,7 @@ export const useSearch: (Options) => SearchHook = (options) => {
         )}
       </div>
     ),
-    [search, decorate]
+    [search, decorate],
   );
 
   return {

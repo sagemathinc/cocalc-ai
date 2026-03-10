@@ -29,18 +29,12 @@ export default function RootFilesystemImage() {
     "customize",
     "project_rootfs_default_image_gpu",
   );
-  const accountDefaultRootfs = useTypedRedux(
-    "account",
-    "default_rootfs_image",
-  );
+  const accountDefaultRootfs = useTypedRedux("account", "default_rootfs_image");
   const accountDefaultRootfsGpu = useTypedRedux(
     "account",
     "default_rootfs_image_gpu",
   );
-  const manifestUrl = useTypedRedux(
-    "customize",
-    "project_rootfs_manifest_url",
-  );
+  const manifestUrl = useTypedRedux("customize", "project_rootfs_manifest_url");
   const manifestUrlExtra = useTypedRedux(
     "customize",
     "project_rootfs_manifest_url_extra",
@@ -311,12 +305,9 @@ async function getImages(project_id: string) {
   // [ ] TODO: this should really be the fs in the sandbox that runs on the file-server ALWAYS
   // but I don't have a way to express that yet.
   const fs = redux.getProjectActions(project_id).fs();
-  const { stdout } = await fs.fd(
-    join(PROJECT_IMAGE_PATH, "0"),
-    {
-      options: ["-E", "workdir", "-E", "upperdir"],
-    },
-  );
+  const { stdout } = await fs.fd(join(PROJECT_IMAGE_PATH, "0"), {
+    options: ["-E", "workdir", "-E", "upperdir"],
+  });
   const v = Buffer.from(stdout)
     .toString()
     .split("\n")

@@ -181,10 +181,7 @@ function RangeSliderMarks({
         range
         min={0}
         max={versions.size - 1}
-        value={[
-          versions.indexOf(version0!),
-          versions.indexOf(version1!),
-        ]}
+        value={[versions.indexOf(version0!), versions.indexOf(version1!)]}
         onChange={handleChange}
       />
     </div>

@@ -17,4 +17,3 @@ describe("normalizeCpSourcePath", () => {
     expect(normalizeCpSourcePath("-weird-name.txt")).toBe("./-weird-name.txt");
   });
 });
-

@@ -37,5 +37,5 @@ export const LatexWordCount: React.FC<LatexWordCountProps> = React.memo(
         {word_count}
       </div>
     );
-  }
+  },
 );

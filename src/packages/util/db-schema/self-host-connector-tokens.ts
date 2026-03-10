@@ -9,13 +9,7 @@ Table({
   name: "self_host_connector_tokens",
   rules: {
     primary_key: "token_id",
-    pg_indexes: [
-      "account_id",
-      "connector_id",
-      "host_id",
-      "expires",
-      "created",
-    ],
+    pg_indexes: ["account_id", "connector_id", "host_id", "expires", "created"],
   },
   fields: {
     token_id: {

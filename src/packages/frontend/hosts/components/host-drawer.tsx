@@ -25,7 +25,10 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
-import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
+import {
+  mapCloudRegionToR2Region,
+  R2_REGION_LABELS,
+} from "@cocalc/util/consts";
 import {
   STATUS_COLOR,
   getHostOnlineTooltip,
@@ -210,13 +213,7 @@ function artifactStatusTag({
   return <Tag color="orange">update available</Tag>;
 }
 
-function upgradeTitle({
-  label,
-  source,
-}: {
-  label: string;
-  source: string;
-}) {
+function upgradeTitle({ label, source }: { label: string; source: string }) {
   return (
     <div>
       <div>
@@ -357,7 +354,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       ? mapCloudRegionToR2Region(host.region)
       : undefined;
   const backupRegionLabel = backupRegion
-    ? R2_REGION_LABELS[backupRegion] ?? backupRegion
+    ? (R2_REGION_LABELS[backupRegion] ?? backupRegion)
     : undefined;
   const connectorStatusTag = isSelfHost ? (
     <Tag color={connectorOnline ? "green" : "red"}>
@@ -408,10 +405,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       ) : null
     ) : null;
   const canForceDeprovision =
-    !!host &&
-    isSelfHost &&
-    !host.deleted &&
-    host.status !== "deprovisioned";
+    !!host && isSelfHost && !host.deleted && host.status !== "deprovisioned";
   const softwareSummary = React.useMemo(() => {
     if (!host) {
       return { upToDate: 0, updatesAvailable: 0, unknown: 0 };
@@ -547,9 +541,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             )}
             {showSelfHostResources && (
               <Typography.Text>
-                Resources:{" "}
-                {selfHostCpu ?? "?"} vCPU / {selfHostRam ?? "?"} GB RAM /{" "}
-                {selfHostDisk ?? "?"} GB disk
+                Resources: {selfHostCpu ?? "?"} vCPU / {selfHostRam ?? "?"} GB
+                RAM / {selfHostDisk ?? "?"} GB disk
               </Typography.Text>
             )}
             {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
@@ -568,7 +561,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             host.project_bundle_version ||
             host.tools_version ||
             softwareVersions) && (
-            <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
               <Space wrap align="center">
                 <Typography.Text strong>Runtime software</Typography.Text>
                 <Popover content={softwareHelp} trigger="click">
@@ -585,7 +582,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     icon={<SyncOutlined spin={softwareVersions.loading} />}
                     onClick={() => {
                       softwareVersions.refresh().catch((err) => {
-                        console.error("failed to refresh host software versions", err);
+                        console.error(
+                          "failed to refresh host software versions",
+                          err,
+                        );
                       });
                     }}
                   >
@@ -654,17 +654,24 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             latest: configured?.version,
                             error: configured?.error,
                           })}
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12 }}
+                          >
                             {runningLabel}
                           </Typography.Text>
                         </Space>
                         <Space
                           wrap
                           align="center"
-                          style={{ justifyContent: "space-between", width: "100%" }}
+                          style={{
+                            justifyContent: "space-between",
+                            width: "100%",
+                          }}
                         >
                           <Typography.Text type="secondary">
-                            running <code>{running ?? "n/a"}</code> | latest available{" "}
+                            running <code>{running ?? "n/a"}</code> | latest
+                            available{" "}
                             <code>{configured?.version ?? "unknown"}</code>
                           </Typography.Text>
                           <Space wrap>
@@ -684,11 +691,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                       artifact,
                                     })
                                   }
-                                  disabled={hostOpActive || host.status !== "running"}
+                                  disabled={
+                                    hostOpActive || host.status !== "running"
+                                  }
                                 >
                                   <Button
                                     size="small"
-                                    disabled={hostOpActive || host.status !== "running"}
+                                    disabled={
+                                      hostOpActive || host.status !== "running"
+                                    }
                                   >
                                     Upgrade
                                   </Button>
@@ -746,11 +757,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                         useHubSource: true,
                                       })
                                     }
-                                    disabled={hostOpActive || host.status !== "running"}
+                                    disabled={
+                                      hostOpActive || host.status !== "running"
+                                    }
                                   >
                                     <Button
                                       size="small"
-                                      disabled={hostOpActive || host.status !== "running"}
+                                      disabled={
+                                        hostOpActive ||
+                                        host.status !== "running"
+                                      }
                                     >
                                       Upgrade from hub
                                     </Button>
@@ -773,7 +789,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                                   </div>
                                 }
                               >
-                                <Button size="small" type="text" icon={<CodeOutlined />}>
+                                <Button
+                                  size="small"
+                                  type="text"
+                                  icon={<CodeOutlined />}
+                                >
                                   CLI
                                 </Button>
                               </Popover>
@@ -888,7 +908,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           ) : hostLog.length === 0 ? (
             <Typography.Text type="secondary">No actions yet.</Typography.Text>
           ) : (
-            <Space orientation="vertical" style={{ width: "100%" }} size="small">
+            <Space
+              orientation="vertical"
+              style={{ width: "100%" }}
+              size="small"
+            >
               {hostLog.map((entry) => (
                 <Card
                   key={entry.id}

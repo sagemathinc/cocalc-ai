@@ -83,7 +83,11 @@ export default async function createVouchers({
     // older vouchers that might be in user shopping carts still
     count = 1;
   }
-  if (amountValue.eq(0) || amountValue.lte(0) || amountValue.gt(MAX_VOUCHER_VALUE)) {
+  if (
+    amountValue.eq(0) ||
+    amountValue.lte(0) ||
+    amountValue.gt(MAX_VOUCHER_VALUE)
+  ) {
     throw Error(`amount must be positive and at most ${MAX_VOUCHER_VALUE}`);
   }
 

@@ -42,7 +42,9 @@ jest.mock("../utils", () => ({
   INPUT_HEIGHT: 60,
 }));
 
-function renderComposer(overrides: Partial<React.ComponentProps<typeof ChatRoomComposer>> = {}) {
+function renderComposer(
+  overrides: Partial<React.ComponentProps<typeof ChatRoomComposer>> = {},
+) {
   const props: React.ComponentProps<typeof ChatRoomComposer> = {
     actions: {
       syncdb: {},

@@ -64,7 +64,9 @@ export class AgentExecutor<TContext = unknown> {
     this.requestIdFactory = options.requestIdFactory ?? createRequestId;
   }
 
-  async execute(input: ExecuteActionInput<TContext>): Promise<AgentActionResult> {
+  async execute(
+    input: ExecuteActionInput<TContext>,
+  ): Promise<AgentActionResult> {
     const requestId = this.requestIdFactory();
     const { action, actor } = input;
     const descriptor = this.registry.get(action.actionType);
@@ -227,4 +229,3 @@ export class AgentExecutor<TContext = unknown> {
     });
   }
 }
-

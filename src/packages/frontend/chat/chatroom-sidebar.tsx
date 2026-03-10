@@ -217,84 +217,84 @@ export function ChatRoomSidebarContent({
       : [];
     return {
       items: [
-      {
-        key: "rename",
-        label: "Settings",
-      },
-      {
-        key: isPinned ? "unpin" : "pin",
-        label: isPinned ? "Unpin chat" : "Pin chat",
-      },
-      {
-        key: "archive",
-        label: "Archive chat",
-      },
-      ...codexItems,
-      {
-        type: "divider",
-      },
-      {
-        key: "export",
-        label: "Export...",
-      },
-      {
-        key: "fork",
-        label: "Fork chat…",
-      },
-      {
-        type: "divider",
-      },
-      {
-        key: "delete",
-        label: <span style={{ color: COLORS.ANTD_RED }}>Delete chat</span>,
-      },
-    ],
-    onClick: ({ key }) => {
-      if (key === "rename") {
-        openRenameModal(
-          threadKey,
-          plainLabel,
-          hasCustomName,
-          threadColor,
-          threadIcon,
-        );
-      } else if (key === "pin" || key === "unpin") {
-        if (!actions?.setThreadPin) {
-          antdMessage.error("Pinning chats is not available.");
-          return;
+        {
+          key: "rename",
+          label: "Settings",
+        },
+        {
+          key: isPinned ? "unpin" : "pin",
+          label: isPinned ? "Unpin chat" : "Pin chat",
+        },
+        {
+          key: "archive",
+          label: "Archive chat",
+        },
+        ...codexItems,
+        {
+          type: "divider",
+        },
+        {
+          key: "export",
+          label: "Export...",
+        },
+        {
+          key: "fork",
+          label: "Fork chat…",
+        },
+        {
+          type: "divider",
+        },
+        {
+          key: "delete",
+          label: <span style={{ color: COLORS.ANTD_RED }}>Delete chat</span>,
+        },
+      ],
+      onClick: ({ key }) => {
+        if (key === "rename") {
+          openRenameModal(
+            threadKey,
+            plainLabel,
+            hasCustomName,
+            threadColor,
+            threadIcon,
+          );
+        } else if (key === "pin" || key === "unpin") {
+          if (!actions?.setThreadPin) {
+            antdMessage.error("Pinning chats is not available.");
+            return;
+          }
+          const pinned = key === "pin";
+          const success = actions.setThreadPin(threadKey, pinned);
+          if (!success) {
+            antdMessage.error("Unable to update chat pin state.");
+            return;
+          }
+          antdMessage.success(pinned ? "Chat pinned." : "Chat unpinned.");
+        } else if (key === "export") {
+          openExportModal({
+            scope: "current-thread",
+            threadKey,
+            label: plainLabel,
+          });
+        } else if (key === "fork") {
+          openForkModal(threadKey, plainLabel, isAI);
+        } else if (key === "archive") {
+          if (!actions?.setThreadArchived) {
+            antdMessage.error("Archiving chats is not available.");
+            return;
+          }
+          const success = actions.setThreadArchived(threadKey, true);
+          if (!success) {
+            antdMessage.error("Unable to archive chat.");
+            return;
+          }
+          antdMessage.success("Chat archived.");
+        } else if (key === "git-browser") {
+          openGitBrowser(threadKey);
+        } else if (key === "delete") {
+          confirmDeleteThread(threadKey, plainLabel);
         }
-        const pinned = key === "pin";
-        const success = actions.setThreadPin(threadKey, pinned);
-        if (!success) {
-          antdMessage.error("Unable to update chat pin state.");
-          return;
-        }
-        antdMessage.success(pinned ? "Chat pinned." : "Chat unpinned.");
-      } else if (key === "export") {
-        openExportModal({
-          scope: "current-thread",
-          threadKey,
-          label: plainLabel,
-        });
-      } else if (key === "fork") {
-        openForkModal(threadKey, plainLabel, isAI);
-      } else if (key === "archive") {
-        if (!actions?.setThreadArchived) {
-          antdMessage.error("Archiving chats is not available.");
-          return;
-        }
-        const success = actions.setThreadArchived(threadKey, true);
-        if (!success) {
-          antdMessage.error("Unable to archive chat.");
-          return;
-        }
-        antdMessage.success("Chat archived.");
-      } else if (key === "git-browser") {
-        openGitBrowser(threadKey);
-      } else if (key === "delete") {
-        confirmDeleteThread(threadKey, plainLabel);
-      }
-    },
+      },
     };
   };
 
@@ -335,11 +335,11 @@ export function ChatRoomSidebarContent({
     const model =
       typeof codexConfig?.model === "string"
         ? codexConfig.model
-        : (actions?.getThreadMetadata?.(key)?.agent_model as string | undefined);
+        : (actions?.getThreadMetadata?.(key)?.agent_model as
+            | string
+            | undefined);
     const isCodexThread =
-      isAI &&
-      typeof model === "string" &&
-      isCodexModelName(model);
+      isAI && typeof model === "string" && isCodexModelName(model);
     const isRecentlyActive =
       thread.lastActivityAt != null &&
       activityNow - thread.lastActivityAt < ACTIVITY_RECENT_MS;
@@ -642,7 +642,10 @@ export function ChatRoomSidebarContent({
                     <Button
                       size="small"
                       onClick={() => {
-                        const ok = actions.setThreadArchived?.(thread.key, false);
+                        const ok = actions.setThreadArchived?.(
+                          thread.key,
+                          false,
+                        );
                         if (ok) {
                           antdMessage.success("Chat unarchived.");
                         } else {

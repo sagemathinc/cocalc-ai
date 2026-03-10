@@ -87,116 +87,112 @@ export default function ChatGPTHelp({
   }
 
   return (
-      <Row style={{ margin: "5px 0", ...style }}>
-        <Col
-          xs={{ span: 24 }}
-          md={{ span: 17 }}
-          style={{ marginBottom: "5px" }}
-        >
-          <Input.TextArea
-            value={input}
-            maxLength={2000}
-            onChange={(e) => setInput(e.target.value)}
-            size={size}
-            autoSize={{ minRows: focus ? 2 : 1, maxRows: 5 }}
-            disabled={state == "wait" || account?.account_id == null}
-            onFocus={() => setFocus(true)}
-            onBlur={() => setFocus(false)}
-            placeholder={
-              placeholder ?? `Ask ChatGPT: how can I do this on ${siteName}?`
+    <Row style={{ margin: "5px 0", ...style }}>
+      <Col xs={{ span: 24 }} md={{ span: 17 }} style={{ marginBottom: "5px" }}>
+        <Input.TextArea
+          value={input}
+          maxLength={2000}
+          onChange={(e) => setInput(e.target.value)}
+          size={size}
+          autoSize={{ minRows: focus ? 2 : 1, maxRows: 5 }}
+          disabled={state == "wait" || account?.account_id == null}
+          onFocus={() => setFocus(true)}
+          onBlur={() => setFocus(false)}
+          placeholder={
+            placeholder ?? `Ask ChatGPT: how can I do this on ${siteName}?`
+          }
+          allowClear
+          onPressEnter={(e) => {
+            if (e.shiftKey) {
+              chatgpt();
             }
-            allowClear
-            onPressEnter={(e) => {
-              if (e.shiftKey) {
-                chatgpt();
-              }
+          }}
+        />
+        {account?.account_id == null && (
+          <InPlaceSignInOrUp
+            title="ChatGPT"
+            why="to use ChatGPT"
+            onSuccess={() => {
+              router.reload();
             }}
           />
-          {account?.account_id == null && (
-            <InPlaceSignInOrUp
-              title="ChatGPT"
-              why="to use ChatGPT"
-              onSuccess={() => {
-                router.reload();
-              }}
-            />
-          )}
-        </Col>
-        <Col
-          xs={{ span: 24, offset: 0 }}
-          md={{ span: 6, offset: 1 }}
-          style={{
-            marginBottom: "5px",
-            display: "flex",
-            justifyContent: "center",
+        )}
+      </Col>
+      <Col
+        xs={{ span: 24, offset: 0 }}
+        md={{ span: 6, offset: 1 }}
+        style={{
+          marginBottom: "5px",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <Button
+          disabled={account?.account_id == null}
+          size={size}
+          type="primary"
+          onClick={() => {
+            if (input?.trim()) {
+              chatgpt();
+            }
           }}
         >
-          <Button
-            disabled={account?.account_id == null}
-            size={size}
-            type="primary"
-            onClick={() => {
-              if (input?.trim()) {
-                chatgpt();
-              }
-            }}
-          >
-            <OpenAIAvatar
-              size={size == "large" ? 24 : 18}
-              backgroundColor="transparent"
-              style={{ marginRight: "5px", marginTop: "-4px" }}
-            />
-            {input?.trim() && focus
-              ? "Shift+Enter"
-              : size == "large"
+          <OpenAIAvatar
+            size={size == "large" ? 24 : 18}
+            backgroundColor="transparent"
+            style={{ marginRight: "5px", marginTop: "-4px" }}
+          />
+          {input?.trim() && focus
+            ? "Shift+Enter"
+            : size == "large"
               ? "Ask ChatGPT"
               : "ChatGPT"}
-          </Button>
-        </Col>
-        <Col xs={{ span: 24 }} md={{ span: 24 }}>
-          {error && (
-            <Alert
-              style={{ margin: "15px 0" }}
-              type="error"
-              message="Error"
-              showIcon
-              closable
-              banner
-              onClose={() => setError("")}
-              description={renderAlertErrorDescription()}
-            />
-          )}
-          {state == "wait" && (
-            <div style={{ textAlign: "center", margin: "15px 0" }}>
-              <OpenAIAvatar size={18} /> ChatGPT is figuring out how to do this
-              using {siteName}...{" "}
-              <Button
-                style={{ float: "right" }}
-                onClick={() => {
-                  counterRef.current += 1; // so result of outstanding request is totally ignored
-                  setState("input");
-                }}
-              >
-                <Loading delay={0}>Cancel...</Loading>
-              </Button>
-              <ProgressEstimate seconds={30} />
-            </div>
-          )}
-          {output != null && (
-            <Alert
-              type="success"
-              closable
-              banner
-              onClose={() => setOutput("")}
-              style={{ margin: "15px 0" }}
-              description={
-                <div>
-                  <Markdown value={output} />
-                </div>
-              }
-            />
-          )}
-        </Col>
-      </Row>
+        </Button>
+      </Col>
+      <Col xs={{ span: 24 }} md={{ span: 24 }}>
+        {error && (
+          <Alert
+            style={{ margin: "15px 0" }}
+            type="error"
+            message="Error"
+            showIcon
+            closable
+            banner
+            onClose={() => setError("")}
+            description={renderAlertErrorDescription()}
+          />
+        )}
+        {state == "wait" && (
+          <div style={{ textAlign: "center", margin: "15px 0" }}>
+            <OpenAIAvatar size={18} /> ChatGPT is figuring out how to do this
+            using {siteName}...{" "}
+            <Button
+              style={{ float: "right" }}
+              onClick={() => {
+                counterRef.current += 1; // so result of outstanding request is totally ignored
+                setState("input");
+              }}
+            >
+              <Loading delay={0}>Cancel...</Loading>
+            </Button>
+            <ProgressEstimate seconds={30} />
+          </div>
+        )}
+        {output != null && (
+          <Alert
+            type="success"
+            closable
+            banner
+            onClose={() => setOutput("")}
+            style={{ margin: "15px 0" }}
+            description={
+              <div>
+                <Markdown value={output} />
+              </div>
+            }
+          />
+        )}
+      </Col>
+    </Row>
   );
 }

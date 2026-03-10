@@ -92,9 +92,10 @@ export const PROVIDER_CONFIGS = {
   openai: {
     name: "OpenAI",
     createClient: async (options, ctx) => {
-      const { ChatOpenAI } = await importLangchain<
-        typeof import("@langchain/openai")
-      >("@langchain/openai");
+      const { ChatOpenAI } =
+        await importLangchain<typeof import("@langchain/openai")>(
+          "@langchain/openai",
+        );
       const { openai_api_key: apiKey } = ctx.settings ?? {};
       const normalizedModel = normalizeOpenAIModel(options.model);
 
@@ -265,9 +266,10 @@ export const PROVIDER_CONFIGS = {
   "custom-openai": {
     name: "Custom OpenAI",
     createClient: async (options, ctx) => {
-      const { ChatOpenAI } = await importLangchain<
-        typeof import("@langchain/openai")
-      >("@langchain/openai");
+      const { ChatOpenAI } =
+        await importLangchain<typeof import("@langchain/openai")>(
+          "@langchain/openai",
+        );
       const transformedModel = fromCustomOpenAIModel(options.model);
       log.debug(
         `Custom OpenAI createClient: original=${options.model}, transformed=${transformedModel}`,

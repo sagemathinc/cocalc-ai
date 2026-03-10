@@ -42,13 +42,7 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
   const home = process.env.HOME ?? process.cwd();
   const navigatorChatPath =
     process.platform === "darwin"
-      ? join(
-          home,
-          "Library",
-          "Application Support",
-          "cocalc",
-          "navigator.chat",
-        )
+      ? join(home, "Library", "Application Support", "cocalc", "navigator.chat")
       : join(home, ".local", "share", "cocalc", "navigator.chat");
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-help-me-fix-agent");
   await ensureNotebook(path_ipynb, [
@@ -85,7 +79,9 @@ test("Fix with Agent opens floating navigator and sends prompt in-place", async 
       async () => {
         try {
           const raw = await readFile(navigatorChatPath, "utf8");
-          return raw.includes("Investigate and fix this Jupyter notebook error.");
+          return raw.includes(
+            "Investigate and fix this Jupyter notebook error.",
+          );
         } catch {
           return false;
         }

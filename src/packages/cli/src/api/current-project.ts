@@ -2,7 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { URL } from "node:url";
 
-import { connect as connectConat, type Client as ConatClient } from "@cocalc/conat/core/client";
+import {
+  connect as connectConat,
+  type Client as ConatClient,
+} from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { isValidUUID } from "@cocalc/util/misc";
 import { normalizeUrl } from "../core/utils";
@@ -91,7 +94,9 @@ function matchesLiteConnection(
           base.protocol.replace(/:$/, "").toLowerCase()
         : true;
     const port = Number(info.port ?? NaN);
-    const basePort = Number(base.port || (base.protocol === "https:" ? 443 : 80));
+    const basePort = Number(
+      base.port || (base.protocol === "https:" ? 443 : 80),
+    );
     const portOk = Number.isFinite(port) ? port === basePort : true;
     return hostOk && protocolOk && portOk;
   } catch {
@@ -99,8 +104,12 @@ function matchesLiteConnection(
   }
 }
 
-function resolveCurrentProjectBearer(apiBaseUrl: string, explicit?: string): string {
-  let bearer = `${explicit ?? process.env.COCALC_BEARER_TOKEN ?? process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
+function resolveCurrentProjectBearer(
+  apiBaseUrl: string,
+  explicit?: string,
+): string {
+  let bearer =
+    `${explicit ?? process.env.COCALC_BEARER_TOKEN ?? process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
   if (bearer) return bearer;
 
   let hostname = "";
@@ -186,7 +195,8 @@ export async function openCurrentProjectConnection(
       "requires a bearer token; set COCALC_BEARER_TOKEN or pass options.bearer",
     );
   }
-  const projectId = `${options.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  const projectId =
+    `${options.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   if (!isValidUUID(projectId)) {
     throw new Error(
       "requires the current project id; set COCALC_PROJECT_ID or pass options.projectId",

@@ -1,4 +1,7 @@
-import { createAgentSdkBridge, createLaunchpadAgentSdkBridge } from "../runtime";
+import {
+  createAgentSdkBridge,
+  createLaunchpadAgentSdkBridge,
+} from "../runtime";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { ProjectApi } from "@cocalc/conat/project/api";
 
@@ -6,7 +9,7 @@ function makeHubClient(): Pick<HubApi, "system" | "projects"> {
   return {
     system: {
       ping: () => ({ now: 123 }),
-      getCustomize: async (fields?: string[]) => ({ fields } as any),
+      getCustomize: async (fields?: string[]) => ({ fields }) as any,
     } as any,
     projects: {
       createProject: async () => "project-created",

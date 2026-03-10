@@ -41,10 +41,7 @@ export default function createApiV2Router(
         if (!opts.includeDocs && entry.path === "/") {
           continue;
         }
-        router.all(
-          entry.path,
-          wrapHandler(entry.handler, logger, entry.path),
-        );
+        router.all(entry.path, wrapHandler(entry.handler, logger, entry.path));
       }
       return router;
     }

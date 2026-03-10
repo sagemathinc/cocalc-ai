@@ -5,11 +5,16 @@ export type AccountCommandDeps = {
   toIso: any;
 };
 
-export function registerAccountCommand(program: Command, deps: AccountCommandDeps): Command {
+export function registerAccountCommand(
+  program: Command,
+  deps: AccountCommandDeps,
+): Command {
   const { withContext, toIso } = deps;
 
   const account = program.command("account").description("account operations");
-  const accountApiKey = account.command("api-key").description("manage account API keys");
+  const accountApiKey = account
+    .command("api-key")
+    .description("manage account API keys");
 
   accountApiKey
     .command("list")
@@ -42,7 +47,11 @@ export function registerAccountCommand(program: Command, deps: AccountCommandDep
   accountApiKey
     .command("create")
     .description("create an account API key")
-    .option("--name <name>", "key label", `cocalc-cli-${Date.now().toString(36)}`)
+    .option(
+      "--name <name>",
+      "key label",
+      `cocalc-cli-${Date.now().toString(36)}`,
+    )
     .option("--expire-seconds <n>", "expire in n seconds")
     .action(
       async (

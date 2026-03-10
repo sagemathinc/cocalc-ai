@@ -125,7 +125,10 @@ const dataSource = [
       <>
         Use Jupyter notebooks with the R kernel, the R command line, X11
         graphics, <LaTeX /> with Knitr and RMarkdown, and more. Many{" "}
-        <A href="/features/r-statistical-software">R packages are included in CoCalc</A>!
+        <A href="/features/r-statistical-software">
+          R packages are included in CoCalc
+        </A>
+        !
       </>
     ),
   },

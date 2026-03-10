@@ -1,4 +1,13 @@
-import { Alert, Button, Popover, Progress, Space, Tag, Timeline, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Popover,
+  Progress,
+  Space,
+  Tag,
+  Timeline,
+  Typography,
+} from "antd";
 import { useMemo, useState } from "react";
 import { TimeAgo, TimeElapsed } from "@cocalc/frontend/components";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
@@ -181,7 +190,10 @@ function formatDetail(detail: any): string | undefined {
   if (typeof detail.status === "string") {
     summaryParts.push(`status=${detail.status}`);
   }
-  if (typeof detail.completed === "number" && typeof detail.total === "number") {
+  if (
+    typeof detail.completed === "number" &&
+    typeof detail.total === "number"
+  ) {
     summaryParts.push(`${detail.completed}/${detail.total}`);
   }
   if (typeof detail.failed === "number") {
@@ -332,7 +344,9 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
         children: (
           <div>
             <div style={{ fontWeight: 600 }}>{entry.label}</div>
-            <div style={{ color: "#666", fontSize: "11px" }}>{entry.description}</div>
+            <div style={{ color: "#666", fontSize: "11px" }}>
+              {entry.description}
+            </div>
           </div>
         ),
       })),
@@ -352,7 +366,9 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
         <div style={{ fontWeight: 600 }}>{actionLabel} lifecycle</div>
         <Space wrap size={[6, 6]}>
           <Tag color={statusColor(status)}>{status ?? "running"}</Tag>
-          {currentPhase ? <Tag style={WRAP_TAG_STYLE}>{currentPhase}</Tag> : null}
+          {currentPhase ? (
+            <Tag style={WRAP_TAG_STYLE}>{currentPhase}</Tag>
+          ) : null}
           {detail ? <Tag style={WRAP_TAG_STYLE}>{detail}</Tag> : null}
           <Tag style={WRAP_TAG_STYLE}>
             Operation ID:{" "}
@@ -373,12 +389,22 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
           </Button>
         </Space>
         {summary?.error ? (
-          <Alert type="error" showIcon message="Operation failed" description={summary.error} />
+          <Alert
+            type="error"
+            showIcon
+            message="Operation failed"
+            description={summary.error}
+          />
         ) : null}
         <Space size="small" wrap style={{ fontSize: 12 }}>
           {summary?.created_by ? (
             <span>
-              Initiated by <User account_id={summary.created_by} show_avatar avatarSize={16} />
+              Initiated by{" "}
+              <User
+                account_id={summary.created_by}
+                show_avatar
+                avatarSize={16}
+              />
             </span>
           ) : null}
           {summary?.created_at ? (
@@ -428,7 +454,11 @@ export function HostOpProgress({
   }
   const summary = op.summary;
   const status = summary?.status ?? "queued";
-  if (summary && summary.status !== "failed" && !ACTIVE_STATUSES.has(summary.status)) {
+  if (
+    summary &&
+    summary.status !== "failed" &&
+    !ACTIVE_STATUSES.has(summary.status)
+  ) {
     return null;
   }
 
@@ -439,7 +469,7 @@ export function HostOpProgress({
   const start_ts =
     created_ts != null && started_ts != null
       ? Math.min(created_ts, started_ts)
-      : created_ts ?? started_ts;
+      : (created_ts ?? started_ts);
   const percent = progressPercent(op);
   const actionLabel = opLabel(op);
 
@@ -480,7 +510,8 @@ export function HostOpProgress({
           {actionLabel}: {label}
           {start_ts != null && (
             <>
-              {" "}· <TimeElapsed start_ts={start_ts} longform={false} />
+              {" "}
+              · <TimeElapsed start_ts={start_ts} longform={false} />
             </>
           )}
         </Typography.Text>
@@ -499,7 +530,8 @@ export function HostOpProgress({
           {actionLabel}: {label}
           {start_ts != null && (
             <>
-              {" "}· <TimeElapsed start_ts={start_ts} />
+              {" "}
+              · <TimeElapsed start_ts={start_ts} />
             </>
           )}
         </Typography.Text>

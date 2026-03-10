@@ -182,7 +182,9 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
 }
 
 function mapLiteTarget(rawUrl: string): string {
-  const parsed = new URL(`http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`);
+  const parsed = new URL(
+    `http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`,
+  );
   const pathname = parsed.pathname;
   let targetPath = "";
   if (pathname.startsWith("/projects/")) {
@@ -218,7 +220,9 @@ function mapLiteTarget(rawUrl: string): string {
 // Build a relative path from the current request path to the same app mount root.
 // This makes redirects work both at "/" and behind strip-prefix proxies.
 function toPrefixRelative(rawUrl: string, target: string): string {
-  const parsed = new URL(`http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`);
+  const parsed = new URL(
+    `http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`,
+  );
   const trimmed = parsed.pathname.replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
     return target;

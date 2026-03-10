@@ -39,7 +39,8 @@ export const buildRegionGroupOptions = (
   if (summary) {
     for (const providerSummary of Object.values(summary)) {
       if (!providerSummary || typeof providerSummary !== "object") continue;
-      const regionGroups = (providerSummary as Record<string, any>).region_groups;
+      const regionGroups = (providerSummary as Record<string, any>)
+        .region_groups;
       if (regionGroups && typeof regionGroups === "object") {
         Object.keys(regionGroups).forEach((group) => groups.add(group));
         continue;

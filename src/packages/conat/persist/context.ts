@@ -8,8 +8,9 @@ on the backend and make the code more unit testable.
 import type { DatabaseSync } from "node:sqlite";
 export type Database = DatabaseSync;
 
-let sqliteModule: { DatabaseSync: new (...args: any[]) => DatabaseSync } | null =
-  null;
+let sqliteModule: {
+  DatabaseSync: new (...args: any[]) => DatabaseSync;
+} | null = null;
 
 export let compress: (data: Buffer) => Buffer = () => {
   throw Error("must initialize persist context");

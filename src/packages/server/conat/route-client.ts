@@ -5,7 +5,11 @@ import {
 } from "@cocalc/backend/data";
 import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import { inboxPrefix } from "@cocalc/conat/names";
-import { connect, type ClientOptions, type Client } from "@cocalc/conat/core/client";
+import {
+  connect,
+  type ClientOptions,
+  type Client,
+} from "@cocalc/conat/core/client";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import {
   routeProjectSubject,
@@ -29,7 +33,10 @@ type RoutedHubClientState = {
 
 const routedHubClients: Record<string, RoutedHubClientState> = {};
 
-function issueHubRouteToken(host_id: string): { token: string; expiresAt: number } {
+function issueHubRouteToken(host_id: string): {
+  token: string;
+  expiresAt: number;
+} {
   const { token, expires_at } = issueProjectHostAuthToken({
     host_id,
     actor: "hub",

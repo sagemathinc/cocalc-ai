@@ -2,7 +2,7 @@ import getPool from "@cocalc/database/pool";
 import { parseDomain, ParseResultType } from "parse-domain";
 
 export default async function isDomainExclusiveSSO(
-  email_address: string
+  email_address: string,
 ): Promise<string | undefined> {
   if (!email_address) {
     return;
@@ -35,7 +35,7 @@ export default async function isDomainExclusiveSSO(
 async function getExclusiveDomains(): Promise<string[]> {
   const pool = getPool("minutes"); // exclusive sso is meant for a on prem settings where config RARELY changes.
   const { rows } = await pool.query(
-    "SELECT conf#>'{exclusive_domains}' as exclusive_domains FROM passport_settings"
+    "SELECT conf#>'{exclusive_domains}' as exclusive_domains FROM passport_settings",
   );
   const v: string[] = [];
   for (const row of rows) {

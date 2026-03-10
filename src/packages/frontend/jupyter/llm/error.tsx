@@ -87,7 +87,11 @@ export default function LLMError({ style, traceback, input }: Props) {
   return (
     <div>
       <Space wrap size={[8, 8]} style={{ marginBottom: 8 }}>
-        <Button size="small" loading={routing} onClick={() => void routeToNavigator()}>
+        <Button
+          size="small"
+          loading={routing}
+          onClick={() => void routeToNavigator()}
+        >
           Fix with Agent
         </Button>
         <Typography.Text type="secondary">

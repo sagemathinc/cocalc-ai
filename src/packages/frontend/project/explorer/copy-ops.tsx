@@ -1,4 +1,13 @@
-import { Button, Popconfirm, Popover, Progress, Space, Spin, Tag, Timeline } from "antd";
+import {
+  Button,
+  Popconfirm,
+  Popover,
+  Progress,
+  Space,
+  Spin,
+  Tag,
+  Timeline,
+} from "antd";
 import { useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -34,7 +43,8 @@ const COPY_PHASES = [
   {
     key: "backup",
     label: "Create backup",
-    description: "Create source snapshot backup when cross-host copy is required",
+    description:
+      "Create source snapshot backup when cross-host copy is required",
   },
   {
     key: "queue",
@@ -202,7 +212,9 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
       children: (
         <div>
           <div style={{ fontWeight: 600 }}>{phase.label}</div>
-          <div style={{ color: "#666", fontSize: "11px" }}>{phase.description}</div>
+          <div style={{ color: "#666", fontSize: "11px" }}>
+            {phase.description}
+          </div>
         </div>
       ),
     }));
@@ -221,7 +233,8 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
         <Space size="small" wrap style={{ fontSize: "12px" }}>
           {createdBy ? (
             <span>
-              Initiated by <User account_id={createdBy} show_avatar avatarSize={16} />
+              Initiated by{" "}
+              <User account_id={createdBy} show_avatar avatarSize={16} />
             </span>
           ) : null}
           {summary?.created_at ? (
@@ -238,8 +251,8 @@ function CopyOpTimeline({ op }: { op: CopyLroState }) {
         <div style={{ fontSize: "12px" }}>
           {sourceCount > 0 ? (
             <span>
-              {sourceCount} {plural(sourceCount, "source path")} to {destCount || 0}{" "}
-              {plural(destCount || 0, "destination")}
+              {sourceCount} {plural(sourceCount, "source path")} to{" "}
+              {destCount || 0} {plural(destCount || 0, "destination")}
             </span>
           ) : (
             <span>Source and destination metadata not available.</span>

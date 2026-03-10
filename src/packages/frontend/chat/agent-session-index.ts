@@ -158,7 +158,8 @@ function getProjectSessions(
   )) {
     const record = value as AgentSessionRecord;
     const identity = threadIdentity(record);
-    const dedupeKey = identity || sessionKey(record.project_id, record.session_id);
+    const dedupeKey =
+      identity || sessionKey(record.project_id, record.session_id);
     const prev = byThread.get(dedupeKey);
     if (!prev) {
       byThread.set(dedupeKey, record);
@@ -170,12 +171,11 @@ function getProjectSessions(
       byThread.set(dedupeKey, { ...record, ...prev });
     }
   }
-  return Array.from(byThread.values())
-    .sort((a, b) => {
-      const ta = new Date(a.updated_at).valueOf();
-      const tb = new Date(b.updated_at).valueOf();
-      return tb - ta;
-    });
+  return Array.from(byThread.values()).sort((a, b) => {
+    const ta = new Date(a.updated_at).valueOf();
+    const tb = new Date(b.updated_at).valueOf();
+    return tb - ta;
+  });
 }
 
 export async function watchAgentSessionsForProject(

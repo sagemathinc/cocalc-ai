@@ -8,7 +8,11 @@ import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { setCodexProjectSpawner } from "@cocalc/ai/acp";
 import { which } from "@cocalc/backend/which";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
-import { getImageNamePath, mount as mountRootFs, unmount } from "@cocalc/project-runner/run/rootfs";
+import {
+  getImageNamePath,
+  mount as mountRootFs,
+  unmount,
+} from "@cocalc/project-runner/run/rootfs";
 import { networkArgument } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
@@ -166,7 +170,45 @@ async function podman(
         }
         const detail = truncateForLog(stderr || stdout);
         const timedOut =
-          (err as any)?.killed === true || `${(err as any)?.code ?? ""}` === "ETIMEDOUT";
+          (err as any)?.killed === true ||
+          `${(err as any)?.code ?? ""}` === "ETIMEDOUT";
+        const context = label ? ` (${label})` : "";
+        reject(
+          new Error(
+            timedOut
+              ? `podman${context} timed out after ${timeoutMs}ms${detail ? `: ${detail}` : ""}`
+              : `podman${context} failed${detail ? `: ${detail}` : ""}`,
+          ),
+        );
+      },
+    );
+  });
+}
+
+async function podmanOutput(
+  args: string[],
+  {
+    timeoutMs = PODMAN_TIMEOUT_MS,
+    label,
+  }: { timeoutMs?: number; label?: string } = {},
+): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    execFile(
+      "podman",
+      args,
+      {
+        timeout: timeoutMs,
+        maxBuffer: 8 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (!err) {
+          resolve(stdout ?? "");
+          return;
+        }
+        const detail = truncateForLog(stderr || stdout);
+        const timedOut =
+          (err as any)?.killed === true ||
+          `${(err as any)?.code ?? ""}` === "ETIMEDOUT";
         const context = label ? ` (${label})` : "";
         reject(
           new Error(
@@ -186,6 +228,20 @@ async function containerExists(name: string): Promise<boolean> {
       label: "container exists",
     });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function containerIsRunning(name: string): Promise<boolean> {
+  try {
+    const output = await podmanOutput(
+      ["inspect", "-f", "{{.State.Running}}", name],
+      {
+        label: "container inspect running",
+      },
+    );
+    return output.trim() === "true";
   } catch {
     return false;
   }
@@ -299,13 +355,19 @@ async function ensureContainer({
 }): Promise<ContainerInfo> {
   const { home, scratch } = await localPath({ project_id: projectId });
   const image = (await fs.readFile(getImageNamePath(home), "utf8")).trim();
-  const rootfs = await mountRootFs({ project_id: projectId, home, config: { image } });
+  const rootfs = await mountRootFs({
+    project_id: projectId,
+    home,
+    config: { image },
+  });
   const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
   const cliBinary = await resolveOptionalCliBinary();
   const codexHome =
     authRuntime.codexHome ??
-    (authRuntime.source === "shared-home" ? resolveSharedCodexHome() : undefined);
+    (authRuntime.source === "shared-home"
+      ? resolveSharedCodexHome()
+      : undefined);
   const projectCodexHome = join(home, ".codex");
   const projectRow = getProject(projectId);
   const hasGpu =
@@ -313,14 +375,36 @@ async function ensureContainer({
     (projectRow?.run_quota?.gpu_count ?? 0) > 0;
 
   if (await containerExists(name)) {
-    return {
-      name,
-      rootfs,
-      codexPath: containerPath,
-      cliPath: cliBinary?.containerPath,
-      home,
-      scratch,
-    };
+    if (!(await containerIsRunning(name))) {
+      logger.warn(
+        "codex project container exists but is not running; recreating",
+        {
+          projectId,
+          name,
+          auth: redactCodexAuthRuntime(authRuntime),
+        },
+      );
+      try {
+        await podman(["rm", "-f", "-t", "0", name], {
+          label: "container rm stale",
+        });
+      } catch (err) {
+        logger.warn("failed removing stale codex project container", {
+          projectId,
+          name,
+          err: `${err}`,
+        });
+      }
+    } else {
+      return {
+        name,
+        rootfs,
+        codexPath: containerPath,
+        cliPath: cliBinary?.containerPath,
+        home,
+        scratch,
+      };
+    }
   }
 
   const args: string[] = [];
@@ -395,7 +479,9 @@ async function ensureContainer({
       });
     }
   }
-  args.push(mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }));
+  args.push(
+    mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }),
+  );
   if (cliBinary) {
     args.push(
       mountArg({

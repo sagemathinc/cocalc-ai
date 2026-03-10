@@ -7,9 +7,7 @@ import { withAutoFormat } from "../format";
 
 function setupEditor(text: string) {
   const editor = withAutoFormat(withReact(createEditor()));
-  const value: Descendant[] = [
-    { type: "paragraph", children: [{ text }] },
-  ];
+  const value: Descendant[] = [{ type: "paragraph", children: [{ text }] }];
   editor.children = value;
   editor.selection = null;
   return editor;

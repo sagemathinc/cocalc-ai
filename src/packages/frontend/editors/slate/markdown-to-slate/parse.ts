@@ -40,14 +40,14 @@ export function parse(token: Token, state: State, cache?): Descendant[] {
   }
 
   throw Error(
-    `some handler must process every token -- ${JSON.stringify(token)}`
+    `some handler must process every token -- ${JSON.stringify(token)}`,
   );
 }
 
 export function markdown_to_slate(
   markdown: string,
   no_meta?: boolean,
-  cache?
+  cache?,
 ): Descendant[] {
   // Parse the markdown:
   // const t0 = Date.now();

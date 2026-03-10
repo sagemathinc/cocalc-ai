@@ -149,8 +149,7 @@ export function useProjectContextProvider({
       hostInfo,
     }) ?? status.get("state");
   const isRunning =
-    useMemo(() => effectiveStatus === "running", [effectiveStatus]) ||
-    lite;
+    useMemo(() => effectiveStatus === "running", [effectiveStatus]) || lite;
   const active_project_tab = useTypedRedux(
     { project_id },
     "active_project_tab",
@@ -234,7 +233,10 @@ export function useProjectContextProvider({
       if (active_project_tab !== "files") return;
       const current = workspaces.current;
       if (!current) return;
-      if (current_path_abs && pathMatchesRoot(current_path_abs, current.root_path)) {
+      if (
+        current_path_abs &&
+        pathMatchesRoot(current_path_abs, current.root_path)
+      ) {
         return;
       }
       if (current_path_abs && !selectionChanged) {
@@ -255,7 +257,8 @@ export function useProjectContextProvider({
 
     const current = workspaces.current;
     if (!current) return;
-    const orderedPaths: string[] = open_files_order?.toJS?.() ?? open_files_order ?? [];
+    const orderedPaths: string[] =
+      open_files_order?.toJS?.() ?? open_files_order ?? [];
     const fallbackPath =
       (current.last_active_path &&
       orderedPaths.includes(current.last_active_path) &&
@@ -263,11 +266,16 @@ export function useProjectContextProvider({
         ? current.last_active_path
         : null) ??
       orderedPaths.find((path) => {
-        return workspaces.resolveWorkspaceForPath(path)?.workspace_id === current.workspace_id;
+        return (
+          workspaces.resolveWorkspaceForPath(path)?.workspace_id ===
+          current.workspace_id
+        );
       });
 
     if (fallbackPath) {
-      actions.set_active_tab(path_to_tab(fallbackPath), { change_history: false });
+      actions.set_active_tab(path_to_tab(fallbackPath), {
+        change_history: false,
+      });
       return;
     }
 

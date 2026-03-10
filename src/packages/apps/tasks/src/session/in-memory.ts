@@ -125,7 +125,9 @@ export class InMemoryTasksSession implements TasksSession {
 }
 
 export class InMemoryTasksSessionProvider implements TasksSessionProvider {
-  constructor(private readonly options: Omit<InMemoryTasksSessionOptions, "path"> = {}) {}
+  constructor(
+    private readonly options: Omit<InMemoryTasksSessionOptions, "path"> = {},
+  ) {}
 
   async openTasksSession(
     options: OpenTasksSessionOptions,

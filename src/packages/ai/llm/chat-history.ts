@@ -12,10 +12,10 @@ export async function transformHistoryToMessages(
   let tokens = 0;
 
   const { InMemoryChatMessageHistory } = await importLangchain(
-    "@langchain/core/chat_history"
+    "@langchain/core/chat_history",
   );
   const { AIMessage, HumanMessage } = await importLangchain(
-    "@langchain/core/messages"
+    "@langchain/core/messages",
   );
 
   const messageHistory = new InMemoryChatMessageHistory();

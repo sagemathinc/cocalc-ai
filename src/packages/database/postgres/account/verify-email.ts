@@ -3,10 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type {
-  PostgreSQL,
-  VerifyEmailCreateTokenResult,
-} from "../types";
+import type { PostgreSQL, VerifyEmailCreateTokenResult } from "../types";
 import randomKey from "random-key";
 import { hours_ago } from "@cocalc/util/misc";
 

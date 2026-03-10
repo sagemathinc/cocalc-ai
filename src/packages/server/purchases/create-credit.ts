@@ -12,7 +12,11 @@ import type { Credit } from "@cocalc/util/db-schema/purchases";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
 import getBalance from "./get-balance";
-import { moneyToDbString, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToDbString,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 
 const logger = getLogger("purchases:create-credit");
 

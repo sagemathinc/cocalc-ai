@@ -17,7 +17,7 @@ function key(project_id: string, path: string): string {
 
 export function get_linked_doc(
   project_id: string,
-  path: string
+  path: string,
 ): CodeMirror.Doc {
   const doc = cache[key(project_id, path)];
   if (doc != undefined) {
@@ -34,7 +34,7 @@ export function has_doc(project_id: string, path: string): boolean {
 export function set_doc(
   project_id: string,
   path: string,
-  cm: CodeMirror.Editor
+  cm: CodeMirror.Editor,
 ): void {
   cache[key(project_id, path)] = cm.getDoc();
 }

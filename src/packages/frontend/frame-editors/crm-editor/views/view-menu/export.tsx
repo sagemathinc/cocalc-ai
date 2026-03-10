@@ -43,8 +43,8 @@ export default function Export({
   const [path, setPath] = useState<string>(
     join(
       path_split(curPath).head,
-      `${replace_all(title.toLowerCase(), " ", "-")}.${type}`
-    )
+      `${replace_all(title.toLowerCase(), " ", "-")}.${type}`,
+    ),
   );
   const [state, setState] = useState<"input" | "saving" | "done">("input");
   const [error, setError] = useState<string>("");
@@ -78,8 +78,8 @@ export default function Export({
         if (content.length > MAX_SIZE) {
           throw Error(
             `Too much data to save to project (${human_readable_size(
-              content.length
-            )}); please select a smaller set of records or less columns.  You can still download this to your computer.`
+              content.length,
+            )}); please select a smaller set of records or less columns.  You can still download this to your computer.`,
           );
         }
         await webapp_client.project_client.write_text_file({
@@ -94,7 +94,7 @@ export default function Export({
         setError(`Error writing '${path}' -- ${err}`);
       }
     },
-    [selected, data, primaryKey]
+    [selected, data, primaryKey],
   );
 
   return (
@@ -147,7 +147,7 @@ export default function Export({
         <div>
           <a
             href={URL.createObjectURL(
-              new Blob([content], { type: "text/plain" })
+              new Blob([content], { type: "text/plain" }),
             )}
             download={path_split(path).tail}
           >

@@ -409,8 +409,8 @@ export async function formatAction(
 
     if (cmd === "ai_formula") {
       if (project_id == null) throw new Error("ai_formula requires project_id");
-      const account_store = redux.getStore("account")
-      const locale = getLocale(account_store.get("other_settings"))
+      const account_store = redux.getStore("account");
+      const locale = getLocale(account_store.get("other_settings"));
       const formula = await insertAIFormula(project_id, locale);
       const value = removeDollars(removeBlankLines(formula.trim()));
       const node: Node = {

@@ -88,11 +88,7 @@ export async function handleFileDownload({
     }
     res.end();
   } catch (err) {
-    logger.debug(
-      "ERROR streaming file",
-      { project_id, path },
-      err,
-    );
+    logger.debug("ERROR streaming file", { project_id, path }, err);
     if (!headersSent) {
       res.statusCode = 500;
       res.end("Error reading file.");

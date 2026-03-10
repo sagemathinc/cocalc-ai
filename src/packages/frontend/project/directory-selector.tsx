@@ -19,7 +19,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { DropdownMenu, Icon, Loading, type MenuItems } from "@cocalc/frontend/components";
+import {
+  DropdownMenu,
+  Icon,
+  Loading,
+  type MenuItems,
+} from "@cocalc/frontend/components";
 import { path_split, path_to_file } from "@cocalc/util/misc";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -64,7 +69,10 @@ function sourceForPath(
   if (!path.startsWith("/")) {
     return { source: "home", rootPath: homePath };
   }
-  if (homePath !== "/" && (path === homePath || path.startsWith(`${homePath}/`))) {
+  if (
+    homePath !== "/" &&
+    (path === homePath || path.startsWith(`${homePath}/`))
+  ) {
     return { source: "home", rootPath: homePath };
   }
   if (path === "/tmp" || path.startsWith("/tmp/")) {
@@ -81,10 +89,7 @@ function relativeExpandedPaths(startingPath: string): string[] {
   if (!startingPath) {
     return expandedPaths;
   }
-  const parts = startingPath
-    .replace(/^\/+/, "")
-    .split("/")
-    .filter(Boolean);
+  const parts = startingPath.replace(/^\/+/, "").split("/").filter(Boolean);
   let path = "";
   for (const part of parts) {
     path = path ? `${path}/${part}` : part;
@@ -103,7 +108,10 @@ function absoluteExpandedPaths({
   homePath: string;
 }): string[] {
   const expandedPaths: string[] = [rootPath];
-  const normalizedStart = normalizeAbsolutePath(startingPath || rootPath, homePath);
+  const normalizedStart = normalizeAbsolutePath(
+    startingPath || rootPath,
+    homePath,
+  );
   const inRoot =
     rootPath === "/" ||
     normalizedStart === rootPath ||
@@ -519,13 +527,7 @@ function Directory(props) {
 
 // Show the directories in path
 function Subdirs(props) {
-  const {
-    path,
-    project_id,
-    showHidden,
-    style,
-    toggleSelection,
-  } = props;
+  const { path, project_id, showHidden, style, toggleSelection } = props;
   const fs = useFs({ project_id });
   const cacheId = getCacheId({
     project_id,
@@ -586,11 +588,7 @@ async function getValidPath(project_id, target) {
   return target;
 }
 
-function CreateDirectory({
-  project_id,
-  path,
-  toggleSelection,
-}) {
+function CreateDirectory({ project_id, path, toggleSelection }) {
   const [error, setError] = useState<string>("");
   const [open, setOpen] = useState<boolean>(false);
   const [value, setValue] = useState<string>(NEW_FOLDER);

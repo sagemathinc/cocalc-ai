@@ -150,8 +150,8 @@ export default function CreateVouchers() {
           Voucher codes are exactly like gift cards. They can be{" "}
           <A href="/redeem">redeemed</A> by anybody for <SiteName /> credit,
           which does not expire and can be used to purchase anything in the
-          store. Visit the{" "}
-          <A href="/vouchers">Voucher Center</A> for more about vouchers, and{" "}
+          store. Visit the <A href="/vouchers">Voucher Center</A> for more about
+          vouchers, and{" "}
           <A href="https://doc.cocalc.com/vouchers.html">read the docs</A>. If
           anything goes wrong with your purchase,{" "}
           <A href="/support/new">contact support</A> and we will make things
@@ -422,7 +422,11 @@ function AddToCartButton({
 }: CartButtonProps) {
   const [clicked, setClicked] = useState<boolean>(false);
   const disabled =
-    clicked || (disabled0 ?? false) || !!cartError || cost == null || cost.cost === 0;
+    clicked ||
+    (disabled0 ?? false) ||
+    !!cartError ||
+    cost == null ||
+    cost.cost === 0;
 
   return (
     <Button

@@ -38,7 +38,7 @@ export default function Listing({
   sort,
 }: Props) {
   const { error, value, loading, query } = useDatabase(
-    getQuery(project_id, path)
+    getQuery(project_id, path),
   );
   useEffect(() => {
     // update the listing whenever "update" changes.
@@ -100,8 +100,8 @@ function FileList({ listing, project_id, path, title, sort }: FileListProps) {
             name={
               isdir
                 ? "folder"
-                : file_associations[filename_extension(entry.name)]?.icon ??
-                  file_associations[""]?.icon
+                : (file_associations[filename_extension(entry.name)]?.icon ??
+                  file_associations[""]?.icon)
             }
           />
           {isdir && <Icon name="caret-right" />}
@@ -138,11 +138,12 @@ function FileList({ listing, project_id, path, title, sort }: FileListProps) {
 
   return (
     <Card
-      style={{ boxShadow:"4px 4px 2px #ddd" }}
+      style={{ boxShadow: "4px 4px 2px #ddd" }}
       title={
         title ? (
           <div>
-            Title: <A
+            Title:{" "}
+            <A
               external
               href={editURL({
                 type: "collaborator",

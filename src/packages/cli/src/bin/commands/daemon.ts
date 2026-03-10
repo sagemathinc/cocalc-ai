@@ -13,7 +13,10 @@ export type DaemonCommandDeps = {
   serveDaemon: any;
 };
 
-export function registerDaemonCommand(program: Command, deps: DaemonCommandDeps): Command {
+export function registerDaemonCommand(
+  program: Command,
+  deps: DaemonCommandDeps,
+): Command {
   const {
     runLocalCommand,
     startDaemonProcess,
@@ -27,7 +30,9 @@ export function registerDaemonCommand(program: Command, deps: DaemonCommandDeps)
     serveDaemon,
   } = deps;
 
-  const daemon = program.command("daemon").description("manage local cocalc-cli daemon");
+  const daemon = program
+    .command("daemon")
+    .description("manage local cocalc-cli daemon");
 
   daemon
     .command("start")

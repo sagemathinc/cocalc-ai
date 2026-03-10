@@ -92,7 +92,10 @@ import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
 import { saveResponse } from "@cocalc/server/llm/save-response";
-import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
+import {
+  isCoreLanguageModel,
+  type LanguageModelCore,
+} from "@cocalc/util/db-schema/llm-utils";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { moveProjectToHost } from "@cocalc/server/projects/move";
 import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
@@ -209,7 +212,10 @@ function parseDrainParallel(parallel?: number): number {
   return n;
 }
 
-async function resolveDrainParallel(owner: string, parallel?: number): Promise<number> {
+async function resolveDrainParallel(
+  owner: string,
+  parallel?: number,
+): Promise<number> {
   const requested = parseDrainParallel(parallel);
   if (!(await isAdmin(owner)) && requested > HOST_DRAIN_OWNER_MAX_PARALLEL) {
     throw new Error(
@@ -358,7 +364,9 @@ async function loadHostBackupStatus(
   return map;
 }
 
-async function loadProjectIdsAssignedToHost(host_id: string): Promise<string[]> {
+async function loadProjectIdsAssignedToHost(
+  host_id: string,
+): Promise<string[]> {
   const { rows } = await pool().query<{ project_id: string }>(
     `
       SELECT project_id
@@ -843,7 +851,9 @@ function normalizeExternalCredentialSelector({
 }) {
   const normalizedProvider = `${provider ?? ""}`.trim().toLowerCase();
   const normalizedKind = `${kind ?? ""}`.trim().toLowerCase();
-  const normalizedScope = `${scope ?? ""}`.trim().toLowerCase() as ExternalCredentialScope;
+  const normalizedScope = `${scope ?? ""}`
+    .trim()
+    .toLowerCase() as ExternalCredentialScope;
   if (!normalizedProvider) throw new Error("provider must be specified");
   if (!normalizedKind) throw new Error("kind must be specified");
   if (
@@ -899,7 +909,8 @@ export async function upsertExternalCredential({
 
   const normalized = normalizeExternalCredentialSelector(selector);
   const selectorProjectId =
-    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+    normalized.project_id ??
+    (normalized.scope === "project" ? project_id : undefined);
   if (normalized.scope === "account" && !normalized.owner_account_id) {
     throw new Error("owner_account_id must be specified for account scope");
   }
@@ -952,15 +963,18 @@ export async function getExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
-}): Promise<{
-  id: string;
-  payload: string;
-  metadata: Record<string, any>;
-  created: Date;
-  updated: Date;
-  revoked: Date | null;
-  last_used: Date | null;
-} | undefined> {
+}): Promise<
+  | {
+      id: string;
+      payload: string;
+      metadata: Record<string, any>;
+      created: Date;
+      updated: Date;
+      revoked: Date | null;
+      last_used: Date | null;
+    }
+  | undefined
+> {
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -973,7 +987,8 @@ export async function getExternalCredential({
 
   const normalized = normalizeExternalCredentialSelector(selector);
   const selectorProjectId =
-    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+    normalized.project_id ??
+    (normalized.scope === "project" ? project_id : undefined);
   if (normalized.scope === "account" && !normalized.owner_account_id) {
     throw new Error("owner_account_id must be specified for account scope");
   }
@@ -1049,7 +1064,8 @@ export async function hasExternalCredential({
 
   const normalized = normalizeExternalCredentialSelector(selector);
   const selectorProjectId =
-    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+    normalized.project_id ??
+    (normalized.scope === "project" ? project_id : undefined);
   if (normalized.scope === "account" && !normalized.owner_account_id) {
     throw new Error("owner_account_id must be specified for account scope");
   }
@@ -1113,7 +1129,8 @@ export async function touchExternalCredential({
 
   const normalized = normalizeExternalCredentialSelector(selector);
   const selectorProjectId =
-    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+    normalized.project_id ??
+    (normalized.scope === "project" ? project_id : undefined);
   if (normalized.scope === "account" && !normalized.owner_account_id) {
     throw new Error("owner_account_id must be specified for account scope");
   }
@@ -1676,9 +1693,8 @@ export async function getCatalog({
       last_seen: row.last_seen ? row.last_seen.toISOString() : undefined,
       version: row.metadata?.version,
     }));
-    const { project_hosts_self_host_alpha_enabled } =
-      await getServerSettings();
-    const modes = await hasCloudflareTunnel()
+    const { project_hosts_self_host_alpha_enabled } = await getServerSettings();
+    const modes = (await hasCloudflareTunnel())
       ? ["cloudflare", "local"]
       : ["local"];
     const kinds = ["direct"];
@@ -1957,10 +1973,8 @@ export async function createHost({
       throw new Error("cloudflare tunnel is not configured");
     }
   }
-  const {
-    project_hosts_bootstrap_channel,
-    project_hosts_bootstrap_version,
-  } = await getServerSettings();
+  const { project_hosts_bootstrap_channel, project_hosts_bootstrap_version } =
+    await getServerSettings();
   const requestedBootstrapChannel =
     typeof machine?.metadata?.bootstrap_channel === "string"
       ? machine.metadata.bootstrap_channel.trim()
@@ -1974,9 +1988,7 @@ export async function createHost({
     project_hosts_bootstrap_channel?.trim() ||
     "latest";
   const bootstrapVersion =
-    requestedBootstrapVersion ||
-    project_hosts_bootstrap_version?.trim() ||
-    "";
+    requestedBootstrapVersion || project_hosts_bootstrap_version?.trim() || "";
   let resolvedRegion = region;
   let connectorId: string | undefined;
   if (isSelfHost) {
@@ -2575,7 +2587,10 @@ export async function drainHostInternal({
             in_flight,
             dest_host_id: destination,
           },
-          progress: Math.min(95, Math.max(5, Math.round((completed / total) * 95))),
+          progress: Math.min(
+            95,
+            Math.max(5, Math.round((completed / total) * 95)),
+          ),
         });
       } catch (err) {
         completed += 1;
@@ -2598,16 +2613,17 @@ export async function drainHostInternal({
             parallel: maxParallel,
             error: `${err}`,
           },
-          progress: Math.min(95, Math.max(5, Math.round((completed / total) * 95))),
+          progress: Math.min(
+            95,
+            Math.max(5, Math.round((completed / total) * 95)),
+          ),
         });
         return;
       }
     }
   };
 
-  await Promise.all(
-    Array.from({ length: maxParallel }, () => worker()),
-  );
+  await Promise.all(Array.from({ length: maxParallel }, () => worker()));
 
   if (firstError) {
     throw firstError;
@@ -3290,11 +3306,7 @@ function normalizeSoftwareChannels(
 function normalizeSoftwareArtifacts(
   artifacts?: HostSoftwareArtifact[],
 ): HostSoftwareArtifact[] {
-  const defaults: HostSoftwareArtifact[] = [
-    "project-host",
-    "project",
-    "tools",
-  ];
+  const defaults: HostSoftwareArtifact[] = ["project-host", "project", "tools"];
   if (!artifacts?.length) return defaults;
   const out: HostSoftwareArtifact[] = [];
   for (const artifact of artifacts) {
@@ -3322,7 +3334,9 @@ function normalizeHostUpgradeTargetsForDedupe(
       artifact: canonicalizeSoftwareArtifact(target.artifact),
       channel: target.version
         ? null
-        : ((target.channel === "staging" ? "staging" : "latest") as HostSoftwareChannel),
+        : ((target.channel === "staging"
+            ? "staging"
+            : "latest") as HostSoftwareChannel),
       version: target.version?.trim() || null,
     }))
     .sort((a, b) =>
@@ -3363,7 +3377,9 @@ async function fetchSoftwareManifest(url: string): Promise<any> {
   return await response.json();
 }
 
-async function fetchSoftwareManifestMaybe(url: string): Promise<any | undefined> {
+async function fetchSoftwareManifestMaybe(
+  url: string,
+): Promise<any | undefined> {
   try {
     return await fetchSoftwareManifest(url);
   } catch {
@@ -3522,7 +3538,10 @@ async function resolveLatestSoftwareRow({
     const manifest = await fetchSoftwareManifest(manifestUrl);
     const resolvedUrl =
       typeof manifest?.url === "string" ? manifest.url : undefined;
-    const resolvedVersion = extractVersionFromSoftwareUrl(canonical, resolvedUrl);
+    const resolvedVersion = extractVersionFromSoftwareUrl(
+      canonical,
+      resolvedUrl,
+    );
     return {
       artifact,
       channel,
@@ -3577,7 +3596,7 @@ async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
         }
       }
     } catch {
-    // keep provided value as-is if it is not a valid URL
+      // keep provided value as-is if it is not a valid URL
     }
   }
   const { project_hosts_software_base_url } = await getServerSettings();
@@ -3641,11 +3660,14 @@ async function resolveReachableUpgradeBaseUrl({
   } catch {
     // keep default replacement
   }
-  logger.warn("upgrade host software: replaced loopback base url for remote host", {
-    host_id: row.id,
-    requested: baseUrl,
-    effective: replacement,
-  });
+  logger.warn(
+    "upgrade host software: replaced loopback base url for remote host",
+    {
+      host_id: row.id,
+      requested: baseUrl,
+      effective: replacement,
+    },
+  );
   return replacement;
 }
 
@@ -3669,7 +3691,7 @@ export async function listHostSoftwareVersions({
   requireAccount(account_id);
   const softwareBaseUrl = (await resolveHostSoftwareBaseUrl(base_url)).replace(
     /\/+$/,
-  "",
+    "",
   );
   const targetOs = normalizeSoftwareOs(os);
   const targetArch = normalizeSoftwareArch(arch);

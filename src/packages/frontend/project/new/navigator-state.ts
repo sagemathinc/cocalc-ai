@@ -77,7 +77,9 @@ export function saveNavigatorConfig(config: StoredNavigatorConfig): void {
   } catch {}
 }
 
-export function loadNavigatorTargetProjectId(fallbackProjectId: string): string {
+export function loadNavigatorTargetProjectId(
+  fallbackProjectId: string,
+): string {
   try {
     const saved = localStorage.getItem(TARGET_PROJECT_KEY);
     if (saved?.trim()) {
@@ -129,7 +131,10 @@ export function saveNavigatorSelectedThreadKey(value?: string): void {
     } else {
       localStorage.removeItem(THREAD_KEY_GLOBAL);
     }
-    if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.dispatchEvent === "function"
+    ) {
       window.dispatchEvent(
         new CustomEvent(NAVIGATOR_SELECTED_THREAD_EVENT, {
           detail: { threadKey: next || undefined },

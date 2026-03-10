@@ -19,7 +19,6 @@ interface Props {
   disabled?: boolean;
 }
 
-
 // Note -- we disable all password manager autocomplete, since this is a component
 // that's used internally in the app for configuration. See https://github.com/sagemathinc/cocalc/issues/6868
 

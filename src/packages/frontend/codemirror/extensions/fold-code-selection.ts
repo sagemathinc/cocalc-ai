@@ -48,7 +48,7 @@ CodeMirror.defineExtension(
         }
       }
     }
-  }
+  },
 );
 
 // This isFolded extension that comes with CodeMirror isn't useful for the above, since it
@@ -58,7 +58,7 @@ CodeMirror.defineExtension("isLineFolded", function (line: number): boolean {
   const editor: any = this;
   for (const mark of editor.findMarks(
     { line, ch: 0 },
-    { line: line + 1, ch: 0 }
+    { line: line + 1, ch: 0 },
   )) {
     if (mark.__isFold) {
       return true;

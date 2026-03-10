@@ -20,7 +20,11 @@ import {
 } from "@cocalc/frontend/misc/local-storage";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { JupyterActions as JupyterActions0 } from "@cocalc/jupyter/redux/actions";
-import { CellToolbarName, type BackendState, type KernelState } from "@cocalc/jupyter/types";
+import {
+  CellToolbarName,
+  type BackendState,
+  type KernelState,
+} from "@cocalc/jupyter/types";
 import { callback2, once } from "@cocalc/util/async-utils";
 import { bufferToBase64 } from "@cocalc/util/base64";
 import { Config as FormatterConfig, Syntax } from "@cocalc/util/code-formatter";
@@ -154,7 +158,8 @@ export class JupyterActions extends JupyterActions0 {
     const pendingSize = this.store?.get("pendingCells")?.size ?? 0;
     const payload = {
       t: new Date().toISOString(),
-      perfNow: typeof performance !== "undefined" ? performance.now() : undefined,
+      perfNow:
+        typeof performance !== "undefined" ? performance.now() : undefined,
       path: this.path,
       runningNow: this.runningNow,
       runQueue: this.runQueue.length,
@@ -2184,9 +2189,10 @@ export class JupyterActions extends JupyterActions0 {
   refreshKernelStatus = async () => {
     await this.waitUntilProjectIsRunning();
     if (this.isClosed()) return;
-    let status:
-      | { backend_state: BackendState; kernel_state: KernelState }
-      | null = null;
+    let status: {
+      backend_state: BackendState;
+      kernel_state: KernelState;
+    } | null = null;
     await until(
       async () => {
         if (this.isClosed()) return true;

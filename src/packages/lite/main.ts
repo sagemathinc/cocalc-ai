@@ -37,10 +37,7 @@ import compression from "compression";
 import { enableMemoryUseLogger } from "@cocalc/backend/memory";
 import { connectionInfoPath } from "./connection-info";
 import { secureRandomString } from "@cocalc/backend/misc";
-import {
-  allowUnauthenticatedConat,
-  createLiteConatAuth,
-} from "./conat-auth";
+import { allowUnauthenticatedConat, createLiteConatAuth } from "./conat-auth";
 import { isLoopbackHost } from "@cocalc/backend/network/policy";
 
 const logger = getLogger("lite:main");

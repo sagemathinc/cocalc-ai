@@ -63,7 +63,9 @@ interface TaskDocumentData {
 export async function collectTaskExport(
   options: TaskExportOptions,
 ): Promise<ExportBundle> {
-  const rows = (await readJsonlRows(options.taskPath)).filter(isTaskRow).map(normalizeTaskRow);
+  const rows = (await readJsonlRows(options.taskPath))
+    .filter(isTaskRow)
+    .map(normalizeTaskRow);
   const sorted = [...rows].sort(compareTasks);
   const assetResult = options.includeBlobs
     ? await collectReferencedAssets({
@@ -73,11 +75,22 @@ export async function collectTaskExport(
       })
     : undefined;
   const assetIndex = assetResult?.index ?? [];
-  const rawReplacements = buildRelativeBlobReplacementMap("document.jsonl", assetIndex);
-  const tasksReplacements = buildRelativeBlobReplacementMap("tasks.jsonl", assetIndex);
-  const markdownReplacements = buildRelativeBlobReplacementMap("tasks.md", assetIndex);
+  const rawReplacements = buildRelativeBlobReplacementMap(
+    "document.jsonl",
+    assetIndex,
+  );
+  const tasksReplacements = buildRelativeBlobReplacementMap(
+    "tasks.jsonl",
+    assetIndex,
+  );
+  const markdownReplacements = buildRelativeBlobReplacementMap(
+    "tasks.md",
+    assetIndex,
+  );
 
-  const exportedTasks = sorted.map((row) => toExportTaskRow(row, tasksReplacements));
+  const exportedTasks = sorted.map((row) =>
+    toExportTaskRow(row, tasksReplacements),
+  );
   const rawDocumentRows = sorted.map((row) => ({
     ...row,
     desc: rewriteMaybeBlobRefs(row.desc, rawReplacements),
@@ -89,8 +102,10 @@ export async function collectTaskExport(
   const document: TaskDocumentData = {
     path: options.taskPath,
     task_count: exportedTasks.length,
-    open_count: exportedTasks.filter((task) => !task.done && !task.deleted).length,
-    done_count: exportedTasks.filter((task) => task.done && !task.deleted).length,
+    open_count: exportedTasks.filter((task) => !task.done && !task.deleted)
+      .length,
+    done_count: exportedTasks.filter((task) => task.done && !task.deleted)
+      .length,
     deleted_count: exportedTasks.filter((task) => task.deleted).length,
     hashtags,
     asset_refs: assetIndex.length ? assetIndex : undefined,
@@ -226,8 +241,10 @@ function normalizeTaskRow(row: TaskRow): TaskRow {
 }
 
 function compareTasks(a: TaskRow, b: TaskRow): number {
-  const posA = typeof a.position === "number" ? a.position : Number.POSITIVE_INFINITY;
-  const posB = typeof b.position === "number" ? b.position : Number.POSITIVE_INFINITY;
+  const posA =
+    typeof a.position === "number" ? a.position : Number.POSITIVE_INFINITY;
+  const posB =
+    typeof b.position === "number" ? b.position : Number.POSITIVE_INFINITY;
   if (posA !== posB) return posA - posB;
   const editedA = typeof a.last_edited === "number" ? a.last_edited : 0;
   const editedB = typeof b.last_edited === "number" ? b.last_edited : 0;
@@ -259,7 +276,8 @@ function toExportTaskRow(
 
 function extractHashtags(content: string): string[] {
   const found = new Set<string>();
-  const matches = `${content ?? ""}`.match(/(^|[^\w])#([A-Za-z0-9][A-Za-z0-9_-]*)/g) ?? [];
+  const matches =
+    `${content ?? ""}`.match(/(^|[^\w])#([A-Za-z0-9][A-Za-z0-9_-]*)/g) ?? [];
   for (const match of matches) {
     const tag = match.slice(match.lastIndexOf("#") + 1).trim();
     if (tag) found.add(tag);
@@ -304,9 +322,17 @@ function renderTasksMarkdown(
       if (task.due_at) lines.push(`- Due: ${task.due_at}`);
       if (task.position != null) lines.push(`- Position: ${task.position}`);
       if (task.hashtags.length) {
-        lines.push(`- Tags: ${task.hashtags.map((tag) => `#${tag}`).join(" ")}`);
+        lines.push(
+          `- Tags: ${task.hashtags.map((tag) => `#${tag}`).join(" ")}`,
+        );
       }
-      lines.push("", rewriteBlobRefs(task.content, replacements) || "(empty)", "", "---", "");
+      lines.push(
+        "",
+        rewriteBlobRefs(task.content, replacements) || "(empty)",
+        "",
+        "---",
+        "",
+      );
     }
   }
   return `${lines.join("\n").trim()}\n`;

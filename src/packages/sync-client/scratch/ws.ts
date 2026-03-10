@@ -39,4 +39,3 @@ export function client() {
   };
   return ws;
 }
-

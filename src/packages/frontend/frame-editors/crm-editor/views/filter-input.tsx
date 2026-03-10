@@ -26,7 +26,7 @@ export default function useFilterInput({ data, id }): {
       wait: 500,
       options: { leading: true, trailing: true },
     },
-    [filter, setFilter0]
+    [filter, setFilter0],
   );
 
   const Filter = useMemo(() => {
@@ -37,7 +37,7 @@ export default function useFilterInput({ data, id }): {
         onSearch={setFilter}
         placeholder={`Filter ${data.length} ${plural(
           data.length,
-          "Result"
+          "Result",
         )}...`}
         enterButton={
           <div

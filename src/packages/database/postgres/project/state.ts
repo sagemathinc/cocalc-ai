@@ -41,13 +41,17 @@ export async function getProjectStorageRequest(
   opts: GetProjectStorageRequestOptions,
 ): Promise<any> {
   return await new Promise((resolve, reject) => {
-    db._get_project_column("storage_request", opts.project_id, (err, result) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(result);
-      }
-    });
+    db._get_project_column(
+      "storage_request",
+      opts.project_id,
+      (err, result) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(result);
+        }
+      },
+    );
   });
 }
 

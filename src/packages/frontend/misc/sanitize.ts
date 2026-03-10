@@ -36,10 +36,10 @@ export function sanitize_html(
   html: string,
   keepScripts: boolean = true,
   keepUnsafeAttributes: boolean = true,
-  post_hook?: Function
+  post_hook?: Function,
 ): string {
   const sani = jQuery(
-    jQuery.parseHTML("<div>" + html + "</div>", null, keepScripts)
+    jQuery.parseHTML("<div>" + html + "</div>", null, keepScripts),
   );
   if (!keepUnsafeAttributes) {
     sani.find("*").each(function (this: any) {

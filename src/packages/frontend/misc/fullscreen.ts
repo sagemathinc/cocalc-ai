@@ -6,7 +6,7 @@ This is generic code with no dependency.
 */
 
 export async function requestFullscreen(
-  element = document.documentElement
+  element = document.documentElement,
 ): Promise<void> {
   if (element?.requestFullscreen != null) {
     await element.requestFullscreen();
@@ -18,7 +18,9 @@ export async function requestFullscreen(
 }
 
 export function isFullscreen() {
-  return !!document.fullscreenElement || !!(document as any).webkitFullscreenElement;
+  return (
+    !!document.fullscreenElement || !!(document as any).webkitFullscreenElement
+  );
 }
 
 export function exitFullscreen() {

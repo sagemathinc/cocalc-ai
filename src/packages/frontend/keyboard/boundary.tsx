@@ -32,17 +32,12 @@ function isElement(value: unknown): value is Element {
 }
 
 function isHTMLElementLike(value: unknown): value is HTMLElement {
-  return (
-    isElement(value) &&
-    typeof (value as HTMLElement).tagName === "string"
-  );
+  return isElement(value) && typeof (value as HTMLElement).tagName === "string";
 }
 
 function isEventLike(value: unknown): value is Event {
   return (
-    value != null &&
-    typeof value === "object" &&
-    "target" in (value as Event)
+    value != null && typeof value === "object" && "target" in (value as Event)
   );
 }
 
@@ -119,8 +114,9 @@ export function isEditableOrKeyboardInteractiveTarget(
 
 export function shouldSuppressGlobalShortcuts(
   event?: Event | null,
-  activeElement: Element | null =
-    typeof document === "undefined" ? null : document.activeElement,
+  activeElement: Element | null = typeof document === "undefined"
+    ? null
+    : document.activeElement,
 ): boolean {
   return (
     isInsideKeyboardBoundary(event) ||
@@ -142,7 +138,9 @@ function composeEventHandlers<E>(
   };
 }
 
-export interface KeyboardBoundaryOptions<E extends HTMLElement = HTMLDivElement> {
+export interface KeyboardBoundaryOptions<
+  E extends HTMLElement = HTMLDivElement,
+> {
   boundary?: string;
   clearPageHandlerOnFocus?: boolean;
   stopMouseDownPropagation?: boolean;

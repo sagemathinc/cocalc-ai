@@ -192,7 +192,7 @@ const emptyOptions = (): FieldOptionsMap => ({});
 const optionsFor = (field: HostFieldId, options: FieldOptionsMap) =>
   options[field] ?? [];
 
-const findOption = <T,>(
+const findOption = <T>(
   field: HostFieldId,
   value: string | undefined,
   options: FieldOptionsMap,
@@ -241,7 +241,7 @@ const applyDiskUpdate = (next: Record<string, any>, disk_gb?: number) => {
   if (typeof disk_gb === "number") next.disk = disk_gb;
 };
 
-const limit = <T,>(items: T[], n = 5) => items.slice(0, n);
+const limit = <T>(items: T[], n = 5) => items.slice(0, n);
 
 const getCatalogEntries = (
   catalog: HostCatalog | undefined,
@@ -249,7 +249,7 @@ const getCatalogEntries = (
 ): HostCatalogEntry[] =>
   catalog?.entries?.filter((entry) => entry.kind === kind) ?? [];
 
-const getCatalogEntryPayload = <T,>(
+const getCatalogEntryPayload = <T>(
   catalog: HostCatalog | undefined,
   kind: string,
   scope = "global",

@@ -53,7 +53,8 @@ export function evaluateHostOperational(
   if (!hostInfo) {
     return { state: "unknown" };
   }
-  const reasonUnavailable = `${read(hostInfo, "reason_unavailable") ?? ""}`.trim();
+  const reasonUnavailable =
+    `${read(hostInfo, "reason_unavailable") ?? ""}`.trim();
   if (reasonUnavailable) {
     return { state: "unavailable", reason: reasonUnavailable };
   }

@@ -57,7 +57,8 @@ export async function deleteAllActivityLogs({
   const targets: { date: Date; sender_id?: string }[] = [];
   const logRefs: { store: string; key: string }[] = [];
   const normalizedThreadId =
-    `${threadId ?? field<string>(message, "thread_id") ?? ""}`.trim() || undefined;
+    `${threadId ?? field<string>(message, "thread_id") ?? ""}`.trim() ||
+    undefined;
   if (normalizedThreadId && actions) {
     const seq = actions.getMessagesInThread(normalizedThreadId);
     for (const msg of seq ?? []) {

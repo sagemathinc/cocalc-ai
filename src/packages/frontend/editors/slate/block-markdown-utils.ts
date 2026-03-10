@@ -81,7 +81,7 @@ export function findNextMatchIndex(
   const lower = fullMarkdown.toLowerCase();
   const length = normalized.length;
   let from =
-    lastMatchIndex != null ? lastMatchIndex + length : selection?.end ?? 0;
+    lastMatchIndex != null ? lastMatchIndex + length : (selection?.end ?? 0);
   if (from < 0) from = 0;
   let idx = lower.indexOf(normalized, from);
   if (idx === -1 && from > 0) {
@@ -102,7 +102,7 @@ export function findPreviousMatchIndex(
   let from =
     lastMatchIndex != null
       ? lastMatchIndex - 1
-      : selection?.start ?? lower.length;
+      : (selection?.start ?? lower.length);
   if (from < 0) {
     const wrapped = lower.lastIndexOf(normalized);
     return wrapped === -1 ? null : wrapped;

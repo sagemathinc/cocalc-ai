@@ -143,7 +143,10 @@ async function setReconcileState(
   );
 }
 
-export async function bumpReconcile(provider: Provider, interval_ms = DEFAULT_INTERVALS.running_ms) {
+export async function bumpReconcile(
+  provider: Provider,
+  interval_ms = DEFAULT_INTERVALS.running_ms,
+) {
   const nextAt = new Date(Date.now() + interval_ms);
   await pool().query(
     `

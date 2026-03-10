@@ -11,7 +11,10 @@ Define a jQuery plugin that processes links.
  - Handles anchor links
 */
 
-import { is_valid_uuid_string as isUUID, path_to_file } from "@cocalc/util/misc";
+import {
+  is_valid_uuid_string as isUUID,
+  path_to_file,
+} from "@cocalc/util/misc";
 import { isCoCalcURL } from "@cocalc/frontend/lib/cocalc-urls";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";

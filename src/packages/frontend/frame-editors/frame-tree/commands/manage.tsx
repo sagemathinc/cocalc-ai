@@ -313,7 +313,10 @@ export class ManageCommands {
     }
 
     // TimeTravel subframe currently stores its leaf actions here.
-    if (this.props.type === "time_travel" && actions.timeTravelActions != null) {
+    if (
+      this.props.type === "time_travel" &&
+      actions.timeTravelActions != null
+    ) {
       return actions.timeTravelActions;
     }
 

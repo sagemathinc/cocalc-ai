@@ -58,7 +58,7 @@ describe("get the spend rate of a user under various circumstances", () => {
       } as any,
     });
     expect(toDecimal(await getSpendRate(account_id, "")).toNumber()).toBe(
-      cost_per_hour1
+      cost_per_hour1,
     );
   });
 
@@ -82,7 +82,7 @@ describe("get the spend rate of a user under various circumstances", () => {
       } as any,
     });
     expect(toDecimal(await getSpendRate(account_id, "")).toNumber()).toBe(
-      cost_per_hour1 + cost_per_hour2
+      cost_per_hour1 + cost_per_hour2,
     );
   });
 
@@ -92,7 +92,7 @@ describe("get the spend rate of a user under various circumstances", () => {
       purchase_id2,
     ]);
     expect(toDecimal(await getSpendRate(account_id, "")).toNumber()).toBe(
-      cost_per_hour1
+      cost_per_hour1,
     );
   });
 

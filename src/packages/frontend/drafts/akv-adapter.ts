@@ -12,7 +12,11 @@ import type {
 
 interface AKVLike {
   get(key: string): Promise<unknown>;
-  set(key: string, value: unknown, options?: { ttl?: number }): Promise<unknown>;
+  set(
+    key: string,
+    value: unknown,
+    options?: { ttl?: number },
+  ): Promise<unknown>;
   delete(key: string): Promise<unknown>;
 }
 

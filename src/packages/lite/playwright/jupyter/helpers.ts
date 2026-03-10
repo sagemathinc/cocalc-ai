@@ -110,7 +110,9 @@ function expandShellHome(path: string): string {
   return path.replace(/\$HOME|\$\{HOME\}/g, home);
 }
 
-async function readLiteDaemonConnectionFromConfig(): Promise<string | undefined> {
+async function readLiteDaemonConnectionFromConfig(): Promise<
+  string | undefined
+> {
   const configCandidates = [
     join(process.cwd(), ".local", "lite-daemon.env"),
     join(process.cwd(), "src", ".local", "lite-daemon.env"),
@@ -334,7 +336,8 @@ export async function mutateNotebookOnDisk(
 export function uniqueNotebookPath(prefix: string): string {
   const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]+/g, "-");
   const baseDir =
-    process.env.COCALC_JUPYTER_E2E_DIR?.trim() || `${process.cwd()}/.playwright-jupyter`;
+    process.env.COCALC_JUPYTER_E2E_DIR?.trim() ||
+    `${process.cwd()}/.playwright-jupyter`;
   return `${baseDir}/${safePrefix}-${randomUUID()}.ipynb`;
 }
 
@@ -386,7 +389,9 @@ export async function openSingleDocNotebookPage(
       const actions = redux?._actions ?? {};
       const stores = redux?._stores ?? {};
       const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
-      const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+      const currentPath = encodedPath
+        ? `/${decodeURIComponent(encodedPath)}`
+        : undefined;
       const actionNames = Object.keys(actions);
       const candidates = actionNames.filter((name) => {
         const action = actions[name];
@@ -428,14 +433,29 @@ export async function openSingleDocNotebookPage(
           for (const nextType of typeCandidates) {
             action.set_frame_type(activeId, nextType);
           }
-          return { ok: true, mode: "set_frame_type", action: bestMatch, activeId };
+          return {
+            ok: true,
+            mode: "set_frame_type",
+            action: bestMatch,
+            activeId,
+          };
         }
         if (activeId != null && typeof action?.set_frame_tree === "function") {
-          action.set_frame_tree({ id: activeId, type: "jupyter_slate_single_doc_notebook" });
-          return { ok: true, mode: "set_frame_tree-leaf", action: bestMatch, activeId };
+          action.set_frame_tree({
+            id: activeId,
+            type: "jupyter_slate_single_doc_notebook",
+          });
+          return {
+            ok: true,
+            mode: "set_frame_tree-leaf",
+            action: bestMatch,
+            activeId,
+          };
         }
         if (typeof action?.replace_frame_tree === "function") {
-          action.replace_frame_tree({ type: "jupyter_slate_single_doc_notebook" });
+          action.replace_frame_tree({
+            type: "jupyter_slate_single_doc_notebook",
+          });
           return { ok: true, mode: "replace_frame_tree", action: bestMatch };
         }
         if (typeof action?.set_frame_tree === "function") {
@@ -453,9 +473,7 @@ export async function openSingleDocNotebookPage(
       }
       return {
         ok: false,
-        reason: `no-switch-method:${bestMatch}:set_frame_type=${
-          typeof action?.set_frame_type
-        }:replace_frame_tree=${typeof action?.replace_frame_tree}:set_frame_tree=${typeof action?.set_frame_tree}:activeId=${
+        reason: `no-switch-method:${bestMatch}:set_frame_type=${typeof action?.set_frame_type}:replace_frame_tree=${typeof action?.replace_frame_tree}:set_frame_tree=${typeof action?.set_frame_tree}:activeId=${
           activeId ?? "none"
         }`,
         action: bestMatch,
@@ -464,9 +482,12 @@ export async function openSingleDocNotebookPage(
     lastReason = switched?.reason ?? switched?.mode ?? "unknown";
     if (switched?.ok) {
       try {
-        await page.waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
-          timeout: 2_000,
-        });
+        await page.waitForSelector(
+          '[data-cocalc-jupyter-slate-single-doc="1"]',
+          {
+            timeout: 2_000,
+          },
+        );
         break;
       } catch {
         // keep polling until selector appears
@@ -474,16 +495,21 @@ export async function openSingleDocNotebookPage(
     }
     await page.waitForTimeout(250);
   }
-  await page.waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
-    timeout: 5_000,
-  }).catch(() => {
-    throw new Error(
-      `failed to switch notebook to single-doc frame within ${timeout_ms}ms (${lastReason})`,
-    );
-  });
-  await page.waitForSelector('[data-cocalc-test="jupyter-singledoc-code-cell"]', {
-    timeout: timeout_ms,
-  });
+  await page
+    .waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
+      timeout: 5_000,
+    })
+    .catch(() => {
+      throw new Error(
+        `failed to switch notebook to single-doc frame within ${timeout_ms}ms (${lastReason})`,
+      );
+    });
+  await page.waitForSelector(
+    '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+    {
+      timeout: timeout_ms,
+    },
+  );
   await page.waitForTimeout(8_000);
 }
 
@@ -500,22 +526,21 @@ export async function setCellInputCode(
   index: number,
   code: string,
 ): Promise<void> {
-  const input = cellLocator(page, index).locator('[cocalc-test="cell-input"] .CodeMirror').first();
+  const input = cellLocator(page, index)
+    .locator('[cocalc-test="cell-input"] .CodeMirror')
+    .first();
   await input.click();
-  await input.evaluate(
-    (element: any, value: string) => {
-      const cm = element?.CodeMirror;
-      if (!cm) {
-        throw new Error("CodeMirror editor not available");
-      }
-      cm.setValue(value);
-      cm.focus();
-      const line = Math.max(0, cm.lineCount() - 1);
-      const ch = cm.getLine(line)?.length ?? 0;
-      cm.setCursor({ line, ch });
-    },
-    code,
-  );
+  await input.evaluate((element: any, value: string) => {
+    const cm = element?.CodeMirror;
+    if (!cm) {
+      throw new Error("CodeMirror editor not available");
+    }
+    cm.setValue(value);
+    cm.focus();
+    const line = Math.max(0, cm.lineCount() - 1);
+    const ch = cm.getLine(line)?.length ?? 0;
+    cm.setCursor({ line, ch });
+  }, code);
 }
 
 export async function clickRunButton(page: Page, index: number): Promise<void> {
@@ -527,11 +552,15 @@ export async function clickRunButton(page: Page, index: number): Promise<void> {
 }
 
 export function singleDocCodeCellLocator(page: Page, index: number) {
-  return page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').nth(index);
+  return page
+    .locator('[data-cocalc-test="jupyter-singledoc-code-cell"]')
+    .nth(index);
 }
 
 export async function countSingleDocCodeCells(page: Page): Promise<number> {
-  return await page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').count();
+  return await page
+    .locator('[data-cocalc-test="jupyter-singledoc-code-cell"]')
+    .count();
 }
 
 export async function pressSingleDocRunShortcut(
@@ -635,11 +664,16 @@ export async function setSingleDocSelectionViaRuntime(
         return;
       }
       const cells = Array.from(
-        document.querySelectorAll('[data-cocalc-test="jupyter-singledoc-code-cell"]'),
+        document.querySelectorAll(
+          '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+        ),
       );
       const cell = cells[idx] as HTMLElement | undefined;
-      if (!cell) throw new Error(`missing single-doc code cell at index ${idx}`);
-      const lines = Array.from(cell.querySelectorAll(".cocalc-slate-code-line"));
+      if (!cell)
+        throw new Error(`missing single-doc code cell at index ${idx}`);
+      const lines = Array.from(
+        cell.querySelectorAll(".cocalc-slate-code-line"),
+      );
       const line =
         pos === "start"
           ? (lines[0] as HTMLElement | undefined)
@@ -698,7 +732,9 @@ export async function readNotebookCellInputFromStore(
     const actions = redux?._actions ?? {};
     const stores = redux?._stores ?? {};
     const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
-    const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+    const currentPath = encodedPath
+      ? `/${decodeURIComponent(encodedPath)}`
+      : undefined;
     const candidates = Object.keys(stores).filter((name) => {
       const store = stores[name];
       if (typeof store?.get !== "function") return false;
@@ -740,7 +776,9 @@ export async function countNotebookCellsFromStore(page: Page): Promise<number> {
     const actions = redux?._actions ?? {};
     const stores = redux?._stores ?? {};
     const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
-    const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+    const currentPath = encodedPath
+      ? `/${decodeURIComponent(encodedPath)}`
+      : undefined;
     const candidates = Object.keys(stores).filter((name) => {
       const store = stores[name];
       if (typeof store?.get !== "function") return false;
@@ -829,7 +867,9 @@ export async function readCellOutputText(
   page: Page,
   index: number,
 ): Promise<string> {
-  const output = cellLocator(page, index).locator('[cocalc-test="cell-output"]');
+  const output = cellLocator(page, index).locator(
+    '[cocalc-test="cell-output"]',
+  );
   if ((await output.count()) === 0) {
     return "";
   }
@@ -855,9 +895,7 @@ export async function readInputPromptState(
   const cell = cellLocator(page, index);
   await cell.scrollIntoViewIfNeeded();
   await cell.hover();
-  const prompt = cell
-    .locator('[cocalc-test="cell-input-prompt"]')
-    .first();
+  const prompt = cell.locator('[cocalc-test="cell-input-prompt"]').first();
   if ((await prompt.count()) === 0) {
     return;
   }

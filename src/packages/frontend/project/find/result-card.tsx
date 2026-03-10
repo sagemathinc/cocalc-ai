@@ -153,10 +153,16 @@ export function FindResultCard({
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: "6px" }}>
+          <div
+            style={{ display: "flex", alignItems: "flex-start", gap: "6px" }}
+          >
             <Icon
               name={iconName}
-              style={{ flex: "0 0 auto", alignSelf: "flex-start", marginTop: "2px" }}
+              style={{
+                flex: "0 0 auto",
+                alignSelf: "flex-start",
+                marginTop: "2px",
+              }}
             />
             <strong style={titleStyle}>
               {trunc_middle(title || "(root)", 80)}
@@ -198,9 +204,7 @@ export function FindResultCard({
             <div key={idx}>{line}</div>
           ))}
           {metaMinLines != null
-            ? new Array(
-                Math.max(0, metaMinLines - (meta?.length ?? 0)),
-              )
+            ? new Array(Math.max(0, metaMinLines - (meta?.length ?? 0)))
                 .fill(null)
                 .map((_, idx) => (
                   <div key={`filler-${idx}`} style={{ visibility: "hidden" }}>

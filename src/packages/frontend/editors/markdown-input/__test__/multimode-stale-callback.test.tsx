@@ -79,4 +79,3 @@ describe("MultiMarkdownInput stale callback guard", () => {
     expect(onChange).toHaveBeenNthCalledWith(2, "fresh-shift");
   });
 });
-

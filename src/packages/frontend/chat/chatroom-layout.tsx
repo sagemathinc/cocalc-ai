@@ -87,7 +87,10 @@ export function ChatRoomLayout({
               }}
             />
           </Button>
-          <Button type={newChatSelected ? "primary" : "default"} onClick={onNewChat}>
+          <Button
+            type={newChatSelected ? "primary" : "default"}
+            onClick={onNewChat}
+          >
             New Chat
           </Button>
         </div>

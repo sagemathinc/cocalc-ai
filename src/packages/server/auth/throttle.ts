@@ -30,7 +30,7 @@ async function isExclusiveEmail(email: string) {
 export async function signInCheck(
   email: string,
   ip?: string,
-  auth_token: boolean = false
+  auth_token: boolean = false,
 ): Promise<string | undefined> {
   if ((emailShortCache.get(email) ?? 0) > 5) {
     // A given email address is allowed at most 5 failed login attempts per minute

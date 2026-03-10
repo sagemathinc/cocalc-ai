@@ -131,15 +131,15 @@ export function upsertProject(row: ProjectRow) {
   const pk = JSON.stringify({ project_id: row.project_id });
   // The generic data table mirrors projects, but we still need values
   // from the concrete projects table (e.g., state_reported).
-  const existingProjectsRow = db
-    .prepare(
-      "SELECT state, state_reported, http_port, ssh_port, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
-    )
-    .get(row.project_id) || {};
+  const existingProjectsRow =
+    db
+      .prepare(
+        "SELECT state, state_reported, http_port, ssh_port, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
+      )
+      .get(row.project_id) || {};
   const existing = getRow("projects", pk) || {};
 
-  const title =
-    row.title ?? (existing as any).title ?? null;
+  const title = row.title ?? (existing as any).title ?? null;
   const existingState: string | null =
     row.state ?? existingProjectsRow.state ?? existing.state?.state ?? null;
   const state = existingState;
@@ -164,15 +164,13 @@ export function upsertProject(row: ProjectRow) {
   const hasHttpPort = Object.prototype.hasOwnProperty.call(row, "http_port");
   const hasSshPort = Object.prototype.hasOwnProperty.call(row, "ssh_port");
   const http_port = hasHttpPort
-    ? row.http_port ?? null
+    ? (row.http_port ?? null)
     : ((existing as any).http_port ?? existingProjectsRow.http_port ?? null);
   const ssh_port = hasSshPort
-    ? row.ssh_port ?? null
+    ? (row.ssh_port ?? null)
     : ((existing as any).ssh_port ?? existingProjectsRow.ssh_port ?? null);
   const secret_token =
-    row.secret_token ??
-    (existingProjectsRow as any).secret_token ??
-    null;
+    row.secret_token ?? (existingProjectsRow as any).secret_token ?? null;
   const authorized_keys =
     row.authorized_keys ??
     (existing as any).authorized_keys ??
@@ -314,9 +312,9 @@ export function listUnreportedProjects(): ProjectRow[] {
 export function markProjectStateReported(project_id: string) {
   ensureProjectsTable();
   const db = getDatabase();
-  db.prepare(
-    "UPDATE projects SET state_reported=1 WHERE project_id=?",
-  ).run(project_id);
+  db.prepare("UPDATE projects SET state_reported=1 WHERE project_id=?").run(
+    project_id,
+  );
 }
 
 export function deleteProjectLocal(project_id: string) {
@@ -326,9 +324,10 @@ export function deleteProjectLocal(project_id: string) {
   deleteRow("projects", JSON.stringify({ project_id }));
 }
 
-export function getProjectPorts(
-  project_id: string,
-): { http_port?: number | null; ssh_port?: number | null } {
+export function getProjectPorts(project_id: string): {
+  http_port?: number | null;
+  ssh_port?: number | null;
+} {
   ensureProjectsTable();
   const db = getDatabase();
   const row = db

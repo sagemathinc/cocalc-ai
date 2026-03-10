@@ -459,9 +459,7 @@ export interface Hosts {
     payload: string;
     metadata?: Record<string, any>;
   }) => Promise<{ id: string; created: boolean }>;
-  getSiteOpenAiApiKey: (opts: {
-    host_id?: string;
-  }) => Promise<{
+  getSiteOpenAiApiKey: (opts: { host_id?: string }) => Promise<{
     enabled: boolean;
     has_api_key: boolean;
     api_key?: string;
@@ -509,7 +507,10 @@ export interface Hosts {
     machine?: HostMachine;
   }) => Promise<Host>;
 
-  startHost: (opts: { account_id?: string; id: string }) => Promise<HostLroResponse>;
+  startHost: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<HostLroResponse>;
   stopHost: (opts: {
     account_id?: string;
     id: string;

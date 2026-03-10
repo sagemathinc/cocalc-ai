@@ -36,9 +36,7 @@ export class LambdaClient {
   }
 
   deleteSshKey(id: string) {
-    return this.http
-      .delete(`/api/v1/ssh-keys/${id}`)
-      .then((r) => r.data.data);
+    return this.http.delete(`/api/v1/ssh-keys/${id}`).then((r) => r.data.data);
   }
 
   listFilesystems() {

@@ -34,7 +34,7 @@ const logger = getLogger("purchases:sync-paid-invoices");
 export async function getPaidInvoices(
   account_id: string,
   limit?: number,
-  created?: Date // greater than or equal to this date
+  created?: Date, // greater than or equal to this date
 ): Promise<any[]> {
   logger.debug("account_id = ", account_id);
   const customer = await getStripeCustomerId({ account_id, create: false });
@@ -62,17 +62,17 @@ export async function getPaidInvoices(
 // the number of new purchases that resulted, i.e., the number
 // of invoices that contributed actual money.
 export default async function syncPaidInvoices(
-  account_id: string
+  account_id: string,
 ): Promise<number> {
   const invoices = await getPaidInvoices(
     account_id,
     10,
-    dayjs().subtract(1, "day").toDate()
+    dayjs().subtract(1, "day").toDate(),
   );
   logger.debug(
     "syncPaidInvoices: considering ",
     invoices.length,
-    "paid invoices"
+    "paid invoices",
   );
   let num = 0;
   for (const invoice of invoices) {

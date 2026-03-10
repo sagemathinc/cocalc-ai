@@ -248,23 +248,21 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         }}
       >
         {displayedNameOverride ?? basename}
-        {displayedNameOverride == null
-          ? ext === ""
-            ? undefined
-            : (
-                <span
-                  style={{
-                    color: !item.mask
-                      ? dimFileExtensions
-                        ? COLORS.GRAY_M
-                        : COLORS.FILE_EXT
-                      : undefined,
-                  }}
-                >
-                  {`.${ext}`}
-                </span>
-              )
-          : undefined}
+        {displayedNameOverride == null ? (
+          ext === "" ? undefined : (
+            <span
+              style={{
+                color: !item.mask
+                  ? dimFileExtensions
+                    ? COLORS.GRAY_M
+                    : COLORS.FILE_EXT
+                  : undefined,
+              }}
+            >
+              {`.${ext}`}
+            </span>
+          )
+        ) : undefined}
         {!!item.linkTarget && (
           <>
             <Icon name="arrow-right" style={{ margin: "0 10px" }} />

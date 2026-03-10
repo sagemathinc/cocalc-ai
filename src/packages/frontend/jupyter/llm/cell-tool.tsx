@@ -690,9 +690,8 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
     });
 
     // do not import until needed -- it is HUGE!
-    const { truncateMessage, getMaxTokens, numTokensUpperBound } = await import(
-      "@cocalc/frontend/misc/llm"
-    );
+    const { truncateMessage, getMaxTokens, numTokensUpperBound } =
+      await import("@cocalc/frontend/misc/llm");
 
     const chunks: string[] = [];
 
@@ -1369,7 +1368,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
     );
   }
 
-function handleKeyDown(e: React.KeyboardEvent) {
+  function handleKeyDown(e: React.KeyboardEvent) {
     e.stopPropagation();
     // Only handle key events from input elements, not from other components like Slider
     const target = e.target as HTMLElement;

@@ -15,6 +15,6 @@ export default function cleanPlugin(registerPlugin, OUTPUT) {
       cleanOnceBeforeBuildPatterns: [OUTPUT],
       verbose: true,
       dry: false,
-    })
+    }),
   );
 }

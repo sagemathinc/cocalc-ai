@@ -27,7 +27,10 @@ function appId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
-async function httpGet(url: string, headers: Record<string, string>): Promise<{
+async function httpGet(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{
   statusCode?: number;
   body: string;
 }> {
@@ -74,8 +77,10 @@ describe("managed app metrics", () => {
   test("records per-app private/public HTTP metrics through the project proxy", async () => {
     jest.resetModules();
     const { project_id, secretToken } = await import("@cocalc/project/data");
-    const { startProxyServer } = await import("@cocalc/project/servers/proxy/proxy");
-    const { deleteApp, ensureRunning, upsertAppSpec } = await import("./control");
+    const { startProxyServer } =
+      await import("@cocalc/project/servers/proxy/proxy");
+    const { deleteApp, ensureRunning, upsertAppSpec } =
+      await import("./control");
 
     expect(secretToken).toBeTruthy();
 
@@ -136,7 +141,8 @@ describe("managed app metrics", () => {
   test("records managed app metrics for direct /port routes", async () => {
     jest.resetModules();
     const { project_id, secretToken } = await import("@cocalc/project/data");
-    const { startProxyServer } = await import("@cocalc/project/servers/proxy/proxy");
+    const { startProxyServer } =
+      await import("@cocalc/project/servers/proxy/proxy");
     const {
       appMetrics,
       deleteApp,
@@ -170,7 +176,10 @@ describe("managed app metrics", () => {
     expect(proxyPort).toBeGreaterThan(0);
 
     try {
-      const status = await ensureRunning(id, { timeout: 10_000, interval: 100 });
+      const status = await ensureRunning(id, {
+        timeout: 10_000,
+        interval: 100,
+      });
       expect(status.port).toBeGreaterThan(0);
       await expect(managedServiceAppForPort(status.port!)).resolves.toEqual({
         app_id: id,
@@ -201,10 +210,10 @@ describe("managed app metrics", () => {
   test("records managed app metrics for direct /proxy routes", async () => {
     jest.resetModules();
     const { project_id, secretToken } = await import("@cocalc/project/data");
-    const { startProxyServer } = await import("@cocalc/project/servers/proxy/proxy");
-    const { appMetrics, deleteApp, ensureRunning, upsertAppSpec } = await import(
-      "./control"
-    );
+    const { startProxyServer } =
+      await import("@cocalc/project/servers/proxy/proxy");
+    const { appMetrics, deleteApp, ensureRunning, upsertAppSpec } =
+      await import("./control");
 
     expect(secretToken).toBeTruthy();
 
@@ -231,7 +240,10 @@ describe("managed app metrics", () => {
     expect(proxyPort).toBeGreaterThan(0);
 
     try {
-      const status = await ensureRunning(id, { timeout: 10_000, interval: 100 });
+      const status = await ensureRunning(id, {
+        timeout: 10_000,
+        interval: 100,
+      });
       expect(status.port).toBeGreaterThan(0);
 
       const viaProxy = await httpGet(

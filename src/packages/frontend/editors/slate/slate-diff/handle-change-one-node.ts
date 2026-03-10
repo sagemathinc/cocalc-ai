@@ -13,7 +13,7 @@ import { slateDiff } from "./diff";
 export function handleChangeOneNode(
   node: Node,
   nextNode: Node,
-  path: number[]
+  path: number[],
 ): Operation[] {
   for (const strategy of STRATEGIES) {
     const ops = strategy(node, nextNode, path);
@@ -32,7 +32,7 @@ export function handleChangeOneNode(
 type Handler = (
   node: Node,
   nextNode: Node,
-  path: number[]
+  path: number[],
 ) => Operation[] | undefined;
 
 const STRATEGIES: Handler[] = [];
@@ -49,7 +49,7 @@ STRATEGIES.push((node, nextNode, path) => {
     nextNode["children"] != null &&
     isEqual(
       copy_without(node, ["children"]),
-      copy_without(nextNode, ["children"])
+      copy_without(nextNode, ["children"]),
     )
   ) {
     return slateDiff(node["children"], nextNode["children"], path);

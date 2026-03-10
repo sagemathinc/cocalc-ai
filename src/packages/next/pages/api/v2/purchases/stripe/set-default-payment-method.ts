@@ -21,7 +21,10 @@ async function set(req): Promise<{ success: true }> {
   if (account_id == null) {
     throw Error("must be signed in to set stripe default payment method");
   }
-  throttle({ account_id, endpoint: "purchases/stripe/set-default-payment-method" });
+  throttle({
+    account_id,
+    endpoint: "purchases/stripe/set-default-payment-method",
+  });
   const { default_payment_method } = getParams(req);
   if (!default_payment_method) {
     throw Error("must specify the default source");

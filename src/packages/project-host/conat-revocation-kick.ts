@@ -78,7 +78,10 @@ export function startConatRevocationKickLoop({
     }
   };
 
-  const timer = setInterval(sweep, Math.max(5_000, Math.floor(sweepIntervalMs)));
+  const timer = setInterval(
+    sweep,
+    Math.max(5_000, Math.floor(sweepIntervalMs)),
+  );
   timer.unref();
   void sweep();
   return () => clearInterval(timer);

@@ -89,7 +89,8 @@ export function getLiteServerSettings(): Record<string, any> {
 
 export async function getCustomizePayload(): Promise<CustomizePayload> {
   const allSettings = getProcessedSettings("server_settings");
-  const { configuration: publicSettings } = buildPublicSiteSettings(allSettings);
+  const { configuration: publicSettings } =
+    buildPublicSiteSettings(allSettings);
   const configuration: Record<string, any> = {
     ...DEFAULT_CONFIGURATION,
     ...publicSettings,

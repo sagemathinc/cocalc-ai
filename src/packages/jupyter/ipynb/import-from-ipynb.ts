@@ -359,7 +359,8 @@ export class IPynbImporter {
     if (cell.metadata != null) {
       const lastRuntimeMs = cell.metadata?.cocalc?.last_runtime_ms;
       if (
-        (typeof lastRuntimeMs === "number" || typeof lastRuntimeMs === "string") &&
+        (typeof lastRuntimeMs === "number" ||
+          typeof lastRuntimeMs === "string") &&
         Number.isFinite(Number(lastRuntimeMs)) &&
         Number(lastRuntimeMs) >= 0
       ) {

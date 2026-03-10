@@ -10,8 +10,6 @@ For now we just pass in a single function and don't bother with actions/redux, e
 since there is no state or need for it...
 */
 
-
-
 import { Icon } from "../../components";
 import { Button } from "../../antd-bootstrap";
 

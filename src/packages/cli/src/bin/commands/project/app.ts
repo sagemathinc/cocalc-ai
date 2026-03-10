@@ -85,7 +85,21 @@ type ManagedAppForwardRow = {
   last_error: string | null;
 };
 
-function parsePositiveIntOrThrow(value: string | undefined, context: string): number | undefined {
+type AppTemplateRow = {
+  id: string;
+  title: string;
+  category: string;
+  description?: string;
+  homepage?: string;
+  template_source?: string;
+  template_scope?: "builtin" | "remote" | "project-local";
+  source_path?: string;
+};
+
+function parsePositiveIntOrThrow(
+  value: string | undefined,
+  context: string,
+): number | undefined {
   if (value == null || `${value}`.trim() === "") return undefined;
   const n = Number(value);
   if (!Number.isInteger(n) || n <= 0) {
@@ -117,7 +131,9 @@ function buildSshCommand(args: string[]): string {
 
 function sanitizeForwardToken(value: string): string {
   const trimmed = `${value}`.trim().toLowerCase();
-  const normalized = trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const normalized = trimmed
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return normalized || "app";
 }
 
@@ -125,7 +141,11 @@ function managedProjectSshAlias(projectId: string): string {
   return `cocalc-project-${projectId}`;
 }
 
-function managedAppForwardName(projectId: string, appId: string, localPort: number): string {
+function managedAppForwardName(
+  projectId: string,
+  appId: string,
+  localPort: number,
+): string {
   return `cocalc-app-forward-${projectId.slice(0, 8)}-${sanitizeForwardToken(appId)}-${localPort}`;
 }
 
@@ -146,8 +166,11 @@ function isReflectForwardRunning(state: string | null | undefined): boolean {
 function formatManagedAppForwardRow(row: any): ManagedAppForwardRow {
   const name = `${row.name ?? ""}`.trim() || null;
   const match =
-    name?.match(/^cocalc-app-forward-([a-f0-9]{8})-([a-z0-9._-]+)-(\d+)$/i) ?? null;
-  const localHost = `${row.local_host ?? row.local?.split(":")[0] ?? "127.0.0.1"}`.trim() || "127.0.0.1";
+    name?.match(/^cocalc-app-forward-([a-f0-9]{8})-([a-z0-9._-]+)-(\d+)$/i) ??
+    null;
+  const localHost =
+    `${row.local_host ?? row.local?.split(":")[0] ?? "127.0.0.1"}`.trim() ||
+    "127.0.0.1";
   const localPort = Number.parseInt(
     `${row.local_port ?? row.local?.split(":").slice(-1)[0] ?? 0}`,
     10,
@@ -178,7 +201,10 @@ function filterManagedAppForwardRows(
 ): ManagedAppForwardRow[] {
   const prefix = managedAppForwardPrefix(projectId, appId);
   return rows
-    .map((row) => ({ ...formatManagedAppForwardRow(row), project_id: projectId }))
+    .map((row) => ({
+      ...formatManagedAppForwardRow(row),
+      project_id: projectId,
+    }))
     .filter((row) => row.name?.startsWith(prefix));
 }
 
@@ -191,7 +217,9 @@ function printManagedAppForwardRowsHuman(rows: ManagedAppForwardRow[]): void {
     if (index > 0) {
       console.log("");
     }
-    const title = row.app_id ? `${row.app_id} (#${row.id})` : `forward #${row.id}`;
+    const title = row.app_id
+      ? `${row.app_id} (#${row.id})`
+      : `forward #${row.id}`;
     console.log(`${title}  ${row.state ?? "unknown"}`);
     console.log(`  Local:   ${row.local_url}`);
     console.log(`  Remote:  ${row.remote_port}`);
@@ -200,6 +228,35 @@ function printManagedAppForwardRowsHuman(rows: ManagedAppForwardRow[]): void {
     }
     if (row.last_error) {
       console.log(`  Error:   ${row.last_error}`);
+    }
+  }
+}
+
+function printAppTemplateRowsHuman(rows: AppTemplateRow[]): void {
+  if (!rows.length) {
+    console.log("(no app templates)");
+    return;
+  }
+  for (const [index, row] of rows.entries()) {
+    if (index > 0) {
+      console.log("");
+    }
+    const parts = [row.id];
+    if (row.category) parts.push(row.category);
+    if (row.template_scope) parts.push(row.template_scope);
+    console.log(parts.join("  "));
+    console.log(`  Title:   ${row.title}`);
+    if (row.description) {
+      console.log(`  About:   ${row.description}`);
+    }
+    if (row.homepage) {
+      console.log(`  Docs:    ${row.homepage}`);
+    }
+    if (row.template_source) {
+      console.log(`  Source:  ${row.template_source}`);
+    }
+    if (row.source_path) {
+      console.log(`  Path:    ${row.source_path}`);
     }
   }
 }
@@ -224,8 +281,14 @@ function ensureManagedProjectSshConfigEntry({
   };
   keyPath: string | null;
   cloudflaredBinary: string | null;
-  removeProjectSshConfigBlock: (content: string, alias: string) => { content: string };
-  projectSshConfigBlockMarkers: (alias: string) => { start: string; end: string };
+  removeProjectSshConfigBlock: (
+    content: string,
+    alias: string,
+  ) => { content: string };
+  projectSshConfigBlockMarkers: (alias: string) => {
+    start: string;
+    end: string;
+  };
 }): void {
   const hostName =
     route.ssh_transport !== "direct"
@@ -234,10 +297,16 @@ function ensureManagedProjectSshConfigEntry({
   if (!hostName) {
     throw new Error("project ssh route is missing host endpoint");
   }
-  const lines = [`Host ${alias}`, `  HostName ${hostName}`, `  User ${route.ssh_username}`];
+  const lines = [
+    `Host ${alias}`,
+    `  HostName ${hostName}`,
+    `  User ${route.ssh_username}`,
+  ];
   if (route.ssh_transport !== "direct") {
     if (!cloudflaredBinary) {
-      throw new Error("cloudflared is required for managed Cloudflare SSH forwarding");
+      throw new Error(
+        "cloudflared is required for managed Cloudflare SSH forwarding",
+      );
     }
     lines.push(`  ProxyCommand ${cloudflaredBinary} access ssh --hostname %h`);
   } else if (route.ssh_port != null) {
@@ -254,8 +323,13 @@ function ensureManagedProjectSshConfigEntry({
   const markers = projectSshConfigBlockMarkers(alias);
   const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
-  const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
-  const stripped = removeProjectSshConfigBlock(existing, alias).content.trimEnd();
+  const existing = existsSync(configPath)
+    ? readFileSync(configPath, "utf8")
+    : "";
+  const stripped = removeProjectSshConfigBlock(
+    existing,
+    alias,
+  ).content.trimEnd();
   const next = stripped ? `${stripped}\n\n${block}` : block;
   writeFileSync(configPath, next, { encoding: "utf8", mode: 0o600 });
 }
@@ -281,7 +355,10 @@ async function resolveAppForwardCommand(
     installSyncPublicKey,
     durationToMs,
   } = deps;
-  const { project: ws, api } = await resolveProjectProjectApi(ctx, opts.project);
+  const { project: ws, api } = await resolveProjectProjectApi(
+    ctx,
+    opts.project,
+  );
   const spec = await api.apps.getAppSpec(opts.appId);
   if (spec.kind !== "service") {
     throw new Error(
@@ -299,7 +376,8 @@ async function resolveAppForwardCommand(
     );
   }
   const remotePort = status.port!;
-  const localPort = parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
+  const localPort =
+    parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
   const localHost = `${opts.localHost ?? "127.0.0.1"}`.trim() || "127.0.0.1";
   const route = await resolveProjectSshConnection(ctx, ws.project_id, {
     direct: !!opts.direct,
@@ -340,7 +418,8 @@ async function resolveAppForwardCommand(
       throw new Error("project ssh route is missing cloudflare hostname");
     }
     const cloudflared =
-      `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() || "cloudflared";
+      `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
+      "cloudflared";
     const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
     sshArgs.push("-o", `ProxyCommand=${proxyCommand}`);
     sshTarget = `${route.ssh_username}@${cloudflareHostname}`;
@@ -378,8 +457,7 @@ async function resolveAppForwardCommand(
     key_already_present: keyInstall
       ? Boolean((keyInstall as any).already_present)
       : false,
-    note:
-      "Run this command on your local machine to create a private tunnel directly to the app port.",
+    note: "Run this command on your local machine to create a private tunnel directly to the app port.",
   };
 }
 
@@ -437,7 +515,8 @@ async function createManagedAppForward(
   }
 
   const remotePort = status.port!;
-  const localPort = parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
+  const localPort =
+    parseTcpPortOrThrow(opts.localPort, "--local-port") ?? remotePort;
   const localHost = `${opts.localHost ?? "127.0.0.1"}`.trim() || "127.0.0.1";
   const route = await resolveProjectSshConnection(ctx, project.project_id, {
     direct: !!opts.direct,
@@ -454,7 +533,9 @@ async function createManagedAppForward(
     });
   }
 
-  const sshAlias = normalizeProjectSshHostAlias(managedProjectSshAlias(project.project_id));
+  const sshAlias = normalizeProjectSshHostAlias(
+    managedProjectSshAlias(project.project_id),
+  );
   const sshConfigPath = normalizeProjectSshConfigPath(opts.sshConfig);
   const cloudflaredBinary =
     route.transport !== "direct" ? resolveCloudflaredBinary() : null;
@@ -474,7 +555,11 @@ async function createManagedAppForward(
     projectSshConfigBlockMarkers,
   });
 
-  const forwardName = managedAppForwardName(project.project_id, opts.appId, localPort);
+  const forwardName = managedAppForwardName(
+    project.project_id,
+    opts.appId,
+    localPort,
+  );
   const existingRows = filterManagedAppForwardRows(
     await listReflectForwards(),
     project.project_id,
@@ -528,7 +613,7 @@ async function createManagedAppForward(
         ? route.cloudflare_hostname
           ? `${route.cloudflare_hostname}:443`
           : null
-        : route.ssh_server ?? null,
+        : (route.ssh_server ?? null),
     ssh_alias: sshAlias,
     ssh_config_path: sshConfigPath,
     remote_port: remotePort,
@@ -547,8 +632,7 @@ async function createManagedAppForward(
       : false,
     reflect_home: reflectSyncHomeDir(),
     session_db: reflectSyncSessionDbPath(),
-    note:
-      "The forward is managed locally via reflect-sync. Re-run this command to reuse it, or stop it with 'cocalc project app forward-stop'.",
+    note: "The forward is managed locally via reflect-sync. Re-run this command to reuse it, or stop it with 'cocalc project app forward-stop'.",
   };
 }
 
@@ -618,7 +702,9 @@ async function readJsonFileOrStdin(
   try {
     return JSON.parse(raw);
   } catch (err) {
-    throw new Error(`failed to parse JSON from ${path === "-" ? "stdin" : path}: ${err}`);
+    throw new Error(
+      `failed to parse JSON from ${path === "-" ? "stdin" : path}: ${err}`,
+    );
   }
 }
 
@@ -671,15 +757,42 @@ export function registerProjectAppCommands(
     });
 
   app
+    .command("templates")
+    .description("list merged app template catalog entries")
+    .option("-w, --project <project>", "project id or name")
+    .action(async (opts: { project?: string }, command: Command) => {
+      await withContext(command, "project app templates", async (ctx) => {
+        const { project: ws, api } = await resolveProjectProjectApi(
+          ctx,
+          opts.project,
+        );
+        const rows = (await api.apps.listAppTemplates()).map((row) => ({
+          id: row.id,
+          title: row.title,
+          category: row.category,
+          description: row.description,
+          homepage: row.homepage,
+          template_source: row.template_source,
+          template_scope: row.template_scope,
+          source_path: row.source_path,
+        }));
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          printAppTemplateRowsHuman(rows);
+          return null;
+        }
+        return {
+          project_id: ws.project_id,
+          items: rows,
+        };
+      });
+    });
+
+  app
     .command("get <appId>")
     .description("get one app spec")
     .option("-w, --project <project>", "project id or name")
     .action(
-      async (
-        appId: string,
-        opts: { project?: string },
-        command: Command,
-      ) => {
+      async (appId: string, opts: { project?: string }, command: Command) => {
         await withContext(command, "project app get", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -711,10 +824,8 @@ export function registerProjectAppCommands(
             ctx,
             opts.project,
           );
-          const minutes = parsePositiveIntOrThrow(
-            opts.minutes,
-            "minutes",
-          ) ?? 60;
+          const minutes =
+            parsePositiveIntOrThrow(opts.minutes, "minutes") ?? 60;
           if (appId) {
             const item = await api.apps.appMetrics(appId, { minutes });
             return {
@@ -737,13 +848,25 @@ export function registerProjectAppCommands(
     .command("forward <appId>")
     .description("create or reuse a managed local SSH tunnel to a service app")
     .option("-w, --project <project>", "project id or name")
-    .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
-    .option("--local-port <port>", "local port to bind (default: same as app port)")
+    .option(
+      "--direct",
+      "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint",
+    )
+    .option(
+      "--local-port <port>",
+      "local port to bind (default: same as app port)",
+    )
     .option("--local-host <host>", "local bind host", "127.0.0.1")
     .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
     .option("--compress", "enable SSH compression for the managed tunnel")
-    .option("--ssh-config <path>", "ssh config path to use/manage (default: ~/.ssh/config)")
-    .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+    .option(
+      "--ssh-config <path>",
+      "ssh config path to use/manage (default: ~/.ssh/config)",
+    )
+    .option(
+      "--key-path <path>",
+      "ssh key base path (default: ~/.ssh/id_ed25519)",
+    )
     .option(
       "--no-install-key",
       "skip automatic local ssh key ensure + project authorized_keys install",
@@ -843,13 +966,24 @@ export function registerProjectAppCommands(
 
   app
     .command("forward-command <appId>", { hidden: true })
-    .description("print a local SSH port-forward command for a managed service app")
+    .description(
+      "print a local SSH port-forward command for a managed service app",
+    )
     .option("-w, --project <project>", "project id or name")
-    .option("--direct", "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint")
-    .option("--local-port <port>", "local port to bind (default: same as app port)")
+    .option(
+      "--direct",
+      "bypass the Cloudflare ssh hostname and use the direct host ssh endpoint",
+    )
+    .option(
+      "--local-port <port>",
+      "local port to bind (default: same as app port)",
+    )
     .option("--local-host <host>", "local bind host", "127.0.0.1")
     .option("--timeout <duration>", "ensure-running timeout (e.g. 30s, 2m)")
-    .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+    .option(
+      "--key-path <path>",
+      "ssh key base path (default: ~/.ssh/id_ed25519)",
+    )
     .option(
       "--no-install-key",
       "skip automatic local ssh key ensure + project authorized_keys install",
@@ -868,13 +1002,17 @@ export function registerProjectAppCommands(
         },
         command: Command,
       ) => {
-        await withContext(command, "project app forward-command", async (ctx) => {
-          const resolved = await resolveAppForwardCommand(ctx, deps, {
-            ...opts,
-            appId,
-          });
-          return resolved;
-        });
+        await withContext(
+          command,
+          "project app forward-command",
+          async (ctx) => {
+            const resolved = await resolveAppForwardCommand(ctx, deps, {
+              ...opts,
+              appId,
+            });
+            return resolved;
+          },
+        );
       },
     );
 
@@ -917,12 +1055,12 @@ export function registerProjectAppCommands(
     .command("export-all")
     .description("export all app specs as one JSON bundle")
     .option("-w, --project <project>", "project id or name")
-    .option("--file <path>", "write JSON bundle to a local file instead of stdout")
+    .option(
+      "--file <path>",
+      "write JSON bundle to a local file instead of stdout",
+    )
     .action(
-      async (
-        opts: { project?: string; file?: string },
-        command: Command,
-      ) => {
+      async (opts: { project?: string; file?: string }, command: Command) => {
         await withContext(command, "project app export-all", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -930,7 +1068,8 @@ export function registerProjectAppCommands(
           );
           const rows = await api.apps.listAppSpecs();
           const apps: PortableAppSpec[] = [];
-          const skipped: Array<{ id: string; path?: string; error: string }> = [];
+          const skipped: Array<{ id: string; path?: string; error: string }> =
+            [];
           for (const row of rows) {
             if (row.spec) {
               apps.push(asPortableSpec(row.spec, `spec:${row.id}`));
@@ -963,10 +1102,7 @@ export function registerProjectAppCommands(
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--file <path>", "local JSON file path, or '-' for stdin")
     .action(
-      async (
-        opts: { project?: string; file: string },
-        command: Command,
-      ) => {
+      async (opts: { project?: string; file: string }, command: Command) => {
         await withContext(command, "project app import", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -977,7 +1113,8 @@ export function registerProjectAppCommands(
             readFileLocal,
             readAllStdin,
           );
-          const { format, specs, source_project_id } = parseImportPayload(parsed);
+          const { format, specs, source_project_id } =
+            parseImportPayload(parsed);
           const imported: Array<{
             app_id: string;
             path: string;
@@ -1014,15 +1151,16 @@ export function registerProjectAppCommands(
         command: Command,
       ) => {
         await withContext(command, "project app clone", async (ctx) => {
-          const { project: fromWs, api: fromApi } = await resolveProjectProjectApi(
-            ctx,
-            opts.fromProject,
-          );
+          const { project: fromWs, api: fromApi } =
+            await resolveProjectProjectApi(ctx, opts.fromProject);
           const { project: toWs, api: toApi } = await resolveProjectProjectApi(
             ctx,
             opts.toProject,
           );
-          const spec = asPortableSpec(await fromApi.apps.getAppSpec(appId), "spec");
+          const spec = asPortableSpec(
+            await fromApi.apps.getAppSpec(appId),
+            "spec",
+          );
           const saved = await toApi.apps.upsertAppSpec(spec);
           return {
             source_project_id: fromWs.project_id,
@@ -1046,10 +1184,8 @@ export function registerProjectAppCommands(
         command: Command,
       ) => {
         await withContext(command, "project app clone-all", async (ctx) => {
-          const { project: fromWs, api: fromApi } = await resolveProjectProjectApi(
-            ctx,
-            opts.fromProject,
-          );
+          const { project: fromWs, api: fromApi } =
+            await resolveProjectProjectApi(ctx, opts.fromProject);
           const { project: toWs, api: toApi } = await resolveProjectProjectApi(
             ctx,
             opts.toProject,
@@ -1059,7 +1195,8 @@ export function registerProjectAppCommands(
             app_id: string;
             path: string;
           }> = [];
-          const skipped: Array<{ id: string; path?: string; error: string }> = [];
+          const skipped: Array<{ id: string; path?: string; error: string }> =
+            [];
           for (const row of rows) {
             if (!row.spec) {
               skipped.push({
@@ -1092,10 +1229,7 @@ export function registerProjectAppCommands(
     .option("-w, --project <project>", "project id or name")
     .requiredOption("--file <path>", "local path to JSON app spec")
     .action(
-      async (
-        opts: { project?: string; file: string },
-        command: Command,
-      ) => {
+      async (opts: { project?: string; file: string }, command: Command) => {
         await withContext(command, "project app upsert", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -1126,11 +1260,7 @@ export function registerProjectAppCommands(
     .description("delete app spec")
     .option("-w, --project <project>", "project id or name")
     .action(
-      async (
-        appId: string,
-        opts: { project?: string },
-        command: Command,
-      ) => {
+      async (appId: string, opts: { project?: string }, command: Command) => {
         await withContext(command, "project app delete", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -1163,7 +1293,9 @@ export function registerProjectAppCommands(
             opts.project,
           );
           if (opts.wait) {
-            const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
+            const timeout = opts.timeout
+              ? deps.durationToMs(opts.timeout)
+              : undefined;
             const status = await api.apps.ensureRunning(appId, {
               timeout,
               interval: 500,
@@ -1187,11 +1319,7 @@ export function registerProjectAppCommands(
     .description("stop app process")
     .option("-w, --project <project>", "project id or name")
     .action(
-      async (
-        appId: string,
-        opts: { project?: string },
-        command: Command,
-      ) => {
+      async (appId: string, opts: { project?: string }, command: Command) => {
         await withContext(command, "project app stop", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -1225,7 +1353,9 @@ export function registerProjectAppCommands(
             opts.project,
           );
           await api.apps.stopApp(appId);
-          const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
+          const timeout = opts.timeout
+            ? deps.durationToMs(opts.timeout)
+            : undefined;
           const status = opts.wait
             ? await api.apps.ensureRunning(appId, { timeout, interval: 500 })
             : await api.apps.startApp(appId);
@@ -1242,11 +1372,7 @@ export function registerProjectAppCommands(
     .description("get app runtime status")
     .option("-w, --project <project>", "project id or name")
     .action(
-      async (
-        appId: string,
-        opts: { project?: string },
-        command: Command,
-      ) => {
+      async (appId: string, opts: { project?: string }, command: Command) => {
         await withContext(command, "project app status", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -1288,11 +1414,7 @@ export function registerProjectAppCommands(
           const data = await api.apps.appLogs(appId);
           const tail = parsePositiveIntOrThrow(opts.tail, "--tail") ?? 200;
           const takeTail = (text: string) =>
-            text
-              .split(/\r?\n/)
-              .slice(-tail)
-              .join("\n")
-              .trim();
+            text.split(/\r?\n/).slice(-tail).join("\n").trim();
           return {
             project_id: ws.project_id,
             app_id: appId,
@@ -1448,11 +1570,7 @@ export function registerProjectAppCommands(
     .description("disable public app access")
     .option("-w, --project <project>", "project id or name")
     .action(
-      async (
-        appId: string,
-        opts: { project?: string },
-        command: Command,
-      ) => {
+      async (appId: string, opts: { project?: string }, command: Command) => {
         await withContext(command, "project app unexpose", async (ctx) => {
           const { project: ws, api } = await resolveProjectProjectApi(
             ctx,
@@ -1485,22 +1603,29 @@ export function registerProjectAppCommands(
         },
         command: Command,
       ) => {
-        await withContext(command, "project app ensure-running", async (ctx) => {
-          const { project: ws, api } = await resolveProjectProjectApi(
-            ctx,
-            opts.project,
-          );
-          const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
-          const interval = parsePositiveIntOrThrow(opts.intervalMs, "--interval-ms") ?? 500;
-          const status = await api.apps.ensureRunning(appId, {
-            timeout,
-            interval,
-          });
-          return {
-            project_id: ws.project_id,
-            ...status,
-          };
-        });
+        await withContext(
+          command,
+          "project app ensure-running",
+          async (ctx) => {
+            const { project: ws, api } = await resolveProjectProjectApi(
+              ctx,
+              opts.project,
+            );
+            const timeout = opts.timeout
+              ? deps.durationToMs(opts.timeout)
+              : undefined;
+            const interval =
+              parsePositiveIntOrThrow(opts.intervalMs, "--interval-ms") ?? 500;
+            const status = await api.apps.ensureRunning(appId, {
+              timeout,
+              interval,
+            });
+            return {
+              project_id: ws.project_id,
+              ...status,
+            };
+          },
+        );
       },
     );
 
@@ -1531,8 +1656,11 @@ export function registerProjectAppCommands(
             ctx,
             opts.project,
           );
-          const timeout = opts.timeout ? deps.durationToMs(opts.timeout) : undefined;
-          const interval = parsePositiveIntOrThrow(opts.intervalMs, "--interval-ms") ?? 500;
+          const timeout = opts.timeout
+            ? deps.durationToMs(opts.timeout)
+            : undefined;
+          const interval =
+            parsePositiveIntOrThrow(opts.intervalMs, "--interval-ms") ?? 500;
           const ok = await api.apps.waitForAppState(appId, desired, {
             timeout,
             interval,
@@ -1581,42 +1709,46 @@ export function registerProjectAppCommands(
     .command("bootstrap-example")
     .description("emit example JSON app spec")
     .action(async (_opts: Record<string, never>, command: Command) => {
-      await withContext(command, "project app bootstrap-example", async (ctx) => {
-        const ws = await resolveProjectFromArgOrContext(ctx);
-        return {
-          project_id: ws.project_id,
-          example: {
-            version: 1,
-            id: "my-app",
-            title: "My App",
-            kind: "service",
-            command: {
-              exec: "python3",
-              args: ["-m", "http.server", "--bind", "127.0.0.1", "8000"],
+      await withContext(
+        command,
+        "project app bootstrap-example",
+        async (ctx) => {
+          const ws = await resolveProjectFromArgOrContext(ctx);
+          return {
+            project_id: ws.project_id,
+            example: {
+              version: 1,
+              id: "my-app",
+              title: "My App",
+              kind: "service",
+              command: {
+                exec: "python3",
+                args: ["-m", "http.server", "--bind", "127.0.0.1", "8000"],
+              },
+              network: {
+                listen_host: "127.0.0.1",
+                port: 8000,
+                protocol: "http",
+              },
+              proxy: {
+                base_path: "/apps/my-app",
+                strip_prefix: true,
+                websocket: true,
+                open_mode: "proxy",
+                readiness_timeout_s: 30,
+              },
+              wake: {
+                enabled: true,
+                keep_warm_s: 1800,
+                startup_timeout_s: 90,
+              },
             },
-            network: {
-              listen_host: "127.0.0.1",
-              port: 8000,
-              protocol: "http",
+            notes: {
+              open_mode:
+                "proxy strips the app base path before forwarding; port keeps port-route semantics for hard-to-proxy apps.",
             },
-            proxy: {
-              base_path: "/apps/my-app",
-              strip_prefix: true,
-              websocket: true,
-              open_mode: "proxy",
-              readiness_timeout_s: 30,
-            },
-            wake: {
-              enabled: true,
-              keep_warm_s: 1800,
-              startup_timeout_s: 90,
-            },
-          },
-          notes: {
-            open_mode:
-              "proxy strips the app base path before forwarding; port keeps port-route semantics for hard-to-proxy apps.",
-          },
-        };
-      });
+          };
+        },
+      );
     });
 }

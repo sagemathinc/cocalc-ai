@@ -5,7 +5,11 @@
 
 import { basename } from "path";
 import { CSS } from "@cocalc/frontend/app-framework";
-import { Process, Processes, State } from "@cocalc/util/types/project-info/types";
+import {
+  Process,
+  Processes,
+  State,
+} from "@cocalc/util/types/project-info/types";
 import {
   ALERT_DISK_FREE,
   ALERT_HIGH_PCT,
@@ -119,7 +123,7 @@ export function process_tree(
   procs: Processes,
   parentid: number,
   pchildren: string[],
-  stats: PTStats
+  stats: PTStats,
 ): ProcessRow[] | undefined {
   const data: ProcessRow[] = [];
   Object.values(procs).forEach((proc) => {

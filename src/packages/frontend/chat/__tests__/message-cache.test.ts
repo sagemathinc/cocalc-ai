@@ -66,9 +66,9 @@ describe("ChatMessageCache message_id index", () => {
     expect(cache.getByMessageId("msg-1")?.sender_id).toBe("user-1");
     expect(cache.getByMessageId("msg-2")?.sender_id).toBe("user-2");
     expect(cache.getMessagesById().get("msg-1")?.sender_id).toBe("user-1");
-    expect(cache.getDateIndex().get(`${new Date(rows[0].date).valueOf()}`)).toBe(
-      "msg-1",
-    );
+    expect(
+      cache.getDateIndex().get(`${new Date(rows[0].date).valueOf()}`),
+    ).toBe("msg-1");
 
     const updated = {
       event: "chat",
@@ -126,7 +126,9 @@ describe("ChatMessageCache message_id index", () => {
         thread_id: row.thread_id,
       }),
     );
-    expect(cache.getByMessageId("msg-fullpk-1")?.thread_id).toBe("thread-fullpk-1");
+    expect(cache.getByMessageId("msg-fullpk-1")?.thread_id).toBe(
+      "thread-fullpk-1",
+    );
     cache.dispose();
   });
 
@@ -267,7 +269,13 @@ describe("ChatMessageCache message_id index", () => {
         date: "2026-01-06T00:00:00.000Z",
         message_id: "head-1",
         thread_id: "thread-archived",
-        history: [{ author_id: "user-1", content: "head", date: "2026-01-06T00:00:00.000Z" }],
+        history: [
+          {
+            author_id: "user-1",
+            content: "head",
+            date: "2026-01-06T00:00:00.000Z",
+          },
+        ],
       },
     ]);
     const cache = new ChatMessageCache(syncdb as any);

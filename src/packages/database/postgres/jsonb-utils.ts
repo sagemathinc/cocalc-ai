@@ -27,7 +27,7 @@ as expressive as RethinkDB REQL (even better in some ways).
 
 export function jsonbSet(
   desc: object,
-  merge: boolean = false
+  merge: boolean = false,
 ): { set: string; params: any[] } {
   const params: any[] = [];
   function pushParam(val: any, type: string): number {
@@ -54,7 +54,7 @@ export function jsonbSet(
           // completely replace field[key] with val.
           obj = `JSONB_SET(${obj}, '{${key}}', $${pushParam(
             val,
-            "JSONB"
+            "JSONB",
           )}::JSONB)`;
         }
       }

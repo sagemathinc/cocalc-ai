@@ -9,10 +9,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
-import {
-  search_match,
-  search_split,
-} from "@cocalc/util/misc";
+import { search_match, search_split } from "@cocalc/util/misc";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { search as runRipgrepSearch } from "@cocalc/frontend/project/search/run";
 import { FindSnapshotRow, type SnapshotResult } from "./rows";
@@ -78,7 +75,10 @@ export function SnapshotsTab({
   const fieldWidth = mode === "flyout" ? "100%" : "50%";
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
-  const available_features = useTypedRedux({ project_id }, "available_features");
+  const available_features = useTypedRedux(
+    { project_id },
+    "available_features",
+  );
   const homeFromFeatures =
     (available_features as any)?.homeDirectory ??
     (available_features as any)?.get?.("homeDirectory");
@@ -124,7 +124,9 @@ export function SnapshotsTab({
     Record<string, { mtime: number; size: number; isDir: boolean }>
   >({});
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [restoreTarget, setRestoreTarget] = useState<SnapshotResult | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<SnapshotResult | null>(
+    null,
+  );
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
@@ -275,8 +277,7 @@ export function SnapshotsTab({
 
   useEffect(() => {
     if (!prefill || prefill.tab !== "snapshots") return;
-    const nextMode =
-      prefill.submode === "contents" ? "contents" : "files";
+    const nextMode = prefill.submode === "contents" ? "contents" : "files";
     setState({ mode: nextMode, query: prefill.query ?? "" });
     if ((prefill.query ?? "").trim()) {
       void runSearch(prefill.query, nextMode);
@@ -298,7 +299,9 @@ export function SnapshotsTab({
     let cancelled = false;
     const pending = results
       .slice(0, 200)
-      .filter((result) => statsMap[`${result.snapshot}:${result.path}`] == null);
+      .filter(
+        (result) => statsMap[`${result.snapshot}:${result.path}`] == null,
+      );
     if (!pending.length) return;
     const queue = [...pending];
     const workerCount = 6;
@@ -310,11 +313,7 @@ export function SnapshotsTab({
           const key = `${result.snapshot}:${result.path}`;
           if (statsMap[key] != null) continue;
           try {
-            const fullPath = join(
-              SNAPSHOTS,
-              result.snapshot,
-              result.path,
-            );
+            const fullPath = join(SNAPSHOTS, result.snapshot, result.path);
             const stats = await fs.stat(fullPath);
             if (cancelled) return;
             setStatsMap((prev) => {
@@ -404,10 +403,7 @@ export function SnapshotsTab({
         const next =
           prev == null
             ? 0
-            : Math.min(
-                Math.max(prev + delta, 0),
-                filteredResults.length - 1,
-              );
+            : Math.min(Math.max(prev + delta, 0), filteredResults.length - 1);
         return next;
       });
     },
@@ -437,7 +433,13 @@ export function SnapshotsTab({
         setState({ filter: "" });
       }
     },
-    [filteredResults.length, moveSelection, openResult, selectedIndex, setState],
+    [
+      filteredResults.length,
+      moveSelection,
+      openResult,
+      selectedIndex,
+      setState,
+    ],
   );
 
   const buildSnapshotPaths = useCallback(

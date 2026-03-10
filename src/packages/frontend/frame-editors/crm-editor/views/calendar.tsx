@@ -107,7 +107,7 @@ function DataList({ data, columns, rowKey }) {
         >
           {x}
         </div>
-      </Popover>
+      </Popover>,
     );
   }
   return <div>{v}</div>;

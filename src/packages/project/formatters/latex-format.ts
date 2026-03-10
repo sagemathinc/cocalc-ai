@@ -21,7 +21,7 @@ function close(proc, cb): void {
 
 export async function latex_format(
   input: string,
-  options: ParserOptions
+  options: ParserOptions,
 ): Promise<string> {
   // create input temp file
   const input_path: string = await callback(file, { postfix: ".tex" });

@@ -48,18 +48,18 @@ export default function Info({ customize }) {
             <Image
               src={AllAboutCoCalcImage}
               style={{
-                minWidth: '324px',
-                maxWidth: '1512px',
-                width: '75%',
+                minWidth: "324px",
+                maxWidth: "1512px",
+                width: "75%",
               }}
               alt="All About CoCalc Logo"
             />
           }
           description={
             <>
-              <SiteName /> is a cloud-based collaborative software oriented towards research,
-              teaching, and scientific publishing purposes. Learn more about the story behind the
-              software below.
+              <SiteName /> is a cloud-based collaborative software oriented
+              towards research, teaching, and scientific publishing purposes.
+              Learn more about the story behind the software below.
             </>
           }
           dataSource={dataSource}

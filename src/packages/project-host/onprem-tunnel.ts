@@ -142,10 +142,7 @@ function buildTunnelArgs(opts: {
     `0.0.0.0:${config.sshTunnelPort}:127.0.0.1:${localSshPort}`,
   ];
   if (localRestPort && remoteRestPort) {
-    args.push(
-      "-L",
-      `127.0.0.1:${localRestPort}:127.0.0.1:${remoteRestPort}`,
-    );
+    args.push("-L", `127.0.0.1:${localRestPort}:127.0.0.1:${remoteRestPort}`);
   }
   return args;
 }
@@ -183,9 +180,7 @@ function resolveTunnelConfigFromEnv(): TunnelConfig | undefined {
   const sshdHost = process.env.COCALC_LAUNCHPAD_SSHD_HOST;
   const sshdPort = parsePort(process.env.COCALC_LAUNCHPAD_SSHD_PORT);
   const tunnelPort = parsePort(process.env.COCALC_LAUNCHPAD_HTTP_TUNNEL_PORT);
-  const sshTunnelPort = parsePort(
-    process.env.COCALC_LAUNCHPAD_SSH_TUNNEL_PORT,
-  );
+  const sshTunnelPort = parsePort(process.env.COCALC_LAUNCHPAD_SSH_TUNNEL_PORT);
   const sshUser =
     process.env.COCALC_LAUNCHPAD_SSHD_USER ??
     process.env.USER ??

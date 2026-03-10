@@ -233,10 +233,7 @@ const CODEX_MODEL_NAME_SET = new Set(
   DEFAULT_CODEX_MODELS.map((model) => model.name.toLowerCase()),
 );
 
-const CODEX_MODEL_ALIASES = new Set([
-  "codex-agent",
-  "openai-codex-agent",
-]);
+const CODEX_MODEL_ALIASES = new Set(["codex-agent", "openai-codex-agent"]);
 
 export function isCodexModelName(model?: string): boolean {
   if (typeof model !== "string") return false;

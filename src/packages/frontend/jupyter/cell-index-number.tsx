@@ -8,7 +8,11 @@ import { Tooltip } from "antd";
 import { numToOrdinal } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 
-export function CellIndexNumber({ index }: { index: number }): React.JSX.Element {
+export function CellIndexNumber({
+  index,
+}: {
+  index: number;
+}): React.JSX.Element {
   return (
     <Tooltip
       placement="top"

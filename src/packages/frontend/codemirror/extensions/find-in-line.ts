@@ -11,9 +11,9 @@ string s, or returns undefined if no single line contains s.
 Should be much faster than calling getLine or getValue.
 */
 
-CodeMirror.defineExtension("find_in_line", function (
-  s: string
-): CodeMirror.Position | undefined {
+CodeMirror.defineExtension("find_in_line", function (s: string):
+  | CodeMirror.Position
+  | undefined {
   // @ts-ignore
   const cm: any = this;
 

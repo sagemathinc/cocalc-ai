@@ -41,7 +41,10 @@ export function useBlockFocus({
       const editor = editorMapRef.current.get(targetIndex);
       if (!editor) {
         pendingFocusRef.current = { index: targetIndex, position };
-        virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
+        virtuosoRef.current?.scrollToIndex({
+          index: targetIndex,
+          align: "center",
+        });
         return;
       }
       const point = blockSelectionPoint(editor, position);

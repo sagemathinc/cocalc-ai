@@ -17,10 +17,7 @@ export {
 } from "./worker";
 export { ensureHostDns, deleteHostDns, hasDns } from "./dns";
 export { cloudHostHandlers } from "./host-work";
-export {
-  refreshCloudCatalogNow,
-  startCloudCatalogWorker,
-} from "./catalog";
+export { refreshCloudCatalogNow, startCloudCatalogWorker } from "./catalog";
 export {
   runReconcileOnce,
   startCloudVmReconciler,

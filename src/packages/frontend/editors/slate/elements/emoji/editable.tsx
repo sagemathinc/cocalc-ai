@@ -16,7 +16,9 @@ register({
     const selected = useSelected();
 
     const border =
-      focused && selected ? `1px solid ${FOCUSED_COLOR}` : `1px solid transparent`;
+      focused && selected
+        ? `1px solid ${FOCUSED_COLOR}`
+        : `1px solid transparent`;
 
     return (
       <span {...attributes} style={{ border }}>

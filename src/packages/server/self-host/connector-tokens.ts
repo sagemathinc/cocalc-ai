@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
-import passwordHash, { verifyPassword } from "@cocalc/backend/auth/password-hash";
+import passwordHash, {
+  verifyPassword,
+} from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
 import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
@@ -49,7 +51,9 @@ export async function createPairingToken(opts: {
   const pairing_key_seed = derivePairingKeySeed(secret);
   const purpose = opts.purpose ?? "pairing";
   const created = new Date();
-  const expires = new Date(created.getTime() + (opts.ttlMs ?? DEFAULT_PAIRING_TTL_MS));
+  const expires = new Date(
+    created.getTime() + (opts.ttlMs ?? DEFAULT_PAIRING_TTL_MS),
+  );
   await pool().query(
     `INSERT INTO self_host_connector_tokens
        (token_id, account_id, connector_id, host_id, token_hash, pairing_key_seed, purpose, created, expires, revoked)
@@ -159,7 +163,10 @@ export async function createPairingTokenForHost(opts: {
   };
 }
 
-export async function verifyPairingToken(token: string, purpose = "pairing"): Promise<{
+export async function verifyPairingToken(
+  token: string,
+  purpose = "pairing",
+): Promise<{
   token_id: string;
   account_id: string;
   connector_id?: string | null;
@@ -325,7 +332,7 @@ export async function revokeConnector(opts: {
          ssh_key_seed=NULL,
          host_id=NULL
      WHERE connector_id=$1
-       ${account_id ? "AND account_id=$2" : "" }
+       ${account_id ? "AND account_id=$2" : ""}
      RETURNING connector_id`,
     account_id ? [connector_id, account_id] : [connector_id],
   );
@@ -398,5 +405,9 @@ export async function verifyConnectorToken(token: string): Promise<{
      WHERE connector_id=$1`,
     [tokenId],
   );
-  return { connector_id: tokenId, account_id: row.account_id, metadata: row.metadata };
+  return {
+    connector_id: tokenId,
+    account_id: row.account_id,
+    metadata: row.metadata,
+  };
 }

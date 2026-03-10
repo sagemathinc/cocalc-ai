@@ -31,7 +31,8 @@ export function makeOfflineMoveConfirmationPayload({
   const status = `${source_status ?? "unknown"}`.trim() || "unknown";
   const backupIso = iso(last_backup);
   const editedIso = iso(last_edited);
-  const reason: OfflineMoveRiskReason = backupIso == null ? "no_backup" : "stale_backup";
+  const reason: OfflineMoveRiskReason =
+    backupIso == null ? "no_backup" : "stale_backup";
   return {
     schema_version: 1,
     source_status: status,
@@ -48,4 +49,3 @@ export function offlineMoveConfirmationError(
 ): Error {
   return new Error(`${OFFLINE_MOVE_CONFIRM_CODE}: ${JSON.stringify(payload)}`);
 }
-

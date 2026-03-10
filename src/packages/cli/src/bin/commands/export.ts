@@ -51,7 +51,9 @@ export function registerExportCommand(
 ): Command {
   const exportCommand = program
     .command("export")
-    .description("export structured CoCalc documents as portable archive bundles")
+    .description(
+      "export structured CoCalc documents as portable archive bundles",
+    )
     .addHelpText(
       "after",
       `
@@ -113,53 +115,62 @@ Examples:
   cocalc export chat ./notes.chat --scope all-threads --include-blobs --out notes-export.zip
 `,
     )
-    .action(async (chatPath: string, opts: ChatExportCliOptions, command: Command) => {
-      const globals = deps.globalsFrom(command);
-      const commandName = "export chat";
-      try {
-        const scope = parseScope(opts.scope);
-        const zipLevel = parseZipLevel(opts.zipLevel);
-        const outputPath = resolve(
-          opts.out ?? defaultChatExportOutputPath(chatPath, scope, opts.threadId),
-        );
-        const blobBaseUrl = normalizeOptionalUrl(
-          opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
-          deps.normalizeUrl,
-        );
-        const blobBearerToken = normalizeOptionalString(
-          opts.blobBearerToken ?? process.env.COCALC_BEARER_TOKEN ?? globals.bearer,
-        );
-        const projectId = normalizeOptionalString(
-          opts.projectId ?? process.env.COCALC_PROJECT_ID,
-        );
-        const exportOptions: ChatExportOptions = {
-          chatPath: resolve(chatPath),
-          scope,
-          threadId: normalizeOptionalString(opts.threadId),
-          projectId,
-          offloadDbPath: normalizeOptionalString(opts.offloadDb),
-          includeBlobs: opts.includeBlobs === true,
-          blobBaseUrl,
-          blobBearerToken,
-        };
-        const bundle = await collectChatExport(exportOptions);
-        const zip = bundleToZipBuffer(bundle, { level: zipLevel });
-        await mkdir(dirname(outputPath), { recursive: true });
-        await writeFile(outputPath, zip);
-        deps.emitSuccess({ globals }, commandName, {
-          output_path: outputPath,
-          scope,
-          thread_ids: (bundle.manifest as any)?.scope?.thread_ids ?? [],
-          thread_count: (bundle.manifest as any)?.thread_count ?? 0,
-          message_count: (bundle.manifest as any)?.message_count ?? 0,
-          asset_count: (bundle.manifest as any)?.asset_count ?? 0,
-          bytes: zip.byteLength,
-        });
-      } catch (error) {
-        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
-        process.exitCode = 1;
-      }
-    });
+    .action(
+      async (
+        chatPath: string,
+        opts: ChatExportCliOptions,
+        command: Command,
+      ) => {
+        const globals = deps.globalsFrom(command);
+        const commandName = "export chat";
+        try {
+          const scope = parseScope(opts.scope);
+          const zipLevel = parseZipLevel(opts.zipLevel);
+          const outputPath = resolve(
+            opts.out ??
+              defaultChatExportOutputPath(chatPath, scope, opts.threadId),
+          );
+          const blobBaseUrl = normalizeOptionalUrl(
+            opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
+            deps.normalizeUrl,
+          );
+          const blobBearerToken = normalizeOptionalString(
+            opts.blobBearerToken ??
+              process.env.COCALC_BEARER_TOKEN ??
+              globals.bearer,
+          );
+          const projectId = normalizeOptionalString(
+            opts.projectId ?? process.env.COCALC_PROJECT_ID,
+          );
+          const exportOptions: ChatExportOptions = {
+            chatPath: resolve(chatPath),
+            scope,
+            threadId: normalizeOptionalString(opts.threadId),
+            projectId,
+            offloadDbPath: normalizeOptionalString(opts.offloadDb),
+            includeBlobs: opts.includeBlobs === true,
+            blobBaseUrl,
+            blobBearerToken,
+          };
+          const bundle = await collectChatExport(exportOptions);
+          const zip = bundleToZipBuffer(bundle, { level: zipLevel });
+          await mkdir(dirname(outputPath), { recursive: true });
+          await writeFile(outputPath, zip);
+          deps.emitSuccess({ globals }, commandName, {
+            output_path: outputPath,
+            scope,
+            thread_ids: (bundle.manifest as any)?.scope?.thread_ids ?? [],
+            thread_count: (bundle.manifest as any)?.thread_count ?? 0,
+            message_count: (bundle.manifest as any)?.message_count ?? 0,
+            asset_count: (bundle.manifest as any)?.asset_count ?? 0,
+            bytes: zip.byteLength,
+          });
+        } catch (error) {
+          deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+          process.exitCode = 1;
+        }
+      },
+    );
 
   exportCommand
     .command("tasks <taskPath>")
@@ -187,29 +198,37 @@ Task export bundles include:
 - optional copied blobs/assets when --include-blobs is used
 `,
     )
-    .action(async (taskPath: string, opts: GenericFileExportCliOptions, command: Command) => {
-      await runBundleExport({
-        command,
-        commandName: "export tasks",
-        out: opts.out,
-        zipLevel: opts.zipLevel,
-        buildBundle: async (globals) =>
-          collectTaskExport({
-            taskPath: resolve(taskPath),
-            includeBlobs: opts.includeBlobs === true,
-            blobBaseUrl: normalizeOptionalUrl(
-              opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
-              deps.normalizeUrl,
-            ),
-            blobBearerToken: normalizeOptionalString(
-              opts.blobBearerToken ?? process.env.COCALC_BEARER_TOKEN ?? globals.bearer,
-            ),
-          }),
-        defaultOutputPath: () =>
-          defaultDocumentExportOutputPath(taskPath, "tasks"),
-        deps,
-      });
-    });
+    .action(
+      async (
+        taskPath: string,
+        opts: GenericFileExportCliOptions,
+        command: Command,
+      ) => {
+        await runBundleExport({
+          command,
+          commandName: "export tasks",
+          out: opts.out,
+          zipLevel: opts.zipLevel,
+          buildBundle: async (globals) =>
+            collectTaskExport({
+              taskPath: resolve(taskPath),
+              includeBlobs: opts.includeBlobs === true,
+              blobBaseUrl: normalizeOptionalUrl(
+                opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
+                deps.normalizeUrl,
+              ),
+              blobBearerToken: normalizeOptionalString(
+                opts.blobBearerToken ??
+                  process.env.COCALC_BEARER_TOKEN ??
+                  globals.bearer,
+              ),
+            }),
+          defaultOutputPath: () =>
+            defaultDocumentExportOutputPath(taskPath, "tasks"),
+          deps,
+        });
+      },
+    );
 
   exportCommand
     .command("board <boardPath>")
@@ -236,30 +255,38 @@ Board export bundles include:
 - optional copied blobs/assets when --include-blobs is used
 `,
     )
-    .action(async (boardPath: string, opts: GenericFileExportCliOptions, command: Command) => {
-      await runBundleExport({
-        command,
-        commandName: "export board",
-        out: opts.out,
-        zipLevel: opts.zipLevel,
-        buildBundle: async (globals) =>
-          collectWhiteboardExport({
-            documentPath: resolve(boardPath),
-            kind: "board",
-            includeBlobs: opts.includeBlobs === true,
-            blobBaseUrl: normalizeOptionalUrl(
-              opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
-              deps.normalizeUrl,
-            ),
-            blobBearerToken: normalizeOptionalString(
-              opts.blobBearerToken ?? process.env.COCALC_BEARER_TOKEN ?? globals.bearer,
-            ),
-          }),
-        defaultOutputPath: () =>
-          defaultDocumentExportOutputPath(boardPath, "board"),
-        deps,
-      });
-    });
+    .action(
+      async (
+        boardPath: string,
+        opts: GenericFileExportCliOptions,
+        command: Command,
+      ) => {
+        await runBundleExport({
+          command,
+          commandName: "export board",
+          out: opts.out,
+          zipLevel: opts.zipLevel,
+          buildBundle: async (globals) =>
+            collectWhiteboardExport({
+              documentPath: resolve(boardPath),
+              kind: "board",
+              includeBlobs: opts.includeBlobs === true,
+              blobBaseUrl: normalizeOptionalUrl(
+                opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
+                deps.normalizeUrl,
+              ),
+              blobBearerToken: normalizeOptionalString(
+                opts.blobBearerToken ??
+                  process.env.COCALC_BEARER_TOKEN ??
+                  globals.bearer,
+              ),
+            }),
+          defaultOutputPath: () =>
+            defaultDocumentExportOutputPath(boardPath, "board"),
+          deps,
+        });
+      },
+    );
 
   exportCommand
     .command("slides <slidesPath>")
@@ -286,30 +313,38 @@ Slides export bundles include:
 - optional copied blobs/assets when --include-blobs is used
 `,
     )
-    .action(async (slidesPath: string, opts: GenericFileExportCliOptions, command: Command) => {
-      await runBundleExport({
-        command,
-        commandName: "export slides",
-        out: opts.out,
-        zipLevel: opts.zipLevel,
-        buildBundle: async (globals) =>
-          collectWhiteboardExport({
-            documentPath: resolve(slidesPath),
-            kind: "slides",
-            includeBlobs: opts.includeBlobs === true,
-            blobBaseUrl: normalizeOptionalUrl(
-              opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
-              deps.normalizeUrl,
-            ),
-            blobBearerToken: normalizeOptionalString(
-              opts.blobBearerToken ?? process.env.COCALC_BEARER_TOKEN ?? globals.bearer,
-            ),
-          }),
-        defaultOutputPath: () =>
-          defaultDocumentExportOutputPath(slidesPath, "slides"),
-        deps,
-      });
-    });
+    .action(
+      async (
+        slidesPath: string,
+        opts: GenericFileExportCliOptions,
+        command: Command,
+      ) => {
+        await runBundleExport({
+          command,
+          commandName: "export slides",
+          out: opts.out,
+          zipLevel: opts.zipLevel,
+          buildBundle: async (globals) =>
+            collectWhiteboardExport({
+              documentPath: resolve(slidesPath),
+              kind: "slides",
+              includeBlobs: opts.includeBlobs === true,
+              blobBaseUrl: normalizeOptionalUrl(
+                opts.blobBaseUrl ?? process.env.COCALC_API_URL ?? globals.api,
+                deps.normalizeUrl,
+              ),
+              blobBearerToken: normalizeOptionalString(
+                opts.blobBearerToken ??
+                  process.env.COCALC_BEARER_TOKEN ??
+                  globals.bearer,
+              ),
+            }),
+          defaultOutputPath: () =>
+            defaultDocumentExportOutputPath(slidesPath, "slides"),
+          deps,
+        });
+      },
+    );
 
   return exportCommand;
 }
@@ -363,7 +398,9 @@ function parseScope(value: string | undefined): ChatExportScope {
   );
 }
 
-function parseZipLevel(value: string | undefined): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 {
+function parseZipLevel(
+  value: string | undefined,
+): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 {
   const parsed = Number(value ?? "6");
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 9) {
     throw new Error("--zip-level must be an integer from 0 to 9");
@@ -377,7 +414,10 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function normalizeOptionalUrl(value: unknown, normalizeUrl: any): string | undefined {
+function normalizeOptionalUrl(
+  value: unknown,
+  normalizeUrl: any,
+): string | undefined {
   const trimmed = normalizeOptionalString(value);
   if (!trimmed) return undefined;
   return normalizeUrl(trimmed);

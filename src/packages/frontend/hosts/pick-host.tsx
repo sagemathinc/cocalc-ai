@@ -17,7 +17,10 @@ import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { labels } from "@cocalc/frontend/i18n";
 import { useIntl } from "react-intl";
-import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
+import {
+  mapCloudRegionToR2Region,
+  R2_REGION_LABELS,
+} from "@cocalc/util/consts";
 
 import { getHostStatusTooltip } from "./constants";
 
@@ -54,8 +57,10 @@ function autoSelectCompare(a: Host, b: Host): number {
   const bStatus = STATUS_ORDER[b.status] ?? 99;
   if (aStatus !== bStatus) return aStatus - bStatus;
 
-  const aProjects = typeof a.projects === "number" ? a.projects : Number.MAX_SAFE_INTEGER;
-  const bProjects = typeof b.projects === "number" ? b.projects : Number.MAX_SAFE_INTEGER;
+  const aProjects =
+    typeof a.projects === "number" ? a.projects : Number.MAX_SAFE_INTEGER;
+  const bProjects =
+    typeof b.projects === "number" ? b.projects : Number.MAX_SAFE_INTEGER;
   if (aProjects !== bProjects) return aProjects - bProjects;
 
   const aScope = SCOPE_ORDER[a.scope ?? ""] ?? 99;
@@ -94,9 +99,9 @@ export function HostPickerModal({
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | undefined>();
   const [showUnavailable, setShowUnavailable] = useState(false);
-  const [regionFilterState, setRegionFilterState] = useState<string | undefined>(
-    regionFilter,
-  );
+  const [regionFilterState, setRegionFilterState] = useState<
+    string | undefined
+  >(regionFilter);
 
   const currentHost = useMemo(
     () => hosts.find((host) => host.id === currentHostId),
@@ -147,8 +152,12 @@ export function HostPickerModal({
     const filtered = filteredHosts;
 
     const current = filtered.filter((h) => h.id === currentHostId);
-    const owned = filtered.filter((h) => h.scope === "owned" && h.id !== currentHostId);
-    const collab = filtered.filter((h) => h.scope === "collab" && h.id !== currentHostId);
+    const owned = filtered.filter(
+      (h) => h.scope === "owned" && h.id !== currentHostId,
+    );
+    const collab = filtered.filter(
+      (h) => h.scope === "collab" && h.id !== currentHostId,
+    );
     const pool = filtered.filter(
       (h) => h.scope === "pool" && h.id !== currentHostId,
     );
@@ -313,7 +322,7 @@ export function HostPickerModal({
             <Button size="small">
               Region:{" "}
               {regionFilterState
-                ? R2_REGION_LABELS[regionFilterState] ?? regionFilterState
+                ? (R2_REGION_LABELS[regionFilterState] ?? regionFilterState)
                 : "All"}
             </Button>
           </Dropdown>
@@ -418,9 +427,7 @@ export function HostPickerModal({
                       {host.reason_unavailable}
                     </Typography.Text>
                   )}
-                  {muted && (
-                    <Divider style={{ margin: "4px 0" }} dashed />
-                  )}
+                  {muted && <Divider style={{ margin: "4px 0" }} dashed />}
                 </Space>
               </List.Item>
             );

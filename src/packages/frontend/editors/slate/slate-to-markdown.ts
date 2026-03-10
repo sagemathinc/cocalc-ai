@@ -27,7 +27,7 @@ export function serialize(node: Node, info: Info): string {
     return serializeElement(node, info);
   } else {
     throw Error(
-      `bug:  node must be Text or Element -- ${JSON.stringify(node)}`
+      `bug:  node must be Text or Element -- ${JSON.stringify(node)}`,
     );
   }
 }
@@ -40,7 +40,7 @@ export function slate_to_markdown(
     cache?;
     noCache?: Set<number>;
     preserveBlankLines?: boolean;
-  }
+  },
 ): string {
   // const t = Date.now();
 

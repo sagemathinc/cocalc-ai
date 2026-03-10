@@ -88,11 +88,17 @@ function getLifecycleType(
   mesg: OutputMessage | undefined,
 ): LifecycleMessageType | null {
   const lifecycle = mesg?.lifecycle;
-  if (typeof lifecycle === "string" && LIFECYCLE_MSG_TYPES.has(lifecycle as any)) {
+  if (
+    typeof lifecycle === "string" &&
+    LIFECYCLE_MSG_TYPES.has(lifecycle as any)
+  ) {
     return lifecycle as LifecycleMessageType;
   }
   const msg_type = mesg?.msg_type;
-  if (typeof msg_type === "string" && LIFECYCLE_MSG_TYPES.has(msg_type as any)) {
+  if (
+    typeof msg_type === "string" &&
+    LIFECYCLE_MSG_TYPES.has(msg_type as any)
+  ) {
     return msg_type as LifecycleMessageType;
   }
   return null;
@@ -102,17 +108,17 @@ function isLifecycleMessage(mesg: OutputMessage | undefined): boolean {
   return getLifecycleType(mesg) != null;
 }
 
-function normalizeOutputMessage(mesg: OutputMessage, run_id: string): OutputMessage {
+function normalizeOutputMessage(
+  mesg: OutputMessage,
+  run_id: string,
+): OutputMessage {
   const normalized: OutputMessage =
     mesg.run_id === run_id ? mesg : { ...mesg, run_id };
   const lifecycle = getLifecycleType(normalized);
   if (lifecycle == null) {
     return normalized;
   }
-  if (
-    normalized.lifecycle === lifecycle &&
-    normalized.msg_type === lifecycle
-  ) {
+  if (normalized.lifecycle === lifecycle && normalized.msg_type === lifecycle) {
     return normalized;
   }
   return { ...normalized, lifecycle, msg_type: lifecycle };

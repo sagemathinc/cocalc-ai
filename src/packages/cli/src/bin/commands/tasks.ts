@@ -153,7 +153,9 @@ function assertHasUpdates(changes: Partial<TaskMutableFields>): void {
   }
 }
 
-function buildUpdateChanges(opts: TasksUpdateCliOptions): Partial<TaskMutableFields> {
+function buildUpdateChanges(
+  opts: TasksUpdateCliOptions,
+): Partial<TaskMutableFields> {
   const changes: Partial<TaskMutableFields> = {};
   if (opts.desc != null) changes.desc = opts.desc;
   if (opts.due != null) changes.due_date = parseOptionalDueDate(opts.due);
@@ -170,7 +172,9 @@ function buildUpdateChanges(opts: TasksUpdateCliOptions): Partial<TaskMutableFie
   return changes;
 }
 
-function buildCreateInput(opts: TasksAddCliOptions): Partial<TaskMutableFields> {
+function buildCreateInput(
+  opts: TasksAddCliOptions,
+): Partial<TaskMutableFields> {
   const input: Partial<TaskMutableFields> = {};
   if (opts.desc != null) input.desc = opts.desc;
   if (opts.due != null) input.due_date = parseOptionalDueDate(opts.due);
@@ -190,7 +194,10 @@ function buildCreateInput(opts: TasksAddCliOptions): Partial<TaskMutableFields> 
   return input;
 }
 
-export function registerTasksCommand(program: Command, deps: TasksCommandDeps): Command {
+export function registerTasksCommand(
+  program: Command,
+  deps: TasksCommandDeps,
+): Command {
   const tasks = program
     .command("tasks")
     .description("edit .tasks documents through a live collaborative session")
@@ -223,23 +230,25 @@ Paths may be absolute or project-relative. Relative paths resolve against $HOME.
     .option("--limit <n>", "limit results")
     .option("--sort <column>", "sort column (Custom|Due|Changed)")
     .option("--dir <direction>", "sort direction (asc|desc)")
-    .action(async (path: string, opts: TasksListCliOptions, command: Command) => {
-      await deps.withContext(command, "tasks list", async (ctx) => {
-        const doc = deps.tasksApi.bindDocument(ctx, {
-          projectIdentifier: opts.project,
-          path,
+    .action(
+      async (path: string, opts: TasksListCliOptions, command: Command) => {
+        await deps.withContext(command, "tasks list", async (ctx) => {
+          const doc = deps.tasksApi.bindDocument(ctx, {
+            projectIdentifier: opts.project,
+            path,
+          });
+          const query: TaskQuery = {
+            includeDone: opts.includeDone === true,
+            includeDeleted: opts.includeDeleted === true,
+            search: opts.search?.trim() || undefined,
+            limit: parseOptionalNumber(opts.limit, "--limit"),
+            sort: parseSort(opts.sort, opts.dir),
+          };
+          const snapshot = await doc.getSnapshot(query);
+          return snapshot.tasks.map(compactTaskRecord);
         });
-        const query: TaskQuery = {
-          includeDone: opts.includeDone === true,
-          includeDeleted: opts.includeDeleted === true,
-          search: opts.search?.trim() || undefined,
-          limit: parseOptionalNumber(opts.limit, "--limit"),
-          sort: parseSort(opts.sort, opts.dir),
-        };
-        const snapshot = await doc.getSnapshot(query);
-        return snapshot.tasks.map(compactTaskRecord);
-      });
-    });
+      },
+    );
 
   tasks
     .command("get <path>")
@@ -249,23 +258,25 @@ Paths may be absolute or project-relative. Relative paths resolve against $HOME.
       "--project <project>",
       "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
-    .action(async (path: string, opts: TasksGetCliOptions, command: Command) => {
-      await deps.withContext(command, "tasks get", async (ctx) => {
-        const doc = deps.tasksApi.bindDocument(ctx, {
-          projectIdentifier: opts.project,
-          path,
+    .action(
+      async (path: string, opts: TasksGetCliOptions, command: Command) => {
+        await deps.withContext(command, "tasks get", async (ctx) => {
+          const doc = deps.tasksApi.bindDocument(ctx, {
+            projectIdentifier: opts.project,
+            path,
+          });
+          const result = await doc.getTask(requireTaskId(opts.taskId));
+          if (!result.task) {
+            throw new Error(`Task '${requireTaskId(opts.taskId)}' not found`);
+          }
+          return {
+            project_id: result.project.project_id,
+            path: result.path,
+            task: compactTaskRecord(result.task),
+          };
         });
-        const result = await doc.getTask(requireTaskId(opts.taskId));
-        if (!result.task) {
-          throw new Error(`Task '${requireTaskId(opts.taskId)}' not found`);
-        }
-        return {
-          project_id: result.project.project_id,
-          path: result.path,
-          task: compactTaskRecord(result.task),
-        };
-      });
-    });
+      },
+    );
 
   tasks
     .command("set-done <path>")
@@ -276,24 +287,29 @@ Paths may be absolute or project-relative. Relative paths resolve against $HOME.
       "--project <project>",
       "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
-    .action(async (path: string, opts: TasksSetDoneCliOptions, command: Command) => {
-      await deps.withContext(command, "tasks set-done", async (ctx) => {
-        const taskId = requireTaskId(opts.taskId);
-        const doc = deps.tasksApi.bindDocument(ctx, {
-          projectIdentifier: opts.project,
-          path,
+    .action(
+      async (path: string, opts: TasksSetDoneCliOptions, command: Command) => {
+        await deps.withContext(command, "tasks set-done", async (ctx) => {
+          const taskId = requireTaskId(opts.taskId);
+          const doc = deps.tasksApi.bindDocument(ctx, {
+            projectIdentifier: opts.project,
+            path,
+          });
+          const result = await doc.setDone(
+            taskId,
+            parseOptionalBoolean(opts.done) ?? true,
+          );
+          return {
+            project_id: result.project.project_id,
+            path: result.path,
+            task_id: taskId,
+            changed_task_ids: result.changedTaskIds,
+            revision: result.revision ?? null,
+            task: result.task ? compactTaskRecord(result.task) : null,
+          };
         });
-        const result = await doc.setDone(taskId, parseOptionalBoolean(opts.done) ?? true);
-        return {
-          project_id: result.project.project_id,
-          path: result.path,
-          task_id: taskId,
-          changed_task_ids: result.changedTaskIds,
-          revision: result.revision ?? null,
-          task: result.task ? compactTaskRecord(result.task) : null,
-        };
-      });
-    });
+      },
+    );
 
   tasks
     .command("append <path>")
@@ -306,32 +322,36 @@ Paths may be absolute or project-relative. Relative paths resolve against $HOME.
       "--project <project>",
       "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
-    .action(async (path: string, opts: TasksAppendCliOptions, command: Command) => {
-      await deps.withContext(command, "tasks append", async (ctx) => {
-        const taskId = requireTaskId(opts.taskId);
-        const text = `${opts.text ?? ""}`;
-        if (!text.trim()) {
-          throw new Error("--text is required");
-        }
-        const doc = deps.tasksApi.bindDocument(ctx, {
-          projectIdentifier: opts.project,
-          path,
+    .action(
+      async (path: string, opts: TasksAppendCliOptions, command: Command) => {
+        await deps.withContext(command, "tasks append", async (ctx) => {
+          const taskId = requireTaskId(opts.taskId);
+          const text = `${opts.text ?? ""}`;
+          if (!text.trim()) {
+            throw new Error("--text is required");
+          }
+          const doc = deps.tasksApi.bindDocument(ctx, {
+            projectIdentifier: opts.project,
+            path,
+          });
+          const result = await doc.appendToDescription(taskId, text);
+          return {
+            project_id: result.project.project_id,
+            path: result.path,
+            task_id: taskId,
+            changed_task_ids: result.changedTaskIds,
+            revision: result.revision ?? null,
+            task: result.task ? compactTaskRecord(result.task) : null,
+          };
         });
-        const result = await doc.appendToDescription(taskId, text);
-        return {
-          project_id: result.project.project_id,
-          path: result.path,
-          task_id: taskId,
-          changed_task_ids: result.changedTaskIds,
-          revision: result.revision ?? null,
-          task: result.task ? compactTaskRecord(result.task) : null,
-        };
-      });
-    });
+      },
+    );
 
   tasks
     .command("update <path>")
-    .description("update selected fields on a task through the live tasks session")
+    .description(
+      "update selected fields on a task through the live tasks session",
+    )
     .requiredOption("--task-id <taskId>", "task id")
     .option("--desc <markdown>", "replace the task description")
     .option(
@@ -346,26 +366,28 @@ Paths may be absolute or project-relative. Relative paths resolve against $HOME.
       "--project <project>",
       "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
-    .action(async (path: string, opts: TasksUpdateCliOptions, command: Command) => {
-      await deps.withContext(command, "tasks update", async (ctx) => {
-        const taskId = requireTaskId(opts.taskId);
-        const changes = buildUpdateChanges(opts);
-        assertHasUpdates(changes);
-        const doc = deps.tasksApi.bindDocument(ctx, {
-          projectIdentifier: opts.project,
-          path,
+    .action(
+      async (path: string, opts: TasksUpdateCliOptions, command: Command) => {
+        await deps.withContext(command, "tasks update", async (ctx) => {
+          const taskId = requireTaskId(opts.taskId);
+          const changes = buildUpdateChanges(opts);
+          assertHasUpdates(changes);
+          const doc = deps.tasksApi.bindDocument(ctx, {
+            projectIdentifier: opts.project,
+            path,
+          });
+          const result = await doc.updateTask(taskId, changes);
+          return {
+            project_id: result.project.project_id,
+            path: result.path,
+            task_id: taskId,
+            changed_task_ids: result.changedTaskIds,
+            revision: result.revision ?? null,
+            task: result.task ? compactTaskRecord(result.task) : null,
+          };
         });
-        const result = await doc.updateTask(taskId, changes);
-        return {
-          project_id: result.project.project_id,
-          path: result.path,
-          task_id: taskId,
-          changed_task_ids: result.changedTaskIds,
-          revision: result.revision ?? null,
-          task: result.task ? compactTaskRecord(result.task) : null,
-        };
-      });
-    });
+      },
+    );
 
   tasks
     .command("add <path>")
@@ -384,20 +406,22 @@ Paths may be absolute or project-relative. Relative paths resolve against $HOME.
       "--project <project>",
       "project id/title (defaults to COCALC_PROJECT_ID or current project context)",
     )
-    .action(async (path: string, opts: TasksAddCliOptions, command: Command) => {
-      await deps.withContext(command, "tasks add", async (ctx) => {
-        const doc = deps.tasksApi.bindDocument(ctx, {
-          projectIdentifier: opts.project,
-          path,
+    .action(
+      async (path: string, opts: TasksAddCliOptions, command: Command) => {
+        await deps.withContext(command, "tasks add", async (ctx) => {
+          const doc = deps.tasksApi.bindDocument(ctx, {
+            projectIdentifier: opts.project,
+            path,
+          });
+          const result = await doc.createTask(buildCreateInput(opts));
+          return {
+            project_id: result.project.project_id,
+            path: result.path,
+            task: compactTaskRecord(result.task),
+          };
         });
-        const result = await doc.createTask(buildCreateInput(opts));
-        return {
-          project_id: result.project.project_id,
-          path: result.path,
-          task: compactTaskRecord(result.task),
-        };
-      });
-    });
+      },
+    );
 
   return tasks;
 }

@@ -26,7 +26,7 @@ export default function Pen({ element, renderStatic }: Props) {
   // I tried doing this at various points in "the pipeline", and here at
   // the renderer is optimal.
   const pad = Math.round(
-    2 * (element.data?.["radius"] ?? 1) * scaleRef.current
+    2 * (element.data?.["radius"] ?? 1) * scaleRef.current,
   );
 
   useEffect(() => {

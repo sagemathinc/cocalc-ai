@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import ROOT_PATH from "lib/root-path";
 
-
 export default docsApiRoute({
   deniedPaths: ["/api/conat/**", "/api/share/**", "/api/v2/**/*.test"],
   // allowedPaths: [...], // Explicitly set which endpoints to include in the generated OpenAPI spec.

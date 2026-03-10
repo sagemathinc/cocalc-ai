@@ -19,9 +19,7 @@ async function handle(req, res) {
   }
 }
 
-async function remove(
-  req: Request,
-): Promise<{
+async function remove(req: Request): Promise<{
   status: "success" | "error";
   project_id?: string;
   type?: string;

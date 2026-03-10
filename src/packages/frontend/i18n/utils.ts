@@ -4,9 +4,9 @@
  */
 
 import {
-    DEFAULT_LOCALE,
-    KEEP_EN_LOCALE,
-    Locale,
+  DEFAULT_LOCALE,
+  KEEP_EN_LOCALE,
+  Locale,
 } from "@cocalc/util/consts/locale";
 import { LOCALIZATIONS } from "@cocalc/util/i18n";
 

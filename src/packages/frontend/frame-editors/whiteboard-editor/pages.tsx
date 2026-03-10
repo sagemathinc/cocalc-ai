@@ -91,7 +91,7 @@ export default function Pages() {
         onClick={(e) => {
           e.stopPropagation(); // so doesn't focus this frame then page, causing flicker.
           const frameId = actions.show_focused_frame_of_type(
-            actions.mainFrameType
+            actions.mainFrameType,
           );
           actions.setPage(frameId, index + 1);
           actions.fitToScreen(frameId);
@@ -162,7 +162,7 @@ export default function Pages() {
           if (oldIndex == newIndex) return;
           actions.movePage(oldIndex, newIndex);
           const frameId = actions.show_focused_frame_of_type(
-            actions.mainFrameType
+            actions.mainFrameType,
           );
           actions.setPage(frameId, newIndex + 1);
         }}

@@ -14,9 +14,7 @@ export class Cluster {
   constructor(public N: number) {}
 
   init = async () => {
-    for (let i = 0; i < this.N; i++) {
-      
-    }
+    for (let i = 0; i < this.N; i++) {}
   };
 }
 

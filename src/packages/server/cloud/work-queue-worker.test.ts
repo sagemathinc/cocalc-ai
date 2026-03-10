@@ -98,9 +98,7 @@ describe("cloud vm worker loop", () => {
     expect(maxInFlight).toBeLessThanOrEqual(4);
     expect(maxPerProvider).toBeLessThanOrEqual(2);
 
-    const { rows } = await getPool().query(
-      "SELECT state FROM cloud_vm_work",
-    );
+    const { rows } = await getPool().query("SELECT state FROM cloud_vm_work");
     expect(rows.every((r) => r.state === "done")).toBe(true);
   });
 });

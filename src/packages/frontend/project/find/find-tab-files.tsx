@@ -176,10 +176,7 @@ export function FilesTab({
         const next =
           prev == null
             ? 0
-            : Math.min(
-                Math.max(prev + delta, 0),
-                filteredResults.length - 1,
-              );
+            : Math.min(Math.max(prev + delta, 0), filteredResults.length - 1);
         return next;
       });
     },
@@ -209,7 +206,13 @@ export function FilesTab({
         setState({ filter: "" });
       }
     },
-    [filteredResults.length, moveSelection, openResult, selectedIndex, setState],
+    [
+      filteredResults.length,
+      moveSelection,
+      openResult,
+      selectedIndex,
+      setState,
+    ],
   );
 
   const resultCount = filteredResults.length;

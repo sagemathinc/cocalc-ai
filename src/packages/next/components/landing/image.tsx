@@ -30,8 +30,6 @@ interface Props {
   shadow?: boolean;
 }
 
-
-
 export default function Image(props: Props) {
   const { src, style, alt, width, height, shadow = false } = props;
 

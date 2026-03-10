@@ -19,14 +19,12 @@ const LABEL_STYLE: React.CSSProperties = {
 
 export default function RemoteSshButton() {
   const target = useTypedRedux("customize", "ssh_remote_target") ?? "";
-  const localUrl =
-    useTypedRedux("customize", "ssh_remote_url") ?? "";
+  const localUrl = useTypedRedux("customize", "ssh_remote_url") ?? "";
   const [open, setOpen] = React.useState(false);
 
   if (!target) return null;
 
-  const url =
-    typeof window !== "undefined" ? window.location.href : undefined;
+  const url = typeof window !== "undefined" ? window.location.href : undefined;
   const localUrlFromReferrer =
     typeof document !== "undefined" && document.referrer
       ? document.referrer
@@ -60,8 +58,8 @@ export default function RemoteSshButton() {
           <Typography.Paragraph>
             You are viewing a remote session started via{" "}
             <Typography.Text code>cocalc-plus ssh</Typography.Text>. Managing
-            SSH sessions is disabled in this remote instance to avoid
-            double-hop confusion.
+            SSH sessions is disabled in this remote instance to avoid double-hop
+            confusion.
           </Typography.Paragraph>
           <Typography.Paragraph>
             Target:{" "}
@@ -73,10 +71,7 @@ export default function RemoteSshButton() {
             <>
               <Typography.Paragraph>
                 Local session URL:{" "}
-                <Typography.Text
-                  code
-                  copyable={{ text: effectiveLocalUrl }}
-                >
+                <Typography.Text code copyable={{ text: effectiveLocalUrl }}>
                   {effectiveLocalUrl}
                 </Typography.Text>
               </Typography.Paragraph>

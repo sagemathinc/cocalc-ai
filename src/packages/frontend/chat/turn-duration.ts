@@ -38,7 +38,10 @@ export function formatTurnDuration({
   if (!entries.length) return "";
   const historyTimes = entries
     .map((entry) =>
-      toMs(entry?.date ?? (typeof entry?.get === "function" ? entry.get("date") : undefined)),
+      toMs(
+        entry?.date ??
+          (typeof entry?.get === "function" ? entry.get("date") : undefined),
+      ),
     )
     .filter((value): value is number => value != null)
     .sort((a, b) => a - b);

@@ -49,9 +49,11 @@ export function createBrowserExecOperations({
     policy?: BrowserExecPolicyV1;
   }) => { exec_id: string; status: BrowserExecOperation["status"] };
   getExec: (args: { exec_id: string }) => BrowserExecOperation;
-  cancelExec: (args: {
+  cancelExec: (args: { exec_id: string }) => {
+    ok: true;
     exec_id: string;
-  }) => { ok: true; exec_id: string; status: BrowserExecOperation["status"] };
+    status: BrowserExecOperation["status"];
+  };
   clearExecs: () => void;
 } {
   const execOps = new Map<string, BrowserExecPendingOperation>();
@@ -89,7 +91,9 @@ export function createBrowserExecOperations({
     return op;
   };
 
-  const toPublicExecOp = (op: BrowserExecPendingOperation): BrowserExecOperation => {
+  const toPublicExecOp = (
+    op: BrowserExecPendingOperation,
+  ): BrowserExecOperation => {
     const {
       exec_id,
       project_id,

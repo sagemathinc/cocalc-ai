@@ -51,12 +51,10 @@ describe("processAcpLLM", () => {
 
   it("chooses a unique assistant message timestamp", async () => {
     jest.spyOn(Date, "now").mockReturnValue(1000);
-    jest
-      .spyOn(global, "setTimeout")
-      .mockImplementation(((fn: any) => {
-        fn();
-        return 0 as any;
-      }) as any);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
     mockStreamAcp.mockResolvedValue(queuedAckStream());
 
     const acpState = new FakeAcpState();
@@ -129,12 +127,10 @@ describe("processAcpLLM", () => {
 
   it("reuses latest acp_thread_id when thread-config sessionId is not yet persisted", async () => {
     jest.spyOn(Date, "now").mockReturnValue(2000);
-    jest
-      .spyOn(global, "setTimeout")
-      .mockImplementation(((fn: any) => {
-        fn();
-        return 0 as any;
-      }) as any);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
     mockStreamAcp.mockResolvedValue(queuedAckStream());
 
     const acpState = new FakeAcpState();
@@ -208,12 +204,10 @@ describe("processAcpLLM", () => {
 
   it("prefers explicit ACP config override over lookup defaults", async () => {
     jest.spyOn(Date, "now").mockReturnValue(3000);
-    jest
-      .spyOn(global, "setTimeout")
-      .mockImplementation(((fn: any) => {
-        fn();
-        return 0 as any;
-      }) as any);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
     mockStreamAcp.mockResolvedValue(queuedAckStream());
 
     const acpState = new FakeAcpState();
@@ -290,12 +284,10 @@ describe("processAcpLLM", () => {
 
   it("keeps queued state on the submitted message after backend acknowledgement", async () => {
     jest.spyOn(Date, "now").mockReturnValue(4000);
-    jest
-      .spyOn(global, "setTimeout")
-      .mockImplementation(((fn: any) => {
-        fn();
-        return 0 as any;
-      }) as any);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
     mockStreamAcp.mockResolvedValue(queuedAckStream("queued"));
 
     const acpState = new FakeAcpState();

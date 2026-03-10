@@ -25,7 +25,7 @@ export default async function addUserToProject({
 
   await pool.query(
     `UPDATE projects SET ${set} WHERE project_id=$${params.length + 1}`,
-    params.concat(project_id)
+    params.concat(project_id),
   );
   await syncProjectUsersOnHost({ project_id });
 }

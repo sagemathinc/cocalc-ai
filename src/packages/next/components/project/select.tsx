@@ -8,7 +8,10 @@ import useDatabase from "lib/hooks/database";
 
 import { Icon } from "@cocalc/frontend/components/icon";
 import { field_cmp } from "@cocalc/util/cmp";
-import { WORKSPACE_LABEL, WORKSPACES_LABEL } from "@cocalc/util/i18n/terminology";
+import {
+  WORKSPACE_LABEL,
+  WORKSPACES_LABEL,
+} from "@cocalc/util/i18n/terminology";
 
 interface Props {
   label?: string;

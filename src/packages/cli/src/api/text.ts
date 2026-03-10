@@ -194,9 +194,7 @@ function replaceString(
   }
   return {
     text:
-      text.slice(0, index) +
-      replacement +
-      text.slice(index + search.length),
+      text.slice(0, index) + replacement + text.slice(index + search.length),
     replaceCount: 1,
   };
 }
@@ -206,7 +204,9 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
 }: {
   withProjectTextSession: WithProjectTextSession<Ctx, Project>;
 }): TextApi<Ctx, Project> {
-  function association(options: TextDocumentBindingOptions): TextDocumentAssociation {
+  function association(
+    options: TextDocumentBindingOptions,
+  ): TextDocumentAssociation {
     return resolveTextDocumentAssociation(normalizeTextPath(options.path));
   }
 
@@ -228,8 +228,7 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
         path: string;
         association: TextDocumentAssociation;
       }) => Promise<T>,
-    ): Promise<T> =>
-      await withProjectTextSession(ctx, binding, fn);
+    ): Promise<T> => await withProjectTextSession(ctx, binding, fn);
 
     return {
       ...binding,
@@ -237,61 +236,70 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
         return resolvedAssociation;
       },
       async getInfo() {
-        return await withSession(async ({ project, session, path, association }) =>
-          currentTextInfo(project, path, session, association),
+        return await withSession(
+          async ({ project, session, path, association }) =>
+            currentTextInfo(project, path, session, association),
         );
       },
       async read() {
-        return await withSession(async ({ project, session, path, association }) => ({
-          ...currentTextInfo(project, path, session, association),
-          text: session.to_str(),
-        }));
+        return await withSession(
+          async ({ project, session, path, association }) => ({
+            ...currentTextInfo(project, path, session, association),
+            text: session.to_str(),
+          }),
+        );
       },
       async write(text: string, writeOptions?: TextWriteOptions) {
-        return await withSession(async ({ project, session, path, association }) => {
-          const before = currentTextInfo(project, path, session, association);
-          assertTextWriteExpectation(before, writeOptions);
-          if (session.to_str() !== text) {
-            session.from_str(text);
-            await session.save();
-          }
-          return currentTextInfo(project, path, session, association);
-        });
+        return await withSession(
+          async ({ project, session, path, association }) => {
+            const before = currentTextInfo(project, path, session, association);
+            assertTextWriteExpectation(before, writeOptions);
+            if (session.to_str() !== text) {
+              session.from_str(text);
+              await session.save();
+            }
+            return currentTextInfo(project, path, session, association);
+          },
+        );
       },
       async append(text: string, writeOptions?: TextWriteOptions) {
-        return await withSession(async ({ project, session, path, association }) => {
-          const before = currentTextInfo(project, path, session, association);
-          assertTextWriteExpectation(before, writeOptions);
-          if (text) {
-            session.from_str(session.to_str() + text);
-            await session.save();
-          }
-          return currentTextInfo(project, path, session, association);
-        });
+        return await withSession(
+          async ({ project, session, path, association }) => {
+            const before = currentTextInfo(project, path, session, association);
+            assertTextWriteExpectation(before, writeOptions);
+            if (text) {
+              session.from_str(session.to_str() + text);
+              await session.save();
+            }
+            return currentTextInfo(project, path, session, association);
+          },
+        );
       },
       async replace(
         search: string,
         replacement: string,
         replaceOptions?: TextReplaceOptions,
       ) {
-        return await withSession(async ({ project, session, path, association }) => {
-          const before = currentTextInfo(project, path, session, association);
-          assertTextWriteExpectation(before, replaceOptions);
-          const next = replaceString(
-            session.to_str(),
-            search,
-            replacement,
-            replaceOptions?.all,
-          );
-          if (next.replaceCount > 0) {
-            session.from_str(next.text);
-            await session.save();
-          }
-          return {
-            ...currentTextInfo(project, path, session, association),
-            replaceCount: next.replaceCount,
-          };
-        });
+        return await withSession(
+          async ({ project, session, path, association }) => {
+            const before = currentTextInfo(project, path, session, association);
+            assertTextWriteExpectation(before, replaceOptions);
+            const next = replaceString(
+              session.to_str(),
+              search,
+              replacement,
+              replaceOptions?.all,
+            );
+            if (next.replaceCount > 0) {
+              session.from_str(next.text);
+              await session.save();
+            }
+            return {
+              ...currentTextInfo(project, path, session, association),
+              replaceCount: next.replaceCount,
+            };
+          },
+        );
       },
       async withSession<T>(
         fn: (args: {
@@ -403,47 +411,50 @@ export function createLiveTextBinder<Ctx, Project extends TextProjectIdentity>({
     },
   });
 
-  const withProjectTextSession: WithProjectTextSession<Ctx, Project> =
-    async (ctx, options, fn) => {
-      const { project, client } = await resolveProjectConatClient(
-        ctx,
-        options.projectIdentifier,
-        options.cwd,
-      );
-      const path = normalizeTextPath(options.path);
-      const key = JSON.stringify({ project_id: project.project_id, path });
-      const release = await leases.acquire(key);
-      try {
-        let entryPromise = sessionPromises.get(key);
-        if (!entryPromise) {
-          const created = (async () => {
-            const opened = await openLiveTextSession({
-              client,
-              projectId: project.project_id,
-              path,
-              persistent: true,
-              fileUseInterval: 0,
-              openTimeoutMs,
-            });
-            return { project, ...opened };
-          })();
-          sessionPromises.set(key, created);
-          entryPromise = created;
-          try {
-            await created;
-          } catch (error) {
-            if (sessionPromises.get(key) === created) {
-              sessionPromises.delete(key);
-            }
-            throw error;
+  const withProjectTextSession: WithProjectTextSession<Ctx, Project> = async (
+    ctx,
+    options,
+    fn,
+  ) => {
+    const { project, client } = await resolveProjectConatClient(
+      ctx,
+      options.projectIdentifier,
+      options.cwd,
+    );
+    const path = normalizeTextPath(options.path);
+    const key = JSON.stringify({ project_id: project.project_id, path });
+    const release = await leases.acquire(key);
+    try {
+      let entryPromise = sessionPromises.get(key);
+      if (!entryPromise) {
+        const created = (async () => {
+          const opened = await openLiveTextSession({
+            client,
+            projectId: project.project_id,
+            path,
+            persistent: true,
+            fileUseInterval: 0,
+            openTimeoutMs,
+          });
+          return { project, ...opened };
+        })();
+        sessionPromises.set(key, created);
+        entryPromise = created;
+        try {
+          await created;
+        } catch (error) {
+          if (sessionPromises.get(key) === created) {
+            sessionPromises.delete(key);
           }
+          throw error;
         }
-        const entry = await entryPromise;
-        return await fn(entry);
-      } finally {
-        await release();
       }
-    };
+      const entry = await entryPromise;
+      return await fn(entry);
+    } finally {
+      await release();
+    }
+  };
 
   return createTextApi({ withProjectTextSession });
 }

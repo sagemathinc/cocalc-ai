@@ -15,7 +15,7 @@ export function cm_define_diffApply_extension(cm) {
     const editor = this;
     const next_pos = function (
       val: string,
-      pos: CodeMirror.Position
+      pos: CodeMirror.Position,
     ): CodeMirror.Position {
       // This functions answers the question:
       // If you were to insert the string val at the CodeMirror position pos

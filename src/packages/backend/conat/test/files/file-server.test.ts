@@ -99,14 +99,18 @@ describe("create basic mocked file server and test it out", () => {
 
       ensureRestoreStaging: async (_opts: { handle: any }): Promise<void> => {},
 
-      finalizeRestoreStaging: async (_opts: { handle: any }): Promise<void> => {},
+      finalizeRestoreStaging: async (_opts: {
+        handle: any;
+      }): Promise<void> => {},
 
       releaseRestoreStaging: async (_opts: {
         handle: any;
         cleanupStaging?: boolean;
       }): Promise<void> => {},
 
-      cleanupRestoreStaging: async (_opts?: { root?: string }): Promise<void> => {},
+      cleanupRestoreStaging: async (_opts?: {
+        root?: string;
+      }): Promise<void> => {},
 
       deleteBackup: async (_opts: {
         project_id: string;

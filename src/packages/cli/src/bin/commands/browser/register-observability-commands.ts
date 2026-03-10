@@ -84,7 +84,8 @@ export function registerBrowserObservabilityCommands({
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
             activeOnly: !!opts.activeOnly,
           });
           const lines = Number(opts.lines ?? "200");
@@ -208,106 +209,113 @@ export function registerBrowserObservabilityCommands({
         },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser logs uncaught", async (ctx) => {
-          const globals = deps.globalsFrom(command);
-          const wantsJson = !!globals.json || globals.output === "json";
-          const profileSelection = loadProfileSelection(deps, command);
-          const sessionInfo = await chooseBrowserSession({
-            ctx,
-            browserHint: browserHintFromOption(opts.browser),
-            fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
-            activeOnly: !!opts.activeOnly,
-          });
-          const lines = Number(opts.lines ?? "200");
-          if (!Number.isFinite(lines) || lines <= 0) {
-            throw new Error("--lines must be a positive integer");
-          }
-          const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
-          const hasSinceSeq = sinceSeqRaw.length > 0;
-          let afterSeq: number | undefined;
-          if (hasSinceSeq) {
-            const parsed = Number(sinceSeqRaw);
-            if (!Number.isFinite(parsed) || parsed < 0) {
-              throw new Error("--since-seq must be a non-negative integer");
-            }
-            afterSeq = Math.floor(parsed);
-          }
-          const follow = opts.follow !== false;
-          const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
-          const timeoutMs = `${opts.timeout ?? ""}`.trim()
-            ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
-            : undefined;
-          const startedAt = Date.now();
-          const browserClient = deps.createBrowserSessionClient({
-            account_id: ctx.accountId,
-            browser_id: sessionInfo.browser_id,
-            client: ctx.remote.client,
-            timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
-          });
-          let printed = 0;
-          let latestDropped = 0;
-          let latestBuffered = 0;
-          let allEvents: BrowserRuntimeEvent[] = [];
-          const emitEvents = (events: BrowserRuntimeEvent[]) => {
-            if (events.length === 0) return;
-            if (wantsJson && follow) {
-              for (const event of events) {
-                process.stdout.write(`${JSON.stringify(event)}\n`);
-              }
-              return;
-            }
-            if (!wantsJson) {
-              for (const event of events) {
-                process.stdout.write(`${formatRuntimeEventLine(event)}\n`);
-              }
-            }
-          };
-          for (;;) {
-            const result = await browserClient.listRuntimeEvents({
-              ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-              limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
-              kinds: ["uncaught_error", "unhandled_rejection"],
-              levels: ["error"],
+        await deps.withContext(
+          command,
+          "browser logs uncaught",
+          async (ctx) => {
+            const globals = deps.globalsFrom(command);
+            const wantsJson = !!globals.json || globals.output === "json";
+            const profileSelection = loadProfileSelection(deps, command);
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint: browserHintFromOption(opts.browser),
+              fallbackBrowserId: profileSelection.browser_id,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+              activeOnly: !!opts.activeOnly,
             });
-            const events = Array.isArray(result?.events) ? result.events : [];
-            latestDropped = Number(result?.dropped ?? latestDropped);
-            latestBuffered = Number(result?.total_buffered ?? latestBuffered);
-            emitEvents(events);
-            printed += events.length;
-            allEvents = allEvents.concat(events);
-            afterSeq = Number(result?.next_seq ?? afterSeq ?? 0);
-            if (!follow) {
-              break;
+            const lines = Number(opts.lines ?? "200");
+            if (!Number.isFinite(lines) || lines <= 0) {
+              throw new Error("--lines must be a positive integer");
             }
-            if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
-              break;
+            const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
+            const hasSinceSeq = sinceSeqRaw.length > 0;
+            let afterSeq: number | undefined;
+            if (hasSinceSeq) {
+              const parsed = Number(sinceSeqRaw);
+              if (!Number.isFinite(parsed) || parsed < 0) {
+                throw new Error("--since-seq must be a non-negative integer");
+              }
+              afterSeq = Math.floor(parsed);
             }
-            await sleep(pollMs);
-          }
-          const base = {
-            browser_id: sessionInfo.browser_id,
-            printed,
-            next_seq: afterSeq ?? 0,
-            dropped: latestDropped,
-            total_buffered: latestBuffered,
-            ...sessionTargetContext(ctx, sessionInfo),
-          };
-          if (wantsJson && !follow) {
-            return {
-              ...base,
-              events: allEvents,
+            const follow = opts.follow !== false;
+            const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
+            const timeoutMs = `${opts.timeout ?? ""}`.trim()
+              ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
+              : undefined;
+            const startedAt = Date.now();
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+              timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
+            });
+            let printed = 0;
+            let latestDropped = 0;
+            let latestBuffered = 0;
+            let allEvents: BrowserRuntimeEvent[] = [];
+            const emitEvents = (events: BrowserRuntimeEvent[]) => {
+              if (events.length === 0) return;
+              if (wantsJson && follow) {
+                for (const event of events) {
+                  process.stdout.write(`${JSON.stringify(event)}\n`);
+                }
+                return;
+              }
+              if (!wantsJson) {
+                for (const event of events) {
+                  process.stdout.write(`${formatRuntimeEventLine(event)}\n`);
+                }
+              }
             };
-          }
-          if (wantsJson && follow) {
-            return null;
-          }
-          return base;
-        });
+            for (;;) {
+              const result = await browserClient.listRuntimeEvents({
+                ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
+                kinds: ["uncaught_error", "unhandled_rejection"],
+                levels: ["error"],
+              });
+              const events = Array.isArray(result?.events) ? result.events : [];
+              latestDropped = Number(result?.dropped ?? latestDropped);
+              latestBuffered = Number(result?.total_buffered ?? latestBuffered);
+              emitEvents(events);
+              printed += events.length;
+              allEvents = allEvents.concat(events);
+              afterSeq = Number(result?.next_seq ?? afterSeq ?? 0);
+              if (!follow) {
+                break;
+              }
+              if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
+                break;
+              }
+              await sleep(pollMs);
+            }
+            const base = {
+              browser_id: sessionInfo.browser_id,
+              printed,
+              next_seq: afterSeq ?? 0,
+              dropped: latestDropped,
+              total_buffered: latestBuffered,
+              ...sessionTargetContext(ctx, sessionInfo),
+            };
+            if (wantsJson && !follow) {
+              return {
+                ...base,
+                events: allEvents,
+              };
+            }
+            if (wantsJson && follow) {
+              return null;
+            }
+            return base;
+          },
+        );
       },
     );
 
-  const network = browser.command("network").description("network trace capture");
+  const network = browser
+    .command("network")
+    .description("network trace capture");
 
   network
     .command("trace")
@@ -340,7 +348,10 @@ export function registerBrowserObservabilityCommands({
       "--phase <csv>",
       "optional phase filter: publish_chunk,recv_chunk,recv_message,drop_chunk_seq,drop_chunk_timeout,http_request,http_response,http_error,ws_open,ws_send,ws_message,ws_close,ws_error",
     )
-    .option("--subject-prefix <prefix>", "optional subject-prefix filter while reading")
+    .option(
+      "--subject-prefix <prefix>",
+      "optional subject-prefix filter while reading",
+    )
     .option("--address <address>", "optional address filter while reading")
     .option(
       "--subject-prefixes <csv>",
@@ -382,129 +393,139 @@ export function registerBrowserObservabilityCommands({
         },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser network trace", async (ctx) => {
-          const globals = deps.globalsFrom(command);
-          const wantsJson = !!globals.json || globals.output === "json";
-          const profileSelection = loadProfileSelection(deps, command);
-          const sessionInfo = await chooseBrowserSession({
-            ctx,
-            browserHint: browserHintFromOption(opts.browser),
-            fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
-            activeOnly: !!opts.activeOnly,
-          });
-          const lines = Number(opts.lines ?? "200");
-          if (!Number.isFinite(lines) || lines <= 0) {
-            throw new Error("--lines must be a positive integer");
-          }
-          const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
-          let afterSeq: number | undefined;
-          if (sinceSeqRaw) {
-            const parsed = Number(sinceSeqRaw);
-            if (!Number.isFinite(parsed) || parsed < 0) {
-              throw new Error("--since-seq must be a non-negative integer");
+        await deps.withContext(
+          command,
+          "browser network trace",
+          async (ctx) => {
+            const globals = deps.globalsFrom(command);
+            const wantsJson = !!globals.json || globals.output === "json";
+            const profileSelection = loadProfileSelection(deps, command);
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint: browserHintFromOption(opts.browser),
+              fallbackBrowserId: profileSelection.browser_id,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+              activeOnly: !!opts.activeOnly,
+            });
+            const lines = Number(opts.lines ?? "200");
+            if (!Number.isFinite(lines) || lines <= 0) {
+              throw new Error("--lines must be a positive integer");
             }
-            afterSeq = Math.floor(parsed);
-          }
-          const follow = !!opts.follow;
-          const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
-          const timeoutMs = `${opts.timeout ?? ""}`.trim()
-            ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
-            : undefined;
-          const startedAt = Date.now();
-          const protocols = parseNetworkProtocols(opts.protocol);
-          const direction = parseNetworkDirection(opts.direction);
-          const phases = parseNetworkPhases(opts.phase);
-          const subjectPrefix = `${opts.subjectPrefix ?? ""}`.trim() || undefined;
-          const addressFilter = `${opts.address ?? ""}`.trim() || undefined;
-          const captureSubjectPrefixes = parseCsvStrings(opts.subjectPrefixes);
-          const captureAddresses = parseCsvStrings(opts.addresses);
-          const browserClient = deps.createBrowserSessionClient({
-            account_id: ctx.accountId,
-            browser_id: sessionInfo.browser_id,
-            client: ctx.remote.client,
-            timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
-          });
-          if (opts.clear) {
-            await browserClient.clearNetworkTrace();
-          }
-          const config = await browserClient.configureNetworkTrace({
-            enabled: !opts.disable,
-            include_decoded: !!opts.decoded,
-            include_internal: !!opts.includeInternal,
-            ...(protocols ? { protocols } : {}),
-            ...(captureSubjectPrefixes ? { subject_prefixes: captureSubjectPrefixes } : {}),
-            ...(captureAddresses ? { addresses: captureAddresses } : {}),
-          });
-          if (opts.disable) {
-            return {
+            const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
+            let afterSeq: number | undefined;
+            if (sinceSeqRaw) {
+              const parsed = Number(sinceSeqRaw);
+              if (!Number.isFinite(parsed) || parsed < 0) {
+                throw new Error("--since-seq must be a non-negative integer");
+              }
+              afterSeq = Math.floor(parsed);
+            }
+            const follow = !!opts.follow;
+            const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
+            const timeoutMs = `${opts.timeout ?? ""}`.trim()
+              ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
+              : undefined;
+            const startedAt = Date.now();
+            const protocols = parseNetworkProtocols(opts.protocol);
+            const direction = parseNetworkDirection(opts.direction);
+            const phases = parseNetworkPhases(opts.phase);
+            const subjectPrefix =
+              `${opts.subjectPrefix ?? ""}`.trim() || undefined;
+            const addressFilter = `${opts.address ?? ""}`.trim() || undefined;
+            const captureSubjectPrefixes = parseCsvStrings(
+              opts.subjectPrefixes,
+            );
+            const captureAddresses = parseCsvStrings(opts.addresses);
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
               browser_id: sessionInfo.browser_id,
-              action: "disabled",
+              client: ctx.remote.client,
+              timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
+            });
+            if (opts.clear) {
+              await browserClient.clearNetworkTrace();
+            }
+            const config = await browserClient.configureNetworkTrace({
+              enabled: !opts.disable,
+              include_decoded: !!opts.decoded,
+              include_internal: !!opts.includeInternal,
+              ...(protocols ? { protocols } : {}),
+              ...(captureSubjectPrefixes
+                ? { subject_prefixes: captureSubjectPrefixes }
+                : {}),
+              ...(captureAddresses ? { addresses: captureAddresses } : {}),
+            });
+            if (opts.disable) {
+              return {
+                browser_id: sessionInfo.browser_id,
+                action: "disabled",
+                config,
+                ...sessionTargetContext(ctx, sessionInfo),
+              };
+            }
+            let printed = 0;
+            let latestDropped = 0;
+            let latestBuffered = 0;
+            let allEvents: BrowserNetworkTraceEvent[] = [];
+            const emitEvents = (events: BrowserNetworkTraceEvent[]) => {
+              if (events.length === 0) return;
+              if (wantsJson && follow) {
+                for (const event of events) {
+                  process.stdout.write(`${JSON.stringify(event)}\n`);
+                }
+                return;
+              }
+              if (!wantsJson) {
+                for (const event of events) {
+                  process.stdout.write(`${formatNetworkTraceLine(event)}\n`);
+                }
+              }
+            };
+            for (;;) {
+              const result = await browserClient.listNetworkTrace({
+                ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                limit: Math.min(50_000, Math.max(1, Math.floor(lines))),
+                ...(protocols ? { protocols } : {}),
+                ...(direction ? { direction } : {}),
+                ...(phases ? { phases } : {}),
+                ...(subjectPrefix ? { subject_prefix: subjectPrefix } : {}),
+                ...(addressFilter ? { address: addressFilter } : {}),
+                include_decoded: !!opts.decoded,
+              });
+              const events = Array.isArray(result?.events) ? result.events : [];
+              latestDropped = Number(result?.dropped ?? latestDropped);
+              latestBuffered = Number(result?.total_buffered ?? latestBuffered);
+              emitEvents(events);
+              printed += events.length;
+              allEvents = allEvents.concat(events);
+              afterSeq = Number(result?.next_seq ?? afterSeq ?? 0);
+              if (!follow) {
+                break;
+              }
+              if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
+                break;
+              }
+              await sleep(pollMs);
+            }
+            const base = {
+              browser_id: sessionInfo.browser_id,
+              printed,
+              next_seq: afterSeq ?? 0,
+              dropped: latestDropped,
+              total_buffered: latestBuffered,
               config,
               ...sessionTargetContext(ctx, sessionInfo),
             };
-          }
-          let printed = 0;
-          let latestDropped = 0;
-          let latestBuffered = 0;
-          let allEvents: BrowserNetworkTraceEvent[] = [];
-          const emitEvents = (events: BrowserNetworkTraceEvent[]) => {
-            if (events.length === 0) return;
+            if (wantsJson && !follow) {
+              return { ...base, events: allEvents };
+            }
             if (wantsJson && follow) {
-              for (const event of events) {
-                process.stdout.write(`${JSON.stringify(event)}\n`);
-              }
-              return;
+              return null;
             }
-            if (!wantsJson) {
-              for (const event of events) {
-                process.stdout.write(`${formatNetworkTraceLine(event)}\n`);
-              }
-            }
-          };
-          for (;;) {
-            const result = await browserClient.listNetworkTrace({
-              ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-              limit: Math.min(50_000, Math.max(1, Math.floor(lines))),
-              ...(protocols ? { protocols } : {}),
-              ...(direction ? { direction } : {}),
-              ...(phases ? { phases } : {}),
-              ...(subjectPrefix ? { subject_prefix: subjectPrefix } : {}),
-              ...(addressFilter ? { address: addressFilter } : {}),
-              include_decoded: !!opts.decoded,
-            });
-            const events = Array.isArray(result?.events) ? result.events : [];
-            latestDropped = Number(result?.dropped ?? latestDropped);
-            latestBuffered = Number(result?.total_buffered ?? latestBuffered);
-            emitEvents(events);
-            printed += events.length;
-            allEvents = allEvents.concat(events);
-            afterSeq = Number(result?.next_seq ?? afterSeq ?? 0);
-            if (!follow) {
-              break;
-            }
-            if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
-              break;
-            }
-            await sleep(pollMs);
-          }
-          const base = {
-            browser_id: sessionInfo.browser_id,
-            printed,
-            next_seq: afterSeq ?? 0,
-            dropped: latestDropped,
-            total_buffered: latestBuffered,
-            config,
-            ...sessionTargetContext(ctx, sessionInfo),
-          };
-          if (wantsJson && !follow) {
-            return { ...base, events: allEvents };
-          }
-          if (wantsJson && follow) {
-            return null;
-          }
-          return base;
-        });
+            return base;
+          },
+        );
       },
     );
 
@@ -522,31 +543,39 @@ export function registerBrowserObservabilityCommands({
     .option("--active-only", "only target active (non-stale) sessions")
     .action(
       async (
-        opts: { browser?: string; sessionProjectId?: string; activeOnly?: boolean },
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+        },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser network clear", async (ctx) => {
-          const profileSelection = loadProfileSelection(deps, command);
-          const sessionInfo = await chooseBrowserSession({
-            ctx,
-            browserHint: browserHintFromOption(opts.browser),
-            fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
-            activeOnly: !!opts.activeOnly,
-          });
-          const browserClient = deps.createBrowserSessionClient({
-            account_id: ctx.accountId,
-            browser_id: sessionInfo.browser_id,
-            client: ctx.remote.client,
-          });
-          const cleared = await browserClient.clearNetworkTrace();
-          return {
-            browser_id: sessionInfo.browser_id,
-            ...cleared,
-            ...sessionTargetContext(ctx, sessionInfo),
-          };
-        });
+        await deps.withContext(
+          command,
+          "browser network clear",
+          async (ctx) => {
+            const profileSelection = loadProfileSelection(deps, command);
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint: browserHintFromOption(opts.browser),
+              fallbackBrowserId: profileSelection.browser_id,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+              activeOnly: !!opts.activeOnly,
+            });
+            const browserClient = deps.createBrowserSessionClient({
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+              client: ctx.remote.client,
+            });
+            const cleared = await browserClient.clearNetworkTrace();
+            return {
+              browser_id: sessionInfo.browser_id,
+              ...cleared,
+              ...sessionTargetContext(ctx, sessionInfo),
+            };
+          },
+        );
       },
     );
-
 }

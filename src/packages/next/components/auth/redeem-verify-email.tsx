@@ -47,11 +47,7 @@ export default function RedeemVerifyEmail({ token, email_address }: Props) {
       );
     }
     if (error) {
-      return (
-        <div>
-          We weren't able to validate your e-mail address. ):
-        </div>
-      );
+      return <div>We weren't able to validate your e-mail address. ):</div>;
     }
     return (
       <div>
@@ -69,12 +65,14 @@ export default function RedeemVerifyEmail({ token, email_address }: Props) {
   }
 
   function renderError() {
-    return error && (
-      <div style={{ fontSize: "12pt" }}>
-        <b>{error}</b>
-        <br/>
-        If you are stuck, please <Contact lower/>.
-      </div>
+    return (
+      error && (
+        <div style={{ fontSize: "12pt" }}>
+          <b>{error}</b>
+          <br />
+          If you are stuck, please <Contact lower />.
+        </div>
+      )
     );
   }
 
@@ -83,13 +81,10 @@ export default function RedeemVerifyEmail({ token, email_address }: Props) {
   }
 
   return (
-    <AuthPageContainer
-      error={renderError()}
-      title={renderTitle()}
-    >
+    <AuthPageContainer error={renderError()} title={renderTitle()}>
       <div style={{ marginTop: "8px" }}>
-        <Body/>
+        <Body />
       </div>
     </AuthPageContainer>
-);
+  );
 }

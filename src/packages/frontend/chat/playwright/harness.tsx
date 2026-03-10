@@ -1,6 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReactDOM from "react-dom/client";
-import { FrameContext, defaultFrameContext } from "../../frame-editors/frame-tree/frame-context";
+import {
+  FrameContext,
+  defaultFrameContext,
+} from "../../frame-editors/frame-tree/frame-context";
 import ChatInput from "../input";
 import { ChatRoomComposer } from "../composer";
 
@@ -25,7 +34,11 @@ declare global {
   }
 }
 
-function InputHarness({ fixedMode = "markdown" }: { fixedMode?: "markdown" | "editor" }): React.JSX.Element {
+function InputHarness({
+  fixedMode = "markdown",
+}: {
+  fixedMode?: "markdown" | "editor";
+}): React.JSX.Element {
   const [composerDraftKey, setComposerDraftKey] = useState<number>(0);
   const [composerSession, setComposerSession] = useState<number>(1);
   const [input, setInput] = useState<string>("");
@@ -101,15 +114,16 @@ function InputHarness({ fixedMode = "markdown" }: { fixedMode?: "markdown" | "ed
       <div style={{ padding: 16, width: 760 }}>
         <h3>Chat Composer Harness</h3>
         <p style={{ color: "#666", marginTop: 0 }}>
-          draftKey: <span data-testid="draft-key">{composerDraftKey}</span>, session:{" "}
-          <span data-testid="session">{composerSession}</span>
+          draftKey: <span data-testid="draft-key">{composerDraftKey}</span>,
+          session: <span data-testid="session">{composerSession}</span>
         </p>
         <ChatInput
           cacheId={cacheId}
           fixedMode={fixedMode}
           input={input}
           onChange={(value: string, sessionToken?: number) => {
-            if (sessionToken != null && sessionToken !== sessionRef.current) return;
+            if (sessionToken != null && sessionToken !== sessionRef.current)
+              return;
             setInput(value);
           }}
           on_send={(value: string) => {
@@ -229,8 +243,8 @@ function ComposerHarness(): React.JSX.Element {
       <div style={{ padding: 16, width: 760 }}>
         <h3>Chat Composer Harness</h3>
         <p style={{ color: "#666", marginTop: 0 }}>
-          draftKey: <span data-testid="draft-key">{composerDraftKey}</span>, session:{" "}
-          <span data-testid="session">{composerSession}</span>
+          draftKey: <span data-testid="draft-key">{composerDraftKey}</span>,
+          session: <span data-testid="session">{composerSession}</span>
         </p>
         <ChatRoomComposer
           actions={fakeActions as any}
@@ -294,7 +308,11 @@ function Harness(): React.JSX.Element {
   }
   return (
     <InputHarness
-      fixedMode={editorMode === "editor" || editorMode === "markdown" ? editorMode : "markdown"}
+      fixedMode={
+        editorMode === "editor" || editorMode === "markdown"
+          ? editorMode
+          : "markdown"
+      }
     />
   );
 }
@@ -416,7 +434,7 @@ function start() {
   window.addEventListener("unhandledrejection", (event) => {
     const reason = (event as PromiseRejectionEvent).reason;
     window.__chatHarnessBootError =
-      typeof reason === "string" ? reason : reason?.message ?? String(reason);
+      typeof reason === "string" ? reason : (reason?.message ?? String(reason));
   });
   ReactDOM.createRoot(root).render(<Harness />);
 }

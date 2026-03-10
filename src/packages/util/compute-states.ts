@@ -77,8 +77,7 @@ export const COMPUTE_STATES: ComputeStates = {
   archived: {
     desc: defineMessage({
       id: "util.compute-states.archived.desc",
-      defaultMessage:
-        "Project will take longer to start.",
+      defaultMessage: "Project will take longer to start.",
     }),
     icon: "file-archive",
     display: defineMessage({

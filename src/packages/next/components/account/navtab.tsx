@@ -191,9 +191,7 @@ export default function AccountNavTab({ style }: Props) {
     yours.push(
       menuItem(
         "projects",
-        <a href={join(ROOT_PATH, "projects")}>
-          {WORKSPACES_LABEL}
-        </a>,
+        <a href={join(ROOT_PATH, "projects")}>{WORKSPACES_LABEL}</a>,
         "edit",
       ),
     );

@@ -20,7 +20,7 @@ render({ type: "timestamp" }, ({ field, obj }) => (
 
 render({ type: "timestamp", editable: true }, ({ field, obj }) => {
   const [value, setValue] = useState<dayjs.Dayjs | undefined>(
-    obj[field] ? dayjs(obj[field]) : undefined
+    obj[field] ? dayjs(obj[field]) : undefined,
   );
   const { edit, save, saving, counter, error, ClickToEdit } =
     useEditableContext<Date | null>(field);

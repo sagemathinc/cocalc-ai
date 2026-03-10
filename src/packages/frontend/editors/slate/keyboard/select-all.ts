@@ -37,7 +37,8 @@ register({ key: "a", meta: IS_MACOS, ctrl: !IS_MACOS }, ({ editor }) => {
   const codeEntry = selection
     ? Editor.above(editor, {
         at: selection.focus,
-        match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
+        match: (node) =>
+          Element.isElement(node) && isCodeLikeBlockType(node.type),
       })
     : null;
   if (codeEntry) {

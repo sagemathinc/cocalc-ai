@@ -20,7 +20,12 @@ TODO:
 
 import { delay } from "awaiting";
 
-import { Rendered, Component, rclass, rtypes } from "@cocalc/frontend/app-framework";
+import {
+  Rendered,
+  Component,
+  rclass,
+  rtypes,
+} from "@cocalc/frontend/app-framework";
 
 import { Loading } from "@cocalc/frontend/components";
 

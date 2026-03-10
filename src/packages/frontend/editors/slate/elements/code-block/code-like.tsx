@@ -39,7 +39,9 @@ export function CodeBlockBody({
 }: CodeBlockBodyProps) {
   return (
     <div
-      className={["cocalc-slate-code-block", className].filter(Boolean).join(" ")}
+      className={["cocalc-slate-code-block", className]
+        .filter(Boolean)
+        .join(" ")}
       style={style}
       onPaste={onPaste}
       onInput={onInput}

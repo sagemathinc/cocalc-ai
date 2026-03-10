@@ -84,8 +84,15 @@ function Search({
     [project_id, path],
   );
 
-  const { error, setError, index, doRefresh, fragmentKey, reduxName, isIndexing } =
-    useSearchIndex();
+  const {
+    error,
+    setError,
+    index,
+    doRefresh,
+    fragmentKey,
+    reduxName,
+    isIndexing,
+  } = useSearchIndex();
 
   const data = useRedux(reduxName ?? actions.name, updateField);
 

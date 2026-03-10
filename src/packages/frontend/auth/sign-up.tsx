@@ -8,10 +8,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
-import {
-  MAX_PASSWORD_LENGTH,
-  MIN_PASSWORD_LENGTH,
-} from "@cocalc/util/auth";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import type { AuthView } from "./types";
 import { appUrl } from "./util";
 
@@ -21,9 +18,9 @@ interface SignUpProps {
 
 export default function SignUpForm({ onNavigate }: SignUpProps) {
   const tokenFromStore = useTypedRedux("account", "token");
-  const [requiresToken, setRequiresToken] = useState<
-    boolean | undefined
-  >(tokenFromStore);
+  const [requiresToken, setRequiresToken] = useState<boolean | undefined>(
+    tokenFromStore,
+  );
   const [registrationToken, setRegistrationToken] = useState<string>(
     QueryParams.get("registrationToken") ?? "",
   );
@@ -35,10 +32,7 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>("");
 
-  const bootstrap = useMemo(
-    () => QueryParams.get("bootstrap") === "1",
-    [],
-  );
+  const bootstrap = useMemo(() => QueryParams.get("bootstrap") === "1", []);
 
   useEffect(() => {
     if (tokenFromStore !== undefined) {
@@ -197,10 +191,7 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
       </Button>
       <div style={{ textAlign: "center" }}>
         Already have an account?{" "}
-        <a
-          onClick={() => onNavigate("sign-in")}
-          style={{ cursor: "pointer" }}
-        >
+        <a onClick={() => onNavigate("sign-in")} style={{ cursor: "pointer" }}>
           Sign in
         </a>
       </div>

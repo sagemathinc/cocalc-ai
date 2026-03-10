@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 
 // Strip output and attachments from all cells.
 export async function jupyter_strip_notebook(
-  ipynb_path: string
+  ipynb_path: string,
 ): Promise<string> {
   // Load the file
   const contents = (await readFile(ipynb_path)).toString();

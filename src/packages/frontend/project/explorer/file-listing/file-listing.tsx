@@ -16,10 +16,7 @@ import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { path_to_file, rowBackground } from "@cocalc/util/misc";
 import { isBackupsPath, BACKUPS } from "@cocalc/util/consts/backups";
-import {
-  SNAPSHOTS,
-  isSnapshotsPath,
-} from "@cocalc/util/consts/snapshots";
+import { SNAPSHOTS, isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { FileRow } from "./file-row";
 import { ListingHeader } from "./listing-header";
 import NoFiles from "./no-files";
@@ -226,7 +223,10 @@ export function FileListing({
         ) : null}
         {listing.length > 0 ? (
           <>
-            <ListingHeader active_file_sort={active_file_sort} sort_by={sort_by} />
+            <ListingHeader
+              active_file_sort={active_file_sort}
+              sort_by={sort_by}
+            />
             {renderRows()}
           </>
         ) : (

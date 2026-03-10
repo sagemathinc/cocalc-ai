@@ -19,7 +19,7 @@ export async function destroy(personId: string) {
   // this would likely be slow, due to no index.
   await db.query(
     "UPDATE accounts SET salesloft_id=NULL WHERE salesloft_id=$1",
-    [personId]
+    [personId],
   );
   const client = await getClient();
   await client.delete(`/people/${personId}`);

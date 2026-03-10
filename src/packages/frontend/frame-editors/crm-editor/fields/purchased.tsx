@@ -6,8 +6,7 @@ render({ type: "purchased" }, ({ field, obj }) => {
   if (!purchased) return null;
   return (
     <div>
-      Purchased{" "}
-      <TimeAgo date={purchased.time} />
+      Purchased <TimeAgo date={purchased.time} />
     </div>
   );
 });

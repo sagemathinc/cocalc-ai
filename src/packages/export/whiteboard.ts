@@ -62,11 +62,16 @@ interface WhiteboardDocumentData {
 export async function collectWhiteboardExport(
   options: WhiteboardExportOptions,
 ): Promise<ExportBundle> {
-  const rows = (await readJsonlRows(options.documentPath)).filter(isWhiteboardRow);
+  const rows = (await readJsonlRows(options.documentPath)).filter(
+    isWhiteboardRow,
+  );
   const pageRows = rows.filter((row) => row.type === "page").sort(comparePages);
   const pageIds = pageRows.map((row) => row.id);
   const firstPageId = pageIds[0];
-  const pageState = new Map<string, { visible: WhiteboardRow[]; invisible: WhiteboardRow[] }>();
+  const pageState = new Map<
+    string,
+    { visible: WhiteboardRow[]; invisible: WhiteboardRow[] }
+  >();
   for (const pageId of pageIds) {
     pageState.set(pageId, { visible: [], invisible: [] });
   }
@@ -92,12 +97,18 @@ export async function collectWhiteboardExport(
       })
     : undefined;
   const assetIndex = assetResult?.index ?? [];
-  const rawReplacements = buildRelativeBlobReplacementMap("document.jsonl", assetIndex);
+  const rawReplacements = buildRelativeBlobReplacementMap(
+    "document.jsonl",
+    assetIndex,
+  );
 
   const files: ExportFile[] = [];
   files.push({
     path: "README.md",
-    content: renderWhiteboardExportReadme(options.kind, options.includeBlobs === true),
+    content: renderWhiteboardExportReadme(
+      options.kind,
+      options.includeBlobs === true,
+    ),
   });
   const pageIndex: WhiteboardPageIndexEntry[] = [];
   const documentSections: string[] = [
@@ -109,14 +120,29 @@ export async function collectWhiteboardExport(
     const page = pageRows[index];
     const ordinal = `${index + 1}`.padStart(4, "0");
     const dir = `pages/${ordinal}-${page.id}`;
-    const visible = [...(pageState.get(page.id)?.visible ?? [])].sort(compareElements);
-    const invisible = [...(pageState.get(page.id)?.invisible ?? [])].sort(compareElements);
-    const pageAssetRefs = collectPageAssetRefs(visible, invisible, assetResult?.byOriginalRef);
+    const visible = [...(pageState.get(page.id)?.visible ?? [])].sort(
+      compareElements,
+    );
+    const invisible = [...(pageState.get(page.id)?.invisible ?? [])].sort(
+      compareElements,
+    );
+    const pageAssetRefs = collectPageAssetRefs(
+      visible,
+      invisible,
+      assetResult?.byOriginalRef,
+    );
     const contentPath = `${dir}/content.md`;
     const elementsPath = `${dir}/elements.jsonl`;
-    const notesPath = options.kind === "slides" ? `${dir}/speaker-notes.md` : undefined;
-    const contentReplacements = buildRelativeBlobReplacementMap(contentPath, pageAssetRefs);
-    const elementsReplacements = buildRelativeBlobReplacementMap(elementsPath, pageAssetRefs);
+    const notesPath =
+      options.kind === "slides" ? `${dir}/speaker-notes.md` : undefined;
+    const contentReplacements = buildRelativeBlobReplacementMap(
+      contentPath,
+      pageAssetRefs,
+    );
+    const elementsReplacements = buildRelativeBlobReplacementMap(
+      elementsPath,
+      pageAssetRefs,
+    );
     const notesReplacements = notesPath
       ? buildRelativeBlobReplacementMap(notesPath, pageAssetRefs)
       : new Map<string, string>();
@@ -144,7 +170,10 @@ export async function collectWhiteboardExport(
     files.push({
       path: elementsPath,
       content: stringifyJsonlRows(
-        visible.map((row) => ({ ...row, str: rewriteMaybeBlobRefs(row.str, elementsReplacements) })),
+        visible.map((row) => ({
+          ...row,
+          str: rewriteMaybeBlobRefs(row.str, elementsReplacements),
+        })),
       ),
     });
     files.push({ path: contentPath, content: pageContent });
@@ -163,7 +192,12 @@ export async function collectWhiteboardExport(
       asset_refs: pageAssetRefs.length ? pageAssetRefs : undefined,
     });
 
-    documentSections.push(`## Page ${index + 1}${title ? `: ${title}` : ""}`, "", pageContent.trim() || "(empty)", "");
+    documentSections.push(
+      `## Page ${index + 1}${title ? `: ${title}` : ""}`,
+      "",
+      pageContent.trim() || "(empty)",
+      "",
+    );
     if (notesPath && notesContent.trim()) {
       documentSections.push("### Speaker Notes", "", notesContent.trim(), "");
     }
@@ -192,8 +226,11 @@ export async function collectWhiteboardExport(
     path: options.documentPath,
     kind: options.kind,
     page_count: pageRows.length,
-    element_count: rows.filter((row) => row.type !== "page" && row.invisible !== true).length,
-    invisible_element_count: rows.filter((row) => row.invisible === true).length,
+    element_count: rows.filter(
+      (row) => row.type !== "page" && row.invisible !== true,
+    ).length,
+    invisible_element_count: rows.filter((row) => row.invisible === true)
+      .length,
     asset_refs: assetIndex.length ? assetIndex : undefined,
     presentation:
       options.kind === "slides"
@@ -225,7 +262,11 @@ export async function collectWhiteboardExport(
         canonical_data: ["document.jsonl", "pages/<page>/elements.jsonl"],
         derived_views:
           options.kind === "slides"
-            ? ["document.md", "pages/<page>/content.md", "pages/<page>/speaker-notes.md"]
+            ? [
+                "document.md",
+                "pages/<page>/content.md",
+                "pages/<page>/speaker-notes.md",
+              ]
             : ["document.md", "pages/<page>/content.md"],
         assets_index: assetIndex.length ? "assets/index.json" : undefined,
       },
@@ -279,7 +320,10 @@ Recommended agent workflow:
 }
 
 function isWhiteboardRow(row: any): row is WhiteboardRow {
-  return typeof normalizeString(row?.id) === "string" && typeof normalizeString(row?.type) === "string";
+  return (
+    typeof normalizeString(row?.id) === "string" &&
+    typeof normalizeString(row?.type) === "string"
+  );
 }
 
 function normalizeWhiteboardRow(row: WhiteboardRow): WhiteboardRow {
@@ -326,7 +370,9 @@ function collectPageAssetRefs(
       if (asset) refs.set(asset.originalRef, asset);
     }
   }
-  return Array.from(refs.values()).sort((a, b) => a.originalRef.localeCompare(b.originalRef));
+  return Array.from(refs.values()).sort((a, b) =>
+    a.originalRef.localeCompare(b.originalRef),
+  );
 }
 
 function renderElementMarkdown(

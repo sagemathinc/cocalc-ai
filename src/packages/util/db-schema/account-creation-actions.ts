@@ -14,8 +14,7 @@ Table({
     },
     action: {
       type: "map",
-      desc:
-        "Describes the action to carry out when an account is created with the given email_address.",
+      desc: "Describes the action to carry out when an account is created with the given email_address.",
     },
     email_address: {
       type: "string",
@@ -27,8 +26,7 @@ Table({
     },
   },
   rules: {
-    desc:
-      "Actions to carry out when accounts are created, triggered by the email address of the user.",
+    desc: "Actions to carry out when accounts are created, triggered by the email address of the user.",
     primary_key: "id",
     pg_indexes: ["email_address"],
   },

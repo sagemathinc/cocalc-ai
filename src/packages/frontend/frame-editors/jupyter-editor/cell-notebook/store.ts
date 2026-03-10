@@ -60,7 +60,7 @@ export class NotebookFrameStore {
 
   public get_cur_cell_index(): number {
     return this.frame_tree_actions.jupyter_actions.store.get_cell_index(
-      this.get("cur_id")
+      this.get("cur_id"),
     );
   }
 
@@ -90,9 +90,8 @@ export class NotebookFrameStore {
     // based on size...
     const selected = this.get_selected_cell_ids();
     const v: string[] = [];
-    const cell_list = this.frame_tree_actions.jupyter_actions.store.get(
-      "cell_list"
-    );
+    const cell_list =
+      this.frame_tree_actions.jupyter_actions.store.get("cell_list");
     if (cell_list == null) {
       // special case -- no cells
       return v;

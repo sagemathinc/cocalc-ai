@@ -57,11 +57,12 @@ describe("tasks export", () => {
       hashtags: ["alpha", "bug"],
     });
 
-    const tasksJsonl = `${bundle.files.find((file) => file.path === "tasks.jsonl")?.content ?? ""}`
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    const tasksJsonl =
+      `${bundle.files.find((file) => file.path === "tasks.jsonl")?.content ?? ""}`
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
     expect(tasksJsonl[0]).toMatchObject({
       event: "task",
       message_kind: "task",

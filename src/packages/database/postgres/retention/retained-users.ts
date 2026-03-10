@@ -44,12 +44,12 @@ ORDER BY periods.period_start`;
     const size = (
       await pool.query(
         "SELECT count(*) as size FROM accounts WHERE created >= $1::timestamp AND created < $2::timestamp",
-        [start, stop]
+        [start, stop],
       )
     ).rows[0].size;
     await pool.query(
       "INSERT INTO crm_retention(start,stop,model,period,size,active,last_start_time) VALUES($1,$2,$3,$4,$5,$6,$7)",
-      [start, stop, model, period, size, active, last_start_time]
+      [start, stop, model, period, size, active, last_start_time],
     );
   } else {
     log.debug("compute the missing data and put it into the database");
@@ -67,7 +67,7 @@ ORDER BY periods.period_start`;
     const new_last_start_time = rows[rows.length - 1].period_start;
     await pool.query(
       "UPDATE crm_retention SET last_start_time=$5::timestamp, active = array_cat(active, $6::integer[]) WHERE start=$1 AND stop=$2 AND model=$3 AND period=$4",
-      [start, stop, model, period, new_last_start_time, active]
+      [start, stop, model, period, new_last_start_time, active],
     );
   }
 }

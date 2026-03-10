@@ -36,33 +36,36 @@ export const useHostCatalog = (
     onErrorRef.current = onError;
   }, [onError]);
 
-  const fetchCatalog = useCallback(async ({ background = false } = {}) => {
-    if (!provider) {
-      setCatalog(undefined);
-      setCatalogError(undefined);
-      setCatalogLoading(false);
-      return;
-    }
-    if (!background) {
-      setCatalogLoading(true);
-    }
-    try {
-      const data = await hub.hosts.getCatalog({ provider });
-      setCatalog(data);
-      setCatalogError(undefined);
-    } catch (err: any) {
-      console.error("failed to load cloud catalog", err);
-      const message =
-        err?.message ?? "Unable to load cloud catalog (regions/zones).";
-      setCatalog(undefined);
-      setCatalogError(message);
-      onErrorRef.current?.(message);
-    } finally {
-      if (!background) {
+  const fetchCatalog = useCallback(
+    async ({ background = false } = {}) => {
+      if (!provider) {
+        setCatalog(undefined);
+        setCatalogError(undefined);
         setCatalogLoading(false);
+        return;
       }
-    }
-  }, [provider, hub]);
+      if (!background) {
+        setCatalogLoading(true);
+      }
+      try {
+        const data = await hub.hosts.getCatalog({ provider });
+        setCatalog(data);
+        setCatalogError(undefined);
+      } catch (err: any) {
+        console.error("failed to load cloud catalog", err);
+        const message =
+          err?.message ?? "Unable to load cloud catalog (regions/zones).";
+        setCatalog(undefined);
+        setCatalogError(message);
+        onErrorRef.current?.(message);
+      } finally {
+        if (!background) {
+          setCatalogLoading(false);
+        }
+      }
+    },
+    [provider, hub],
+  );
 
   useEffect(() => {
     (async () => {

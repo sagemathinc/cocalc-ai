@@ -8,7 +8,7 @@ import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 export async function getTotalChargesThisMonth(
   account_id: string,
   service: Service,
-  client?: PoolClient
+  client?: PoolClient,
 ): Promise<MoneyValue> {
   const pool = client ?? getPool();
   const closing_date = await getLastClosingDate(account_id);
@@ -25,7 +25,7 @@ export async function getTotalChargesThisMonth(
 // Returns the total charges this month grouped by service.
 // Unlike getTotalChargesThisMonth, credits are included as one of the service categories.
 export async function getChargesThisMonthByService(
-  account_id: string
+  account_id: string,
 ): Promise<{ [service: string]: MoneyValue }> {
   const pool = getPool();
   const closing_date = await getLastClosingDate(account_id);
@@ -37,6 +37,6 @@ export async function getChargesThisMonthByService(
       ...map,
       [service]: moneyToDbString(total ?? 0),
     }),
-    {}
+    {},
   );
 }

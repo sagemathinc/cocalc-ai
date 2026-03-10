@@ -12,7 +12,7 @@ import { PassportTypes } from "@cocalc/database/settings/auth-sso-types";
 // to match what's defined in DEFAULT_LOGIN_INFO
 export function parseOpenIdProfile(
   type: PassportTypes,
-  json: any
+  json: any,
 ): Profile & { _json: any } {
   // it's a convention to also store the raw json in _json
   // we don't store the "_raw" field (unprocessed json), since it is redundant

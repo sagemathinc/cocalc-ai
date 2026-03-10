@@ -85,7 +85,7 @@ function blockPayload(node: Descendant): string {
 }
 
 export function buildBlockSignature(node: Descendant): BlockSignature {
-  const type = Element.isElement(node) ? node.type ?? "unknown" : "text";
+  const type = Element.isElement(node) ? (node.type ?? "unknown") : "text";
   const payload = blockPayload(node);
   const signature = `${type}:${hash_string(payload)}:${payload.length}`;
   return { type, payload, signature };
@@ -268,7 +268,10 @@ function pointFromBlockOffset(
   for (const [node, path] of Node.texts(block)) {
     const nextTotal = total + node.text.length;
     if (offset <= nextTotal) {
-      return { path: [blockIndex, ...path], offset: Math.max(0, offset - total) };
+      return {
+        path: [blockIndex, ...path],
+        offset: Math.max(0, offset - total),
+      };
     }
     total = nextTotal;
     lastPath = path;
@@ -436,9 +439,7 @@ export function remapSelectionAfterBlockPatchWithSentinels(
   }
 
   const markerIndices =
-    anchorMarker === focusMarker
-      ? [anchorIdx]
-      : [anchorIdx, focusIdx];
+    anchorMarker === focusMarker ? [anchorIdx] : [anchorIdx, focusIdx];
   const adjustIndex = (idx: number) =>
     idx - markerIndices.filter((marker) => marker < idx).length;
 
@@ -508,9 +509,7 @@ export function remapSelectionInDocWithSentinels(
   if (anchorIdx < 0 || focusIdx < 0) return null;
 
   const markerIndices =
-    anchorMarker === focusMarker
-      ? [anchorIdx]
-      : [anchorIdx, focusIdx];
+    anchorMarker === focusMarker ? [anchorIdx] : [anchorIdx, focusIdx];
   const adjustIndex = (idx: number) =>
     idx - markerIndices.filter((marker) => marker < idx).length;
 

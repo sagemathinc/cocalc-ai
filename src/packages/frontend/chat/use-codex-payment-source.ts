@@ -11,7 +11,10 @@ type PaymentSourceCacheEntry = {
 };
 
 const paymentSourceCache = new Map<string, PaymentSourceCacheEntry>();
-const paymentSourceInflight = new Map<string, Promise<PaymentSourceCacheEntry>>();
+const paymentSourceInflight = new Map<
+  string,
+  Promise<PaymentSourceCacheEntry>
+>();
 
 function cacheKey(projectId?: string): string {
   return projectId?.trim() || "";

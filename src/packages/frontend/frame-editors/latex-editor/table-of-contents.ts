@@ -41,7 +41,7 @@ export function parseTableOfContents(latex: string): Entry[] {
         level: 3,
         value: line.slice("\\subsubsection{".length, -1),
         id: `${id}`,
-       /* number, */
+        /* number, */
       });
       continue;
     }

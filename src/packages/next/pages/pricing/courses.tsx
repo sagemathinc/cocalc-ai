@@ -60,8 +60,8 @@ function Body(): JSX.Element {
       />
       <Paragraph style={{ marginTop: "20px" }}>
         Memberships cover workspace resources for teaching and research. For
-        course-wide pricing or invoicing, please <A href="/support/new">contact
-        support</A>.
+        course-wide pricing or invoicing, please{" "}
+        <A href="/support/new">contact support</A>.
       </Paragraph>
       <LinkToStore label="View Memberships" />
     </div>

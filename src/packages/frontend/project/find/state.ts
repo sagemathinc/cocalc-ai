@@ -15,10 +15,10 @@ export function useFindTabState<T extends Record<string, any>>(
     }
     return stored;
   }, [stored]);
-  const value = useMemo(() => ({ ...defaults, ...(storedValue ?? {}) }), [
-    defaults,
-    storedValue,
-  ]);
+  const value = useMemo(
+    () => ({ ...defaults, ...(storedValue ?? {}) }),
+    [defaults, storedValue],
+  );
   const update = useCallback(
     (patch: Partial<T>) => {
       if (!actions) return;

@@ -82,12 +82,13 @@ export function useMultimodeSelection({
 
   function getMarkdownPositionForActiveSelection(): MarkdownPosition | null {
     if (mode === "editor") {
-      return richTextControlRef.current?.getMarkdownPositionForSelection?.() ?? null;
+      return (
+        richTextControlRef.current?.getMarkdownPositionForSelection?.() ?? null
+      );
     }
     const selection = selectionRef.current?.getSelection?.();
     const primary =
-      (Array.isArray(selection) ? selection[0] : selection) ??
-      null;
+      (Array.isArray(selection) ? selection[0] : selection) ?? null;
     const point = primary?.head ?? primary?.anchor ?? null;
     if (
       point == null ||
@@ -106,8 +107,7 @@ export function useMultimodeSelection({
     }
     if (mode === "editor") {
       return retrySelectionApply({
-        isReady: () =>
-          richTextControlRef.current?.isSelectionReady?.() ?? true,
+        isReady: () => richTextControlRef.current?.isSelectionReady?.() ?? true,
         subscribeReady: subscribeRichTextReady,
         apply: () => {
           const applied =
@@ -168,7 +168,9 @@ export function useMultimodeSelection({
       modeSwitchSelectionRef.current = getMarkdownPositionForActiveSelection();
     },
     rememberSelectionForModeSwitch: (to: Mode) => {
-      const pos = modeSwitchSelectionRef.current ?? getMarkdownPositionForActiveSelection();
+      const pos =
+        modeSwitchSelectionRef.current ??
+        getMarkdownPositionForActiveSelection();
       modeSwitchSelectionRef.current = null;
       if (pos != null) {
         pendingModeSelectionRef.current = { to, pos };

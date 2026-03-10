@@ -51,7 +51,7 @@ const Heading: React.FC<HeadingProps> = React.memo(
         )}
       </a>
     );
-  }
+  },
 );
 
 interface HeadingsProps {
@@ -88,19 +88,19 @@ export const Headings: React.FC<HeadingsProps> = React.memo(
           <Col xs={1}>
             {render_heading(
               HEADINGS[0],
-              column === HEADINGS[0] ? dir : undefined
+              column === HEADINGS[0] ? dir : undefined,
             )}
           </Col>
           <Col xs={1}>
             {render_heading(
               HEADINGS[1],
-              column === HEADINGS[1] ? dir : undefined
+              column === HEADINGS[1] ? dir : undefined,
             )}
           </Col>
           <Col xs={1}>
             {render_heading(
               HEADINGS[2],
-              column === HEADINGS[2] ? dir : undefined
+              column === HEADINGS[2] ? dir : undefined,
             )}
           </Col>
           <Col
@@ -115,5 +115,5 @@ export const Headings: React.FC<HeadingsProps> = React.memo(
     }
 
     return <div style={{ padding: "0 10px" }}>{render_headings()}</div>;
-  }
+  },
 );

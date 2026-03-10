@@ -519,9 +519,7 @@ export const GOOGLE_PREFIX = "google-";
 //       for whatever reason, it's also described that way in purchases/close.ts
 export type LanguageServiceCore =
   | `${typeof OPENAI_PREFIX}${OpenAIModel}`
-  | `${typeof GOOGLE_PREFIX}${
-      | "text-bison-001"
-      | "chat-bison-001"}`
+  | `${typeof GOOGLE_PREFIX}${"text-bison-001" | "chat-bison-001"}`
   | `${typeof GOOGLE_PREFIX}${GoogleModel}`
   | AnthropicService
   | MistralService;

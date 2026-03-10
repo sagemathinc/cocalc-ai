@@ -26,7 +26,7 @@ function EditPerson({ obj, field, id }) {
         setAdding(false);
       } catch (_) {}
     },
-    [save0, obj]
+    [save0, obj],
   );
 
   return (

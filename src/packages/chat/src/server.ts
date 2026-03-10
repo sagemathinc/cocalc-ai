@@ -29,11 +29,10 @@ export const CHAT_PRIMARY_KEYS = [
 ];
 export const CHAT_STRING_COLS = ["input"];
 
-export interface CreateChatSyncDBOptions
-  extends Omit<
-    ImmerDBOptions,
-    "primary_keys" | "path" | "project_id" | "client"
-  > {
+export interface CreateChatSyncDBOptions extends Omit<
+  ImmerDBOptions,
+  "primary_keys" | "path" | "project_id" | "client"
+> {
   client: ConatClient;
   project_id: string;
   path: string;

@@ -17,7 +17,7 @@ export function envToInt(name: string, fallback: number) {
   const parsed = parseInt(value);
   if (isNaN(parsed)) {
     L(
-      `envToInt: could not parse ${name}=${value}, using fallback value ${fallback}`
+      `envToInt: could not parse ${name}=${value}, using fallback value ${fallback}`,
     );
     return fallback;
   }
@@ -34,7 +34,7 @@ export function envToFloat(name: string, fallback: number) {
   const parsed = parseFloat(value);
   if (isNaN(parsed)) {
     L(
-      `envToFloat: could not parse ${name}=${value}, using fallback value ${fallback}`
+      `envToFloat: could not parse ${name}=${value}, using fallback value ${fallback}`,
     );
     return fallback;
   }

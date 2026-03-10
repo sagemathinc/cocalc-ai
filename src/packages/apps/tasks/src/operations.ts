@@ -86,7 +86,10 @@ export function createTask(
   if (task.last_edited == null && shouldTouchLastEdited({}, task)) {
     task.last_edited = now;
   }
-  const nextSnapshot = createTaskSnapshot([...snapshot.tasks, task], snapshot.revision);
+  const nextSnapshot = createTaskSnapshot(
+    [...snapshot.tasks, task],
+    snapshot.revision,
+  );
   return {
     snapshot: nextSnapshot,
     task,
@@ -269,11 +272,7 @@ function compareNullableNumber(
 }
 
 function splitSearch(search?: string): string[] {
-  return (search ?? "")
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+  return (search ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
 }
 
 function extractHashtags(desc: string): Set<string> {

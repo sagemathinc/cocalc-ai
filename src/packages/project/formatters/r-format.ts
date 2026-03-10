@@ -27,7 +27,7 @@ function formatR(input_path: string) {
 export async function r_format(
   input: string,
   _: ParserOptions,
-  logger: any
+  logger: any,
 ): Promise<string> {
   // create input temp file
   const input_path: string = await callback(file);

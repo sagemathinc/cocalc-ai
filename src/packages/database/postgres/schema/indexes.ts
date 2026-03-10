@@ -17,7 +17,7 @@ function possiblyAddParens(query: string): string {
 }
 
 export function createIndexesQueries(
-  schema: TableSchema
+  schema: TableSchema,
 ): { name: string; query: string; unique: boolean }[] {
   const v = schema.pg_indexes ?? [];
   if (schema.fields.expire != null && !v.includes("expire")) {
@@ -43,7 +43,7 @@ export function createIndexesQueries(
 // IMPORTANT: There is also code in database/postgres/schema/sync.ts that creates indexes.
 export async function createIndexes(
   db: Client,
-  schema: TableSchema
+  schema: TableSchema,
 ): Promise<void> {
   log.debug("createIndexes", schema.name, " creating SQL query");
   for (const { name, query, unique } of createIndexesQueries(schema)) {

@@ -5,10 +5,11 @@ function parsePublicKeys(raw?: string): string[] {
   return raw
     .split(/\r?\n|,/g)
     .map((entry) => entry.trim())
-    .filter((entry) =>
-      entry.startsWith("ssh-") ||
-      entry.startsWith("ecdsa-") ||
-      entry.startsWith("sk-"),
+    .filter(
+      (entry) =>
+        entry.startsWith("ssh-") ||
+        entry.startsWith("ecdsa-") ||
+        entry.startsWith("sk-"),
     );
 }
 

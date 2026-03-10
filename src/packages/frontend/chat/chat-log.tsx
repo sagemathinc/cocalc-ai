@@ -80,19 +80,19 @@ function isEditableOrOverlayInteractionTarget(
       [
         '[contenteditable="true"]',
         '[data-slate-editor="true"]',
-        '.slate-editor',
-        '.CodeMirror',
-        '.CodeMirror-code',
-        '.cm-editor',
-        '.cm-content',
+        ".slate-editor",
+        ".CodeMirror",
+        ".CodeMirror-code",
+        ".cm-editor",
+        ".cm-content",
         '[role="textbox"]',
-        '.ant-drawer',
-        '.ant-drawer-mask',
-        '.ant-select-dropdown',
-        '.ant-dropdown',
-        '.ant-modal',
-        '.ant-popover',
-        '.ant-tooltip',
+        ".ant-drawer",
+        ".ant-drawer-mask",
+        ".ant-select-dropdown",
+        ".ant-dropdown",
+        ".ant-modal",
+        ".ant-popover",
+        ".ant-tooltip",
       ].join(", "),
     ),
   );
@@ -208,13 +208,7 @@ export function ChatLog({
       );
     }, 1);
     return { dates, numChildren };
-  }, [
-    messages,
-    account_id,
-    singleThreadView,
-    visibleKeys,
-    combinedKeys,
-  ]);
+  }, [messages, account_id, singleThreadView, visibleKeys, combinedKeys]);
 
   useEffect(() => {
     if (!canAutoScroll) return;
@@ -300,7 +294,9 @@ export function ChatLog({
       if (
         ACP_ACTIVE_STATES.has(byThread) ||
         ACP_ACTIVE_STATES.has(
-          messageId != null ? acpState?.get?.(`message:${messageId}`) : undefined,
+          messageId != null
+            ? acpState?.get?.(`message:${messageId}`)
+            : undefined,
         )
       ) {
         return true;
@@ -484,7 +480,8 @@ export function getSortedDates(
   for (const message of visibleMessages) {
     const threadId = `${field<string>(message, "thread_id") ?? ""}`.trim();
     const groupKey =
-      threadId || `${field<string>(message, "message_id") ?? dateValue(message)?.valueOf() ?? Math.random()}`;
+      threadId ||
+      `${field<string>(message, "message_id") ?? dateValue(message)?.valueOf() ?? Math.random()}`;
     const bucket = groups.get(groupKey) ?? [];
     bucket.push(message);
     groups.set(groupKey, bucket);
@@ -635,7 +632,11 @@ export function MessageList({
     currentThreadKey?: string,
     prevThreadKey?: string,
   ) => {
-    if (!showThreadHeaders || !currentThreadKey || currentThreadKey === prevThreadKey) {
+    if (
+      !showThreadHeaders ||
+      !currentThreadKey ||
+      currentThreadKey === prevThreadKey
+    ) {
       return null;
     }
     const threadKey = currentThreadKey;
@@ -643,9 +644,7 @@ export function MessageList({
       threadId: threadKey,
     });
     const rawTitle =
-      `${metadata?.name ?? ""}`.trim() ||
-      newest_content(message) ||
-      "Thread";
+      `${metadata?.name ?? ""}`.trim() || newest_content(message) || "Thread";
     const threadTitle = stripHtml(rawTitle);
     return (
       <div
@@ -658,9 +657,7 @@ export function MessageList({
           fontSize: "90%",
           color: "#333",
         }}
-        onClick={
-          onSelectThread ? () => onSelectThread(threadKey) : undefined
-        }
+        onClick={onSelectThread ? () => onSelectThread(threadKey) : undefined}
       >
         {threadTitle}
       </div>
@@ -682,13 +679,15 @@ export function MessageList({
       : undefined;
     const prevThreadKey =
       showThreadHeaders && index > 0
-        ? `${field<string>(
-            getMessageAtDate({
-              messages,
-              date: parseFloat(sortedDates[index - 1]),
-            }),
-            "thread_id",
-          ) ?? sortedDates[index - 1]}`
+        ? `${
+            field<string>(
+              getMessageAtDate({
+                messages,
+                date: parseFloat(sortedDates[index - 1]),
+              }),
+              "thread_id",
+            ) ?? sortedDates[index - 1]
+          }`
         : undefined;
 
     const is_thread = numChildren != null && isThread(message, numChildren);
@@ -749,13 +748,11 @@ export function MessageList({
             }
             threadViewMode={singleThreadView}
             onForceScrollToBottom={forceScrollToBottom}
-            acpState={
-              (() => {
-                const messageId = field<string>(message, "message_id");
-                if (!messageId) return undefined;
-                return acpState?.get(`message:${messageId}`);
-              })()
-            }
+            acpState={(() => {
+              const messageId = field<string>(message, "message_id");
+              if (!messageId) return undefined;
+              return acpState?.get(`message:${messageId}`);
+            })()}
             dim={shouldDim}
             searchHighlight={searchQuery}
             openActivityToken={
@@ -780,7 +777,9 @@ export function MessageList({
     const id = setTimeout(() => {
       const host = listContainerRef.current;
       if (!host) return;
-      const scroller = host.querySelector<HTMLElement>("[data-virtuoso-scroller]");
+      const scroller = host.querySelector<HTMLElement>(
+        "[data-virtuoso-scroller]",
+      );
       if (!scroller) return;
       if (scroller.getBoundingClientRect().height > 0) return;
       // Defensive self-heal for intermittent layout collapse in some sessions.
@@ -864,7 +863,9 @@ export function MessageList({
             : undefined
         }
         atTopStateChange={onAtTopStateChange}
-        followOutput={!manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false}
+        followOutput={
+          !manualScroll && atBottom && !anyOverlayOpen ? "smooth" : false
+        }
       />
     </div>
   );

@@ -54,12 +54,14 @@ export default function PasswordReset() {
   }
 
   function renderError() {
-    return error && (
-      <div style={{ fontSize: "12pt" }}>
-        <b>{error}</b>
-        <br/>
-        If you are stuck, please <Contact lower/>.
-      </div>
+    return (
+      error && (
+        <div style={{ fontSize: "12pt" }}>
+          <b>{error}</b>
+          <br />
+          If you are stuck, please <Contact lower />.
+        </div>
+      )
     );
   }
 
@@ -92,7 +94,9 @@ export default function PasswordReset() {
           }}
         />
         <Button
-          disabled={!email || resetting || !isValidEmailAddress(email) || !!error}
+          disabled={
+            !email || resetting || !isValidEmailAddress(email) || !!error
+          }
           shape="round"
           size="large"
           type="primary"
@@ -101,7 +105,7 @@ export default function PasswordReset() {
         >
           {resetting ? (
             <>
-              <Icon name="spinner" spin/> Sending password reset email...
+              <Icon name="spinner" spin /> Sending password reset email...
             </>
           ) : !email || !isValidEmailAddress(email) || error ? (
             "Enter your email address."

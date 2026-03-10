@@ -8,7 +8,9 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { getMembershipTierMap, MembershipTierRecord } from "./tiers";
 
-function tierToEntitlements(tier?: MembershipTierRecord): MembershipEntitlements {
+function tierToEntitlements(
+  tier?: MembershipTierRecord,
+): MembershipEntitlements {
   if (!tier) return {};
   return {
     project_defaults: tier.project_defaults,
@@ -48,8 +50,7 @@ async function buildMembershipCandidates(
 
   const sub = subResult.rows[0];
   if (sub) {
-    const membershipClass = (sub.metadata?.class ??
-      "free") as MembershipClass;
+    const membershipClass = (sub.metadata?.class ?? "free") as MembershipClass;
     const tier = tiers[membershipClass];
     candidates.push({
       class: membershipClass,

@@ -83,7 +83,7 @@ export default function Home(props: Props) {
         }}
       >
         <Title level={1} style={{ color: COLORS.GRAY }}>
-        Signed in as{" "}
+          Signed in as{" "}
           <Tooltip title={"View all your account settings"} placement={"right"}>
             <a href={join(ROOT_PATH, "settings")}>
               {`${account.first_name} ${account.last_name} ${

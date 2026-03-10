@@ -2,7 +2,11 @@
 Test the exec command.
 */
 
-import exec, { parseAndValidateOptions, selectPlatformOptions, validate } from "./exec";
+import exec, {
+  parseAndValidateOptions,
+  selectPlatformOptions,
+  validate,
+} from "./exec";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

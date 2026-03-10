@@ -335,7 +335,9 @@ export interface System {
     project_id?: string;
   }) => Promise<CodexPaymentSourceInfo>;
 
-  getPublicSiteUrl: (opts?: { account_id?: string }) => Promise<{ url: string }>;
+  getPublicSiteUrl: (opts?: {
+    account_id?: string;
+  }) => Promise<{ url: string }>;
 
   testR2Credentials: (opts: {
     account_id?: string;

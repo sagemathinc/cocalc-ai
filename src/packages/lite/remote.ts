@@ -23,7 +23,10 @@ export let project_id = "";
 let client: ConatClient | null = null;
 let initPromise: Promise<void> | null = null;
 
-function parseRemoteHub(remoteHub: string): { address: string; apiKey: string } {
+function parseRemoteHub(remoteHub: string): {
+  address: string;
+  apiKey: string;
+} {
   const url = new URL(remoteHub);
   const apiKey = url.searchParams.get("apiKey");
   const address = url.origin + (url.pathname.length > 1 ? url.pathname : "");

@@ -62,9 +62,7 @@ export default function Compose({
   }>({ to_ids, subject, body });
 
   const [error, setError] = useState<string>("");
-  const [state, setState] = useState<"compose" | "sending" | "sent">(
-    "compose",
-  );
+  const [state, setState] = useState<"compose" | "sending" | "sent">("compose");
   const [manualSaveInProgress, setManualSaveInProgress] = useState(false);
   const creatingDraftPromiseRef = useRef<Promise<number> | null>(null);
 
