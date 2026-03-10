@@ -183,6 +183,24 @@ export type BrowserExecApi = {
     opts?: { background?: boolean },
   ) => Promise<{ opened: number; paths: string[] }>;
   closeFiles: (paths: unknown) => Promise<{ closed: number; paths: string[] }>;
+  workspaces: {
+    getSelection: () =>
+      | { kind: "all" }
+      | { kind: "unscoped" }
+      | { kind: "workspace"; workspace_id: string };
+    setSelection: (
+      selection:
+        | { kind: "all" }
+        | { kind: "unscoped" }
+        | { kind: "workspace"; workspace_id: string },
+    ) => Promise<{
+      ok: true;
+      selection:
+        | { kind: "all" }
+        | { kind: "unscoped" }
+        | { kind: "workspace"; workspace_id: string };
+    }>;
+  };
   notebook: {
     listCells: (path: string) => Promise<BrowserNotebookCell[]>;
     runCells: (

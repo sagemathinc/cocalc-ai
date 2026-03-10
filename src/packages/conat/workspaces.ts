@@ -193,6 +193,19 @@ export function normalizeWorkspaceSelection(
   return selection.kind === "unscoped" ? { kind: "unscoped" } : { kind: "all" };
 }
 
+export function coerceWorkspaceSelection(
+  selection: WorkspaceSelection | undefined | null,
+): WorkspaceSelection {
+  if (!selection || typeof selection !== "object") return { kind: "all" };
+  if (selection.kind === "workspace") {
+    return typeof selection.workspace_id === "string" &&
+      selection.workspace_id.trim().length > 0
+      ? { kind: "workspace", workspace_id: selection.workspace_id.trim() }
+      : { kind: "all" };
+  }
+  return selection.kind === "unscoped" ? { kind: "unscoped" } : { kind: "all" };
+}
+
 export function pathMatchesWorkspaceRoot(
   path: string,
   root_path: string,
@@ -256,6 +269,12 @@ export function readWorkspaceRecordsFromStore(
   return sortWorkspaceRecords(raw.map(normalizeWorkspaceRecord));
 }
 
+export function readStoredWorkspaceRecords(
+  store: WorkspaceStore,
+): WorkspaceRecord[] {
+  return readWorkspaceRecordsFromStore(store);
+}
+
 export function writeWorkspaceRecordsToStore(
   store: WorkspaceStore,
   records: WorkspaceRecord[],
@@ -270,6 +289,81 @@ export function hasWorkspaceStoreState(store: WorkspaceStore): boolean {
   return (
     store.get(WORKSPACES_STORE_VERSION_KEY) != null ||
     store.get(WORKSPACES_STORE_RECORDS_KEY) != null
+  );
+}
+
+export function createStoredWorkspaceRecord(
+  store: WorkspaceStore,
+  {
+    project_id,
+    input,
+    now,
+    workspace_id,
+  }: {
+    project_id: string;
+    input: WorkspaceCreateInput;
+    now?: number;
+    workspace_id?: string;
+  },
+): WorkspaceRecord {
+  const record = createWorkspaceRecord({ project_id, input, now, workspace_id });
+  const nextRecords = createWorkspaceRecords(readWorkspaceRecordsFromStore(store), record);
+  writeWorkspaceRecordsToStore(store, nextRecords);
+  return record;
+}
+
+export function updateStoredWorkspaceRecord(
+  store: WorkspaceStore,
+  workspace_id: string,
+  patch: WorkspaceUpdatePatch,
+  now = Date.now(),
+): WorkspaceRecord | null {
+  const { records, updated } = updateWorkspaceRecords(
+    readWorkspaceRecordsFromStore(store),
+    workspace_id,
+    patch,
+    now,
+  );
+  writeWorkspaceRecordsToStore(store, records);
+  return updated;
+}
+
+export function deleteStoredWorkspaceRecord(
+  store: WorkspaceStore,
+  workspace_id: string,
+): WorkspaceRecord[] {
+  const records = deleteWorkspaceRecords(readWorkspaceRecordsFromStore(store), workspace_id);
+  writeWorkspaceRecordsToStore(store, records);
+  return records;
+}
+
+export function touchStoredWorkspaceRecord(
+  store: WorkspaceStore,
+  workspace_id: string,
+  at = Date.now(),
+): WorkspaceRecord | null {
+  const { records, updated } = touchWorkspaceRecords(
+    readWorkspaceRecordsFromStore(store),
+    workspace_id,
+    at,
+  );
+  writeWorkspaceRecordsToStore(store, records);
+  return updated;
+}
+
+export function resolveWorkspaceIdentifier(
+  records: WorkspaceRecord[],
+  identifier: string,
+): WorkspaceRecord | null {
+  const value = `${identifier ?? ""}`.trim();
+  if (!value) return null;
+  const byId = records.find((record) => record.workspace_id === value);
+  if (byId) return byId;
+  const normalizedPath = normalizeWorkspacePath(value);
+  return (
+    records.find((record) => record.root_path === normalizedPath) ??
+    records.find((record) => record.chat_path?.trim() === normalizedPath) ??
+    null
   );
 }
 

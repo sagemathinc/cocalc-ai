@@ -3,6 +3,7 @@ import type {
   BrowserExtensionSummary,
   BrowserInstallHelloWorldOptions,
 } from "../extensions-runtime";
+import type { WorkspaceSelection } from "@cocalc/conat/workspaces";
 import type {
   BrowserBashOptions,
   BrowserNotifyType,
@@ -92,6 +93,12 @@ export type BrowserExecApi = {
     opts?: { background?: boolean },
   ) => Promise<{ opened: number; paths: string[] }>;
   closeFiles: (paths: unknown) => Promise<{ closed: number; paths: string[] }>;
+  workspaces: {
+    getSelection: () => WorkspaceSelection;
+    setSelection: (
+      selection: WorkspaceSelection,
+    ) => Promise<{ ok: true; selection: WorkspaceSelection }>;
+  };
   notebook: {
     listCells: (
       path: string,
