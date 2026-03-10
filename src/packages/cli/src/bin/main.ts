@@ -124,6 +124,10 @@ import { registerExportCommand, type ExportCommandDeps } from "./commands/export
 import { registerImportCommand, type ImportCommandDeps } from "./commands/import";
 import { registerTasksCommand, type TasksCommandDeps } from "./commands/tasks";
 import { registerExecCommand, type ExecCommandDeps } from "./commands/exec";
+import {
+  registerWorkspacesCommand,
+  type WorkspacesCommandDeps,
+} from "./commands/workspaces";
 import { createExportApi } from "../api/export";
 import { createImportApi } from "../api/import";
 import { createTasksApi } from "../api/tasks";
@@ -1412,7 +1416,10 @@ async function resolveProjectConatClient(
 ): Promise<{ project: ProjectRow; client: ConatClient }> {
   const explicitIdentifier = `${projectIdentifier ?? ""}`.trim();
   const envProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-  if (!explicitIdentifier && isValidUUID(envProjectId)) {
+  if (
+    isValidUUID(envProjectId) &&
+    (!explicitIdentifier || explicitIdentifier === envProjectId)
+  ) {
     return {
       project: {
         project_id: envProjectId,
@@ -2072,6 +2079,18 @@ const tasksCommandDeps = {
 } satisfies TasksCommandDeps;
 
 registerTasksCommand(program, tasksCommandDeps);
+
+const workspacesCommandDeps = {
+  withContext,
+  resolveProjectConatClient,
+  authConfigPath,
+  loadAuthConfig,
+  saveAuthConfig,
+  selectedProfileName,
+  globalsFrom,
+} satisfies WorkspacesCommandDeps;
+
+registerWorkspacesCommand(program, workspacesCommandDeps);
 
 const execCommandDeps = {
   withContext,

@@ -26,6 +26,10 @@ import {
   type IconName,
 } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import {
+  ensureWorkspaceChatDirectory,
+  ensureWorkspaceChatPath,
+} from "@cocalc/frontend/project/workspaces/runtime";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import type {
   WorkspaceCreateInput,
@@ -57,7 +61,6 @@ type EditorDraft = {
   root_path: string;
   theme: ThemeEditorDraft;
   pinned: boolean;
-  chat_path: string;
 };
 
 function iconFor(record?: WorkspaceRecord | null): IconName {
@@ -84,7 +87,6 @@ function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDr
         fallbackPath ? defaultWorkspaceTitle(fallbackPath) : "",
       ),
       pinned: false,
-      chat_path: "",
     };
   }
   return {
@@ -92,7 +94,6 @@ function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDr
     root_path: record.root_path,
     theme: themeDraftFromTheme(record.theme),
     pinned: record.pinned,
-    chat_path: record.chat_path ?? "",
   };
 }
 
@@ -105,10 +106,12 @@ async function validateRootPath(rootPath: string): Promise<string | null> {
 }
 
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
-  const { active_project_tab, workspaces } = useProjectContext();
+  const { actions, active_project_tab, workspaces } = useProjectContext();
+  const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs") ?? "/";
   const [editing, setEditing] = useState<EditorDraft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const isFlyout = layout === "flyout";
 
@@ -166,14 +169,12 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           root_path: values.root_path,
           theme: themeFromDraft(values.theme),
           pinned: values.pinned,
-          chat_path: values.chat_path.trim() || null,
         });
       } else {
         workspaces.createWorkspace({
           root_path: values.root_path,
           ...themeFromDraft(values.theme),
           pinned: values.pinned,
-          chat_path: values.chat_path.trim() || null,
           source: "manual",
         } satisfies WorkspaceCreateInput);
       }
@@ -182,6 +183,43 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       setError(`${err}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function onDeleteFromEditor(): Promise<void> {
+    if (!editing?.workspace_id) return;
+    setSaving(true);
+    setError("");
+    try {
+      workspaces.deleteWorkspace(editing.workspace_id);
+      setEditing(null);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openWorkspaceChat(record: WorkspaceRecord): Promise<void> {
+    if (!actions) return;
+    setOpeningChatId(record.workspace_id);
+    setError("");
+    try {
+      const { chat_path } = await ensureWorkspaceChatPath({
+        project_id,
+        account_id,
+        workspace_id: record.workspace_id,
+      });
+      await ensureWorkspaceChatDirectory({ project_id, chat_path });
+      workspaces.setSelection({
+        kind: "workspace",
+        workspace_id: record.workspace_id,
+      });
+      await actions.open_file({ path: chat_path, foreground: true });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setOpeningChatId(null);
     }
   }
 
@@ -199,8 +237,15 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         style={{
           borderLeft: `4px solid ${record.theme.color ?? "#d9d9d9"}`,
           background: selected ? "#f6ffed" : undefined,
+          cursor: "pointer",
         }}
         bodyStyle={{ padding: isFlyout ? 10 : 12 }}
+        onClick={() =>
+          select({
+            kind: "workspace",
+            workspace_id: record.workspace_id,
+          })
+        }
       >
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
           {imageUrl ? (
@@ -255,38 +300,34 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
                 size="small"
-                type={selected ? "primary" : "default"}
-                onClick={() =>
-                  select({
-                    kind: "workspace",
-                    workspace_id: record.workspace_id,
-                  })
-                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openEdit(record);
+                }}
               >
-                Show tabs
-              </Button>
-              <Button size="small" onClick={() => openEdit(record)}>
                 Edit
               </Button>
               <Button
                 size="small"
-                onClick={() =>
+                loading={openingChatId === record.workspace_id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void openWorkspaceChat(record);
+                }}
+              >
+                Open workspace chat
+              </Button>
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
                   workspaces.updateWorkspace(record.workspace_id, {
                     pinned: !record.pinned,
-                  })
-                }
+                  });
+                }}
               >
                 {record.pinned ? "Unpin" : "Pin"}
               </Button>
-              <Popconfirm
-                title="Delete this workspace?"
-                description="Open tabs will stay open; this only removes the saved workspace record."
-                onConfirm={() => workspaces.deleteWorkspace(record.workspace_id)}
-              >
-                <Button size="small" danger>
-                  Delete
-                </Button>
-              </Popconfirm>
             </Space>
             <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>
               {record.last_used_at ? (
@@ -411,14 +452,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         extraAfterTheme={
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <div>
-              <Typography.Text strong>Canonical chat path</Typography.Text>
-              <Input
-                placeholder="optional for later agent routing"
-                value={editing?.chat_path ?? ""}
-                onChange={(e) => patchEditing({ chat_path: e.target.value })}
-              />
-            </div>
-            <div>
               <Typography.Text strong>Pinned</Typography.Text>
               <div style={{ marginTop: 8 }}>
                 <Switch
@@ -427,6 +460,17 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 />
               </div>
             </div>
+            {editing?.workspace_id ? (
+              <Popconfirm
+                title="Delete this workspace?"
+                description="Open tabs will stay open; this only removes the saved workspace record."
+                onConfirm={() => void onDeleteFromEditor()}
+              >
+                <Button danger loading={saving}>
+                  Delete workspace
+                </Button>
+              </Popconfirm>
+            ) : null}
           </Space>
         }
       />
