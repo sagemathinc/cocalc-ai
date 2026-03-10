@@ -40,6 +40,7 @@ import {
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
+const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -520,15 +521,27 @@ export function CodexConfigButton({
               hidePanelChrome
               defaultProjectId={projectId}
             />
+            <Text type="secondary">
+              <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                View Codex usage in ChatGPT
+              </a>
+            </Text>
             <Divider style={{ margin: "8px 0" }} />
             <LiteAISettings onSaved={refreshPaymentSource} showTitle />
           </Space>
         ) : (
-          <CodexCredentialsPanel
-            embedded
-            hidePanelChrome
-            defaultProjectId={projectId}
-          />
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <CodexCredentialsPanel
+              embedded
+              hidePanelChrome
+              defaultProjectId={projectId}
+            />
+            <Text type="secondary">
+              <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                View Codex usage in ChatGPT
+              </a>
+            </Text>
+          </Space>
         )}
       </Modal>
     </>
