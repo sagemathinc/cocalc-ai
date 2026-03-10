@@ -8,7 +8,7 @@ import { lite } from "@cocalc/frontend/lite";
 import type { CodexSessionMode } from "@cocalc/util/ai/codex";
 
 export function getDefaultCodexSessionMode(): CodexSessionMode {
-  if (lite) return "read-only";
+  if (lite) return "workspace-write";
   const customizeStore = redux?.getStore?.("customize");
   if (customizeStore?.get?.("is_launchpad") === true) return "full-access";
   return "workspace-write";

@@ -7,6 +7,21 @@ describe("codex default session mode", () => {
     jest.dontMock("@cocalc/frontend/app-framework");
   });
 
+  it("defaults new lite codex threads to workspace-write", () => {
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: true,
+    }));
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: () => undefined,
+      },
+    }));
+
+    const { getDefaultCodexSessionMode } = require("../codex-defaults");
+
+    expect(getDefaultCodexSessionMode()).toBe("workspace-write");
+  });
+
   it("defaults new non-lite launchpad threads to full-access", () => {
     jest.doMock("@cocalc/frontend/lite", () => ({
       lite: false,
