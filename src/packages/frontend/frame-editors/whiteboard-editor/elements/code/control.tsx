@@ -18,6 +18,11 @@ interface Props {
 
 export default function CodeControlBar({ element }: Props) {
   const { actions, project_id, path, id } = useFrameContext();
+  const actionButtonStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+  } as const;
   return (
     <div
       style={{
@@ -61,6 +66,7 @@ export default function CodeControlBar({ element }: Props) {
         <Button
           disabled={element.data?.runState == "busy"}
           size="small"
+          style={actionButtonStyle}
           onClick={() => {
             void actions.runCodeElement({ id: element.id });
           }}
@@ -72,12 +78,12 @@ export default function CodeControlBar({ element }: Props) {
         <Button
           disabled={element.data?.runState == "busy"}
           size="small"
-          style={{ marginLeft: "6px" }}
+          style={{ ...actionButtonStyle, marginLeft: "6px" }}
           onClick={() => {
             void actions.runCodeTree(id, element.id);
           }}
         >
-          Run Tree
+          <Icon name="play" /> Run Tree
         </Button>
       </Tooltip>
       {!element.locked && (

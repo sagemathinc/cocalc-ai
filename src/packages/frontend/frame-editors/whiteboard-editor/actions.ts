@@ -34,6 +34,7 @@ import {
   getPageSpan,
   centerRectsAt,
   centerOfRect,
+  getPosition,
   topOfRect,
   rectSpan,
   translateRectsZ,
@@ -869,7 +870,7 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     );
     if (nextId == null) return;
     this.setSelection(frameId, nextId);
-    this.scrollElementIntoView(nextId, frameId);
+    this.revealElementIfCompletelyHidden(nextId, frameId);
     return nextId;
   }
 
@@ -888,10 +889,39 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     }
     for (const cellId of tree.order) {
       this.setSelection(frameId, cellId);
-      this.scrollElementIntoView(cellId, frameId);
+      this.revealElementIfCompletelyHidden(cellId, frameId);
       await this.runCodeElement({ id: cellId });
     }
     return tree.order;
+  }
+
+  private revealElementIfCompletelyHidden(
+    id: string,
+    frameId: string | undefined = undefined,
+  ): void {
+    const element = this.getElement(id);
+    if (element == null) return;
+    frameId = frameId ?? this.show_focused_frame_of_type(this.mainFrameType);
+    if (frameId == null) return;
+    const node = this._get_frame_node(frameId);
+    const currentPageId = this.numberToPageId(node?.get("page"));
+    if ((element.page ?? this.defaultPageId()) != currentPageId) {
+      this.scrollElementIntoView(id, frameId);
+      return;
+    }
+    const viewport = node?.get("viewport")?.toJS();
+    if (viewport == null) {
+      this.scrollElementIntoView(id, frameId);
+      return;
+    }
+    const rect = getPosition(element);
+    const overlapsX =
+      rect.x < viewport.x + viewport.w && rect.x + rect.w > viewport.x;
+    const overlapsY =
+      rect.y < viewport.y + viewport.h && rect.y + rect.h > viewport.y;
+    if (!(overlapsX && overlapsY)) {
+      this.scrollElementIntoView(id, frameId);
+    }
   }
 
   saveChat({ id, input }: { id: string; input: string }) {
