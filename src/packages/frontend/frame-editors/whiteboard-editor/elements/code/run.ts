@@ -38,10 +38,13 @@ export default async function run({ project_id, path, input, id, set }: Opts) {
       start: cell.get("start"),
       end: cell.get("end"),
     });
+    const hasExecutionResult =
+      cell.get("exec_count") != null || cell.get("output") != null;
     if (
       cell.get("state") == "done" &&
       cell.get("end") &&
-      cell.get("end") != previousEnd
+      cell.get("end") != previousEnd &&
+      hasExecutionResult
     ) {
       finished = true;
       store.removeListener("change", onChange);

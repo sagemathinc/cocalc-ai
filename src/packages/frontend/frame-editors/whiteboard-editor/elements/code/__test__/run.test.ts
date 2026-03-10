@@ -178,4 +178,67 @@ describe("whiteboard code run bridge", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
   });
+
+  it("waits for the later output patch before finalizing a completed run", async () => {
+    const store = new FakeStore({
+      cell1: {
+        id: "cell1",
+        pos: 0,
+        state: "idle",
+        kernel: "python3",
+      },
+    });
+    const save = jest.fn();
+    const set = jest.fn();
+    const jupyterActions = {
+      store,
+      clear_outputs: jest.fn(),
+      set_cell_input: jest.fn(),
+      runCells: jest.fn(async () => {
+        store.updateCell("cell1", {
+          state: "done",
+          kernel: "python3",
+          start: 10,
+          end: 11,
+        });
+        store.emit("change");
+      }),
+      syncdb: { save },
+    };
+    getJupyterActions.mockResolvedValue(jupyterActions);
+
+    await run({
+      project_id: "project-1",
+      path: "test.board",
+      input: "2+3",
+      id: "cell1",
+      set,
+    });
+
+    expect(set).toHaveBeenLastCalledWith({
+      output: undefined,
+      runState: "done",
+      execCount: undefined,
+      kernel: "python3",
+      start: 10,
+      end: 11,
+    });
+    expect(save).not.toHaveBeenCalled();
+
+    store.updateCell("cell1", {
+      output: [{ output_type: "execute_result", data: { "text/plain": "5" } }],
+      exec_count: 1,
+    });
+    store.emit("change");
+
+    expect(set).toHaveBeenLastCalledWith({
+      output: [{ output_type: "execute_result", data: { "text/plain": "5" } }],
+      runState: "done",
+      execCount: 1,
+      kernel: "python3",
+      start: 10,
+      end: 11,
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
 });
