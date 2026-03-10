@@ -25,6 +25,7 @@ import type {
   AppSpec,
   AppMetricsSummary,
   AppPublicReadinessAudit,
+  AppTemplateCatalogEntry,
   DetectedAppPort,
   InstalledAppTemplate,
   ManagedAppStatus,
@@ -40,6 +41,7 @@ import {
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
+  appServerPresetsFromCatalogEntries,
   builtinAppServerPresets,
   type AppServerPreset,
   type AppServiceOpenMode,
@@ -435,10 +437,6 @@ function isPositiveIntegerText(value: string): boolean {
   return Number.isInteger(n) && n > 0;
 }
 
-function appServerPresets(homeDirectory: string): AppServerPreset[] {
-  return builtinAppServerPresets(homeDirectory);
-}
-
 export function AppServerPanel({
   project_id,
 }: {
@@ -448,8 +446,8 @@ export function AppServerPanel({
     () => getProjectHomeDirectory(project_id),
     [project_id],
   );
-  const presets = useMemo(
-    () => appServerPresets(homeDirectory),
+  const fallbackPresets = useMemo(
+    () => builtinAppServerPresets(homeDirectory),
     [homeDirectory],
   );
   const api = useMemo(
@@ -505,6 +503,9 @@ export function AppServerPanel({
   >([]);
   const [detectingInstalledTemplates, setDetectingInstalledTemplates] =
     useState<boolean>(false);
+  const [templateEntries, setTemplateEntries] = useState<AppTemplateCatalogEntry[]>(
+    [],
+  );
   const [logsOpen, setLogsOpen] = useState<boolean>(false);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsData, setLogsData] = useState<{
@@ -546,6 +547,13 @@ export function AppServerPanel({
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const presets = useMemo(
+    () =>
+      templateEntries.length > 0
+        ? appServerPresetsFromCatalogEntries(templateEntries, homeDirectory)
+        : fallbackPresets,
+    [fallbackPresets, homeDirectory, templateEntries],
+  );
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -699,10 +707,11 @@ export function AppServerPanel({
       setLoading(true);
       setError(undefined);
       setStartupFailures({});
-      const [next, specRecords, metrics] = await Promise.all([
+      const [next, specRecords, metrics, templates] = await Promise.all([
         api.apps.listAppStatuses(),
         api.apps.listAppSpecs(),
         api.apps.listAppMetrics({ minutes: 60 }),
+        api.apps.listAppTemplates(),
       ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
       const map: Record<string, AppSpec | undefined> = {};
@@ -715,6 +724,7 @@ export function AppServerPanel({
       setMetricsById(
         Object.fromEntries(metrics.map((item) => [item.app_id, item] as const)),
       );
+      setTemplateEntries(templates);
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1637,6 +1647,7 @@ export function AppServerPanel({
               {quickPresets.map((preset) => (
                 <Button
                   key={preset.key}
+                  title={preset.description ?? preset.label}
                   onClick={() => {
                     applyPreset(preset.key);
                     setCreatorOpen(true);
@@ -1658,9 +1669,33 @@ export function AppServerPanel({
               onChange={(value) => applyPreset(value)}
               options={presets.map((preset) => ({
                 value: preset.key,
-                label: preset.label,
+                label: `${preset.label}${preset.category ? ` (${preset.category})` : ""}`,
               }))}
             />
+            {activePreset ? (
+              <Card size="small" style={{ background: "#fafafa" }}>
+                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Typography.Text strong>{activePreset.label}</Typography.Text>
+                    {activePreset.category ? <Tag>{activePreset.category}</Tag> : null}
+                  </Space>
+                  {activePreset.description ? (
+                    <Typography.Text type="secondary">
+                      {activePreset.description}
+                    </Typography.Text>
+                  ) : null}
+                  {activePreset.homepage ? (
+                    <a
+                      href={activePreset.homepage}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Learn more
+                    </a>
+                  ) : null}
+                </Space>
+              </Card>
+            ) : null}
             {activePreset?.note ? (
               <Alert type="info" showIcon message={activePreset.note} />
             ) : null}

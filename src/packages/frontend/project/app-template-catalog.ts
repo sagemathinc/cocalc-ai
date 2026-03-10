@@ -78,8 +78,24 @@ function toPreset(
   };
 }
 
+export function appServerPresetsFromCatalogEntries(
+  entries: AppTemplateCatalogEntryV1[],
+  homeDirectory: string,
+): AppServerPreset[] {
+  return mergeAppTemplateCatalogs([
+    {
+      version: 1,
+      kind: "cocalc-app-template-catalog",
+      source: "merged",
+      published_at: new Date(0).toISOString(),
+      templates: entries,
+    },
+  ]).map((template) => toPreset(template, homeDirectory));
+}
+
 export function builtinAppServerPresets(homeDirectory: string): AppServerPreset[] {
-  return mergeAppTemplateCatalogs([builtinAppTemplateCatalog()]).map(
-    (template) => toPreset(template, homeDirectory),
+  return appServerPresetsFromCatalogEntries(
+    builtinAppTemplateCatalog().templates,
+    homeDirectory,
   );
 }
