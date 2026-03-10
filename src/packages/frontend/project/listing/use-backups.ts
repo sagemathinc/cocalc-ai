@@ -2,10 +2,7 @@ import useAsyncEffect from "use-async-effect";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { field_cmp } from "@cocalc/util/misc";
-import {
-  BACKUPS,
-  isBackupsPath,
-} from "@cocalc/util/consts/backups";
+import { BACKUPS, isBackupsPath } from "@cocalc/util/consts/backups";
 import type { DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 
 export { BACKUPS, isBackupsPath };
@@ -16,7 +13,7 @@ export interface BackupMeta {
   mtime: number;
 }
 
-const CACHE_TTL_MS = 5*60_000;
+const CACHE_TTL_MS = 5 * 60_000;
 const PREFETCH_LIMIT = 8;
 
 export default function useBackupsListing({
@@ -123,7 +120,9 @@ export default function useBackupsListing({
     }
   }, [project_id, path, sortField, sortDirection, tick]);
 
-  function sortEntries(entries: DirectoryListingEntry[]): DirectoryListingEntry[] {
+  function sortEntries(
+    entries: DirectoryListingEntry[],
+  ): DirectoryListingEntry[] {
     const sorted = [...entries];
     sorted.sort(field_cmp(sortField));
     if (sortDirection === "desc") sorted.reverse();
@@ -186,7 +185,9 @@ export default function useBackupsListing({
     basePath: string,
     entries: DirectoryListingEntry[],
   ) {
-    const subdirs = entries.filter((entry) => entry.isDir).slice(0, PREFETCH_LIMIT);
+    const subdirs = entries
+      .filter((entry) => entry.isDir)
+      .slice(0, PREFETCH_LIMIT);
     if (!subdirs.length) return;
     for (const entry of subdirs) {
       const subpath = basePath ? `${basePath}/${entry.name}` : entry.name;

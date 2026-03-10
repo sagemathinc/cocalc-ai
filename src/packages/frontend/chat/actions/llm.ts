@@ -139,7 +139,9 @@ export async function processLLM({
   const project_id = store.get("project_id");
   const path = store.get("path");
   const effectiveTag =
-    !tag && `${(message as any)?.parent_message_id ?? ""}`.trim() ? "reply" : tag;
+    !tag && `${(message as any)?.parent_message_id ?? ""}`.trim()
+      ? "reply"
+      : tag;
 
   track("chatgpt", {
     project_id,

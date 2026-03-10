@@ -13,7 +13,7 @@ export const NEWS_CHANNELS = [
   ...CHANNELS.filter((c) => c !== "event"),
 ] as const;
 
-export type NewsFilter = typeof NEWS_CHANNELS[number];
+export type NewsFilter = (typeof NEWS_CHANNELS)[number];
 
 // function, that checks if given string is of type NewsFilter
 export function isNewsFilter(ch: string): ch is NewsFilter {

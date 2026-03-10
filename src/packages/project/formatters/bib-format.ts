@@ -38,7 +38,7 @@ async function biber(input_path, output_path) {
 export async function bib_format(
   input: string,
   options: ParserOptions,
-  logger: any
+  logger: any,
 ): Promise<string> {
   // create input temp file
   const input_path: string = await callback(tmp.file);
@@ -59,7 +59,7 @@ export async function bib_format(
     } catch (e) {
       logger.debug(`Calling Bibtex formatter raised ${e}`);
       throw new Error(
-        `Bibtex formatter broken or not available. Is '${options.parser}' installed?`
+        `Bibtex formatter broken or not available. Is '${options.parser}' installed?`,
       );
     }
 

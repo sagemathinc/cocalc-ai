@@ -184,7 +184,7 @@ export function Data({
           </div>
         )}
         <div style={{ flex: 1 }}>{content}</div>
-      </div>
+      </div>,
     );
   }
   return <>{v}</>;

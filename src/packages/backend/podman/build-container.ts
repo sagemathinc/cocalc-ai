@@ -20,14 +20,7 @@ async function hasImage(name: string, sudo = false): Promise<boolean> {
   }
   const { stdout } = await execFile(
     sudo ? "sudo" : "podman",
-    [
-      ...(sudo ? ["podman"] : []),
-      "image",
-      "list",
-      name,
-      "--format",
-      "json",
-    ],
+    [...(sudo ? ["podman"] : []), "image", "list", name, "--format", "json"],
     { env: podmanEnv() },
   );
   if (JSON.parse(stdout).length > 0) {

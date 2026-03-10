@@ -13,7 +13,7 @@ function checkboxReplace(_md, _options) {
     checked: boolean,
     before: string,
     after: string,
-    Token
+    Token,
   ) {
     // before <input type="checkbox" data-index="{n}" checked="true"> after
     const checkbox_token = new Token("checkbox_input", "input", 0);

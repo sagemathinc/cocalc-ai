@@ -72,10 +72,9 @@ export const GetPurchasesOutputSchema = z.union([
   FailedAPIOperationSchema,
   z
     .object({
-      balance: MoneyValueSchema
-        .describe(
-          `The account balance after this purchase was made. For in-progress metered purchases, this can be complicated -- it's the balance when the purchases table was requested, incorporating the contribution of this purchase so far.`,
-        ),
+      balance: MoneyValueSchema.describe(
+        `The account balance after this purchase was made. For in-progress metered purchases, this can be complicated -- it's the balance when the purchases table was requested, incorporating the contribution of this purchase so far.`,
+      ),
       purchases: z.array(
         z.object({
           id: PurchaseIdSchema,

@@ -172,7 +172,11 @@ async function waitForHostStatus({
     }
     if (row.deleted) {
       if (allowDeleted) {
-        return { status: "deleted", metadata: row.metadata ?? {}, deleted: true };
+        return {
+          status: "deleted",
+          metadata: row.metadata ?? {},
+          deleted: true,
+        };
       }
       throw new Error("host deleted");
     }
@@ -186,7 +190,9 @@ async function waitForHostStatus({
     }
     if (failOn && failOn.includes(status)) {
       const lastError = row.metadata?.last_error;
-      throw new Error(lastError ? `host ${status}: ${lastError}` : `host ${status}`);
+      throw new Error(
+        lastError ? `host ${status}: ${lastError}` : `host ${status}`,
+      );
     }
     await delay(POLL_MS);
   }
@@ -206,7 +212,9 @@ async function waitForHostHeartbeat({
     if (!row || row.deleted) {
       throw new Error("host not found");
     }
-    const lastSeen = row.last_seen ? new Date(row.last_seen as any).getTime() : 0;
+    const lastSeen = row.last_seen
+      ? new Date(row.last_seen as any).getTime()
+      : 0;
     if (lastSeen && lastSeen >= since) {
       return { last_seen: row.last_seen };
     }
@@ -371,9 +379,7 @@ async function ensureHostBackups({
       ? Math.round((done / total) * BACKUP_PROGRESS_MAX)
       : 0;
     const skippedTotal = skippedUnprovisioned + skippedMissingVolume;
-    const skippedNote = skippedTotal
-      ? ` (skipped ${skippedTotal})`
-      : "";
+    const skippedNote = skippedTotal ? ` (skipped ${skippedTotal})` : "";
     await progressStep(
       "backups",
       `backups ${done}/${total}${skippedNote}`,
@@ -441,9 +447,8 @@ async function ensureHostBackups({
     }
   };
 
-  const workers = Array.from(
-    { length: Math.min(BACKUP_PARALLEL, total) },
-    () => worker(),
+  const workers = Array.from({ length: Math.min(BACKUP_PARALLEL, total) }, () =>
+    worker(),
   );
 
   await Promise.all(workers);

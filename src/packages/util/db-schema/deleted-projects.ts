@@ -84,6 +84,11 @@ Table({
   },
   rules: {
     primary_key: "project_id",
-    pg_indexes: ["deleted_at", "deleted_by", "owner_account_id", "backup_purge_due_at"],
+    pg_indexes: [
+      "deleted_at",
+      "deleted_by",
+      "owner_account_id",
+      "backup_purge_due_at",
+    ],
   },
 });

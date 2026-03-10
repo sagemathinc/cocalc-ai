@@ -54,5 +54,5 @@ export const COMMANDS: { [type: string]: Entry } = {
 
 // all keys of COMMANDS, that have at least one "." in their name
 export const DOUBLE_EXT = Object.keys(COMMANDS).filter(
-  (key) => key.indexOf(".") >= 0
+  (key) => key.indexOf(".") >= 0,
 );

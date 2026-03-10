@@ -57,14 +57,12 @@ export function SoftwareLicensesPage() {
     {
       title: "Created",
       dataIndex: "created",
-      render: (value) =>
-        value ? dayjs(value).format("YYYY-MM-DD") : "—",
+      render: (value) => (value ? dayjs(value).format("YYYY-MM-DD") : "—"),
     },
     {
       title: "Expires",
       dataIndex: "expires_at",
-      render: (value) =>
-        value ? dayjs(value).format("YYYY-MM-DD") : "—",
+      render: (value) => (value ? dayjs(value).format("YYYY-MM-DD") : "—"),
     },
     {
       title: "Status",

@@ -2,7 +2,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, unlinkSync } from "node:fs";
-import { chmod, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -262,7 +269,11 @@ async function startSshd(): Promise<SshdState | null> {
   const authorizedKeysPath = join(sshdDir, "authorized_keys");
   const pidPath = join(sshdDir, "sshd.pid");
   await mkdir(sshdDir, { recursive: true });
-  await ensureHostKey(hostKeyPath, sshBins.sshKeygenPath, sshBins.sshBinaryPath);
+  await ensureHostKey(
+    hostKeyPath,
+    sshBins.sshKeygenPath,
+    sshBins.sshBinaryPath,
+  );
   await ensureAuthorizedKeysPath(authorizedKeysPath);
   await writeSshdConfig({
     configPath,
@@ -338,7 +349,6 @@ function formatAuthorizedKey(entry: TunnelEntry): string | null {
   ];
   return `${options.join(",")} ${entry.tunnel_public_key} host-${entry.host_id}`;
 }
-
 
 function normalizeSshKey(key?: string | null): string {
   if (!key) return "";
@@ -836,7 +846,10 @@ async function writeCloudflaredConfig(opts: {
   await chmod(opts.path, 0o600);
 }
 
-function appPublicWildcardHostname(dns?: string, suffix?: string): string | undefined {
+function appPublicWildcardHostname(
+  dns?: string,
+  suffix?: string,
+): string | undefined {
   const raw = clean(dns)?.toLowerCase();
   if (!raw) return;
   const parts = raw.split(".").filter(Boolean);
@@ -844,7 +857,9 @@ function appPublicWildcardHostname(dns?: string, suffix?: string): string | unde
   const root = parts.length > 2 ? parts.slice(-2).join(".") : raw;
   const prefix = parts.length > 2 ? parts.slice(0, -2).join("-") : "";
   const normalizedSuffix = clean(suffix)?.toLowerCase() || "app";
-  const wildcardLabel = ["*", normalizedSuffix, prefix].filter(Boolean).join("-");
+  const wildcardLabel = ["*", normalizedSuffix, prefix]
+    .filter(Boolean)
+    .join("-");
   return `${wildcardLabel}.${root}`;
 }
 
@@ -1057,9 +1072,8 @@ export async function getLaunchpadCloudflaredStatus(): Promise<{
     hostname = tunnel?.hostname;
   }
   const error =
-    cloudflaredLastError ?? (enabled && !running
-      ? "Cloudflare tunnel is not running."
-      : null);
+    cloudflaredLastError ??
+    (enabled && !running ? "Cloudflare tunnel is not running." : null);
   return { enabled, running, hostname, error };
 }
 

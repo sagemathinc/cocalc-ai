@@ -34,9 +34,9 @@ describe("ImmerDBDocument with one primary key", () => {
     expect(
       doc.is_equal(new ImmerDBDocument(new Set(["key"]), new Set([]), records)),
     ).toBe(true);
-    expect(doc.is_equal(new ImmerDBDocument(new Set(["key"]), new Set([])))).toBe(
-      false,
-    );
+    expect(
+      doc.is_equal(new ImmerDBDocument(new Set(["key"]), new Set([]))),
+    ).toBe(false);
   });
 
   it("make and apply a patch", () => {
@@ -144,11 +144,9 @@ describe("ImmerDBDocument patch variants", () => {
   });
 
   it("string patch -- diff", () => {
-    const doc = new ImmerDBDocument(
-      new Set(["key"]),
-      new Set(["value"]),
-      [{ key: "cocalc", value: "a string" }],
-    );
+    const doc = new ImmerDBDocument(new Set(["key"]), new Set(["value"]), [
+      { key: "cocalc", value: "a string" },
+    ]);
     const patch = doc.make_patch(
       doc.set({ key: "cocalc", value: "a different string" }),
     );
@@ -215,11 +213,9 @@ describe("ImmerDBDocument patch variants", () => {
   });
 
   it("string column runtime type checking works", () => {
-    const doc = new ImmerDBDocument(
-      new Set(["key"]),
-      new Set(["value"]),
-      [{ key: "cocalc", value: "a string" }],
-    );
+    const doc = new ImmerDBDocument(new Set(["key"]), new Set(["value"]), [
+      { key: "cocalc", value: "a string" },
+    ]);
 
     const doc2 = doc.set({ value: "foo" });
     const x = doc2.get_one({})!;

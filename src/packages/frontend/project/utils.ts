@@ -288,18 +288,12 @@ export function url_fullpath(project_id: string, path: string): string {
 }
 
 // returns the URL for the file at the given path
-export function url_href(
-  project_id: string,
-  path: string,
-): string {
+export function url_href(project_id: string, path: string): string {
   return fileURL({ project_id, path });
 }
 
 // returns the download URL for a file at a given path
-export function download_href(
-  project_id: string,
-  path: string,
-): string {
+export function download_href(project_id: string, path: string): string {
   const u = url_href(project_id, path);
   return `${u}?download`;
 }

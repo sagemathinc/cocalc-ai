@@ -29,10 +29,7 @@ function extractJsonBlock(input: string): any | null {
     // ignore
   }
   const markerMatch = trimmed.match(
-    new RegExp(
-      `${START_MARKER}([\\s\\S]*?)${END_MARKER}`,
-      "m",
-    ),
+    new RegExp(`${START_MARKER}([\\s\\S]*?)${END_MARKER}`, "m"),
   );
   if (markerMatch?.[1]) {
     try {
@@ -136,11 +133,12 @@ export default function GcpServiceAccountWizard({
   }, [scriptUrl, trimmedProject, trimmedServiceAccount]);
 
   const scriptMarkdown = useMemo(
-    () => `\`\`\`sh\n${scriptCommand}\n\`\`\`\n\nReview the script here: ${
-      scriptUrl
-        ? `[${scriptUrl}](${scriptUrl})`
-        : "<software-base-url>/gcp/gcp-setup.sh"
-    }\n`,
+    () =>
+      `\`\`\`sh\n${scriptCommand}\n\`\`\`\n\nReview the script here: ${
+        scriptUrl
+          ? `[${scriptUrl}](${scriptUrl})`
+          : "<software-base-url>/gcp/gcp-setup.sh"
+      }\n`,
     [scriptCommand, scriptUrl],
   );
 
@@ -150,7 +148,7 @@ export default function GcpServiceAccountWizard({
       `PROJECT_ID="${trimmedProject}"`,
       `SA_EMAIL="${trimmedServiceAccount}@${trimmedProject}.iam.gserviceaccount.com"`,
       "",
-      "gcloud iam service-accounts delete \"$SA_EMAIL\" --project \"$PROJECT_ID\"",
+      'gcloud iam service-accounts delete "$SA_EMAIL" --project "$PROJECT_ID"',
     ];
     return `\`\`\`sh\n${lines.join("\n")}\n\`\`\``;
   }, [trimmedProject, trimmedServiceAccount]);
@@ -248,7 +246,9 @@ export default function GcpServiceAccountWizard({
               />
             </div>
             <div>
-              <strong>Step 4 — Run this script to create your service account</strong>
+              <strong>
+                Step 4 — Run this script to create your service account
+              </strong>
               <div style={{ marginTop: "8px" }}>
                 <StaticMarkdown value={scriptMarkdown} />
               </div>

@@ -59,11 +59,7 @@ interface FileEditorSpec {
   remove?:
     | ((path: string, redux: any, project_id: string | undefined) => string) // returned string = redux name  or undefined if not using redux
     | ((path: string, redux: any, project_id: string | undefined) => void);
-  save?: (
-    path: string,
-    redux: any,
-    project_id: string,
-  ) => void;
+  save?: (path: string, redux: any, project_id: string) => void;
 }
 
 // Map of extensions to the appropriate structures below
@@ -134,10 +130,7 @@ export function has_file_editor(ext: string): boolean {
  * Logs when a file extension falls back to the unknown editor.
  * This helps with debugging why an editor failed to load.
  */
-function logFallback(
-  ext: string | undefined,
-  path: string,
-): void {
+function logFallback(ext: string | undefined, path: string): void {
   console.warn(
     `Editor fallback triggered: No editor found for ext '${
       ext ?? "unknown"
@@ -317,11 +310,7 @@ export async function remove(
 // The save function may be called to request to save contents to disk.
 // It does not take a callback.  It's a non-op if no save function is registered
 // or the file isn't open.
-export function save(
-  path: string,
-  redux,
-  project_id: string,
-): void {
+export function save(path: string, redux, project_id: string): void {
   if (path == null) {
     console.warn("WARNING: save(undefined path)"); // TODO: remove when all typescript
     return;

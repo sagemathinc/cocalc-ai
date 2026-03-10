@@ -23,9 +23,7 @@ function normalizeVersionValue(value: unknown): number {
   return parsed;
 }
 
-export function isPublicSiteSettingKey(
-  key: string,
-): key is SiteSettingsKeys {
+export function isPublicSiteSettingKey(key: string): key is SiteSettingsKeys {
   return PUBLIC_SITE_SETTINGS_SET.has(key as SiteSettingsKeys);
 }
 

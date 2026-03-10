@@ -57,7 +57,10 @@ function user_is_in_project_group(rawOpts: AccessOpts): void {
       )}`,
     );
 
-    if (Array.isArray(opts.account_groups) && opts.account_groups.includes("admin")) {
+    if (
+      Array.isArray(opts.account_groups) &&
+      opts.account_groups.includes("admin")
+    ) {
       access = true;
     } else {
       access = !!(await callback2(opts.database.user_is_in_project_group, {

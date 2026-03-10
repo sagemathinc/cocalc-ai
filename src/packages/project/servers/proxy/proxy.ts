@@ -97,9 +97,7 @@ interface StartOptions {
   host?: string; // default to COCALC_PROXY_HOST or 127.0.0.1
 }
 
-function getExposureMode(
-  req: http.IncomingMessage,
-): AppProxyExposureMode {
+function getExposureMode(req: http.IncomingMessage): AppProxyExposureMode {
   return req.headers[APP_PROXY_EXPOSURE_HEADER] === "public"
     ? "public"
     : "private";
@@ -112,10 +110,7 @@ function getRequestBytes(req: http.IncomingMessage): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-function byteLengthOfChunk(
-  chunk: unknown,
-  encoding?: BufferEncoding,
-): number {
+function byteLengthOfChunk(chunk: unknown, encoding?: BufferEncoding): number {
   if (chunk == null) return 0;
   if (Buffer.isBuffer(chunk)) return chunk.length;
   if (typeof chunk === "string") return Buffer.byteLength(chunk, encoding);
@@ -145,8 +140,7 @@ function observeHttpResponse({
     encoding?: BufferEncoding | ((err?: Error | null) => void),
     callback?: (err?: Error | null) => void,
   ) => {
-    const actualEncoding =
-      typeof encoding === "string" ? encoding : undefined;
+    const actualEncoding = typeof encoding === "string" ? encoding : undefined;
     bytesSent += byteLengthOfChunk(chunk, actualEncoding);
     return originalWrite(chunk, encoding as any, callback);
   };
@@ -156,8 +150,7 @@ function observeHttpResponse({
     encoding?: BufferEncoding | (() => void),
     callback?: () => void,
   ) => {
-    const actualEncoding =
-      typeof encoding === "string" ? encoding : undefined;
+    const actualEncoding = typeof encoding === "string" ? encoding : undefined;
     bytesSent += byteLengthOfChunk(chunk, actualEncoding);
     return originalEnd(chunk, encoding as any, callback);
   };
@@ -317,7 +310,9 @@ export function attachProxyServer({
             | undefined;
           if (context) {
             recordAppWebsocketOpened({ app_id: context.app_id });
-            socket.once("close", () => recordAppWebsocketClosed(context.app_id));
+            socket.once("close", () =>
+              recordAppWebsocketClosed(context.app_id),
+            );
           }
           proxy.ws(req, socket, head, {
             target,
@@ -383,7 +378,9 @@ function createProxyResolver({
     }
     const wanted = relative === "/" ? "" : relative.slice(1);
     let candidate = path.resolve(rootAbs, wanted);
-    if (!(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))) {
+    if (
+      !(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))
+    ) {
       return;
     }
 
@@ -397,7 +394,11 @@ function createProxyResolver({
     if (info?.isDirectory()) {
       const indexName = (index || "index.html").replace(/^\/+/, "");
       candidate = path.resolve(candidate, indexName);
-      if (!(candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`))) {
+      if (
+        !(
+          candidate === rootAbs || candidate.startsWith(`${rootAbs}${path.sep}`)
+        )
+      ) {
         return;
       }
       try {
@@ -455,7 +456,8 @@ function createProxyResolver({
         const from = m[1] ? Number(m[1]) : undefined;
         const to = m[2] ? Number(m[2]) : undefined;
         if (from != null && Number.isFinite(from)) start = Math.max(0, from);
-        if (to != null && Number.isFinite(to)) end = Math.min(info.size - 1, to);
+        if (to != null && Number.isFinite(to))
+          end = Math.min(info.size - 1, to);
         if (m[1] === "" && to != null && Number.isFinite(to)) {
           start = Math.max(0, info.size - to);
           end = info.size - 1;
@@ -498,7 +500,10 @@ function createProxyResolver({
     stream.pipe(res);
   };
 
-  async function getTarget(req: http.IncomingMessage, res?: http.ServerResponse) {
+  async function getTarget(
+    req: http.IncomingMessage,
+    res?: http.ServerResponse,
+  ) {
     const url = req.url ?? "";
     const mPort = portPattern.exec(url);
     if (mPort) {

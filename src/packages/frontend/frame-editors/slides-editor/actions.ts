@@ -107,7 +107,7 @@ export class Actions extends WhiteboardActions<State> {
         y: -492,
         z: 0,
       },
-      false
+      false,
     );
     this.createElement(
       undefined,
@@ -127,7 +127,7 @@ export class Actions extends WhiteboardActions<State> {
         y: -393,
         z: 1,
       },
-      false
+      false,
     );
     if (commit) {
       this.syncstring_commit();

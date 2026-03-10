@@ -12,7 +12,9 @@ interface Props {
   on_change: (string, number) => void;
 }
 
-export function EditorSettingsAutosaveInterval(props: Props): React.JSX.Element {
+export function EditorSettingsAutosaveInterval(
+  props: Props,
+): React.JSX.Element {
   const intl = useIntl();
 
   return (

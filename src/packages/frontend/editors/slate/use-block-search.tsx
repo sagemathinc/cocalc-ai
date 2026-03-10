@@ -65,7 +65,12 @@ export function useBlockSearch(options: Options): {
     if (idx == null) return;
     lastMatchIndexRef.current = idx;
     selectGlobalRange(idx, idx + query.length);
-  }, [getFullMarkdown, getSelectionGlobalRange, searchQuery, selectGlobalRange]);
+  }, [
+    getFullMarkdown,
+    getSelectionGlobalRange,
+    searchQuery,
+    selectGlobalRange,
+  ]);
 
   const findPreviousMatch = useCallback(() => {
     const query = searchQuery.trim();
@@ -81,7 +86,12 @@ export function useBlockSearch(options: Options): {
     if (idx == null) return;
     lastMatchIndexRef.current = idx;
     selectGlobalRange(idx, idx + query.length);
-  }, [getFullMarkdown, getSelectionGlobalRange, searchQuery, selectGlobalRange]);
+  }, [
+    getFullMarkdown,
+    getSelectionGlobalRange,
+    searchQuery,
+    selectGlobalRange,
+  ]);
 
   const replaceOneMatch = useCallback(() => {
     const query = searchQuery.trim();
@@ -266,7 +276,11 @@ export function useBlockSearch(options: Options): {
                 cancelText="Cancel"
                 disabled={!replaceQuery.trim()}
               >
-                <Button size="small" type="text" disabled={!replaceQuery.trim()}>
+                <Button
+                  size="small"
+                  type="text"
+                  disabled={!replaceQuery.trim()}
+                >
                   Replace all
                 </Button>
               </Popconfirm>

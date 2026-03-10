@@ -1804,84 +1804,103 @@ export function GitCommitDrawer({
       });
       await saveReview({ comments: next, reviewed, note: reviewNote });
     },
-    [accountId, commit, reviewRecord?.comments, reviewNote, reviewed, saveReview],
+    [
+      accountId,
+      commit,
+      reviewRecord?.comments,
+      reviewNote,
+      reviewed,
+      saveReview,
+    ],
   );
 
-  const createInlineComment = useCallback(async (anchor: CommentAnchor, body: string) => {
-    const trimmed = `${body ?? ""}`.trim();
-    if (!trimmed) return;
-    const now = Date.now();
-    await mutateInlineComments((comments) => {
-      const id = makeCommentId();
-      comments[id] = {
-        id,
-        file_path: anchor.filePath,
-        side: anchor.side,
-        line: anchor.line,
-        hunk_header: anchor.hunk_header,
-        hunk_hash: anchor.hunk_hash,
-        snippet: anchor.snippet,
-        body_md: trimmed,
-        status: "draft",
-        created_at: now,
-        updated_at: now,
-        local_revision: 1,
-      };
-      return comments;
-    });
-  }, [mutateInlineComments]);
+  const createInlineComment = useCallback(
+    async (anchor: CommentAnchor, body: string) => {
+      const trimmed = `${body ?? ""}`.trim();
+      if (!trimmed) return;
+      const now = Date.now();
+      await mutateInlineComments((comments) => {
+        const id = makeCommentId();
+        comments[id] = {
+          id,
+          file_path: anchor.filePath,
+          side: anchor.side,
+          line: anchor.line,
+          hunk_header: anchor.hunk_header,
+          hunk_hash: anchor.hunk_hash,
+          snippet: anchor.snippet,
+          body_md: trimmed,
+          status: "draft",
+          created_at: now,
+          updated_at: now,
+          local_revision: 1,
+        };
+        return comments;
+      });
+    },
+    [mutateInlineComments],
+  );
 
-  const updateInlineComment = useCallback(async (id: string, body: string) => {
-    const trimmed = `${body ?? ""}`.trim();
-    if (!id || !trimmed) return;
-    const now = Date.now();
-    await mutateInlineComments((comments) => {
-      const existing = comments[id];
-      if (!existing) return comments;
-      comments[id] = {
-        ...existing,
-        body_md: trimmed,
-        status: "draft",
-        updated_at: now,
-        local_revision: (existing.local_revision ?? 0) + 1,
-      };
-      return comments;
-    });
-  }, [mutateInlineComments]);
+  const updateInlineComment = useCallback(
+    async (id: string, body: string) => {
+      const trimmed = `${body ?? ""}`.trim();
+      if (!id || !trimmed) return;
+      const now = Date.now();
+      await mutateInlineComments((comments) => {
+        const existing = comments[id];
+        if (!existing) return comments;
+        comments[id] = {
+          ...existing,
+          body_md: trimmed,
+          status: "draft",
+          updated_at: now,
+          local_revision: (existing.local_revision ?? 0) + 1,
+        };
+        return comments;
+      });
+    },
+    [mutateInlineComments],
+  );
 
-  const resolveInlineComment = useCallback(async (id: string) => {
-    if (!id) return;
-    const now = Date.now();
-    await mutateInlineComments((comments) => {
-      const existing = comments[id];
-      if (!existing) return comments;
-      comments[id] = {
-        ...existing,
-        status: "resolved",
-        updated_at: now,
-        local_revision: (existing.local_revision ?? 0) + 1,
-      };
-      return comments;
-    });
-  }, [mutateInlineComments]);
+  const resolveInlineComment = useCallback(
+    async (id: string) => {
+      if (!id) return;
+      const now = Date.now();
+      await mutateInlineComments((comments) => {
+        const existing = comments[id];
+        if (!existing) return comments;
+        comments[id] = {
+          ...existing,
+          status: "resolved",
+          updated_at: now,
+          local_revision: (existing.local_revision ?? 0) + 1,
+        };
+        return comments;
+      });
+    },
+    [mutateInlineComments],
+  );
 
-  const reopenInlineComment = useCallback(async (id: string) => {
-    if (!id) return;
-    const now = Date.now();
-    await mutateInlineComments((comments) => {
-      const existing = comments[id];
-      if (!existing) return comments;
-      comments[id] = {
-        ...existing,
-        status: "draft",
-        submitted_at: undefined,
-        submission_turn_id: undefined,
-        updated_at: now,
-        local_revision: (existing.local_revision ?? 0) + 1,
-      };
-      return comments;
-    });
-  }, [mutateInlineComments]);
+  const reopenInlineComment = useCallback(
+    async (id: string) => {
+      if (!id) return;
+      const now = Date.now();
+      await mutateInlineComments((comments) => {
+        const existing = comments[id];
+        if (!existing) return comments;
+        comments[id] = {
+          ...existing,
+          status: "draft",
+          submitted_at: undefined,
+          submission_turn_id: undefined,
+          updated_at: now,
+          local_revision: (existing.local_revision ?? 0) + 1,
+        };
+        return comments;
+      });
+    },
+    [mutateInlineComments],
+  );
 
   const inlineCommentsByFile = useMemo(() => {
     const byFile = new Map<string, GitReviewCommentV2[]>();

@@ -195,5 +195,7 @@ function toPosix(value: string): string {
 function isInsideRoot(candidate: string, root: string): boolean {
   const rel = path.relative(root, candidate);
   if (!rel) return true;
-  return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+  return (
+    rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)
+  );
 }

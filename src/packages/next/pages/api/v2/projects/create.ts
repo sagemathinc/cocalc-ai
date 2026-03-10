@@ -16,7 +16,7 @@ export default async function handle(req, res) {
       title,
       description,
       image,
-      public_path_id
+      public_path_id,
     );
     res.json({ project_id });
   } catch (err) {
@@ -29,7 +29,7 @@ async function createProject(
   title,
   description,
   image,
-  public_path_id?: string
+  public_path_id?: string,
 ): Promise<string> {
   if (!account_id) {
     throw Error("user must be signed in");

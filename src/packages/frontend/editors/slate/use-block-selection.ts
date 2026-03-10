@@ -7,7 +7,10 @@ import { useCallback } from "react";
 import { Descendant, Editor, Range, Transforms } from "slate";
 import { ReactEditor } from "./slate-react";
 import type { SlateEditor } from "./types";
-import { blockSelectionPoint, pointFromOffsetInDoc } from "./block-selection-utils";
+import {
+  blockSelectionPoint,
+  pointFromOffsetInDoc,
+} from "./block-selection-utils";
 import {
   blockOffsetForGlobalIndex,
   globalIndexForBlockOffset,
@@ -35,7 +38,9 @@ interface Options {
   blocksRef: React.MutableRefObject<string[]>;
   editorMapRef: React.MutableRefObject<Map<number, SlateEditor>>;
   pendingSelectionRef: React.MutableRefObject<PendingSelection | null>;
-  virtuosoRef: React.MutableRefObject<{ scrollToIndex: (opts: any) => void } | null>;
+  virtuosoRef: React.MutableRefObject<{
+    scrollToIndex: (opts: any) => void;
+  } | null>;
   focusedIndex: number | null;
   lastFocusedIndex: number | null;
   setFocusedIndex: (index: number | null) => void;
@@ -58,7 +63,10 @@ export function useBlockSelection(options: Options) {
       anchor: { path: number[]; offset: number },
       focus: { path: number[]; offset: number } = anchor,
     ) => {
-      if (!Editor.hasPath(editor, anchor.path) || !Editor.hasPath(editor, focus.path)) {
+      if (
+        !Editor.hasPath(editor, anchor.path) ||
+        !Editor.hasPath(editor, focus.path)
+      ) {
         return false;
       }
       const desired = { anchor, focus };
@@ -113,7 +121,10 @@ export function useBlockSelection(options: Options) {
       if (index < 0 || index >= blocksRef.current.length) return false;
       const editor = editorMapRef.current.get(index);
       if (!editor) return false;
-      const point = pointFromOffsetInDoc(editor.children as Descendant[], offset);
+      const point = pointFromOffsetInDoc(
+        editor.children as Descendant[],
+        offset,
+      );
       if (!safelyFocusAndSelect(editor, point)) return false;
       setFocusedIndex(index);
       return true;
@@ -144,9 +155,10 @@ export function useBlockSelection(options: Options) {
       if (globalIndex == null) return false;
       const target = blockOffsetForGlobalIndex(blocks, globalIndex);
       const blockMarkdown = normalizeBlockMarkdown(blocks[target.index] ?? "");
-      const blockPos =
-        indexToPosition({ index: target.offset, markdown: blockMarkdown }) ??
-        { line: 0, ch: 0 };
+      const blockPos = indexToPosition({
+        index: target.offset,
+        markdown: blockMarkdown,
+      }) ?? { line: 0, ch: 0 };
       const editor = editorMapRef.current.get(target.index);
       if (!editor) {
         pendingSelectionRef.current = {
@@ -196,9 +208,15 @@ export function useBlockSelection(options: Options) {
       if (endPos == null) return setSelectionFromMarkdownPosition(startPos);
       const blocks = blocksRef.current;
       const fullMarkdown = joinBlocks(blocks);
-      const startGlobal = positionToIndex({ markdown: fullMarkdown, pos: startPos });
+      const startGlobal = positionToIndex({
+        markdown: fullMarkdown,
+        pos: startPos,
+      });
       if (startGlobal == null) return false;
-      const endGlobal = positionToIndex({ markdown: fullMarkdown, pos: endPos });
+      const endGlobal = positionToIndex({
+        markdown: fullMarkdown,
+        pos: endPos,
+      });
       if (endGlobal == null) return setSelectionFromMarkdownPosition(startPos);
       const start = blockOffsetForGlobalIndex(blocks, startGlobal);
       const end = blockOffsetForGlobalIndex(blocks, endGlobal);
@@ -206,9 +224,10 @@ export function useBlockSelection(options: Options) {
         return setSelectionFromMarkdownPosition(startPos);
       }
       const blockMarkdown = normalizeBlockMarkdown(blocks[start.index] ?? "");
-      const startBlockPos =
-        indexToPosition({ index: start.offset, markdown: blockMarkdown }) ??
-        { line: 0, ch: 0 };
+      const startBlockPos = indexToPosition({
+        index: start.offset,
+        markdown: blockMarkdown,
+      }) ?? { line: 0, ch: 0 };
       const endBlockPos =
         indexToPosition({ index: end.offset, markdown: blockMarkdown }) ??
         startBlockPos;
@@ -267,7 +286,8 @@ export function useBlockSelection(options: Options) {
 
   const getSelectionGlobalRange = useCallback(() => {
     let index = focusedIndex ?? lastFocusedIndex ?? null;
-    let editor = index != null ? editorMapRef.current.get(index) ?? null : null;
+    let editor =
+      index != null ? (editorMapRef.current.get(index) ?? null) : null;
     if (!editor || !editor.selection) {
       for (const [idx, candidate] of editorMapRef.current.entries()) {
         if (!candidate?.selection) continue;
@@ -305,8 +325,14 @@ export function useBlockSelection(options: Options) {
     (startIndex: number, endIndex: number) => {
       const blocks = blocksRef.current;
       const fullMarkdown = joinBlocks(blocks);
-      const startPos = indexToPosition({ index: startIndex, markdown: fullMarkdown });
-      const endPos = indexToPosition({ index: endIndex, markdown: fullMarkdown });
+      const startPos = indexToPosition({
+        index: startIndex,
+        markdown: fullMarkdown,
+      });
+      const endPos = indexToPosition({
+        index: endIndex,
+        markdown: fullMarkdown,
+      });
       if (startPos && endPos) {
         setSelectionRangeFromMarkdownPosition(startPos, endPos);
         return;

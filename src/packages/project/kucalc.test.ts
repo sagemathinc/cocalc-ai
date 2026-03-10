@@ -12,7 +12,7 @@ test("compute status is doing something", async () => {
       "session_id",
       "start_ts",
       "time",
-    ])
+    ]),
   );
   expect(status.memory.rss).toBeDefined();
 });

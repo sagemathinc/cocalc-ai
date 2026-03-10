@@ -24,7 +24,7 @@ export default async function getOwner(owner: string): Promise<Owner> {
   // Is it an account?
   let result = await pool.query(
     "SELECT account_id FROM accounts WHERE LOWER(name)=$1",
-    [owner.toLowerCase()]
+    [owner.toLowerCase()],
   );
   if (result.rows.length > 0) {
     return { type: "account", owner_id: result.rows[0].account_id };
@@ -32,7 +32,7 @@ export default async function getOwner(owner: string): Promise<Owner> {
   // Is it an organization?
   result = await pool.query(
     "SELECT title, description, organization_id FROM organizations WHERE LOWER(name)=$1",
-    [owner.toLowerCase()]
+    [owner.toLowerCase()],
   );
   if (result.rows.length > 0) {
     return { type: "organization", owner_id: result.rows[0].organization_id };
@@ -41,12 +41,12 @@ export default async function getOwner(owner: string): Promise<Owner> {
 }
 
 export async function getOwnerName(
-  owner_id: string
+  owner_id: string,
 ): Promise<string | undefined> {
   const pool = getPool("long");
   let result = await pool.query(
     "SELECT name FROM accounts WHERE account_id=$1",
-    [owner_id]
+    [owner_id],
   );
   if (result.rows.length > 0) {
     const { name } = result.rows[0];
@@ -55,7 +55,7 @@ export async function getOwnerName(
   }
   result = await pool.query(
     "SELECT name FROM organizations WHERE organization_id=$1",
-    [owner_id]
+    [owner_id],
   );
   if (result.rows.length > 0) {
     const { name } = result.rows[0];

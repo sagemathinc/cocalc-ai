@@ -20,7 +20,6 @@ export default function KaTeXCompatHacks(math: string): string {
   return math;
 }
 
-
 // Support eqnarray: https://github.com/KaTeX/KaTeX/issues/3643
 // This is very close: "\begin{darray}{rcl} ... \end{darray}"
 function eqnarray(math: string): string {

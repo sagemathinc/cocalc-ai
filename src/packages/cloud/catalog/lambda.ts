@@ -53,7 +53,10 @@ export async function fetchLambdaCatalog(opts: {
     ? (typesRaw as InstanceTypeEntry[])
     : (Object.values((typesRaw as Record<string, InstanceTypeEntry>) ?? {}) ??
       []);
-  if (!Array.isArray(typesRaw) && (typesRaw == null || typeof typesRaw !== "object")) {
+  if (
+    !Array.isArray(typesRaw) &&
+    (typesRaw == null || typeof typesRaw !== "object")
+  ) {
     logger.warn("fetchLambdaCatalog unexpected instance-types shape", {
       type: typeof typesRaw,
     });

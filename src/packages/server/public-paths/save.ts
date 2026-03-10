@@ -14,14 +14,14 @@ import isCollaborator from "@cocalc/server/projects/is-collaborator";
 //
 export default async function savePublicPath(
   public_path_id: string,
-  account_id: string
+  account_id: string,
 ): Promise<void> {
   const pool = getPool();
 
   // figure out project_id and make sure account_id is a collab.
   const { rows } = await pool.query(
     "SELECT project_id FROM public_paths WHERE id=$1",
-    [public_path_id]
+    [public_path_id],
   );
   if (rows.length == 0) {
     throw Error(`no public path with id=${public_path_id}`);
@@ -34,7 +34,7 @@ export default async function savePublicPath(
     }))
   ) {
     throw Error(
-      "user must be signed in as collaborator on the project containing the public path"
+      "user must be signed in as collaborator on the project containing the public path",
     );
   }
 

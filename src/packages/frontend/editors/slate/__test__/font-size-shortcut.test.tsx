@@ -17,7 +17,11 @@ test("ctrl+shift+> increases font size", () => {
   expect(handler).toBeTruthy();
   handler?.({
     editor: editor as any,
-    extra: { actions: { change_font_size: changeFontSize }, id: "", search: {} as any },
+    extra: {
+      actions: { change_font_size: changeFontSize },
+      id: "",
+      search: {} as any,
+    },
   });
   expect(changeFontSize).toHaveBeenCalledWith(1);
 });
@@ -35,7 +39,11 @@ test("ctrl+shift+< decreases font size", () => {
   expect(handler).toBeTruthy();
   handler?.({
     editor: editor as any,
-    extra: { actions: { change_font_size: changeFontSize }, id: "", search: {} as any },
+    extra: {
+      actions: { change_font_size: changeFontSize },
+      id: "",
+      search: {} as any,
+    },
   });
   expect(changeFontSize).toHaveBeenCalledWith(-1);
 });

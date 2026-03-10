@@ -6,8 +6,10 @@ import {
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import { type MakeOptional } from "./syncdb";
 
-export interface SyncStringOptions
-  extends MakeOptional<Omit<SyncStringOpts, "client">, "fs"> {
+export interface SyncStringOptions extends MakeOptional<
+  Omit<SyncStringOpts, "client">,
+  "fs"
+> {
   client: ConatClient;
   // name of the file server that hosts this document:
   service?: string;

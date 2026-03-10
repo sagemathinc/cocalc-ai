@@ -38,10 +38,7 @@ function envNumber(name: string, fallback: number): number {
 }
 const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
-  envNumber(
-    "COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS",
-    30 * 24 * 60 * 60,
-  ),
+  envNumber("COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60),
 );
 const HTTP_UPGRADE_REVOKE_SWEEP_MS = Math.max(
   5_000,
@@ -122,7 +119,9 @@ function base64UrlDecode(value: string): string {
 }
 
 function sessionSignature(payload: string): string {
-  return createHmac("sha256", conatPassword).update(payload).digest("base64url");
+  return createHmac("sha256", conatPassword)
+    .update(payload)
+    .digest("base64url");
 }
 
 function createSessionToken({
@@ -180,9 +179,10 @@ function verifySessionToken(
   return { account_id, iat_s: iat, exp_s: exp };
 }
 
-function readBearerToken(
-  req: IncomingMessage,
-): { token?: string; source?: "header" | "cookie" | "query" } {
+function readBearerToken(req: IncomingMessage): {
+  token?: string;
+  source?: "header" | "cookie" | "query";
+} {
   const authHeader = req.headers.authorization;
   if (typeof authHeader === "string") {
     const m = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -191,13 +191,15 @@ function readBearerToken(
     }
   }
   const cookies = parseCookies(req.headers.cookie as string | undefined);
-  const cookieToken = `${cookies[PROJECT_HOST_HTTP_AUTH_COOKIE_NAME] ?? ""}`.trim();
+  const cookieToken =
+    `${cookies[PROJECT_HOST_HTTP_AUTH_COOKIE_NAME] ?? ""}`.trim();
   if (cookieToken) {
     return { token: cookieToken, source: "cookie" };
   }
   try {
     const u = new URL(req.url ?? "/", "http://project-host.local");
-    const queryToken = `${u.searchParams.get(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM) ?? ""}`.trim();
+    const queryToken =
+      `${u.searchParams.get(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM) ?? ""}`.trim();
     if (queryToken) {
       return { token: queryToken, source: "query" };
     }
@@ -248,8 +250,7 @@ function isProjectCollaboratorLocal({
   }
   const row = getRow("projects", JSON.stringify({ project_id }));
   const userEntry = row?.users?.[account_id];
-  const group =
-    typeof userEntry === "string" ? userEntry : userEntry?.group;
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectCollaboratorGroup(group);
   collaboratorCache.set(key, allowed);
   return allowed;
@@ -293,9 +294,13 @@ export function createProjectHostHttpProxyAuth({
   ): string => {
     const actor = claims.act ?? "account";
     if (actor === "hub") {
-      const publicAppHost = `${req?.headers?.[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
+      const publicAppHost =
+        `${req?.headers?.[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
       if (!publicAppHost || !project_id) {
-        throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
+        throw new HttpAuthError(
+          403,
+          "invalid actor for project-host HTTP auth",
+        );
       }
       return project_id;
     }
@@ -329,7 +334,8 @@ export function createProjectHostHttpProxyAuth({
       }
     | undefined => {
     const cookies = parseCookies(req.headers.cookie as string | undefined);
-    const token = `${cookies[PROJECT_HOST_HTTP_SESSION_COOKIE_NAME] ?? ""}`.trim();
+    const token =
+      `${cookies[PROJECT_HOST_HTTP_SESSION_COOKIE_NAME] ?? ""}`.trim();
     if (!token) return;
     return verifySessionToken(token);
   };

@@ -92,7 +92,8 @@ function assertChatIdentity(request: AcpRequest): {
   assistant_message_id: string;
   assistant_message_date: string;
 } {
-  const project_id = `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
+  const project_id =
+    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? ""}`.trim();
   const thread_id = `${request.chat?.thread_id ?? ""}`.trim();
   const user_message_id = `${request.chat?.parent_message_id ?? ""}`.trim();

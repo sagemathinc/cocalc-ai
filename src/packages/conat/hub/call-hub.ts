@@ -26,7 +26,9 @@ export default async function callHub({
   } catch (err) {
     const code = (err as any)?.code;
     const error =
-      err instanceof Error ? err : new Error(typeof err === "string" ? err : `${err}`);
+      err instanceof Error
+        ? err
+        : new Error(typeof err === "string" ? err : `${err}`);
     (error as any).code ??= code;
     error.message = `${error.message} - callHub: subject='${subject}', name='${name}', code='${code}' `;
     throw error;

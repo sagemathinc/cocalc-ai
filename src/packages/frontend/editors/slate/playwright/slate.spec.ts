@@ -3,12 +3,10 @@ import type { Descendant } from "slate";
 
 type SlatePoint = { path: number[]; offset: number };
 
-type SlateSelection =
-  | {
-      anchor: SlatePoint;
-      focus: SlatePoint;
-    }
-  | null;
+type SlateSelection = {
+  anchor: SlatePoint;
+  focus: SlatePoint;
+} | null;
 
 async function waitForHarness(page) {
   await page.waitForFunction(() => {
@@ -23,29 +21,32 @@ async function waitForCollabHarness(page) {
 }
 
 async function waitForCollabMarkdownContains(page, value: string) {
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateCollabTest?.getMarkdownA?.() ?? "";
-    });
-  }).toContain(value);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateCollabTest?.getMarkdownA?.() ?? "";
+      });
+    })
+    .toContain(value);
 }
 
 async function setBlockSelectionFromMarkdownPosition(
   page,
   pos: { line: number; ch: number },
 ) {
-  await expect.poll(async () => {
-    return await page.evaluate(({ line, ch }) => {
-      return (
-        window.__slateBlockTest?.setSelectionFromMarkdownPosition?.({
-          line,
-          ch,
-        }) ?? false
-      );
-    }, pos);
-  }).toBe(true);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(({ line, ch }) => {
+        return (
+          window.__slateBlockTest?.setSelectionFromMarkdownPosition?.({
+            line,
+            ch,
+          }) ?? false
+        );
+      }, pos);
+    })
+    .toBe(true);
 }
-
 
 type SlateNode = {
   type?: string;
@@ -78,8 +79,8 @@ test("typing updates Slate text and selection", async ({ page }) => {
   const text = await page.evaluate(() => window.__slateTest?.getText());
   expect(text).toBe("hello world");
 
-  const selection = (await page.evaluate(
-    () => window.__slateTest?.getSelection(),
+  const selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
   )) as SlateSelection;
 
   expect(selection).not.toBeNull();
@@ -100,17 +101,17 @@ test("enter creates a new block", async ({ page }) => {
   await page.keyboard.press("Enter");
   await editor.type("second");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   expect(value?.length).toBe(2);
   if (value) {
     expect(nodeText(value[0])).toBe("first");
     expect(nodeText(value[1])).toBe("second");
   }
 
-  const selection = (await page.evaluate(
-    () => window.__slateTest?.getSelection(),
+  const selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
   )) as SlateSelection;
 
   expect(selection).not.toBeNull();
@@ -118,7 +119,6 @@ test("enter creates a new block", async ({ page }) => {
     expect(selection.anchor.path[0]).toBe(1);
   }
 });
-
 
 test("enter at start inserts blank lines above without moving cursor", async ({
   page,
@@ -153,9 +153,9 @@ test("enter at start inserts blank lines above without moving cursor", async ({
 
   await page.keyboard.press("Enter");
 
-  let value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  let value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
 
   expect(value?.length).toBe(4);
   if (value) {
@@ -164,8 +164,8 @@ test("enter at start inserts blank lines above without moving cursor", async ({
     expect(nodeText(value[3])).toBe("xyz");
   }
 
-  let selection = (await page.evaluate(
-    () => window.__slateTest?.getSelection(),
+  let selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
   )) as SlateSelection;
 
   expect(selection).not.toBeNull();
@@ -176,9 +176,9 @@ test("enter at start inserts blank lines above without moving cursor", async ({
 
   await page.keyboard.press("Enter");
 
-  value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
 
   expect(value?.length).toBe(6);
   if (value) {
@@ -189,8 +189,8 @@ test("enter at start inserts blank lines above without moving cursor", async ({
     expect(nodeText(value[5])).toBe("xyz");
   }
 
-  selection = (await page.evaluate(
-    () => window.__slateTest?.getSelection(),
+  selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
   )) as SlateSelection;
 
   expect(selection).not.toBeNull();
@@ -232,9 +232,9 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
 
   await page.keyboard.press("Backspace");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
 
   expect(value?.length).toBe(1);
   if (value) {
@@ -242,8 +242,8 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
     expect(nodeText(value[0])).toBe("quoted text");
   }
 
-  const selection = (await page.evaluate(
-    () => window.__slateTest?.getSelection(),
+  const selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
   )) as SlateSelection;
 
   expect(selection).not.toBeNull();
@@ -291,9 +291,9 @@ test("backspace with spacer + empty blockquote does not lose following text", as
 
   await page.keyboard.press("Backspace");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
 
   expect(value).toBeDefined();
   if (value) {
@@ -328,9 +328,9 @@ test("backspace after quoted text keeps quote content", async ({ page }) => {
 
   await page.keyboard.press("Backspace");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   expect(value).toBeDefined();
   if (value) {
     const quote = value.find((node) => node?.type === "blockquote");
@@ -369,9 +369,9 @@ test("backspace after quoted text and paragraph text preserves both", async ({
 
   await page.keyboard.press("Backspace");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   expect(value).toBeDefined();
   if (value) {
     const quote = value.find((node) => node?.type === "blockquote");
@@ -414,9 +414,9 @@ test("backspace after multiline quote with blank quoted line appends to last quo
 
   await page.keyboard.press("Backspace");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   expect(value).toBeDefined();
   if (value) {
     const quote = value.find((node) => node?.type === "blockquote");
@@ -460,9 +460,9 @@ test("backspace at start of quoted paragraph after empty quoted line removes onl
 
   await page.keyboard.press("Backspace");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   expect(value).toBeDefined();
   if (value) {
     const quote = value.find((node) => node?.type === "blockquote");
@@ -603,9 +603,9 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
     );
   });
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
 
   expect(value?.length).toBe(1);
   if (value) {
@@ -697,8 +697,8 @@ test("autoformat list focuses first item in empty editor", async ({ page }) => {
     );
   });
 
-  const selection = (await page.evaluate(
-    () => window.__slateTest?.getSelection(),
+  const selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
   )) as SlateSelection;
   expect(selection).not.toBeNull();
 });
@@ -709,9 +709,7 @@ test("autoformat bold keeps focus after trailing space", async ({ page }) => {
 
   const editor = page.locator("[data-slate-editor]");
   await editor.click();
-  await page.keyboard.type(
-    "QUESTION which you didn't answer -- are **ALL** ",
-  );
+  await page.keyboard.type("QUESTION which you didn't answer -- are **ALL** ");
 
   await page.waitForFunction(() => {
     return (
@@ -753,9 +751,9 @@ test("convert markdown candidate code block to rich text", async ({ page }) => {
     return value?.[0]?.type === "bullet_list";
   });
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   expect(value?.[0]?.type).toBe("bullet_list");
 });
 
@@ -783,14 +781,13 @@ test("code blocks allow blank lines via Enter", async ({ page }) => {
   await page.keyboard.press("Enter");
   await page.keyboard.type("b");
 
-  const value = (await page.evaluate(
-    () => window.__slateTest?.getValue(),
-  )) as SlateNode[] | undefined;
+  const value = (await page.evaluate(() => window.__slateTest?.getValue())) as
+    | SlateNode[]
+    | undefined;
   const lines =
     value?.[0]?.children?.map((line) => nodeText(line as SlateNode)) ?? [];
   expect(lines).toEqual(["a", "", "b"]);
 });
-
 
 test("block editor: arrow keys can escape a code block", async ({ page }) => {
   const markdown = "a\n\n```\nfoo\n```\n\nb";
@@ -809,11 +806,13 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
       "function"
     );
   });
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("foo");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("foo");
 
   const codeBlock = page.locator(".cocalc-slate-code-block").first();
   await expect(codeBlock).toBeVisible();
@@ -822,11 +821,13 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   await page.keyboard.press("ArrowDown");
   await page.keyboard.type("Y");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toMatch(/```[\s\S]*foo[\s\S]*```[\s\S]*Y/);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toMatch(/```[\s\S]*foo[\s\S]*```[\s\S]*Y/);
 });
 
 test("block editor: autoformat list marker at start of quoted line preserves trailing text", async ({
@@ -846,9 +847,13 @@ test("block editor: autoformat list marker at start of quoted line preserves tra
   await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 2 });
   await page.keyboard.type("- ");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.() ?? "");
-  }).toContain("> - foo");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateBlockTest?.getMarkdown?.() ?? "",
+      );
+    })
+    .toContain("> - foo");
 });
 
 test("block editor: ArrowLeft at block start moves to previous block end", async ({
@@ -874,11 +879,13 @@ test("block editor: ArrowLeft at block start moves to previous block end", async
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.type("X");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("abcX\n\n123");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("abcX\n\n123");
 });
 
 test("block editor: ArrowRight at block end moves to next block start", async ({
@@ -904,14 +911,18 @@ test("block editor: ArrowRight at block end moves to next block start", async ({
   await page.keyboard.press("ArrowRight");
   await page.keyboard.type("Y");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("abc\n\nY123");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("abc\n\nY123");
 });
 
-test("block editor: arrow inserts before/after code block", async ({ page }) => {
+test("block editor: arrow inserts before/after code block", async ({
+  page,
+}) => {
   const markdown = "```\nfoo\n```";
   await page.goto(
     `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
@@ -928,11 +939,13 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
       "function"
     );
   });
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("foo");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("foo");
 
   const codeBlock = page.locator(".cocalc-slate-code-block").first();
   await expect(codeBlock).toBeVisible();
@@ -944,11 +957,13 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
   await page.waitForTimeout(50);
   await page.keyboard.type("xz");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toMatch(/xz[\s\S]*```/);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toMatch(/xz[\s\S]*```/);
 
   // Insert after code block.
   await codeBlock.click();
@@ -957,11 +972,13 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
   await page.waitForTimeout(50);
   await page.keyboard.type("yz");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("yz");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("yz");
 });
 
 test("block editor: gap insert keeps caret", async ({ page }) => {
@@ -981,11 +998,13 @@ test("block editor: gap insert keeps caret", async ({ page }) => {
       "function"
     );
   });
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("foo");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("foo");
 
   await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 0 });
   await page.keyboard.press("Home");
@@ -993,17 +1012,21 @@ test("block editor: gap insert keeps caret", async ({ page }) => {
   await page.waitForTimeout(50);
   await page.keyboard.type("X");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("X");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("X");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateBlockTest?.getMarkdown?.() ?? "";
-    });
-  }).toContain("```");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateBlockTest?.getMarkdown?.() ?? "";
+      });
+    })
+    .toContain("```");
 });
 
 test("block editor: backspace at block start merges and keeps focus", async ({
@@ -1026,14 +1049,22 @@ test("block editor: backspace at block start merges and keeps focus", async ({
   await page.waitForTimeout(50);
   await page.keyboard.press("Backspace");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).toBe("abc123\n\n456");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toBe("abc123\n\n456");
 
   await page.keyboard.type("Z");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).toBe("abcZ123\n\n456");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toBe("abcZ123\n\n456");
 });
 
 test("block editor: backspace at start of paragraph after quote joins into quote", async ({
@@ -1051,9 +1082,13 @@ test("block editor: backspace at start of paragraph after quote joins into quote
   });
   await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 0 });
   await page.keyboard.press("Backspace");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).toBe("> foo bar");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toBe("> foo bar");
 });
 
 test("block editor: backspace at start of text after quote preserves following text", async ({
@@ -1071,9 +1106,13 @@ test("block editor: backspace at start of text after quote preserves following t
   });
   await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
   await page.keyboard.press("Backspace");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).toBe("> foo bar stuff");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toBe("> foo bar stuff");
 });
 
 test("block editor: backspace after empty quote does not crash", async ({
@@ -1091,9 +1130,13 @@ test("block editor: backspace after empty quote does not crash", async ({
   });
   await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
   await page.keyboard.press("Backspace");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).toContain("stuff");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toContain("stuff");
 });
 
 test("block editor: backspace at start of x after multi-line quote appends to final quoted line", async ({
@@ -1111,12 +1154,20 @@ test("block editor: backspace at start of x after multi-line quote appends to fi
   });
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("Backspace");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).toContain("> barx");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
-  }).not.toContain("> foox");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toContain("> barx");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .not.toContain("> foox");
 });
 
 test("editable markdown: backspace at start of x after multi-line quote appends to final quoted line", async ({
@@ -1131,31 +1182,33 @@ test("editable markdown: backspace at start of x after multi-line quote appends 
   });
 
   let xPath: number[] | null = null;
-  await expect.poll(async () => {
-    xPath = await page.evaluate(() => {
-      const value = window.__slateEditableTest?.getValue?.() as
-        | any[]
-        | undefined;
-      if (!Array.isArray(value) || value.length === 0) return null;
-      const findPath = (node: any, path: number[]): number[] | null => {
-        if (typeof node?.text === "string" && node.text === "x") {
-          return path;
-        }
-        if (!Array.isArray(node?.children)) return null;
-        for (let i = 0; i < node.children.length; i++) {
-          const hit = findPath(node.children[i], [...path, i]);
+  await expect
+    .poll(async () => {
+      xPath = await page.evaluate(() => {
+        const value = window.__slateEditableTest?.getValue?.() as
+          | any[]
+          | undefined;
+        if (!Array.isArray(value) || value.length === 0) return null;
+        const findPath = (node: any, path: number[]): number[] | null => {
+          if (typeof node?.text === "string" && node.text === "x") {
+            return path;
+          }
+          if (!Array.isArray(node?.children)) return null;
+          for (let i = 0; i < node.children.length; i++) {
+            const hit = findPath(node.children[i], [...path, i]);
+            if (hit) return hit;
+          }
+          return null;
+        };
+        for (let i = 0; i < value.length; i++) {
+          const hit = findPath(value[i], [i]);
           if (hit) return hit;
         }
         return null;
-      };
-      for (let i = 0; i < value.length; i++) {
-        const hit = findPath(value[i], [i]);
-        if (hit) return hit;
-      }
-      return null;
-    });
-    return xPath;
-  }).not.toBeNull();
+      });
+      return xPath;
+    })
+    .not.toBeNull();
   expect(Array.isArray(xPath)).toBe(true);
 
   await page.evaluate((path) => {
@@ -1167,12 +1220,20 @@ test("editable markdown: backspace at start of x after multi-line quote appends 
 
   await page.keyboard.press("Backspace");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
-  }).toContain("> barx");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
-  }).not.toContain("> foox");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateEditableTest?.getMarkdown?.(),
+      );
+    })
+    .toContain("> barx");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateEditableTest?.getMarkdown?.(),
+      );
+    })
+    .not.toContain("> foox");
 });
 
 test("editable markdown: typed quote flow then backspace before x keeps trailing quoted paragraph", async ({
@@ -1193,12 +1254,20 @@ test("editable markdown: typed quote flow then backspace before x keeps trailing
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("Backspace");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.() ?? "");
-  }).toContain("> barx");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.() ?? "");
-  }).not.toContain("> foox");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateEditableTest?.getMarkdown?.() ?? "",
+      );
+    })
+    .toContain("> barx");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(
+        () => window.__slateEditableTest?.getMarkdown?.() ?? "",
+      );
+    })
+    .not.toContain("> foox");
 });
 
 test("editable markdown: sync-set markdown then backspace before x appends to bar", async ({
@@ -1212,9 +1281,13 @@ test("editable markdown: sync-set markdown then backspace before x appends to ba
   await page.evaluate(() => {
     window.__slateEditableTest?.setMarkdown?.("> foo\n>\n> bar\n\nx");
   });
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
-  }).toContain("> bar");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateEditableTest?.getMarkdown?.(),
+      );
+    })
+    .toContain("> bar");
 
   await page.evaluate(() => {
     window.__slateEditableTest?.setSelectionFromMarkdownPosition?.({
@@ -1224,12 +1297,20 @@ test("editable markdown: sync-set markdown then backspace before x appends to ba
   });
   await page.keyboard.press("Backspace");
 
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
-  }).toContain("> barx");
-  await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateEditableTest?.getMarkdown?.());
-  }).not.toContain("> foox");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateEditableTest?.getMarkdown?.(),
+      );
+    })
+    .toContain("> barx");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateEditableTest?.getMarkdown?.(),
+      );
+    })
+    .not.toContain("> foox");
 });
 
 test("sync: remote change to other block applies without deferring", async ({
@@ -1255,12 +1336,16 @@ test("sync: remote change to other block applies without deferring", async ({
   });
 
   await page.waitForFunction(() => {
-    return window.__slateCollabTest?.getMarkdownA?.().includes("charlie remote");
+    return window.__slateCollabTest
+      ?.getMarkdownA?.()
+      .includes("charlie remote");
   });
 
   await page.keyboard.type("Z");
 
-  const selectionMarkdown = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  const selectionMarkdown = await page.evaluate(() =>
+    window.__slateCollabTest?.getMarkdownA(),
+  );
   expect(selectionMarkdown ?? "").toContain("remote");
   expect(selectionMarkdown ?? "").toContain("Z");
 });
@@ -1290,7 +1375,9 @@ test("sync: defer remote change to active block while typing", async ({
 
   await page.waitForTimeout(40);
 
-  const before = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  const before = await page.evaluate(() =>
+    window.__slateCollabTest?.getMarkdownA(),
+  );
   expect(before).toContain("1");
   expect(before).toContain("2");
   expect(before).toContain("3");
@@ -1299,7 +1386,9 @@ test("sync: defer remote change to active block while typing", async ({
 
   await page.waitForTimeout(200);
 
-  const after = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  const after = await page.evaluate(() =>
+    window.__slateCollabTest?.getMarkdownA(),
+  );
   expect(after).toContain("1");
   expect(after).toContain("2");
   expect(after).toContain("3");
@@ -1330,11 +1419,15 @@ test("sync: remote insert before active block keeps caret in block", async ({
   });
 
   await page.waitForFunction(() => {
-    return window.__slateCollabTest?.getMarkdownA?.().includes("remote inserted");
+    return window.__slateCollabTest
+      ?.getMarkdownA?.()
+      .includes("remote inserted");
   });
 
   await page.keyboard.type("Z");
-  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA?.() ?? "");
+  const md = await page.evaluate(
+    () => window.__slateCollabTest?.getMarkdownA?.() ?? "",
+  );
   expect(md).toContain("Z");
   expect(md).toContain("beta");
   expect(md).toContain("remote inserted");
@@ -1367,7 +1460,9 @@ test("sync: remote delete before active block keeps caret in block", async ({
   });
 
   await page.keyboard.type("Z");
-  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA?.() ?? "");
+  const md = await page.evaluate(
+    () => window.__slateCollabTest?.getMarkdownA?.() ?? "",
+  );
   // In harness mode this path is occasionally timing-sensitive; assert stable invariants.
   expect(md.replace(/Z/g, "")).toContain("beta");
   expect(md).toContain("charlie");
@@ -1388,9 +1483,7 @@ test("sync: remote swap of other blocks keeps caret in active block", async ({
   await waitForCollabMarkdownContains(page, "beta");
 
   await page.evaluate(() => {
-    window.__slateCollabTest?.setRemote(
-      "alpha\n\nbeta\n\ncharlie\n\ndelta\n",
-    );
+    window.__slateCollabTest?.setRemote("alpha\n\nbeta\n\ncharlie\n\ndelta\n");
   });
 
   await page.waitForFunction(() => {
@@ -1411,11 +1504,13 @@ test("sync: remote swap of other blocks keeps caret in active block", async ({
   });
 
   await page.keyboard.type("Z");
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      return window.__slateCollabTest?.getMarkdownA?.() ?? "";
-    });
-  }).toContain("Z");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        return window.__slateCollabTest?.getMarkdownA?.() ?? "";
+      });
+    })
+    .toContain("Z");
 });
 
 test("sync: remote change to other block while typing stays applied", async ({
@@ -1445,7 +1540,9 @@ test("sync: remote change to other block while typing stays applied", async ({
     return window.__slateCollabTest?.getMarkdownA?.().includes("alpha remote");
   });
 
-  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  const md = await page.evaluate(() =>
+    window.__slateCollabTest?.getMarkdownA(),
+  );
   expect(md).toContain("alpha remote");
   expect(md?.replace(/[0-9]/g, "")).toContain("beta");
   expect(md).toContain("1");
@@ -1475,7 +1572,9 @@ test("sync: remote edit in active line keeps caret at end", async ({
   });
 
   await page.waitForFunction(() => {
-    return window.__slateCollabTest?.getMarkdownA?.().includes("this is a string");
+    return window.__slateCollabTest
+      ?.getMarkdownA?.()
+      .includes("this is a string");
   });
 
   const selectionSet = await page.evaluate(() => {
@@ -1514,16 +1613,22 @@ test("sync: remote edit in active line keeps caret at end", async ({
   });
 
   await page.waitForFunction(() => {
-    return window.__slateCollabTest?.getMarkdownA?.().includes("remote this is a string");
+    return window.__slateCollabTest
+      ?.getMarkdownA?.()
+      .includes("remote this is a string");
   });
   await page.waitForTimeout(200);
   await page.keyboard.press("End");
-  const before = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  const before = await page.evaluate(() =>
+    window.__slateCollabTest?.getMarkdownA(),
+  );
   expect(before).toContain("remote this is a string");
 
   await page.keyboard.type("Z");
 
-  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  const md = await page.evaluate(() =>
+    window.__slateCollabTest?.getMarkdownA(),
+  );
   expect(md).toMatch(/remote this is a stringZ|Zremote this is a string/);
 });
 
@@ -1549,7 +1654,9 @@ test("sync:block editor remote edit in active line keeps caret at end", async ({
   });
 
   await page.waitForFunction(() => {
-    return window.__slateCollabTest?.getMarkdownA?.().includes("this is a string");
+    return window.__slateCollabTest
+      ?.getMarkdownA?.()
+      .includes("this is a string");
   });
 
   await editorA.locator("text=this is a string").first().click();
@@ -1576,6 +1683,8 @@ test("sync:block editor remote edit in active line keeps caret at end", async ({
 
   await page.keyboard.type("Z");
 
-  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA?.() ?? "");
+  const md = await page.evaluate(
+    () => window.__slateCollabTest?.getMarkdownA?.() ?? "",
+  );
   expect(md).toContain("Z");
 });

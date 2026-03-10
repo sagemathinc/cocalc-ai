@@ -3,7 +3,7 @@ import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame
 
 export default function useViewControl(
   table: string,
-  defaultViewId?: string
+  defaultViewId?: string,
 ): {
   view: string | undefined;
   switchToView: (viewId: string) => void;
@@ -20,7 +20,7 @@ export default function useViewControl(
     (viewId: string) => {
       actions.set_frame_tree({ id: frameId, [viewKey]: viewId });
     },
-    [table]
+    [table],
   );
 
   return { view, switchToView };

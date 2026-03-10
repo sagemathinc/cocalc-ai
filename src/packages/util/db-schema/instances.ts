@@ -33,8 +33,7 @@ Table({
     },
     action: {
       type: "map",
-      desc:
-        "{action:'start', started:timestamp, finished:timestamp,  params:?, error:?, rule:?}",
+      desc: "{action:'start', started:timestamp, finished:timestamp,  params:?, error:?, rule:?}",
       date: ["started", "finished"],
     },
   },

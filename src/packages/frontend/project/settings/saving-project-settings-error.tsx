@@ -38,13 +38,12 @@ export default function SavingProjectSettingsError({ project_id }: Props) {
   } else {
     if (obj["name"] != null) {
       // Issue trying to set the project name.
-      description =
-        `Please try a different ${projectLabelLower} name. Names can be between 1 and 100 characters, contain upper and lower case letters, numbers, dashes and periods, and must be unique across all ${projectsLabelLower} that you own. Only the owner of a ${projectLabelLower} can currently change the name.`;
+      description = `Please try a different ${projectLabelLower} name. Names can be between 1 and 100 characters, contain upper and lower case letters, numbers, dashes and periods, and must be unique across all ${projectsLabelLower} that you own. Only the owner of a ${projectLabelLower} can currently change the name.`;
     } else {
       description = (
         <>
-          There was an error trying to save a {projectLabelLower} setting to
-          the server. In particular, the following change failed:
+          There was an error trying to save a {projectLabelLower} setting to the
+          server. In particular, the following change failed:
           <pre style={{ margin: "30px" }}>
             {JSON.stringify(obj, undefined, 2)}
           </pre>

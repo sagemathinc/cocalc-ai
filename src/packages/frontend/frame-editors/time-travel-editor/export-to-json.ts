@@ -11,7 +11,7 @@ import { account_id_to_username } from "./util";
 export async function export_to_json(
   syncdoc,
   path: string,
-  project_id: string
+  project_id: string,
 ): Promise<string> {
   if (syncdoc == null || syncdoc.get_state() != "ready") {
     throw Error("History not yet available.  Try again later.");

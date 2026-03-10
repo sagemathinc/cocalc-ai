@@ -59,7 +59,7 @@ async function resolveServerUser(): Promise<string> {
   }
   try {
     const passwd = await readFile("/etc/passwd", "utf8");
-    return new RegExp(`^${escapeRegex(name)}:`,"m").test(passwd)
+    return new RegExp(`^${escapeRegex(name)}:`, "m").test(passwd)
       ? name
       : "user";
   } catch {

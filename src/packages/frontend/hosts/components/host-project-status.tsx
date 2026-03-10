@@ -6,8 +6,7 @@ function formatProjectStatus(host: Host, compact: boolean): string | null {
   const assigned = status?.total ?? host.projects;
   const provisioned = status?.provisioned;
   const running = status?.running;
-  const hasCounts =
-    assigned != null || provisioned != null || running != null;
+  const hasCounts = assigned != null || provisioned != null || running != null;
   if (!hasCounts) return null;
   const assignedVal = assigned ?? 0;
   const provisionedVal = provisioned ?? 0;

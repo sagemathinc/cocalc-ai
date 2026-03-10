@@ -44,7 +44,9 @@ export function decideInitialWatchSource({
   }
 
   const hasDiskTimestamp =
-    typeof diskMtimeMs === "number" && Number.isFinite(diskMtimeMs) && diskMtimeMs > 0;
+    typeof diskMtimeMs === "number" &&
+    Number.isFinite(diskMtimeMs) &&
+    diskMtimeMs > 0;
   if (!hasDiskTimestamp) {
     return { loadFromDisk: false, reason: "disk_mtime_unavailable" };
   }

@@ -88,7 +88,7 @@ export function getProductId(info: PurchaseInfo): string {
           `m${info.custom_member ? 1 : 0}`,
           `p${period()}`,
           `r${info.custom_ram}`,
-        ]
+        ],
       );
       if (info.custom_dedicated_ram) {
         pid.push(`y${info.custom_dedicated_ram}`);

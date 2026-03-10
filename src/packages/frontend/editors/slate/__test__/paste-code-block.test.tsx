@@ -7,7 +7,9 @@ import { getCodeBlockText } from "../elements/code-block/utils";
 
 test("multiline paste inserts a code block with markdown hint", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -30,7 +32,9 @@ test("multiline paste inserts a code block with markdown hint", () => {
 
 test("multiline paste always offers convert-to-rich-text option", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -53,7 +57,9 @@ test("multiline paste always offers convert-to-rich-text option", () => {
 
 test("single-line plain text paste inserts plain text", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -73,7 +79,9 @@ test("single-line plain text paste inserts plain text", () => {
 
 test("single-line url paste inserts plain text", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -96,7 +104,9 @@ test("single-line url paste inserts plain text", () => {
 
 test("single-line file path paste inserts backticks", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -116,7 +126,9 @@ test("single-line file path paste inserts backticks", () => {
 
 test("single-line email paste inserts plain text", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -137,7 +149,9 @@ test("single-line email paste inserts plain text", () => {
 
 test("multiline paste preserves indentation in code blocks", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -189,7 +203,9 @@ test("multiline paste inside code block preserves newlines", () => {
 
 test("multiline paste with html type does not force code-block mode", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -212,7 +228,9 @@ test("multiline paste with html type does not force code-block mode", () => {
 
 test("forced plain-text paste ignores html formatting payloads", () => {
   const editor = withAutoFormat(withReact(createEditor()));
-  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ] as Descendant[];
   editor.selection = {
     anchor: { path: [0, 0], offset: 0 },
     focus: { path: [0, 0], offset: 0 },
@@ -232,5 +250,7 @@ test("forced plain-text paste ignores html formatting payloads", () => {
   editor.insertData(data as any);
 
   expect((editor.children[0] as any).children[0].text).toBe("-x");
-  expect(editor.children.find((n: any) => n.type === "bullet_list")).toBeFalsy();
+  expect(
+    editor.children.find((n: any) => n.type === "bullet_list"),
+  ).toBeFalsy();
 });

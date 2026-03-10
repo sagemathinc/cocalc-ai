@@ -71,10 +71,7 @@ export function pointAtPath(
   }
 }
 
-export function ensurePoint(
-  editor: Editor,
-  point?: Point | null,
-): Point {
+export function ensurePoint(editor: Editor, point?: Point | null): Point {
   if (point == null) {
     return docStart(editor);
   }
@@ -89,10 +86,7 @@ export function ensurePoint(
   return pointAtPath(editor, point.path, point.offset);
 }
 
-export function ensureRange(
-  editor: Editor,
-  range?: Range | null,
-): Range {
+export function ensureRange(editor: Editor, range?: Range | null): Range {
   if (range == null) {
     const point = docStart(editor);
     return { anchor: point, focus: point };

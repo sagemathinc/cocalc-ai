@@ -13,7 +13,7 @@ import { useCallback } from "react";
 const DEFAULT_WIDTH = 200;
 
 export default function useViewsWidth(
-  table: string
+  table: string,
 ): [width: number, setWidth: (width: number) => void] {
   const [record, setRecord] = useRecord<{
     width?: number;
@@ -27,7 +27,7 @@ export default function useViewsWidth(
     (width: number) => {
       setRecord({ width });
     },
-    [setRecord]
+    [setRecord],
   );
 
   return [record.width ?? DEFAULT_WIDTH, setWidth];

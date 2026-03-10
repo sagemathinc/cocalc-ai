@@ -153,7 +153,9 @@ export function LauncherCustomizeModal({
 
   function saveProjectDefaults() {
     const addQuick = quickCreate.filter((id) => !projectBaseQuick.includes(id));
-    const removeQuick = projectBaseQuick.filter((id) => !quickCreate.includes(id));
+    const removeQuick = projectBaseQuick.filter(
+      (id) => !quickCreate.includes(id),
+    );
     const addApps = apps.filter((id) => !projectBaseAppList.includes(id));
     const removeApps = projectBaseAppList.filter((id) => !apps.includes(id));
     onSaveProject?.({
@@ -297,7 +299,11 @@ export function LauncherCustomizeModal({
     return (
       <Space size={[6, 6]} wrap>
         {ids.map((id) => (
-          <Tag key={`${prefix}-${id}`} color={color} style={{ marginInlineEnd: 0 }}>
+          <Tag
+            key={`${prefix}-${id}`}
+            color={color}
+            style={{ marginInlineEnd: 0 }}
+          >
             {label(id)} <span style={{ opacity: 0.65 }}>({id})</span>
           </Tag>
         ))}
@@ -348,16 +354,16 @@ export function LauncherCustomizeModal({
           type="default"
           onClick={() => setShowMergeDetails(!showMergeDetails)}
         >
-          <Icon name={showMergeDetails ? "caret-down" : "caret-right"} /> How this
-          merges
+          <Icon name={showMergeDetails ? "caret-down" : "caret-right"} /> How
+          this merges
         </Button>
       </div>
       {showMergeDetails && (
         <div style={{ marginBottom: "14px" }}>
           <Typography.Paragraph style={{ marginBottom: "6px" }}>
-            Launcher items are merged additively in this order: built-in defaults, site
-            defaults, project defaults, account defaults, then project-user
-            overrides.
+            Launcher items are merged additively in this order: built-in
+            defaults, site defaults, project defaults, account defaults, then
+            project-user overrides.
           </Typography.Paragraph>
           <Typography.Paragraph style={{ marginBottom: "10px" }}>
             Each layer can add items and explicitly remove inherited items.
@@ -379,7 +385,10 @@ export function LauncherCustomizeModal({
             {contributions.map((layer) => (
               <div
                 key={layer.key}
-                style={{ borderBottom: "1px dashed #f0f0f0", paddingBottom: "8px" }}
+                style={{
+                  borderBottom: "1px dashed #f0f0f0",
+                  paddingBottom: "8px",
+                }}
               >
                 <Typography.Text strong>{layer.title}</Typography.Text>
                 <div style={{ marginTop: "4px" }}>
@@ -423,8 +432,15 @@ export function LauncherCustomizeModal({
             <div>
               <Typography.Text strong>Effective launcher state</Typography.Text>
               <div style={{ marginTop: "4px" }}>
-                <Typography.Text type="secondary">Quick Create: </Typography.Text>
-                {renderTags(quickCreate, "processing", quickLabel, "effective-quick")}
+                <Typography.Text type="secondary">
+                  Quick Create:{" "}
+                </Typography.Text>
+                {renderTags(
+                  quickCreate,
+                  "processing",
+                  quickLabel,
+                  "effective-quick",
+                )}
               </div>
               <div style={{ marginTop: "4px" }}>
                 <Typography.Text type="secondary">Apps: </Typography.Text>
@@ -462,9 +478,7 @@ export function LauncherCustomizeModal({
           </SortableList>
           {hiddenQuick.length > 0 && (
             <div style={{ marginTop: "8px" }}>
-              <Typography.Text type="secondary">
-                Available
-              </Typography.Text>
+              <Typography.Text type="secondary">Available</Typography.Text>
               {hiddenQuick.map((spec) => (
                 <div key={spec.id}>
                   {renderQuickRow(spec.id, false, false, true)}
@@ -500,8 +514,7 @@ export function LauncherCustomizeModal({
                   value,
                   label: (
                     <span>
-                      <Icon name={info.icon ?? "file"} />{" "}
-                      {info.name ?? value}{" "}
+                      <Icon name={info.icon ?? "file"} /> {info.name ?? value}{" "}
                       <span style={{ opacity: 0.6 }}>({value})</span>
                     </span>
                   ),
@@ -537,9 +550,7 @@ export function LauncherCustomizeModal({
           </SortableList>
           {hiddenApps.length > 0 && (
             <div style={{ marginTop: "8px" }}>
-              <Typography.Text type="secondary">
-                Available
-              </Typography.Text>
+              <Typography.Text type="secondary">Available</Typography.Text>
               {hiddenApps.map((spec) => (
                 <div key={spec.id}>
                   {renderAppRow(spec.id, false, false, true)}

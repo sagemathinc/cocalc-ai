@@ -14,7 +14,7 @@ import { aux_file } from "@cocalc/util/misc";
 export async function convert(
   project_id: string,
   path: string,
-  time?: number
+  time?: number,
 ): Promise<ExecOutput> {
   return exec({
     command: "rst2html",

@@ -17,10 +17,7 @@ import {
   AllSiteSettingsCached as ServerSettings,
 } from "@cocalc/util/db-schema/types";
 import { site_settings_conf as CONF } from "@cocalc/util/schema";
-import {
-  decryptSettingValue,
-  encryptSettingValue,
-} from "./secret-settings";
+import { decryptSettingValue, encryptSettingValue } from "./secret-settings";
 export type { ServerSettings };
 
 const L = getLogger("server:server-settings");

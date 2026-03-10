@@ -43,7 +43,9 @@ export function upsertAccountRevocation({
     .prepare(
       `SELECT revoked_before_ms, updated_ms FROM account_revocations WHERE account_id=?`,
     )
-    .get(account_id) as { revoked_before_ms?: number; updated_ms?: number } | undefined;
+    .get(account_id) as
+    | { revoked_before_ms?: number; updated_ms?: number }
+    | undefined;
   const nextRevokedBeforeMs = Math.max(
     Number(existing?.revoked_before_ms ?? 0) || 0,
     Math.max(0, Math.floor(revoked_before_ms || 0)),
@@ -63,7 +65,9 @@ export function upsertAccountRevocation({
   ).run(account_id, nextRevokedBeforeMs, nextUpdatedMs);
 }
 
-export function getAccountRevokedBeforeMs(account_id: string): number | undefined {
+export function getAccountRevokedBeforeMs(
+  account_id: string,
+): number | undefined {
   if (!isValidUUID(account_id)) return;
   ensureTables();
   const db = getDatabase();

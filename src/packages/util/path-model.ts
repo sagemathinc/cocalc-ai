@@ -20,7 +20,10 @@ export function isAbsolutePath(path: string): boolean {
   return typeof path === "string" && path.startsWith("/");
 }
 
-export function normalizeAbsolutePath(input: string, base: string = "/"): string {
+export function normalizeAbsolutePath(
+  input: string,
+  base: string = "/",
+): string {
   const normalizedBase = stripTrailingSlash(
     ensureAbsolute(pathPosix.normalize(base || "/")),
   );

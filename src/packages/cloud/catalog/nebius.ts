@@ -512,17 +512,19 @@ export async function fetchNebiusCatalog(
             region,
             items: await listPublicImagesForRegion(client, region),
           })),
+        ).then((lists) =>
+          lists.flatMap((entry) =>
+            entry.items.map((image) => ({
+              image,
+              region: entry.region,
+            })),
+          ),
         )
-          .then((lists) =>
-            lists.flatMap((entry) =>
-              entry.items.map((image) => ({
-                image,
-                region: entry.region,
-              })),
-            ),
-          )
       : listAllImages(client).then((items) =>
-          items.map((image) => ({ image, region: undefined as string | undefined })),
+          items.map((image) => ({
+            image,
+            region: undefined as string | undefined,
+          })),
         ),
   ]);
 
@@ -616,9 +618,7 @@ export async function fetchNebiusCatalog(
   };
 }
 
-export function nebiusCatalogEntries(
-  catalog: NebiusCatalog,
-): CatalogEntry[] {
+export function nebiusCatalogEntries(catalog: NebiusCatalog): CatalogEntry[] {
   return [
     {
       kind: "regions",

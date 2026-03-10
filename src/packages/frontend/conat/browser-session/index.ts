@@ -10,9 +10,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import type { WebappClient } from "@cocalc/frontend/client/client";
 import type { HubApi } from "@cocalc/conat/hub/api";
-import {
-  BrowserExtensionsRuntime,
-} from "../extensions-runtime";
+import { BrowserExtensionsRuntime } from "../extensions-runtime";
 import { executeBrowserAction } from "./action-engine";
 import {
   asFiniteNonNegative,
@@ -124,7 +122,6 @@ export type BrowserSessionAutomation = {
   start: (account_id: string) => Promise<void>;
   stop: () => Promise<void>;
 };
-
 
 export function createBrowserSessionAutomation({
   client,
@@ -277,7 +274,10 @@ export function createBrowserSessionAutomation({
     ): Promise<BrowserTerminalFrameInfo[]> => {
       assertExecNotCanceled(isCanceled);
       const cleanPath = requireAbsolutePath(path);
-      const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
+      const editorActions = redux.getEditorActions(
+        project_id,
+        cleanPath,
+      ) as any;
       if (
         editorActions == null ||
         typeof editorActions._get_leaf_ids !== "function" ||
@@ -299,7 +299,10 @@ export function createBrowserSessionAutomation({
         const args = normalizeTerminalFrameArgs(node?.get?.("args"));
         const title = `${node?.get?.("title") ?? ""}`.trim() || undefined;
         const number = Number(node?.get?.("number"));
-        const session_path = toTerminalSessionPath({ parentPath: cleanPath, node });
+        const session_path = toTerminalSessionPath({
+          parentPath: cleanPath,
+          node,
+        });
         out.push({
           parent_path: cleanPath,
           frame_id,
@@ -315,9 +318,7 @@ export function createBrowserSessionAutomation({
       return out;
     };
 
-    const sanitizeTerminalDirection = (
-      value: unknown,
-    ): "row" | "col" => {
+    const sanitizeTerminalDirection = (value: unknown): "row" | "col" => {
       return `${value ?? "col"}`.trim() === "row" ? "row" : "col";
     };
 
@@ -333,7 +334,10 @@ export function createBrowserSessionAutomation({
       pid?: number;
     }> => {
       assertExecNotCanceled(isCanceled);
-      const cleanSessionPath = requireAbsolutePath(session_path, "session_path");
+      const cleanSessionPath = requireAbsolutePath(
+        session_path,
+        "session_path",
+      );
       const clean = sanitizeTerminalSpawnOptions(options);
       const command = clean.command ?? "bash";
       const args = clean.args ?? [];
@@ -480,7 +484,11 @@ export function createBrowserSessionAutomation({
         runCells: async (
           path: string,
           ids?: unknown,
-        ): Promise<{ ran: number; mode: "all" | "selected"; ids: string[] }> => {
+        ): Promise<{
+          ran: number;
+          mode: "all" | "selected";
+          ids: string[];
+        }> => {
           assertExecNotCanceled(isCanceled);
           const jupyterActions = await getJupyterActionsForPath({
             project_id,
@@ -488,7 +496,9 @@ export function createBrowserSessionAutomation({
           });
           assertExecNotCanceled(isCanceled);
           const store = jupyterActions.store;
-          const existingCellIds = new Set(asStringArray(store.get("cell_list")));
+          const existingCellIds = new Set(
+            asStringArray(store.get("cell_list")),
+          );
           const wanted = sanitizeCellIdList(ids);
           if (wanted.length === 0) {
             const all = asStringArray(store.get("cell_list"));
@@ -518,7 +528,9 @@ export function createBrowserSessionAutomation({
           });
           assertExecNotCanceled(isCanceled);
           const store = jupyterActions.store;
-          const existingCellIds = new Set(asStringArray(store.get("cell_list")));
+          const existingCellIds = new Set(
+            asStringArray(store.get("cell_list")),
+          );
           for (const update of cleanUpdates) {
             if (!existingCellIds.has(update.id)) {
               throw Error(`no cell with id '${update.id}'`);
@@ -538,7 +550,8 @@ export function createBrowserSessionAutomation({
       notify: {
         show: (message: unknown, opts?: unknown) =>
           notify(undefined, message, opts),
-        info: (message: unknown, opts?: unknown) => notify("info", message, opts),
+        info: (message: unknown, opts?: unknown) =>
+          notify("info", message, opts),
         success: (message: unknown, opts?: unknown) =>
           notify("success", message, opts),
         warning: (message: unknown, opts?: unknown) =>
@@ -562,7 +575,7 @@ export function createBrowserSessionAutomation({
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
           const lockMs = asFiniteNonNegative(lock);
-          const data = await fsApi.readFile(cleanPath, encoding, lockMs) as
+          const data = (await fsApi.readFile(cleanPath, encoding, lockMs)) as
             | string
             | Buffer;
           assertExecNotCanceled(isCanceled);
@@ -591,14 +604,14 @@ export function createBrowserSessionAutomation({
         stat: async (path: string): Promise<BrowserFsStat> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.stat(cleanPath) as BrowserFsStat;
+          const value = (await fsApi.stat(cleanPath)) as BrowserFsStat;
           assertExecNotCanceled(isCanceled);
           return value;
         },
         lstat: async (path: string): Promise<BrowserFsStat> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.lstat(cleanPath) as BrowserFsStat;
+          const value = (await fsApi.lstat(cleanPath)) as BrowserFsStat;
           assertExecNotCanceled(isCanceled);
           return value;
         },
@@ -1123,8 +1136,8 @@ export function createBrowserSessionAutomation({
             if (!cleanSnapshot) {
               throw Error("snapshot must be specified");
             }
-            const getSnapshotFileText = (client.conat_client as any)?.hub?.projects
-              ?.getSnapshotFileText;
+            const getSnapshotFileText = (client.conat_client as any)?.hub
+              ?.projects?.getSnapshotFileText;
             if (typeof getSnapshotFileText !== "function") {
               throw Error("snapshot provider unavailable");
             }
@@ -1197,8 +1210,8 @@ export function createBrowserSessionAutomation({
             if (!cleanBackupId) {
               throw Error("backup_id must be specified");
             }
-            const getBackupFileText = (client.conat_client as any)?.hub?.projects
-              ?.getBackupFileText;
+            const getBackupFileText = (client.conat_client as any)?.hub
+              ?.projects?.getBackupFileText;
             if (typeof getBackupFileText !== "function") {
               throw Error("backup provider unavailable");
             }
@@ -1247,7 +1260,9 @@ export function createBrowserSessionAutomation({
               const cleanHash = `${hash ?? ""}`.trim();
               if (!cleanHash) continue;
               const seconds = Number(ts);
-              const wall_time = Number.isFinite(seconds) ? seconds * 1000 : undefined;
+              const wall_time = Number.isFinite(seconds)
+                ? seconds * 1000
+                : undefined;
               out.push({
                 hash: cleanHash,
                 ...(wall_time != null ? { wall_time } : {}),
@@ -1454,9 +1469,7 @@ export function createBrowserSessionAutomation({
         preludeResult.value.dispose();
       }
 
-      const scriptResult = await vm.evalCodeAsync(
-        `(() => { ${script}\n})()`,
-      );
+      const scriptResult = await vm.evalCodeAsync(`(() => { ${script}\n})()`);
       let sandboxValue: unknown;
       if (scriptResult.error) {
         const message = vm.dump(scriptResult.error);
@@ -1529,7 +1542,12 @@ export function createBrowserSessionAutomation({
       const snapshot = buildSessionSnapshot(client);
       return flattenOpenFiles(snapshot.open_projects);
     },
-    openFile: async ({ project_id, path, foreground = true, foreground_project = true }) =>
+    openFile: async ({
+      project_id,
+      path,
+      foreground = true,
+      foreground_project = true,
+    }) =>
       await openFileInProject({
         project_id,
         path,
@@ -1551,7 +1569,8 @@ export function createBrowserSessionAutomation({
       };
     },
     action: async ({ project_id, action, posture, policy }) => {
-      const actionName = `${(action as any)?.name ?? ""}`.trim() as BrowserActionName;
+      const actionName =
+        `${(action as any)?.name ?? ""}`.trim() as BrowserActionName;
       if (!actionName) {
         throw Error("action.name must be specified");
       }
@@ -1566,7 +1585,8 @@ export function createBrowserSessionAutomation({
           ? ((action as any).actions as Array<{ name?: string }>)
           : [];
         for (let i = 0; i < steps.length; i++) {
-          const stepName = `${steps[i]?.name ?? ""}`.trim() as BrowserActionName;
+          const stepName =
+            `${steps[i]?.name ?? ""}`.trim() as BrowserActionName;
           if (!stepName || stepName === "batch") {
             throw Error(
               `invalid batch step ${i}: action name must be a non-empty non-batch action`,
@@ -1588,8 +1608,7 @@ export function createBrowserSessionAutomation({
     startExec: async ({ project_id, code, posture, policy }) =>
       execOperations.startExec({ project_id, code, posture, policy }),
     getExec: async ({ exec_id }) => execOperations.getExec({ exec_id }),
-    cancelExec: async ({ exec_id }) =>
-      execOperations.cancelExec({ exec_id }),
+    cancelExec: async ({ exec_id }) => execOperations.cancelExec({ exec_id }),
   };
 
   return {

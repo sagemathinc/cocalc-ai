@@ -11,9 +11,7 @@ test("stripBlankParagraphs removes blank_line paragraphs", () => {
 });
 
 test("stripBlankParagraphs keeps non-whitespace paragraphs even if blank flag is set", () => {
-  const doc = [
-    { type: "paragraph", blank: true, children: [{ text: "bar" }] },
-  ];
+  const doc = [{ type: "paragraph", blank: true, children: [{ text: "bar" }] }];
   const withoutBlanks = stripBlankParagraphs(doc as any);
   expect(withoutBlanks).toHaveLength(1);
   expect(withoutBlanks[0]?.["type"]).toBe("paragraph");

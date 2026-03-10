@@ -70,7 +70,9 @@ export class JupyterActions extends JupyterActions0 {
       logger.debug(
         "initIpywidgetsSupport: NOT WORKING -- ipywidgets_state not defined",
       );
-      throw Error(`syncdb's ipywidgets_state must be defined! -- initIpywidgetsSupport ${this.syncdb.path}`);
+      throw Error(
+        `syncdb's ipywidgets_state must be defined! -- initIpywidgetsSupport ${this.syncdb.path}`,
+      );
     }
     this.syncdb.ipywidgets_state.on(
       "change",
@@ -81,7 +83,9 @@ export class JupyterActions extends JupyterActions0 {
 
   capture_output_message = (mesg: any): boolean => {
     if (this.syncdb.ipywidgets_state == null) {
-      throw Error("syncdb's ipywidgets_state must be defined! -- capture_output_message");
+      throw Error(
+        "syncdb's ipywidgets_state must be defined! -- capture_output_message",
+      );
     }
     return this.syncdb.ipywidgets_state.capture_output_message(mesg);
   };
@@ -89,7 +93,9 @@ export class JupyterActions extends JupyterActions0 {
   process_comm_message_from_kernel = async (mesg: any): Promise<void> => {
     logger.debug("process_comm_message_from_kernel", mesg.header);
     if (this.syncdb.ipywidgets_state == null) {
-      throw Error("syncdb's ipywidgets_state must be defined! -- process_comm_message_from_kernel");
+      throw Error(
+        "syncdb's ipywidgets_state must be defined! -- process_comm_message_from_kernel",
+      );
     }
     await this.syncdb.ipywidgets_state.process_comm_message_from_kernel(mesg);
   };
@@ -110,7 +116,9 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
     if (this.syncdb.ipywidgets_state == null) {
-      throw Error("syncdb's ipywidgets_state must be defined! -- handle_ipywidgets_state_change");
+      throw Error(
+        "syncdb's ipywidgets_state must be defined! -- handle_ipywidgets_state_change",
+      );
     }
     for (const key of keys) {
       const [, model_id, type] = JSON.parse(key);

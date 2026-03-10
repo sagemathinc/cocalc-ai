@@ -29,9 +29,10 @@ type UseBlockContainerEventsArgs = {
   searchHook: SearchHook;
   selectionRange: SelectionRange | null;
   blockSelection: { anchor: number; focus: number } | null;
-  blockSelectionRef: React.MutableRefObject<
-    { anchor: number; focus: number } | null
-  >;
+  blockSelectionRef: React.MutableRefObject<{
+    anchor: number;
+    focus: number;
+  } | null>;
   containerRef: React.MutableRefObject<HTMLDivElement | null>;
   blocksRef: React.MutableRefObject<string[]>;
   focusBlock: (index: number, position: "start" | "end") => void;
@@ -217,7 +218,11 @@ export function useBlockContainerEvents({
       if (focusedIndex != null) {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
           const editor = editorMapRef.current.get(focusedIndex);
-          if (editor && editor.selection && Range.isCollapsed(editor.selection)) {
+          if (
+            editor &&
+            editor.selection &&
+            Range.isCollapsed(editor.selection)
+          ) {
             const root = { children: editor.children } as Node;
             const normalized = normalizePointForDoc(
               root,

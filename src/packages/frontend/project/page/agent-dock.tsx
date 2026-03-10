@@ -1,10 +1,4 @@
-import {
-  Alert,
-  Button,
-  Select,
-  Space,
-  Tooltip,
-} from "antd";
+import { Alert, Button, Select, Space, Tooltip } from "antd";
 import {
   useCallback,
   useEffect,
@@ -14,12 +8,14 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import Draggable from "react-draggable";
-import { redux, useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
-import {
-  watchAgentSessionsForProject,
-} from "@cocalc/frontend/chat/agent-session-index";
+import { watchAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
 import {
   getChatActions,
   initChat,
@@ -122,7 +118,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
 
   useEffect(() => {
     if (!session) return;
-    const updated = sessions.find((item) => item.session_id === session.session_id);
+    const updated = sessions.find(
+      (item) => item.session_id === session.session_id,
+    );
     if (updated) {
       setSession(updated);
     }
@@ -145,8 +143,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     window.addEventListener(AGENT_DOCK_OPEN_EVENT, onOpen as EventListener);
     window.addEventListener(AGENT_DOCK_CLOSE_EVENT, onClose as EventListener);
     return () => {
-      window.removeEventListener(AGENT_DOCK_OPEN_EVENT, onOpen as EventListener);
-      window.removeEventListener(AGENT_DOCK_CLOSE_EVENT, onClose as EventListener);
+      window.removeEventListener(
+        AGENT_DOCK_OPEN_EVENT,
+        onOpen as EventListener,
+      );
+      window.removeEventListener(
+        AGENT_DOCK_CLOSE_EVENT,
+        onClose as EventListener,
+      );
     };
   }, [project_id]);
 
@@ -219,11 +223,17 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       const maxHeight = Math.max(MIN_DOCK_HEIGHT, window.innerHeight - 48);
       const width = Math.max(
         MIN_DOCK_WIDTH,
-        Math.min(maxWidth, resizeState.startWidth + (evt.clientX - resizeState.startX)),
+        Math.min(
+          maxWidth,
+          resizeState.startWidth + (evt.clientX - resizeState.startX),
+        ),
       );
       const height = Math.max(
         MIN_DOCK_HEIGHT,
-        Math.min(maxHeight, resizeState.startHeight + (evt.clientY - resizeState.startY)),
+        Math.min(
+          maxHeight,
+          resizeState.startHeight + (evt.clientY - resizeState.startY),
+        ),
       );
       setDockSize({
         width: Math.round(width),
@@ -307,7 +317,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
 
   if (!session || !is_active) return null;
 
-  const width = IS_MOBILE ? Math.max(MIN_DOCK_WIDTH, viewport.width - 24) : dockSize.width;
+  const width = IS_MOBILE
+    ? Math.max(MIN_DOCK_WIDTH, viewport.width - 24)
+    : dockSize.width;
   const height = IS_MOBILE
     ? Math.max(MIN_DOCK_HEIGHT, Math.round(viewport.height * 0.72))
     : dockSize.height;
@@ -373,7 +385,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 showSearch
                 optionFilterProp="label"
                 onChange={(value) => {
-                  const next = sessions.find((item) => item.session_id === value);
+                  const next = sessions.find(
+                    (item) => item.session_id === value,
+                  );
                   if (next) {
                     setSession(next);
                   }
@@ -395,7 +409,9 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   </Button>
                 </Tooltip>
                 <Tooltip title={`Agent chat font size: ${fontSize}px`}>
-                  <span style={{ minWidth: 24, textAlign: "center", fontSize: 12 }}>
+                  <span
+                    style={{ minWidth: 24, textAlign: "center", fontSize: 12 }}
+                  >
                     {fontSize}
                   </span>
                 </Tooltip>
@@ -422,14 +438,23 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 >
                   Open Chat File
                 </Button>
-                <Button size="small" type="text" onClick={() => setSession(null)}>
+                <Button
+                  size="small"
+                  type="text"
+                  onClick={() => setSession(null)}
+                >
                   <Icon name="times" />
                 </Button>
               </Space>
             </div>
           </div>
           {error ? (
-            <Alert type="error" showIcon message={error} style={{ margin: 8 }} />
+            <Alert
+              type="error"
+              showIcon
+              message={error}
+              style={{ margin: 8 }}
+            />
           ) : null}
           <div style={{ flex: 1, minHeight: 0 }}>
             {chatActions ? (

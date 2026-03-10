@@ -6,7 +6,9 @@ import Compose from "./compose";
 let latestMarkdownInputProps: any = null;
 
 jest.mock("antd", () => ({
-  Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  Button: ({ children, ...props }: any) => (
+    <button {...props}>{children}</button>
+  ),
   Flex: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   Input: ({ onChange, onFocus, onKeyDown, value, ...props }: any) => (
     <input

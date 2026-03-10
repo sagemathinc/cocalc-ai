@@ -42,11 +42,7 @@ interface Props {
   settings: CourseSettingsRecord;
 }
 
-export function ConfigurationPanel({
-  name,
-  project_id,
-  settings,
-}: Props) {
+export function ConfigurationPanel({ name, project_id, settings }: Props) {
   const actions = useActions<CourseActions>({ name });
 
   return (
@@ -58,10 +54,7 @@ export function ConfigurationPanel({
     >
       <Row>
         <Col md={12} style={{ padding: "15px 15px 15px 0" }}>
-          <UpgradeConfiguration
-            settings={settings}
-            actions={actions}
-          />
+          <UpgradeConfiguration settings={settings} actions={actions} />
           <br />
           <TitleAndDescription
             actions={actions}
@@ -113,10 +106,7 @@ export function ConfigurationPanel({
   );
 }
 
-export function UpgradeConfiguration({
-  settings,
-  actions,
-}) {
+export function UpgradeConfiguration({ settings, actions }) {
   const is_commercial = useTypedRedux("customize", "is_commercial");
 
   return (

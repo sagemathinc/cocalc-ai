@@ -11,16 +11,8 @@ import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-cli
 
 const logger = getLogger("server:projects:copy-db");
 
-const ACTIVE_STATUSES: ProjectCopyState[] = [
-  "queued",
-  "applying",
-  "failed",
-];
-const TERMINAL_STATUSES: ProjectCopyState[] = [
-  "done",
-  "canceled",
-  "expired",
-];
+const ACTIVE_STATUSES: ProjectCopyState[] = ["queued", "applying", "failed"];
+const TERMINAL_STATUSES: ProjectCopyState[] = ["done", "canceled", "expired"];
 
 async function refreshCopyOperation(op_id: string): Promise<void> {
   try {
@@ -181,7 +173,9 @@ async function maybeCleanupSnapshot({
   const activeCount = await countActiveSnapshotRefs(snapshot_id);
   if (activeCount > 0) return;
   try {
-    await (await getProjectFileServerClient({ project_id: src_project_id })).deleteBackup({
+    await (
+      await getProjectFileServerClient({ project_id: src_project_id })
+    ).deleteBackup({
       project_id: src_project_id,
       id: snapshot_id,
     });
@@ -416,7 +410,9 @@ export async function cancelCopiesByOpId({
   include_applying?: boolean;
 }): Promise<ProjectCopyRow[]> {
   await expireCopies();
-  const statuses = include_applying ? ["queued", "failed", "applying"] : ["queued", "failed"];
+  const statuses = include_applying
+    ? ["queued", "failed", "applying"]
+    : ["queued", "failed"];
   const { rows } = await pool().query(
     `
       UPDATE project_copies
@@ -554,7 +550,14 @@ export async function updateCopyStatus({
         AND dest_path=$4
       RETURNING *
     `,
-    [src_project_id, src_path, dest_project_id, dest_path, status, last_error ?? null],
+    [
+      src_project_id,
+      src_path,
+      dest_project_id,
+      dest_path,
+      status,
+      last_error ?? null,
+    ],
   );
   const updated = rows[0] as ProjectCopyRow | undefined;
   if (

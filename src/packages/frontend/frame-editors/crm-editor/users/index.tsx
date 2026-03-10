@@ -53,7 +53,7 @@ export default function Account() {
               title={`${users.length} ${plural(
                 users.length,
                 "Match",
-                "Matches"
+                "Matches",
               )} for ${query} ${
                 users.length >= 100 ? "(search limit is 100)" : ""
               }`}

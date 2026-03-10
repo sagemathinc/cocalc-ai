@@ -78,7 +78,7 @@ export default function ToolPanel<Params>({
   const { loadPresets, savePresets } = presetManager;
   const frame = useFrameContext();
   const [selected, setSelected0] = useState<number>(
-    frame.desc.get(`${tool}Id`) ?? 0
+    frame.desc.get(`${tool}Id`) ?? 0,
   );
   const setSelected = (id) => {
     setSelected0(id);
@@ -89,7 +89,7 @@ export default function ToolPanel<Params>({
   };
   const [showEditParams, setShowEditParams] = useState<boolean>(false);
   const [presets, setPresets0] = useState<{ [id: number]: Params }>(
-    loadPresets()
+    loadPresets(),
   );
   function setPresets(presets) {
     savePresets(presets);
@@ -130,8 +130,7 @@ export default function ToolPanel<Params>({
               </div>
               {!showEditParams && (
                 <div style={{ color: "#666" }}>
-                  ({id == selected ? "click" : "double click"} to
-                  customize)
+                  ({id == selected ? "click" : "double click"} to customize)
                 </div>
               )}
             </div>
@@ -331,7 +330,7 @@ function EditParams({ params, set, Preview, editableParams, style, onClose }) {
                 if (time != null) {
                   set(
                     "countdown",
-                    time.second() + time.minute() * 60 + time.hour() * 60 * 60
+                    time.second() + time.minute() * 60 + time.hour() * 60 * 60,
                   );
                 } else {
                   set("countdown", null);
@@ -411,7 +410,7 @@ export function getElement(tool: Tool, id: number): Partial<Element> {
 export function getPresetManager<Params extends AllParams>(
   tool: Tool,
   DEFAULTS: Params[],
-  extraIds?: { [id: number]: Params } // typical for negative id's; hardcoded.
+  extraIds?: { [id: number]: Params }, // typical for negative id's; hardcoded.
 ): PresetManager<Params> {
   const key = `whiteboard_${tool}`;
 
@@ -429,7 +428,7 @@ export function getPresetManager<Params extends AllParams>(
     let changed: { [id: number]: Params } = {};
     try {
       changed = JSON.parse(
-        redux.getStore("account").getIn(["editor_settings", key], "{}")
+        redux.getStore("account").getIn(["editor_settings", key], "{}"),
       );
     } catch (_err) {
       changed = {};

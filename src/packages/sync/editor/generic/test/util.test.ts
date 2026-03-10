@@ -72,7 +72,7 @@ describe("test doing a 3-way merge", () => {
     const merge = three_way_merge({ base, local, remote });
     // Merging captures both changes.
     expect(merge).toBe(
-      "CoCalc is software for collaborative calculation in the cloud."
+      "CoCalc is software for collaborative calculation in the cloud.",
     );
   });
 });

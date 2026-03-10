@@ -33,9 +33,8 @@ let hostInfo: Pick<HostProjectStatus, "host_id" | "host"> | undefined;
 const logger = getLogger("project-host:master-status");
 let resendTimer: NodeJS.Timeout | undefined;
 let masterClient: Client | undefined;
-let pendingInventory:
-  | { project_ids: string[]; checked_at: number }
-  | null = null;
+let pendingInventory: { project_ids: string[]; checked_at: number } | null =
+  null;
 
 async function deleteProjectDataLocal(project_id: string) {
   try {

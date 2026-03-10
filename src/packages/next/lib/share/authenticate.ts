@@ -54,7 +54,7 @@ export default function isAuthenticated({
     // do a double check...
     res.statusCode = 401;
     res.end(
-      "auth is misconfigured  -- invalid auth field in the public_paths database."
+      "auth is misconfigured  -- invalid auth field in the public_paths database.",
     );
     return false;
   }

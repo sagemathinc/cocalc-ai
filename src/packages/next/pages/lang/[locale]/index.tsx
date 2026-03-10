@@ -201,7 +201,6 @@ function Features() {
     );
   }
 
-
   function jupyterLatex() {
     return (
       <Pitch
@@ -471,11 +470,11 @@ function Features() {
     }
   }
 
-      return (
-        <>
-          {realtimeChat()}
-          {jupyterLatex()}
-          {vendorOpenWorld()}
+  return (
+    <>
+      {realtimeChat()}
+      {jupyterLatex()}
+      {vendorOpenWorld()}
       {teachingLinux()}
       {gettingStarted()}
     </>

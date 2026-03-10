@@ -27,11 +27,7 @@ const DEFINITION = `CoCalc Environment Variables:
 import { dirname, join, resolve } from "path";
 import { ConnectionOptions } from "node:tls";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import {
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-} from "crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync } from "crypto";
 import { isEmpty } from "lodash";
 import basePath from "@cocalc/backend/base-path";
 import port from "@cocalc/backend/port";

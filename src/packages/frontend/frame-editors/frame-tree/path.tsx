@@ -70,7 +70,11 @@ export const Path: React.FC<Props> = React.memo(
           copyTimeoutRef.current = window.setTimeout(() => {
             setCopied(false);
           }, 1200);
-          message.success({ content: "Copied path", key: "copy-path", duration: 1.2 });
+          message.success({
+            content: "Copied path",
+            key: "copy-path",
+            duration: 1.2,
+          });
         }}
       >
         {x?.icon && <Icon name={x.icon} />} {path}
@@ -95,5 +99,5 @@ export const Path: React.FC<Props> = React.memo(
         )}
       </div>
     );
-  }
+  },
 );

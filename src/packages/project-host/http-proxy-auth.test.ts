@@ -1,4 +1,7 @@
-import { buildProjectHostSessionCookie, projectCookiePath } from "./http-proxy-cookies";
+import {
+  buildProjectHostSessionCookie,
+  projectCookiePath,
+} from "./http-proxy-cookies";
 
 describe("project-host HTTP session cookie", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";

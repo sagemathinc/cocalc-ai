@@ -19,7 +19,8 @@ function splitCodeBlock({ editor }) {
   Editor.withoutNormalizing(editor, () => {
     Transforms.splitNodes(editor, {
       at: selection,
-      match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
+      match: (node) =>
+        Element.isElement(node) && isCodeLikeBlockType(node.type),
     });
   });
   return true;

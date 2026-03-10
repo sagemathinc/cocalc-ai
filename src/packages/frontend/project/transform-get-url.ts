@@ -13,9 +13,10 @@ import { DNS } from "@cocalc/util/theme";
 const COCALC_SHARE_SERVER = `https://share.${DNS}/share/`;
 
 // returns something like {command:'wget', args:['http://...']}
-export function transform_get_url(
-  url: string
-): { command: string; args: string[] } {
+export function transform_get_url(url: string): {
+  command: string;
+  args: string[];
+} {
   let args: string[], command: string;
   const URL_TRANSFORMS = {
     "http://trac.sagemath.org/attachment/ticket/":
@@ -66,7 +67,7 @@ export function transform_get_url(
     if (startswith(url, "http://nbviewer.jupyter.org/github/")) {
       url = url.replace(
         "http://nbviewer.jupyter.org/github/",
-        "https://raw.githubusercontent.com/"
+        "https://raw.githubusercontent.com/",
       );
       url = url.replace("/blob/", "/");
     }

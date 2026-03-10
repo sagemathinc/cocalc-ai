@@ -4,4 +4,4 @@
  */
 
 export const MainPages = ["cards", "subscriptions", "receipts"] as const;
-export type MainPagesType = typeof MainPages[number];
+export type MainPagesType = (typeof MainPages)[number];

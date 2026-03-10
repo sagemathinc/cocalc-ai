@@ -88,7 +88,7 @@ export const MarksBar: React.FC<MarksBarProps> = (props: MarksBarProps) => {
         mark={mark}
         active={marks[mark] ?? false}
         editor={editor}
-      />
+      />,
     );
   }
   v.push(<CodeButton key={"code2"} editor={editor} />);
@@ -96,7 +96,7 @@ export const MarksBar: React.FC<MarksBarProps> = (props: MarksBarProps) => {
   v.push(<FontSize key={"size"} editor={editor} size={getSizeMark(marks)} />);
   v.push(<Heading key="heading" editor={editor} />);
   v.push(
-    <ColorButton key={"color"} editor={editor} color={getColorMark(marks)} />
+    <ColorButton key={"color"} editor={editor} color={getColorMark(marks)} />,
   );
   v.push(<FontFamily key={"font"} editor={editor} font={getFontMark(marks)} />);
   return (

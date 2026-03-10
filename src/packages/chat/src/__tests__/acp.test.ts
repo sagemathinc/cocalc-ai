@@ -29,7 +29,9 @@ describe("appendStreamMessage", () => {
     );
 
     expect(merged).toHaveLength(1);
-    expect((merged[0] as any).event.text).toBe("**First block**\n\n**Second block**");
+    expect((merged[0] as any).event.text).toBe(
+      "**First block**\n\n**Second block**",
+    );
   });
 
   test("does not change plain token streaming", () => {
@@ -48,7 +50,9 @@ describe("appendStreamMessage", () => {
     );
 
     expect(merged).toHaveLength(1);
-    expect((merged[0] as any).event.text).toBe("**First block** **Second block**");
+    expect((merged[0] as any).event.text).toBe(
+      "**First block** **Second block**",
+    );
   });
 
   test("inserts a separating space between sentence chunks", () => {
@@ -89,9 +93,7 @@ describe("response text helpers", () => {
   });
 
   test("falls back to message text when summary is absent", () => {
-    const events: AcpStreamMessage[] = [
-      textEvent("message", "final", 1),
-    ];
+    const events: AcpStreamMessage[] = [textEvent("message", "final", 1)];
     expect(getBestResponseText(events)).toBe("final");
   });
 

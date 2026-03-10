@@ -1,6 +1,10 @@
 #!/usr/bin/env ts-node
 import { randomUUID } from "node:crypto";
-import { closeDatabase, getDatabase, initDatabase } from "../../sqlite/database";
+import {
+  closeDatabase,
+  getDatabase,
+  initDatabase,
+} from "../../sqlite/database";
 import {
   claimNextQueuedAcpJobForThread,
   enqueueAcpJob,
@@ -78,10 +82,7 @@ describe("acp job queue ordering", () => {
       path: older.path,
       thread_id: older.thread_id,
     });
-    expect(queued.map((row) => row.op_id)).toEqual([
-      older.op_id,
-      newer.op_id,
-    ]);
+    expect(queued.map((row) => row.op_id)).toEqual([older.op_id, newer.op_id]);
 
     const first = claimNextQueuedAcpJobForThread({
       project_id: older.project_id,
@@ -119,10 +120,7 @@ describe("acp job queue ordering", () => {
       path: older.path,
       thread_id: older.thread_id,
     });
-    expect(queued.map((row) => row.op_id)).toEqual([
-      newer.op_id,
-      older.op_id,
-    ]);
+    expect(queued.map((row) => row.op_id)).toEqual([newer.op_id, older.op_id]);
 
     const first = claimNextQueuedAcpJobForThread({
       project_id: older.project_id,

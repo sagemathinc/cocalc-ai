@@ -27,10 +27,7 @@ import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
-import {
-  isCodeLikeBlockType,
-  toCodeLines,
-} from "../elements/code-block/utils";
+import { isCodeLikeBlockType, toCodeLines } from "../elements/code-block/utils";
 import { ensureRange, getNodeAt, slateDebug } from "../slate-util";
 
 function rememberAutoformatSelection(editor: Editor, selection: Range): void {
@@ -179,7 +176,10 @@ function autoformatMarkAtCursor(
     return false;
   }
 
-  const inner = text.slice(openIndex + marker.length, text.length - marker.length);
+  const inner = text.slice(
+    openIndex + marker.length,
+    text.length - marker.length,
+  );
   if (inner.length === 0) {
     return false;
   }
@@ -403,7 +403,10 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
       });
       editor.selection = { anchor: afterPoint, focus: afterPoint };
       (editor as any).lastSelection = { anchor: afterPoint, focus: afterPoint };
-      rememberAutoformatSelection(editor, { anchor: afterPoint, focus: afterPoint });
+      rememberAutoformatSelection(editor, {
+        anchor: afterPoint,
+        focus: afterPoint,
+      });
     } catch {
       // ignore selection failures
     }
@@ -556,7 +559,11 @@ function autoformatListAtStart(editor: Editor): boolean {
     try {
       const top = (editor.children || []).map((n: any, idx: number) => ({
         idx,
-        type: Element.isElement(n) ? n.type : Text.isText(n) ? "text" : typeof n,
+        type: Element.isElement(n)
+          ? n.type
+          : Text.isText(n)
+            ? "text"
+            : typeof n,
         spacer: n.spacer ?? undefined,
         children: Array.isArray(n.children)
           ? n.children.map((c: any) =>
@@ -698,7 +705,9 @@ export const withAutoFormat = (editor) => {
       const hasTypes = dataTypes.length > 0;
       const isPlainTextOnly =
         !hasTypes ||
-        (dataTypes.length === 1 && dataTypes[0] === "text/plain" && text !== "");
+        (dataTypes.length === 1 &&
+          dataTypes[0] === "text/plain" &&
+          text !== "");
       if (isPlainTextOnly && lineCount === 1) {
         const trimmed = normalized.trim();
         if (trimmed.length > 0) {
@@ -890,7 +899,8 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   const markAutoformat = (applied: boolean): boolean => {
     if (applied) {
       const pendingSelection =
-        (editor as any).__autoformatSelection ?? ensureRange(editor, editor.selection);
+        (editor as any).__autoformatSelection ??
+        ensureRange(editor, editor.selection);
       (editor as any).__autoformatSelection = pendingSelection;
     }
     return applied;
@@ -917,8 +927,10 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   if (markAutoformat(autoformatMarkAtCursor(editor, "__", "bold"))) return true;
   if (markAutoformat(autoformatMarkAtCursor(editor, "~~", "strikethrough")))
     return true;
-  if (markAutoformat(autoformatMarkAtCursor(editor, "*", "italic"))) return true;
-  if (markAutoformat(autoformatMarkAtCursor(editor, "_", "italic"))) return true;
+  if (markAutoformat(autoformatMarkAtCursor(editor, "*", "italic")))
+    return true;
+  if (markAutoformat(autoformatMarkAtCursor(editor, "_", "italic")))
+    return true;
 
   // If we wanted the format to always be undo-able.
   // editor.saveValue(true);
@@ -941,7 +953,11 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
         position: selection.focus.offset,
         properties: node, // important to preserve text properties on split (seems fine to leave text field)
       });
-      r = markdownAutoformatAt(editor, selection.focus.path, paragraphTextOverride);
+      r = markdownAutoformatAt(
+        editor,
+        selection.focus.path,
+        paragraphTextOverride,
+      );
     });
   } catch (err) {
     console.warn(`SLATE -- issue in markdownAutoformat ${err}`);
@@ -955,7 +971,8 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   }
   if (r) {
     const pendingSelection =
-      (editor as any).__autoformatSelection ?? ensureRange(editor, editor.selection);
+      (editor as any).__autoformatSelection ??
+      ensureRange(editor, editor.selection);
     (editor as any).__autoformatSelection = pendingSelection;
   }
   return r;
@@ -1057,16 +1074,17 @@ function markdownAutoformatAt(
 
   const paragraphTextAtStart =
     path.length >= 2 && start <= 0
-      ? paragraphTextOverride ??
+      ? (paragraphTextOverride ??
         (() => {
           const paragraphEntry = Editor.above(editor, {
             at: path,
-            match: (node) => Element.isElement(node) && node.type === "paragraph",
+            match: (node) =>
+              Element.isElement(node) && node.type === "paragraph",
           });
           if (!paragraphEntry) return "";
           const [, paragraphPath] = paragraphEntry;
           return Editor.string(editor, paragraphPath).trimRight();
-        })()
+        })())
       : undefined;
 
   // If a potential *block* marker is immediately followed by text (e.g. "-x"),
@@ -1105,14 +1123,15 @@ function markdownAutoformatAt(
       // If a list marker was typed without a space (e.g., "-foo") and
       // the autoformat is triggered by the space key, insert the missing
       // space so markdown parsing recognizes the block marker.
-      const markerMatch = text.match(/^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)(?=\S)/);
+      const markerMatch = text.match(
+        /^(#{1,6}|[-*+]|\d+[.)]|>|```|\$\$)(?=\S)/,
+      );
       if (markerMatch) {
         const marker = markerMatch[1];
         text = marker + " " + text.slice(marker.length);
       }
     }
   }
-
 
   // make a copy to avoid any caching issues (??).
   let doc = [...(markdown_to_slate(text, true) as any)];
@@ -1168,7 +1187,9 @@ function markdownAutoformatAt(
     doc.length == 1 &&
     doc[0].type == "paragraph" &&
     doc[0].children.every(
-      (child) => Text.isText(child) || (Element.isElement(child) && Editor.isInline(editor, child)),
+      (child) =>
+        Text.isText(child) ||
+        (Element.isElement(child) && Editor.isInline(editor, child)),
     );
 
   if (!isInline) {
@@ -1209,7 +1230,7 @@ function markdownAutoformatAt(
     const operations = slateDiff(
       [node],
       children,
-      path.slice(0, path.length - 1)
+      path.slice(0, path.length - 1),
     );
 
     // Adjust the last entry in path for each operation computed
@@ -1310,7 +1331,11 @@ function markdownAutoformatAt(
         nextNode = Editor.node(editor, afterPath)[0] as Node;
       }
       if (!Element.isElement(nextNode) || nextNode.type !== "paragraph") {
-        Transforms.insertNodes(editor, { type: "paragraph", children: [{ text: "" }] }, { at: afterPath });
+        Transforms.insertNodes(
+          editor,
+          { type: "paragraph", children: [{ text: "" }] },
+          { at: afterPath },
+        );
       }
       const focus = Editor.start(editor, afterPath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
@@ -1357,5 +1382,9 @@ function shift_path(op: Operation, shift: number): void {
 // loses focus.
 // This is a SCARY function..
 export function focusEditorAt(editor: ReactEditor, point: Point): void {
-  setSelectionAndFocus(editor, { focus: point, anchor: point }, { force: true });
+  setSelectionAndFocus(
+    editor,
+    { focus: point, anchor: point },
+    { force: true },
+  );
 }

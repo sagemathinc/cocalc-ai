@@ -35,13 +35,10 @@ import {
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
-import {
-  TIER_TEMPLATES,
-} from "@cocalc/util/membership-tier-templates";
+import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
-
 
 interface Tier {
   key?: string;
@@ -399,11 +396,7 @@ export function MembershipTiers() {
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={2} />
           </Form.Item>
-          <Form.Item
-            name="active"
-            label="Active"
-            valuePropName="checked"
-          >
+          <Form.Item name="active" label="Active" valuePropName="checked">
             <Switch />
           </Form.Item>
           <Divider>Entitlements / Features</Divider>

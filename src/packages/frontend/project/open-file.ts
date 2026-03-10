@@ -140,7 +140,8 @@ export async function open_file(
   const tabIsOpened = () =>
     !!actions.get_store()?.get("open_files")?.has(displayPath);
   const hasComponentBootstrap = () =>
-    actions.get_store()?.getIn(["open_files", displayPath, "component"]) != null;
+    actions.get_store()?.getIn(["open_files", displayPath, "component"]) !=
+    null;
   // A row can exist in open_files without component/ext bootstrap (e.g. partial
   // session restore or failed editor initialization). Treat that as not-open so
   // this call fully hydrates the tab instead of leaving it on perpetual Loading...
@@ -347,9 +348,8 @@ async function open_sagews_worksheet(
         project_id: actions.project_id,
         path: opts.path,
       });
-      const { default: sagewsToIpynb } = await import(
-        "@cocalc/frontend/frame-editors/sagews-editor/sagews-to-ipynb"
-      );
+      const { default: sagewsToIpynb } =
+        await import("@cocalc/frontend/frame-editors/sagews-editor/sagews-to-ipynb");
       const ipynb = sagewsToIpynb(raw);
       await webapp_client.project_client.write_text_file({
         project_id: actions.project_id,

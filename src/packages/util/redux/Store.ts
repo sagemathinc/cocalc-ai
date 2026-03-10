@@ -18,12 +18,12 @@ import { bind_methods, defaults, required, top_sort } from "@cocalc/util/misc";
 
 export type StoreConstructorType<
   T extends Record<string, any>,
-  C = Store<T>
+  C = Store<T>,
 > = new (name: string, redux: AppRedux, store_def?: T) => C;
 
 export interface Selector<
   State extends Record<string, any>,
-  K extends keyof State
+  K extends keyof State,
 > {
   dependencies?: readonly (keyof State)[];
   fn: (state?: TypedMap<State>) => State[K];
@@ -86,7 +86,7 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
           // Set the selector function to the new selector
           this.selectors[selector_name]!.fn = createSelector(
             dependent_selectors as any,
-            this.selectors[selector_name]!.fn
+            this.selectors[selector_name]!.fn,
           ) as any;
         }
       }
@@ -95,7 +95,7 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
         top_sort(dependency_graph);
       } catch {
         throw new Error(
-          `redux store "${this.name}" has cycle in its selector dependencies`
+          `redux store "${this.name}" has cycle in its selector dependencies`,
         );
       }
       return;
@@ -119,7 +119,7 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
 
   get: TypedCollectionMethods<State>["get"] = (
     field: string,
-    notSetValue?: any
+    notSetValue?: any,
   ) => {
     if (this.selectors && this.selectors[field] != undefined) {
       return this.selectors[field]!.fn(this.getState());
@@ -132,7 +132,7 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
 
   getIn: TypedCollectionMethods<State>["getIn"] = (
     path: any[],
-    notSetValue?: any
+    notSetValue?: any,
   ) => {
     if (path.length == 0) {
       return undefined;
@@ -151,7 +151,7 @@ export class Store<State extends Record<string, any>> extends EventEmitter {
           this.name,
           "but",
           path[0],
-          "is not immutable"
+          "is not immutable",
         );
         return fromJS(top_value).getIn(path.slice(1), notSetValue);
       }

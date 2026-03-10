@@ -7,7 +7,10 @@ import rustic from "@cocalc/backend/sandbox/rustic";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import getPool from "@cocalc/database/pool";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import { deleteProjectDataOnHost, stopProjectOnHost } from "@cocalc/server/project-host/control";
+import {
+  deleteProjectDataOnHost,
+  stopProjectOnHost,
+} from "@cocalc/server/project-host/control";
 import {
   getDeletedProjectBackupConfigForDeletion,
   getProjectBackupConfigForDeletion,
@@ -70,7 +73,9 @@ function pool() {
 }
 
 function isMissingTableError(err: unknown): boolean {
-  return typeof err === "object" && err != null && (err as any).code === "42P01";
+  return (
+    typeof err === "object" && err != null && (err as any).code === "42P01"
+  );
 }
 
 function normalizeUsers(users: any): Record<string, any> {
@@ -222,7 +227,9 @@ async function getProjectAccess({
   if (admin || isOwner(project.users, account_id)) {
     return { project, admin };
   }
-  throw new Error("must be a project owner (or admin) to permanently delete a workspace");
+  throw new Error(
+    "must be a project owner (or admin) to permanently delete a workspace",
+  );
 }
 
 export async function assertHardDeleteProjectPermission({
@@ -286,7 +293,9 @@ async function forgetAllSnapshotsForHost({
   try {
     snapshots = JSON.parse(stdout);
   } catch (err) {
-    throw new Error(`unable to parse rustic snapshot list for host '${host}': ${err}`);
+    throw new Error(
+      `unable to parse rustic snapshot list for host '${host}': ${err}`,
+    );
   }
   const ids = extractSnapshotIds(snapshots);
   if (!ids.length) {
@@ -349,7 +358,9 @@ async function deleteProjectBackupsWithToml({
   }
 }
 
-async function deleteProjectBackups(project_id: string): Promise<BackupDeletionResult> {
+async function deleteProjectBackups(
+  project_id: string,
+): Promise<BackupDeletionResult> {
   const { toml } = await getProjectBackupConfigForDeletion({ project_id });
   return await deleteProjectBackupsWithToml({ project_id, toml });
 }
@@ -716,7 +727,9 @@ async function markDeletedProjectBackupPurgeFailure({
   );
 }
 
-async function purgeDeletedProjectBackupSecret(project_id: string): Promise<void> {
+async function purgeDeletedProjectBackupSecret(
+  project_id: string,
+): Promise<void> {
   try {
     await pool().query(
       "DELETE FROM project_backup_secrets WHERE project_id=$1",
@@ -813,7 +826,9 @@ export async function hardDeleteProject({
   account_id: string;
   backup_retention_days?: number;
   purge_backups_now?: boolean;
-  onProgress?: (update: HardDeleteProjectProgressUpdate) => Promise<void> | void;
+  onProgress?: (
+    update: HardDeleteProjectProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HardDeleteProjectResult> {
   if (!isValidUUID(project_id)) {
     throw new Error("project_id must be a valid uuid");

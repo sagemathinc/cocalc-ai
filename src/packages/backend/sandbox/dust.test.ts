@@ -14,7 +14,9 @@ afterAll(async () => {
 });
 
 const describeDust =
-  process.platform === "linux" && existsSync(dustBin) ? describe : describe.skip;
+  process.platform === "linux" && existsSync(dustBin)
+    ? describe
+    : describe.skip;
 
 describeDust("dust works", () => {
   it("directory starts empty - no results", async () => {

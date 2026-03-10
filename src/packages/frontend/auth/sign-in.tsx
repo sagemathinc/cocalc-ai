@@ -76,10 +76,7 @@ export default function SignInForm({ onNavigate }: SignInProps) {
         >
           Forgot password?
         </a>
-        <a
-          onClick={() => onNavigate("sign-up")}
-          style={{ cursor: "pointer" }}
-        >
+        <a onClick={() => onNavigate("sign-up")} style={{ cursor: "pointer" }}>
           Create an account
         </a>
       </div>

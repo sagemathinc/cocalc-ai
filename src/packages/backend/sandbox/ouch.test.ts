@@ -20,7 +20,9 @@ afterAll(async () => {
 });
 
 const describeOuch =
-  process.platform === "linux" && existsSync(ouchBin) ? describe : describe.skip;
+  process.platform === "linux" && existsSync(ouchBin)
+    ? describe
+    : describe.skip;
 
 describeOuch("ouch works on a little file", () => {
   for (const ext of [

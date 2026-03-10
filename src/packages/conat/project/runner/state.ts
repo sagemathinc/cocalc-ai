@@ -13,11 +13,7 @@ export interface RunnerStatus {
   time: number;
 }
 
-export type ProjectState =
-  | "opened"
-  | "starting"
-  | "running"
-  | "stopping";
+export type ProjectState = "opened" | "starting" | "running" | "stopping";
 
 export interface ProjectStatus {
   server?: string;

@@ -6,7 +6,11 @@ import { debounce } from "lodash";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SimpleInputMerge } from "../../../sync/editor/generic/simple-input-merge";
 import { Actions } from "./types";
-import { debugSyncLog, getBlockDeferChars, getBlockDeferMs } from "./block-sync-utils";
+import {
+  debugSyncLog,
+  getBlockDeferChars,
+  getBlockDeferMs,
+} from "./block-sync-utils";
 
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
 

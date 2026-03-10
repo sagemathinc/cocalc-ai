@@ -96,7 +96,9 @@ export const ActiveContent: React.FC = React.memo(() => {
         className="smc-vfill"
         style={{
           ...STACK_LAYER_STYLE,
-          ...(is_active ? STACK_LAYER_ACTIVE_STYLE : STACK_LAYER_INACTIVE_STYLE),
+          ...(is_active
+            ? STACK_LAYER_ACTIVE_STYLE
+            : STACK_LAYER_INACTIVE_STYLE),
         }}
         aria-hidden={!is_active}
       >

@@ -528,13 +528,11 @@ export default function SiteSettings({ close }) {
         if (!isRequiredWhen(conf)) continue;
         if (!isMissingValue(name, conf)) continue;
         const group = conf.group ?? inferGroup(conf);
-        const entry =
-          groupMap.get(group) ??
-          ({
-            count: 0,
-            names: [] as string[],
-            key: group,
-          });
+        const entry = groupMap.get(group) ?? {
+          count: 0,
+          names: [] as string[],
+          key: group,
+        };
         entry.count += 1;
         entry.names.push(conf?.name ?? name);
         groupMap.set(group, entry);
@@ -580,8 +578,7 @@ export default function SiteSettings({ close }) {
         if (!isMissingValue(name, conf)) continue;
         const group = conf.group ?? inferGroup(conf);
         const subgroup = conf.subgroup ?? "General";
-        const groupCounts =
-          counts.get(group) ?? new Map<string, number>();
+        const groupCounts = counts.get(group) ?? new Map<string, number>();
         groupCounts.set(subgroup, (groupCounts.get(subgroup) ?? 0) + 1);
         counts.set(group, groupCounts);
       }
@@ -608,8 +605,7 @@ export default function SiteSettings({ close }) {
       const group = item.conf.group ?? inferGroup(item.conf);
       const subgroup = item.conf.subgroup ?? "General";
       const subMap =
-        groupMap.get(group) ??
-        new Map<string, { name: string; conf: any }[]>();
+        groupMap.get(group) ?? new Map<string, { name: string; conf: any }[]>();
       const list = subMap.get(subgroup) ?? [];
       list.push(item);
       subMap.set(subgroup, list);
@@ -659,7 +655,9 @@ export default function SiteSettings({ close }) {
                     width: "22px",
                     height: "22px",
                     borderRadius: "50%",
-                    background: groupStatus.get(groupName) ? "#d6f5d6" : "#ffe2e2",
+                    background: groupStatus.get(groupName)
+                      ? "#d6f5d6"
+                      : "#ffe2e2",
                     color: groupStatus.get(groupName) ? "#1f7a1f" : "#a00",
                     fontWeight: 700,
                     fontSize: "12px",
@@ -682,7 +680,10 @@ export default function SiteSettings({ close }) {
             {[...subgroups.entries()]
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
-                <details data-admin-subgroup key={`${groupName}-${subgroupName}`}>
+                <details
+                  data-admin-subgroup
+                  key={`${groupName}-${subgroupName}`}
+                >
                   <summary
                     style={{
                       margin: "10px 0 4px 0",
@@ -694,9 +695,7 @@ export default function SiteSettings({ close }) {
                     }}
                   >
                     {subgroupName}
-                    {subgroupMissingCounts
-                      .get(groupName)
-                      ?.get(subgroupName) ? (
+                    {subgroupMissingCounts.get(groupName)?.get(subgroupName) ? (
                       <span
                         style={{
                           fontSize: "12px",
@@ -708,7 +707,9 @@ export default function SiteSettings({ close }) {
                           padding: "1px 8px",
                         }}
                       >
-                        {subgroupMissingCounts.get(groupName)?.get(subgroupName)}{" "}
+                        {subgroupMissingCounts
+                          .get(groupName)
+                          ?.get(subgroupName)}{" "}
                         missing
                       </span>
                     ) : null}
@@ -733,7 +734,9 @@ export default function SiteSettings({ close }) {
                         const a = EXTRAS.ollama_configuration;
                         const oaic = data?.custom_openai_configuration;
                         const oai = (
-                          oaic != null ? Object.keys(a.to_val?.(oaic) ?? {}) : []
+                          oaic != null
+                            ? Object.keys(a.to_val?.(oaic) ?? {})
+                            : []
                         ).map(toCustomOpenAIModel);
                         if (Array.isArray(llms)) {
                           conf.valid = [...llms, ...oll, ...oai];
@@ -820,7 +823,10 @@ export default function SiteSettings({ close }) {
                           `admin-settings-group-${group}`,
                         );
                         if (el) {
-                          el.scrollIntoView({ behavior: "smooth", block: "start" });
+                          el.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                          });
                         }
                       }}
                     >

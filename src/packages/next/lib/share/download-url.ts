@@ -7,10 +7,10 @@ import ROOT_PATH from "lib/root-path";
 export default function downloadURL(
   id: string,
   path: string,
-  relativePath: string
+  relativePath: string,
 ): string {
   return join(
     ROOT_PATH,
-    `share/download/${id}/${encodePath(join(path, relativePath))}`
+    `share/download/${id}/${encodePath(join(path, relativePath))}`,
   );
 }

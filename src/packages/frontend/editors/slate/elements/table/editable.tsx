@@ -155,7 +155,7 @@ register({
             parent: thead_tr,
             no_escape: false,
             lastChild: i == n - 1,
-          }).length - 3
+          }).length - 3,
         ),
         align: thead_tr.children[i].align,
       });
@@ -170,7 +170,7 @@ register({
             parent: tr,
             no_escape: false,
             lastChild: i == n - 1,
-          }).length - 3
+          }).length - 3,
         );
       }
     }

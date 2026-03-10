@@ -13,22 +13,22 @@ describe("checking that a user's first or last name is valid", () => {
   it("blocks suspicious names", () => {
     expect(is_valid_username("OPEN http://foo.com")).not.toBe(undefined);
     expect(is_valid_username("https://earn-money.cc is good")).not.toBe(
-      undefined
+      undefined,
     );
     return expect(is_valid_username("OPEN mailto:bla@bar.de")).not.toBe(
-      undefined
+      undefined,
     );
   });
 
   it("is not fooled to easily", () => {
     expect(is_valid_username("OPEN hTTp://foo.com")).not.toBe(undefined);
     expect(is_valid_username("httpS://earn-money.cc is good")).not.toBe(
-      undefined
+      undefined,
     );
     expect(is_valid_username("OPEN MAILTO:bla@bar.de")).not.toBe(undefined);
     expect(is_valid_username("test.account.dot")).toContain("test.account.dot");
     expect(is_valid_username("no spam EARN-A-LOT-OF.money Now")).toContain(
-      ".money"
+      ".money",
     );
     return expect(is_valid_username("spam abc.co earn")).toContain(".co");
   });

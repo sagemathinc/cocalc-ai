@@ -150,7 +150,9 @@ export function create_key_handler(
       // inside the single-doc notebook frame.
       if (evt?.which === 13) {
         // eslint-disable-next-line no-console
-        console.log("jupyter global keyboard skipped Enter inside single-doc slate");
+        console.log(
+          "jupyter global keyboard skipped Enter inside single-doc slate",
+        );
       }
       return;
     }

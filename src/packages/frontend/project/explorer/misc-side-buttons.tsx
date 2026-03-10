@@ -24,10 +24,7 @@ import { type JSX, type MouseEvent } from "react";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import Snapshots from "@cocalc/frontend/project/snapshots";
 import Backups from "@cocalc/frontend/project/backups";
-import {
-  BACKUPS,
-  isBackupsPath,
-} from "@cocalc/util/consts/backups";
+import { BACKUPS, isBackupsPath } from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import TourButton from "./tour/button";

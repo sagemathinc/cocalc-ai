@@ -35,7 +35,11 @@ const DEFAULT_PROFILE = "default";
 export function authConfigPath(env = process.env): string {
   const explicit = env.COCALC_CLI_CONFIG?.trim();
   if (explicit) return explicit;
-  return join(env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config"), "cocalc", "config.json");
+  return join(
+    env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config"),
+    "cocalc",
+    "config.json",
+  );
 }
 
 export function sanitizeProfileName(name: string | undefined): string {
@@ -63,7 +67,11 @@ export function loadAuthConfig(path = authConfigPath()): AuthConfig {
 
   const profilesRaw = parsed.profiles;
   const profiles: Record<string, AuthProfile> = {};
-  if (profilesRaw && typeof profilesRaw === "object" && !Array.isArray(profilesRaw)) {
+  if (
+    profilesRaw &&
+    typeof profilesRaw === "object" &&
+    !Array.isArray(profilesRaw)
+  ) {
     for (const [name, value] of Object.entries(profilesRaw)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       profiles[name] = value as AuthProfile;
@@ -78,7 +86,10 @@ export function loadAuthConfig(path = authConfigPath()): AuthConfig {
   return { current_profile, profiles };
 }
 
-export function saveAuthConfig(config: AuthConfig, path = authConfigPath()): void {
+export function saveAuthConfig(
+  config: AuthConfig,
+  path = authConfigPath(),
+): void {
   mkdirSync(dirname(path), { recursive: true });
   const payload: AuthConfig = {
     current_profile: config.current_profile,
@@ -92,7 +103,9 @@ export function selectedProfileName(
   config: AuthConfig,
   env = process.env,
 ): string {
-  return sanitizeProfileName(globals.profile ?? env.COCALC_PROFILE ?? config.current_profile);
+  return sanitizeProfileName(
+    globals.profile ?? env.COCALC_PROFILE ?? config.current_profile,
+  );
 }
 
 export function applyAuthProfile(
@@ -110,7 +123,12 @@ export function applyAuthProfile(
   if (!resolved.api && !env.COCALC_API_URL && data.api) {
     resolved.api = data.api;
   }
-  if (!resolved.accountId && !resolved.account_id && !env.COCALC_ACCOUNT_ID && data.account_id) {
+  if (
+    !resolved.accountId &&
+    !resolved.account_id &&
+    !env.COCALC_ACCOUNT_ID &&
+    data.account_id
+  ) {
     resolved.accountId = data.account_id;
   }
   if (!resolved.apiKey && !env.COCALC_API_KEY && data.api_key) {

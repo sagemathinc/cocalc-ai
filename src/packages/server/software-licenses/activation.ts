@@ -129,11 +129,7 @@ export async function activateLicenseOnServer({
   };
 }
 
-export async function activateLicenseOnLaunchpad({
-  token,
-}: {
-  token: string;
-}) {
+export async function activateLicenseOnLaunchpad({ token }: { token: string }) {
   const serverUrl = await getLicenseServerUrl();
   if (!serverUrl) {
     throw Error("licensing server URL not configured");

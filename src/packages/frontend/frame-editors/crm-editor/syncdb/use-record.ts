@@ -26,7 +26,7 @@ export default function useRecord<T>({
     (value: T) => {
       setRecord0({ ...value, table, id });
     },
-    [table, id, setRecord0]
+    [table, id, setRecord0],
   );
 
   return [record, setRecord];

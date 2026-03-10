@@ -3,7 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -117,7 +124,10 @@ function asString(input: unknown, context: string): string {
   return value;
 }
 
-function asOptionalPositiveInt(input: unknown, context: string): number | undefined {
+function asOptionalPositiveInt(
+  input: unknown,
+  context: string,
+): number | undefined {
   if (input == null || input === "") return undefined;
   const value = Number(input);
   if (!Number.isInteger(value) || value <= 0) {
@@ -144,7 +154,10 @@ function asStringArray(input: unknown, context: string): string[] {
   return input.map((value, idx) => asString(value, `${context}[${idx}]`));
 }
 
-function asStringRecord(input: unknown, context: string): Record<string, string> | undefined {
+function asStringRecord(
+  input: unknown,
+  context: string,
+): Record<string, string> | undefined {
   if (input == null) return undefined;
   const obj = asObject(input, context);
   const out: Record<string, string> = {};
@@ -156,10 +169,7 @@ function asStringRecord(input: unknown, context: string): Record<string, string>
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function normalizeCommandSpec(
-  input: unknown,
-  context: string,
-): AppCommandSpec {
+function normalizeCommandSpec(input: unknown, context: string): AppCommandSpec {
   const commandIn = asObject(input, context);
   return {
     exec: asString(commandIn.exec, `${context}.exec`),
@@ -172,7 +182,9 @@ function normalizeCommandSpec(
 function normalizeLegacyJupyterLabServiceSpec(
   spec: AppServiceSpec,
 ): AppServiceSpec {
-  const command = [spec.command.exec, ...(spec.command.args ?? [])].join(" ").trim();
+  const command = [spec.command.exec, ...(spec.command.args ?? [])]
+    .join(" ")
+    .trim();
   const looksLikeLegacyJupyterLab =
     spec.id === "jupyterlab" &&
     command.includes("jupyter lab") &&
@@ -228,16 +240,23 @@ function normalizeServiceSpec(input: Record<string, any>): AppServiceSpec {
     open_mode,
     health_path: asOptionalString(proxyIn.health_path),
     readiness_timeout_s:
-      asOptionalPositiveInt(proxyIn.readiness_timeout_s, "spec.proxy.readiness_timeout_s") ??
-      45,
+      asOptionalPositiveInt(
+        proxyIn.readiness_timeout_s,
+        "spec.proxy.readiness_timeout_s",
+      ) ?? 45,
   };
 
   const wakeIn = asObject(input.wake ?? {}, "spec.wake");
   const wake = {
     enabled: asOptionalBoolean(wakeIn.enabled, true),
-    keep_warm_s: asOptionalPositiveInt(wakeIn.keep_warm_s, "spec.wake.keep_warm_s") ?? 1800,
+    keep_warm_s:
+      asOptionalPositiveInt(wakeIn.keep_warm_s, "spec.wake.keep_warm_s") ??
+      1800,
     startup_timeout_s:
-      asOptionalPositiveInt(wakeIn.startup_timeout_s, "spec.wake.startup_timeout_s") ?? 120,
+      asOptionalPositiveInt(
+        wakeIn.startup_timeout_s,
+        "spec.wake.startup_timeout_s",
+      ) ?? 120,
   };
 
   return normalizeLegacyJupyterLabServiceSpec({
@@ -258,28 +277,30 @@ function normalizeStaticSpec(input: Record<string, any>): AppStaticSpec {
   const staticIn = asObject(input.static, "spec.static");
   const proxyIn = asObject(input.proxy ?? {}, "spec.proxy");
 
-  const refreshIn = staticIn.refresh == null
-    ? undefined
-    : asObject(staticIn.refresh, "spec.static.refresh");
-  const refresh = refreshIn == null
-    ? undefined
-    : {
-        command: normalizeCommandSpec(
-          refreshIn.command,
-          "spec.static.refresh.command",
-        ),
-        timeout_s:
-          asOptionalPositiveInt(
-            refreshIn.timeout_s,
-            "spec.static.refresh.timeout_s",
-          ) ?? 120,
-        stale_after_s:
-          asOptionalPositiveInt(
-            refreshIn.stale_after_s,
-            "spec.static.refresh.stale_after_s",
-          ) ?? 3600,
-        trigger_on_hit: asOptionalBoolean(refreshIn.trigger_on_hit, true),
-      };
+  const refreshIn =
+    staticIn.refresh == null
+      ? undefined
+      : asObject(staticIn.refresh, "spec.static.refresh");
+  const refresh =
+    refreshIn == null
+      ? undefined
+      : {
+          command: normalizeCommandSpec(
+            refreshIn.command,
+            "spec.static.refresh.command",
+          ),
+          timeout_s:
+            asOptionalPositiveInt(
+              refreshIn.timeout_s,
+              "spec.static.refresh.timeout_s",
+            ) ?? 120,
+          stale_after_s:
+            asOptionalPositiveInt(
+              refreshIn.stale_after_s,
+              "spec.static.refresh.stale_after_s",
+            ) ?? 3600,
+          trigger_on_hit: asOptionalBoolean(refreshIn.trigger_on_hit, true),
+        };
 
   return {
     version: 1,
@@ -297,7 +318,10 @@ function normalizeStaticSpec(input: Record<string, any>): AppStaticSpec {
       strip_prefix: asOptionalBoolean(proxyIn.strip_prefix, true),
       websocket: false,
       readiness_timeout_s:
-        asOptionalPositiveInt(proxyIn.readiness_timeout_s, "spec.proxy.readiness_timeout_s") ?? 45,
+        asOptionalPositiveInt(
+          proxyIn.readiness_timeout_s,
+          "spec.proxy.readiness_timeout_s",
+        ) ?? 45,
     },
     wake: {
       enabled: false,
@@ -358,7 +382,9 @@ export async function getAppSpec(id: string): Promise<AppSpec> {
   return normalizeAppSpec(parsed);
 }
 
-export async function upsertAppSpec(spec: unknown): Promise<{ id: string; path: string; spec: AppSpec }> {
+export async function upsertAppSpec(
+  spec: unknown,
+): Promise<{ id: string; path: string; spec: AppSpec }> {
   const normalized = normalizeAppSpec(spec);
   await ensureAppsDir();
   const path = specFilePath(normalized.id);
@@ -366,7 +392,9 @@ export async function upsertAppSpec(spec: unknown): Promise<{ id: string; path: 
   return { id: normalized.id, path, spec: normalized };
 }
 
-export async function deleteAppSpec(id: string): Promise<{ id: string; deleted: boolean; path: string }> {
+export async function deleteAppSpec(
+  id: string,
+): Promise<{ id: string; deleted: boolean; path: string }> {
   const normalized = assertAppId(id);
   const path = specFilePath(normalized);
   try {
@@ -394,7 +422,10 @@ export async function listAppSpecs(): Promise<AppSpecRecord[]> {
     const path = join(dir, name);
     try {
       assertAppId(id);
-      const [raw, stats] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+      const [raw, stats] = await Promise.all([
+        readFile(path, "utf8"),
+        stat(path),
+      ]);
       const parsed = JSON.parse(raw);
       const spec = normalizeAppSpec(parsed);
       records.push({

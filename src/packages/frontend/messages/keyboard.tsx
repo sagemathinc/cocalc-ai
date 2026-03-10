@@ -60,7 +60,7 @@ function handler(e) {
     case "s":
       name = "toggle-star";
       break;
-      
+
     case "l":
       name = "toggle-like";
       break;

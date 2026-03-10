@@ -163,10 +163,7 @@ function Body() {
                   <Line amount={individuals} desc={"Monthly Active Users¹"} />
                   <Line amount={prod ?? 1} desc="Production Deployment" />
                   <Line amount={1} desc="Test Deployment" />
-                  <Line
-                    amount={INF}
-                    desc={`Number of ${WORKSPACES_LABEL}`}
-                  />
+                  <Line amount={INF} desc={`Number of ${WORKSPACES_LABEL}`} />
                   <Line
                     amount={INF}
                     desc={`${WORKSPACE_LABEL} Collaborators`}

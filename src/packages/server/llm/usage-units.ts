@@ -22,8 +22,5 @@ export async function computeUsageUnits({
   if (!Number.isFinite(dollars.toNumber()) || dollars.lte(0)) {
     return 0;
   }
-  return Math.max(
-    1,
-    moneyRound2Up(dollars.mul(UNITS_PER_DOLLAR)).toNumber(),
-  );
+  return Math.max(1, moneyRound2Up(dollars.mul(UNITS_PER_DOLLAR)).toNumber());
 }

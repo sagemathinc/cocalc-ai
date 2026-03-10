@@ -7,5 +7,5 @@
 // the iframe or markdown, so we max the width out at 900px.  I have no idea if 900px
 // is a good choice...
 
-export const MAX_WIDTH_NUM: number = 900
+export const MAX_WIDTH_NUM: number = 900;
 export const MAX_WIDTH: string = `${MAX_WIDTH_NUM}px`;

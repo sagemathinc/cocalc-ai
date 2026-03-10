@@ -36,7 +36,7 @@ register({
     useEffect(() => {
       if (!loading) {
         setFullName(
-          (value.accounts.first_name + " " + value.accounts.last_name).trim()
+          (value.accounts.first_name + " " + value.accounts.last_name).trim(),
         );
       }
     }, [loading]);

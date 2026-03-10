@@ -10,8 +10,8 @@ export function pgType(info: TypeInfo): string {
   if (info == null || typeof info === "boolean") {
     throw Error(
       `pgType: insufficient information to determine type (info=${JSON.stringify(
-        info
-      )})`
+        info,
+      )})`,
     );
   }
   if (info.pg_type) {
@@ -19,7 +19,7 @@ export function pgType(info: TypeInfo): string {
   }
   if (!info.type) {
     throw Error(
-      "pg_type: insufficient information to determine type (pg_type and type fields both empty)"
+      "pg_type: insufficient information to determine type (pg_type and type fields both empty)",
     );
   }
   const type = info.type.toLowerCase();
@@ -43,7 +43,7 @@ export function pgType(info: TypeInfo): string {
       return "DOUBLE PRECISION";
     case "array":
       throw Error(
-        `pg_type: you must specify the array type explicitly (type=${type})`
+        `pg_type: you must specify the array type explicitly (type=${type})`,
       );
     case "buffer":
       return "BYTEA";

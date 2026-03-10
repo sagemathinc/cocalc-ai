@@ -8,7 +8,7 @@ import { open, utimes } from "node:fs/promises";
 // touch the file in a similar manner as "touch" in linux
 export async function touch(
   path: string,
-  createIfMissing = true
+  createIfMissing = true,
 ): Promise<boolean> {
   try {
     const now = new Date();

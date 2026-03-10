@@ -4,10 +4,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AkvDraftAdapter,
-  DraftController,
-} from "@cocalc/frontend/drafts";
+import { AkvDraftAdapter, DraftController } from "@cocalc/frontend/drafts";
 import {
   get_local_storage,
   set_local_storage,
@@ -106,7 +103,11 @@ export function useChatComposerDraft({
     }
     const local = get_local_storage(localStorageKey);
     let localText =
-      typeof local === "string" ? local : typeof local === "number" ? `${local}` : "";
+      typeof local === "string"
+        ? local
+        : typeof local === "number"
+          ? `${local}`
+          : "";
     let localUpdatedAt = 0;
     const shadow = shadowDraftState.get(storageKey);
     if (shadow && shadow.updatedAt > localUpdatedAt) {
@@ -177,18 +178,21 @@ export function useChatComposerDraft({
     };
   }, [cancelPendingLocalWrite, localStorageKey]);
 
-  const setInput = useCallback((value: string) => {
-    const now = Date.now();
-    setShadow(storageKey, { text: value, updatedAt: now });
-    scheduleLocalWrite(value);
-    const controller = controllerRef.current;
-    if (!controller) {
-      setInputState(value);
-      return;
-    }
-    controller.setText(value);
-    controller.setComposing(value.trim().length > 0);
-  }, [scheduleLocalWrite, storageKey]);
+  const setInput = useCallback(
+    (value: string) => {
+      const now = Date.now();
+      setShadow(storageKey, { text: value, updatedAt: now });
+      scheduleLocalWrite(value);
+      const controller = controllerRef.current;
+      if (!controller) {
+        setInputState(value);
+        return;
+      }
+      controller.setText(value);
+      controller.setComposing(value.trim().length > 0);
+    },
+    [scheduleLocalWrite, storageKey],
+  );
 
   const clearInput = useCallback(async () => {
     const now = Date.now();

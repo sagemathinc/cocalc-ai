@@ -36,7 +36,7 @@ function set_state(project_websockets: Map<string, WebsocketState>): void {
 
 export function set_project_websocket_state(
   project_id: string,
-  state: WebsocketState
+  state: WebsocketState,
 ): void {
   set_state(get_state().set(project_id, state));
 }

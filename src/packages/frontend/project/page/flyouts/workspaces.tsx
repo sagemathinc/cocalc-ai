@@ -53,7 +53,10 @@ type Props = {
 
 type WorkspacesFlyoutProps = {
   project_id: string;
-  wrap: (content: React.JSX.Element, style?: React.CSSProperties) => React.JSX.Element;
+  wrap: (
+    content: React.JSX.Element,
+    style?: React.CSSProperties,
+  ) => React.JSX.Element;
 };
 
 type EditorDraft = {
@@ -78,7 +81,10 @@ function selectionValue(selection: WorkspaceSelection): string {
   }
 }
 
-function makeDraft(record?: WorkspaceRecord | null, fallbackPath = ""): EditorDraft {
+function makeDraft(
+  record?: WorkspaceRecord | null,
+  fallbackPath = "",
+): EditorDraft {
   if (!record) {
     return {
       root_path: fallbackPath,
@@ -108,7 +114,8 @@ async function validateRootPath(rootPath: string): Promise<string | null> {
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const { actions, active_project_tab, workspaces } = useProjectContext();
   const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
-  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs") ?? "/";
+  const current_path_abs =
+    useTypedRedux({ project_id }, "current_path_abs") ?? "/";
   const [editing, setEditing] = useState<EditorDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [openingChatId, setOpeningChatId] = useState<string | null>(null);
@@ -145,7 +152,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
 
   function patchTheme(themePatch: Partial<ThemeEditorDraft>): void {
     setEditing((current) =>
-      current ? { ...current, theme: { ...current.theme, ...themePatch } } : current,
+      current
+        ? { ...current, theme: { ...current.theme, ...themePatch } }
+        : current,
     );
   }
 

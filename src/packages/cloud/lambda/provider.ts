@@ -35,7 +35,9 @@ const MIN_UBUNTU_VERSION = 2404;
 
 function parseUbuntuVersion(value?: string | null): number | undefined {
   if (!value) return undefined;
-  const match = value.toLowerCase().match(/ubuntu[^0-9]*([0-9]{2})[._-]?([0-9]{2})/);
+  const match = value
+    .toLowerCase()
+    .match(/ubuntu[^0-9]*([0-9]{2})[._-]?([0-9]{2})/);
   if (!match) return undefined;
   const major = Number(match[1]);
   const minor = Number(match[2]);
@@ -44,11 +46,7 @@ function parseUbuntuVersion(value?: string | null): number | undefined {
 }
 
 function imageUbuntuVersion(img: ImageEntry): number {
-  return (
-    parseUbuntuVersion(img.family) ??
-    parseUbuntuVersion(img.name) ??
-    0
-  );
+  return parseUbuntuVersion(img.family) ?? parseUbuntuVersion(img.name) ?? 0;
 }
 
 function isUbuntuImage(img: ImageEntry): boolean {
@@ -59,7 +57,10 @@ function isUbuntuImage(img: ImageEntry): boolean {
 }
 
 function isCudaImage(img: ImageEntry): boolean {
-  return /cuda|nvidia|gpu/i.test(img.family ?? "") || /cuda|nvidia|gpu/i.test(img.name ?? "");
+  return (
+    /cuda|nvidia|gpu/i.test(img.family ?? "") ||
+    /cuda|nvidia|gpu/i.test(img.name ?? "")
+  );
 }
 
 function isGpuBase2404(img: ImageEntry): boolean {
@@ -148,7 +149,10 @@ function selectInstanceType(
     if (wantsGpu) {
       if (gpus <= 0) return false;
       if (gpuCount && gpus < gpuCount) return false;
-      if (gpuType && !entry.instance_type?.name?.toLowerCase().includes(gpuType))
+      if (
+        gpuType &&
+        !entry.instance_type?.name?.toLowerCase().includes(gpuType)
+      )
         return false;
     } else if (gpus > 0) {
       return false;
@@ -204,7 +208,9 @@ function selectImage(
   ) {
     throw new Error(`no Lambda images available for region ${spec.region}`);
   }
-  const poolCandidates = regionCandidates.length ? regionCandidates : candidates;
+  const poolCandidates = regionCandidates.length
+    ? regionCandidates
+    : candidates;
   const wantsGpu = !!spec.gpu;
   if (wantsGpu) {
     const gpuBase24 = poolCandidates.filter(isGpuBase2404);
@@ -245,7 +251,10 @@ function selectImage(
     return (b.name ?? "").localeCompare(a.name ?? "");
   });
   const selected =
-    sorted[0]?.id ?? poolCandidates[0]?.id ?? candidates[0]?.id ?? images[0]?.id;
+    sorted[0]?.id ??
+    poolCandidates[0]?.id ??
+    candidates[0]?.id ??
+    images[0]?.id;
   if (!selected) {
     throw new Error("no Lambda images available");
   }
@@ -282,8 +291,11 @@ export class LambdaProvider implements CloudProvider {
     const prefix = normalizePrefix(creds.prefix);
     const normalizedSpecName = spec.name.toLowerCase();
     const hasPrefix =
-      normalizedSpecName === prefix || normalizedSpecName.startsWith(`${prefix}-`);
-    const resourceName = hasPrefix ? spec.name : safeName(prefix, spec.name, 64);
+      normalizedSpecName === prefix ||
+      normalizedSpecName.startsWith(`${prefix}-`);
+    const resourceName = hasPrefix
+      ? spec.name
+      : safeName(prefix, spec.name, 64);
     const hostname = resourceName;
 
     const types = await client.listInstanceTypes();
@@ -297,9 +309,7 @@ export class LambdaProvider implements CloudProvider {
         (entry) => entry.instance_type?.name === explicitInstanceType,
       );
       if (!match) {
-        throw new Error(
-          `unknown Lambda instance type ${explicitInstanceType}`,
-        );
+        throw new Error(`unknown Lambda instance type ${explicitInstanceType}`);
       }
       const regions =
         (match.regions_with_capacity_available ?? [])
@@ -327,11 +337,15 @@ export class LambdaProvider implements CloudProvider {
     const filesystemName = spec.metadata?.filesystem_name;
     const filesystemMount = spec.metadata?.filesystem_mount_point ?? "/btrfs";
     let file_system_names: string[] | undefined;
-    let file_system_mounts: Array<{ name: string; mount_point: string }> | undefined;
+    let file_system_mounts:
+      | Array<{ name: string; mount_point: string }>
+      | undefined;
     if (filesystemName) {
       await ensureFilesystem(client, filesystemName, spec.region);
       file_system_names = [filesystemName];
-      file_system_mounts = [{ name: filesystemName, mount_point: filesystemMount }];
+      file_system_mounts = [
+        { name: filesystemName, mount_point: filesystemMount },
+      ];
     }
 
     const user_data = buildUserData(spec);
@@ -370,7 +384,11 @@ export class LambdaProvider implements CloudProvider {
         filesystem_name: filesystemName,
       },
     };
-    logger.info("lambda.createHost", { region: spec.region, instance_type_name, image });
+    logger.info("lambda.createHost", {
+      region: spec.region,
+      instance_type_name,
+      image,
+    });
     return runtime;
   }
 

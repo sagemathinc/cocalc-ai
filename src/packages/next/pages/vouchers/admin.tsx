@@ -101,13 +101,7 @@ export default function Created({ customize }) {
     }
 
     return v;
-  }, [
-    value,
-    showExpiredOnly,
-    showPaidOnly,
-    showAdminOnly,
-    error,
-  ]);
+  }, [value, showExpiredOnly, showPaidOnly, showAdminOnly, error]);
 
   return (
     <Customize value={customize}>
@@ -137,7 +131,7 @@ export default function Created({ customize }) {
             {profile != null && !profile.account_id && (
               <Card>
                 <div style={{ fontSize: "75px", textAlign: "center" }}>
-                  <Icon name="gift2"/>
+                  <Icon name="gift2" />
                 </div>
                 <InPlaceSignInOrUp
                   title="Voucher Status"
@@ -200,7 +194,7 @@ export default function Created({ customize }) {
                       </div>
                     </div>
                   )}
-                  {!loading  && showExpiredOnly && (
+                  {!loading && showExpiredOnly && (
                     <div>
                       <Button
                         style={{ marginTop: "30px" }}

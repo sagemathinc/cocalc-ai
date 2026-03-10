@@ -134,7 +134,7 @@ export function defaultWorkspaceTheme(
   const trimmedTitle = `${title ?? ""}`.trim();
   const root = normalizeWorkspacePath(root_path);
   const fallbackTitle =
-    root === "/" ? "/" : root.split("/").filter(Boolean).at(-1) ?? root;
+    root === "/" ? "/" : (root.split("/").filter(Boolean).at(-1) ?? root);
   return {
     title: trimmedTitle || fallbackTitle,
     description: "",
@@ -181,11 +181,13 @@ export function normalizeWorkspaceRecord(
         ? record.chat_path.trim()
         : null,
     created_at:
-      typeof record.created_at === "number" && Number.isFinite(record.created_at)
+      typeof record.created_at === "number" &&
+      Number.isFinite(record.created_at)
         ? record.created_at
         : Date.now(),
     updated_at:
-      typeof record.updated_at === "number" && Number.isFinite(record.updated_at)
+      typeof record.updated_at === "number" &&
+      Number.isFinite(record.updated_at)
         ? record.updated_at
         : Date.now(),
     source: record.source ?? "manual",
@@ -210,7 +212,9 @@ export function normalizeWorkspaceSelection(
 ): WorkspaceSelection {
   if (!selection || typeof selection !== "object") return { kind: "all" };
   if (selection.kind === "workspace") {
-    return records.some((record) => record.workspace_id === selection.workspace_id)
+    return records.some(
+      (record) => record.workspace_id === selection.workspace_id,
+    )
       ? selection
       : { kind: "all" };
   }
@@ -330,8 +334,16 @@ export function createStoredWorkspaceRecord(
     workspace_id?: string;
   },
 ): WorkspaceRecord {
-  const record = createWorkspaceRecord({ project_id, input, now, workspace_id });
-  const nextRecords = createWorkspaceRecords(readWorkspaceRecordsFromStore(store), record);
+  const record = createWorkspaceRecord({
+    project_id,
+    input,
+    now,
+    workspace_id,
+  });
+  const nextRecords = createWorkspaceRecords(
+    readWorkspaceRecordsFromStore(store),
+    record,
+  );
   writeWorkspaceRecordsToStore(store, nextRecords);
   return record;
 }
@@ -356,7 +368,10 @@ export function deleteStoredWorkspaceRecord(
   store: WorkspaceStore,
   workspace_id: string,
 ): WorkspaceRecord[] {
-  const records = deleteWorkspaceRecords(readWorkspaceRecordsFromStore(store), workspace_id);
+  const records = deleteWorkspaceRecords(
+    readWorkspaceRecordsFromStore(store),
+    workspace_id,
+  );
   writeWorkspaceRecordsToStore(store, records);
   return records;
 }
@@ -417,7 +432,8 @@ export function createWorkspaceRecord({
     pinned: input.pinned === true,
     last_used_at: now,
     last_active_path:
-      typeof input.last_active_path === "string" && input.last_active_path.trim()
+      typeof input.last_active_path === "string" &&
+      input.last_active_path.trim()
         ? normalizeWorkspacePath(input.last_active_path)
         : null,
     chat_path: input.chat_path ?? null,
@@ -457,7 +473,9 @@ export function updateWorkspaceRecords(
         pinned: patch.pinned ?? record.pinned,
         chat_path: patch.chat_path ?? record.chat_path,
         last_used_at:
-          patch.last_used_at === undefined ? record.last_used_at : patch.last_used_at,
+          patch.last_used_at === undefined
+            ? record.last_used_at
+            : patch.last_used_at,
         last_active_path:
           patch.last_active_path === undefined
             ? record.last_active_path
@@ -483,5 +501,10 @@ export function touchWorkspaceRecords(
   workspace_id: string,
   at = Date.now(),
 ): { records: WorkspaceRecord[]; updated: WorkspaceRecord | null } {
-  return updateWorkspaceRecords(records, workspace_id, { last_used_at: at }, at);
+  return updateWorkspaceRecords(
+    records,
+    workspace_id,
+    { last_used_at: at },
+    at,
+  );
 }

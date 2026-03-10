@@ -25,7 +25,10 @@ test("durationToMs rejects invalid values", () => {
 test("normalizeUrl handles schemes and trimming", () => {
   assert.equal(normalizeUrl("localhost:9100/"), "http://localhost:9100");
   assert.equal(normalizeUrl("http://example.com///"), "http://example.com");
-  assert.equal(normalizeUrl("https://example.com/path/"), "https://example.com/path");
+  assert.equal(
+    normalizeUrl("https://example.com/path/"),
+    "https://example.com/path",
+  );
 });
 
 test("parseSshServer parses host and optional port", () => {

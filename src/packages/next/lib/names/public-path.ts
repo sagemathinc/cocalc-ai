@@ -18,7 +18,7 @@ import { join } from "path";
 export default async function getPublicPathId(
   owner: string,
   project: string,
-  public_path: string[] // this is the entire actual path
+  public_path: string[], // this is the entire actual path
 ): Promise<string> {
   if (shouldUseProxy(owner)) {
     // special case -- proxy urls...
@@ -32,7 +32,7 @@ export default async function getPublicPathId(
   const pool = getPool("long");
   const result = await pool.query(
     "SELECT id FROM public_paths WHERE LOWER(name)=$1 AND project_id=$2",
-    [public_path[0]?.toLowerCase() ?? "", project_id]
+    [public_path[0]?.toLowerCase() ?? "", project_id],
   );
   if (result.rows.length > 0) {
     return result.rows[0].id;
@@ -43,14 +43,14 @@ export default async function getPublicPathId(
 // Given the id of a public path, returns owner name, project name, and public_path name
 // if they are all defined and nonempty. Otherwise returns undefined.
 export async function getPublicPathNames(
-  id: string
+  id: string,
 ): Promise<
   { owner: string; project: string; public_path: string } | undefined
 > {
   const pool = getPool("medium");
   let result = await pool.query(
     "SELECT project_id, name FROM public_paths WHERE id=$1",
-    [id]
+    [id],
   );
   if (result.rows.length == 0) return;
   const { project_id, name: public_path } = result.rows[0];
@@ -59,7 +59,7 @@ export async function getPublicPathNames(
   // Having to get users is pretty stupid -- see comment in lib/project/get-owner.ts
   result = await pool.query(
     "SELECT name, users FROM projects WHERE project_id=$1 AND name IS NOT NULL AND name != ''",
-    [project_id]
+    [project_id],
   );
   if (result.rows.length == 0) return;
 

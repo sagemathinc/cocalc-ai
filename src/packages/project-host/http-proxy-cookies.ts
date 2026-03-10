@@ -3,7 +3,9 @@ import { PROJECT_HOST_HTTP_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/projec
 
 const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
-  Number.isFinite(Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS))
+  Number.isFinite(
+    Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS),
+  )
     ? Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS)
     : 30 * 24 * 60 * 60,
 );

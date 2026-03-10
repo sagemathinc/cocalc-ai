@@ -6,5 +6,5 @@
 // Use this type to type the callback which is e.g. used in callback 2
 export type CB<T = any, E = string | Error | null | undefined> = (
   err?: E,
-  result?: T
+  result?: T,
 ) => any;

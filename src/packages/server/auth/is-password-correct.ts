@@ -21,7 +21,7 @@ export default async function isPasswordCorrect({
   const pool = getPool();
   const { rows } = await pool.query(
     "SELECT password_hash FROM accounts WHERE account_id=$1",
-    [account_id]
+    [account_id],
   );
   if (rows.length == 0) return false;
   const { password_hash } = rows[0];

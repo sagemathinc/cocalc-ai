@@ -62,7 +62,10 @@ export class UsageInfoServer extends EventEmitter {
   private usage?: UsageInfo;
   private last?: UsageInfo;
 
-  constructor(path: string, opts?: { client?: ConatClient; project_id?: string }) {
+  constructor(
+    path: string,
+    opts?: { client?: ConatClient; project_id?: string },
+  ) {
     super();
     this.path = path;
     this.dbg = (...args) => logger.debug(this.path, ...args);

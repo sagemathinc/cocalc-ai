@@ -8,7 +8,7 @@ export default async function getSubscriptions(
     limit?: number;
     ending_before?: string;
     starting_after?: string;
-  }
+  },
 ): Promise<object> {
   if (!isValidUUID(account_id)) {
     throw Error("invalid uuid");

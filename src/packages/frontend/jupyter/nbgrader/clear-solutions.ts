@@ -57,7 +57,7 @@ If minimal_stubs is true, use a "friendly" stub that doesn't cause an error.
 function replaceSolutionRegion(
   input: string,
   language: string | undefined,
-  minimal_stubs?: boolean
+  minimal_stubs?: boolean,
 ): string | undefined {
   const lines: string[] = input.split("\n");
 
@@ -125,7 +125,7 @@ function replaceSolutionRegion(
 export default function clearSolution(
   cell: Map<string, any>,
   kernel_language: string | undefined,
-  minimal_stubs?: boolean
+  minimal_stubs?: boolean,
 ): Map<string, any> {
   // Clear the solution region in the input part of the cell, and returns
   // a new modified cell object if necessary.  You can tell whether or not
@@ -137,7 +137,7 @@ export default function clearSolution(
   const input2: string | undefined = replaceSolutionRegion(
     input,
     language,
-    minimal_stubs
+    minimal_stubs,
   );
   return input2 != null ? cell.set("input", input2) : cell;
 }

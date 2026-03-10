@@ -9,10 +9,9 @@ import path from "node:path";
 import { reflectVersion } from "../reflect/manager";
 import { main as sshMain } from "./ssh";
 
-const dynamicImport = new Function(
-  "p",
-  "return import(p);",
-) as (p: string) => Promise<any>;
+const dynamicImport = new Function("p", "return import(p);") as (
+  p: string,
+) => Promise<any>;
 
 function usage() {
   console.log(`Usage:
@@ -70,7 +69,11 @@ function stopDaemon(pidfile?: string | null) {
   }
 }
 
-function daemonize(args: string[], pidfile?: string | null, logfile?: string | null) {
+function daemonize(
+  args: string[],
+  pidfile?: string | null,
+  logfile?: string | null,
+) {
   const childArgs = args.concat(["--daemon-child"]);
   let stdoutFd: "ignore" | number = "ignore";
   let stderrFd: "ignore" | number = "ignore";
@@ -110,20 +113,25 @@ function daemonize(args: string[], pidfile?: string | null, logfile?: string | n
 function normalizeOsArch() {
   const platform = os.platform();
   const osName =
-    platform === "darwin" ? "darwin" : platform === "linux" ? "linux" : platform;
+    platform === "darwin"
+      ? "darwin"
+      : platform === "linux"
+        ? "linux"
+        : platform;
   const archRaw = os.arch();
   const arch =
-    archRaw === "x64"
-      ? "amd64"
-      : archRaw === "arm64"
-        ? "arm64"
-        : archRaw;
+    archRaw === "x64" ? "amd64" : archRaw === "arm64" ? "arm64" : archRaw;
   return { os: osName, arch };
 }
 
 function defaultPlusRootDir() {
   if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "cocalc-plus");
+    return path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "cocalc-plus",
+    );
   }
   return path.join(os.homedir(), ".local", "share", "cocalc-plus");
 }
@@ -259,8 +267,7 @@ function runCliCommand(args: string[]): Promise<void> {
 function writeVersionInfo() {
   const dataDir = process.env.COCALC_DATA_DIR || defaultPlusDataDir();
   const outPath =
-    process.env.COCALC_WRITE_VERSION_INFO ||
-    path.join(dataDir, "version.json");
+    process.env.COCALC_WRITE_VERSION_INFO || path.join(dataDir, "version.json");
   if (!outPath) return;
   const { os: osName, arch } = normalizeOsArch();
   const payload = {
@@ -360,11 +367,7 @@ async function runCli() {
     await dynamicImport("reflect-sync/cli");
     return;
   }
-  if (
-    argv[0] === "version" ||
-    argv[0] === "--version" ||
-    argv[0] === "-v"
-  ) {
+  if (argv[0] === "version" || argv[0] === "--version" || argv[0] === "-v") {
     console.log(getPackageVersion());
     return;
   }
@@ -382,7 +385,8 @@ async function runCli() {
   const daemonStatus = hasFlag(argv, "--daemon-status");
   const daemon = hasFlag(argv, "--daemon");
   const daemonChild = hasFlag(argv, "--daemon-child");
-  const pidfile = pickArg(argv, "--pidfile") || process.env.COCALC_DAEMON_PIDFILE;
+  const pidfile =
+    pickArg(argv, "--pidfile") || process.env.COCALC_DAEMON_PIDFILE;
   const logfile = pickArg(argv, "--log") || process.env.COCALC_DAEMON_LOG;
 
   const connInfo = pickArg(argv, "--write-connection-info");

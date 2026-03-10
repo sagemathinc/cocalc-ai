@@ -146,7 +146,9 @@ export function listBrowserSessionsForAccount({
   account_id: string;
   max_age_ms?: unknown;
   include_stale?: unknown;
-  live_by_browser_id?: Map<string, BrowserSessionLiveInfo> | Record<string, BrowserSessionLiveInfo>;
+  live_by_browser_id?:
+    | Map<string, BrowserSessionLiveInfo>
+    | Record<string, BrowserSessionLiveInfo>;
 }): BrowserSessionInfo[] {
   const now = Date.now();
   pruneStaleRecords(now);

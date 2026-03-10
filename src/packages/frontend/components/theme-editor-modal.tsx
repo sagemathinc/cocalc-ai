@@ -5,7 +5,10 @@ import type { IconName } from "./icon";
 import { ColorButton } from "./color-picker";
 import { IconPickerInput } from "./icon-picker-input";
 import { ThemeImageInput, blobImageUrl } from "./theme-image-input";
-import type { ThemeEditorDraft, ThemeImageChoice } from "@cocalc/frontend/theme/types";
+import type {
+  ThemeEditorDraft,
+  ThemeImageChoice,
+} from "@cocalc/frontend/theme/types";
 
 interface ThemeEditorModalProps {
   open: boolean;
@@ -43,7 +46,7 @@ export function ThemeEditorModal({
     [value?.image_blob],
   );
   const iconName = useMemo(
-    () => ((value?.icon?.trim() || defaultIcon) as IconName),
+    () => (value?.icon?.trim() || defaultIcon) as IconName,
     [defaultIcon, value?.icon],
   );
   const uniqueImages = useMemo(() => {
@@ -191,7 +194,10 @@ export function ThemeEditorModal({
                     title="Select theme color"
                   />
                   {value?.color ? (
-                    <Button size="small" onClick={() => onChange({ color: null })}>
+                    <Button
+                      size="small"
+                      onClick={() => onChange({ color: null })}
+                    >
                       Clear
                     </Button>
                   ) : null}

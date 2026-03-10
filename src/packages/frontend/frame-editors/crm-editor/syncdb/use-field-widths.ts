@@ -18,7 +18,7 @@ export default function useFieldWidths({
   id: string; // id of a view of the given table.
 }): [
   fieldWidths: FieldWidths, // map from fields to their width; default is empty map, i.e., use defaults
-  setFieldWidths: (fieldWidths: FieldWidths) => void
+  setFieldWidths: (fieldWidths: FieldWidths) => void,
 ] {
   const [record, setRecord] = useRecord<{
     widths?: FieldWidths;
@@ -32,7 +32,7 @@ export default function useFieldWidths({
     (fieldWidths: FieldWidths) => {
       setRecord({ widths: fieldWidths });
     },
-    [setRecord]
+    [setRecord],
   );
 
   return [record.widths ?? {}, setFieldWidths];

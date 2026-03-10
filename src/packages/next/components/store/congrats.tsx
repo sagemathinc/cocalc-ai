@@ -123,9 +123,7 @@ export default function Congrats() {
     );
   }
 
-  const memberships = purchases.result.filter(
-    (x) => x.product == "membership",
-  );
+  const memberships = purchases.result.filter((x) => x.product == "membership");
 
   return (
     <>
@@ -157,8 +155,7 @@ export default function Congrats() {
                     ? item.description.class.charAt(0).toUpperCase() +
                       item.description.class.slice(1)
                     : "Membership"}{" "}
-                  ({" "}
-                  {item.description?.interval ?? "monthly"} ) purchased{" "}
+                  ( {item.description?.interval ?? "monthly"} ) purchased{" "}
                   <TimeAgo datetime={item.purchased.time} />
                 </li>
               ))}

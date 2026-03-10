@@ -241,10 +241,9 @@ export function TerminalFlyout({
     const clean = "\x05\x15"; // move cursor to end of line, then clear line
     const nextPath = effective_current_path;
     // start with a space to avoid recording in history
-    const cmd =
-      nextPath.startsWith("/")
-        ? ` cd "${escapeBashChangeDirPath(nextPath)}"`
-        : ` cd "$HOME/${escapeBashChangeDirPath(nextPath)}"`;
+    const cmd = nextPath.startsWith("/")
+      ? ` cd "${escapeBashChangeDirPath(nextPath)}"`
+      : ` cd "$HOME/${escapeBashChangeDirPath(nextPath)}"`;
     // this will end up in a write buffer, hence it should be ok to do right at the beginning
     terminalRef.current.conn_write(`${clean}${cmd}\n`);
   }, [effective_current_path, syncPath, sync, terminalExists]);
@@ -287,13 +286,9 @@ export function TerminalFlyout({
       margin: "0px",
     };
     if (error) {
-      return (
-        <Alert banner closable type="error" title={error} style={style} />
-      );
+      return <Alert banner closable type="error" title={error} style={style} />;
     } else if (status) {
-      return (
-        <Alert banner closable type="info" title={status} style={style} />
-      );
+      return <Alert banner closable type="info" title={status} style={style} />;
     }
   }
 

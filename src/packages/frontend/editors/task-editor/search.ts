@@ -7,20 +7,21 @@ import { LocalViewStateMap } from "./types";
 
 export function get_search(
   local_view_state: LocalViewStateMap,
-  relevant_tags: { [tag: string]: true }
+  relevant_tags: { [tag: string]: true },
 ): string {
   let search = "";
-  local_view_state
-    .get("selected_hashtags")
-    ?.forEach(function (state: -1 | 1, tag: string): void {
-      if (!relevant_tags[tag]) {
-        return;
-      }
-      if (state === 1) {
-        search += " #" + tag + " ";
-      } else if (state === -1) {
-        search += " -#" + tag + " ";
-      }
-    });
+  local_view_state.get("selected_hashtags")?.forEach(function (
+    state: -1 | 1,
+    tag: string,
+  ): void {
+    if (!relevant_tags[tag]) {
+      return;
+    }
+    if (state === 1) {
+      search += " #" + tag + " ";
+    } else if (state === -1) {
+      search += " -#" + tag + " ";
+    }
+  });
   return search + " " + (local_view_state.get("search") ?? "");
 }

@@ -36,4 +36,3 @@ describe("backend owned roots bridge", () => {
     expect(registry.listRoots()).toHaveLength(0);
   });
 });
-

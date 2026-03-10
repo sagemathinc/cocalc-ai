@@ -60,8 +60,7 @@ const RESTORE_PHASE_SET = new Set<RestorePhaseKey>(
 );
 
 export default function RestoreOps({ project_id }: { project_id: string }) {
-  const restoreOps =
-    useTypedRedux({ project_id }, "restore_ops")?.toJS() ?? {};
+  const restoreOps = useTypedRedux({ project_id }, "restore_ops")?.toJS() ?? {};
   const entries = Object.values(restoreOps) as RestoreLroState[];
   const active = entries.filter(
     (op) =>
@@ -113,7 +112,9 @@ function RestoreOpRow({ op }: { op: RestoreLroState }) {
 
   return (
     <div style={{ marginBottom: "6px" }}>
-      <div style={{ fontSize: "12px", marginBottom: "2px" }}>Restore operation</div>
+      <div style={{ fontSize: "12px", marginBottom: "2px" }}>
+        Restore operation
+      </div>
       <Space size="small" align="center">
         {percent == null ? (
           <Spin size="small" />
@@ -171,7 +172,9 @@ function RestoreOpTimeline({ op }: { op: RestoreLroState }) {
       children: (
         <div>
           <div style={{ fontWeight: 600 }}>{entry.label}</div>
-          <div style={{ color: "#666", fontSize: "11px" }}>{entry.description}</div>
+          <div style={{ color: "#666", fontSize: "11px" }}>
+            {entry.description}
+          </div>
         </div>
       ),
     }));
@@ -203,7 +206,12 @@ function RestoreOpTimeline({ op }: { op: RestoreLroState }) {
         <Space size="small" wrap style={{ fontSize: "12px" }}>
           {summary?.created_by ? (
             <span>
-              Initiated by <User account_id={summary.created_by} show_avatar avatarSize={16} />
+              Initiated by{" "}
+              <User
+                account_id={summary.created_by}
+                show_avatar
+                avatarSize={16}
+              />
             </span>
           ) : null}
           {summary?.created_at ? (

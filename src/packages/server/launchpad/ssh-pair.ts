@@ -34,12 +34,12 @@ async function main() {
   if (!pairingToken) {
     throw new Error("missing pairing token");
   }
-  const baseOverride = String(process.env.COCALC_SELF_HOST_PAIR_URL ?? "").trim();
+  const baseOverride = String(
+    process.env.COCALC_SELF_HOST_PAIR_URL ?? "",
+  ).trim();
   const config = getLaunchpadLocalConfig("local");
   const port = config.http_port ?? 9001;
-  const baseUrl =
-    baseOverride ||
-    `http://127.0.0.1:${port}`;
+  const baseUrl = baseOverride || `http://127.0.0.1:${port}`;
   const resp = await fetch(`${baseUrl}/self-host/pair`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

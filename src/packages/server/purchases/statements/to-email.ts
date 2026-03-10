@@ -37,7 +37,11 @@ purchases:
 
 import type { Statement } from "@cocalc/util/db-schema/statements";
 import type { Purchase } from "@cocalc/util/db-schema/purchases";
-import { moneyRound2Down, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import {
+  moneyRound2Down,
+  moneyToCurrency,
+  toDecimal,
+} from "@cocalc/util/money";
 import { plural } from "@cocalc/util/misc";
 import { QUOTA_SPEC } from "@cocalc/util/db-schema/purchase-quotas";
 

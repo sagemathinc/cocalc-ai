@@ -172,11 +172,13 @@ export function getRootMessage({
     let root: ChatMessageTyped | undefined;
     let earliest: ChatMessageTyped | undefined;
     for (const candidate of messages.values?.() ?? []) {
-      if (`${(candidate as any)?.thread_id ?? ""}`.trim() !== threadId) continue;
+      if (`${(candidate as any)?.thread_id ?? ""}`.trim() !== threadId)
+        continue;
       if (!earliest) {
         earliest = candidate as ChatMessageTyped;
       } else {
-        const currentMs = dateValue(candidate as any)?.valueOf() ?? Number.POSITIVE_INFINITY;
+        const currentMs =
+          dateValue(candidate as any)?.valueOf() ?? Number.POSITIVE_INFINITY;
         const earliestMs =
           dateValue(earliest as any)?.valueOf() ?? Number.POSITIVE_INFINITY;
         if (currentMs < earliestMs) {
@@ -216,10 +218,7 @@ export function getRootMessage({
   return getMessageAtDate({ messages, date: ms }) ?? fallbackRootByThreadId();
 }
 
-function stableMessageOrder(
-  a: ChatMessageTyped,
-  b: ChatMessageTyped,
-): number {
+function stableMessageOrder(a: ChatMessageTyped, b: ChatMessageTyped): number {
   const aMs = dateValue(a)?.valueOf() ?? Number.POSITIVE_INFINITY;
   const bMs = dateValue(b)?.valueOf() ?? Number.POSITIVE_INFINITY;
   if (aMs !== bMs) return aMs - bMs;
@@ -246,7 +245,11 @@ export function orderLinearThreadMessages(
   const anchors: ChatMessageTyped[] = [];
   for (const message of sorted) {
     const parentId = parentMessageIdField(message);
-    if (parentId && byId.has(parentId) && parentId !== `${(message as any)?.message_id ?? ""}`.trim()) {
+    if (
+      parentId &&
+      byId.has(parentId) &&
+      parentId !== `${(message as any)?.message_id ?? ""}`.trim()
+    ) {
       const bucket = children.get(parentId) ?? [];
       bucket.push(message);
       children.set(parentId, bucket);
@@ -263,7 +266,9 @@ export function orderLinearThreadMessages(
   const visited = new Set<string>();
   const visit = (message: ChatMessageTyped) => {
     const id = `${(message as any)?.message_id ?? ""}`.trim();
-    const key = id || `${dateValue(message)?.valueOf() ?? "no-date"}:${senderId(message) ?? ""}`;
+    const key =
+      id ||
+      `${dateValue(message)?.valueOf() ?? "no-date"}:${senderId(message) ?? ""}`;
     if (visited.has(key)) return;
     visited.add(key);
     ordered.push(message);

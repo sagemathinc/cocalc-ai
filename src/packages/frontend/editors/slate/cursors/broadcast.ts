@@ -32,15 +32,15 @@ export const useBroadcastCursors: (Options) => () => void = ({
   broadcastCursors,
 }) => {
   const focusPointRef = useRef<Point | undefined>(undefined);
-  const markdownPositionRef = useRef<
-    { line: number; ch: number } | undefined
-  >(undefined);
+  const markdownPositionRef = useRef<{ line: number; ch: number } | undefined>(
+    undefined,
+  );
 
   const update = useCallback(
     debounce(() => {
       markdownPositionRef.current = nearestMarkdownPositionForSlatePoint(
         editor,
-        focusPointRef.current
+        focusPointRef.current,
       );
       if (
         markdownPositionRef.current != null &&
@@ -50,7 +50,7 @@ export const useBroadcastCursors: (Options) => () => void = ({
         broadcastCursors([{ x: ch, y: line }]);
       }
     }, UPDATE_DEBOUNCE_MS),
-    []
+    [],
   );
 
   const onChange = () => {

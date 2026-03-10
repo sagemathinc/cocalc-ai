@@ -74,9 +74,7 @@ export async function applyMembershipChange({
     const start = dayjs().toDate();
     const existingEnd = change.current_period_end;
     const end =
-      change.change == "downgrade" &&
-      existingEnd != null &&
-      existingEnd > start
+      change.change == "downgrade" && existingEnd != null && existingEnd > start
         ? existingEnd
         : interval == "month"
           ? dayjs(start).add(1, "month").toDate()

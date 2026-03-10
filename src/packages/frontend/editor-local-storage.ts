@@ -24,7 +24,7 @@ const SEP = "\uFE10";
 function _local_storage_prefix(
   project_id: string,
   filename?: string,
-  key?: string
+  key?: string,
 ): string {
   let s = project_id;
   if (filename != null) {
@@ -50,7 +50,7 @@ function _local_storage_prefix(
 export function local_storage_delete(
   project_id: string,
   filename?: string,
-  key?: string
+  key?: string,
 ) {
   const prefix = _local_storage_prefix(project_id, filename, key);
   delete_local_storage_prefix(prefix);
@@ -60,7 +60,7 @@ export function local_storage(
   project_id: string,
   filename?: string,
   key?: string,
-  value?: any
+  value?: any,
 ) {
   const prefix = _local_storage_prefix(project_id, filename, key);
   const n = prefix.length;

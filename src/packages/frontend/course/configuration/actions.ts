@@ -18,10 +18,7 @@ import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { store as projects_store } from "@cocalc/frontend/projects/store";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { CourseActions, primary_key } from "../actions";
-import {
-  CourseSettingsRecord,
-  PARALLEL_DEFAULT,
-} from "../store";
+import { CourseSettingsRecord, PARALLEL_DEFAULT } from "../store";
 import { SyncDBRecord } from "../types";
 import {
   StudentProjectFunctionality,
@@ -70,7 +67,6 @@ export class ConfigurationActions {
     );
     this.course_actions.shared_project.set_project_description();
   };
-
 
   set_pay_choice = (type: "student" | "institute", value: boolean): void => {
     this.set({ [type + "_pay"]: value, table: "settings" });

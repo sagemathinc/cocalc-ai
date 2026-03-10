@@ -9,7 +9,7 @@ export async function open_file_use_entry(
   project_id: string,
   path: string,
   show_chat: boolean,
-  redux: any
+  redux: any,
 ): Promise<void> {
   if (redux == null) {
     return;

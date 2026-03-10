@@ -34,7 +34,11 @@ export async function localPathFileserver({
   rootfs?: string;
   allowSafeModeHardlink?: boolean;
   allowSafeModeSymlink?: boolean;
-  onMutation?: (opts: { subject: string; op: string; path?: string }) => void | Promise<void>;
+  onMutation?: (opts: {
+    subject: string;
+    op: string;
+    path?: string;
+  }) => void | Promise<void>;
 } = {}) {
   logger.debug("localPathFileserver", {
     service,

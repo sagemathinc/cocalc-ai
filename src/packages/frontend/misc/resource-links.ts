@@ -6,7 +6,6 @@
 // resource links, pointing to some assets we're hosting (formerly on a CDN)
 // see packages/cdn for *how* they're hosted.
 
-
 import { versions } from "@cocalc/cdn";
 
 // this encodes <link href="..." crossOrigin="..." etc. />
@@ -23,7 +22,7 @@ const CDN = "cdn";
 // prefix must be a full URL, e.g. https://cocalc.com/ or https://cocalc.foo.bar/subdir/
 export function resource_links(
   prefix: string,
-  with_version: boolean = false
+  with_version: boolean = false,
 ): ResourceLink[] {
   if (prefix.slice(-1) != "/") prefix = prefix + "/";
   const vers = (name) => (with_version ? `-${versions[name]}` : "");
@@ -34,7 +33,7 @@ export function resource_links(
     },
     {
       href: `${prefix}${CDN}/codemirror${vers(
-        "codemirror"
+        "codemirror",
       )}/lib/codemirror.css`,
       rel: "stylesheet",
     },

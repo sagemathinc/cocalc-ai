@@ -188,7 +188,8 @@ export const SPEC = {
       const a = effectiveArch() === "x64" ? "amd64" : effectiveArch();
       return `${SPEC.restServer.BASE}/v${SPEC.restServer.VERSION}/rest-server_${SPEC.restServer.VERSION}_linux_${a}.tar.gz`;
     },
-    pathInArchive: () => `rest-server_${SPEC.restServer.VERSION}_linux_${effectiveArch() === "x64" ? "amd64" : effectiveArch()}/${SPEC.restServer.binary}`,
+    pathInArchive: () =>
+      `rest-server_${SPEC.restServer.VERSION}_linux_${effectiveArch() === "x64" ? "amd64" : effectiveArch()}/${SPEC.restServer.binary}`,
   },
   // sshpiper -- used by the project-host
   // See https://github.com/sagemathinc/sshpiper-binaries/releases

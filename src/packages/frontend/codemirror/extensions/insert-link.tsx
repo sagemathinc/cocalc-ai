@@ -77,7 +77,7 @@ function insert_link(mode: string, opts: Options): string {
 
 export async function get_insert_link_opts_from_user(
   default_display: string,
-  show_target: boolean
+  show_target: boolean,
 ): Promise<undefined | Options> {
   return await show_react_modal((cb) => {
     return (

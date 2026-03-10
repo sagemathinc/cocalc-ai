@@ -19,7 +19,6 @@ import { db } from "@cocalc/database";
 import { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 
-
 describe("Delete Operations - Group 3b", () => {
   let database: any; // Singleton database instance
 

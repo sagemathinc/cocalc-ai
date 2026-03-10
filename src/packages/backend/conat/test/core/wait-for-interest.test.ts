@@ -124,8 +124,6 @@ describe("async respond tests for interest by default", () => {
     client2.close();
     await mesg.respond(eval(mesg.data), { timeout: 500, noThrow: true });
   });
-  
-
 });
 
 afterAll(after);

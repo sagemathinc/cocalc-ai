@@ -32,7 +32,7 @@ export default function DefaultMath({ data }: Props) {
   const __html = replace_all(
     math_unescape(replace_math(text, math)),
     "\\$",
-    "$"
+    "$",
   );
   return <span dangerouslySetInnerHTML={{ __html }}></span>;
 }

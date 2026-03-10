@@ -27,7 +27,10 @@ interface AppExposureState {
 }
 
 const CACHE_TTL_MS = 1000;
-const cache = new TTL<string, { specs: AppSpec[]; exposures: Record<string, AppExposureState> }>({
+const cache = new TTL<
+  string,
+  { specs: AppSpec[]; exposures: Record<string, AppExposureState> }
+>({
   max: 10_000,
   ttl: CACHE_TTL_MS,
 });
@@ -79,7 +82,9 @@ async function loadSpecs(project_id: string): Promise<AppSpec[]> {
   return out;
 }
 
-async function loadExposures(project_id: string): Promise<Record<string, AppExposureState>> {
+async function loadExposures(
+  project_id: string,
+): Promise<Record<string, AppExposureState>> {
   const dir = projectAppsDir(project_id);
   if (!dir) return {};
   const path = join(dir, "runtime-state.json");
@@ -128,10 +133,14 @@ export async function authorizePublicAppPath({
   const parsed = new URL(url, "http://project-host.local");
   const projectPrefix = normalizePrefix(`/${project_id}`);
   const pathname = parsed.pathname;
-  if (!(pathname === projectPrefix || pathname.startsWith(`${projectPrefix}/`))) {
+  if (
+    !(pathname === projectPrefix || pathname.startsWith(`${projectPrefix}/`))
+  ) {
     return false;
   }
-  const localPath = normalizePrefix(pathname.slice(projectPrefix.length) || "/");
+  const localPath = normalizePrefix(
+    pathname.slice(projectPrefix.length) || "/",
+  );
   const { specs, exposures } = await getAppData(project_id);
   const now = Date.now();
   for (const spec of specs) {
@@ -150,7 +159,8 @@ export async function authorizePublicAppPath({
       return false;
     }
     if (exposure.auth_front === "token") {
-      const token = `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
+      const token =
+        `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
       if (!token || !exposure.token || token !== exposure.token) {
         return false;
       }

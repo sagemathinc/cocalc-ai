@@ -44,7 +44,9 @@ function recentLogCacheKey({
 
 function getEventTime(evt: any): number | undefined {
   const value = evt?.time;
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 /**

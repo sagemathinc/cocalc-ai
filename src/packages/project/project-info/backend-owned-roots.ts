@@ -42,4 +42,3 @@ export function ensureBackendOwnedRootBridge() {
   installed = true;
   setProcessTracker(createTrackedRoot);
 }
-

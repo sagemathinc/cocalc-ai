@@ -198,7 +198,9 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   children,
 }) => {
   if (element.type === "code_line") {
-    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
+    return (
+      <CodeLineElement attributes={attributes}>{children}</CodeLineElement>
+    );
   }
   if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
@@ -360,9 +362,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
               }}
             />
           )}
-          collapseToggle={
-            null
-          }
+          collapseToggle={null}
         />
       )}
       {editing ? (
@@ -434,7 +434,10 @@ export const StaticElement: React.FC<RenderElementProps> = ({
           className="cocalc-slate-code-block"
           style={{ margin: 0 }}
           dangerouslySetInnerHTML={{
-            __html: highlightCodeHtml(renderedValue, temporaryInfo ?? element.info),
+            __html: highlightCodeHtml(
+              renderedValue,
+              temporaryInfo ?? element.info,
+            ),
           }}
         />
       )}

@@ -24,7 +24,9 @@ function inferLabel(path: string, ext: string | null): string {
   return "Text";
 }
 
-export function resolveTextDocumentAssociation(path: string): TextDocumentAssociation {
+export function resolveTextDocumentAssociation(
+  path: string,
+): TextDocumentAssociation {
   const base = basename(path);
   const ext = filename_extension(path) || null;
   const descriptor = getSyncDocDescriptor(path);

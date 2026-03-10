@@ -22,7 +22,7 @@ export default async function getVoucherCodes({
 
   const { rows } = await pool.query(
     "SELECT created_by FROM vouchers WHERE id=$1",
-    [id]
+    [id],
   );
   if (rows.length == 0) {
     throw Error(`no voucher with id ${id}`);
@@ -36,7 +36,7 @@ export default async function getVoucherCodes({
 
   const { rows: rows2 } = await pool.query(
     "SELECT code, created, when_redeemed, redeemed_by, notes, canceled FROM voucher_codes WHERE id=$1 ORDER BY created DESC, code",
-    [id]
+    [id],
   );
   return rows2;
 }

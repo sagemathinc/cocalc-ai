@@ -91,7 +91,9 @@ export function NewFileButton({
         );
       case "small":
         return (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+          >
             {displayed_icon}
             <span style={{ color: COLORS.GRAY_D }}>{name}</span>
           </span>

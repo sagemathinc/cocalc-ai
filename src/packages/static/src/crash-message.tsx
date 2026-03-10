@@ -16,7 +16,7 @@ export default function CrashMessage({
     context: `\n\nCONTEXT:\n\n${JSON.stringify(
       { msg, lineNo, columnNo, stack, url },
       undefined,
-      2
+      2,
     )}`,
     type: "problem",
     hideExtra: true,

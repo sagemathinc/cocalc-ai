@@ -140,8 +140,8 @@ export function RowEntryInner({
         isClearing && !value
           ? "Will clear on save"
           : isSet && !value
-          ? "Stored (enter to replace)"
-          : undefined;
+            ? "Stored (enter to replace)"
+            : undefined;
       const style = isStored ? {} : rowEntryStyle(value, valid);
       const visibilityToggle = !isStored;
       if (multiline != null) {

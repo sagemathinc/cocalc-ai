@@ -1,4 +1,9 @@
-import type { HostSpec, HostRuntime, CloudProvider, RemoteInstance } from "../types";
+import type {
+  HostSpec,
+  HostRuntime,
+  CloudProvider,
+  RemoteInstance,
+} from "../types";
 import getLogger from "@cocalc/backend/logger";
 import {
   createVirtualMachines,
@@ -192,7 +197,9 @@ async function selectFlavor(
 
   const selectedFlavor = spec.metadata?.machine_type;
   if (selectedFlavor) {
-    const exact = regionFlavors.find((flavor) => flavor.name === selectedFlavor);
+    const exact = regionFlavors.find(
+      (flavor) => flavor.name === selectedFlavor,
+    );
     if (exact) return exact.name;
     logger.warn("selectFlavor: requested flavor not found in region", {
       region,
@@ -243,7 +250,9 @@ async function selectImage(
     (img) => imageUbuntuVersion(img) >= MIN_UBUNTU_VERSION,
   );
   if (!versioned.length) {
-    throw new Error(`no Hyperstack Ubuntu ${MIN_UBUNTU_VERSION / 100}+ images for ${region}`);
+    throw new Error(
+      `no Hyperstack Ubuntu ${MIN_UBUNTU_VERSION / 100}+ images for ${region}`,
+    );
   }
   const wantsGpu = !!spec.gpu;
   const cpuPreferred = versioned.filter((img) => !isCudaImage(img));
@@ -368,7 +377,8 @@ async function findDataVolumeById(
 ): Promise<VolumeDetails | undefined> {
   const volumes = await getVolumes();
   return volumes.find(
-    (volume) => volume.id === id && volume.environment?.name === environment_name,
+    (volume) =>
+      volume.id === id && volume.environment?.name === environment_name,
   );
 }
 
@@ -642,7 +652,9 @@ export class HyperstackProvider implements CloudProvider {
     creds: HyperstackCreds,
   ): Promise<RemoteInstance | undefined> {
     ensureHyperstackConfig(creds);
-    const instance = await getVirtualMachine(parseInstanceId(runtime.instance_id));
+    const instance = await getVirtualMachine(
+      parseInstanceId(runtime.instance_id),
+    );
     if (!instance) return undefined;
     return {
       instance_id: runtime.instance_id,

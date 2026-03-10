@@ -94,7 +94,9 @@ describe("cloud dns", () => {
     expect(zoneCalls.some((url) => url.includes("name=dev.example.com"))).toBe(
       true,
     );
-    expect(zoneCalls.some((url) => url.includes("name=example.com"))).toBe(true);
+    expect(zoneCalls.some((url) => url.includes("name=example.com"))).toBe(
+      true,
+    );
   });
 
   it("creates a proxied A record for the host", async () => {

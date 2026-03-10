@@ -264,7 +264,9 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
                     });
                     setAvatarImage(undefined);
                   } catch (err) {
-                    setError(`Error deleting ${projectLabelLower} image: ${err}`);
+                    setError(
+                      `Error deleting ${projectLabelLower} image: ${err}`,
+                    );
                   }
                 }}
               >
@@ -315,7 +317,9 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
                     await actions.setProjectColor(project_id, "");
                     setColor(undefined);
                   } catch (err) {
-                    setError(`Error removing ${projectLabelLower} color: ${err}`);
+                    setError(
+                      `Error removing ${projectLabelLower} color: ${err}`,
+                    );
                   }
                 }}
               >

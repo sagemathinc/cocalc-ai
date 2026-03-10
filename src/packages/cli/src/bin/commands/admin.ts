@@ -8,8 +8,12 @@ export type AdminCommandDeps = {
   isValidUUID: any;
 };
 
-export function registerAdminCommand(program: Command, deps: AdminCommandDeps): Command {
-  const { withContext, resolveAccountByIdentifier, normalizeUrl, isValidUUID } = deps;
+export function registerAdminCommand(
+  program: Command,
+  deps: AdminCommandDeps,
+): Command {
+  const { withContext, resolveAccountByIdentifier, normalizeUrl, isValidUUID } =
+    deps;
 
   const admin = program.command("admin").description("site admin operations");
   const adminUser = admin.command("user").description("admin user management");
@@ -34,7 +38,11 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
           }
 
           const limit = opts.limit == null ? 20 : Number(opts.limit);
-          if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit <= 0) {
+          if (
+            !Number.isFinite(limit) ||
+            !Number.isInteger(limit) ||
+            limit <= 0
+          ) {
             throw new Error("--limit must be a positive integer");
           }
           const cappedLimit = Math.min(limit, ADMIN_SEARCH_LIMIT);
@@ -112,10 +120,7 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
           let firstName = opts.firstName?.trim();
           let lastName = opts.lastName?.trim();
           if (opts.name?.trim()) {
-            const parts = opts.name
-              .trim()
-              .split(/\s+/)
-              .filter(Boolean);
+            const parts = opts.name.trim().split(/\s+/).filter(Boolean);
             if (!firstName && parts.length) {
               firstName = parts[0];
             }
@@ -160,49 +165,53 @@ export function registerAdminCommand(program: Command, deps: AdminCommandDeps): 
         },
         command: Command,
       ) => {
-        await withContext(command, "admin user issue-auth-token", async (ctx) => {
-          const identifier = `${user ?? ""}`.trim();
-          if (!identifier) {
-            throw new Error("user identifier must be non-empty");
-          }
-
-          const resolved = isValidUUID(identifier)
-            ? { account_id: identifier }
-            : await resolveAccountByIdentifier(ctx, identifier);
-          const userAccountId = `${resolved?.account_id ?? ""}`.trim();
-          if (!userAccountId) {
-            throw new Error(`unable to resolve account for '${identifier}'`);
-          }
-
-          const token = await ctx.hub.system.generateUserAuthToken({
-            user_account_id: userAccountId,
-            password: opts.password,
-          });
-
-          // Prefer the configured public DNS/site URL when available so generated
-          // impersonation links work from other machines/browsers.
-          let base = normalizeUrl(ctx.apiBaseUrl).replace(/\/+$/, "");
-          try {
-            const site = await ctx.hub.system.getPublicSiteUrl({});
-            const publicUrl = `${site?.url ?? ""}`.trim();
-            if (publicUrl) {
-              base = normalizeUrl(publicUrl).replace(/\/+$/, "");
+        await withContext(
+          command,
+          "admin user issue-auth-token",
+          async (ctx) => {
+            const identifier = `${user ?? ""}`.trim();
+            if (!identifier) {
+              throw new Error("user identifier must be non-empty");
             }
-          } catch {
-            // Keep fallback to current apiBaseUrl for older hubs / local-only setups.
-          }
-          const signInUrl = new URL(`${base}/auth/impersonate`);
-          signInUrl.searchParams.set("auth_token", token);
-          if (opts.lang?.trim()) {
-            signInUrl.searchParams.set("lang_temp", opts.lang.trim());
-          }
 
-          return {
-            user_account_id: userAccountId,
-            token,
-            url: signInUrl.toString(),
-          };
-        });
+            const resolved = isValidUUID(identifier)
+              ? { account_id: identifier }
+              : await resolveAccountByIdentifier(ctx, identifier);
+            const userAccountId = `${resolved?.account_id ?? ""}`.trim();
+            if (!userAccountId) {
+              throw new Error(`unable to resolve account for '${identifier}'`);
+            }
+
+            const token = await ctx.hub.system.generateUserAuthToken({
+              user_account_id: userAccountId,
+              password: opts.password,
+            });
+
+            // Prefer the configured public DNS/site URL when available so generated
+            // impersonation links work from other machines/browsers.
+            let base = normalizeUrl(ctx.apiBaseUrl).replace(/\/+$/, "");
+            try {
+              const site = await ctx.hub.system.getPublicSiteUrl({});
+              const publicUrl = `${site?.url ?? ""}`.trim();
+              if (publicUrl) {
+                base = normalizeUrl(publicUrl).replace(/\/+$/, "");
+              }
+            } catch {
+              // Keep fallback to current apiBaseUrl for older hubs / local-only setups.
+            }
+            const signInUrl = new URL(`${base}/auth/impersonate`);
+            signInUrl.searchParams.set("auth_token", token);
+            if (opts.lang?.trim()) {
+              signInUrl.searchParams.set("lang_temp", opts.lang.trim());
+            }
+
+            return {
+              user_account_id: userAccountId,
+              token,
+              url: signInUrl.toString(),
+            };
+          },
+        );
       },
     );
 

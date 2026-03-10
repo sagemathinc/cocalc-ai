@@ -54,7 +54,9 @@ export function is_zero_map(map: undefined | null | object): boolean {
 // Returns copy of map with no undefined/null values (recursive).
 // Doesn't modify map.  If map is an array, just returns it
 // with no change even if it has undefined values.
-export function map_without_undefined_and_null(map?: object): object | undefined | null {
+export function map_without_undefined_and_null(
+  map?: object,
+): object | undefined | null {
   if (map == null) {
     return;
   }

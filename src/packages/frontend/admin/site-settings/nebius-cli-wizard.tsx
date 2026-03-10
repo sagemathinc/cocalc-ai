@@ -97,10 +97,7 @@ function extractJsonBlock(text: string): any | null {
     // ignore
   }
   const markerMatch = trimmed.match(
-    new RegExp(
-      `${START_MARKER}([\\s\\S]*?)${END_MARKER}`,
-      "m",
-    ),
+    new RegExp(`${START_MARKER}([\\s\\S]*?)${END_MARKER}`, "m"),
   );
   if (markerMatch?.[1]) {
     try {

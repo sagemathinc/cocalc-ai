@@ -131,7 +131,6 @@ export type SiteSettingsKeys =
   | "samesite_remember_me"
   | "user_tracking";
 
-
 type Mapping = { [key: string]: string | number | boolean };
 
 type ToVal = boolean | string | number | string[] | Mapping;
@@ -306,8 +305,7 @@ export const displayJson = (conf) =>
 
 // TODO a cheap'n'dirty validation is good enough
 export const valid_dns_name = (val) => val.match(/^[a-zA-Z0-9.-]+$/g);
-export const valid_dns_name_or_empty = (val) =>
-  !val || valid_dns_name(val);
+export const valid_dns_name_or_empty = (val) => !val || valid_dns_name(val);
 
 export const split_iframe_comm_hosts: ToValFunc<string[]> = (hosts) =>
   (hosts ?? "").match(/[a-z0-9.-]+/g) || [];
@@ -400,9 +398,7 @@ export const site_settings_conf: SiteSettings = {
     group: "Networking",
     subgroup: "Domain",
     order: 10,
-    required_when: [
-      { key: "cloudflare_mode", equals: ["self", "managed"] },
-    ],
+    required_when: [{ key: "cloudflare_mode", equals: ["self", "managed"] }],
   },
   cloudflare_mode: {
     name: "Cloudflare Integration Mode",

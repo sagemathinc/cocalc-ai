@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "@cocalc/frontend/app-framework";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import type {
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
@@ -24,7 +29,9 @@ type UseHostSoftwareVersionsOptions = {
   artifacts?: HostSoftwareArtifact[];
 };
 
-type VersionMap = Partial<Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>>;
+type VersionMap = Partial<
+  Record<HostSoftwareArtifact, HostSoftwareAvailableVersion>
+>;
 
 type UseHostSoftwareVersionsResult = {
   loading: boolean;
@@ -47,9 +54,7 @@ function getErrorMessage(err: unknown): string {
   return "Unable to load software versions.";
 }
 
-function firstRowPerArtifact(
-  rows: HostSoftwareAvailableVersion[],
-): VersionMap {
+function firstRowPerArtifact(rows: HostSoftwareAvailableVersion[]): VersionMap {
   const out: VersionMap = {};
   for (const row of rows) {
     if (out[row.artifact]) continue;

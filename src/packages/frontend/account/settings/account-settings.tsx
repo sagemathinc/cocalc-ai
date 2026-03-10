@@ -16,7 +16,12 @@ import {
   Row,
   Well,
 } from "@cocalc/frontend/antd-bootstrap";
-import { Rendered, TypedMap, redux, useState } from "@cocalc/frontend/app-framework";
+import {
+  Rendered,
+  TypedMap,
+  redux,
+  useState,
+} from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Gap, Icon, TimeAgo } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -397,7 +402,8 @@ export function AccountSettings(props: Readonly<Props>) {
   function render_header(): Rendered {
     return (
       <>
-        <Icon name={ACCOUNT_PROFILE_ICON_NAME} /> {intl.formatMessage(labels.account)}
+        <Icon name={ACCOUNT_PROFILE_ICON_NAME} />{" "}
+        {intl.formatMessage(labels.account)}
       </>
     );
   }

@@ -3,10 +3,17 @@ import {
   type DStream,
   type DStreamOptions as DstreamCreateOptions,
 } from "@cocalc/conat/sync/dstream";
-import { dkv as createDKV, type DKV, type DKVOptions } from "@cocalc/conat/sync/dkv";
+import {
+  dkv as createDKV,
+  type DKV,
+  type DKVOptions,
+} from "@cocalc/conat/sync/dkv";
 import { dko as createDKO, type DKO } from "@cocalc/conat/sync/dko";
 import { akv as createAKV, type AKV } from "@cocalc/conat/sync/akv";
-import { astream as createAStream, type AStream } from "@cocalc/conat/sync/astream";
+import {
+  astream as createAStream,
+  type AStream,
+} from "@cocalc/conat/sync/astream";
 export { inventory } from "@cocalc/conat/sync/inventory";
 import "./index";
 
@@ -33,4 +40,3 @@ export function akv<T = any>(opts: DKVOptions): AKV<T> {
 export async function dko<T = any>(opts: DKVOptions): Promise<DKO<T>> {
   return await createDKO(opts);
 }
-

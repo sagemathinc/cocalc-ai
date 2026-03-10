@@ -11,7 +11,6 @@ import Logo from "components/logo";
 
 import { BODY_STYLE, LOGIN_STYLE, AUTH_WRAPPER_STYLE } from "../shared";
 
-
 interface AuthPageContainerProps {
   children: ReactNode;
   error?: ReactNode;
@@ -22,24 +21,19 @@ interface AuthPageContainerProps {
 }
 
 export default function AuthPageContainer(props: AuthPageContainerProps) {
-  const {
-    children,
-    error ,
-    footer,
-    minimal = false,
-    subtitle,
-    title,
-  } = props;
+  const { children, error, footer, minimal = false, subtitle, title } = props;
 
   return (
     <div style={BODY_STYLE}>
       <div style={AUTH_WRAPPER_STYLE}>
         {!minimal && (
-          <div style={{
-            textAlign: "center",
-            marginBottom: "15px",
-            color: COLORS.GRAY_D,
-          }}>
+          <div
+            style={{
+              textAlign: "center",
+              marginBottom: "15px",
+              color: COLORS.GRAY_D,
+            }}
+          >
             <Logo
               type="icon"
               style={{ width: "100px", height: "100px", marginBottom: "15px" }}
@@ -50,9 +44,7 @@ export default function AuthPageContainer(props: AuthPageContainerProps) {
           </div>
         )}
 
-        <div style={LOGIN_STYLE}>
-          {children}
-        </div>
+        <div style={LOGIN_STYLE}>{children}</div>
 
         {error && (
           <>
@@ -67,10 +59,11 @@ export default function AuthPageContainer(props: AuthPageContainerProps) {
         )}
 
         {footer && (
-          <div style={{
-              margin: `${ BODY_STYLE.margin } auto`,
+          <div
+            style={{
+              margin: `${BODY_STYLE.margin} auto`,
               padding: "8px",
-          }}
+            }}
           >
             {footer}
           </div>

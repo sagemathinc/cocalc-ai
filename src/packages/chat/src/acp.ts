@@ -101,9 +101,7 @@ function needsTextBoundarySpace(
   return false;
 }
 
-export function extractEventText(
-  event?: AcpStreamEvent,
-): string | undefined {
+export function extractEventText(event?: AcpStreamEvent): string | undefined {
   if (!eventHasText(event)) return;
   return event.text;
 }

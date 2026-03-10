@@ -66,9 +66,7 @@ export function resolveProjectHostAcpWorkerLaunch({
   const base = path.basename(command).toLowerCase();
   const nodeLike = base === "node" || base.startsWith("node");
   if (nodeLike) {
-    const entry =
-      entryPoint ??
-      require.resolve("@cocalc/project-host/main");
+    const entry = entryPoint ?? require.resolve("@cocalc/project-host/main");
     return { command, args: [entry] };
   }
   return { command, args: [] };

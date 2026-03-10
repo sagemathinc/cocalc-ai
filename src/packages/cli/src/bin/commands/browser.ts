@@ -165,7 +165,8 @@ export function registerBrowserCommand(
             include_stale: true,
           });
           const selected = resolveBrowserSession(sessions ?? [], browserHint);
-          const scopedApiUrl = `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+          const scopedApiUrl =
+            `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
           const saved = saveProfileBrowserId({
             deps,
             command,
@@ -239,77 +240,83 @@ export function registerBrowserCommand(
         },
         command: Command,
       ) => {
-        await deps.withContext(command, "browser target-resolve", async (ctx) => {
-          const profileSelection = loadProfileSelection(deps, command);
-          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-          const browserHint = browserHintFromOption(opts.browser) ?? "";
-          const projectHint = `${opts.project ?? ""}`.trim();
-          const sessionInfo = await chooseBrowserSession({
-            ctx,
-            browserHint,
-            fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery:
-              !!opts.requireDiscovery ||
-              (projectHint.length === 0 && projectIdHint.length === 0),
-            sessionProjectId:
-              `${opts.sessionProjectId ?? ""}`.trim() ||
-              `${projectIdHint ?? ""}`.trim() ||
-              undefined,
-            activeOnly: !!opts.activeOnly,
-          });
-          let resolvedProjectId: string | undefined;
-          let projectError: string | undefined;
-          try {
-            resolvedProjectId = await resolveTargetProjectId({
-              deps,
+        await deps.withContext(
+          command,
+          "browser target-resolve",
+          async (ctx) => {
+            const profileSelection = loadProfileSelection(deps, command);
+            const projectIdHint =
+              `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+            const browserHint = browserHintFromOption(opts.browser) ?? "";
+            const projectHint = `${opts.project ?? ""}`.trim();
+            const sessionInfo = await chooseBrowserSession({
               ctx,
-              project: projectHint,
-              projectId: projectIdHint,
-              sessionInfo,
+              browserHint,
+              fallbackBrowserId: profileSelection.browser_id,
+              requireDiscovery:
+                !!opts.requireDiscovery ||
+                (projectHint.length === 0 && projectIdHint.length === 0),
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() ||
+                `${projectIdHint ?? ""}`.trim() ||
+                undefined,
+              activeOnly: !!opts.activeOnly,
             });
-          } catch (err) {
-            projectError = `${err}`;
-          }
-          let projectSummary:
-            | {
-                project_id: string;
-                title?: string;
-                host_id?: string | null;
-              }
-            | undefined;
-          if (resolvedProjectId) {
+            let resolvedProjectId: string | undefined;
+            let projectError: string | undefined;
             try {
-              const ws = await deps.resolveProject(ctx, resolvedProjectId);
-              projectSummary = {
-                project_id: ws.project_id,
-                ...(ws.title ? { title: ws.title } : {}),
-                ...(ws.host_id != null ? { host_id: ws.host_id } : {}),
-              };
-            } catch {
-              // best-effort enrichment only
+              resolvedProjectId = await resolveTargetProjectId({
+                deps,
+                ctx,
+                project: projectHint,
+                projectId: projectIdHint,
+                sessionInfo,
+              });
+            } catch (err) {
+              projectError = `${err}`;
             }
-          }
-          return {
-            browser_id: sessionInfo.browser_id,
-            session_name: sessionInfo.session_name ?? "",
-            active_project_id: sessionInfo.active_project_id ?? "",
-            open_projects: sessionInfo.open_projects?.length ?? 0,
-            requested: {
-              browser: browserHint || undefined,
-              project: projectHint || undefined,
-              project_id: projectIdHint || undefined,
-              session_project_id: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
-              active_only: !!opts.activeOnly,
-              require_discovery: !!opts.requireDiscovery,
-            },
-            resolved: {
-              project_id: resolvedProjectId,
-              ...(projectSummary ? { project: projectSummary } : {}),
-              ...(projectError ? { project_error: projectError } : {}),
-            },
-            ...sessionTargetContext(ctx, sessionInfo, resolvedProjectId),
-          };
-        });
+            let projectSummary:
+              | {
+                  project_id: string;
+                  title?: string;
+                  host_id?: string | null;
+                }
+              | undefined;
+            if (resolvedProjectId) {
+              try {
+                const ws = await deps.resolveProject(ctx, resolvedProjectId);
+                projectSummary = {
+                  project_id: ws.project_id,
+                  ...(ws.title ? { title: ws.title } : {}),
+                  ...(ws.host_id != null ? { host_id: ws.host_id } : {}),
+                };
+              } catch {
+                // best-effort enrichment only
+              }
+            }
+            return {
+              browser_id: sessionInfo.browser_id,
+              session_name: sessionInfo.session_name ?? "",
+              active_project_id: sessionInfo.active_project_id ?? "",
+              open_projects: sessionInfo.open_projects?.length ?? 0,
+              requested: {
+                browser: browserHint || undefined,
+                project: projectHint || undefined,
+                project_id: projectIdHint || undefined,
+                session_project_id:
+                  `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+                active_only: !!opts.activeOnly,
+                require_discovery: !!opts.requireDiscovery,
+              },
+              resolved: {
+                project_id: resolvedProjectId,
+                ...(projectSummary ? { project: projectSummary } : {}),
+                ...(projectError ? { project_error: projectError } : {}),
+              },
+              ...sessionTargetContext(ctx, sessionInfo, resolvedProjectId),
+            };
+          },
+        );
       },
     );
 
@@ -329,26 +336,32 @@ export function registerBrowserCommand(
     .option("--active-only", "only target active (non-stale) sessions")
     .action(
       async (
-        opts: { browser?: string; sessionProjectId?: string; activeOnly?: boolean },
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+        },
         command: Command,
       ) => {
-      await deps.withContext(command, "browser exec-api", async (ctx) => {
-        const profileSelection = loadProfileSelection(deps, command);
-        const sessionInfo = await chooseBrowserSession({
-          ctx,
-          browserHint: browserHintFromOption(opts.browser),
-          fallbackBrowserId: profileSelection.browser_id,
-          sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
-          activeOnly: !!opts.activeOnly,
+        await deps.withContext(command, "browser exec-api", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          });
+          return await browserClient.getExecApiDeclaration();
         });
-        const browserClient = deps.createBrowserSessionClient({
-          account_id: ctx.accountId,
-          browser_id: sessionInfo.browser_id,
-          client: ctx.remote.client,
-        });
-        return await browserClient.getExecApiDeclaration();
-      });
-    });
+      },
+    );
 
   browser
     .command("files")
@@ -364,33 +377,39 @@ export function registerBrowserCommand(
     .option("--active-only", "only target active (non-stale) sessions")
     .action(
       async (
-        opts: { browser?: string; sessionProjectId?: string; activeOnly?: boolean },
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+        },
         command: Command,
       ) => {
-      await deps.withContext(command, "browser files", async (ctx) => {
-        const profileSelection = loadProfileSelection(deps, command);
-        const sessionInfo = await chooseBrowserSession({
-          ctx,
-          browserHint: browserHintFromOption(opts.browser),
-          fallbackBrowserId: profileSelection.browser_id,
-          sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
-          activeOnly: !!opts.activeOnly,
+        await deps.withContext(command, "browser files", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          });
+          const files = await browserClient.listOpenFiles();
+          return files.map((row) => ({
+            browser_id: sessionInfo.browser_id,
+            project_id: row.project_id,
+            title: row.title ?? "",
+            path: row.path,
+            ...sessionTargetContext(ctx, sessionInfo, row.project_id),
+          }));
         });
-        const browserClient = deps.createBrowserSessionClient({
-          account_id: ctx.accountId,
-          browser_id: sessionInfo.browser_id,
-          client: ctx.remote.client,
-        });
-        const files = await browserClient.listOpenFiles();
-        return files.map((row) => ({
-          browser_id: sessionInfo.browser_id,
-          project_id: row.project_id,
-          title: row.title ?? "",
-          path: row.path,
-          ...sessionTargetContext(ctx, sessionInfo, row.project_id),
-        }));
-      });
-    });
+      },
+    );
 
   browser
     .command("open [project] <paths...>")
@@ -428,7 +447,8 @@ export function registerBrowserCommand(
         command: Command,
       ) => {
         await deps.withContext(command, "browser open", async (ctx) => {
-          const projectHint = `${opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const projectHint =
+            `${opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           if (!projectHint) {
             throw new Error(
               "project is required; pass [project], --project-id, or set COCALC_PROJECT_ID",
@@ -452,7 +472,9 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
           });
-          const cleanPaths = (paths ?? []).map((p) => `${p ?? ""}`.trim()).filter((p) => p.length > 0);
+          const cleanPaths = (paths ?? [])
+            .map((p) => `${p ?? ""}`.trim())
+            .filter((p) => p.length > 0);
           if (!cleanPaths.length) {
             throw new Error("at least one path must be specified");
           }
@@ -508,7 +530,8 @@ export function registerBrowserCommand(
         command: Command,
       ) => {
         await deps.withContext(command, "browser close", async (ctx) => {
-          const projectHint = `${opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const projectHint =
+            `${opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           if (!projectHint) {
             throw new Error(
               "project is required; pass [project], --project-id, or set COCALC_PROJECT_ID",
@@ -532,7 +555,9 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
           });
-          const cleanPaths = (paths ?? []).map((p) => `${p ?? ""}`.trim()).filter((p) => p.length > 0);
+          const cleanPaths = (paths ?? [])
+            .map((p) => `${p ?? ""}`.trim())
+            .filter((p) => p.length > 0);
           if (!cleanPaths.length) {
             throw new Error("at least one path must be specified");
           }
@@ -586,13 +611,15 @@ export function registerBrowserCommand(
       "--fullpage",
       "capture full-page screenshot (native renderer; DOM renderer uses html root)",
     )
-    .option("--viewport-width <n>", "set viewport width before capture (native)")
-    .option("--viewport-height <n>", "set viewport height before capture (native)")
     .option(
-      "--scale <n>",
-      "render scale for DOM screenshot renderer",
-      "1",
+      "--viewport-width <n>",
+      "set viewport width before capture (native)",
     )
+    .option(
+      "--viewport-height <n>",
+      "set viewport height before capture (native)",
+    )
+    .option("--scale <n>", "render scale for DOM screenshot renderer", "1")
     .option("--out <path>", "output PNG path on local machine")
     .option(
       "--timeout <duration>",
@@ -629,14 +656,16 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser screenshot", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const projectIdHint =
+            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
           const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery:
+              projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -666,7 +695,9 @@ export function registerBrowserCommand(
             ? Math.floor(Number(opts.viewportHeight))
             : undefined;
           if ((viewportWidth == null) !== (viewportHeight == null)) {
-            throw new Error("--viewport-width and --viewport-height must be provided together");
+            throw new Error(
+              "--viewport-width and --viewport-height must be provided together",
+            );
           }
           if (
             viewportWidth != null &&
@@ -681,7 +712,9 @@ export function registerBrowserCommand(
             throw new Error("--viewport-height must be a positive integer");
           }
           if (requestedRenderer === "media" && fullPage) {
-            throw new Error("--fullpage is not supported with --renderer media");
+            throw new Error(
+              "--fullpage is not supported with --renderer media",
+            );
           }
           if (
             requestedRenderer === "media" &&
@@ -697,7 +730,10 @@ export function registerBrowserCommand(
           const outputPath =
             `${opts.out ?? ""}`.trim() ||
             `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
-          const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const timeoutMs = Math.max(
+            1_000,
+            durationToMs(opts.timeout, ctx.timeoutMs),
+          );
           const metaOutPath = `${opts.metaOut ?? ""}`.trim();
           let rendererUsed: ScreenshotRenderer = requestedRenderer;
           let result: Record<string, unknown> | undefined;
@@ -784,7 +820,9 @@ export function registerBrowserCommand(
 
           const pngDataUrl = `${result?.png_data_url ?? ""}`.trim();
           if (!pngDataUrl.startsWith("data:image/png;base64,")) {
-            throw new Error("browser screenshot capture returned invalid PNG data");
+            throw new Error(
+              "browser screenshot capture returned invalid PNG data",
+            );
           }
           const base64 = pngDataUrl.slice("data:image/png;base64,".length);
           const png = Buffer.from(base64, "base64");
@@ -814,7 +852,9 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             project_id,
             output_path: resolvePath(outputPath),
-            ...(metaOutPath ? { meta_output_path: resolvePath(metaOutPath) } : {}),
+            ...(metaOutPath
+              ? { meta_output_path: resolvePath(metaOutPath) }
+              : {}),
             bytes: png.byteLength,
             width: Number(result?.width ?? 0),
             height: Number(result?.height ?? 0),
@@ -829,7 +869,9 @@ export function registerBrowserCommand(
             selector,
             full_page: !!result?.full_page || fullPage,
             ...(viewportWidth != null ? { viewport_width: viewportWidth } : {}),
-            ...(viewportHeight != null ? { viewport_height: viewportHeight } : {}),
+            ...(viewportHeight != null
+              ? { viewport_height: viewportHeight }
+              : {}),
             wait_for_idle_ms: Number(result?.wait_for_idle_ms ?? waitForIdleMs),
             wait_for_idle_timed_out: !!result?.wait_for_idle_timed_out,
             page_url: `${result?.page_url ?? ""}`,
@@ -871,10 +913,7 @@ export function registerBrowserCommand(
       "--allow-raw-exec",
       "explicitly allow raw JS exec (sets policy.allow_raw_exec=true)",
     )
-    .option(
-      "--async",
-      "start execution asynchronously and return an exec id",
-    )
+    .option("--async", "start execution asynchronously and return an exec id")
     .option(
       "--wait",
       "when used with --async, wait for completion and return final status/result",
@@ -911,14 +950,16 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser exec", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectIdHint = `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+          const projectIdHint =
+            `${opts.projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
           const browserHint = browserHintFromOption(opts.browser) ?? "";
           const projectHint = `${opts.project ?? ""}`.trim();
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint,
             fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: projectHint.length === 0 && projectIdHint.length === 0,
+            requireDiscovery:
+              projectHint.length === 0 && projectIdHint.length === 0,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() ||
               `${projectIdHint ?? ""}`.trim() ||
@@ -932,7 +973,10 @@ export function registerBrowserCommand(
             projectId: projectIdHint,
             sessionInfo,
           });
-          const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const timeoutMs = Math.max(
+            1_000,
+            durationToMs(opts.timeout, ctx.timeoutMs),
+          );
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
@@ -1117,7 +1161,8 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
             activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
@@ -1175,10 +1220,14 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
             activeOnly: !!opts.activeOnly,
           });
-          const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const timeoutMs = Math.max(
+            1_000,
+            durationToMs(opts.timeout, ctx.timeoutMs),
+          );
           const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
@@ -1240,7 +1289,8 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId: `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
             activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({

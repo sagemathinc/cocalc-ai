@@ -21,13 +21,14 @@ import {
 } from "antd";
 import { Map as ImmutableMap, List, OrderedMap } from "immutable";
 import { FormattedMessage, useIntl } from "react-intl";
-import { CSS, Rendered, useRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { useState } from "react";
 import {
-  Icon,
-  Paragraph,
-  Text,
-} from "@cocalc/frontend/components";
+  CSS,
+  Rendered,
+  useRedux,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
+import { useState } from "react";
+import { Icon, Paragraph, Text } from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
@@ -234,7 +235,7 @@ export function KernelSelector({
                 </>
               }
             >
-            <Icon
+              <Icon
                 style={{ color: COLORS.GRAY, cursor: "pointer" }}
                 name="question-circle"
               />
@@ -426,7 +427,9 @@ export function KernelSelector({
       }
       const name = kernel_name(kernel) ?? kernel;
       return (
-        <Typography.Text type="secondary">Current kernel: {name}</Typography.Text>
+        <Typography.Text type="secondary">
+          Current kernel: {name}
+        </Typography.Text>
       );
     }
     if (kernel == null || kernel_info == null) {
@@ -435,8 +438,8 @@ export function KernelSelector({
       if (kernel != null && kernel_info == null) {
         msg = (
           <>
-            Your notebook kernel <code>"{kernel}"</code> does not exist on{" "}
-            this project.
+            Your notebook kernel <code>"{kernel}"</code> does not exist on this
+            project.
           </>
         );
       } else {
@@ -631,7 +634,9 @@ export function KernelSelector({
           {renderCloseButton()}
           {renderRefreshButton()}
         </div>
-        <h3 style={{ marginTop: 0 }}>{intl.formatMessage(labels.select_a_kernel)}</h3>
+        <h3 style={{ marginTop: 0 }}>
+          {intl.formatMessage(labels.select_a_kernel)}
+        </h3>
       </div>
     );
   }

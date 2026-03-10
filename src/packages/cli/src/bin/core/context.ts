@@ -98,7 +98,10 @@ const HUB_API_GROUPS: HubGroupName[] = [
 export function createHubApiForContext(
   callByName: <T>(name: string, args?: any[]) => Promise<T>,
 ): HubApi {
-  const hub = {} as Record<HubGroupName, Record<string, (...args: any[]) => Promise<any>>>;
+  const hub = {} as Record<
+    HubGroupName,
+    Record<string, (...args: any[]) => Promise<any>>
+  >;
   for (const group of HUB_API_GROUPS) {
     hub[group] = new Proxy(
       {},
@@ -107,7 +110,8 @@ export function createHubApiForContext(
           if (typeof property !== "string") {
             return undefined;
           }
-          return async (...args: any[]) => await callByName(`${group}.${property}`, args);
+          return async (...args: any[]) =>
+            await callByName(`${group}.${property}`, args);
         },
       },
     );

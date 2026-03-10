@@ -62,7 +62,8 @@ export function AdminMembership({ account_id }: { account_id: string }) {
   const tierOptions = useMemo(() => {
     return [...tiers]
       .sort(
-        (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.id.localeCompare(b.id),
+        (a, b) =>
+          (b.priority ?? 0) - (a.priority ?? 0) || a.id.localeCompare(b.id),
       )
       .map((tier) => ({
         value: tier.id,
@@ -72,10 +73,13 @@ export function AdminMembership({ account_id }: { account_id: string }) {
   }, [tiers]);
 
   const tierLabels = useMemo(() => {
-    return tiers.reduce((acc, tier) => {
-      acc[tier.id] = tier.label ?? tier.id;
-      return acc;
-    }, {} as Record<string, string>);
+    return tiers.reduce(
+      (acc, tier) => {
+        acc[tier.id] = tier.label ?? tier.id;
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
   }, [tiers]);
 
   const candidateRows = useMemo(() => {
@@ -87,7 +91,10 @@ export function AdminMembership({ account_id }: { account_id: string }) {
       return {
         key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
         tier: tierLabels[candidate.class] ?? candidate.class,
-        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
+        source:
+          candidate.source === "subscription"
+            ? "Subscription"
+            : "Admin assigned",
         priority: candidate.priority,
         expires: candidate.expires,
         subscription_id: candidate.subscription_id,
@@ -112,11 +119,14 @@ export function AdminMembership({ account_id }: { account_id: string }) {
         throw Error(tierData.error);
       }
       setTiers(tierData?.tiers ?? []);
-      const nextAssignment = (assignmentResult as AdminAssignment | undefined) ?? null;
+      const nextAssignment =
+        (assignmentResult as AdminAssignment | undefined) ?? null;
       setAssignment(nextAssignment);
       setDetails(detailsResult as MembershipDetails);
       setSelectedTier(nextAssignment?.membership_class ?? undefined);
-      setExpiresAt(nextAssignment?.expires_at ? dayjs(nextAssignment.expires_at) : null);
+      setExpiresAt(
+        nextAssignment?.expires_at ? dayjs(nextAssignment.expires_at) : null,
+      );
       setNotes(nextAssignment?.notes ?? "");
     } catch (err) {
       setError(`${err}`);
@@ -203,7 +213,11 @@ export function AdminMembership({ account_id }: { account_id: string }) {
             <Text type="secondary">No admin-assigned membership.</Text>
           )}
           <div style={{ marginTop: "10px" }}>
-            <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+            <Space
+              orientation="vertical"
+              style={{ width: "100%" }}
+              size="middle"
+            >
               <div>
                 <Text>Membership tier</Text>
                 <Select
@@ -236,7 +250,11 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 />
               </div>
               <Space>
-                <Button type="primary" onClick={applyAssignment} loading={saving}>
+                <Button
+                  type="primary"
+                  onClick={applyAssignment}
+                  loading={saving}
+                >
                   {assignment ? "Update" : "Assign"}
                 </Button>
                 <Button onClick={clearAssignment} loading={clearing} danger>
@@ -244,8 +262,8 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 </Button>
               </Space>
               <Text type="secondary">
-                Membership resolution uses tier priority across subscriptions and admin
-                assignments.
+                Membership resolution uses tier priority across subscriptions
+                and admin assignments.
               </Text>
             </Space>
           </div>
@@ -280,7 +298,8 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                   {
                     title: "Expires",
                     dataIndex: "expires",
-                    render: (value) => (value ? <TimeAgo date={value} /> : "Never"),
+                    render: (value) =>
+                      value ? <TimeAgo date={value} /> : "Never",
                   },
                   {
                     title: "Subscription id",

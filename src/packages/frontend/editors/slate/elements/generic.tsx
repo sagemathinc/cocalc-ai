@@ -77,7 +77,7 @@ register({
           ...(elt.attrs as object),
           ...{ style },
         },
-        children
+        children,
       );
     }
     return (

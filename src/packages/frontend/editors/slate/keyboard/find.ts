@@ -15,7 +15,7 @@ register(
   ({ extra }) => {
     extra.search.focus(getSelection()?.toString());
     return true;
-  }
+  },
 );
 
 register(
@@ -26,7 +26,7 @@ register(
   ({ extra }) => {
     extra.search.next();
     return true;
-  }
+  },
 );
 
 register(
@@ -37,5 +37,5 @@ register(
   ({ extra }) => {
     extra.search.previous();
     return true;
-  }
+  },
 );

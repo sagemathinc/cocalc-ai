@@ -101,8 +101,8 @@ export const tex2jax: any = {
   },
 
   createPatterns: function () {
-    let starts:any[]  = [],
-      parts :any[] = [],
+    let starts: any[] = [],
+      parts: any[] = [],
       i,
       m,
       config = this.config;
@@ -137,7 +137,7 @@ export const tex2jax: any = {
     }
     this.start = new RegExp(parts.join("|"), "g");
     this.skipTags = new RegExp("^(" + config.skipTags.join("|") + ")$", "i");
-    const ignore :any[] = [];
+    const ignore: any[] = [];
     if (config.ignoreClass) {
       ignore.push(config.ignoreClass);
     }

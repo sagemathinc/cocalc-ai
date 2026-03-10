@@ -616,7 +616,6 @@ export class ProjectClient {
   }): Promise<ApiKey[] | undefined> => {
     return await this.client.conat_client.hub.system.manageApiKeys(opts);
   };
-
 }
 
 // Polyfill for Safari: Add async iterator support to ReadableStream if missing.

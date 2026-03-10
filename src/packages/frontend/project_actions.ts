@@ -1351,19 +1351,28 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         isJupyterPath(sync_path)
       ) {
         const canonicalPath = canonicalSyncPath(path, homeDirectory);
-        if (this.open_files != null && this.open_files.get(path, "sync_path") !== canonicalPath) {
+        if (
+          this.open_files != null &&
+          this.open_files.get(path, "sync_path") !== canonicalPath
+        ) {
           this.open_files.set(path, "sync_path", canonicalPath);
         }
         return canonicalPath;
       }
       const canonicalPath = canonicalSyncPath(sync_path, homeDirectory);
-      if (this.open_files != null && this.open_files.get(path, "sync_path") !== canonicalPath) {
+      if (
+        this.open_files != null &&
+        this.open_files.get(path, "sync_path") !== canonicalPath
+      ) {
         this.open_files.set(path, "sync_path", canonicalPath);
       }
       return canonicalPath;
     }
     const canonicalPath = canonicalSyncPath(path, homeDirectory);
-    if (this.open_files != null && this.open_files.get(path, "sync_path") !== canonicalPath) {
+    if (
+      this.open_files != null &&
+      this.open_files.get(path, "sync_path") !== canonicalPath
+    ) {
       this.open_files.set(path, "sync_path", canonicalPath);
     }
     return canonicalPath;
@@ -1387,10 +1396,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       const other_sync_path = open_files.getIn([display_path, "sync_path"]);
       if (typeof other_sync_path === "string") {
-        if (canonicalSyncPath(other_sync_path, homeDirectory) === canonicalSync) {
+        if (
+          canonicalSyncPath(other_sync_path, homeDirectory) === canonicalSync
+        ) {
           found = true;
         }
-      } else if (canonicalSyncPath(display_path, homeDirectory) === canonicalSync) {
+      } else if (
+        canonicalSyncPath(display_path, homeDirectory) === canonicalSync
+      ) {
         // Backward-compatible fallback for tabs opened before sync_path existed.
         found = true;
       }
@@ -2285,11 +2298,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         (opts.src.project_id === this.project_id
           ? getProjectHomeDirectory(this.project_id)
           : undefined);
-      const resp =
-        await webapp_client.project_client.copyPathBetweenProjects({
-          ...opts,
-          ...(src_home ? { src_home } : {}),
-        });
+      const resp = await webapp_client.project_client.copyPathBetweenProjects({
+        ...opts,
+        ...(src_home ? { src_home } : {}),
+      });
       this.copyOpsManager.track(resp);
       this.set_activity({
         id,

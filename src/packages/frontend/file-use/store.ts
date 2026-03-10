@@ -349,5 +349,4 @@ export class FileUseStore extends Store<FileUseState> {
     }
     return users;
   }
-
 }

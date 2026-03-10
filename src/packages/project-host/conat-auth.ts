@@ -86,8 +86,7 @@ function isProjectCollaboratorLocal({
   }
   const row = getRow("projects", JSON.stringify({ project_id }));
   const userEntry = row?.users?.[account_id];
-  const group =
-    typeof userEntry === "string" ? userEntry : userEntry?.group;
+  const group = typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectCollaboratorGroup(group);
   collaboratorCache.set(key, allowed);
   return allowed;
@@ -124,11 +123,7 @@ export function clearProjectHostConatAuthCaches() {
   clearAuthCaches();
 }
 
-export function createProjectHostConatAuth({
-  host_id,
-}: {
-  host_id: string;
-}): {
+export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
   getUser: UserFunction;
   isAllowed: AllowFunction;
   clearCaches: () => void;

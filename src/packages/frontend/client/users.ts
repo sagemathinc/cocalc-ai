@@ -93,7 +93,9 @@ export class UsersClient {
   clearAdminAssignedMembership = async (opts: {
     user_account_id: string;
   }): Promise<void> => {
-    await this.client.conat_client.hub.system.clearAdminAssignedMembership(opts);
+    await this.client.conat_client.hub.system.clearAdminAssignedMembership(
+      opts,
+    );
   };
 
   // Gets username with given account_id.   We use caching and aggregate to

@@ -122,7 +122,8 @@ export default function Teaching({ customize }) {
             <A href={"/features/r-statistical-software"}>
               Statistical Software R
             </A>{" "}
-            with many pre-installed <A href={"/features/r-statistical-software"}>R packages</A>;
+            with many pre-installed{" "}
+            <A href={"/features/r-statistical-software"}>R packages</A>;
             <br />
             <A href={"/features/julia"}>Julia</A> programming language,{" "}
             <A href={"/features/octave"}>Octave</A>, and{" "}

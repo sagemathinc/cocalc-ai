@@ -96,7 +96,10 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
   }
   logger.debug("jupyterRun: running");
   async function* runCells() {
-    const lifecycle = (type: "run_start" | "run_done" | "cell_start" | "cell_done", id?: string) => {
+    const lifecycle = (
+      type: "run_start" | "run_done" | "cell_start" | "cell_done",
+      id?: string,
+    ) => {
       return {
         ...(id != null ? { id } : {}),
         msg_type: type,
@@ -186,10 +189,7 @@ class MulticellOutputHandler {
         () => {
           const { id, state, output, start, end, exec_count } = cell;
           this.actions.set_runtime_cell_state(id, { state, start, end });
-          this.actions._set(
-            { type: "cell", id, output, exec_count },
-            true,
-          );
+          this.actions._set({ type: "cell", id, output, exec_count }, true);
         },
         1000 / BACKEND_OUTPUT_FPS,
         {

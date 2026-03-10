@@ -100,10 +100,7 @@ export function useChatThreadSelection({
     // If a concrete thread key is selected, don't immediately force a fallback
     // when thread metadata is transiently stale. This happens right after send:
     // selection moves to the new root before threadIndex has caught up.
-    if (
-      selectedThreadKey != null &&
-      selectedThreadKey !== COMBINED_FEED_KEY
-    ) {
+    if (selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY) {
       return;
     }
     if (preferLatestThread && allowAutoSelectThread) {

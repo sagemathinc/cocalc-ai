@@ -30,7 +30,7 @@ const KEY_TO_POINT = {
 
 export default function getKeyHandler(
   actions: Actions,
-  frameId: string
+  frameId: string,
 ): (event) => void {
   return (e) => {
     const node = actions._get_frame_node(frameId);

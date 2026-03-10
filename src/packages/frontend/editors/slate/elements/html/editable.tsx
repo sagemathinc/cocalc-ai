@@ -84,7 +84,10 @@ const Element = ({ attributes, children, element }) => {
               e.preventDefault();
               e.stopPropagation();
               try {
-                const path = ReactEditor.findPath(editor as any, element as any);
+                const path = ReactEditor.findPath(
+                  editor as any,
+                  element as any,
+                );
                 const start = Editor.start(editor, path);
                 Transforms.select(editor, start);
                 ReactEditor.focus(editor as any);
@@ -132,7 +135,10 @@ const Element = ({ attributes, children, element }) => {
               e.preventDefault();
               e.stopPropagation();
               try {
-                const path = ReactEditor.findPath(editor as any, element as any);
+                const path = ReactEditor.findPath(
+                  editor as any,
+                  element as any,
+                );
                 const start = Editor.start(editor, path);
                 Transforms.select(editor, start);
                 ReactEditor.focus(editor as any);

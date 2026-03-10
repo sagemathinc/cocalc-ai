@@ -117,8 +117,7 @@ export async function purgeHistory({
     noInventory: true,
   });
 
-  const getOne =
-    (syncstrings as any).get_one ?? (syncstrings as any).getOne;
+  const getOne = (syncstrings as any).get_one ?? (syncstrings as any).getOne;
   const current = ((typeof getOne === "function"
     ? getOne.call(syncstrings)
     : undefined) ?? {

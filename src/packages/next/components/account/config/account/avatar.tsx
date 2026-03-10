@@ -234,11 +234,11 @@ function EditImage({ value, email_address, onChange }) {
                     src,
                     AVATAR_SIZE,
                     AVATAR_SIZE,
-                    "image/png"
-                  )
+                    "image/png",
+                  ),
                 );
               },
-              false
+              false,
             );
             if (typeof file != "object") {
               // This is for typescript.
@@ -246,7 +246,7 @@ function EditImage({ value, email_address, onChange }) {
               // some other potential types, but reader.readAsDataURL
               // doesn't allow some of those types.
               console.warn(
-                "WARNING: unable to read, since avatar is assumed to be a Blob"
+                "WARNING: unable to read, since avatar is assumed to be a Blob",
               );
               return;
             }

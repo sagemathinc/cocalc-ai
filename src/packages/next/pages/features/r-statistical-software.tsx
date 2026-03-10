@@ -100,7 +100,10 @@ export default function R({ customize }) {
                     </li>
                     <li>
                       CoCalc already{" "}
-                      <A href="/features/r-statistical-software">provides many packages</A> for you.
+                      <A href="/features/r-statistical-software">
+                        provides many packages
+                      </A>{" "}
+                      for you.
                     </li>
                     <li>
                       The <A href="/features/latex-editor">LaTeX editor</A> is
@@ -416,7 +419,10 @@ export default function R({ customize }) {
               to get started with your analysis without any overhead.
             </Paragraph>
             <Paragraph>
-              Look at our <A href="/features/r-statistical-software">list of available packages</A>{" "}
+              Look at our{" "}
+              <A href="/features/r-statistical-software">
+                list of available packages
+              </A>{" "}
               in more detail. If something is missing, please tell us about it (
               <Contact lower />) so we can install that package globally.
             </Paragraph>

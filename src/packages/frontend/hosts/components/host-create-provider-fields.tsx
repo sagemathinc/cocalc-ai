@@ -1,7 +1,20 @@
-import { Alert, Col, Form, Input, InputNumber, Row, Select, Slider, Tag } from "antd";
+import {
+  Alert,
+  Col,
+  Form,
+  Input,
+  InputNumber,
+  Row,
+  Select,
+  Slider,
+  Tag,
+} from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
+import {
+  mapCloudRegionToR2Region,
+  R2_REGION_LABELS,
+} from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import type { HostFieldId } from "../providers/registry";
 import { SshTargetLabel } from "./ssh-target-help";
@@ -17,18 +30,11 @@ type HostCreateProviderFieldsProps = {
   hideProviderSelect?: boolean;
 };
 
-export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> = ({
-  provider,
-  onProviderChange,
-  hideProviderSelect = false,
-}) => {
-  const {
-    providerOptions,
-    selectedProvider,
-    fields,
-    catalogError,
-    storage,
-  } = provider;
+export const HostCreateProviderFields: React.FC<
+  HostCreateProviderFieldsProps
+> = ({ provider, onProviderChange, hideProviderSelect = false }) => {
+  const { providerOptions, selectedProvider, fields, catalogError, storage } =
+    provider;
   const { schema, options, labels, tooltips } = fields;
   const { persistentGrowable, showDiskFields } = storage;
   const form = Form.useFormInstance();
@@ -159,7 +165,8 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   React.useEffect(() => {
     ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
   }, [ensureFieldValue, form]);
-  const requireSshTarget = selectedProvider === "self-host" && !selfHostAlphaEnabled;
+  const requireSshTarget =
+    selectedProvider === "self-host" && !selfHostAlphaEnabled;
   const showSelfHostSshWarning =
     selectedProvider === "self-host" &&
     watchedSelfHostMode === "local" &&
@@ -189,10 +196,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
         tooltip={tooltip}
         initialValue={fieldOptions[0]?.value}
       >
-        <Select
-          options={fieldOptions}
-          disabled={!fieldOptions.length}
-        />
+        <Select options={fieldOptions} disabled={!fieldOptions.length} />
       </Form.Item>
     );
     if (field === "region" && selectedProvider !== "self-host") {
@@ -267,9 +271,10 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
                 placeholder="Choose a compatible zone"
                 options={gcpCompatibilityWarning.compatibleZones}
                 onChange={(value) => {
-                  const zoneOption = gcpCompatibilityWarning.compatibleZones.find(
-                    (opt) => opt.value === value,
-                  );
+                  const zoneOption =
+                    gcpCompatibilityWarning.compatibleZones.find(
+                      (opt) => opt.value === value,
+                    );
                   const meta = (zoneOption?.meta ?? {}) as { region?: string };
                   form.setFieldsValue({
                     zone: value,
@@ -336,11 +341,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
               />
             </Col>
             <Col flex="120px">
-              <Form.Item
-                name="disk"
-                initialValue={INITIAL_DISK_SIZE}
-                noStyle
-              >
+              <Form.Item name="disk" initialValue={INITIAL_DISK_SIZE} noStyle>
                 <InputNumber
                   min={diskMin}
                   max={MAX_DISK_SIZE}

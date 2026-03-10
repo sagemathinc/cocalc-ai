@@ -79,14 +79,15 @@ function compactTaskRecord(task: TaskRecord): Record<string, unknown> {
   };
 }
 
-function compactTaskRows(tasks: readonly TaskRecord[]): Array<Record<string, unknown>> {
+function compactTaskRows(
+  tasks: readonly TaskRecord[],
+): Array<Record<string, unknown>> {
   return tasks.map(compactTaskRecord);
 }
 
-export function createProjectTasksOps<
-  Ctx,
-  Project extends ProjectIdentity,
->(deps: ProjectTasksOpsDeps<Ctx, Project>) {
+export function createProjectTasksOps<Ctx, Project extends ProjectIdentity>(
+  deps: ProjectTasksOpsDeps<Ctx, Project>,
+) {
   const sessionPromises = new Map<string, Promise<SessionEntry<Project>>>();
   const sessionLeases = new RefcountLeaseManager<string>({
     delayMs: 30_000,

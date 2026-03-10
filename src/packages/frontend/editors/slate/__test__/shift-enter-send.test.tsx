@@ -52,7 +52,11 @@ test("shift+enter sends latest markdown even when cache is stale", () => {
   expect(handler).toBeTruthy();
   handler?.({
     editor,
-    extra: { actions: { shiftEnter: (value) => (sent = value) }, id: "", search: EMPTY_SEARCH },
+    extra: {
+      actions: { shiftEnter: (value) => (sent = value) },
+      id: "",
+      search: EMPTY_SEARCH,
+    },
   });
 
   expect(sent.trim()).toBe("hello");

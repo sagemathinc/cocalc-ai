@@ -33,7 +33,9 @@ export function normalizeBrowserPosture(
   const clean = `${value ?? ""}`.trim().toLowerCase();
   if (!clean) return undefined;
   if (clean === "dev" || clean === "prod") return clean;
-  throw new Error(`invalid browser posture '${value}'; expected 'dev' or 'prod'`);
+  throw new Error(
+    `invalid browser posture '${value}'; expected 'dev' or 'prod'`,
+  );
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -41,7 +43,9 @@ function isLoopbackHostname(hostname: string): boolean {
   return h === "localhost" || h === "::1" || h.startsWith("127.");
 }
 
-export function defaultPostureForApiUrl(apiUrl: string): BrowserAutomationPosture {
+export function defaultPostureForApiUrl(
+  apiUrl: string,
+): BrowserAutomationPosture {
   try {
     const host = new URL(apiUrl).hostname;
     return isLoopbackHostname(host) ? "dev" : "prod";
@@ -108,7 +112,9 @@ export function parseScrollAlign(
   ) {
     return clean;
   }
-  throw new Error(`invalid --${label} '${value}'; expected start|center|end|nearest`);
+  throw new Error(
+    `invalid --${label} '${value}'; expected start|center|end|nearest`,
+  );
 }
 
 export function parseRuntimeEventLevels(
@@ -230,7 +236,9 @@ export function formatRuntimeEventLine(event: BrowserRuntimeEvent): string {
   return `${ts} [${level}] [${kind}] ${event.message}${source}`;
 }
 
-export function formatNetworkTraceLine(event: BrowserNetworkTraceEvent): string {
+export function formatNetworkTraceLine(
+  event: BrowserNetworkTraceEvent,
+): string {
   const ts = `${event.ts ?? ""}`.trim() || new Date().toISOString();
   const protocol = `${event.protocol ?? "conat"}`.toUpperCase();
   const direction = `${event.direction ?? "recv"}`.toUpperCase();
@@ -278,7 +286,9 @@ export function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
   const row = parsed as Record<string, unknown>;
   const version = Number(row.version ?? 1);
   if (version !== 1) {
-    throw new Error(`unsupported browser exec policy version '${row.version ?? ""}'; expected 1`);
+    throw new Error(
+      `unsupported browser exec policy version '${row.version ?? ""}'; expected 1`,
+    );
   }
   const cleanStringArray = (value: unknown): string[] | undefined => {
     if (!Array.isArray(value)) return undefined;
@@ -287,23 +297,26 @@ export function parseBrowserExecPolicy(raw: string): BrowserExecPolicyV1 {
       .filter((x) => x.length > 0);
     return out.length ? out : undefined;
   };
-  const cleanActionArray = (value: unknown): BrowserActionName[] | undefined => {
+  const cleanActionArray = (
+    value: unknown,
+  ): BrowserActionName[] | undefined => {
     if (!Array.isArray(value)) return undefined;
     const out = value
       .map((x) => `${x ?? ""}`.trim())
-      .filter((x): x is BrowserActionName =>
-        x === "click" ||
-        x === "click_at" ||
-        x === "drag" ||
-        x === "type" ||
-        x === "press" ||
-        x === "reload" ||
-        x === "navigate" ||
-        x === "scroll_by" ||
-        x === "scroll_to" ||
-        x === "wait_for_selector" ||
-        x === "wait_for_url" ||
-        x === "batch",
+      .filter(
+        (x): x is BrowserActionName =>
+          x === "click" ||
+          x === "click_at" ||
+          x === "drag" ||
+          x === "type" ||
+          x === "press" ||
+          x === "reload" ||
+          x === "navigate" ||
+          x === "scroll_by" ||
+          x === "scroll_to" ||
+          x === "wait_for_selector" ||
+          x === "wait_for_url" ||
+          x === "batch",
       );
     return out.length ? out : undefined;
   };

@@ -47,10 +47,10 @@ export type DeepImmutable<T> = T extends  // TODO: Make any non-plain-object ret
   | CoveredJSBuiltInTypes
   ? T // Any of the types above should not be TypedMap-ified
   : T extends (infer U)[]
-  ? ListToRecurse<U> // Converts values of arrays as well
-  : T extends object // Filter out desired objects above this line
-  ? TypedMap<{ [P in keyof T]: DeepImmutable<T[P]> }>
-  : T; // Base case primatives
+    ? ListToRecurse<U> // Converts values of arrays as well
+    : T extends object // Filter out desired objects above this line
+      ? TypedMap<{ [P in keyof T]: DeepImmutable<T[P]> }>
+      : T; // Base case primatives
 
 // https://github.com/microsoft/TypeScript/issues/26980
 type ListToRecurse<U> = {
@@ -66,17 +66,18 @@ type ListToRecurse<U> = {
  * 1. `V = T[K]`
  *
  */
-type Get<T, K extends ValidKey> = T extends TypedMap<infer TP>
-  ? K extends keyof TP
-    ? TP[K]
-    : never
-  : T extends { get: infer get }
-  ? get extends (key: K) => infer V
-    ? V
-    : never
-  : K extends keyof T
-  ? T[K]
-  : undefined; // The real behavior on undefined members is undefined
+type Get<T, K extends ValidKey> =
+  T extends TypedMap<infer TP>
+    ? K extends keyof TP
+      ? TP[K]
+      : never
+    : T extends { get: infer get }
+      ? get extends (key: K) => infer V
+        ? V
+        : never
+      : K extends keyof T
+        ? T[K]
+        : undefined; // The real behavior on undefined members is undefined
 
 type Drill2Get<T, K1 extends ValidKey, K2 extends ValidKey> = Get<
   Get<T, K1>,
@@ -86,14 +87,14 @@ type Drill3Get<
   T,
   K1 extends ValidKey,
   K2 extends ValidKey,
-  K3 extends ValidKey
+  K3 extends ValidKey,
 > = Get<Drill2Get<T, K1, K2>, K3>;
 type Drill4Get<
   T,
   K1 extends ValidKey,
   K2 extends ValidKey,
   K3 extends ValidKey,
-  K4 extends ValidKey
+  K4 extends ValidKey,
 > = Get<Drill3Get<T, K1, K2, K3>, K4>;
 type Drill5Get<
   T,
@@ -101,7 +102,7 @@ type Drill5Get<
   K2 extends ValidKey,
   K3 extends ValidKey,
   K4 extends ValidKey,
-  K5 extends ValidKey
+  K5 extends ValidKey,
 > = Get<Drill4Get<T, K1, K2, K3, K4>, K5>;
 
 /**
@@ -136,7 +137,7 @@ export interface TypedCollectionMethods<TProps> {
   get<K extends ValidKey>(field: K): DeepImmutable<Get<TProps, K>>;
   get<K extends ValidKey, NSV>(
     field: K,
-    notSetValue: NSV
+    notSetValue: NSV,
   ): NonNullable<DeepImmutable<Get<TProps, K>>> | NSV;
 
   /**
@@ -156,10 +157,10 @@ export interface TypedCollectionMethods<TProps> {
   // Recurse data structure such as a binary tree are currently not supported
   getIn<K1 extends ValidKey>(path: [K1]): DeepImmutable<Get<TProps, K1>>;
   getIn<K1 extends ValidKey, K2 extends ValidKey>(
-    path: [K1, K2]
+    path: [K1, K2],
   ): DeepImmutable<CopyMaybe<Get<TProps, K1>, Drill2Get<TProps, K1, K2>>>;
   getIn<K1 extends ValidKey, K2 extends ValidKey, K3 extends ValidKey>(
-    path: [K1, K2, K3]
+    path: [K1, K2, K3],
   ): DeepImmutable<
     Copy2Maybes<
       Get<TProps, K1>,
@@ -171,9 +172,9 @@ export interface TypedCollectionMethods<TProps> {
     K1 extends ValidKey,
     K2 extends ValidKey,
     K3 extends ValidKey,
-    K4 extends ValidKey
+    K4 extends ValidKey,
   >(
-    path: [K1, K2, K3, K4]
+    path: [K1, K2, K3, K4],
   ): DeepImmutable<
     Copy3Maybes<
       Get<TProps, K1>,
@@ -187,9 +188,9 @@ export interface TypedCollectionMethods<TProps> {
     K2 extends ValidKey,
     K3 extends ValidKey,
     K4 extends ValidKey,
-    K5 extends ValidKey
+    K5 extends ValidKey,
   >(
-    path: [K1, K2, K3, K4, K5]
+    path: [K1, K2, K3, K4, K5],
   ): DeepImmutable<
     Copy4Maybes<
       Get<TProps, K1>,
@@ -201,25 +202,25 @@ export interface TypedCollectionMethods<TProps> {
   >;
   getIn<K1 extends ValidKey, NSV>(
     path: [K1],
-    notSetValue: NSV
+    notSetValue: NSV,
   ): NonNullable<DeepImmutable<Get<TProps, K1>>> | NSV;
   getIn<K1 extends ValidKey, K2 extends ValidKey, NSV>(
     path: [K1, K2],
-    notSetValue: NSV
+    notSetValue: NSV,
   ): NonNullable<DeepImmutable<Drill2Get<TProps, K1, K2>>> | NSV;
   getIn<K1 extends ValidKey, K2 extends ValidKey, K3 extends ValidKey, NSV>(
     path: [K1, K2, K3],
-    notSetValue: NSV
+    notSetValue: NSV,
   ): NonNullable<DeepImmutable<Drill3Get<TProps, K1, K2, K3>>> | NSV;
   getIn<
     K1 extends ValidKey,
     K2 extends ValidKey,
     K3 extends ValidKey,
     K4 extends ValidKey,
-    NSV
+    NSV,
   >(
     path: [K1, K2, K3, K4],
-    notSetValue: NSV
+    notSetValue: NSV,
   ): NonNullable<DeepImmutable<Drill4Get<TProps, K1, K2, K3, K4>>> | NSV;
   getIn<
     K1 extends ValidKey,
@@ -227,9 +228,9 @@ export interface TypedCollectionMethods<TProps> {
     K3 extends ValidKey,
     K4 extends ValidKey,
     K5 extends ValidKey,
-    NSV
+    NSV,
   >(
     path: [K1, K2, K3, K4, K5],
-    notSetValue: NSV
+    notSetValue: NSV,
   ): NonNullable<DeepImmutable<Drill5Get<TProps, K1, K2, K3, K4, K5>>> | NSV;
 }

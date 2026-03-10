@@ -3,12 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AppMetricsBucket,
@@ -103,7 +98,11 @@ function ensureLoaded(): void {
   try {
     const raw = readFileSync(metricsStatePath(), "utf8");
     const parsed = JSON.parse(raw) as MetricsStateV1;
-    if (parsed?.version === 1 && parsed.apps && typeof parsed.apps === "object") {
+    if (
+      parsed?.version === 1 &&
+      parsed.apps &&
+      typeof parsed.apps === "object"
+    ) {
       state = {
         version: 1,
         updated_at_ms: Number(parsed.updated_at_ms) || 0,
@@ -195,7 +194,10 @@ function currentMinuteStart(now = Date.now()): number {
   return Math.floor(now / HISTORY_BUCKET_MS) * HISTORY_BUCKET_MS;
 }
 
-function historyBucket(metrics: PersistedAppMetrics, minute_start_ms: number): AppMetricsBucket {
+function historyBucket(
+  metrics: PersistedAppMetrics,
+  minute_start_ms: number,
+): AppMetricsBucket {
   const last = metrics.history[metrics.history.length - 1];
   if (last?.minute_start_ms === minute_start_ms) {
     return last;
@@ -234,7 +236,10 @@ function percentileFromHistogram(
   for (let i = 0; i < histogram.length; i += 1) {
     seen += histogram[i] ?? 0;
     if (seen >= wanted) {
-      return HISTOGRAM_BOUNDS_MS[i] ?? HISTOGRAM_BOUNDS_MS[HISTOGRAM_BOUNDS_MS.length - 1];
+      return (
+        HISTOGRAM_BOUNDS_MS[i] ??
+        HISTOGRAM_BOUNDS_MS[HISTOGRAM_BOUNDS_MS.length - 1]
+      );
     }
   }
   return HISTOGRAM_BOUNDS_MS[HISTOGRAM_BOUNDS_MS.length - 1];
@@ -298,18 +303,17 @@ export function recordAppHttpMetric({
   scheduleFlush();
 }
 
-export function recordAppWebsocketOpened({
-  app_id,
-}: {
-  app_id: string;
-}): void {
+export function recordAppWebsocketOpened({ app_id }: { app_id: string }): void {
   const metrics = appMetrics(app_id);
   const now = Date.now();
   metrics.last_hit_ms = now;
   metrics.totals.websocket_upgrades += 1;
   const bucket = historyBucket(metrics, currentMinuteStart(now));
   bucket.websocket_upgrades += 1;
-  activeWebsocketCounts.set(app_id, (activeWebsocketCounts.get(app_id) ?? 0) + 1);
+  activeWebsocketCounts.set(
+    app_id,
+    (activeWebsocketCounts.get(app_id) ?? 0) + 1,
+  );
   scheduleFlush();
 }
 
@@ -346,9 +350,9 @@ export function getAppMetrics(
   };
 }
 
-export function listAppMetrics(
-  { minutes = 60 }: { minutes?: number } = {},
-): AppMetricsSummary[] {
+export function listAppMetrics({
+  minutes = 60,
+}: { minutes?: number } = {}): AppMetricsSummary[] {
   ensureLoaded();
   return Object.keys(state.apps)
     .sort()

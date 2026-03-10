@@ -30,7 +30,7 @@ export type Items = { [key: string]: { cost: number; benefit: number } };
 
 export default function knapsack(
   items: Items,
-  maxCost: number
+  maxCost: number,
 ): {
   items: string[]; // names of the  items to include
   cost: number; // total cost of this choice
@@ -122,7 +122,7 @@ function knap(items, maxCost, minBen, memo) {
       items.slice(i + 1),
       maxCost - items[i].c,
       minBen - items[i].b,
-      memo
+      memo,
     );
     if (ret[2] + items[i].b > minBen) {
       // Found a better subproblem solution.

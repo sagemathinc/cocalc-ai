@@ -764,11 +764,7 @@ export const Icon: React.FC<Props> = (props: Props) => {
         : flipTransform;
     }
 
-    return (
-      <span style={style}>
-        {String.fromCharCode(props.unicode!)}
-      </span>
-    );
+    return <span style={style}>{String.fromCharCode(props.unicode!)}</span>;
   }
 
   let name: IconName = props.name ?? "square";

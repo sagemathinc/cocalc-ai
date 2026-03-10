@@ -49,7 +49,8 @@ function normalizeApiScope(value: unknown): string | undefined {
 
 export function browserHintFromOption(value: unknown): string | undefined {
   return (
-    normalizeBrowserId(value) ?? normalizeBrowserId(process.env.COCALC_BROWSER_ID)
+    normalizeBrowserId(value) ??
+    normalizeBrowserId(process.env.COCALC_BROWSER_ID)
   );
 }
 
@@ -96,8 +97,7 @@ export function sessionTargetContext(
       const apiOrigin = new URL(apiUrl).origin;
       const sessionOrigin = new URL(sessionUrl).origin;
       if (apiOrigin !== sessionOrigin) {
-        target_warning =
-          `browser session URL origin (${sessionOrigin}) differs from API origin (${apiOrigin})`;
+        target_warning = `browser session URL origin (${sessionOrigin}) differs from API origin (${apiOrigin})`;
       }
     } catch {
       // ignore parse failures
@@ -125,7 +125,8 @@ export async function resolveTargetProjectId({
   projectId?: string;
   sessionInfo: BrowserSessionInfo;
 }): Promise<string> {
-  const projectIdHint = `${projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+  const projectIdHint =
+    `${projectId ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   const projectHint = `${project ?? ""}`.trim();
   if (projectIdHint) {
     return isValidUUID(projectIdHint)
@@ -139,7 +140,10 @@ export async function resolveTargetProjectId({
   if (activeProjectId) {
     return (await deps.resolveProject(ctx, activeProjectId)).project_id;
   }
-  if (sessionInfo.open_projects?.length === 1 && sessionInfo.open_projects[0]?.project_id) {
+  if (
+    sessionInfo.open_projects?.length === 1 &&
+    sessionInfo.open_projects[0]?.project_id
+  ) {
     return (
       await deps.resolveProject(ctx, sessionInfo.open_projects[0].project_id)
     ).project_id;
@@ -269,7 +273,9 @@ export async function chooseBrowserSession({
       include_stale: !activeOnly,
     })) as BrowserSessionInfo[];
     sessions = (sessions ?? []).filter((s) => (activeOnly ? !s.stale : true));
-    sessions = sessions.filter((s) => sessionMatchesProject(s, sessionProjectId));
+    sessions = sessions.filter((s) =>
+      sessionMatchesProject(s, sessionProjectId),
+    );
     return sessions;
   };
 
@@ -286,7 +292,10 @@ export async function chooseBrowserSession({
       (s) => !s.stale && sessionMatchesSpawnMarker(s, marker),
     );
     if (!match) return undefined;
-    if (`${spawned.state.browser_id ?? ""}`.trim() !== `${match.browser_id ?? ""}`.trim()) {
+    if (
+      `${spawned.state.browser_id ?? ""}`.trim() !==
+      `${match.browser_id ?? ""}`.trim()
+    ) {
       writeSpawnState(spawned.file, {
         ...spawned.state,
         browser_id: match.browser_id,
@@ -332,7 +341,8 @@ export async function chooseBrowserSession({
     } catch (err) {
       const remapped = await remapSpawnedSessionByHint(explicitHint);
       if (remapped) return remapped;
-      const msg = `${(err as { message?: string } | undefined)?.message ?? ""}`.trim();
+      const msg =
+        `${(err as { message?: string } | undefined)?.message ?? ""}`.trim();
       if (msg) {
         throw err;
       }

@@ -7,7 +7,10 @@ describe("SyncFsWatchStore", () => {
     const store = new SyncFsWatchStore();
     store.setContent("a.txt", "hello");
 
-    const result = await store.handleExternalChange("a.txt", async () => "hello world");
+    const result = await store.handleExternalChange(
+      "a.txt",
+      async () => "hello world",
+    );
 
     expect(result.deleted).toBe(false);
     expect(result.content).toBe("hello world");

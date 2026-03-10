@@ -59,9 +59,9 @@ export interface EventIteratorOptions<V> {
 /**
  * An EventIterator, used for asynchronously iterating over received values.
  */
-export class EventIterator<V extends unknown>
-  implements AsyncIterableIterator<V>
-{
+export class EventIterator<
+  V extends unknown,
+> implements AsyncIterableIterator<V> {
   /**
    * The emitter to listen to.
    */

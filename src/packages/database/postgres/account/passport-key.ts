@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-
 // Passports -- accounts linked to Google/Dropbox/Facebook/Github, etc.
 // The Schema is slightly redundant, but indexed properly:
 //    {passports:['google-id', 'facebook-id'],  passport_profiles:{'google-id':'...', 'facebook-id':'...'}}

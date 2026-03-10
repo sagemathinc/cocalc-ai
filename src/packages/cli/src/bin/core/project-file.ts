@@ -77,10 +77,7 @@ type ProjectFilesystem = {
     path: string,
     options: { recursive?: boolean; force?: boolean },
   ) => Promise<void>;
-  mkdir: (
-    path: string,
-    options?: { recursive?: boolean },
-  ) => Promise<void>;
+  mkdir: (path: string, options?: { recursive?: boolean }) => Promise<void>;
   ripgrep: (
     path: string,
     pattern: string,
@@ -367,7 +364,11 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     });
     const stdout = asUtf8((result as any)?.stdout);
     const stderr = asUtf8((result as any)?.stderr);
-    const exit_code = normalizeProcessExitCode((result as any)?.code, stdout, stderr);
+    const exit_code = normalizeProcessExitCode(
+      (result as any)?.code,
+      stdout,
+      stderr,
+    );
     return {
       project_id: project.project_id,
       path: path?.trim() || ".",
@@ -411,7 +412,11 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     });
     const stdout = asUtf8((result as any)?.stdout);
     const stderr = asUtf8((result as any)?.stderr);
-    const exit_code = normalizeProcessExitCode((result as any)?.code, stdout, stderr);
+    const exit_code = normalizeProcessExitCode(
+      (result as any)?.code,
+      stdout,
+      stderr,
+    );
     return {
       project_id: project.project_id,
       path: path?.trim() || ".",
@@ -438,7 +443,10 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
     maxBytes: number;
     keep: boolean;
   }): Promise<ProjectFileCheckReport> {
-    const project = await resolveProjectFromArgOrContext(ctx, projectIdentifier);
+    const project = await resolveProjectFromArgOrContext(
+      ctx,
+      projectIdentifier,
+    );
     const prefix = normalizeProjectPathPrefix(pathPrefix);
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const tempPath = joinProjectPath(prefix, runId);
@@ -496,7 +504,8 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
           data: Buffer.from(content),
           parents: true,
         }),
-      (value: any) => `uploaded ${value?.bytes ?? Buffer.byteLength(content)} bytes`,
+      (value: any) =>
+        `uploaded ${value?.bytes ?? Buffer.byteLength(content)} bytes`,
     );
 
     await record(
@@ -524,7 +533,10 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
           projectIdentifier: project.project_id,
           path: filePath,
         });
-        assertProjectCheck(`${data.content ?? ""}` === content, "cat content mismatch");
+        assertProjectCheck(
+          `${data.content ?? ""}` === content,
+          "cat content mismatch",
+        );
         return data;
       },
       () => `read ${filePath}`,
@@ -538,9 +550,10 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
           projectIdentifier: project.project_id,
           src: filePath,
         });
-        const decoded = Buffer.from(`${data.content_base64 ?? ""}`, "base64").toString(
-          "utf8",
-        );
+        const decoded = Buffer.from(
+          `${data.content_base64 ?? ""}`,
+          "base64",
+        ).toString("utf8");
         assertProjectCheck(decoded === content, "get content mismatch");
         return data;
       },
@@ -707,7 +720,9 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
         failed: report.failed,
         skipped: report.skipped,
         temp_path: report.temp_path,
-        first_failure: firstFailure ? `${firstFailure.step}: ${firstFailure.detail}` : null,
+        first_failure: firstFailure
+          ? `${firstFailure.step}: ${firstFailure.detail}`
+          : null,
       });
 
       for (const row of report.results) {
@@ -733,15 +748,24 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
       }
     }
 
-    const totalDurationMs = runResults.reduce((sum, row) => sum + row.duration_ms, 0);
+    const totalDurationMs = runResults.reduce(
+      (sum, row) => sum + row.duration_ms,
+      0,
+    );
     const okRuns = runResults.filter((x) => x.ok).length;
     const failedRuns = runResults.length - okRuns;
     const minDurationMs =
-      runResults.length > 0 ? Math.min(...runResults.map((x) => x.duration_ms)) : 0;
+      runResults.length > 0
+        ? Math.min(...runResults.map((x) => x.duration_ms))
+        : 0;
     const maxDurationMs =
-      runResults.length > 0 ? Math.max(...runResults.map((x) => x.duration_ms)) : 0;
+      runResults.length > 0
+        ? Math.max(...runResults.map((x) => x.duration_ms))
+        : 0;
 
-    const aggregatedSteps: ProjectFileCheckBenchStepStat[] = Array.from(stepStats.entries())
+    const aggregatedSteps: ProjectFileCheckBenchStepStat[] = Array.from(
+      stepStats.entries(),
+    )
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([step, stats]) => ({
         step,
@@ -762,7 +786,9 @@ export function createProjectFileOps<Ctx>(deps: ProjectFileOpsDeps<Ctx>) {
       ok_runs: okRuns,
       failed_runs: failedRuns,
       total_duration_ms: totalDurationMs,
-      avg_duration_ms: runResults.length ? Math.round(totalDurationMs / runResults.length) : 0,
+      avg_duration_ms: runResults.length
+        ? Math.round(totalDurationMs / runResults.length)
+        : 0,
       min_duration_ms: minDurationMs,
       max_duration_ms: maxDurationMs,
       run_results: runResults,

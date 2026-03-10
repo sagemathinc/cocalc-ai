@@ -19,10 +19,7 @@ export default function EditSchedule() {
   const [showHelp, setShowHelp] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const project = useTypedRedux("projects", "project_map")?.get(project_id);
-  const openSchedule = useTypedRedux(
-    { project_id },
-    "open_snapshot_schedule",
-  );
+  const openSchedule = useTypedRedux({ project_id }, "open_snapshot_schedule");
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
 
   useEffect(() => {

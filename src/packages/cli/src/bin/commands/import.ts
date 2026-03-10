@@ -20,7 +20,9 @@ export function registerImportCommand(
 ): Command {
   const importCommand = program
     .command("import")
-    .description("import structured CoCalc archive bundles back into live documents")
+    .description(
+      "import structured CoCalc archive bundles back into live documents",
+    )
     .addHelpText(
       "after",
       `
@@ -39,7 +41,10 @@ first exported, edited locally in a structured bundle, and then merged back.
       "import a tasks export bundle or extracted export directory back into a .tasks file",
     )
     .option("--target <path>", "override the destination .tasks path")
-    .option("--dry-run", "compute the merge and report conflicts without writing")
+    .option(
+      "--dry-run",
+      "compute the merge and report conflicts without writing",
+    )
     .addHelpText(
       "after",
       `
@@ -57,21 +62,27 @@ Notes:
 - Asset rebinding is not implemented yet for tasks import. Bundles with local \`assets/\` references are rejected.
 `,
     )
-    .action(async (bundlePath: string, opts: TaskImportCliOptions, command: Command) => {
-      const globals = deps.globalsFrom(command);
-      const commandName = "import tasks";
-      try {
-        const result = await importTaskBundle({
-          sourcePath: bundlePath,
-          targetPath: opts.target,
-          dryRun: opts.dryRun === true,
-        });
-        deps.emitSuccess({ globals }, commandName, result);
-      } catch (error) {
-        deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
-        process.exitCode = 1;
-      }
-    });
+    .action(
+      async (
+        bundlePath: string,
+        opts: TaskImportCliOptions,
+        command: Command,
+      ) => {
+        const globals = deps.globalsFrom(command);
+        const commandName = "import tasks";
+        try {
+          const result = await importTaskBundle({
+            sourcePath: bundlePath,
+            targetPath: opts.target,
+            dryRun: opts.dryRun === true,
+          });
+          deps.emitSuccess({ globals }, commandName, result);
+        } catch (error) {
+          deps.emitError({ globals }, commandName, error, deps.normalizeUrl);
+          process.exitCode = 1;
+        }
+      },
+    );
 
   return importCommand;
 }

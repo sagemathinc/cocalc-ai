@@ -1,4 +1,6 @@
-export function normalizeContentType(value: string | undefined): string | undefined {
+export function normalizeContentType(
+  value: string | undefined,
+): string | undefined {
   const normalized = `${value ?? ""}`.trim().toLowerCase();
   if (!normalized) return undefined;
   return normalized.split(";")[0].trim() || undefined;

@@ -19,7 +19,7 @@ export function synctable(
   options,
   client,
   throttle_changes: undefined | number,
-  use_cache: boolean = true
+  use_cache: boolean = true,
 ): SyncTable {
   if (options == null) {
     options = [];
@@ -44,7 +44,7 @@ export function synctable(
       query,
       options,
       client,
-      throttle_changes
+      throttle_changes,
     );
     S.cache_key = cache_key;
   }

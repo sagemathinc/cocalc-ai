@@ -66,7 +66,9 @@ export default function MembershipPurchaseModal({
   onClose,
   onChanged,
 }: Props) {
-  const [membership, setMembership] = useState<MembershipResolution | null>(null);
+  const [membership, setMembership] = useState<MembershipResolution | null>(
+    null,
+  );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
   const [interval, setInterval] = useState<"month" | "year">("month");
   const [loading, setLoading] = useState<boolean>(false);
@@ -121,10 +123,13 @@ export default function MembershipPurchaseModal({
   }, [tiers]);
 
   const tierById = useMemo(() => {
-    return visibleTiers.reduce((acc, tier) => {
-      acc[tier.id] = tier;
-      return acc;
-    }, {} as Record<string, MembershipTier>);
+    return visibleTiers.reduce(
+      (acc, tier) => {
+        acc[tier.id] = tier;
+        return acc;
+      },
+      {} as Record<string, MembershipTier>,
+    );
   }, [visibleTiers]);
 
   useEffect(() => {
@@ -269,8 +274,7 @@ export default function MembershipPurchaseModal({
               const priceValue = price != null ? toDecimal(price) : null;
               const isCurrentTier = tier.id === currentClass;
               const tierPriority = tier.priority ?? 0;
-              const currentPriority =
-                tierById[currentClass]?.priority ?? 0;
+              const currentPriority = tierById[currentClass]?.priority ?? 0;
               const actionLabel = isCurrentTier
                 ? "Current plan"
                 : tierPriority > currentPriority
@@ -354,42 +358,42 @@ export default function MembershipPurchaseModal({
               {canProceed &&
                 quoteChargeValue.gt(0) &&
                 chargeAmountValue.gt(0) && (
-                <div style={{ marginTop: "12px" }}>
-                  <StripePayment
-                    disabled={actionLoading}
-                    lineItems={lineItems}
-                    description={`Membership change to ${selectedLabel} (${interval})`}
-                    purpose={MEMBERSHIP_CHANGE}
-                    metadata={{
-                      membership_class: selectedTierId,
-                      membership_interval: interval,
-                      allow_downgrade: "true",
-                    }}
-                    onFinished={async (total) => {
-                      if (!total) {
-                        await directChange();
-                      } else {
-                        setPlace("processing");
-                      }
-                    }}
-                  />
-                </div>
-              )}
+                  <div style={{ marginTop: "12px" }}>
+                    <StripePayment
+                      disabled={actionLoading}
+                      lineItems={lineItems}
+                      description={`Membership change to ${selectedLabel} (${interval})`}
+                      purpose={MEMBERSHIP_CHANGE}
+                      metadata={{
+                        membership_class: selectedTierId,
+                        membership_interval: interval,
+                        allow_downgrade: "true",
+                      }}
+                      onFinished={async (total) => {
+                        if (!total) {
+                          await directChange();
+                        } else {
+                          setPlace("processing");
+                        }
+                      }}
+                    />
+                  </div>
+                )}
               {canProceed &&
                 (quoteChargeValue.eq(0) || chargeAmountValue.eq(0)) && (
-                <div style={{ marginTop: "12px" }}>
-                  <Space>
-                    <Button onClick={onClose}>Cancel</Button>
-                    <Button
-                      type="primary"
-                      loading={actionLoading}
-                      onClick={directChange}
-                    >
-                      Confirm change
-                    </Button>
-                  </Space>
-                </div>
-              )}
+                  <div style={{ marginTop: "12px" }}>
+                    <Space>
+                      <Button onClick={onClose}>Cancel</Button>
+                      <Button
+                        type="primary"
+                        loading={actionLoading}
+                        onClick={directChange}
+                      >
+                        Confirm change
+                      </Button>
+                    </Space>
+                  </div>
+                )}
             </div>
           )}
           {place === "processing" && (

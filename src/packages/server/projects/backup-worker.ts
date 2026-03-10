@@ -2,11 +2,7 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
-import {
-  claimLroOps,
-  touchLro,
-  updateLro,
-} from "@cocalc/server/lro/lro-db";
+import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
@@ -43,7 +39,10 @@ function publishSummary(summary: LroSummary) {
   });
 }
 
-async function publishSummarySafe(summary: LroSummary, context: string): Promise<void> {
+async function publishSummarySafe(
+  summary: LroSummary,
+  context: string,
+): Promise<void> {
   try {
     await publishSummary(summary);
   } catch (err) {
@@ -163,7 +162,11 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
     });
 
     const started = Date.now();
-    progress({ step: "backup", message: "creating backup snapshot", detail: { tags } });
+    progress({
+      step: "backup",
+      message: "creating backup snapshot",
+      detail: { tags },
+    });
 
     const client = await getProjectFileServerClient({
       project_id,

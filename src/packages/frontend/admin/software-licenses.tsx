@@ -291,7 +291,8 @@ export function SoftwareLicensesAdmin() {
       {error && <ErrorDisplay error={error} />}
 
       <Paragraph type="secondary">
-        Manage Launchpad/Rocket software license tiers and issued license tokens.
+        Manage Launchpad/Rocket software license tiers and issued license
+        tokens.
       </Paragraph>
 
       <Divider titlePlacement="start">License Tiers</Divider>
@@ -326,7 +327,10 @@ export function SoftwareLicensesAdmin() {
       </Space>
       <Table
         size="small"
-        dataSource={licenses.map((license) => ({ key: license.id, ...license }))}
+        dataSource={licenses.map((license) => ({
+          key: license.id,
+          ...license,
+        }))}
         columns={licenseColumns}
         pagination={{ pageSize: 25 }}
       />
@@ -340,11 +344,7 @@ export function SoftwareLicensesAdmin() {
         okText="Save"
       >
         <Form form={tierForm} layout="vertical">
-          <Form.Item
-            label="Tier id"
-            name="id"
-            rules={[{ required: true }]}
-          >
+          <Form.Item label="Tier id" name="id" rules={[{ required: true }]}>
             <Input disabled={!!editingTier?.id} />
           </Form.Item>
           <Form.Item label="Label" name="label">

@@ -40,7 +40,9 @@ export function isRecentlySucceededMove({
   const summary = moveLro?.summary;
   if (summary?.status !== "succeeded") return false;
   const ts =
-    toTs(summary.updated_at) ?? toTs(summary.finished_at) ?? toTs(summary.created_at);
+    toTs(summary.updated_at) ??
+    toTs(summary.finished_at) ??
+    toTs(summary.created_at);
   if (ts == null) return false;
   return nowMs - ts <= graceMs;
 }

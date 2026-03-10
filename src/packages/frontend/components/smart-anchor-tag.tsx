@@ -137,9 +137,7 @@ function parseInternalFileHref(href: string): {
         ? Number(lineRaw)
         : undefined;
     const line =
-      lineFromParam ??
-      parsedPath.line ??
-      parseLineFromHashFragment(url.hash);
+      lineFromParam ?? parsedPath.line ?? parseLineFromHashFragment(url.hash);
     return { path: parsedPath.path, line };
   } catch {
     return {};
@@ -471,7 +469,11 @@ function CoCalcURL({ href, title, children, project_id }) {
             <ProjectTitle project_id={target_project_id} />
           )}{" "}
           in the{" "}
-          {targetPath ? <>directory "{targetPath}"</> : "project root directory"}
+          {targetPath ? (
+            <>directory "{targetPath}"</>
+          ) : (
+            "project root directory"
+          )}
           .
         </>
       );
@@ -543,7 +545,10 @@ function InternalFileLink({ project_id, href, title, children }) {
         void (async () => {
           try {
             let isDir = actions.isDirViaCache?.(target.path!);
-            if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
+            if (
+              typeof isDir !== "boolean" &&
+              typeof actions.isDir === "function"
+            ) {
               isDir = await actions.isDir(target.path!);
             }
             if (isDir === true) {
@@ -587,7 +592,10 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
             void (async () => {
               try {
                 let isDir = actions.isDirViaCache?.(absoluteTarget.path);
-                if (typeof isDir !== "boolean" && typeof actions.isDir === "function") {
+                if (
+                  typeof isDir !== "boolean" &&
+                  typeof actions.isDir === "function"
+                ) {
                   isDir = await actions.isDir(absoluteTarget.path);
                 }
                 if (isDir === true) {
@@ -638,7 +646,11 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
             })();
             return;
           }
-          const openInSameTab = !((e as any).which === 2 || e.ctrlKey || e.metaKey);
+          const openInSameTab = !(
+            (e as any).which === 2 ||
+            e.ctrlKey ||
+            e.metaKey
+          );
           if (openInSameTab) {
             window.location.assign(href);
           } else {
@@ -672,9 +684,15 @@ function InternalRelativeLink({ project_id, path, href, title, children }) {
             decodePathForParsing(hrefPlain),
           );
           if (parsed.line != null && !fragmentId?.line) {
-            fragmentId = { ...(fragmentId?.anchor ? {} : fragmentId), line: `${parsed.line}` };
+            fragmentId = {
+              ...(fragmentId?.anchor ? {} : fragmentId),
+              line: `${parsed.line}`,
+            };
           } else if (lineFromHash != null && !fragmentId?.line) {
-            fragmentId = { ...(fragmentId?.anchor ? {} : fragmentId), line: `${lineFromHash}` };
+            fragmentId = {
+              ...(fragmentId?.anchor ? {} : fragmentId),
+              line: `${lineFromHash}`,
+            };
           }
           target = join("files", parsed.path);
         }

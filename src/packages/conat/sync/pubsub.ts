@@ -7,7 +7,11 @@ This is used, e.g., for broadcasting a user's cursors when they are editing a fi
 import { projectSubject } from "@cocalc/conat/names";
 import { State } from "@cocalc/conat/types";
 import { EventEmitter } from "events";
-import { type Subscription, getClient, Client } from "@cocalc/conat/core/client";
+import {
+  type Subscription,
+  getClient,
+  Client,
+} from "@cocalc/conat/core/client";
 
 export class PubSub extends EventEmitter {
   private subject: string;

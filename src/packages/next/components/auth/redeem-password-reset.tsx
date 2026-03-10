@@ -53,11 +53,13 @@ export default function PasswordReset({ passwordResetId }) {
   }
 
   function renderError() {
-    return error && (
-      <div style={{ fontSize: "12pt" }}>
-        <b>{error}</b>
-        <br/> If you are stuck, please <Contact lower/>.
-      </div>
+    return (
+      error && (
+        <div style={{ fontSize: "12pt" }}>
+          <b>{error}</b>
+          <br /> If you are stuck, please <Contact lower />.
+        </div>
+      )
     );
   }
 
@@ -67,9 +69,7 @@ export default function PasswordReset({ passwordResetId }) {
       footer={renderFooter()}
       title={`Reset Your ${siteName} Password`}
     >
-      <div style={{ margin: "10px 0" }}>
-        Choose a new {siteName} password:
-      </div>
+      <div style={{ margin: "10px 0" }}>Choose a new {siteName} password:</div>
       <form>
         <Input.Password
           style={{ fontSize: "13pt" }}
@@ -98,7 +98,7 @@ export default function PasswordReset({ passwordResetId }) {
         >
           {resetting ? (
             <>
-              <Icon name="spinner" spin/> Changing password...
+              <Icon name="spinner" spin /> Changing password...
             </>
           ) : !isValidPassword(password) ? (
             "Enter password (at least 6 characters)."

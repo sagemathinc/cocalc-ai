@@ -1,4 +1,3 @@
-
 // Do NOT change this - this exact string is assumed in @cocalc/hub/user-remember-me and @cocalc/util/client
 // Of course, they do use this very constant.  It's just that if you change this you might have
 // to rebuild and restart all servers, etc., which gets complicated...

@@ -7,7 +7,7 @@ import { getServerSettings } from "@cocalc/database/settings";
 
 export default async function sendPasswordResetEmail(
   email_address: string, // target email_address of user who will receive the password reset email
-  id: string // the secret code that they must supply to reset their password
+  id: string, // the secret code that they must supply to reset their password
 ): Promise<void> {
   const subject = "Password Reset";
   const { html, text } = await getMessage(email_address, id);
@@ -16,7 +16,7 @@ export default async function sendPasswordResetEmail(
     await sendViaSMTP(message, "password_reset");
   } catch (err) {
     console.log(
-      `sending password reset via secondary smtp server failed; trying sendgrid -- ${err}`
+      `sending password reset via secondary smtp server failed; trying sendgrid -- ${err}`,
     );
     await sendViaSendgrid(message);
   }
@@ -24,7 +24,7 @@ export default async function sendPasswordResetEmail(
 
 async function getMessage(
   email_address: string,
-  id: string
+  id: string,
 ): Promise<{ html: string; text: string }> {
   const { help_email, site_name } = await getServerSettings();
   const site_url = await siteURL();

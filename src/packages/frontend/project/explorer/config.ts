@@ -25,10 +25,7 @@ interface Location {
   path?: string;
 }
 
-function key({
-  project_id,
-  path = "/",
-}: Location) {
+function key({ project_id, path = "/" }: Location) {
   return `${project_id}-${path}`;
 }
 
@@ -87,7 +84,9 @@ export function setSearch({
     ...location,
     path: targetPath,
     // merge what was there with what's new
-    config: { search: { ...get({ ...location, path: targetPath })?.search, ...search } },
+    config: {
+      search: { ...get({ ...location, path: targetPath })?.search, ...search },
+    },
   });
   const actions = redux.getProjectActions(location.project_id);
   actions.setState({ search_page: Math.random() });

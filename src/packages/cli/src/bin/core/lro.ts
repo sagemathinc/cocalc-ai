@@ -30,7 +30,9 @@ export async function waitForLro({
   let lastError: string | null | undefined;
 
   while (Date.now() - started <= timeoutMs) {
-    const summary = (await hub.lro.get({ op_id: opId })) as LroStatusSummaryLike | undefined;
+    const summary = (await hub.lro.get({ op_id: opId })) as
+      | LroStatusSummaryLike
+      | undefined;
     const status = summary?.status ?? "unknown";
     lastStatus = status;
     lastError = summary?.error;

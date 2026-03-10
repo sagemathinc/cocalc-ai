@@ -112,18 +112,19 @@ export default function TermsOfService({ customize }) {
                 can use SageMath and other open source math software online in
                 connection with mathematical research and teaching and the
                 performance of computational mathematics. Through their
-                Accounts, users can create multiple workspaces ("<b>Workspace</b>"),
-                each of which acts as a file system with multiple directories,
-                inside of which a user can create and edit any number of files
-                of any type (such as Latex documents, IPython notebooks, and
-                SageMath worksheets) as well as write, compile, and run software
-                code in various programming languages (such files and code
-                collectively, "<b>Files</b>"). You’ll be able to share your
-                Files with other users of the Services, as well as enable them
-                to contribute to and build upon them and share them as well.
-                When you create Files, you can, if you choose, specify the terms
-                and conditions that govern other users’ use of your Files (e.g.
-                a specific software or creative commons license) ("
+                Accounts, users can create multiple workspaces ("
+                <b>Workspace</b>"), each of which acts as a file system with
+                multiple directories, inside of which a user can create and edit
+                any number of files of any type (such as Latex documents,
+                IPython notebooks, and SageMath worksheets) as well as write,
+                compile, and run software code in various programming languages
+                (such files and code collectively, "<b>Files</b>"). You’ll be
+                able to share your Files with other users of the Services, as
+                well as enable them to contribute to and build upon them and
+                share them as well. When you create Files, you can, if you
+                choose, specify the terms and conditions that govern other
+                users’ use of your Files (e.g. a specific software or creative
+                commons license) ("
                 <b>File License</b>"). Similarly, if you download, access or use
                 another user’s Files through the Services, you agree that you
                 will use such Files strictly in accordance with the File License
@@ -176,7 +177,8 @@ export default function TermsOfService({ customize }) {
                 You may access your Account data via our application programming
                 interface ("<b>API</b>"). Your use of the API, including use
                 through a third party product that accesses the Services, is
-                subject to these Terms as well as the following specific terms:{" "}
+                subject to these Terms as well as the following specific
+                terms:{" "}
               </p>
               <ul>
                 <li>
@@ -193,7 +195,8 @@ export default function TermsOfService({ customize }) {
                   the API may result in the temporary or permanent suspension of
                   your access to the API. SMI, in its sole discretion, will
                   determine abuse or excessive usage of the API. SMI will make a
-                  reasonable attempt via email to warn you prior to suspension.{" "}
+                  reasonable attempt via email to warn you prior to
+                  suspension.{" "}
                 </li>
               </ul>
               <h1>Payment, Refunds, Upgrading and Downgrading Accounts</h1>
@@ -285,7 +288,8 @@ export default function TermsOfService({ customize }) {
                 copyright, trademark, and other laws of the United States and
                 foreign countries. You agree not to remove, alter or obscure any
                 copyright, trademark, service mark or other proprietary rights
-                notices incorporated in or accompanying the Services or Content.{" "}
+                notices incorporated in or accompanying the Services or
+                Content.{" "}
               </p>
               <h2>Rights in User Content Granted by You</h2>
               <p>
@@ -298,7 +302,8 @@ export default function TermsOfService({ customize }) {
                 you hereby grant to Account holders and non-Account holder users
                 of the Services who are permitted access to your Files the right
                 to use your Files in accordance with the applicable File
-                Licenses you have indicated govern use of your Files (if any).{" "}
+                Licenses you have indicated govern use of your Files (if
+                any).{" "}
               </p>
               <p>
                 You are solely responsible for all your User Content. You
@@ -383,7 +388,8 @@ export default function TermsOfService({ customize }) {
                   Avoid, bypass, remove, deactivate, impair, descramble or
                   otherwise circumvent any technological measure implemented by
                   SMI or any of SMI’s providers or any other third party
-                  (including another user) to protect the Services or Content;{" "}
+                  (including another user) to protect the Services or
+                  Content;{" "}
                 </li>
                 <li>
                   Attempt to access or search the Services or Content or
@@ -502,7 +508,8 @@ export default function TermsOfService({ customize }) {
                 HORSES, WORMS, OR OTHER COMPUTER PROGRAMMING DEVICES WHICH MAY
                 DAMAGE A USER’S COMPUTER, SYSTEM OR DATA OR PREVENT THE USER
                 FROM USING ITS COMPUTER, SYSTEM OR DATA. YOU KNOWINGLY AND
-                FREELY ASSUME ALL RISK WHEN USING THE SERVICES AND THE CONTENT.{" "}
+                FREELY ASSUME ALL RISK WHEN USING THE SERVICES AND THE
+                CONTENT.{" "}
               </p>
               <p className="uppercase">
                 THE CONTENT PROVIDED BY ACCOUNT HOLDERS AND THE USE OF CONTENT

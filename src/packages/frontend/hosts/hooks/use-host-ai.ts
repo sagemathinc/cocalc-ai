@@ -2,7 +2,10 @@ import { useState } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
 import type { HostRecommendation } from "../types";
-import { extractJsonPayload, normalizeRecommendation } from "../utils/recommendations";
+import {
+  extractJsonPayload,
+  normalizeRecommendation,
+} from "../utils/recommendations";
 
 type UseHostAiOptions = {
   catalogSummary?: Record<string, any>;
@@ -32,14 +35,17 @@ export const useHostAi = ({
     setAiLoading(true);
     try {
       const providers =
-        availableProviders?.filter((provider) => provider && provider !== "none") ??
+        availableProviders?.filter(
+          (provider) => provider && provider !== "none",
+        ) ??
         (Object.keys(catalogSummary ?? {}) as HostRecommendation["provider"][]);
       if (!providers.length) {
         throw new Error("No providers available for recommendations");
       }
       const providerList = providers.join("|");
       const hasRegionGroups = Object.values(catalogSummary ?? {}).some(
-        (summary) => summary && typeof summary === "object" && "region_groups" in summary,
+        (summary) =>
+          summary && typeof summary === "object" && "region_groups" in summary,
       );
       const regionGuidance = hasRegionGroups
         ? "Use the region_group preference to select a region from catalog.<provider>.region_groups when possible. "

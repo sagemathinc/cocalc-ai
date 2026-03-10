@@ -70,7 +70,7 @@ function columns(id, relativePath) {
             href={
               record.url ??
               `/share/public_paths/${id}/${encodeURIComponent(
-                join(relativePath, name)
+                join(relativePath, name),
               )}`
             }
           >

@@ -13,7 +13,6 @@ let theDB: PostgreSQL | undefined = undefined;
 const hasOptions = (opts: PostgreSQLOptions): boolean =>
   Object.keys(opts).length > 0;
 
-
 /**
  * Return the singleton PostgreSQL instance.
  *

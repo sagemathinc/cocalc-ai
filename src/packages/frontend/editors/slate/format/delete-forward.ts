@@ -43,16 +43,26 @@ function customDeleteForward(editor: Editor): boolean | undefined {
 
   const nextPath = Path.next(path);
   const nextNode = getNodeAt(editor, nextPath);
-  if (Element.isElement(nextNode) && nextNode.type === "paragraph" && nextNode["spacer"]) {
+  if (
+    Element.isElement(nextNode) &&
+    nextNode.type === "paragraph" &&
+    nextNode["spacer"]
+  ) {
     const afterPath = Path.next(nextPath);
     const afterNode = getNodeAt(editor, afterPath);
-    if (Element.isElement(afterNode) && FORWARD_DELETE_BLOCK_TYPES.has(afterNode.type)) {
+    if (
+      Element.isElement(afterNode) &&
+      FORWARD_DELETE_BLOCK_TYPES.has(afterNode.type)
+    ) {
       Transforms.removeNodes(editor, { at: afterPath });
       Transforms.removeNodes(editor, { at: nextPath });
       return true;
     }
   }
-  if (Element.isElement(nextNode) && FORWARD_DELETE_BLOCK_TYPES.has(nextNode.type)) {
+  if (
+    Element.isElement(nextNode) &&
+    FORWARD_DELETE_BLOCK_TYPES.has(nextNode.type)
+  ) {
     Transforms.removeNodes(editor, { at: nextPath });
     return true;
   }

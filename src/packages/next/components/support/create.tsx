@@ -333,16 +333,16 @@ export default function Create() {
                 {submitting
                   ? "Submitting..."
                   : success
-                  ? "Thank you for creating a ticket"
-                  : submitError
-                  ? "Close the error box to try again"
-                  : !isValidEmailAddress(email)
-                  ? "Enter Valid Email Address above"
-                  : !subject
-                  ? "Enter Subject above"
-                  : (body ?? "").length < MIN_BODY_LENGTH
-                  ? `Describe your ${type} in detail above`
-                  : "Create Support Ticket"}
+                    ? "Thank you for creating a ticket"
+                    : submitError
+                      ? "Close the error box to try again"
+                      : !isValidEmailAddress(email)
+                        ? "Enter Valid Email Address above"
+                        : !subject
+                          ? "Enter Subject above"
+                          : (body ?? "").length < MIN_BODY_LENGTH
+                            ? `Describe your ${type} in detail above`
+                            : "Create Support Ticket"}
               </Button>
             )}
             {submitting && <Loading style={{ fontSize: "32pt" }} />}
@@ -599,8 +599,8 @@ print(sid_obj.polarity_scores(text))`}
       Each <SiteName /> project is a Docker image running Ubuntu Linux on 64-bit
       x86 hardware, so it is possible for us to install most standard Linux
       software, and we have already installed{" "}
-      <A href="/features/linux">a huge amount</A>. If there is something you need that
-      is missing, let us know below. You can also{" "}
+      <A href="/features/linux">a huge amount</A>. If there is something you
+      need that is missing, let us know below. You can also{" "}
       <a onClick={() => setShowWestPoint(true)}>
         view a recent ticket from West Point
       </a>{" "}

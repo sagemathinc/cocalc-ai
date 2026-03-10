@@ -7,7 +7,18 @@
 Create a new project
 */
 
-import { Button, Card, Form, Input, Modal, Radio, Select, Space, Tag, Typography } from "antd";
+import {
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { delay } from "awaiting";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -43,11 +54,7 @@ interface Props {
   onClose: () => void;
 }
 
-export function NewProjectCreator({
-  default_value,
-  open,
-  onClose,
-}: Props) {
+export function NewProjectCreator({ default_value, open, onClose }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
@@ -73,8 +80,9 @@ export function NewProjectCreator({
       DEFAULT_R2_REGION,
     [cloudflareCountry, cloudflareRegionCode],
   );
-  const [projectRegion, setProjectRegion] =
-    useState<R2Region>(preferredProjectRegion);
+  const [projectRegion, setProjectRegion] = useState<R2Region>(
+    preferredProjectRegion,
+  );
   const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
   const [rootfsTouched, setRootfsTouched] = useState<boolean>(false);
   const [rootfsImage, setRootfsImage] = useState<string | undefined>();
@@ -88,10 +96,7 @@ export function NewProjectCreator({
       })),
     [],
   );
-  const manifestUrl = useTypedRedux(
-    "customize",
-    "project_rootfs_manifest_url",
-  );
+  const manifestUrl = useTypedRedux("customize", "project_rootfs_manifest_url");
   const manifestUrlExtra = useTypedRedux(
     "customize",
     "project_rootfs_manifest_url_extra",
@@ -104,10 +109,7 @@ export function NewProjectCreator({
     "customize",
     "project_rootfs_default_image_gpu",
   );
-  const accountDefaultRootfs = useTypedRedux(
-    "account",
-    "default_rootfs_image",
-  );
+  const accountDefaultRootfs = useTypedRedux("account", "default_rootfs_image");
   const accountDefaultRootfsGpu = useTypedRedux(
     "account",
     "default_rootfs_image_gpu",
@@ -121,8 +123,11 @@ export function NewProjectCreator({
         .filter((url): url is string => !!url && url.length > 0),
     [manifestUrl, manifestUrlExtra],
   );
-  const { images: rootfsImages, loading: rootfsLoading, error: rootfsError } =
-    useRootfsImages(manifestUrls);
+  const {
+    images: rootfsImages,
+    loading: rootfsLoading,
+    error: rootfsError,
+  } = useRootfsImages(manifestUrls);
   const isGpu = selectedHost?.gpu ?? false;
   const effectiveDefaultRootfs = useMemo(() => {
     const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
@@ -219,8 +224,9 @@ export function NewProjectCreator({
   async function create_project(): Promise<void> {
     setSaving(true);
     const actions = redux.getActions("projects");
-    const defaultComputeImage =
-      await redux.getStore("customize").getDefaultComputeImage();
+    const defaultComputeImage = await redux
+      .getStore("customize")
+      .getDefaultComputeImage();
     let project_id: string;
     const chosenRootfs =
       rootfsImage?.trim() || effectiveDefaultRootfs || DEFAULT_PROJECT_IMAGE;
@@ -247,7 +253,11 @@ export function NewProjectCreator({
       ...opts,
     });
     // switch_to=true is perhaps suggested by #4088
-    actions.open_project({ project_id, target: "project-home", switch_to: true });
+    actions.open_project({
+      project_id,
+      target: "project-home",
+      switch_to: true,
+    });
     cancel_editing();
   }
 
@@ -344,9 +354,7 @@ export function NewProjectCreator({
                   {activeEntry.description}
                 </Paragraph>
               )}
-              {activeEntry?.gpu && (
-                <Tag color="purple">GPU image</Tag>
-              )}
+              {activeEntry?.gpu && <Tag color="purple">GPU image</Tag>}
               {rootfsError && (
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                   Manifest load issue: {rootfsError}
@@ -446,7 +454,11 @@ export function NewProjectCreator({
               />
             </Paragraph>
             <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
-              <Space orientation="vertical" size="small" style={{ width: "100%" }}>
+              <Space
+                orientation="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
                 <div style={{ fontWeight: 600 }}>Backup region</div>
                 <Select
                   value={projectRegion}
@@ -455,8 +467,8 @@ export function NewProjectCreator({
                   disabled={saving}
                 />
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  Backups are stored in this region. {projectsLabel} can only run
-                  on hosts in the same region.
+                  Backups are stored in this region. {projectsLabel} can only
+                  run on hosts in the same region.
                 </Paragraph>
               </Space>
             </Card>

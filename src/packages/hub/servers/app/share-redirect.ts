@@ -92,7 +92,7 @@ const sha1ToPath: { [sha1: string]: string } = {};
 
 async function pathInShare(
   sha1hash: string,
-  fullPath: string
+  fullPath: string,
 ): Promise<string> {
   fullPath = decodeURI(fullPath);
   // winston.debug("pathInShare", { sha1hash, fullPath });
@@ -103,7 +103,7 @@ async function pathInShare(
     const pool = getPool();
     const { rows } = await pool.query(
       "SELECT path FROM public_paths WHERE id=$1",
-      [sha1hash]
+      [sha1hash],
     );
     if (rows.length == 0) {
       throw Error("no such public path");

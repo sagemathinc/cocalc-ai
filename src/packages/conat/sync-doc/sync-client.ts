@@ -65,7 +65,8 @@ export class SyncClient extends EventEmitter implements Client0 {
         /socket has been disconnected|socket is disconnected|connection closed/i.test(
           message,
         );
-      if (!disconnected && code != 503) { // 503 when hub not running yet
+      if (!disconnected && code != 503) {
+        // 503 when hub not running yet
         console.log("WARNING: issue touching project", { project_id }, err);
       }
     }

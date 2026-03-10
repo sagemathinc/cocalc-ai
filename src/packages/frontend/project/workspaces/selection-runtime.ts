@@ -18,7 +18,10 @@ export function loadSessionSelection(project_id: string): WorkspaceSelection {
     const raw = sessionStorage.getItem(sessionSelectionKey(project_id));
     if (!raw) return { kind: "all" };
     const parsed = JSON.parse(raw);
-    if (parsed?.kind === "workspace" && typeof parsed.workspace_id === "string") {
+    if (
+      parsed?.kind === "workspace" &&
+      typeof parsed.workspace_id === "string"
+    ) {
       return { kind: "workspace", workspace_id: parsed.workspace_id };
     }
     if (parsed?.kind === "unscoped") {
@@ -49,7 +52,10 @@ export function dispatchWorkspaceSelectionEvent(
   project_id: string,
   selection: WorkspaceSelection,
 ): void {
-  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+  if (
+    typeof window === "undefined" ||
+    typeof window.dispatchEvent !== "function"
+  ) {
     return;
   }
   window.dispatchEvent(

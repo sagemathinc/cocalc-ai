@@ -471,63 +471,65 @@ export function FilesHeader({
                   <DropdownMenu
                     button
                     size="small"
-                    items={[
-                      {
-                        key: "snapshots-open",
-                        label: "Browse Snapshots",
-                        onClick: () => {
-                          actions?.open_directory(SNAPSHOTS);
-                          track("snapshots", {
-                            action: "open",
-                            where: "flyout-files",
-                          });
+                    items={
+                      [
+                        {
+                          key: "snapshots-open",
+                          label: "Browse Snapshots",
+                          onClick: () => {
+                            actions?.open_directory(SNAPSHOTS);
+                            track("snapshots", {
+                              action: "open",
+                              where: "flyout-files",
+                            });
+                          },
                         },
-                      },
-                      {
-                        key: "snapshots-config",
-                        label: "Configure Snapshots",
-                        onClick: () => {
-                          actions?.open_directory(SNAPSHOTS);
-                          actions?.setState({ open_snapshot_schedule: true });
+                        {
+                          key: "snapshots-config",
+                          label: "Configure Snapshots",
+                          onClick: () => {
+                            actions?.open_directory(SNAPSHOTS);
+                            actions?.setState({ open_snapshot_schedule: true });
+                          },
                         },
-                      },
-                      {
-                        key: "snapshots-create",
-                        label: "Create Snapshot",
-                        onClick: () => {
-                          actions?.open_directory(SNAPSHOTS);
-                          actions?.setState({ open_create_snapshot: true });
+                        {
+                          key: "snapshots-create",
+                          label: "Create Snapshot",
+                          onClick: () => {
+                            actions?.open_directory(SNAPSHOTS);
+                            actions?.setState({ open_create_snapshot: true });
+                          },
                         },
-                      },
-                      { type: "divider" },
-                      {
-                        key: "backups-open",
-                        label: "Browse Backups",
-                        onClick: () => {
-                          actions?.open_directory(BACKUPS);
-                          track("backups", {
-                            action: "open",
-                            where: "flyout-files",
-                          });
+                        { type: "divider" },
+                        {
+                          key: "backups-open",
+                          label: "Browse Backups",
+                          onClick: () => {
+                            actions?.open_directory(BACKUPS);
+                            track("backups", {
+                              action: "open",
+                              where: "flyout-files",
+                            });
+                          },
                         },
-                      },
-                      {
-                        key: "backups-config",
-                        label: "Configure Backups",
-                        onClick: () => {
-                          actions?.open_directory(BACKUPS);
-                          actions?.setState({ open_backup_schedule: true });
+                        {
+                          key: "backups-config",
+                          label: "Configure Backups",
+                          onClick: () => {
+                            actions?.open_directory(BACKUPS);
+                            actions?.setState({ open_backup_schedule: true });
+                          },
                         },
-                      },
-                      {
-                        key: "backups-create",
-                        label: "Create Backup",
-                        onClick: () => {
-                          actions?.open_directory(BACKUPS);
-                          actions?.setState({ open_create_backup: true });
+                        {
+                          key: "backups-create",
+                          label: "Create Backup",
+                          onClick: () => {
+                            actions?.open_directory(BACKUPS);
+                            actions?.setState({ open_create_backup: true });
+                          },
                         },
-                      },
-                    ] as MenuItems}
+                      ] as MenuItems
+                    }
                     title={<Icon name="life-ring" />}
                   />
                 </span>

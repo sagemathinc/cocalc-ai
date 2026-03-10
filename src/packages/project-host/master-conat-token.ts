@@ -24,7 +24,8 @@ export function getProjectHostMasterConatTokenPath(): string {
 }
 
 export function getProjectHostMasterConatToken(): string | undefined {
-  const fromEnv = `${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim();
+  const fromEnv =
+    `${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim();
   if (fromEnv) {
     return fromEnv;
   }
@@ -59,7 +60,9 @@ function bootstrapConfigCandidates(): string[] {
   candidates.add("/home/ubuntu/cocalc-host/bootstrap/bootstrap-config.json");
   try {
     for (const user of readdirSync("/home")) {
-      candidates.add(`/home/${user}/cocalc-host/bootstrap/bootstrap-config.json`);
+      candidates.add(
+        `/home/${user}/cocalc-host/bootstrap/bootstrap-config.json`,
+      );
     }
   } catch {
     // ignore missing /home etc.
@@ -68,7 +71,8 @@ function bootstrapConfigCandidates(): string[] {
 }
 
 export function getProjectHostBootstrapToken(): string | undefined {
-  const fromEnv = `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN ?? ""}`.trim();
+  const fromEnv =
+    `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN ?? ""}`.trim();
   if (fromEnv) return fromEnv;
   for (const path of bootstrapConfigCandidates()) {
     try {
@@ -109,17 +113,17 @@ function readBootstrapConfig():
 
 export function getProjectHostBootstrapConatSource(opts?: {
   fallbackConatUrl?: string;
-}):
-  | ProjectHostBootstrapConatSource
-  | undefined {
+}): ProjectHostBootstrapConatSource | undefined {
   const fallbackConatUrl = `${opts?.fallbackConatUrl ?? ""}`.trim();
-  const fromEnvToken = `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN ?? ""}`.trim();
+  const fromEnvToken =
+    `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN ?? ""}`.trim();
   const fromEnvConatUrl = `${
     process.env.COCALC_PROJECT_HOST_BOOTSTRAP_CONAT_URL ??
     process.env.COCALC_PROJECT_HOST_BOOTSTRAP_MASTER_CONAT_URL ??
     ""
   }`.trim();
-  const fromEnvCaPath = `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_CA_CERT_PATH ?? ""}`.trim();
+  const fromEnvCaPath =
+    `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_CA_CERT_PATH ?? ""}`.trim();
   if (fromEnvToken && (fromEnvConatUrl || fallbackConatUrl)) {
     return {
       bootstrap_token: fromEnvToken,
@@ -151,7 +155,9 @@ export async function fetchMasterConatTokenViaBootstrap(
     "User-Agent": "cocalc-project-host/1.0 (master-conat-rotate)",
     Accept: "text/plain,*/*",
   };
-  const ca = source.ca_cert_path ? readFileSync(source.ca_cert_path, "utf8") : undefined;
+  const ca = source.ca_cert_path
+    ? readFileSync(source.ca_cert_path, "utf8")
+    : undefined;
 
   return await new Promise<string>((resolve, reject) => {
     const req = requestFn(

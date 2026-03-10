@@ -93,7 +93,7 @@ export function CodeMirrorStatic(props: Props) {
         v.push(
           <span key={v.length} className={`cm-${type}`}>
             {text}
-          </span>
+          </span>,
         );
       } else {
         v.push(<span key={v.length}>{text}</span>);

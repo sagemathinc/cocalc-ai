@@ -6,7 +6,7 @@ several different languages.
 export default function createSetEnvCommand(
   lang: string,
   varName: string,
-  varValue: string
+  varValue: string,
 ): string {
   // throws exception if don't know how.
   lang = lang.toLowerCase(); // xeus-cling is 'C++-17'
@@ -33,7 +33,7 @@ export default function createSetEnvCommand(
   } else {
     // e.g., "gap" -- I didn't try.
     throw Error(
-      `unable to set environment variable: ${varName} for language ${lang} is not implemented.`
+      `unable to set environment variable: ${varName} for language ${lang} is not implemented.`,
     );
   }
 }

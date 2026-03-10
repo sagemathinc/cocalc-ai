@@ -31,7 +31,10 @@ export default function KernelWarning({ name, actions }: Props) {
       "data-cocalc-jupyter-kernel-warning-visible",
       visible ? "1" : "0",
     );
-    el.setAttribute("data-cocalc-jupyter-kernel-warning-text", kernelError ?? "");
+    el.setAttribute(
+      "data-cocalc-jupyter-kernel-warning-text",
+      kernelError ?? "",
+    );
   }, [kernelError]);
 
   if (!kernelError) {

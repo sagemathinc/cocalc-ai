@@ -11,7 +11,7 @@ import { rangeAll, rangeToEnd, rangeFromStart } from "../slate-util";
 // TODO: findMatches will be used for "replace all" functionality, but isn't used now.
 export function findMatches(
   editor: Editor,
-  decorate: (x: [Node, Path]) => any[]
+  decorate: (x: [Node, Path]) => any[],
 ): any[] {
   const matches: any[] = [];
   for (const [node, path] of Editor.nodes(editor, {
@@ -28,7 +28,7 @@ function selectMatch(
   editor: Editor,
   decorate,
   options,
-  above: boolean
+  above: boolean,
 ): boolean {
   let cursor;
   if (editor.selection == null) {
@@ -60,7 +60,7 @@ function selectMatch(
   return false;
 }
 
-export function selectNextMatch(editor: Editor, decorate) : boolean {
+export function selectNextMatch(editor: Editor, decorate): boolean {
   {
     const { anchor, focus } = rangeToEnd(editor);
     const at = { focus, anchor: { path: anchor.path, offset: 0 } };
@@ -73,7 +73,7 @@ export function selectNextMatch(editor: Editor, decorate) : boolean {
   return false;
 }
 
-export function selectPreviousMatch(editor: Editor, decorate) : boolean {
+export function selectPreviousMatch(editor: Editor, decorate): boolean {
   {
     const { anchor, focus } = rangeFromStart(editor);
     const n = Editor.next(editor, { at: focus.path });
@@ -82,7 +82,8 @@ export function selectPreviousMatch(editor: Editor, decorate) : boolean {
   }
   {
     const at = rangeToEnd(editor);
-    if (selectMatch(editor, decorate, { at, reverse: true }, false)) return true;
+    if (selectMatch(editor, decorate, { at, reverse: true }, false))
+      return true;
   }
   return false;
 }

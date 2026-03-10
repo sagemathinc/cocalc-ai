@@ -40,7 +40,13 @@ export function HostCreatePanel({
   const sider = (
     <Layout.Sider width={width} style={PANEL_STYLE} collapsible={false}>
       {onHide && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            marginBottom: 8,
+          }}
+        >
           <Button size="small" onClick={onHide}>
             Hide Panel
           </Button>
@@ -62,7 +68,10 @@ export function HostCreatePanel({
       maxWidth={maxWidth}
       handleStyles={handleStyles}
       onResizeStop={(_, __, ___, delta) => {
-        const next = Math.min(maxWidth, Math.max(minWidth, width + delta.width));
+        const next = Math.min(
+          maxWidth,
+          Math.max(minWidth, width + delta.width),
+        );
         setWidth(next);
       }}
     >

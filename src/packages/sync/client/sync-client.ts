@@ -76,5 +76,4 @@ export class SyncClient {
   public sync_db(_opts: SyncDBOpts): SyncDoc {
     throw Error("deprecated");
   }
-
 }

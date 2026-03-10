@@ -57,7 +57,10 @@ function applyPatchAndRemapSelection(
 function applyPatchAndRemapSelectionWithSentinels(
   prev: Descendant[],
   next: Descendant[],
-  selection: { anchor: { path: number[]; offset: number }; focus: { path: number[]; offset: number } },
+  selection: {
+    anchor: { path: number[]; offset: number };
+    focus: { path: number[]; offset: number };
+  },
 ) {
   const editor = createEditor();
   editor.children = prev;
@@ -82,7 +85,10 @@ function applyPatchAndRemapSelectionWithSentinels(
 function remapDocWithSentinels(
   prev: Descendant[],
   next: Descendant[],
-  selection: { anchor: { path: number[]; offset: number }; focus: { path: number[]; offset: number } },
+  selection: {
+    anchor: { path: number[]; offset: number };
+    focus: { path: number[]; offset: number };
+  },
 ) {
   return remapSelectionInDocWithSentinels(prev, next, selection);
 }
@@ -227,7 +233,9 @@ describe("block diff signatures", () => {
         type: "code_block",
         info: "js",
         fence: true,
-        children: [{ type: "code_line", children: [{ text: "console.log(1);" }] }],
+        children: [
+          { type: "code_line", children: [{ text: "console.log(1);" }] },
+        ],
       },
       {
         type: "bullet_list",
@@ -245,7 +253,9 @@ describe("block diff signatures", () => {
         type: "code_block",
         info: "js",
         fence: true,
-        children: [{ type: "code_line", children: [{ text: "console.log(2);" }] }],
+        children: [
+          { type: "code_line", children: [{ text: "console.log(2);" }] },
+        ],
       },
       {
         type: "bullet_list",

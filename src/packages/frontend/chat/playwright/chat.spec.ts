@@ -23,19 +23,29 @@ async function waitForHarness(page) {
 async function expectComposerInput(page, value: string) {
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getInput?.() ?? null);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getInput?.() ?? null,
+      );
     })
     .toBe(value);
 }
 
-async function expectComposerInputAfterSwitch(page, previous: string, inserted: string) {
+async function expectComposerInputAfterSwitch(
+  page,
+  previous: string,
+  inserted: string,
+) {
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getInput?.() ?? null);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getInput?.() ?? null,
+      );
     })
     .not.toBe(previous);
 
-  const next = await page.evaluate(() => window.__chatComposerTest?.getInput?.() ?? null);
+  const next = await page.evaluate(
+    () => window.__chatComposerTest?.getInput?.() ?? null,
+  );
   expect(typeof next).toBe("string");
   expect(next).toContain(inserted);
   expect(next?.length).toBe(previous.length + inserted.length);
@@ -59,7 +69,9 @@ async function setInputRaw(page, value: string) {
 }
 
 async function typeInCodeMirror(page, text: string) {
-  const editor = page.locator(".CodeMirror-code[contenteditable='true']").first();
+  const editor = page
+    .locator(".CodeMirror-code[contenteditable='true']")
+    .first();
   await expect(editor).toHaveCount(1);
   await editor.click();
   await page.keyboard.type(text);
@@ -80,7 +92,10 @@ async function clickSendButton(page) {
 }
 
 async function switchComposerMode(page, label: "Rich Text" | "Markdown") {
-  const button = page.locator(".ant-radio-button-wrapper").filter({ hasText: label }).first();
+  const button = page
+    .locator(".ant-radio-button-wrapper")
+    .filter({ hasText: label })
+    .first();
   await expect(button).toBeVisible();
   await button.click();
 }
@@ -90,7 +105,8 @@ async function expectMarkdownCaretVisible(page) {
     .poll(async () => {
       return await page.evaluate(() => {
         const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
-        const scroller = document.querySelector<HTMLElement>(".CodeMirror-scroll");
+        const scroller =
+          document.querySelector<HTMLElement>(".CodeMirror-scroll");
         if (cm == null || scroller == null) {
           return null;
         }
@@ -106,7 +122,9 @@ async function expectMarkdownCaretVisible(page) {
     .toEqual({ visible: true });
 }
 
-test("new-thread shift+enter send clears and stays cleared", async ({ page }) => {
+test("new-thread shift+enter send clears and stays cleared", async ({
+  page,
+}) => {
   await page.goto("/");
   await waitForHarness(page);
 
@@ -126,7 +144,9 @@ test("new-thread shift+enter send clears and stays cleared", async ({ page }) =>
   await expectHarnessHealthy(page);
 });
 
-test("second new-thread send also stays cleared after New Chat", async ({ page }) => {
+test("second new-thread send also stays cleared after New Chat", async ({
+  page,
+}) => {
   await page.goto("/");
   await waitForHarness(page);
 
@@ -154,7 +174,9 @@ test("second new-thread send also stays cleared after New Chat", async ({ page }
   await expectHarnessHealthy(page);
 });
 
-test("composer mode: send button appears while typing without blur", async ({ page }) => {
+test("composer mode: send button appears while typing without blur", async ({
+  page,
+}) => {
   await page.goto("/?mode=composer&editorMode=markdown");
   await waitForHarness(page);
 
@@ -163,18 +185,24 @@ test("composer mode: send button appears while typing without blur", async ({ pa
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonDisabled?.(),
+      );
     })
     .toBe(false);
   await expectHarnessHealthy(page);
 });
 
-test("composer mode: shift+enter sends and clears without blur", async ({ page }) => {
+test("composer mode: shift+enter sends and clears without blur", async ({
+  page,
+}) => {
   await page.goto("/?mode=composer&editorMode=markdown");
   await waitForHarness(page);
 
@@ -185,7 +213,9 @@ test("composer mode: shift+enter sends and clears without blur", async ({ page }
   await expectComposerInput(page, "");
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getSends?.().length ?? 0,
+      );
     })
     .toBeGreaterThan(0);
   await expectHarnessHealthy(page);
@@ -289,12 +319,16 @@ test("composer mode: markdown keeps the caret visible while moving upward", asyn
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => (window as any).__cmArrowUpVisibility ?? []);
+      return await page.evaluate(
+        () => (window as any).__cmArrowUpVisibility ?? [],
+      );
     })
     .toEqual(Array.from({ length: 10 }, () => true));
 });
 
-test("composer editor mode: send button appears while typing", async ({ page }) => {
+test("composer editor mode: send button appears while typing", async ({
+  page,
+}) => {
   await page.goto("/?mode=composer&editorMode=editor");
   await waitForHarness(page);
 
@@ -303,12 +337,16 @@ test("composer editor mode: send button appears while typing", async ({ page }) 
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonDisabled?.(),
+      );
     })
     .toBe(false);
   await expectHarnessHealthy(page);
@@ -343,7 +381,9 @@ test("composer editor mode: shift+enter sends and clears", async ({ page }) => {
   await expectComposerInput(page, "");
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getSends?.().length ?? 0,
+      );
     })
     .toBeGreaterThan(0);
   await expectHarnessHealthy(page);
@@ -410,7 +450,9 @@ test("composer editor mode: follow-up after first send shows Send and clears on 
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
 
@@ -422,7 +464,9 @@ test("composer editor mode: follow-up after first send shows Send and clears on 
   await expectHarnessHealthy(page);
 });
 
-test("composer editor mode: switching to markdown keeps typing live", async ({ page }) => {
+test("composer editor mode: switching to markdown keeps typing live", async ({
+  page,
+}) => {
   await page.goto("/?mode=composer&editorMode=editor");
   await waitForHarness(page);
 
@@ -457,12 +501,16 @@ test("composer editor mode: repeated follow-up shift+enter sends always show Sen
   await expectComposerInput(page, "y");
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonDisabled?.(),
+      );
     })
     .toBe(false);
   await page.keyboard.press("Shift+Enter");
@@ -474,12 +522,16 @@ test("composer editor mode: repeated follow-up shift+enter sends always show Sen
   await expectComposerInput(page, "z");
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonDisabled?.(),
+      );
     })
     .toBe(false);
   await page.keyboard.press("Shift+Enter");
@@ -487,7 +539,9 @@ test("composer editor mode: repeated follow-up shift+enter sends always show Sen
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getSends?.() ?? [],
+      );
     })
     .toEqual(["x", "y", "z"]);
   await expectHarnessHealthy(page);
@@ -526,7 +580,9 @@ test("composer editor mode: mixed text/image sends clear for both shift+enter an
   await expectComposerInput(page, image2);
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
   await clickSendButton(page);
@@ -534,7 +590,9 @@ test("composer editor mode: mixed text/image sends clear for both shift+enter an
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getSends?.() ?? [],
+      );
     })
     .toEqual(["alpha", image1.trim(), image2.trim()]);
   await expectHarnessHealthy(page);
@@ -569,12 +627,16 @@ test("composer editor mode: after mixed sends, another follow-up still shows Sen
   await expectComposerInput(page, "y");
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonVisible?.(),
+      );
     })
     .toBe(true);
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+      return await page.evaluate(() =>
+        window.__chatComposerTest?.getSendButtonDisabled?.(),
+      );
     })
     .toBe(false);
   await page.keyboard.press("Shift+Enter");
@@ -582,7 +644,9 @@ test("composer editor mode: after mixed sends, another follow-up still shows Sen
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getSends?.() ?? [],
+      );
     })
     .toEqual(["x", image.trim(), "y"]);
   await expectHarnessHealthy(page);
@@ -611,13 +675,17 @@ test("composer editor mode: image-markdown-only shift+enter clears on repeated s
 
   await expect
     .poll(async () => {
-      return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
+      return await page.evaluate(
+        () => window.__chatComposerTest?.getSends?.().length ?? 0,
+      );
     })
     .toBe(2);
   await expectHarnessHealthy(page);
 });
 
-test("archived search hit click hydrates and jumps to message", async ({ page }) => {
+test("archived search hit click hydrates and jumps to message", async ({
+  page,
+}) => {
   await page.goto("/?mode=archived-search");
   await waitForHarness(page);
 

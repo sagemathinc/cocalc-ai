@@ -50,7 +50,8 @@ function JupyterMarkdownCellElement({
   const isLastCell = topIndex === editor.children.length - 1;
   const beforeActive =
     gapCursor?.index === topIndex && gapCursor.side === "before";
-  const afterActive = gapCursor?.index === topIndex && gapCursor.side === "after";
+  const afterActive =
+    gapCursor?.index === topIndex && gapCursor.side === "after";
   useEffect(() => {
     if (!cellId || !focused || !selected) return;
     setSelectedCellId?.(cellId);

@@ -50,4 +50,3 @@ describe("test the jupyterExecute function", () => {
 afterAll(async () => {
   Kernel.closeAll();
 });
-

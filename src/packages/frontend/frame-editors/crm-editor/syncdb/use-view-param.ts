@@ -26,7 +26,7 @@ export default function useViewParam<T>({
     (value: T | undefined | null) => {
       setRecord({ value: value ?? defaultValue });
     },
-    [setRecord]
+    [setRecord],
   );
 
   return [value, setValue];

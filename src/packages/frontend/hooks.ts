@@ -28,7 +28,7 @@ type Tail<T extends any[]> = ((...args: T) => any) extends (
 // TODO: Allow an option to flush instead of cancel
 function useCallbackWith<
   H extends CancelableHOF,
-  F extends (...args: any[]) => any
+  F extends (...args: any[]) => any,
 >(hof: H, callback: F, ...tail: Tail<Parameters<H>>): typeof wrapped {
   const wrapped = React.useCallback(hof(callback, ...tail), [...tail]);
 
@@ -51,7 +51,7 @@ function useCallbackWith<
 export const useDebounce = <T extends (...args) => any>(
   cb: T,
   wait?: number,
-  options?: DebounceSettings
+  options?: DebounceSettings,
 ): DebouncedFunc<T> => {
   return useCallbackWith(debounce, cb, wait, options);
 };

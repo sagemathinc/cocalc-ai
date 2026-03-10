@@ -68,9 +68,18 @@ export type BackendDocumentExportOptions = ExportPathOptions & {
 
 export interface ExportApi<Ctx> {
   chat(ctx: Ctx, options: BackendChatExportOptions): Promise<ChatExportSummary>;
-  tasks(ctx: Ctx, options: BackendDocumentExportOptions): Promise<TasksExportSummary>;
-  board(ctx: Ctx, options: BackendDocumentExportOptions): Promise<WhiteboardExportSummary>;
-  slides(ctx: Ctx, options: BackendDocumentExportOptions): Promise<WhiteboardExportSummary>;
+  tasks(
+    ctx: Ctx,
+    options: BackendDocumentExportOptions,
+  ): Promise<TasksExportSummary>;
+  board(
+    ctx: Ctx,
+    options: BackendDocumentExportOptions,
+  ): Promise<WhiteboardExportSummary>;
+  slides(
+    ctx: Ctx,
+    options: BackendDocumentExportOptions,
+  ): Promise<WhiteboardExportSummary>;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -111,7 +120,10 @@ function defaultChatExportOutputPath(
       : scope === "all-threads"
         ? ".all-threads"
         : ".threads";
-  return resolvePath(dirname(chatPath), `${name}${scopeSuffix}.cocalc-export.zip`);
+  return resolvePath(
+    dirname(chatPath),
+    `${name}${scopeSuffix}.cocalc-export.zip`,
+  );
 }
 
 function defaultDocumentExportOutputPath(documentPath: string): string {
@@ -138,7 +150,9 @@ export function createExportApi<Ctx>({
     const outputPath = resolveFsPath(
       args.out ?? defaultDocumentExportOutputPath(args.sourcePath),
     );
-    const zip = bundleToZipBuffer(args.bundle, { level: parseZipLevel(args.zipLevel) });
+    const zip = bundleToZipBuffer(args.bundle, {
+      level: parseZipLevel(args.zipLevel),
+    });
     await mkdir(dirname(outputPath), { recursive: true });
     await writeFile(outputPath, zip);
     return {
@@ -152,25 +166,38 @@ export function createExportApi<Ctx>({
   }
 
   return {
-    async chat(ctx: Ctx, options: BackendChatExportOptions): Promise<ChatExportSummary> {
+    async chat(
+      ctx: Ctx,
+      options: BackendChatExportOptions,
+    ): Promise<ChatExportSummary> {
       const defaults = getDefaults(ctx);
-      const scope = (options.scope ?? "all-non-archived-threads") as ChatExportOptions["scope"];
+      const scope = (options.scope ??
+        "all-non-archived-threads") as ChatExportOptions["scope"];
       const chatPath = resolveFsPath(options.path, options.cwd);
       const outputPath = resolveFsPath(
-        options.out ?? defaultChatExportOutputPath(chatPath, scope, options.threadId),
+        options.out ??
+          defaultChatExportOutputPath(chatPath, scope, options.threadId),
         options.cwd,
       );
       const bundle = await collectChatExport({
         chatPath,
         scope,
         threadId: normalizeOptionalString(options.threadId),
-        projectId: normalizeOptionalString(options.projectId) ?? normalizeOptionalString(defaults.projectId),
+        projectId:
+          normalizeOptionalString(options.projectId) ??
+          normalizeOptionalString(defaults.projectId),
         offloadDbPath: normalizeOptionalString(options.offloadDbPath),
         includeBlobs: options.includeBlobs === true,
-        blobBaseUrl: normalizeOptionalString(options.blobBaseUrl) ?? normalizeOptionalString(defaults.apiBaseUrl),
-        blobBearerToken: normalizeOptionalString(options.blobBearerToken) ?? normalizeOptionalString(defaults.bearer),
+        blobBaseUrl:
+          normalizeOptionalString(options.blobBaseUrl) ??
+          normalizeOptionalString(defaults.apiBaseUrl),
+        blobBearerToken:
+          normalizeOptionalString(options.blobBearerToken) ??
+          normalizeOptionalString(defaults.bearer),
       });
-      const zip = bundleToZipBuffer(bundle, { level: parseZipLevel(options.zipLevel) });
+      const zip = bundleToZipBuffer(bundle, {
+        level: parseZipLevel(options.zipLevel),
+      });
       await mkdir(dirname(outputPath), { recursive: true });
       await writeFile(outputPath, zip);
       return {
@@ -184,14 +211,21 @@ export function createExportApi<Ctx>({
         messageCount: Number((bundle.manifest as any)?.message_count ?? 0),
       };
     },
-    async tasks(ctx: Ctx, options: BackendDocumentExportOptions): Promise<TasksExportSummary> {
+    async tasks(
+      ctx: Ctx,
+      options: BackendDocumentExportOptions,
+    ): Promise<TasksExportSummary> {
       const defaults = getDefaults(ctx);
       const taskPath = resolveFsPath(options.path, options.cwd);
       const bundle = await collectTaskExport({
         taskPath,
         includeBlobs: options.includeBlobs === true,
-        blobBaseUrl: normalizeOptionalString(options.blobBaseUrl) ?? normalizeOptionalString(defaults.apiBaseUrl),
-        blobBearerToken: normalizeOptionalString(options.blobBearerToken) ?? normalizeOptionalString(defaults.bearer),
+        blobBaseUrl:
+          normalizeOptionalString(options.blobBaseUrl) ??
+          normalizeOptionalString(defaults.apiBaseUrl),
+        blobBearerToken:
+          normalizeOptionalString(options.blobBearerToken) ??
+          normalizeOptionalString(defaults.bearer),
       });
       const result = await finalizeBundle({
         kind: "tasks",
@@ -206,15 +240,22 @@ export function createExportApi<Ctx>({
         taskCount: Number((bundle.manifest as any)?.task_count ?? 0),
       };
     },
-    async board(ctx: Ctx, options: BackendDocumentExportOptions): Promise<WhiteboardExportSummary> {
+    async board(
+      ctx: Ctx,
+      options: BackendDocumentExportOptions,
+    ): Promise<WhiteboardExportSummary> {
       const defaults = getDefaults(ctx);
       const documentPath = resolveFsPath(options.path, options.cwd);
       const bundle = await collectWhiteboardExport({
         documentPath,
         kind: "board",
         includeBlobs: options.includeBlobs === true,
-        blobBaseUrl: normalizeOptionalString(options.blobBaseUrl) ?? normalizeOptionalString(defaults.apiBaseUrl),
-        blobBearerToken: normalizeOptionalString(options.blobBearerToken) ?? normalizeOptionalString(defaults.bearer),
+        blobBaseUrl:
+          normalizeOptionalString(options.blobBaseUrl) ??
+          normalizeOptionalString(defaults.apiBaseUrl),
+        blobBearerToken:
+          normalizeOptionalString(options.blobBearerToken) ??
+          normalizeOptionalString(defaults.bearer),
       });
       const result = await finalizeBundle({
         kind: "board",
@@ -229,15 +270,22 @@ export function createExportApi<Ctx>({
         pageCount: Number((bundle.manifest as any)?.page_count ?? 0),
       };
     },
-    async slides(ctx: Ctx, options: BackendDocumentExportOptions): Promise<WhiteboardExportSummary> {
+    async slides(
+      ctx: Ctx,
+      options: BackendDocumentExportOptions,
+    ): Promise<WhiteboardExportSummary> {
       const defaults = getDefaults(ctx);
       const documentPath = resolveFsPath(options.path, options.cwd);
       const bundle = await collectWhiteboardExport({
         documentPath,
         kind: "slides",
         includeBlobs: options.includeBlobs === true,
-        blobBaseUrl: normalizeOptionalString(options.blobBaseUrl) ?? normalizeOptionalString(defaults.apiBaseUrl),
-        blobBearerToken: normalizeOptionalString(options.blobBearerToken) ?? normalizeOptionalString(defaults.bearer),
+        blobBaseUrl:
+          normalizeOptionalString(options.blobBaseUrl) ??
+          normalizeOptionalString(defaults.apiBaseUrl),
+        blobBearerToken:
+          normalizeOptionalString(options.blobBearerToken) ??
+          normalizeOptionalString(defaults.bearer),
       });
       const result = await finalizeBundle({
         kind: "slides",

@@ -201,7 +201,10 @@ export async function truncateSessionHistory(
   await new Promise<void>((resolve, reject) => {
     const read = createReadStream(filePath, { encoding: "utf8" });
     const write = createWriteStream(tmp, { encoding: "utf8" });
-    const rlCopy = readline.createInterface({ input: read, crlfDelay: Infinity });
+    const rlCopy = readline.createInterface({
+      input: read,
+      crlfDelay: Infinity,
+    });
     let lineNum = 0;
     let wroteHeader = false;
 

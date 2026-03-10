@@ -157,14 +157,17 @@ type BlobReference = {
 };
 
 const BLOB_MARKDOWN = /!\[[^\]]*\]\(((?:https?:\/\/[^)]+)?\/blobs\/[^)]+)\)/gi;
-const BLOB_HTML = /<img[^>]+src=["']((?:https?:\/\/[^"']+)?\/blobs\/[^"']+)["'][^>]*>/gi;
+const BLOB_HTML =
+  /<img[^>]+src=["']((?:https?:\/\/[^"']+)?\/blobs\/[^"']+)["'][^>]*>/gi;
 const DEFAULT_ARCHIVED_PAGE_SIZE = 500;
 
 export async function collectChatExport(
   options: ChatExportOptions,
 ): Promise<ExportBundle> {
   const liveRows = await readChatRows(options.chatPath);
-  const liveMessages = liveRows.filter(isChatMessageRow).map(normalizeMessageRow);
+  const liveMessages = liveRows
+    .filter(isChatMessageRow)
+    .map(normalizeMessageRow);
   const threadRows = liveRows.filter(isThreadRecordRow);
   const configRows = selectLatestByThreadId<ChatThreadConfigRow>(
     liveRows.filter(isThreadConfigRecordRow),
@@ -193,8 +196,12 @@ export async function collectChatExport(
       threadId,
       config: configRows.get(threadId),
       state: stateRows.get(threadId),
-      thread: threadRows.find((row) => normalizeString(row.thread_id) === threadId),
-      liveMessages: liveMessages.filter((row) => normalizeString(row.thread_id) === threadId),
+      thread: threadRows.find(
+        (row) => normalizeString(row.thread_id) === threadId,
+      ),
+      liveMessages: liveMessages.filter(
+        (row) => normalizeString(row.thread_id) === threadId,
+      ),
       archivedMessages: [],
       dedupedMessages: [],
       title: "",
@@ -215,11 +222,14 @@ export async function collectChatExport(
       ...aggregate.archivedMessages,
       ...aggregate.liveMessages,
     ]);
-    aggregate.dedupedMessages = orderLinearThreadMessages(aggregate.dedupedMessages);
+    aggregate.dedupedMessages = orderLinearThreadMessages(
+      aggregate.dedupedMessages,
+    );
     aggregate.rootMessageId =
       aggregate.thread?.root_message_id ||
-      aggregate.dedupedMessages.find((row) => !normalizeString(row.parent_message_id))
-        ?.message_id ||
+      aggregate.dedupedMessages.find(
+        (row) => !normalizeString(row.parent_message_id),
+      )?.message_id ||
       aggregate.dedupedMessages[0]?.message_id;
     aggregate.title = deriveThreadTitle(aggregate);
     aggregate.archived = aggregate.config?.archived === true;
@@ -377,7 +387,10 @@ export async function collectChatExport(
         include_blobs: options.includeBlobs === true,
       },
       thread_count: threadIndex.length,
-      message_count: threadIndex.reduce((sum, entry) => sum + entry.message_count, 0),
+      message_count: threadIndex.reduce(
+        (sum, entry) => sum + entry.message_count,
+        0,
+      ),
       asset_count: assetIndex.length,
     }),
     files,
@@ -435,7 +448,9 @@ Recommended agent workflow:
 
 function defaultChatExportRootDir(chatPath: string): string {
   const stem = path.parse(chatPath).name.trim();
-  const sanitized = stem.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const sanitized = stem
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return sanitized || "chat";
 }
 
@@ -531,7 +546,9 @@ function toExportMessageRow(
     parent_message_id: normalizeString(message.parent_message_id),
     timestamp: message.date,
     edited_at:
-      current && current.date !== message.date ? normalizeDate(current.date) : undefined,
+      current && current.date !== message.date
+        ? normalizeDate(current.date)
+        : undefined,
     sender_id: sender.sender_id,
     sender_type: sender.sender_type,
     sender_label: sender.sender_label,
@@ -619,7 +636,10 @@ async function collectChatAssets({
   );
 }
 
-function rewriteBlobRefs(content: string, replacements: Map<string, string>): string {
+function rewriteBlobRefs(
+  content: string,
+  replacements: Map<string, string>,
+): string {
   let next = `${content ?? ""}`;
   for (const [original, replacement] of replacements.entries()) {
     next = next.split(original).join(replacement);
@@ -642,11 +662,15 @@ async function fetchBlobAsset(
   }
   const response = await fetch(ref.fetchUrl, { headers });
   if (!response.ok) {
-    throw new Error(`failed to fetch blob ${ref.originalRef}: HTTP ${response.status}`);
+    throw new Error(
+      `failed to fetch blob ${ref.originalRef}: HTTP ${response.status}`,
+    );
   }
   const content = new Uint8Array(await response.arrayBuffer());
   const sha256 = createHash("sha256").update(content).digest("hex");
-  const headerContentType = normalizeContentType(response.headers.get("content-type"));
+  const headerContentType = normalizeContentType(
+    response.headers.get("content-type"),
+  );
   const sniffed = sniffBlobType(content);
   const contentType =
     headerContentType && headerContentType !== "application/octet-stream"
@@ -673,7 +697,9 @@ function sanitizeExtension(ext: string): string {
     : "";
 }
 
-function normalizeContentType(contentType: string | null | undefined): string | undefined {
+function normalizeContentType(
+  contentType: string | null | undefined,
+): string | undefined {
   const normalized = `${contentType ?? ""}`.trim().toLowerCase();
   if (!normalized) return undefined;
   const head = normalized.split(";")[0]?.trim();
@@ -706,9 +732,10 @@ function extensionForContentType(contentType: string | undefined): string {
   }
 }
 
-function sniffBlobType(
-  content: Uint8Array,
-): { contentType?: string; extension?: string } {
+function sniffBlobType(content: Uint8Array): {
+  contentType?: string;
+  extension?: string;
+} {
   if (
     content.length >= 8 &&
     content[0] === 0x89 &&
@@ -722,7 +749,12 @@ function sniffBlobType(
   ) {
     return { contentType: "image/png", extension: ".png" };
   }
-  if (content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff) {
+  if (
+    content.length >= 3 &&
+    content[0] === 0xff &&
+    content[1] === 0xd8 &&
+    content[2] === 0xff
+  ) {
     return { contentType: "image/jpeg", extension: ".jpg" };
   }
   if (content.length >= 6) {
@@ -770,7 +802,8 @@ function parseBlobReference(
 ): BlobReference | undefined {
   const trimmed = `${target ?? ""}`.trim();
   if (!trimmed) return undefined;
-  const absolute = trimmed.startsWith("http://") || trimmed.startsWith("https://");
+  const absolute =
+    trimmed.startsWith("http://") || trimmed.startsWith("https://");
   if (!absolute && !blobBaseUrl) {
     throw new Error(
       `relative blob reference requires --blob-base-url/COCALC_API_URL: ${trimmed}`,
@@ -855,7 +888,9 @@ function normalizeMessageRow(row: ChatMessage): SourceChatMessageRow {
   };
 }
 
-function normalizeHistory(history: MessageHistory[] | undefined): MessageHistory[] {
+function normalizeHistory(
+  history: MessageHistory[] | undefined,
+): MessageHistory[] {
   if (!Array.isArray(history)) return [];
   return history
     .map((entry) => ({
@@ -999,7 +1034,9 @@ async function hydrateArchivedMessages({
         if (!row.row || typeof row.row !== "object") continue;
         const event = (row.row as Record<string, unknown>).event;
         if (event !== "chat") continue;
-        aggregate.archivedMessages.push(normalizeMessageRow(row.row as ChatMessage));
+        aggregate.archivedMessages.push(
+          normalizeMessageRow(row.row as ChatMessage),
+        );
       }
       if (result.next_offset == null) break;
       offset = result.next_offset;
@@ -1007,7 +1044,9 @@ async function hydrateArchivedMessages({
   }
 }
 
-function dedupeMessages(messages: SourceChatMessageRow[]): SourceChatMessageRow[] {
+function dedupeMessages(
+  messages: SourceChatMessageRow[],
+): SourceChatMessageRow[] {
   const byKey = new Map<string, SourceChatMessageRow>();
   for (const message of messages) {
     byKey.set(messageKey(message), message);
@@ -1067,7 +1106,10 @@ function orderLinearThreadMessages(
   return ordered;
 }
 
-function compareMessages(a: SourceChatMessageRow, b: SourceChatMessageRow): number {
+function compareMessages(
+  a: SourceChatMessageRow,
+  b: SourceChatMessageRow,
+): number {
   const aMs = dateNumber(a.date);
   const bMs = dateNumber(b.date);
   if (aMs !== bMs) return aMs - bMs;
@@ -1081,7 +1123,8 @@ function deriveThreadTitle(aggregate: ThreadAggregate): string {
   const configured = normalizeString(aggregate.config?.name);
   if (configured) return configured;
   const root = aggregate.dedupedMessages.find(
-    (message) => normalizeString(message.message_id) === aggregate.rootMessageId,
+    (message) =>
+      normalizeString(message.message_id) === aggregate.rootMessageId,
   );
   const content = newestContent(root ?? aggregate.dedupedMessages[0]);
   const normalized = content.replace(/\s+/g, " ").trim();
@@ -1090,7 +1133,9 @@ function deriveThreadTitle(aggregate: ThreadAggregate): string {
     const short = words.slice(0, 8).join(" ");
     return words.length > 8 ? `${short}…` : short;
   }
-  const last = aggregate.lastMessageAt ? new Date(aggregate.lastMessageAt) : undefined;
+  const last = aggregate.lastMessageAt
+    ? new Date(aggregate.lastMessageAt)
+    : undefined;
   return last && Number.isFinite(last.valueOf())
     ? last.toLocaleString()
     : "Untitled Chat";
@@ -1109,8 +1154,12 @@ function newestContent(message: SourceChatMessageRow | undefined): string {
 
 function sortThreads(threads: ThreadAggregate[]): ThreadAggregate[] {
   return threads.slice().sort((a, b) => {
-    const aMs = dateNumber(a.lastMessageAt ?? a.config?.updated_at ?? a.thread?.created_at);
-    const bMs = dateNumber(b.lastMessageAt ?? b.config?.updated_at ?? b.thread?.created_at);
+    const aMs = dateNumber(
+      a.lastMessageAt ?? a.config?.updated_at ?? a.thread?.created_at,
+    );
+    const bMs = dateNumber(
+      b.lastMessageAt ?? b.config?.updated_at ?? b.thread?.created_at,
+    );
     if (aMs !== bMs) return bMs - aMs;
     return a.title.localeCompare(b.title);
   });
@@ -1151,9 +1200,13 @@ function renderThreadTranscript(
   lines.push("");
   aggregate.dedupedMessages.forEach((message, index) => {
     const sender = senderParticipantFor(senderDirectory, message.sender_id);
-    lines.push(`## ${index + 1}. ${escapeHeading(sender.sender_label)} (${message.date})`);
+    lines.push(
+      `## ${index + 1}. ${escapeHeading(sender.sender_label)} (${message.date})`,
+    );
     lines.push("");
-    lines.push(`- Message ID: \`${normalizeString(message.message_id) ?? ""}\``);
+    lines.push(
+      `- Message ID: \`${normalizeString(message.message_id) ?? ""}\``,
+    );
     lines.push(`- Sender: ${sender.sender_label}`);
     lines.push(`- Sender Type: ${sender.sender_type}`);
     lines.push(`- Sender ID: \`${message.sender_id}\``);

@@ -84,10 +84,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedSize,
     selectedStorageMode,
   } = useHostFormValues(form);
-  const selfHostKind =
-    (selectedSelfHostKind ??
-      host?.machine?.metadata?.self_host_kind ??
-      "direct") as string;
+  const selfHostKind = (selectedSelfHostKind ??
+    host?.machine?.metadata?.self_host_kind ??
+    "direct") as string;
   const isDirect = selfHostKind === "direct";
   const selfHostAlphaEnabled = !!useTypedRedux(
     "customize",
@@ -170,7 +169,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const selection: ProviderSelection = {
     region: watchedRegion ?? host?.region ?? undefined,
     zone: watchedZone ?? host?.machine?.zone ?? undefined,
-    machine_type: watchedMachineType ?? host?.machine?.machine_type ?? undefined,
+    machine_type:
+      watchedMachineType ?? host?.machine?.machine_type ?? undefined,
     gpu_type: watchedGpuType ?? host?.machine?.gpu_type ?? undefined,
     size:
       watchedMachineType ??
@@ -199,10 +199,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       compatibleZone?: string;
     };
     if (regionMeta.compatible === false) {
-      const compatibleRegions = (compatibilityOptions.region ?? []).filter((opt) => {
-        const meta = opt.meta as { compatible?: boolean } | undefined;
-        return meta?.compatible === true;
-      });
+      const compatibleRegions = (compatibilityOptions.region ?? []).filter(
+        (opt) => {
+          const meta = opt.meta as { compatible?: boolean } | undefined;
+          return meta?.compatible === true;
+        },
+      );
       return { type: "region" as const, compatibleRegions };
     }
     if (!watchedZone) return null;
@@ -250,10 +252,11 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const currentCpu = readPositive(host?.machine?.metadata?.cpu);
   const currentRam = readPositive(host?.machine?.metadata?.ram_gb);
   const currentDisk = readPositive(host?.machine?.disk_gb);
-  const diskMin = isDeprovisioned ? 10 : currentDisk ?? 10;
+  const diskMin = isDeprovisioned ? 10 : (currentDisk ?? 10);
   const diskMax = Math.max(2000, diskMin);
   const watchedDiskType = Form.useWatch("disk_type", form);
-  const isNebiusIoM3 = providerId === "nebius" && watchedDiskType === "ssd_io_m3";
+  const isNebiusIoM3 =
+    providerId === "nebius" && watchedDiskType === "ssd_io_m3";
   const diskStep = isNebiusIoM3 ? NEBIUS_IO_M3_GB : 1;
   const diskMinAdjusted = isNebiusIoM3
     ? Math.ceil(diskMin / NEBIUS_IO_M3_GB) * NEBIUS_IO_M3_GB
@@ -335,7 +338,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     if (lockRegionZone) return;
     const zoneOptions = fieldOptions.zone ?? [];
     if (!zoneOptions.length) return;
-    const hasZone = watchedZone && zoneOptions.some((opt) => opt.value === watchedZone);
+    const hasZone =
+      watchedZone && zoneOptions.some((opt) => opt.value === watchedZone);
     if (!hasZone) {
       form.setFieldsValue({ zone: zoneOptions[0]?.value });
     }
@@ -348,7 +352,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   };
 
   const ensureFieldValue = React.useCallback(
-    (field: "region" | "zone" | "machine_type" | "size" | "gpu_type", current?: string) => {
+    (
+      field: "region" | "zone" | "machine_type" | "size" | "gpu_type",
+      current?: string,
+    ) => {
       const options = fieldOptions[field] ?? [];
       if (!options.length) return;
       if (!current || !options.some((opt) => opt.value === current)) {
@@ -461,7 +468,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             style={{ marginBottom: 12 }}
             title="Selected GPU isn't available in this region."
             description={
-              gcpCompatibilityWarning.compatibleRegions.length && !lockRegionZone ? (
+              gcpCompatibilityWarning.compatibleRegions.length &&
+              !lockRegionZone ? (
                 <Select
                   placeholder="Choose a compatible region"
                   options={gcpCompatibilityWarning.compatibleRegions}
@@ -492,15 +500,19 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             style={{ marginBottom: 12 }}
             title="Selected GPU isn't available in this zone."
             description={
-              gcpCompatibilityWarning.compatibleZones.length && !lockRegionZone ? (
+              gcpCompatibilityWarning.compatibleZones.length &&
+              !lockRegionZone ? (
                 <Select
                   placeholder="Choose a compatible zone"
                   options={gcpCompatibilityWarning.compatibleZones}
                   onChange={(value) => {
-                    const zoneOption = gcpCompatibilityWarning.compatibleZones.find(
-                      (opt) => opt.value === value,
-                    );
-                    const meta = (zoneOption?.meta ?? {}) as { region?: string };
+                    const zoneOption =
+                      gcpCompatibilityWarning.compatibleZones.find(
+                        (opt) => opt.value === value,
+                      );
+                    const meta = (zoneOption?.meta ?? {}) as {
+                      region?: string;
+                    };
                     form.setFieldsValue({
                       zone: value,
                       region: meta.region ?? undefined,
@@ -549,7 +561,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
               isDeprovisioned
                 ? "Disk size is applied on next provision."
                 : `Disk can only grow while provisioned.${
-                    isNebiusIoM3 ? " SSD IO M3 requires multiples of 93 GB." : ""
+                    isNebiusIoM3
+                      ? " SSD IO M3 requires multiples of 93 GB."
+                      : ""
                   }`
             }
             extra={
@@ -581,8 +595,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
         {!isDeprovisioned && showAdvancedSection && !hideAdvanced && (
           <Collapse ghost style={{ marginBottom: 8 }}>
             <Collapse.Panel header="Advanced options" key="advanced">
-              {providerDescriptor &&
-                fieldSchema.advanced.map(renderField)}
+              {providerDescriptor && fieldSchema.advanced.map(renderField)}
               {isDeprovisioned && storageSupport.supported && (
                 <>
                   <Form.Item

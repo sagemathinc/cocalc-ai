@@ -19,7 +19,7 @@ import { getServerSettings } from "@cocalc/database/settings";
 // It will increment a counter for each day, and if it goes too high it throws
 // an exceptions, which prevents further emais from being sent for that user.
 export default async function sendEmailThrottle(
-  id?: string // account_id or project_id or organization_id...
+  id?: string, // account_id or project_id or organization_id...
 ): Promise<void> {
   if (!id) return; // not associated to a particular user
   const day = startOfToday();
@@ -27,11 +27,11 @@ export default async function sendEmailThrottle(
   const pool = getPool("short"); // a few seconds old is ok...
   const { rows } = await pool.query(
     "SELECT count FROM email_counter WHERE time=$1 AND id=$2",
-    [day, id]
+    [day, id],
   );
   if (rows.length > 0 && rows[0].count > DAILY_LIMIT) {
     throw Error(
-      `You may send at most ${DAILY_LIMIT} emails per day, and you have reached that limit.`
+      `You may send at most ${DAILY_LIMIT} emails per day, and you have reached that limit.`,
     );
   }
   // Increment the counter.
@@ -39,7 +39,7 @@ export default async function sendEmailThrottle(
     // This will always work with no race conditions, since the given entry exists.
     await pool.query(
       "UPDATE email_counter SET count = count + 1 WHERE id=$1 AND time=$2",
-      [id, day]
+      [id, day],
     );
   } else {
     const settings = await getServerSettings();
@@ -48,7 +48,7 @@ export default async function sendEmailThrottle(
     // hence the "ON CONFLICT".
     await pool.query(
       "INSERT INTO email_counter (id,time,count,expire) VALUES($1,$2,1,$3) ON CONFLICT (id, time) DO UPDATE SET count = excluded.count + 1",
-      [id, day, expire]
+      [id, day, expire],
     );
   }
 }

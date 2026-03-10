@@ -1,4 +1,13 @@
-import { Button, Popconfirm, Popover, Progress, Space, Spin, Tag, Timeline } from "antd";
+import {
+  Button,
+  Popconfirm,
+  Popover,
+  Progress,
+  Space,
+  Spin,
+  Tag,
+  Timeline,
+} from "antd";
 import { useMemo, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -49,7 +58,8 @@ export default function MoveOps({ project_id }: { project_id: string }) {
   }
   const canDismiss =
     summary != null && LRO_DISMISSABLE_STATUSES.has(summary.status);
-  const canCancel = summary != null && !LRO_TERMINAL_STATUSES.has(summary.status);
+  const canCancel =
+    summary != null && !LRO_TERMINAL_STATUSES.has(summary.status);
   const percent = progressPercent(moveOp);
   const statusText = formatStatusLine(moveOp);
   const progressStatus = progressBarStatus(summary?.status);
@@ -160,7 +170,11 @@ function MoveOpDetails({ op }: { op: MoveLroState }) {
           {summary?.created_by ? (
             <span>
               Initiated by{" "}
-              <User account_id={summary.created_by} show_avatar avatarSize={16} />
+              <User
+                account_id={summary.created_by}
+                show_avatar
+                avatarSize={16}
+              />
             </span>
           ) : null}
           {summary?.created_at ? (

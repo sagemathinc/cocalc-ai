@@ -16,7 +16,7 @@ const PRIMARY_KEY = { id: "tabs", table: "tables" } as const;
 
 export default function useTables(): [
   tables: string[],
-  setTables: (value: string[]) => void
+  setTables: (value: string[]) => void,
 ] {
   const [record, setRecord] = useSyncdbRecord<{ value: string[] }>({
     key: { id: "tabs", table: "tables" } as any,
@@ -26,7 +26,7 @@ export default function useTables(): [
     (value: string[]) => {
       setRecord({ value, ...PRIMARY_KEY });
     },
-    [setRecord]
+    [setRecord],
   );
 
   return [record.value, setTables];

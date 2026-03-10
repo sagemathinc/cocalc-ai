@@ -8,7 +8,10 @@ import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { termPath } from "@cocalc/util/terminal/names";
 import { normalize } from "./utils";
 
-export function toAbsoluteProjectPath(path: string, homeDirectory: string): string {
+export function toAbsoluteProjectPath(
+  path: string,
+  homeDirectory: string,
+): string {
   const normalizedHome = normalizeAbsolutePath(homeDirectory || "/");
   const normalized = normalize(path);
   if (!normalized || normalized === "." || normalized === "~") {

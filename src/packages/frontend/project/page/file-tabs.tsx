@@ -152,7 +152,9 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     index: number,
     currentTarget: HTMLDivElement,
   ): void {
-    const tabs = Array.from(currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+    const tabs = Array.from(
+      currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'),
+    );
     tabs[index]?.click();
     focusTabStripSoon();
   }

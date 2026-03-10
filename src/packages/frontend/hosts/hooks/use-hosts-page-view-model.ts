@@ -97,7 +97,10 @@ function matchesUpgradeRequest({
   );
   if (summaryTargets.length !== artifacts.length) return false;
   if (summaryTargets.join(",") !== artifacts.join(",")) return false;
-  return normalizeUpgradeBaseUrl(input.base_url) === normalizeUpgradeBaseUrl(base_url);
+  return (
+    normalizeUpgradeBaseUrl(input.base_url) ===
+    normalizeUpgradeBaseUrl(base_url)
+  );
 }
 
 function readHostViewMode(): HostListViewMode {
@@ -212,15 +215,16 @@ export const useHostsPageViewModel = () => {
   const handleUpgradeComplete = React.useCallback(() => {
     refresh().catch(() => {});
   }, [refresh]);
-  const listHostLro = React.useCallback(
-    (opts) => hub.lro.list(opts),
-    [hub],
-  );
+  const listHostLro = React.useCallback((opts) => hub.lro.list(opts), [hub]);
   const getHostLroStream = React.useCallback(
     (opts) => webapp_client.conat_client.lroStream(opts),
     [],
   );
-  const { hostOps, trackHostOp, refresh: refreshHostOps } = useHostOps({
+  const {
+    hostOps,
+    trackHostOp,
+    refresh: refreshHostOps,
+  } = useHostOps({
     hosts,
     listLro: listHostLro,
     getLroStream: getHostLroStream,
@@ -262,7 +266,8 @@ export const useHostsPageViewModel = () => {
           .filter(
             (summary) =>
               summary.kind === "host-upgrade-software" &&
-              lroTimestampMs(summary.updated_at ?? summary.created_at) >= cutoff &&
+              lroTimestampMs(summary.updated_at ?? summary.created_at) >=
+                cutoff &&
               matchesUpgradeRequest({ summary, artifacts, base_url }),
           )
           .sort(
@@ -347,8 +352,7 @@ export const useHostsPageViewModel = () => {
     React.useState<(typeof hosts)[number]>();
   const [editOpen, setEditOpen] = React.useState(false);
   const [savingEdit, setSavingEdit] = React.useState(false);
-  const [editProvider, setEditProvider] =
-    React.useState<HostProvider>("none");
+  const [editProvider, setEditProvider] = React.useState<HostProvider>("none");
   const { drawerOpen, selected, openDetails, closeDetails } =
     useHostSelection(hosts);
   const openEdit = (host: (typeof hosts)[number]) => {
@@ -411,11 +415,16 @@ export const useHostsPageViewModel = () => {
     selectedStorageMode,
   } = useHostFormValues(form);
 
-  const { catalog, catalogError, catalogLoading, catalogRefreshing, refreshCatalog } =
-    useHostCatalog(hub, {
-      provider: catalogProvider,
-      onError: (text) => console.warn(text),
-    });
+  const {
+    catalog,
+    catalogError,
+    catalogLoading,
+    catalogRefreshing,
+    refreshCatalog,
+  } = useHostCatalog(hub, {
+    provider: catalogProvider,
+    onError: (text) => console.warn(text),
+  });
   const hasSelfHostHosts = React.useMemo(
     () => hosts.some((host) => host.machine?.cloud === "self-host"),
     [hosts],
@@ -662,7 +671,10 @@ export const useHostsPageViewModel = () => {
       : undefined;
     const currentVersion = connector?.version;
     if (!currentVersion) return;
-    if (!setupUpgradeFromVersion || currentVersion !== setupUpgradeFromVersion) {
+    if (
+      !setupUpgradeFromVersion ||
+      currentVersion !== setupUpgradeFromVersion
+    ) {
       setSetupNotice(`Connector upgraded to v${currentVersion}.`);
       setSetupUpgradePending(false);
       return;
@@ -903,9 +915,10 @@ export const useHostsPageViewModel = () => {
     },
   });
 
-  const { catalog: editCatalog, catalogError: editCatalogError } = useHostCatalog(hub, {
-    provider: editProvider !== "none" ? editProvider : undefined,
-  });
+  const { catalog: editCatalog, catalogError: editCatalogError } =
+    useHostCatalog(hub, {
+      provider: editProvider !== "none" ? editProvider : undefined,
+    });
 
   const editVm = {
     open: editOpen,
@@ -943,10 +956,9 @@ export const useHostsPageViewModel = () => {
         const isStopped = editingHost.status === "off";
         const canEditMachine = isDeprovisioned || isStopped;
         if (isDeprovisioned) {
-          const provider =
-            (values.provider ??
-              (editingHost.machine?.cloud as HostProvider | undefined) ??
-              "none") as HostProvider;
+          const provider = (values.provider ??
+            (editingHost.machine?.cloud as HostProvider | undefined) ??
+            "none") as HostProvider;
           const selection = {
             region: values.region,
             zone: values.zone,
@@ -971,13 +983,17 @@ export const useHostsPageViewModel = () => {
           if (payload.region) update.region = payload.region;
           if (machine.zone) update.zone = machine.zone;
           if (machine.machine_type) update.machine_type = machine.machine_type;
-          if (machine.gpu_type !== undefined) update.gpu_type = machine.gpu_type || undefined;
-          if (machine.gpu_count !== undefined) update.gpu_count = machine.gpu_count;
+          if (machine.gpu_type !== undefined)
+            update.gpu_type = machine.gpu_type || undefined;
+          if (machine.gpu_count !== undefined)
+            update.gpu_count = machine.gpu_count;
           if (machine.storage_mode) update.storage_mode = machine.storage_mode;
-          if (typeof machine.disk_gb === "number") update.disk_gb = machine.disk_gb;
+          if (typeof machine.disk_gb === "number")
+            update.disk_gb = machine.disk_gb;
           if (machine.disk_type) update.disk_type = machine.disk_type;
           if (typeof metadata.cpu === "number") update.cpu = metadata.cpu;
-          if (typeof metadata.ram_gb === "number") update.ram_gb = metadata.ram_gb;
+          if (typeof metadata.ram_gb === "number")
+            update.ram_gb = metadata.ram_gb;
           if (typeof metadata.self_host_ssh_target === "string") {
             update.self_host_ssh_target = metadata.self_host_ssh_target;
           }

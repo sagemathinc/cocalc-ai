@@ -25,7 +25,7 @@ export default function SortMenu({ sortFields, columns, setSortField }) {
                   setSortField={setSortField}
                 />,
               ]
-            : []
+            : [],
         )}
     </div>
   );
@@ -62,7 +62,7 @@ interface SortByProps {
   setSortField: (
     field: string,
     newField: string,
-    direction: SortDirection | null
+    direction: SortDirection | null,
   ) => void;
 }
 

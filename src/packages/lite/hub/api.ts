@@ -114,17 +114,20 @@ async function getCodexPaymentSource(opts?: {
   );
   const hasProjectApiKey =
     !!(project_id && projectKeys[project_id]) ||
-    !!(project_id && `${process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY ?? ""}`.trim());
+    !!(
+      project_id &&
+      `${process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY ?? ""}`.trim()
+    );
   const accountKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
   );
-  const hasAccountApiKey =
-    !!getEnvOpenAiApiKey() || !!accountKeys[account_id];
+  const hasAccountApiKey = !!getEnvOpenAiApiKey() || !!accountKeys[account_id];
   const settings = getLiteServerSettings();
   const acpMockMode = `${process.env.COCALC_ACP_MODE ?? ""}`.trim() === "mock";
   const hasSiteApiKey =
     acpMockMode ||
-    (!!settings?.openai_enabled && !!`${settings?.openai_api_key ?? ""}`.trim());
+    (!!settings?.openai_enabled &&
+      !!`${settings?.openai_api_key ?? ""}`.trim());
 
   let source: CodexPaymentSourceInfo["source"] = "none";
   if (hasSubscription) {
@@ -388,10 +391,7 @@ export const hubApi: HubApi = {
     removeBrowserSession,
   },
   projects: {
-    chatStoreStats: async (opts: {
-      chat_path: string;
-      db_path?: string;
-    }) => {
+    chatStoreStats: async (opts: { chat_path: string; db_path?: string }) => {
       return await getChatStoreStats({
         chat_path: opts.chat_path,
         db_path: opts.db_path,
@@ -499,10 +499,7 @@ export const hubApi: HubApi = {
         message_ids: opts.message_ids,
       });
     },
-    chatStoreVacuum: (opts: {
-      chat_path: string;
-      db_path?: string;
-    }) => {
+    chatStoreVacuum: (opts: { chat_path: string; db_path?: string }) => {
       return vacuumChatStore({
         chat_path: opts.chat_path,
         db_path: opts.db_path,

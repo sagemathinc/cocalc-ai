@@ -68,7 +68,7 @@ export default function Panel({
       if (TOOLS[tool].hideFromToolbar) continue;
       if (readOnly && !TOOLS[tool].readOnly) continue;
       v.push(
-        <ToolButton key={tool} tool={tool} isSelected={tool == selectedTool} />
+        <ToolButton key={tool} tool={tool} isSelected={tool == selectedTool} />,
       );
     }
   }

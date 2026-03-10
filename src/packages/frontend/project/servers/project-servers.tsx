@@ -18,8 +18,8 @@ export function ProjectServers() {
       </Title>
       <Paragraph>
         Managed applications run inside this project and can be opened
-        privately, exposed publicly, or integrated more deeply with the
-        project over time.
+        privately, exposed publicly, or integrated more deeply with the project
+        over time.
       </Paragraph>
       <AppServerPanel project_id={project_id} />
     </div>

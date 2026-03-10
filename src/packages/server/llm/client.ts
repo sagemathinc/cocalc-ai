@@ -64,16 +64,15 @@ export async function getOllama(model: string): Promise<Ollama> {
 
   log.debug("Instantiating Ollama client with config", ollamaConfig);
 
-  const { Ollama } = await importLangchain<typeof import("@langchain/ollama")>(
-    "@langchain/ollama",
-  );
+  const { Ollama } =
+    await importLangchain<typeof import("@langchain/ollama")>(
+      "@langchain/ollama",
+    );
   const client = new Ollama(ollamaConfig);
   return client;
 }
 
-export async function getCustomOpenAI(
-  model: string,
-): Promise<ChatOpenAILC> {
+export async function getCustomOpenAI(model: string): Promise<ChatOpenAILC> {
   if (isCustomOpenAI(model)) {
     throw new Error(
       `At this point, the model name should be one of the custom openai models, but it was ${model}`,
@@ -123,9 +122,10 @@ export async function getCustomOpenAI(
     omit(customOpenAIConfig, ["apiKey", "openAIApiKey", "azureOpenAIApiKey"]),
   );
 
-  const { ChatOpenAI } = await importLangchain<
-    typeof import("@langchain/openai")
-  >("@langchain/openai");
+  const { ChatOpenAI } =
+    await importLangchain<typeof import("@langchain/openai")>(
+      "@langchain/openai",
+    );
   // https://js.langchain.com/docs/integrations/chat/openai/
   const client = new ChatOpenAI(customOpenAIConfig);
   return client;

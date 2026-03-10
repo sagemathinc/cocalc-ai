@@ -37,7 +37,7 @@ describe("basic capability pack", () => {
       adapters: {
         hub: {
           ping: () => ({ now: 123 }),
-          getCustomize: async (_fields?: string[]) => ({} as any),
+          getCustomize: async (_fields?: string[]) => ({}) as any,
           createProject: async () => {
             calls.createProject += 1;
             return "project-abc";
@@ -99,7 +99,10 @@ describe("basic capability pack", () => {
   test("registers expected action types", () => {
     const registry = new AgentCapabilityRegistry<AgentSdkContext>();
     registerBasicCapabilities(registry);
-    const actionTypes = registry.list().map((x) => x.actionType).sort();
+    const actionTypes = registry
+      .list()
+      .map((x) => x.actionType)
+      .sort();
     expect(actionTypes).toEqual([
       "hub.projects.create",
       "hub.system.get_customize",

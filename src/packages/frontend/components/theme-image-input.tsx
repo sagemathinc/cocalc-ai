@@ -41,7 +41,9 @@ async function uploadThemeImageBlob(
   return uuid;
 }
 
-function pickPastedImage(event: React.ClipboardEvent<HTMLDivElement>): Blob | undefined {
+function pickPastedImage(
+  event: React.ClipboardEvent<HTMLDivElement>,
+): Blob | undefined {
   for (const item of Array.from(event.clipboardData?.items ?? [])) {
     if (!item.type?.startsWith("image/")) continue;
     const file = item.getAsFile();
@@ -102,7 +104,9 @@ export function ThemeImageInput({
     }
   }
 
-  async function handlePastedImage(event: React.ClipboardEvent<HTMLDivElement>) {
+  async function handlePastedImage(
+    event: React.ClipboardEvent<HTMLDivElement>,
+  ) {
     const file = pickPastedImage(event);
     if (!file) return;
     event.preventDefault();
@@ -114,7 +118,11 @@ export function ThemeImageInput({
     <div>
       <Space
         align="center"
-        style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}
+        style={{
+          width: "100%",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
       >
         <Typography.Text strong>{label}</Typography.Text>
         <Button
@@ -150,7 +158,12 @@ export function ThemeImageInput({
             <img
               src={imageUrl}
               alt="Theme image preview"
-              style={{ width: size, height: size, objectFit: "cover", borderRadius: 12 }}
+              style={{
+                width: size,
+                height: size,
+                objectFit: "cover",
+                borderRadius: 12,
+              }}
             />
           ) : (
             <p className="ant-upload-drag-icon">
@@ -161,7 +174,8 @@ export function ThemeImageInput({
             {uploading ? "Uploading..." : uploadText}
           </p>
           <p className="ant-upload-hint">
-            Crop after upload. Paste below to use a screenshot from the clipboard.
+            Crop after upload. Paste below to use a screenshot from the
+            clipboard.
           </p>
         </Upload.Dragger>
       </ImgCrop>
@@ -186,12 +200,7 @@ export function ThemeImageInput({
           : "Click here, then paste an image from the clipboard."}
       </div>
       {error ? (
-        <Alert
-          type="error"
-          showIcon
-          style={{ marginTop: 8 }}
-          message={error}
-        />
+        <Alert type="error" showIcon style={{ marginTop: 8 }} message={error} />
       ) : null}
       {uniqueImages.length > 0 ? (
         <div style={{ marginTop: 8 }}>
@@ -211,7 +220,9 @@ export function ThemeImageInput({
                   type="button"
                   onClick={() => onChange(choice.blob)}
                   style={{
-                    border: selected ? "2px solid #1677ff" : "1px solid #d9d9d9",
+                    border: selected
+                      ? "2px solid #1677ff"
+                      : "1px solid #d9d9d9",
                     borderRadius: 10,
                     padding: 4,
                     background: "#fff",

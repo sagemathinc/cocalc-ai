@@ -90,7 +90,7 @@ export default function RetentionConfig({
           setInfo(progress);
           setPercentDone(percentDone);
         },
-        cacheOnly
+        cacheOnly,
       );
       setData(data);
       setInfo("");
@@ -265,8 +265,8 @@ export default function RetentionConfig({
             info.includes("error")
               ? "error"
               : info.startsWith(WARNING)
-              ? "warning"
-              : "info"
+                ? "warning"
+                : "info"
           }
           closable
           onClose={() => setInfo("")}

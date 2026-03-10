@@ -180,7 +180,10 @@ function AIGenerateDocument({
   useEffect(() => {
     if (!show) return;
     if (initialPrompt == null) return;
-    if (!lastShowRef.current || lastInitialPromptRef.current !== initialPrompt) {
+    if (
+      !lastShowRef.current ||
+      lastInitialPromptRef.current !== initialPrompt
+    ) {
       setPrompt(initialPrompt);
       lastInitialPromptRef.current = initialPrompt;
     }
@@ -661,9 +664,8 @@ function AIGenerateDocument({
         const { input, history, system } = fullPrompt;
 
         // do not import until needed -- it is HUGE!
-        const { getMaxTokens, numTokensUpperBound } = await import(
-          "@cocalc/frontend/misc/llm"
-        );
+        const { getMaxTokens, numTokensUpperBound } =
+          await import("@cocalc/frontend/misc/llm");
 
         const all = [
           input,

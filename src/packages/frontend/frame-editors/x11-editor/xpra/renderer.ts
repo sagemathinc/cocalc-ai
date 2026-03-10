@@ -231,7 +231,7 @@ export class Renderer {
         sx + xdelta,
         sy + ydelta,
         sw,
-        sh
+        sh,
       );
     }
   }

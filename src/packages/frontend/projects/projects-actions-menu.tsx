@@ -60,10 +60,9 @@ export function ProjectActionsMenu({ record }: Props) {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const project_map = useTypedRedux("projects", "project_map");
-  const currentHostId = project_map?.getIn([
-    record.project_id,
-    "host_id",
-  ]) as string | undefined;
+  const currentHostId = project_map?.getIn([record.project_id, "host_id"]) as
+    | string
+    | undefined;
   const projectRegion = String(
     project_map?.getIn([record.project_id, "region"]) ?? DEFAULT_R2_REGION,
   );
@@ -284,9 +283,7 @@ export function ProjectActionsMenu({ record }: Props) {
       : []),
     {
       key: "hide",
-      label: record.hidden
-        ? `Unhide ${projectLabel}`
-        : `Hide ${projectLabel}`,
+      label: record.hidden ? `Unhide ${projectLabel}` : `Hide ${projectLabel}`,
       icon: <Icon name={record.hidden ? "eye" : "eye-slash"} />,
     },
     {
@@ -315,7 +312,10 @@ export function ProjectActionsMenu({ record }: Props) {
           onSelect={async (dest_host_id) => {
             setMoveOpen(false);
             try {
-              await actions.move_project_to_host(record.project_id, dest_host_id);
+              await actions.move_project_to_host(
+                record.project_id,
+                dest_host_id,
+              );
             } catch (err) {
               console.error("move project failed", err);
               Modal.error({

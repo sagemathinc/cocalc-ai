@@ -83,10 +83,7 @@ async function purchaseVoucherShoppingCartItem(
   Memberships
  ***/
 
-async function purchaseMembershipShoppingCartItem(
-  item,
-  client: PoolClient,
-) {
+async function purchaseMembershipShoppingCartItem(item, client: PoolClient) {
   logger.debug("purchaseMembershipShoppingCartItem", item);
   const { description } = item;
   if (description?.type != "membership") {
@@ -103,10 +100,7 @@ async function purchaseMembershipShoppingCartItem(
   if (pricing.existing_subscription_id) {
     await client.query(
       "UPDATE subscriptions SET status='canceled', canceled_at=NOW(), canceled_reason=$1 WHERE id=$2",
-      [
-        `Upgraded to ${description.class}`,
-        pricing.existing_subscription_id,
-      ],
+      [`Upgraded to ${description.class}`, pricing.existing_subscription_id],
     );
   }
 

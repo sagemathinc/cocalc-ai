@@ -26,7 +26,11 @@ import {
 import { applyMembershipChange } from "../membership-change";
 import send, { support, url, name } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
-import { moneyRound2Down, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import {
+  moneyRound2Down,
+  moneyToCurrency,
+  toDecimal,
+} from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getPool from "@cocalc/database/pool";
@@ -379,8 +383,9 @@ ${await support()}`;
         await applyMembershipChange({
           account_id,
           targetClass: paymentIntent.metadata.membership_class,
-          interval: paymentIntent.metadata
-            .membership_interval as "month" | "year",
+          interval: paymentIntent.metadata.membership_interval as
+            | "month"
+            | "year",
           allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
           storeVisibleOnly: true,
         });

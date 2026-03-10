@@ -46,7 +46,8 @@ function createBridge({
         getCustomize: (fields?: string[]) => system.getCustomize(fields),
       },
       projects: {
-        createProject: (opts) => projects.createProject({ ...opts, account_id }),
+        createProject: (opts) =>
+          projects.createProject({ ...opts, account_id }),
       },
     },
     projectResolver: async (projectId: string) => {
@@ -92,9 +93,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
 }
 
-function compactManifest(
-  manifest: AgentManifestEntry[],
-): Array<{
+function compactManifest(manifest: AgentManifestEntry[]): Array<{
   actionType: string;
   summary: string;
   argsSchema?: unknown;
@@ -160,9 +159,7 @@ function extractJsonFromText(text: string): unknown {
   }
 }
 
-function normalizeTarget(
-  value: unknown,
-): Record<string, string> | undefined {
+function normalizeTarget(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) {
     return undefined;
   }

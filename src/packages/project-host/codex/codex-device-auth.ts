@@ -85,7 +85,10 @@ setInterval(() => {
   }
 }, DEVICE_AUTH_PRUNE_INTERVAL_MS).unref();
 
-function classifyDeviceAuthFailure(output: string, code: number | null): string {
+function classifyDeviceAuthFailure(
+  output: string,
+  code: number | null,
+): string {
   const text = output ?? "";
   if (
     /status\s*429/i.test(text) ||
@@ -278,9 +281,9 @@ function snapshot(session: DeviceAuthSession) {
   };
 }
 
-export function getCodexDeviceAuthStatus(id: string):
-  | ReturnType<typeof snapshot>
-  | undefined {
+export function getCodexDeviceAuthStatus(
+  id: string,
+): ReturnType<typeof snapshot> | undefined {
   pruneSessions();
   const session = sessions.get(id);
   if (!session) return undefined;

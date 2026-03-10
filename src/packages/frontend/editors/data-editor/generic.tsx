@@ -44,25 +44,17 @@ const INFO = {
   docx: microsoft_word,
   ppt: microsoft_ppt,
   pptx: microsoft_ppt,
-  blend: "This is a [Blender](https://www.blender.org/) file.  CoCalc can only [open it via X11 Desktop](https://github.com/sagemathinc/cocalc/issues/5107).",
-  kmz:
-    "Editing [KMZ files](https://developers.google.com/kml/documentation/kmzarchives) is not supported. You could `unzip` them in a [Terminal](https://doc.cocalc.com/terminal.html).",
-  jar:
-    "Run JAVA jar archives in a [Terminal](https://doc.cocalc.com/terminal.html) via `java -jar <filename.jar>`",
-  raw:
-    "You may be able to use this file via a Python library or use it in some other way.",
-  tiff:
-    'You may be able to use this file via a Python image manipulation library or via a tool like "Gimp" in an ["X11" file](https://doc.cocalc.com/x11.html).',
-  fit:
-    "You may be able to use this file from Python using the [fitparse](https://github.com/dtcooper/python-fitparse) library.",
-  odt:
-    'OpenDocument Text -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Writer" application.',
-  ods:
-    'OpenDocument Spreadsheet -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Calc" application.',
-  odp:
-    'OpenDocument Presentation -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Impress" application.',
-  sobj:
-    'You can load an sobj file into **SageMath** by typing `load("filename.sobj")`.',
+  blend:
+    "This is a [Blender](https://www.blender.org/) file.  CoCalc can only [open it via X11 Desktop](https://github.com/sagemathinc/cocalc/issues/5107).",
+  kmz: "Editing [KMZ files](https://developers.google.com/kml/documentation/kmzarchives) is not supported. You could `unzip` them in a [Terminal](https://doc.cocalc.com/terminal.html).",
+  jar: "Run JAVA jar archives in a [Terminal](https://doc.cocalc.com/terminal.html) via `java -jar <filename.jar>`",
+  raw: "You may be able to use this file via a Python library or use it in some other way.",
+  tiff: 'You may be able to use this file via a Python image manipulation library or via a tool like "Gimp" in an ["X11" file](https://doc.cocalc.com/x11.html).',
+  fit: "You may be able to use this file from Python using the [fitparse](https://github.com/dtcooper/python-fitparse) library.",
+  odt: 'OpenDocument Text -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Writer" application.',
+  ods: 'OpenDocument Spreadsheet -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Calc" application.',
+  odp: 'OpenDocument Presentation -- Create an ["X11" file](https://doc.cocalc.com/x11.html) and open the "Impress" application.',
+  sobj: 'You can load an sobj file into **SageMath** by typing `load("filename.sobj")`.',
   "noext-octave-workspace": `\
 This is a data file that contains the state of your Octave workspace.
 Read more: [Saving-Data-on-Unexpected-Exits](https://www.gnu.org/software/octave/doc/v4.2.1/Saving-Data-on-Unexpected-Exits.html).\

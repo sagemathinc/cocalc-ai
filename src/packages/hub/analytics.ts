@@ -34,7 +34,7 @@ import { getLogger } from "./logger";
 // dist/analytics.js and also analytics-script.ts
 // gets compiled to dist/analytics-script.js.
 const result = UglifyJS.minify(
-  fs.readFileSync(join(__dirname, "analytics-script.js")).toString()
+  fs.readFileSync(join(__dirname, "analytics-script.js")).toString(),
 );
 if (result.error) {
   throw Error(`Error minifying analytics-script.js -- ${result.error}`);
@@ -82,7 +82,7 @@ function recordAnalyticsData(
   db: any,
   token: string,
   payload: object | undefined,
-  pii_retention: number | false
+  pii_retention: number | false,
 ): void {
   if (payload == null) return;
   if (!is_valid_uuid_string(token)) return;
@@ -123,7 +123,7 @@ function recordAnalyticsData(
 function check_cors(
   origin: string | undefined,
   dns_parsed: ParseResult,
-  dbg: Function
+  dbg: Function,
 ): boolean {
   // no origin, e.g. when loaded as usual in a script tag
   if (origin == null) return true;
@@ -186,7 +186,7 @@ import base_path from "@cocalc/backend/base-path";
 
 export async function initAnalytics(
   router: Router,
-  database: PostgreSQL
+  database: PostgreSQL,
 ): Promise<void> {
   const dbg = create_log("analytics_js/cors");
 
@@ -203,7 +203,7 @@ export async function initAnalytics(
     dbg(
       `WARNING: the configured domain name ${DNS} cannot be parsed properly. ` +
         `Please fix it in Admin → Site Settings!\n` +
-        `dns_parsed="${JSON.stringify(dns_parsed)}}"`
+        `dns_parsed="${JSON.stringify(dns_parsed)}}"`,
     );
   }
 
@@ -237,7 +237,7 @@ export async function initAnalytics(
     // in case user was already here, do not send it again.
     // only the first hit is interesting.
     dbg(
-      `/analytics.js GET analytics_cookie='${req.cookies[analytics_cookie_name]}'`
+      `/analytics.js GET analytics_cookie='${req.cookies[analytics_cookie_name]}'`,
     );
 
     if (!req.cookies[analytics_cookie_name]) {
@@ -257,7 +257,7 @@ export async function initAnalytics(
       // cache for 6 hours -- max-age has unit seconds
       res.header(
         "Cache-Control",
-        `private, max-age=${6 * 60 * 60}, must-revalidate`
+        `private, max-age=${6 * 60 * 60}, must-revalidate`,
       );
       res.write("// NOOP");
       res.end();
@@ -269,7 +269,7 @@ export async function initAnalytics(
     res.header("Cache-Control", "no-cache, no-store");
 
     const DOMAIN = `${dns_parsed.domain}.${dns_parsed.topLevelDomains.join(
-      "."
+      ".",
     )}`;
     res.write(`var NAME = '${analytics_cookie_name}';\n`);
     res.write(`var ID = '${uuid()}';\n`);

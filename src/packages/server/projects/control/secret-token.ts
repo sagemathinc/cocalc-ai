@@ -23,9 +23,7 @@ export async function getProjectSecretToken(project_id): Promise<string> {
   return rows[0]?.secret_token;
 }
 
-export async function deleteProjectSecretToken(
-  project_id,
-): Promise<undefined> {
+export async function deleteProjectSecretToken(project_id): Promise<undefined> {
   const pool = getPool();
   await pool.query(
     "UPDATE projects SET secret_token=NULL WHERE project_id=$1",

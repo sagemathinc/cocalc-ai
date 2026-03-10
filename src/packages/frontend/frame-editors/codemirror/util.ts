@@ -20,6 +20,7 @@ export function init_style_hacks(cm: Editor): void {
   // they've configured as "monospace" in their browser.  So we force that back:
   e.setAttribute(
     "style",
-    e.getAttribute("style") + "; height:100%; font-family:monospace !important;"
+    e.getAttribute("style") +
+      "; height:100%; font-family:monospace !important;",
   );
 }

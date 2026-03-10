@@ -13,7 +13,8 @@ import {
   Progress,
   Spin,
   Table,
-  Tag, Space,
+  Tag,
+  Space,
 } from "antd";
 import { cloneDeep, isEqual } from "lodash";
 import { useEffect, useRef, useState } from "react";
@@ -22,7 +23,11 @@ import { Icon, IconName } from "@cocalc/frontend/components/icon";
 import { getServiceCosts } from "@cocalc/frontend/purchases/api";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { QUOTA_SPEC, Service } from "@cocalc/util/db-schema/purchase-quotas";
-import { moneyToCurrency, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToCurrency,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 import { COLORS } from "@cocalc/util/theme";
 import { TITLE_BAR_BORDER } from "../frame-editors/frame-tree/style";
 import Cost from "./pay-as-you-go/cost";
@@ -204,11 +209,11 @@ export default function AllQuotasConfig() {
         if (record.quota == null) return null;
         const currentValue = toDecimal(current ?? 0);
         const quotaValue = toDecimal(record.quota ?? 0);
-        const percent =
-          quotaValue.gt(0)
-            ? Math.round(currentValue.div(quotaValue).mul(100).toNumber())
-            : 0;
-        const overBudget = quotaValue.gt(0) && currentValue.div(quotaValue).gt(0.8);
+        const percent = quotaValue.gt(0)
+          ? Math.round(currentValue.div(quotaValue).mul(100).toNumber())
+          : 0;
+        const overBudget =
+          quotaValue.gt(0) && currentValue.div(quotaValue).gt(0.8);
         return (
           <div>
             {moneyToCurrency(currentValue)}{" "}

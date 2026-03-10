@@ -62,10 +62,7 @@ export function register(
   const s = KeyToString(key as Key);
   if (keyHandlers[s] != null) {
     // making this a warning to support hot module reloading.
-    if (
-      typeof process !== "undefined" &&
-      process?.env?.NODE_ENV === "test"
-    ) {
+    if (typeof process !== "undefined" && process?.env?.NODE_ENV === "test") {
       // Avoid noisy warnings in unit tests that import this module multiple times.
     } else {
       console.warn(`WARNING: there is already a handler registered for ${s}`);

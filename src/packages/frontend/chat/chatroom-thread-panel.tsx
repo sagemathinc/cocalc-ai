@@ -897,10 +897,10 @@ export function ChatRoomThreadPanel({
 
   const shouldShowCodexConfig = Boolean(
     selectedThreadId &&
-      (selectedThreadMeta?.agent_kind === "acp" ||
-        selectedThreadMeta?.acp_config != null ||
-        isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
-        actions?.getCodexConfig?.(selectedThreadId) != null),
+    (selectedThreadMeta?.agent_kind === "acp" ||
+      selectedThreadMeta?.acp_config != null ||
+      isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
+      actions?.getCodexConfig?.(selectedThreadId) != null),
   );
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =

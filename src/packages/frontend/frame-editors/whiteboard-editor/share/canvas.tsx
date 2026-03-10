@@ -28,7 +28,7 @@ export default function Canvas({ elements, mainFrameType }: Props) {
   const margin = 20;
   const transforms = useMemo<Transforms>(
     () => getTransforms(elements, margin),
-    [elements, margin]
+    [elements, margin],
   );
   const fitToView = () => {
     if (elements.length == 0) return;
@@ -37,7 +37,7 @@ export default function Canvas({ elements, mainFrameType }: Props) {
     const rect = c.getBoundingClientRect();
     if (rect == null) return;
     setCanvasScale(
-      Math.min(rect.height / transforms.height, rect.width / transforms.width)
+      Math.min(rect.height / transforms.height, rect.width / transforms.width),
     );
   };
   // gets used below to cache this for each render if needed, e.g., if there are edges.

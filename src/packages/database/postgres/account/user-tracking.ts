@@ -11,7 +11,7 @@ export async function record_user_tracking(
   db: PostgreSQL,
   account_id: string,
   event: string,
-  value: { [key: string]: any }
+  value: { [key: string]: any },
 ): Promise<void> {
   /* Right now this function is called from outside typescript
     (e.g., api from user), so we have to do extra type checking.

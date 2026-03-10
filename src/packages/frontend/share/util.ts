@@ -28,7 +28,7 @@ function getProjectOwnerName(project_id: string): string | undefined {
 export function publicShareUrl(
   project_id: string,
   public_path: string,
-  file_path: string
+  file_path: string,
 ): string {
   if (!file_path.startsWith(public_path)) {
     throw Error(`${file_path} must start with ${public_path}`);
@@ -49,7 +49,7 @@ export function publicShareUrl(
         return `${serverUrl()}/${join(
           userName,
           projectName ? projectName : project_id,
-          publicPathName ? publicPathName : id
+          publicPathName ? publicPathName : id,
         )}${relativePath ? join("/files", relativePath) : ""}`;
       }
     }

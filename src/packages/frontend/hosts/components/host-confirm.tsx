@@ -95,13 +95,13 @@ export function confirmHostDrain({
     content: (
       <div>
         <Typography.Text type="secondary">
-          Drain moves assigned projects off this host onto another running
-          host selected automatically.
+          Drain moves assigned projects off this host onto another running host
+          selected automatically.
         </Typography.Text>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Enable force drain only as a last resort. It directly clears
-          project host assignment (`host_id=null`) without performing safe
-          move operations.
+          Enable force drain only as a last resort. It directly clears project
+          host assignment (`host_id=null`) without performing safe move
+          operations.
         </Typography.Paragraph>
         {total > 0 && (
           <div style={{ marginTop: 6 }}>
@@ -215,8 +215,8 @@ export function confirmHostDeprovision({
               {needs === 1 ? "" : "s"} are properly backed up.
             </Typography.Text>
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              When a host is off or deprovisioned, projects can still be used
-              on another host using the most recent backup.
+              When a host is off or deprovisioned, projects can still be used on
+              another host using the most recent backup.
             </Typography.Paragraph>
             {total > 0 && (
               <div style={{ marginTop: 6 }}>

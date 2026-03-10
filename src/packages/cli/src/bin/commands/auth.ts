@@ -19,7 +19,10 @@ export type AuthCommandDeps = {
   saveAuthConfig: any;
 };
 
-export function registerAuthCommand(program: Command, deps: AuthCommandDeps): Command {
+export function registerAuthCommand(
+  program: Command,
+  deps: AuthCommandDeps,
+): Command {
   const {
     runLocalCommand,
     authConfigPath,
@@ -53,14 +56,25 @@ export function registerAuthCommand(program: Command, deps: AuthCommandDeps): Co
         const profile = config.profiles[selected];
         const applied = applyAuthProfile(globals, config);
         const effective = applied.globals as any;
-        const accountId = getExplicitAccountId(effective) ?? process.env.COCALC_ACCOUNT_ID ?? null;
-        const apiBaseUrl = effective.api ? normalizeUrl(effective.api) : defaultApiBaseUrl();
+        const accountId =
+          getExplicitAccountId(effective) ??
+          process.env.COCALC_ACCOUNT_ID ??
+          null;
+        const apiBaseUrl = effective.api
+          ? normalizeUrl(effective.api)
+          : defaultApiBaseUrl();
 
-        let check: { ok: boolean; account_id?: string | null; error?: string } | undefined;
+        let check:
+          | { ok: boolean; account_id?: string | null; error?: string }
+          | undefined;
         if (opts.check) {
           try {
             const timeoutMs = durationToMs(effective.timeout, 15_000);
-            const remote = await connectRemote({ globals: effective, apiBaseUrl, timeoutMs });
+            const remote = await connectRemote({
+              globals: effective,
+              apiBaseUrl,
+              timeoutMs,
+            });
             check = {
               ok: true,
               account_id: resolveAccountIdFromRemote(remote) ?? null,
@@ -196,42 +210,50 @@ export function registerAuthCommand(program: Command, deps: AuthCommandDeps): Co
     .command("logout")
     .description("remove stored auth profile(s)")
     .option("--all", "remove all auth profiles")
-    .option("--target-profile <name>", "profile to remove (defaults to selected/current)")
-    .action(async (opts: { all?: boolean; targetProfile?: string }, command: Command) => {
-      await runLocalCommand(command, "auth logout", async (globals: any) => {
-        const configPath = authConfigPath();
-        const config = loadAuthConfig(configPath);
+    .option(
+      "--target-profile <name>",
+      "profile to remove (defaults to selected/current)",
+    )
+    .action(
+      async (
+        opts: { all?: boolean; targetProfile?: string },
+        command: Command,
+      ) => {
+        await runLocalCommand(command, "auth logout", async (globals: any) => {
+          const configPath = authConfigPath();
+          const config = loadAuthConfig(configPath);
 
-        if (opts.all) {
-          config.profiles = {};
-          config.current_profile = undefined;
+          if (opts.all) {
+            config.profiles = {};
+            config.current_profile = undefined;
+            saveAuthConfig(config, configPath);
+            return {
+              removed: "all",
+              current_profile: null,
+              remaining_profiles: 0,
+            };
+          }
+
+          const target = sanitizeProfileName(
+            opts.targetProfile ?? globals.profile ?? config.current_profile,
+          );
+          if (!config.profiles[target]) {
+            throw new Error(`auth profile '${target}' not found`);
+          }
+          delete config.profiles[target];
+          if (config.current_profile === target) {
+            const next = Object.keys(config.profiles).sort()[0];
+            config.current_profile = next;
+          }
           saveAuthConfig(config, configPath);
           return {
-            removed: "all",
-            current_profile: null,
-            remaining_profiles: 0,
+            removed: target,
+            current_profile: config.current_profile ?? null,
+            remaining_profiles: Object.keys(config.profiles).length,
           };
-        }
-
-        const target = sanitizeProfileName(
-          opts.targetProfile ?? globals.profile ?? config.current_profile,
-        );
-        if (!config.profiles[target]) {
-          throw new Error(`auth profile '${target}' not found`);
-        }
-        delete config.profiles[target];
-        if (config.current_profile === target) {
-          const next = Object.keys(config.profiles).sort()[0];
-          config.current_profile = next;
-        }
-        saveAuthConfig(config, configPath);
-        return {
-          removed: target,
-          current_profile: config.current_profile ?? null,
-          remaining_profiles: Object.keys(config.profiles).length,
-        };
-      });
-    });
+        });
+      },
+    );
 
   return auth;
 }

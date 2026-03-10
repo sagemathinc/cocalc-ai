@@ -92,11 +92,7 @@ export class SubvolumeSnapshots {
           flags = await getSubvolumeField(path, "Read-only");
         }
         const ro = flags?.toLowerCase() ?? "";
-        if (
-          ro.includes("readonly") ||
-          ro.startsWith("yes") ||
-          ro === "true"
-        ) {
+        if (ro.includes("readonly") || ro.startsWith("yes") || ro === "true") {
           snapshots.push(name);
         }
       } catch (err) {

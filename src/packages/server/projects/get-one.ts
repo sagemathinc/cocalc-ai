@@ -4,7 +4,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 // This is also used by the latex api endpoint.
 export default async function getOneProject(
-  account_id
+  account_id,
 ): Promise<{ project_id: string; title?: string }> {
   if (!isValidUUID(account_id)) {
     throw Error("getOneProject -- user must be authenticated");

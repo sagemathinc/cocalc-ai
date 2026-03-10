@@ -26,7 +26,7 @@ export const PathLink = React.memo(function PathLink({
     function handle_click() {
       actions.set_active_tab("files");
     },
-    [actions]
+    [actions],
   );
 
   return (

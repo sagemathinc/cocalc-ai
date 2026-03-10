@@ -21,12 +21,12 @@ export function addUserProfileCallback(opts: UserProfileCallbackOpts) {
     accessToken,
     tokenSecret,
     params,
-    done
+    done,
   ) {
     L2(
       `userinfoURL=${userinfoURL}, accessToken=${accessToken}, params=${safeJsonStringify(
-        params
-      )}`
+        params,
+      )}`,
     );
 
     let oauth = this._oauth;
@@ -40,8 +40,8 @@ export function addUserProfileCallback(opts: UserProfileCallbackOpts) {
       if (err) {
         L2(
           `InternalOAuthError: Failed to fetch user profile -- ${safeJsonStringify(
-            err
-          )}`
+            err,
+          )}`,
         );
 
         if (err.data) {
@@ -54,15 +54,17 @@ export function addUserProfileCallback(opts: UserProfileCallbackOpts) {
 
         if (json && json.error && json.error_description) {
           return done(
-            new Error(`UserInfoError: ${json.error_description}, ${json.error}`)
+            new Error(
+              `UserInfoError: ${json.error_description}, ${json.error}`,
+            ),
           );
         }
         return done(
           new Error(
             `InternalOAuthError: Failed to fetch user profile -- ${safeJsonStringify(
-              err
-            )}`
-          )
+              err,
+            )}`,
+          ),
         );
       }
 
@@ -76,8 +78,8 @@ export function addUserProfileCallback(opts: UserProfileCallbackOpts) {
         } catch (ex) {
           return done(
             new Error(
-              `Failed to parse user profile -- ${body} -- error: ${ex} `
-            )
+              `Failed to parse user profile -- ${body} -- error: ${ex} `,
+            ),
           );
         }
       }

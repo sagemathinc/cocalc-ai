@@ -1161,7 +1161,9 @@ export const SshPage: React.FC = React.memo(() => {
           return (
             <Tooltip
               title={
-                <div style={{ maxWidth: 900, whiteSpace: "pre-wrap" }}>{text}</div>
+                <div style={{ maxWidth: 900, whiteSpace: "pre-wrap" }}>
+                  {text}
+                </div>
               }
             >
               <Typography.Text
@@ -2174,7 +2176,11 @@ export const SshPage: React.FC = React.memo(() => {
         }}
         okText="Create"
       >
-        <Form form={targetForm} layout="vertical" initialValues={{ autoStart: true }}>
+        <Form
+          form={targetForm}
+          layout="vertical"
+          initialValues={{ autoStart: true }}
+        >
           <Form.Item
             label="SSH target"
             name="target"
@@ -2185,7 +2191,11 @@ export const SshPage: React.FC = React.memo(() => {
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
-          <Form.Item name="autoStart" valuePropName="checked" style={{ marginBottom: 0 }}>
+          <Form.Item
+            name="autoStart"
+            valuePropName="checked"
+            style={{ marginBottom: 0 }}
+          >
             <Checkbox>Start session immediately</Checkbox>
           </Form.Item>
         </Form>

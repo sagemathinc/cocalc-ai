@@ -61,7 +61,7 @@ export default function Signup(props: Props) {
             <Text code key={d}>
               {d}
             </Text>
-          ))
+          )),
         )}
       </Paragraph>
     );

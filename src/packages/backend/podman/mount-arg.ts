@@ -1,4 +1,3 @@
-
 function escapeMountPath(p) {
   return p
     .replace(/\\/g, "\\\\") // literal backslashes

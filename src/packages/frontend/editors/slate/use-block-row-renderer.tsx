@@ -30,9 +30,11 @@ type BlockRowRendererArgs = {
   actions?: Actions;
   id?: string;
   rowStyle: React.CSSProperties;
-  gapCursor:
-    | { index: number; side: "before" | "after"; path?: number[] }
-    | null;
+  gapCursor: {
+    index: number;
+    side: "before" | "after";
+    path?: number[];
+  } | null;
   setGapCursor: (
     gap: { index: number; side: "before" | "after"; path?: number[] } | null,
   ) => void;

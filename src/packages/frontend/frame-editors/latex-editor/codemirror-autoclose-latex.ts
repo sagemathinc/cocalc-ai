@@ -104,7 +104,7 @@ function auto_close_latex(cm) {
     const end: string = `\\end{${environment}}`;
     const s: string = cm.getRange(
       { line: pos.line + 1, ch: 0 },
-      { line: pos.line + 1000, ch: 0 }
+      { line: pos.line + 1000, ch: 0 },
     );
     i = s.indexOf(`\\end{${environment}}`);
     const j: number = s.indexOf(`\\begin{${environment}}`);

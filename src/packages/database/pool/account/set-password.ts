@@ -2,7 +2,7 @@ import getPool from "@cocalc/database/pool";
 import passwordHash from "@cocalc/backend/auth/password-hash";
 export default async function setPassword(
   account_id: string,
-  password: string
+  password: string,
 ): Promise<void> {
   const pool = getPool();
   await pool.query("UPDATE accounts SET password_hash=$1 WHERE account_id=$2", [

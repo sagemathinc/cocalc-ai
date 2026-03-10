@@ -75,7 +75,7 @@ export default function Kanban({
     }
     for (const record of data) {
       categorizedData[optionToColumn[record[categoryField]] ?? 0].data.push(
-        record
+        record,
       );
       idToRecord[record[rowKey]] = record;
     }
@@ -110,11 +110,7 @@ export default function Kanban({
       }}
     >
       {error && (
-        <Alert
-          type="error"
-          title="Database Query Error"
-          description={error}
-        />
+        <Alert type="error" title="Database Query Error" description={error} />
       )}
       <DragOverlay>
         {dragId != null && (

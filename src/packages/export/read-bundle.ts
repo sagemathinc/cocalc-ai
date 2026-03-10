@@ -46,7 +46,8 @@ async function loadBundleZip(
   if (manifestPath == null) {
     throw new Error(`bundle at ${zipPath} does not contain manifest.json`);
   }
-  const rootDir = dirname(manifestPath) === "." ? undefined : dirname(manifestPath);
+  const rootDir =
+    dirname(manifestPath) === "." ? undefined : dirname(manifestPath);
   const manifest = JSON.parse(strFromU8(files[manifestPath]));
   return {
     manifest,

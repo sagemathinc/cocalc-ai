@@ -1762,7 +1762,7 @@ export const CHAR_TO_NAME = Object.keys(KEYSYM_TO_UNICODE).reduce(
     Object.assign({}, result, {
       [String.fromCharCode(KEYSYM_TO_UNICODE[key])]: key,
     }),
-  {}
+  {},
 );
 
 export const CODEC_DESCRIPTION = {

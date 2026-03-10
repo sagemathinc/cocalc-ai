@@ -115,7 +115,8 @@ export function AgentDebugPanel() {
           </Button>
         </Space>
         <Typography.Text strong>
-          Result {manifest ? `(${manifest.length} manifest entries loaded)` : ""}
+          Result{" "}
+          {manifest ? `(${manifest.length} manifest entries loaded)` : ""}
         </Typography.Text>
         <Input.TextArea
           value={resultText}

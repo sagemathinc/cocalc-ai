@@ -8,10 +8,7 @@ import type {
   BrowserRuntimeEventLevel,
   BrowserSessionServiceApi,
 } from "@cocalc/conat/service/browser-session";
-import {
-  onConatTrace,
-  type ConatTraceEvent,
-} from "@cocalc/conat/core/client";
+import { onConatTrace, type ConatTraceEvent } from "@cocalc/conat/core/client";
 import {
   safeStringifyForRuntimeLog,
   truncateRuntimeMessage,
@@ -44,11 +41,15 @@ type ConfigureNetworkTraceOpts = Parameters<
 type ConfigureNetworkTraceResult = Awaited<
   ReturnType<BrowserSessionServiceApi["configureNetworkTrace"]>
 >;
-type ListNetworkTraceOpts = Parameters<BrowserSessionServiceApi["listNetworkTrace"]>[0];
+type ListNetworkTraceOpts = Parameters<
+  BrowserSessionServiceApi["listNetworkTrace"]
+>[0];
 type ListNetworkTraceResult = Awaited<
   ReturnType<BrowserSessionServiceApi["listNetworkTrace"]>
 >;
-type ListRuntimeEventsOpts = Parameters<BrowserSessionServiceApi["listRuntimeEvents"]>[0];
+type ListRuntimeEventsOpts = Parameters<
+  BrowserSessionServiceApi["listRuntimeEvents"]
+>[0];
 type ListRuntimeEventsResult = Awaited<
   ReturnType<BrowserSessionServiceApi["listRuntimeEvents"]>
 >;
@@ -168,7 +169,8 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
             .map((x) => safeStringifyForRuntimeLog(x))
             .filter((x) => x.length > 0)
             .join(" ");
-          const emit = (globalThis as any).__cocalc_browser_runtime_capture_emit;
+          const emit = (globalThis as any)
+            .__cocalc_browser_runtime_capture_emit;
           emit?.({
             kind: "console",
             level,
@@ -201,14 +203,12 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
             `${event?.message ?? ""}`.trim() ||
             safeStringifyForRuntimeLog((event as any)?.error),
           source: `${event?.filename ?? ""}`.trim() || undefined,
-          line:
-            Number.isFinite(Number(event?.lineno ?? NaN))
-              ? Number(event?.lineno)
-              : undefined,
-          column:
-            Number.isFinite(Number(event?.colno ?? NaN))
-              ? Number(event?.colno)
-              : undefined,
+          line: Number.isFinite(Number(event?.lineno ?? NaN))
+            ? Number(event?.lineno)
+            : undefined,
+          column: Number.isFinite(Number(event?.colno ?? NaN))
+            ? Number(event?.colno)
+            : undefined,
           stack: `${(event as any)?.error?.stack ?? ""}`.trim() || undefined,
         });
       } catch {
@@ -221,7 +221,8 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
         try {
           const reason = (event as any)?.reason;
           const message = safeStringifyForRuntimeLog(reason);
-          const emit = (globalThis as any).__cocalc_browser_runtime_capture_emit;
+          const emit = (globalThis as any)
+            .__cocalc_browser_runtime_capture_emit;
           emit?.({
             kind: "unhandled_rejection",
             level: "error",
@@ -244,7 +245,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
         internalTraceReplySubjects.delete(subject);
       }
     }
-    if (internalTraceReplySubjects.size <= MAX_NETWORK_TRACE_INTERNAL_SUBJECTS) {
+    if (
+      internalTraceReplySubjects.size <= MAX_NETWORK_TRACE_INTERNAL_SUBJECTS
+    ) {
       return;
     }
     const entries = [...internalTraceReplySubjects.entries()].sort(
@@ -383,7 +386,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
         `${event.phase ?? ""}`.trim() === "recv_message" &&
         subject.includes(".browser-session")
       ) {
-        const methodName = extractInternalTraceMethodName(event.decoded_preview);
+        const methodName = extractInternalTraceMethodName(
+          event.decoded_preview,
+        );
         if (methodName != null && INTERNAL_TRACE_METHODS.has(methodName)) {
           const replySubject = getReplySubjectFromHeaders(event.headers);
           if (replySubject) {
@@ -420,7 +425,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
     networkTraceSeq += 1;
     networkTraceEvents.push({
       ...event,
-      ...(decoded_preview ? { decoded_preview } : { decoded_preview: undefined }),
+      ...(decoded_preview
+        ? { decoded_preview }
+        : { decoded_preview: undefined }),
       seq: networkTraceSeq,
       ts: new Date().toISOString(),
       ...(typeof location !== "undefined" && location.href
@@ -435,7 +442,8 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
   };
 
   const appendConatNetworkTraceEvent = (event: ConatTraceEvent): void => {
-    const direction = `${event.direction ?? ""}`.trim() as BrowserNetworkTraceDirection;
+    const direction =
+      `${event.direction ?? ""}`.trim() as BrowserNetworkTraceDirection;
     const phase = `${event.phase ?? ""}`.trim() as BrowserNetworkTracePhase;
     appendBufferedNetworkTraceEvent({
       protocol: "conat",
@@ -445,13 +453,23 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
       ...(event.address ? { address: `${event.address}` } : {}),
       ...(event.subject ? { subject: `${event.subject}` } : {}),
       ...(event.chunk_id ? { chunk_id: `${event.chunk_id}` } : {}),
-      ...(event.chunk_seq != null ? { chunk_seq: Number(event.chunk_seq) } : {}),
+      ...(event.chunk_seq != null
+        ? { chunk_seq: Number(event.chunk_seq) }
+        : {}),
       ...(event.chunk_done != null ? { chunk_done: !!event.chunk_done } : {}),
-      ...(event.chunk_bytes != null ? { chunk_bytes: Number(event.chunk_bytes) } : {}),
-      ...(event.raw_bytes != null ? { raw_bytes: Number(event.raw_bytes) } : {}),
+      ...(event.chunk_bytes != null
+        ? { chunk_bytes: Number(event.chunk_bytes) }
+        : {}),
+      ...(event.raw_bytes != null
+        ? { raw_bytes: Number(event.raw_bytes) }
+        : {}),
       ...(event.encoding != null ? { encoding: Number(event.encoding) } : {}),
-      ...(event.headers ? { headers: event.headers as Record<string, unknown> } : {}),
-      ...(event.decoded_preview ? { decoded_preview: `${event.decoded_preview}` } : {}),
+      ...(event.headers
+        ? { headers: event.headers as Record<string, unknown> }
+        : {}),
+      ...(event.decoded_preview
+        ? { decoded_preview: `${event.decoded_preview}` }
+        : {}),
       ...(event.decode_error ? { decode_error: `${event.decode_error}` } : {}),
       ...(event.message ? { message: `${event.message}` } : {}),
     });
@@ -499,12 +517,14 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
       }
     };
 
-    const originalFetch = typeof g.fetch === "function" ? g.fetch.bind(g) : undefined;
+    const originalFetch =
+      typeof g.fetch === "function" ? g.fetch.bind(g) : undefined;
     if (originalFetch) {
       g.fetch = async (...args: any[]) => {
         const input = args[0];
         const init = args[1];
-        const method = `${init?.method ?? input?.method ?? "GET"}`.toUpperCase();
+        const method =
+          `${init?.method ?? input?.method ?? "GET"}`.toUpperCase();
         const target_url = `${input?.url ?? input ?? ""}`.trim();
         const started = Date.now();
         emitHttp({
@@ -532,7 +552,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
             method,
             status: Number(resp?.status),
             duration_ms,
-            raw_bytes: Number.isFinite(contentLength) ? contentLength : undefined,
+            raw_bytes: Number.isFinite(contentLength)
+              ? contentLength
+              : undefined,
             message: `${resp?.status ?? ""} ${resp?.statusText ?? ""}`.trim(),
           });
           return resp;
@@ -558,13 +580,17 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
       const send0 = OriginalXHR.prototype.send;
       const setRequestHeader0 = OriginalXHR.prototype.setRequestHeader;
       OriginalXHR.prototype.open = function (...args: any[]) {
-        (this as any).__cocalc_trace_method = `${args[0] ?? "GET"}`.toUpperCase();
+        (this as any).__cocalc_trace_method =
+          `${args[0] ?? "GET"}`.toUpperCase();
         (this as any).__cocalc_trace_target_url = `${args[1] ?? ""}`.trim();
         (this as any).__cocalc_trace_headers = {};
         (this as any).__cocalc_trace_finished = false;
         return open0.apply(this, args);
       };
-      OriginalXHR.prototype.setRequestHeader = function (name: string, value: string) {
+      OriginalXHR.prototype.setRequestHeader = function (
+        name: string,
+        value: string,
+      ) {
         try {
           const h = ((this as any).__cocalc_trace_headers ??= {});
           h[`${name ?? ""}`] = `${value ?? ""}`;
@@ -573,7 +599,8 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
       };
       OriginalXHR.prototype.send = function (...args: any[]) {
         const method = `${(this as any).__cocalc_trace_method ?? "GET"}`;
-        const target_url = `${(this as any).__cocalc_trace_target_url ?? ""}`.trim();
+        const target_url =
+          `${(this as any).__cocalc_trace_target_url ?? ""}`.trim();
         const started = Date.now();
         emitHttp({
           protocol: "http",
@@ -588,12 +615,17 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
             ? { decoded_preview: safeDecodedPreview(args[0]) }
             : {}),
         });
-        const emitDone = (phase: BrowserNetworkTracePhase, message?: string) => {
+        const emitDone = (
+          phase: BrowserNetworkTracePhase,
+          message?: string,
+        ) => {
           if ((this as any).__cocalc_trace_finished) {
             return;
           }
           (this as any).__cocalc_trace_finished = true;
-          const contentLength = Number(this.getResponseHeader?.("content-length"));
+          const contentLength = Number(
+            this.getResponseHeader?.("content-length"),
+          );
           emitHttp({
             protocol: "http",
             direction: "recv",
@@ -603,7 +635,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
             method,
             status: Number(this.status),
             duration_ms: Date.now() - started,
-            raw_bytes: Number.isFinite(contentLength) ? contentLength : undefined,
+            raw_bytes: Number.isFinite(contentLength)
+              ? contentLength
+              : undefined,
             message,
           });
         };
@@ -612,9 +646,13 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
           () => emitDone("http_response", `${this.status ?? ""}`.trim()),
           { once: true },
         );
-        this.addEventListener("error", () => emitDone("http_error", "xhr error"), {
-          once: true,
-        });
+        this.addEventListener(
+          "error",
+          () => emitDone("http_error", "xhr error"),
+          {
+            once: true,
+          },
+        );
         this.addEventListener(
           "timeout",
           () => emitDone("http_error", "xhr timeout"),
@@ -622,9 +660,13 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
             once: true,
           },
         );
-        this.addEventListener("abort", () => emitDone("http_error", "xhr abort"), {
-          once: true,
-        });
+        this.addEventListener(
+          "abort",
+          () => emitDone("http_error", "xhr abort"),
+          {
+            once: true,
+          },
+        );
         return send0.apply(this, args);
       };
     }
@@ -728,15 +770,21 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
               x === "conat" || x === "http" || x === "ws",
           );
         networkTraceConfig.protocols =
-          next.length > 0 ? [...new Set(next)] : [...ALL_NETWORK_TRACE_PROTOCOLS];
+          next.length > 0
+            ? [...new Set(next)]
+            : [...ALL_NETWORK_TRACE_PROTOCOLS];
       }
       if (opts.max_events != null && Number.isFinite(Number(opts.max_events))) {
         networkTraceConfig.max_events = Math.max(
           100,
-          Math.min(MAX_NETWORK_TRACE_EVENTS, Math.floor(Number(opts.max_events))),
+          Math.min(
+            MAX_NETWORK_TRACE_EVENTS,
+            Math.floor(Number(opts.max_events)),
+          ),
         );
         if (networkTraceEvents.length > networkTraceConfig.max_events) {
-          const drop = networkTraceEvents.length - networkTraceConfig.max_events;
+          const drop =
+            networkTraceEvents.length - networkTraceConfig.max_events;
           networkTraceEvents.splice(0, drop);
           networkTraceDropped += drop;
         }
@@ -777,7 +825,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
     };
   };
 
-  const listNetworkTrace = (opts: ListNetworkTraceOpts): ListNetworkTraceResult => {
+  const listNetworkTrace = (
+    opts: ListNetworkTraceOpts,
+  ): ListNetworkTraceResult => {
     const after_seq = Number(opts?.after_seq ?? 0);
     const limitRaw = Number(opts?.limit ?? 200);
     const limit = Number.isFinite(limitRaw)
@@ -817,7 +867,10 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
       if (phases && !phases.has(`${event.phase ?? ""}`)) {
         return false;
       }
-      if (subjectPrefix && !`${event.subject ?? ""}`.startsWith(subjectPrefix)) {
+      if (
+        subjectPrefix &&
+        !`${event.subject ?? ""}`.startsWith(subjectPrefix)
+      ) {
         return false;
       }
       if (address && `${event.address ?? ""}` !== address) {
@@ -851,7 +904,9 @@ export function createBrowserRuntimeObservability(): BrowserRuntimeObservability
     return { ok: true, cleared, next_seq: networkTraceSeq };
   };
 
-  const listRuntimeEvents = (opts: ListRuntimeEventsOpts): ListRuntimeEventsResult => {
+  const listRuntimeEvents = (
+    opts: ListRuntimeEventsOpts,
+  ): ListRuntimeEventsResult => {
     const after_seq = Number(opts?.after_seq ?? 0);
     const limitRaw = Number(opts?.limit ?? 200);
     const limit = Number.isFinite(limitRaw)

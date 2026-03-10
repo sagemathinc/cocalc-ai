@@ -766,7 +766,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             ? ((this.actions as any) ?? undefined)
             : undefined;
         const activeElement =
-          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
         handoffProjectNavigationFromLocalOwner(
           navigationCommand,
           this.project_id,

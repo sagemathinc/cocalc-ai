@@ -175,7 +175,7 @@ export class ConatSocketClient extends ConatSocketBase {
       await until(
         async () => {
           if (this.state == "closed") {
-           //  logger.silly("closed -- giving up on connecting");
+            //  logger.silly("closed -- giving up on connecting");
             return true;
           }
           try {
@@ -200,7 +200,7 @@ export class ConatSocketClient extends ConatSocketBase {
         this.alive?.recv();
         const cmd = mesg.headers?.[SOCKET_HEADER_CMD];
         //if (cmd) {
-          // logger.silly("client got cmd", cmd);
+        // logger.silly("client got cmd", cmd);
         //}
         if (cmd == "socket") {
           this.tcp?.send.handleRequest(mesg);

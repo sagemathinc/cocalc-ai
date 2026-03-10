@@ -6,7 +6,11 @@ import type {
 import { getPoolClient, PoolClient } from "@cocalc/database/pool";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import { is_date as isDate, is_integer } from "@cocalc/util/misc";
-import { moneyToDbString, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import {
+  moneyToDbString,
+  toDecimal,
+  type MoneyValue,
+} from "@cocalc/util/money";
 
 type Options = Omit<Subscription, "id" | "created" | "notes"> & {
   cost: MoneyValue;
@@ -14,7 +18,7 @@ type Options = Omit<Subscription, "id" | "created" | "notes"> & {
 
 export default async function createSubscription(
   opts: Options,
-  client: PoolClient | null // useful to allow null for unit testing, but must be explicit
+  client: PoolClient | null, // useful to allow null for unit testing, but must be explicit
 ): Promise<number> {
   let db: PoolClient | null = client;
   // some consistency checks below.  It's very likely this should always hold,
@@ -45,7 +49,7 @@ export default async function createSubscription(
       (!is_integer(opts.latest_purchase_id) || opts.latest_purchase_id < 0)
     ) {
       throw Error(
-        "if specified, latest_purchase_id must be a nonnegative integer"
+        "if specified, latest_purchase_id must be a nonnegative integer",
       );
     }
     const metadata = opts.metadata as Metadata;
@@ -74,7 +78,7 @@ export default async function createSubscription(
         opts.current_period_end,
         opts.latest_purchase_id,
         opts.metadata,
-      ]
+      ],
     );
     const { id } = rows[0];
     return id;

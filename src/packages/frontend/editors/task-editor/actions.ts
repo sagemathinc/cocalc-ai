@@ -645,11 +645,12 @@ export class TaskActions extends Actions<TaskState> {
   }
 
   public empty_trash(): void {
-    const taskIds = this.store
-      .get("tasks")
-      ?.filter((task: TaskMap) => task.get("deleted"))
-      ?.keySeq()
-      ?.toArray?.() ?? [];
+    const taskIds =
+      this.store
+        .get("tasks")
+        ?.filter((task: TaskMap) => task.get("deleted"))
+        ?.keySeq()
+        ?.toArray?.() ?? [];
     if (taskIds.length === 0) return;
     this.runSessionMutation(async () => {
       await this.tasksSession.removeTasks(taskIds);

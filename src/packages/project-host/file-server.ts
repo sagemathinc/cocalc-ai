@@ -132,7 +132,9 @@ async function waitForProjectSshPort(
   return null;
 }
 
-async function ensureProjectSshWake(project_id: string): Promise<number | null> {
+async function ensureProjectSshWake(
+  project_id: string,
+): Promise<number | null> {
   const existingPort = normalizePositivePort(getProject(project_id)?.ssh_port);
   if (existingPort != null) {
     return existingPort;
@@ -648,7 +650,10 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
         err: `${err}`,
       });
       await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(BACKUP_CONFIG_FETCH_RETRY_MS, remainingMs)),
+        setTimeout(
+          resolve,
+          Math.min(BACKUP_CONFIG_FETCH_RETRY_MS, remainingMs),
+        ),
       );
     }
   }
@@ -1198,10 +1203,13 @@ async function syncBackupIndexCache(
       delete manifest.entries[backup_id];
     }
     if (preservedLocalOnly > 0 && remote.length === 0) {
-      logger.warn("backup index remote snapshot list empty; using local index", {
-        project_id,
-        preserved: preservedLocalOnly,
-      });
+      logger.warn(
+        "backup index remote snapshot list empty; using local index",
+        {
+          project_id,
+          preserved: preservedLocalOnly,
+        },
+      );
     }
 
     await saveBackupIndexManifest(project_id, manifest);

@@ -47,7 +47,7 @@ export const LogSearch: React.FC<Props> = ({
           actions.set_active_tab("settings");
       }
     },
-    [selected, actions]
+    [selected, actions],
   );
 
   const on_change = useDebounce(
@@ -56,9 +56,9 @@ export const LogSearch: React.FC<Props> = ({
         reset_cursor();
         actions.setState({ search: value });
       },
-      [reset_cursor, actions]
+      [reset_cursor, actions],
     ),
-    150
+    150,
   );
 
   return (

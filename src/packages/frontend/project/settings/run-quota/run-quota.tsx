@@ -68,8 +68,8 @@ export const RunQuota: React.FC<Props> = React.memo(
       if (name === "memory") return "Memory";
       const conf = PARAMS[name];
       return isFlyout
-        ? conf?.display_short ?? conf?.display ?? name
-        : conf?.display ?? name;
+        ? (conf?.display_short ?? conf?.display ?? name)
+        : (conf?.display ?? name);
     }
 
     const data: QuotaData[] = React.useMemo(() => {
@@ -87,13 +87,11 @@ export const RunQuota: React.FC<Props> = React.memo(
       });
     }, [runQuota, currentUsage, maxUpgrades, projectIsRunning]);
 
-    function renderExtraMaximum(record: QuotaData): React.JSX.Element | undefined {
+    function renderExtraMaximum(
+      record: QuotaData,
+    ): React.JSX.Element | undefined {
       if (SHOW_MAX.includes(record.key)) {
-        return (
-          <>
-            The maximum possible quota is {record.maximum}.
-          </>
-        );
+        return <>The maximum possible quota is {record.maximum}.</>;
       }
     }
 

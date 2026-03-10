@@ -1274,7 +1274,9 @@ export default function Privacy({ customize }) {
                       <td> 2025-02-20 </td>
                     </tr>
                     <tr>
-                      <td>Update: HR data require explicit opt-in for any new use</td>
+                      <td>
+                        Update: HR data require explicit opt-in for any new use
+                      </td>
                       <td> 2025-10-03 </td>
                     </tr>
                   </tbody>

@@ -78,7 +78,9 @@ export async function touchProjectLastEditedRunning(
   await touchProjectLastEdited(project_id, reason, { force: opts?.force });
 }
 
-export function shouldCheckProjectLastEditedRunning(project_id: string): boolean {
+export function shouldCheckProjectLastEditedRunning(
+  project_id: string,
+): boolean {
   return !runningTouchCache.has(project_id);
 }
 

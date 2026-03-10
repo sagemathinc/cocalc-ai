@@ -13,7 +13,7 @@ import { SlateEditor } from "./editable-markdown";
 
 export function slatePointToMarkdownPosition(
   editor: SlateEditor,
-  point: Point | undefined
+  point: Point | undefined,
 ): { line: number; ch: number } | undefined {
   if (point == null) return undefined; // easy special case not handled below.
   const { index, markdown } = slatePointToMarkdown(editor, point);
@@ -23,7 +23,7 @@ export function slatePointToMarkdownPosition(
 
 export function nearestMarkdownIndexForSlatePoint(
   editor: SlateEditor,
-  point: Point | undefined
+  point: Point | undefined,
 ): { index: number; markdown: string } {
   if (!point) {
     return { index: -1, markdown: "" };
@@ -65,7 +65,7 @@ export function nearestMarkdownIndexForSlatePoint(
 
 export function nearestMarkdownPositionForSlatePoint(
   editor: SlateEditor,
-  point: Point | undefined
+  point: Point | undefined,
 ): { line: number; ch: number } | undefined {
   const { index, markdown } = nearestMarkdownIndexForSlatePoint(editor, point);
   if (index < 0) return undefined;
@@ -83,7 +83,7 @@ export function nearestMarkdownPositionForSlatePoint(
 // that isn't canonical this could make things be slightly off.
 export function slatePointToMarkdown(
   editor: SlateEditor,
-  point: Point
+  point: Point,
 ): { index: number; markdown: string } {
   let node;
   try {
@@ -158,7 +158,7 @@ export function positionToIndex({
 
 function insertSentinel(
   pos: { line: number; ch: number },
-  markdown: string
+  markdown: string,
 ): string {
   const v = markdown.split("\n");
   const s = v[pos.line];
@@ -282,7 +282,7 @@ export function markdownPositionToSlatePoint({
 
 export async function scrollIntoView(
   editor: ReactEditor,
-  point: Point
+  point: Point,
 ): Promise<void> {
   const scrollIntoView = () => {
     try {
@@ -318,7 +318,7 @@ export async function scrollIntoView(
 function normalizePoint(
   editor: Editor,
   doc: Descendant[],
-  point: Point
+  point: Point,
 ): Point | undefined {
   // On the slate side at the top level we create blank paragraph to make it possible to
   // move the cursor before/after various block elements.  In practice this seems to nicely

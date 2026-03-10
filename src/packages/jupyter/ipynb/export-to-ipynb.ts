@@ -191,7 +191,9 @@ function processOtherMetadata(obj, other_metadata) {
 
 function processCocalcRuntimeMetadata(obj: IPynbCell, cell: Cell): void {
   const last =
-    typeof cell.last === "number" && Number.isFinite(cell.last) && cell.last >= 0
+    typeof cell.last === "number" &&
+    Number.isFinite(cell.last) &&
+    cell.last >= 0
       ? Math.round(cell.last)
       : undefined;
   if (last == null) {

@@ -54,7 +54,9 @@ export function createManagedSyncDocLeases({
     }
   };
 
-  const parseDocTypeFromSyncstring = (raw: unknown): {
+  const parseDocTypeFromSyncstring = (
+    raw: unknown,
+  ): {
     type: BrowserSyncDocType;
     opts?: Record<string, unknown>;
   } => {
@@ -105,8 +107,10 @@ export function createManagedSyncDocLeases({
       noInventory: true,
     });
     try {
-      const getOne = (syncstrings as any).get_one ?? (syncstrings as any).getOne;
-      const row = typeof getOne === "function" ? getOne.call(syncstrings) : undefined;
+      const getOne =
+        (syncstrings as any).get_one ?? (syncstrings as any).getOne;
+      const row =
+        typeof getOne === "function" ? getOne.call(syncstrings) : undefined;
       return parseDocTypeFromSyncstring(row?.doctype);
     } finally {
       try {
@@ -152,7 +156,9 @@ export function createManagedSyncDocLeases({
     const started = Date.now();
     while (Date.now() - started < 15_000) {
       const state =
-        typeof syncdoc?.get_state === "function" ? syncdoc.get_state() : "ready";
+        typeof syncdoc?.get_state === "function"
+          ? syncdoc.get_state()
+          : "ready";
       if (state === "ready") {
         return syncdoc;
       }

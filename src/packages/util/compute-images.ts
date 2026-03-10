@@ -51,8 +51,10 @@ export interface ComputeImage {
   registry?: string;
 }
 
-interface ComputeImageProd
-  extends Omit<ComputeImage, "id" | "tag" | "registry"> {
+interface ComputeImageProd extends Omit<
+  ComputeImage,
+  "id" | "tag" | "registry"
+> {
   group: Group;
 }
 

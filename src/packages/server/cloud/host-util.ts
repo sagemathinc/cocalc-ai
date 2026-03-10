@@ -65,9 +65,7 @@ const parseUbuntuVersion = (value?: string | null): number | undefined => {
   return major * 100 + minor;
 };
 
-const parseGcpUbuntuVersion = (
-  value?: string | null,
-): number | undefined => {
+const parseGcpUbuntuVersion = (value?: string | null): number | undefined => {
   if (!value) return undefined;
   const match = value.match(/ubuntu-.*?(\d{2})(\d{2})/i);
   if (!match) return undefined;
@@ -116,16 +114,13 @@ const pickGcpAcceleratorFamily = (
   );
   const gpuImages = ubuntuImages.filter((img) => img.gpuReady);
   const versioned = gpuImages.filter((img) => {
-    const version =
-      parseGcpUbuntuVersion(img.family ?? img.name) ?? 0;
+    const version = parseGcpUbuntuVersion(img.family ?? img.name) ?? 0;
     return version >= MIN_UBUNTU_VERSION;
   });
   if (!versioned.length) return {};
   const sorted = [...versioned].sort((a, b) => {
-    const versionA =
-      parseGcpUbuntuVersion(a.family ?? a.name) ?? 0;
-    const versionB =
-      parseGcpUbuntuVersion(b.family ?? b.name) ?? 0;
+    const versionA = parseGcpUbuntuVersion(a.family ?? a.name) ?? 0;
+    const versionB = parseGcpUbuntuVersion(b.family ?? b.name) ?? 0;
     if (versionA !== versionB) return versionB - versionA;
     const timeA = gcpImageTimestamp(a);
     const timeB = gcpImageTimestamp(b);
@@ -145,7 +140,11 @@ const pickGcpAcceleratorFamily = (
 const pickNebiusImageFamily = (
   images: NebiusImage[],
   wantsGpu: boolean,
-  opts: { region?: string; platform?: string | null; arch?: string | null } = {},
+  opts: {
+    region?: string;
+    platform?: string | null;
+    arch?: string | null;
+  } = {},
 ): string | undefined => {
   const normalizeArch = (raw?: string | null) => {
     if (!raw) return undefined;
@@ -195,11 +194,14 @@ const pickNebiusImageFamily = (
       return imgArch === desiredArch;
     });
     versionedImages = baseArchMatches.length ? baseArchMatches : baseVersioned;
-    logger.debug("nebius image selection: no 24.04 images for platform; falling back", {
-      platform: opts.platform,
-      region: opts.region,
-      arch: desiredArch,
-    });
+    logger.debug(
+      "nebius image selection: no 24.04 images for platform; falling back",
+      {
+        platform: opts.platform,
+        region: opts.region,
+        arch: desiredArch,
+      },
+    );
   }
   const candidates = versionedImages.filter((img) =>
     wantsGpu ? isNebiusGpuFamily(img.family) : !isNebiusGpuFamily(img.family),
@@ -293,7 +295,9 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   if (providerId === "self-host" && !row.region) {
     throw new Error("self-host requires connector id in region");
   }
-  const prefix = providerId ? await getProviderPrefix(providerId) : "cocalc-host";
+  const prefix = providerId
+    ? await getProviderPrefix(providerId)
+    : "cocalc-host";
   const provider = providerId ? getServerProvider(providerId) : undefined;
   const normalizeName = provider?.normalizeName ?? gcpSafeName;
   const providerName = providerId ? normalizeName(prefix, baseName) : baseName;

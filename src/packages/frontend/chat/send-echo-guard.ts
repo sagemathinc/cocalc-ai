@@ -25,4 +25,3 @@ export function shouldIgnoreSentEcho({
     incoming === suppress.raw || incomingTrimmed === suppress.trimmed;
   return sameAsSent && currentInput.trim() === "";
 }
-

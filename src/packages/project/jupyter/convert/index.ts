@@ -82,7 +82,6 @@ export async function nbconvert(opts: NbconvertParams): Promise<void> {
   }
 }
 
-
 function htmlPath(path: string): string {
   const { dir, name } = parse(path);
   return join(dir, name + ".html");

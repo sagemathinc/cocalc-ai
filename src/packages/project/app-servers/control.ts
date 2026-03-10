@@ -141,16 +141,11 @@ export interface AppPublicReadinessAudit {
   agent_prompt: string;
 }
 
-export async function appMetrics(
-  id: string,
-  opts?: { minutes?: number },
-) {
+export async function appMetrics(id: string, opts?: { minutes?: number }) {
   return getAppMetricsState(id, opts);
 }
 
-export async function listMetrics(
-  opts?: { minutes?: number },
-) {
+export async function listMetrics(opts?: { minutes?: number }) {
   return listAppMetricsState(opts);
 }
 
@@ -181,7 +176,11 @@ function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
 }
 
-function appendLimited(prev: Buffer, chunk: Buffer, maxBytes = MAX_APP_LOG_BYTES): Buffer {
+function appendLimited(
+  prev: Buffer,
+  chunk: Buffer,
+  maxBytes = MAX_APP_LOG_BYTES,
+): Buffer {
   if (prev.length + chunk.length <= maxBytes) {
     return Buffer.concat([prev, chunk], prev.length + chunk.length);
   }
@@ -232,7 +231,10 @@ function decodeIpv6Hex(hex: string): string {
   return groups.join(":").replace(/(^|:)0{1,3}/g, "$1");
 }
 
-async function parseProcTcp(path: string, family: "tcp" | "tcp6"): Promise<Array<{ host: string; port: number }>> {
+async function parseProcTcp(
+  path: string,
+  family: "tcp" | "tcp6",
+): Promise<Array<{ host: string; port: number }>> {
   let raw = "";
   try {
     raw = await readFile(path, "utf8");
@@ -262,8 +264,12 @@ async function parseProcTcp(path: string, family: "tcp" | "tcp6"): Promise<Array
 }
 
 async function detectListeningPorts(): Promise<DetectedAppPort[]> {
-  const fromSs = await new Promise<Array<{ host: string; port: number }> | undefined>((resolve) => {
-    const child = spawn("ss", ["-ltnH"], { stdio: ["ignore", "pipe", "ignore"] });
+  const fromSs = await new Promise<
+    Array<{ host: string; port: number }> | undefined
+  >((resolve) => {
+    const child = spawn("ss", ["-ltnH"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     const chunks: Buffer[] = [];
     child.stdout?.on("data", (c: Buffer) => chunks.push(c));
     child.once("error", () => resolve(undefined));
@@ -273,12 +279,10 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
     });
   });
   const source: "ss" | "procfs" = fromSs ? "ss" : "procfs";
-  const sockets =
-    fromSs ??
-    [
-      ...(await parseProcTcp("/proc/net/tcp", "tcp")),
-      ...(await parseProcTcp("/proc/net/tcp6", "tcp6")),
-    ];
+  const sockets = fromSs ?? [
+    ...(await parseProcTcp("/proc/net/tcp", "tcp")),
+    ...(await parseProcTcp("/proc/net/tcp6", "tcp6")),
+  ];
   const byPort = new Map<number, Set<string>>();
   for (const { host, port } of sockets) {
     if (!byPort.has(port)) byPort.set(port, new Set());
@@ -287,7 +291,8 @@ async function detectListeningPorts(): Promise<DetectedAppPort[]> {
   const managedByPort = new Map<number, string[]>();
   const statuses = await listAppStatuses();
   for (const row of statuses) {
-    if (row.kind !== "service" || row.state !== "running" || !row.port) continue;
+    if (row.kind !== "service" || row.state !== "running" || !row.port)
+      continue;
     if (!managedByPort.has(row.port)) managedByPort.set(row.port, []);
     managedByPort.get(row.port)!.push(row.id);
   }
@@ -410,7 +415,9 @@ async function runAvailabilityCheck({
       clearTimeout(timer);
       if (settled) return;
       settled = true;
-      const text = Buffer.concat([...stdout, ...stderr]).toString("utf8").trim();
+      const text = Buffer.concat([...stdout, ...stderr])
+        .toString("utf8")
+        .trim();
       resolve({
         available: code === 0,
         status: code === 0 ? "available" : "missing",
@@ -447,7 +454,9 @@ function assertServiceSpec(spec: AppSpec): AppServiceSpec {
 
 function assertStaticSpec(spec: AppSpec): AppStaticSpec {
   if (spec.kind !== "static") {
-    throw new Error(`app '${spec.id}' has kind='${spec.kind}', expected 'static'`);
+    throw new Error(
+      `app '${spec.id}' has kind='${spec.kind}', expected 'static'`,
+    );
   }
   return spec;
 }
@@ -634,12 +643,13 @@ async function runStaticRefresh(
         }, 1000);
       }, timeoutMs);
     }
-    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve) => {
-        child.once("close", (code, signal) => resolve({ code, signal }));
-        child.once("error", () => resolve({ code: 1, signal: null }));
-      },
-    );
+    const result = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+      child.once("error", () => resolve({ code: 1, signal: null }));
+    });
     if (timer) clearTimeout(timer);
     state.last_finished_ms = Date.now();
     if (timedOut) {
@@ -732,8 +742,7 @@ export async function startApp(
   }
 
   const exposure = await getAppExposureState(spec.id);
-  const publicMode =
-    opts?.publicMode ?? (exposure?.mode === "public");
+  const publicMode = opts?.publicMode ?? exposure?.mode === "public";
   const preferredPort = opts?.preferredPort ?? spec.network.port;
   const port = await getPort({ port: preferredPort });
   const host = spec.network.listen_host || "127.0.0.1";
@@ -888,7 +897,12 @@ export async function waitForAppState(
 
 export async function ensureRunning(
   id: string,
-  opts?: { timeout?: number; interval?: number; preferredPort?: number; publicMode?: boolean },
+  opts?: {
+    timeout?: number;
+    interval?: number;
+    preferredPort?: number;
+    publicMode?: boolean;
+  },
 ): Promise<AppStatus> {
   const spec = await getAppSpec(id);
   if (spec.kind === "static") {
@@ -955,7 +969,9 @@ export async function upsertAppSpec(spec: unknown): Promise<{
   return saved;
 }
 
-export async function deleteApp(id: string): Promise<{ id: string; deleted: boolean; path: string }> {
+export async function deleteApp(
+  id: string,
+): Promise<{ id: string; deleted: boolean; path: string }> {
   try {
     await stopApp(id);
   } catch {
@@ -985,7 +1001,9 @@ async function specsForRouting(): Promise<AppSpec[]> {
     return routeCache.specs;
   }
   const rows = await listAppSpecs();
-  const specs = rows.map((row) => row.spec).filter((spec): spec is AppSpec => !!spec);
+  const specs = rows
+    .map((row) => row.spec)
+    .filter((spec): spec is AppSpec => !!spec);
   routeCache = { at: now, specs };
   return specs;
 }
@@ -1010,7 +1028,9 @@ export async function resolveAppProxyTarget({
       continue;
     }
     const suffix =
-      pathname.length > fullPrefix.length ? pathname.slice(fullPrefix.length) : "";
+      pathname.length > fullPrefix.length
+        ? pathname.slice(fullPrefix.length)
+        : "";
     const stripPrefixPath = `${suffix || "/"}${parsed.search ?? ""}`;
     const finalPath = spec.proxy.strip_prefix
       ? stripPrefixPath
@@ -1103,7 +1123,8 @@ export async function exposeApp({
 }): Promise<AppStatus> {
   const spec = await getAppSpec(id);
   const warnings: string[] = [];
-  const publicRestart = spec.kind === "service" ? assertServiceSpec(spec) : undefined;
+  const publicRestart =
+    spec.kind === "service" ? assertServiceSpec(spec) : undefined;
   let preferredServicePort: number | undefined;
   let restartIntoPublicMode = false;
   let reserved:
@@ -1177,12 +1198,13 @@ export async function exposeApp({
     }
     throw err;
   }
-  const status = publicRestart && restartIntoPublicMode
-    ? await restartServiceForExposureMode(publicRestart, {
-        preferredPort: preferredServicePort,
-        publicMode: true,
-      })
-    : await statusApp(id);
+  const status =
+    publicRestart && restartIntoPublicMode
+      ? await restartServiceForExposureMode(publicRestart, {
+          preferredPort: preferredServicePort,
+          publicMode: true,
+        })
+      : await statusApp(id);
   if (warnings.length > 0) {
     status.warnings = [...new Set(warnings)];
   }
@@ -1191,12 +1213,16 @@ export async function exposeApp({
 
 export async function unexposeApp(id: string): Promise<AppStatus> {
   const spec = await getAppSpec(id);
-  const publicRestart = spec.kind === "service" ? assertServiceSpec(spec) : undefined;
+  const publicRestart =
+    spec.kind === "service" ? assertServiceSpec(spec) : undefined;
   const current = publicRestart ? await statusApp(id) : undefined;
   const preferredServicePort = current?.port ?? publicRestart?.network.port;
   try {
     const hub = hubApi(conat());
-    await hub.system.releaseProjectAppPublicSubdomain({ project_id, app_id: id });
+    await hub.system.releaseProjectAppPublicSubdomain({
+      project_id,
+      app_id: id,
+    });
   } catch (err) {
     logger.warn("failed to release app public subdomain", {
       app_id: id,
@@ -1220,10 +1246,8 @@ export async function appLogs(id: string): Promise<{
   stderr: string;
 }> {
   const status = await statusApp(id);
-  const stdout =
-    status.stdout?.toString("utf8").replace(/\u0000+$/g, "") ?? "";
-  const stderr =
-    status.stderr?.toString("utf8").replace(/\u0000+$/g, "") ?? "";
+  const stdout = status.stdout?.toString("utf8").replace(/\u0000+$/g, "") ?? "";
+  const stderr = status.stderr?.toString("utf8").replace(/\u0000+$/g, "") ?? "";
   return {
     id: status.id,
     state: status.state,
@@ -1243,11 +1267,15 @@ export async function detectApps(opts?: {
   if (opts?.http_only) {
     detected = await detectHttpPorts(detected);
   }
-  const filtered = includeManaged ? detected : detected.filter((d) => !d.managed);
+  const filtered = includeManaged
+    ? detected
+    : detected.filter((d) => !d.managed);
   return filtered.slice(0, limit);
 }
 
-export async function detectInstalledTemplates(): Promise<InstalledAppTemplate[]> {
+export async function detectInstalledTemplates(): Promise<
+  InstalledAppTemplate[]
+> {
   const checks: Array<InstalledAppTemplate & { cmd?: string }> = [
     {
       key: "jupyterlab",
@@ -1370,8 +1398,10 @@ export async function auditAppPublicReadiness(
         id: "service.running",
         level: "warning",
         status: "warn",
-        message: "Service process is running but readiness is not confirmed yet.",
-        suggestion: "Inspect logs and health endpoint, then retry readiness check.",
+        message:
+          "Service process is running but readiness is not confirmed yet.",
+        suggestion:
+          "Inspect logs and health endpoint, then retry readiness check.",
       });
     } else {
       add({
@@ -1397,7 +1427,8 @@ export async function auditAppPublicReadiness(
         level: "warning",
         status: "warn",
         message: "Static app has no explicit cache_control.",
-        suggestion: "Set cache_control for better CDN behavior and egress control.",
+        suggestion:
+          "Set cache_control for better CDN behavior and egress control.",
       });
     }
     const refresh = spec.static.refresh;
@@ -1456,7 +1487,8 @@ export async function auditAppPublicReadiness(
         level: "warning",
         status: "warn",
         message: "Front auth is disabled (publicly unauthenticated).",
-        suggestion: "Use front auth token unless your app intentionally supports anonymous access.",
+        suggestion:
+          "Use front auth token unless your app intentionally supports anonymous access.",
       });
     }
   }
@@ -1471,7 +1503,11 @@ export async function auditAppPublicReadiness(
       });
       for (const warning of policy.warnings ?? []) {
         add({
-          id: `policy.${warning.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`,
+          id: `policy.${warning
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 40)}`,
           level: "warning",
           status: "warn",
           message: warning,

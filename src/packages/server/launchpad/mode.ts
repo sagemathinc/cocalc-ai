@@ -72,9 +72,7 @@ export function getLaunchpadLocalConfig(
     process.env.PORT ??
     "";
   const httpPortParsed = Number.parseInt(httpPortRaw, 10);
-  const httpPort = Number.isFinite(httpPortParsed)
-    ? httpPortParsed
-    : basePort;
+  const httpPort = Number.isFinite(httpPortParsed) ? httpPortParsed : basePort;
   const sshdPortRaw = process.env.COCALC_SSHD_PORT ?? "";
   const sshdPortParsed = Number.parseInt(sshdPortRaw, 10);
   const sshdPort = Number.isFinite(sshdPortParsed)

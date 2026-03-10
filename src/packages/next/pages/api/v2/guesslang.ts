@@ -4,7 +4,7 @@ import getParams from "lib/api/get-params";
 import { apiRoute, apiRouteOperation } from "lib/api";
 import {
   GuesslangInputSchema,
-  GuesslangOutputSchema
+  GuesslangOutputSchema,
 } from "lib/api/schema/guesslang";
 
 const modelOperations = new ModelOperations();
@@ -25,7 +25,7 @@ export default apiRoute({
   guesslang: apiRouteOperation({
     method: "POST",
     openApiOperation: {
-      tags: ["Utils"]
+      tags: ["Utils"],
     },
   })
     .input({

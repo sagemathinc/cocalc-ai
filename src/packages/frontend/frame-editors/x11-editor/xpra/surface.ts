@@ -101,7 +101,7 @@ export class Surface {
     this.context = context;
     this.renderer = new Renderer(
       { wid: this.wid, canvas: this.canvas, context: this.context },
-      send
+      send,
     );
     // console.log("new Surface", this);
   }
@@ -247,7 +247,7 @@ export class Surface {
         this.y,
         this.w,
         this.h,
-        this.properties
+        this.properties,
       );
     }
   }

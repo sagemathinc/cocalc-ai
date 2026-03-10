@@ -186,9 +186,9 @@ test("autoformat list marker at start of blockquote paragraph preserves trailing
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
-  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
-    "foo",
-  );
+  expect(
+    slate_to_markdown(editor.children, { preserveBlankLines: false }),
+  ).toContain("foo");
 
   focusSpy.mockRestore();
 });
@@ -224,9 +224,9 @@ test("autoformat list marker in blockquote preserves text with leading empty tex
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
-  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
-    "foo",
-  );
+  expect(
+    slate_to_markdown(editor.children, { preserveBlankLines: false }),
+  ).toContain("foo");
 
   focusSpy.mockRestore();
 });
@@ -261,9 +261,9 @@ test("autoformat list marker in split quote text nodes keeps following text", ()
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
-  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
-    "foo",
-  );
+  expect(
+    slate_to_markdown(editor.children, { preserveBlankLines: false }),
+  ).toContain("foo");
 
   focusSpy.mockRestore();
 });
@@ -293,16 +293,18 @@ test("autoformat list marker in split top-level text nodes keeps following text"
   if (listEntry) {
     expect(Editor.string(editor, listEntry[1])).toBe("foo");
   }
-  expect(slate_to_markdown(editor.children, { preserveBlankLines: false })).toContain(
-    "foo",
-  );
+  expect(
+    slate_to_markdown(editor.children, { preserveBlankLines: false }),
+  ).toContain("foo");
 
   focusSpy.mockRestore();
 });
 
 test("autoformat '-x' with normalize keeps x", () => {
   const editor = withAutoFormat(withNormalize(withReact(createEditor())));
-  editor.children = [{ type: "paragraph", children: [{ text: "-x" }] }] as Descendant[];
+  editor.children = [
+    { type: "paragraph", children: [{ text: "-x" }] },
+  ] as Descendant[];
   editor.selection = null;
 
   const focusSpy = jest

@@ -9,7 +9,7 @@ export default async function getAccountId({
   const pool = getPool("medium");
   const { rows } = await pool.query(
     "SELECT account_id FROM accounts WHERE email_address=$1",
-    [email_address]
+    [email_address],
   );
   if (rows.length == 0) {
     throw Error(`no account with email address '${email_address}'`);

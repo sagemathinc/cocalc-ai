@@ -50,7 +50,7 @@ export async function getOneSSO(id: string): Promise<SSO | undefined> {
     `${SQL_SELECT}
      FROM passport_settings
      WHERE strategy=$1`,
-    [id]
+    [id],
   );
   if (rows.length === 0) return;
   return parseRow(rows[0]);

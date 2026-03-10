@@ -52,11 +52,10 @@ jest.mock("../component", () => ({
   MarkdownInput: (props: any) => {
     latestMarkdownProps = props;
     if (props.selectionRef != null) {
-      props.selectionRef.current =
-        markdownSelectionApi ?? {
-          setSelection: jest.fn(),
-          getSelection: jest.fn(() => null),
-        };
+      props.selectionRef.current = markdownSelectionApi ?? {
+        setSelection: jest.fn(),
+        getSelection: jest.fn(() => null),
+      };
     }
     return <div data-testid="markdown-input" />;
   },
@@ -99,7 +98,13 @@ describe("MultiMarkdownInput wrapper contract", () => {
   it("reports initial mode and updates onModeChange when the mode switch is used", () => {
     const onModeChange = jest.fn();
 
-    render(<MultiMarkdownInput value="" onChange={() => {}} onModeChange={onModeChange} />);
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        onModeChange={onModeChange}
+      />,
+    );
 
     expect(onModeChange).toHaveBeenNthCalledWith(1, "editor");
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
@@ -117,7 +122,13 @@ describe("MultiMarkdownInput wrapper contract", () => {
   it("does not re-emit onModeChange when the active mode is selected again", () => {
     const onModeChange = jest.fn();
 
-    render(<MultiMarkdownInput value="" onChange={() => {}} onModeChange={onModeChange} />);
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        onModeChange={onModeChange}
+      />,
+    );
 
     expect(onModeChange).toHaveBeenCalledTimes(1);
 
@@ -192,7 +203,9 @@ describe("MultiMarkdownInput wrapper contract", () => {
       getMarkdownPositionForSelection: jest.fn(() => ({ line: 5, ch: 1 })),
     };
 
-    render(<MultiMarkdownInput value="" onChange={onChange} defaultMode="editor" />);
+    render(
+      <MultiMarkdownInput value="" onChange={onChange} defaultMode="editor" />,
+    );
 
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
 
@@ -234,7 +247,13 @@ describe("MultiMarkdownInput wrapper contract", () => {
       isSelectionReady: jest.fn(() => editorReady),
     };
 
-    render(<MultiMarkdownInput value="" onChange={() => {}} defaultMode="markdown" />);
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="markdown"
+      />,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "editor" }));
     expect(setSelectionFromMarkdownPosition).not.toHaveBeenCalled();
@@ -267,7 +286,13 @@ describe("MultiMarkdownInput wrapper contract", () => {
       isSelectionReady: jest.fn(() => editorReady),
     };
 
-    render(<MultiMarkdownInput value="" onChange={() => {}} defaultMode="markdown" />);
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="markdown"
+      />,
+    );
 
     const editorButton = screen.getByRole("button", { name: "editor" });
     fireEvent.mouseDown(editorButton);
@@ -300,7 +325,9 @@ describe("MultiMarkdownInput wrapper contract", () => {
       getMarkdownPositionForSelection: jest.fn(() => ({ line: 4, ch: 2 })),
     };
 
-    render(<MultiMarkdownInput value="" onChange={() => {}} defaultMode="editor" />);
+    render(
+      <MultiMarkdownInput value="" onChange={() => {}} defaultMode="editor" />,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "markdown" }));
     expect(setSelection).not.toHaveBeenCalled();

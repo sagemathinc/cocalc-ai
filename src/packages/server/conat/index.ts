@@ -57,9 +57,7 @@ export async function initConatApi() {
   startHostLroWorker();
   initLLM();
   if (!isLaunchpadProduct()) {
-    const { init: initProjectRunner } = lazyRequire(
-      "./project/run",
-    ) as {
+    const { init: initProjectRunner } = lazyRequire("./project/run") as {
       init: () => Promise<void>;
     };
     for (let i = 0; i < projectRunnerCount; i++) {
@@ -90,9 +88,9 @@ const moduleRequire: NodeRequire | undefined =
     ? require
     : typeof (Module as { createRequire?: (path: string) => NodeRequire })
           .createRequire === "function"
-      ? (Module as { createRequire: (path: string) => NodeRequire }).createRequire(
-          __filename,
-        )
+      ? (
+          Module as { createRequire: (path: string) => NodeRequire }
+        ).createRequire(__filename)
       : undefined;
 
 function lazyRequire<T = any>(moduleName: string): T {

@@ -52,7 +52,5 @@ export function render_project_quota(name: string, value: number): Rendered {
 }
 
 export function render_amount(amount: number, currency: string) {
-  return (
-    <div style={{ float: "right" }}>{stripeAmount(amount, currency)}</div>
-  );
+  return <div style={{ float: "right" }}>{stripeAmount(amount, currency)}</div>;
 }

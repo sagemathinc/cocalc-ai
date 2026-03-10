@@ -13,7 +13,7 @@ import CodeMirror from "@cocalc/frontend/codemirror/static";
 export function run_mode(
   code: string,
   mode: string,
-  language: string | undefined
+  language: string | undefined,
 ) {
   if (!code) {
     // code assumed trimmed
@@ -54,7 +54,7 @@ This function is inspired by
 export function process_magics(
   code,
   syntax: Syntax,
-  mode: "escape" | "unescape"
+  mode: "escape" | "unescape",
 ): string {
   if (syntax !== "python3") return code;
 
@@ -66,20 +66,20 @@ export function process_magics(
       // on arbitrary input (however, other things are more important right now).
       if (code.match(/^#\%{3}#/gm)?.length > 0) {
         throw new Error(
-          "Cells with lines starting with '#%%%#' cannot be formatted."
+          "Cells with lines starting with '#%%%#' cannot be formatted.",
         );
       }
       return code
         .split("\n")
         .map((line) =>
-          line.replace(/^\%(.*)$/, (m, g1) => (g1 != null ? `#%%%#%${g1}` : m))
+          line.replace(/^\%(.*)$/, (m, g1) => (g1 != null ? `#%%%#%${g1}` : m)),
         )
         .join("\n");
     case "unescape":
       return code
         .split("\n")
         .map((line) =>
-          line.replace(/^#\%{3}#(.*)$/, (m, g1) => (g1 != null ? `${g1}` : m))
+          line.replace(/^#\%{3}#(.*)$/, (m, g1) => (g1 != null ? `${g1}` : m)),
         )
         .join("\n");
   }
