@@ -25,6 +25,7 @@ import type {
   AppSpec,
   AppMetricsSummary,
   AppPublicReadinessAudit,
+  AppTemplateCatalogEntry,
   DetectedAppPort,
   InstalledAppTemplate,
   ManagedAppStatus,
@@ -39,11 +40,15 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  appServerPresetsFromCatalogEntries,
+  builtinAppServerPresets,
+  type AppServerPreset,
+  type AppServiceOpenMode,
+} from "./app-template-catalog";
 import { withProjectHostBase } from "./host-url";
 
 type AppKind = "service" | "static";
-type PresetKind = "service" | "static";
-type AppServiceOpenMode = "proxy" | "port";
 type AppStatusFilter = "all" | "running" | "stopped" | "error" | "public";
 type AppRowAction = "expose" | "unexpose" | "audit";
 
@@ -51,29 +56,6 @@ interface PublicAppPolicy {
   enabled: boolean;
   dns_domain?: string;
   subdomain_suffix?: string;
-}
-
-interface AppServerPreset {
-  key: string;
-  label: string;
-  kind: PresetKind;
-  id: string;
-  title: string;
-  command?: string;
-  serviceOpenMode?: AppServiceOpenMode;
-  preferredPort?: string;
-  healthPath?: string;
-  staticRoot?: string;
-  staticIndex?: string;
-  staticCacheControl?: string;
-  staticRefreshCommand?: string;
-  staticRefreshStaleAfter?: string;
-  staticRefreshTimeout?: string;
-  staticRefreshOnHit?: boolean;
-  note?: string;
-  installCommand?: string;
-  installHint?: string;
-  installAgentPrompt?: string;
 }
 
 interface StartupFailureDetails {
@@ -195,12 +177,6 @@ function downloadJsonFile(filename: string, value: unknown): void {
 function defaultBasePath(appId: string): string {
   const id = `${appId ?? ""}`.trim();
   return id ? `/apps/${id}` : "/apps/my-app";
-}
-
-function joinPath(head: string, tail: string): string {
-  const h = `${head ?? ""}`.replace(/\/+$/, "");
-  const t = `${tail ?? ""}`.replace(/^\/+/, "");
-  return `${h}/${t}`;
 }
 
 function tailLines(text: string, maxLines = 30, maxChars = 4000): string {
@@ -461,115 +437,6 @@ function isPositiveIntegerText(value: string): boolean {
   return Number.isInteger(n) && n > 0;
 }
 
-function appServerPresets(homeDirectory: string): AppServerPreset[] {
-  return [
-    {
-      key: "jupyterlab",
-      label: "JupyterLab",
-      kind: "service",
-      id: "jupyterlab",
-      title: "JupyterLab",
-      preferredPort: "6002",
-      serviceOpenMode: "port",
-      healthPath: "/lab",
-      installCommand: "apt-get update && apt-get install -y jupyterlab jupyter",
-      installHint:
-        "On CoCalc's usual Ubuntu/root images, installing JupyterLab with apt is more reliable than pip and avoids system-package policy errors.",
-      installAgentPrompt:
-        "Install JupyterLab in the current project so the managed JupyterLab app can start. Use the safest practical approach for this Linux environment, verify the resulting 'jupyter lab --version', and explain any caveats.",
-      command:
-        "base_url=\"${APP_BASE_URL/\\/proxy\\//\\/port\\/}\"; jupyter lab --allow-root --port-retries=0 --no-browser --NotebookApp.token= --NotebookApp.password= --ServerApp.disable_check_xsrf=True --NotebookApp.allow_remote_access=True --NotebookApp.mathjax_url=/cdn/mathjax/MathJax.js --NotebookApp.base_url=\"${base_url}\" --ServerApp.base_url=\"${base_url}\" --ip=${HOST:-127.0.0.1} --port=${PORT}",
-    },
-    {
-      key: "code-server",
-      label: "code-server",
-      kind: "service",
-      id: "code-server",
-      title: "code-server",
-      preferredPort: "6004",
-      serviceOpenMode: "proxy",
-      installCommand: "curl -fsSL https://code-server.dev/install.sh | sh",
-      installHint:
-        "code-server is not installed in this project image yet. The upstream installer works well on most Linux systems.",
-      installAgentPrompt:
-        "Install code-server in the current project so the managed code-server app can start. Use the safest practical Linux installation method, verify 'code-server --version', and summarize anything the user should know.",
-      command:
-        "code-server --bind-addr=${HOST:-127.0.0.1}:${PORT} --auth=none",
-    },
-    {
-      key: "pluto",
-      label: "Pluto",
-      kind: "service",
-      id: "pluto",
-      title: "Pluto",
-      preferredPort: "6005",
-      serviceOpenMode: "proxy",
-      installCommand: "julia -e 'using Pkg; Pkg.add(\"Pluto\")'",
-      installHint:
-        "Pluto needs Julia plus the Pluto package in this project environment.",
-      installAgentPrompt:
-        "Install Pluto for the current project so the managed Pluto app can start. Use Julia package tooling, verify the package is available, and mention any environment assumptions.",
-      command:
-        "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'",
-    },
-    {
-      key: "rstudio",
-      label: "RStudio / rserver",
-      kind: "service",
-      id: "rserver",
-      title: "RStudio Server",
-      preferredPort: "6006",
-      serviceOpenMode: "proxy",
-      installHint:
-        "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
-      installAgentPrompt:
-        "Set up RStudio Server (rserver) in the current Linux project or host environment so the managed app can start. Choose an approach appropriate for this system, verify 'rserver --version' if possible, and explain any limitations.",
-      command:
-        "rserver --server-daemonize=0 --auth-none=1 --auth-encrypt-password=0 --www-port=${PORT} --www-root-path=${APP_BASE_URL} --auth-minimum-user-id=0",
-    },
-    {
-      key: "python-hello",
-      label: "Python Hello World",
-      kind: "service",
-      id: "python-hello",
-      title: "Python Hello World",
-      preferredPort: "8080",
-      serviceOpenMode: "proxy",
-      healthPath: "/",
-      command:
-        "python3 -c \"import os, pathlib, http.server; host=os.getenv('HOST','127.0.0.1'); port=int(os.getenv('PORT','8080')); root=pathlib.Path('/tmp/cocalc-python-hello'); root.mkdir(parents=True, exist_ok=True); (root/'index.html').write_text('<h1>Hello from Python</h1>\\\\n', encoding='utf-8'); os.chdir(root); server=http.server.ThreadingHTTPServer((host,port), http.server.SimpleHTTPRequestHandler); print(f'listening on http://{host}:{port}', flush=True); server.serve_forever()\"",
-    },
-    {
-      key: "node-hello",
-      label: "Node.js Hello World",
-      kind: "service",
-      id: "node-hello",
-      title: "Node.js Hello World",
-      preferredPort: "8080",
-      serviceOpenMode: "proxy",
-      command:
-        "node -e \"const http=require('http');const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||8080);http.createServer((req,res)=>{const body='hello from node\\\\n';res.writeHead(200,{'content-type':'text/plain; charset=utf-8','content-length':Buffer.byteLength(body)});res.end(body);}).listen(port,host,()=>console.log('listening on http://'+host+':'+port));\"",
-    },
-    {
-      key: "static-hello",
-      label: "Static Hello World",
-      kind: "static",
-      id: "static-hello",
-      title: "Static Hello World",
-      staticRoot: joinPath(homeDirectory, "static-hello"),
-      staticIndex: "index.html",
-      staticCacheControl: "public,max-age=3600",
-      staticRefreshCommand:
-        "mkdir -p \"$APP_STATIC_ROOT\" && [ -f \"$APP_STATIC_ROOT/index.html\" ] || printf '<h1>Hello from static app</h1>\\n' > \"$APP_STATIC_ROOT/index.html\"",
-      staticRefreshStaleAfter: "3600",
-      staticRefreshTimeout: "120",
-      staticRefreshOnHit: true,
-      note:
-        "Optional refresh job can bootstrap or periodically update generated static content on first/stale hits.",
-    },
-  ];
-}
-
 export function AppServerPanel({
   project_id,
 }: {
@@ -579,8 +446,8 @@ export function AppServerPanel({
     () => getProjectHomeDirectory(project_id),
     [project_id],
   );
-  const presets = useMemo(
-    () => appServerPresets(homeDirectory),
+  const fallbackPresets = useMemo(
+    () => builtinAppServerPresets(homeDirectory),
     [homeDirectory],
   );
   const api = useMemo(
@@ -636,6 +503,9 @@ export function AppServerPanel({
   >([]);
   const [detectingInstalledTemplates, setDetectingInstalledTemplates] =
     useState<boolean>(false);
+  const [templateEntries, setTemplateEntries] = useState<AppTemplateCatalogEntry[]>(
+    [],
+  );
   const [logsOpen, setLogsOpen] = useState<boolean>(false);
   const [logsLoading, setLogsLoading] = useState<boolean>(false);
   const [logsData, setLogsData] = useState<{
@@ -677,6 +547,13 @@ export function AppServerPanel({
   const [creatorOpen, setCreatorOpen] = useState<boolean>(false);
   const [creatorInitialized, setCreatorInitialized] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const presets = useMemo(
+    () =>
+      templateEntries.length > 0
+        ? appServerPresetsFromCatalogEntries(templateEntries, homeDirectory)
+        : fallbackPresets,
+    [fallbackPresets, homeDirectory, templateEntries],
+  );
 
   const activePreset = useMemo(
     () => presets.find((preset) => preset.key === presetKey),
@@ -830,10 +707,11 @@ export function AppServerPanel({
       setLoading(true);
       setError(undefined);
       setStartupFailures({});
-      const [next, specRecords, metrics] = await Promise.all([
+      const [next, specRecords, metrics, templates] = await Promise.all([
         api.apps.listAppStatuses(),
         api.apps.listAppSpecs(),
         api.apps.listAppMetrics({ minutes: 60 }),
+        api.apps.listAppTemplates(),
       ]);
       setRows(next.sort((a, b) => a.id.localeCompare(b.id)));
       const map: Record<string, AppSpec | undefined> = {};
@@ -846,6 +724,7 @@ export function AppServerPanel({
       setMetricsById(
         Object.fromEntries(metrics.map((item) => [item.app_id, item] as const)),
       );
+      setTemplateEntries(templates);
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -1768,6 +1647,7 @@ export function AppServerPanel({
               {quickPresets.map((preset) => (
                 <Button
                   key={preset.key}
+                  title={preset.description ?? preset.label}
                   onClick={() => {
                     applyPreset(preset.key);
                     setCreatorOpen(true);
@@ -1789,9 +1669,33 @@ export function AppServerPanel({
               onChange={(value) => applyPreset(value)}
               options={presets.map((preset) => ({
                 value: preset.key,
-                label: preset.label,
+                label: `${preset.label}${preset.category ? ` (${preset.category})` : ""}`,
               }))}
             />
+            {activePreset ? (
+              <Card size="small" style={{ background: "#fafafa" }}>
+                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Typography.Text strong>{activePreset.label}</Typography.Text>
+                    {activePreset.category ? <Tag>{activePreset.category}</Tag> : null}
+                  </Space>
+                  {activePreset.description ? (
+                    <Typography.Text type="secondary">
+                      {activePreset.description}
+                    </Typography.Text>
+                  ) : null}
+                  {activePreset.homepage ? (
+                    <a
+                      href={activePreset.homepage}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Learn more
+                    </a>
+                  ) : null}
+                </Space>
+              </Card>
+            ) : null}
             {activePreset?.note ? (
               <Alert type="info" showIcon message={activePreset.note} />
             ) : null}
