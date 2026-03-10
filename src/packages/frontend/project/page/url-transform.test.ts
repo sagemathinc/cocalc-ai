@@ -22,5 +22,15 @@ describe("project page url transform", () => {
       fileURL({ project_id, path: "tmp/x/pics/p.png" }),
     );
   });
-});
 
+  it("rewrites absolute project image paths to file urls", () => {
+    const project_id = "00000000-1000-4000-8000-000000000000";
+    const transform = getUrlTransform({
+      project_id,
+      path: "tmp/x/a.chat",
+    });
+    expect(transform("/tmp/z/files-explorer-bottom.png", "img")).toBe(
+      fileURL({ project_id, path: "tmp/z/files-explorer-bottom.png" }),
+    );
+  });
+});
