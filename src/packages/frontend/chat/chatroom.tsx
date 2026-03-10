@@ -58,6 +58,7 @@ import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
+import { resolveCombinedComposerTargetKey } from "./combined-composer-target";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -643,25 +644,13 @@ export function ChatPanel({
   }, [project_id, path, selectedThreadKey]);
 
   useEffect(() => {
-    if (!isCombinedFeedSelected) {
-      if (composerTargetKey != null) {
-        setComposerTargetKey(null);
-      }
-      return;
-    }
-    if (threads.length === 0) {
-      if (composerTargetKey != null) {
-        setComposerTargetKey(null);
-      }
-      return;
-    }
-    if (composerTargetKey == null) {
-      setComposerTargetKey(threads[0].key);
-      return;
-    }
-    const exists = threads.some((thread) => thread.key === composerTargetKey);
-    if (!exists) {
-      setComposerTargetKey(threads[0].key);
+    const nextTargetKey = resolveCombinedComposerTargetKey(
+      composerTargetKey,
+      threads,
+      isCombinedFeedSelected,
+    );
+    if (nextTargetKey !== composerTargetKey) {
+      setComposerTargetKey(nextTargetKey);
     }
   }, [isCombinedFeedSelected, threads, composerTargetKey]);
 
