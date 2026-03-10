@@ -13,10 +13,7 @@ import { MarkdownInputModeSwitch } from "./mode-switch";
 import { useMultimodeFocusInteraction } from "./use-multimode-focus-interaction";
 import { useMultimodeModeState } from "./use-multimode-mode-state";
 import { useMultimodeSelection } from "./use-multimode-selection";
-import type {
-  Mode,
-  MultiMarkdownInputProps,
-} from "./types";
+import type { Mode, MultiMarkdownInputProps } from "./types";
 
 // NOTE: on mobile there is very little suppport for "editor" = "slate", but
 // very good support for "markdown", hence the default below.
@@ -37,6 +34,7 @@ export default function MultiMarkdownInput({
   fixedMode,
   fontSize,
   autoGrowMaxHeight,
+  clampAutoGrowToHost,
   getValueRef,
   height = "auto",
   autoGrow,
@@ -121,16 +119,21 @@ export default function MultiMarkdownInput({
     showToolbarModeSwitch && height != null && height !== "auto"
       ? height
       : "100%";
-  const { activeModeRef, mode, setMode, getCachedSelection, saveCachedSelection } =
-    useMultimodeModeState({
-      cacheId,
-      projectId: project_id,
-      path,
-      defaultMode,
-      fixedMode,
-      fallbackMode: IS_MOBILE ? "markdown" : "editor",
-      onModeChange,
-    });
+  const {
+    activeModeRef,
+    mode,
+    setMode,
+    getCachedSelection,
+    saveCachedSelection,
+  } = useMultimodeModeState({
+    cacheId,
+    projectId: project_id,
+    path,
+    defaultMode,
+    fixedMode,
+    fallbackMode: IS_MOBILE ? "markdown" : "editor",
+    onModeChange,
+  });
   const {
     focused,
     beginModeSwitchInteraction,
@@ -180,7 +183,6 @@ export default function MultiMarkdownInput({
     selectionRef,
     rememberPendingSelection,
     captureModeSwitchSelection,
-    clearModeSwitchSelection,
     rememberSelectionForModeSwitch,
     getMarkdownPositionForSelection,
     notifyMarkdownSelectionReady,
@@ -255,7 +257,6 @@ export default function MultiMarkdownInput({
                 beginModeSwitchInteraction();
               }}
               onInteractionEnd={() => {
-                clearModeSwitchSelection();
                 endModeSwitchInteraction();
               }}
             />
@@ -283,7 +284,6 @@ export default function MultiMarkdownInput({
             beginModeSwitchInteraction();
           }}
           onInteractionEnd={() => {
-            clearModeSwitchSelection();
             endModeSwitchInteraction();
           }}
         />
@@ -301,124 +301,125 @@ export default function MultiMarkdownInput({
       >
         {mode === "markdown" ? (
           <MarkdownTextAdapter
-          editorDivRef={editorDivRef}
-          selectionRef={selectionRef}
-          value={value}
-          onChange={(value) => {
-            if (!isActiveCallback("markdown")) return;
-            onChangeRef.current?.(value);
-          }}
-          saveDebounceMs={saveDebounceMs}
-          getValueRef={internalGetValueRef}
-          project_id={project_id}
-          path={path}
-          enableUpload={enableUpload}
-          onUploadStart={onUploadStart}
-          onUploadEnd={onUploadEnd}
-          enableMentions={enableMentions}
-          onShiftEnter={(value) => {
-            if (!isActiveCallback("markdown")) return;
-            onShiftEnterRef.current?.(value);
-          }}
-          onAltEnter={(value, pos) => {
-            onChangeRef.current?.(value);
-            if (pos) {
-              rememberPendingSelection("editor", pos);
-            }
-            setMode("editor");
-          }}
-          placeholder={placeholder ?? "Type markdown..."}
-          fontSize={fontSize}
-          cmOptions={cmOptions}
-          height={editorHeight}
-          autoGrow={autoGrow ?? height === "auto"}
-          autoGrowMaxHeight={autoGrowMaxHeight}
-          chromeLayout={showToolbarModeSwitch ? "external" : "internal"}
-          style={style}
-          autoFocus={focused}
-          submitMentionsRef={submitMentionsRef}
-          extraHelp={extraHelp}
-          hideHelp={hideHelp}
-          onBlur={(value) => {
-            onChangeRef.current?.(value);
-            handleMarkdownBlur();
-          }}
-          onFocus={onFocus}
-          onSelectionReady={notifyMarkdownSelectionReady}
-          onSave={onSave}
-          onUndo={onUndo}
-          onRedo={onRedo}
-          undoMode={undoMode}
-          redoMode={redoMode}
-          onCursors={onCursors}
-          cursors={cursorsMap}
-          onCursorTop={onCursorTop}
-          onCursorBottom={onCursorBottom}
-          isFocused={isFocused}
-          registerEditor={registerEditor}
-          unregisterEditor={unregisterEditor}
-          refresh={refresh}
-          compact={compact}
-          dirtyRef={dirtyRef}
+            editorDivRef={editorDivRef}
+            selectionRef={selectionRef}
+            value={value}
+            onChange={(value) => {
+              if (!isActiveCallback("markdown")) return;
+              onChangeRef.current?.(value);
+            }}
+            saveDebounceMs={saveDebounceMs}
+            getValueRef={internalGetValueRef}
+            project_id={project_id}
+            path={path}
+            enableUpload={enableUpload}
+            onUploadStart={onUploadStart}
+            onUploadEnd={onUploadEnd}
+            enableMentions={enableMentions}
+            onShiftEnter={(value) => {
+              if (!isActiveCallback("markdown")) return;
+              onShiftEnterRef.current?.(value);
+            }}
+            onAltEnter={(value, pos) => {
+              onChangeRef.current?.(value);
+              if (pos) {
+                rememberPendingSelection("editor", pos);
+              }
+              setMode("editor");
+            }}
+            placeholder={placeholder ?? "Type markdown..."}
+            fontSize={fontSize}
+            cmOptions={cmOptions}
+            height={editorHeight}
+            autoGrow={autoGrow ?? height === "auto"}
+            autoGrowMaxHeight={autoGrowMaxHeight}
+            clampAutoGrowToHost={clampAutoGrowToHost}
+            chromeLayout={showToolbarModeSwitch ? "external" : "internal"}
+            style={style}
+            autoFocus={focused}
+            submitMentionsRef={submitMentionsRef}
+            extraHelp={extraHelp}
+            hideHelp={hideHelp}
+            onBlur={(value) => {
+              onChangeRef.current?.(value);
+              handleMarkdownBlur();
+            }}
+            onFocus={onFocus}
+            onSelectionReady={notifyMarkdownSelectionReady}
+            onSave={onSave}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            undoMode={undoMode}
+            redoMode={redoMode}
+            onCursors={onCursors}
+            cursors={cursorsMap}
+            onCursorTop={onCursorTop}
+            onCursorBottom={onCursorBottom}
+            isFocused={isFocused}
+            registerEditor={registerEditor}
+            unregisterEditor={unregisterEditor}
+            refresh={refresh}
+            compact={compact}
+            dirtyRef={dirtyRef}
           />
         ) : undefined}
         {mode === "editor" ? (
           <SlateRichTextAdapter
-          selectionRef={selectionRef}
-          editorDivRef={editorDivRef}
-          noVfill={noVfill}
-          value={value}
-          minimal={minimal}
-          height={editorHeight}
-          saveDebounceMs={saveDebounceMs}
-          getValueRef={internalGetValueRef}
-          onChange={(value) => {
-            if (!isActiveCallback("editor")) return;
-            onChangeRef.current?.(value);
-          }}
-          onShiftEnter={(value) => {
-            if (!isActiveCallback("editor")) return;
-            onChangeRef.current?.(value);
-            onShiftEnterRef.current?.(value);
-          }}
-          onAltEnter={(value) => {
-            onChangeRef.current?.(value);
-            const pos = getMarkdownPositionForSelection();
-            if (pos) {
-              rememberPendingSelection("markdown", pos);
+            selectionRef={selectionRef}
+            editorDivRef={editorDivRef}
+            noVfill={noVfill}
+            value={value}
+            minimal={minimal}
+            height={editorHeight}
+            saveDebounceMs={saveDebounceMs}
+            getValueRef={internalGetValueRef}
+            onChange={(value) => {
+              if (!isActiveCallback("editor")) return;
+              onChangeRef.current?.(value);
+            }}
+            onShiftEnter={(value) => {
+              if (!isActiveCallback("editor")) return;
+              onChangeRef.current?.(value);
+              onShiftEnterRef.current?.(value);
+            }}
+            onAltEnter={(value) => {
+              onChangeRef.current?.(value);
+              const pos = getMarkdownPositionForSelection();
+              if (pos) {
+                rememberPendingSelection("markdown", pos);
+              }
+              setMode("markdown");
+            }}
+            onCursors={onCursors}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            undoMode={undoMode}
+            redoMode={redoMode}
+            onSave={onSave}
+            cursors={cursorsMap}
+            fontSize={fontSize}
+            autoFocus={focused}
+            onFocus={handleRichTextFocus}
+            onBlur={handleRichTextBlur}
+            onSelectionReady={notifyRichTextSelectionReady}
+            onCursorTop={onCursorTop}
+            onCursorBottom={onCursorBottom}
+            isFocused={isFocused}
+            registerEditor={registerEditor}
+            unregisterEditor={unregisterEditor}
+            disableBlockEditor={disableBlockEditor}
+            placeholder={placeholder}
+            submitMentionsRef={submitMentionsRef}
+            editBar2={editBar2}
+            dirtyRef={dirtyRef}
+            controlRef={slateControlRef}
+            preserveBlankLines={preserveBlankLines}
+            externalMultilinePasteAsCodeBlock={
+              slateExternalMultilinePasteAsCodeBlock
             }
-            setMode("markdown");
-          }}
-          onCursors={onCursors}
-          onUndo={onUndo}
-          onRedo={onRedo}
-          undoMode={undoMode}
-          redoMode={redoMode}
-          onSave={onSave}
-          cursors={cursorsMap}
-          fontSize={fontSize}
-          autoFocus={focused}
-          onFocus={handleRichTextFocus}
-          onBlur={handleRichTextBlur}
-          onSelectionReady={notifyRichTextSelectionReady}
-          onCursorTop={onCursorTop}
-          onCursorBottom={onCursorBottom}
-          isFocused={isFocused}
-          registerEditor={registerEditor}
-          unregisterEditor={unregisterEditor}
-          disableBlockEditor={disableBlockEditor}
-          placeholder={placeholder}
-          submitMentionsRef={submitMentionsRef}
-          editBar2={editBar2}
-          dirtyRef={dirtyRef}
-          controlRef={slateControlRef}
-          preserveBlankLines={preserveBlankLines}
-          externalMultilinePasteAsCodeBlock={
-            slateExternalMultilinePasteAsCodeBlock
-          }
-          style={style}
-          editBarStyle={editBarStyle}
-          autoGrow={isAutoGrow}
+            style={style}
+            editBarStyle={editBarStyle}
+            autoGrow={isAutoGrow}
           />
         ) : undefined}
       </div>

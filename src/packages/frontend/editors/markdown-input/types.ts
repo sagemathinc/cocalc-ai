@@ -54,6 +54,7 @@ export interface MultiMarkdownInputProps {
   height?: string;
   autoGrow?: boolean;
   autoGrowMaxHeight?: number;
+  clampAutoGrowToHost?: boolean;
   style?: CSSProperties;
   modeSwitchStyle?: CSSProperties;
   modeSwitchPlacement?: "float" | "toolbar";

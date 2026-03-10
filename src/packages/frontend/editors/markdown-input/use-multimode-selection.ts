@@ -1,4 +1,4 @@
-import { MutableRefObject, useEffect, useRef } from "react";
+import { MutableRefObject, useEffect, useLayoutEffect, useRef } from "react";
 import {
   restoreSelectionWithRetry,
   retrySelectionApply,
@@ -67,6 +67,19 @@ export function useMultimodeSelection({
     return true;
   }
 
+  function stabilizePendingSelection(to: Mode, pos: MarkdownPosition) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.setTimeout(() => {
+      if (to === "editor") {
+        richTextControlRef.current?.setSelectionFromMarkdownPosition?.(pos);
+      } else {
+        applyMarkdownSelection(pos);
+      }
+    }, 0);
+  }
+
   function getMarkdownPositionForActiveSelection(): MarkdownPosition | null {
     if (mode === "editor") {
       return richTextControlRef.current?.getMarkdownPositionForSelection?.() ?? null;
@@ -86,7 +99,7 @@ export function useMultimodeSelection({
     return { line: point.line, ch: point.ch };
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const pending = pendingModeSelectionRef.current;
     if (!pending || pending.to !== mode) {
       return;
@@ -103,6 +116,7 @@ export function useMultimodeSelection({
             ) ?? false;
           if (applied) {
             pendingModeSelectionRef.current = null;
+            stabilizePendingSelection("editor", pending.pos);
           }
           return applied;
         },
@@ -115,6 +129,7 @@ export function useMultimodeSelection({
         const applied = applyMarkdownSelection(pending.pos);
         if (applied) {
           pendingModeSelectionRef.current = null;
+          stabilizePendingSelection("markdown", pending.pos);
         }
         return applied;
       },
@@ -151,9 +166,6 @@ export function useMultimodeSelection({
     },
     captureModeSwitchSelection: () => {
       modeSwitchSelectionRef.current = getMarkdownPositionForActiveSelection();
-    },
-    clearModeSwitchSelection: () => {
-      modeSwitchSelectionRef.current = null;
     },
     rememberSelectionForModeSwitch: (to: Mode) => {
       const pos = modeSwitchSelectionRef.current ?? getMarkdownPositionForActiveSelection();

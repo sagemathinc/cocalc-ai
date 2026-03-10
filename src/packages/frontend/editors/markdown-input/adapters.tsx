@@ -34,6 +34,7 @@ interface MarkdownTextAdapterProps {
   height?: string;
   autoGrow?: boolean;
   autoGrowMaxHeight?: number;
+  clampAutoGrowToHost?: boolean;
   chromeLayout?: "internal" | "external";
   style?: React.CSSProperties;
   autoFocus: boolean;
@@ -81,6 +82,7 @@ export function MarkdownTextAdapter({
   height,
   autoGrow,
   autoGrowMaxHeight,
+  clampAutoGrowToHost,
   chromeLayout,
   style,
   autoFocus,
@@ -128,6 +130,7 @@ export function MarkdownTextAdapter({
       height={height}
       autoGrow={autoGrow ?? height === "auto"}
       autoGrowMaxHeight={autoGrowMaxHeight}
+      clampAutoGrowToHost={clampAutoGrowToHost}
       chromeLayout={chromeLayout}
       style={style}
       autoFocus={autoFocus}
@@ -241,8 +244,7 @@ export function SlateRichTextAdapter({
 }: SlateRichTextAdapterProps) {
   const hasFixedHeight = height != null && height !== "auto";
   const maxHeight = hasFixedHeight ? height : MAX_INPUT_HEIGHT;
-  const useLocalRichTextHistory =
-    undoMode === "local" || redoMode === "local";
+  const useLocalRichTextHistory = undoMode === "local" || redoMode === "local";
 
   const externalUndo = resolveUndoHandler({ mode: undoMode, handler: onUndo });
   const externalRedo = resolveUndoHandler({ mode: redoMode, handler: onRedo });
