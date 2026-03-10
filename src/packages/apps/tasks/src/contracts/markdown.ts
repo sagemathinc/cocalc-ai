@@ -3,9 +3,7 @@ export type MarkdownStyleValue = string | number | undefined;
 export type MarkdownStyle = Readonly<Record<string, MarkdownStyleValue>>;
 export type TasksSurfaceComponent<Props> = (props: Props) => unknown;
 
-export type MutableRefBox<T> =
-  | { current: T }
-  | { current?: T | undefined };
+export type MutableRefBox<T> = { current: T } | { current?: T | undefined };
 
 export interface TasksMarkdownEditorProps {
   saveDebounceMs?: number;
@@ -19,6 +17,8 @@ export interface TasksMarkdownEditorProps {
   enableUpload?: boolean;
   enableMentions?: boolean;
   height?: number | string;
+  autoGrow?: boolean;
+  autoGrowMaxHeight?: number;
   placeholder?: string;
   autoFocus?: boolean;
   onSave?: () => void;

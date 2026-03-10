@@ -114,6 +114,7 @@ interface Props {
   // preserve fixed-height consumers (e.g., task editor).
   autoGrow?: boolean;
   autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
+  clampAutoGrowToHost?: boolean;
   chromeLayout?: "internal" | "external";
 }
 
@@ -121,6 +122,7 @@ export function MarkdownInput(props: Props) {
   const {
     autoFocus,
     autoGrowMaxHeight,
+    clampAutoGrowToHost = false,
     cmOptions,
     compact,
     cursors,
@@ -362,7 +364,9 @@ export function MarkdownInput(props: Props) {
         refreshMaxHeight();
         const maxHeight = maxHeightRef.current;
         const desired = measureRenderedContentHeight(editor);
-        const availableHeight = measureAvailableEditorHeight();
+        const availableHeight = clampAutoGrowToHost
+          ? measureAvailableEditorHeight()
+          : null;
         let clamped = Math.min(
           maxHeight,
           Math.max(initialMinHeight, Math.round(desired)),
@@ -401,6 +405,7 @@ export function MarkdownInput(props: Props) {
       ensureCaretVisibleIfNeeded,
       initialMinHeight,
       isAutoGrow,
+      clampAutoGrowToHost,
       measureAvailableEditorHeight,
       measureRenderedContentHeight,
       resetEditorHostScroll,

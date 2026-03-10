@@ -150,6 +150,7 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.hideHelp).toBe(true);
     expect(lastMarkdownInputProps.modeSwitchPlacement).toBe("toolbar");
     expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
+    expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(true);
 
     act(() => {
       lastMarkdownInputProps.onChange("hello");
@@ -288,5 +289,4 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.value).toBe("");
     expect(focus).toHaveBeenCalled();
   });
-
 });

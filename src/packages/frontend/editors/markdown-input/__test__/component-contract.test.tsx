@@ -439,6 +439,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
         onChange={() => {}}
         saveDebounceMs={0}
         autoGrow
+        clampAutoGrowToHost
       />,
     );
 
@@ -464,6 +465,7 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
         onChange={() => {}}
         saveDebounceMs={0}
         autoGrow
+        clampAutoGrowToHost
         refresh={1}
       />,
     );
