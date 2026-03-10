@@ -1,6 +1,6 @@
 export type AppTemplateKind = "service" | "static";
 export type AppTemplateServiceOpenMode = "proxy" | "port";
-import builtinCatalogJson from "./builtin-template-catalog.json";
+import builtinCatalog from "./builtin-template-catalog";
 
 export interface AppTemplateDetectV1 {
   commands?: string[];
@@ -86,7 +86,7 @@ export function sortAppTemplateCatalogEntries<T extends { priority?: number; tit
 }
 
 export function builtinAppTemplateCatalog(): AppTemplateCatalogV1 {
-  return builtinCatalogJson as AppTemplateCatalogV1;
+  return builtinCatalog;
 }
 
 export function isAppTemplateCatalogV1(value: unknown): value is AppTemplateCatalogV1 {

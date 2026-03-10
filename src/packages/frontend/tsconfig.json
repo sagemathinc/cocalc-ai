@@ -10,7 +10,7 @@
       "@cocalc/app-tasks/*": ["../apps/tasks/src/*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json"],
+  "include": ["**/*.ts", "**/*.tsx", "**/*.js"],
   "exclude": [
     "dist",
     "node_modules",
