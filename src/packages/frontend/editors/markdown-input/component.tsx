@@ -249,7 +249,6 @@ export function MarkdownInput(props: Props) {
     return MIN_INPUT_HEIGHT;
   }, [explicitEditorHeight]);
 
-  const [editorHeight, setEditorHeight] = useState<number>(initialMinHeight);
   const maxHeightRef = useRef<number>(initialMinHeight * 2);
 
   const refreshMaxHeight = useCallback(() => {
@@ -273,43 +272,101 @@ export function MarkdownInput(props: Props) {
     maxHeightRef.current = Math.max(1, nextMaxHeight);
   }, [autoGrowMaxHeight, explicitEditorHeight, initialMinHeight]);
 
-  const adjustHeight = useCallback(() => {
-    if (!isAutoGrow) return;
-    if (!cm.current) return;
-    const doc = cm.current.getDoc();
-    const lineCount = Math.max(1, doc?.lineCount() ?? 1);
-    const lineHeight =
-      typeof cm.current.defaultTextHeight === "function"
-        ? cm.current.defaultTextHeight()
-        : 20;
-    refreshMaxHeight();
-    const maxHeight = maxHeightRef.current;
-    const desired =
-      lineCount * lineHeight + PADDING_TOP * 2 + (IS_MOBILE ? 6 : 4);
-    const clamped = Math.min(
-      maxHeight,
-      Math.max(initialMinHeight, Math.round(desired)),
-    );
-    cm.current.setSize(null, clamped);
-    const wrapper = cm.current.getWrapperElement();
-    if (wrapper) {
-      wrapper.style.height = `${clamped}px`;
-      wrapper.style.maxHeight = `${maxHeight}px`;
-      wrapper.style.minHeight = `${initialMinHeight}px`;
-    }
-    setEditorHeight((prev) => (prev !== clamped ? clamped : prev));
-  }, [initialMinHeight, refreshMaxHeight, isAutoGrow]);
+  const measureRenderedContentHeight = useCallback(
+    (editor: CodeMirror.Editor): number => {
+      const wrapper = editor.getWrapperElement();
+      const sizer = wrapper.querySelector<HTMLElement>(".CodeMirror-sizer");
+      const fallback =
+        typeof editor.defaultTextHeight === "function"
+          ? editor.defaultTextHeight()
+          : 20;
+      const rendered = Math.ceil(
+        sizer?.getBoundingClientRect().height ?? fallback,
+      );
+      return Math.max(initialMinHeight, rendered + PADDING_TOP * 2);
+    },
+    [initialMinHeight],
+  );
 
-  const syncFixedHeight = useCallback(() => {
-    if (isAutoGrow || cm.current == null) return;
-    cm.current.setSize(null, "100%");
-    const wrapper = cm.current.getWrapperElement();
-    if (wrapper) {
-      wrapper.style.height = "100%";
-      wrapper.style.maxHeight = "100%";
-      wrapper.style.minHeight = "100%";
+  const applyWrapperDimensions = useCallback(
+    (
+      editor: CodeMirror.Editor,
+      {
+        height,
+        minHeight,
+        maxHeight,
+      }: {
+        height: string;
+        minHeight: string;
+        maxHeight: string;
+      },
+    ) => {
+      const wrapper = editor.getWrapperElement();
+      wrapper.style.height = height;
+      wrapper.style.minHeight = minHeight;
+      wrapper.style.maxHeight = maxHeight;
+    },
+    [],
+  );
+
+  const ensureCaretVisibleIfNeeded = useCallback((editor: CodeMirror.Editor) => {
+    const scrollInfo = editor.getScrollInfo();
+    if (scrollInfo.height <= scrollInfo.clientHeight + 1) {
+      return;
     }
-  }, [isAutoGrow]);
+    editor.scrollIntoView(editor.getDoc().getCursor(), 20);
+  }, []);
+
+  const syncCodeMirrorLayout = useCallback(
+    ({
+      ensureCaret = false,
+    }: {
+      ensureCaret?: boolean;
+    } = {}) => {
+      const editor = cm.current;
+      if (editor == null) return;
+
+      if (isAutoGrow) {
+        refreshMaxHeight();
+        const maxHeight = maxHeightRef.current;
+        const desired = measureRenderedContentHeight(editor);
+        const clamped = Math.min(
+          maxHeight,
+          Math.max(initialMinHeight, Math.round(desired)),
+        );
+        editor.setSize(null, clamped);
+        applyWrapperDimensions(editor, {
+          height: `${clamped}px`,
+          minHeight: `${initialMinHeight}px`,
+          maxHeight: `${maxHeight}px`,
+        });
+      } else {
+        editor.setSize(null, "100%");
+        applyWrapperDimensions(editor, {
+          height: "100%",
+          minHeight: "100%",
+          maxHeight: "100%",
+        });
+      }
+
+      editor.refresh();
+      if (ensureCaret) {
+        ensureCaretVisibleIfNeeded(editor);
+      }
+    },
+    [
+      applyWrapperDimensions,
+      ensureCaretVisibleIfNeeded,
+      initialMinHeight,
+      isAutoGrow,
+      measureRenderedContentHeight,
+      refreshMaxHeight,
+    ],
+  );
+
+  const handleAutoGrowContentChange = useCallback(() => {
+    syncCodeMirrorLayout({ ensureCaret: true });
+  }, [syncCodeMirrorLayout]);
 
   const focus = useCallback(() => {
     if (isFocusedRef.current) return; // already focused
@@ -336,35 +393,36 @@ export function MarkdownInput(props: Props) {
   }, [isFocused]);
 
   useEffect(() => {
-    cm.current?.refresh();
-  }, [refresh]);
+    syncCodeMirrorLayout();
+  }, [refresh, syncCodeMirrorLayout]);
 
   useEffect(() => {
-    const onResize = () => adjustHeight();
-    if (isAutoGrow && typeof window !== "undefined") {
+    const onResize = () => syncCodeMirrorLayout();
+    if (typeof window !== "undefined") {
       window.addEventListener("resize", onResize);
     }
     return () => {
-      if (isAutoGrow && typeof window !== "undefined") {
+      if (typeof window !== "undefined") {
         window.removeEventListener("resize", onResize);
       }
     };
-  }, [adjustHeight, isAutoGrow]);
+  }, [syncCodeMirrorLayout]);
 
   useEffect(() => {
     if (cm.current == null) return;
-    if (isAutoGrow) {
-      adjustHeight();
-    } else {
-      syncFixedHeight();
-    }
-  }, [
-    adjustHeight,
-    explicitEditorHeight,
-    isAutoGrow,
-    showInstructions,
-    syncFixedHeight,
-  ]);
+    syncCodeMirrorLayout();
+  }, [explicitEditorHeight, isAutoGrow, isVisible, showInstructions, syncCodeMirrorLayout]);
+
+  useEffect(() => {
+    if (!isAutoGrow || cm.current == null) return;
+    const cmInstance = cm.current;
+    cmInstance.off("change", handleAutoGrowContentChange);
+    cmInstance.on("change", handleAutoGrowContentChange);
+    handleAutoGrowContentChange();
+    return () => {
+      cmInstance.off("change", handleAutoGrowContentChange);
+    };
+  }, [handleAutoGrowContentChange, isAutoGrow]);
 
   useEffect(() => {
     // initialize the codemirror editor
@@ -479,7 +537,7 @@ export function MarkdownInput(props: Props) {
     cm.current.on("focus", () => {
       isFocusedRef.current = true;
       setIsFocusedStyle(true);
-      cm.current?.refresh();
+      syncCodeMirrorLayout({ ensureCaret: true });
     });
     if (onCursors != null) {
       cm.current.on("cursorActivity", () => {
@@ -524,7 +582,7 @@ export function MarkdownInput(props: Props) {
 
     const e: any = cm.current.getWrapperElement();
     const fixedHeight = !isAutoGrow ? "100%" : undefined;
-    const baseHeight = fixedHeight ?? `${editorHeight}px`;
+    const baseHeight = fixedHeight ?? `${initialMinHeight}px`;
     let s = `height:${baseHeight}; font-family:sans-serif !important;`;
     if (compact) {
       s += "padding:0";
@@ -536,9 +594,7 @@ export function MarkdownInput(props: Props) {
       s += `;min-height:${h};max-height:${h};overflow:auto;`;
     }
     e.setAttribute("style", s);
-    if (isAutoGrow) {
-      adjustHeight();
-    }
+    syncCodeMirrorLayout();
 
     if (enableMentions) {
       cm.current.on("change", (cm, changeObj) => {
@@ -651,10 +707,6 @@ export function MarkdownInput(props: Props) {
       });
     }
 
-    setTimeout(() => {
-      cm.current?.refresh();
-    }, 0);
-
     // clean up
     return () => {
       if (cm.current == null) return;
@@ -671,17 +723,6 @@ export function MarkdownInput(props: Props) {
       cm.current = undefined;
     };
   }, []);
-
-  useEffect(() => {
-    if (!isAutoGrow || cm.current == null) return;
-    const cmInstance = cm.current;
-    cmInstance.off("change", adjustHeight);
-    cmInstance.on("change", adjustHeight);
-    adjustHeight();
-    return () => {
-      cmInstance.off("change", adjustHeight);
-    };
-  }, [adjustHeight, isAutoGrow]);
 
   useEffect(() => {
     const bindings = editor_settings.get("bindings");
@@ -781,10 +822,11 @@ export function MarkdownInput(props: Props) {
       });
     }
     emitSelectionReady();
+    syncCodeMirrorLayout();
     if (upload_close_preview_ref.current != null) {
       upload_close_preview_ref.current(true);
     }
-  }, [value, setValueNoJump, saveValue, emitSelectionReady]);
+  }, [value, setValueNoJump, saveValue, emitSelectionReady, syncCodeMirrorLayout]);
 
   function upload_sending(file: { name: string }): void {
     if (project_id == null || path == null) {

@@ -48,13 +48,14 @@ function createMockEditor() {
     getAllMarks: jest.fn(() => []),
     getCursor: jest.fn(() => currentCursor),
     getDoc: jest.fn(() => ({
+      getCursor: () => currentCursor,
       lineCount: () => Math.max(1, currentValue.split("\n").length),
       listSelections: () => currentSelections,
     })),
     getGutterElement: jest.fn(() => document.createElement("div")),
     getInputField: jest.fn(() => inputField),
     getLine: jest.fn((line: number) => currentValue.split("\n")[line] ?? ""),
-    getScrollInfo: jest.fn(() => ({ top: 0 })),
+    getScrollInfo: jest.fn(() => ({ top: 0, height: 0, clientHeight: 0 })),
     getValue: jest.fn(() => currentValue),
     getWrapperElement: jest.fn(() => wrapper),
     lastLine: jest.fn(() => Math.max(0, currentValue.split("\n").length - 1)),
@@ -68,6 +69,7 @@ function createMockEditor() {
     }),
     refresh: jest.fn(),
     replaceRange: jest.fn(),
+    scrollIntoView: jest.fn(),
     setCursor: jest.fn((cursor: { line: number; ch: number }) => {
       currentCursor = cursor;
     }),

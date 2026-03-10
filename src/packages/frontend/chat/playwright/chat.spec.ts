@@ -85,6 +85,27 @@ async function switchComposerMode(page, label: "Rich Text" | "Markdown") {
   await button.click();
 }
 
+async function expectMarkdownCaretVisible(page) {
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
+        const scroller = document.querySelector<HTMLElement>(".CodeMirror-scroll");
+        if (cm == null || scroller == null) {
+          return null;
+        }
+        const cursorBox = cm.cursorCoords(cm.getDoc().getCursor(), "page");
+        const scrollerBox = scroller.getBoundingClientRect();
+        return {
+          visible:
+            cursorBox.top >= scrollerBox.top - 1 &&
+            cursorBox.bottom <= scrollerBox.bottom + 1,
+        };
+      });
+    })
+    .toEqual({ visible: true });
+}
+
 test("new-thread shift+enter send clears and stays cleared", async ({ page }) => {
   await page.goto("/");
   await waitForHarness(page);
@@ -202,6 +223,75 @@ test("composer mode: markdown to rich text preserves a mid-line caret", async ({
 
   await expectComposerInput(page, "abXcd");
   await expectHarnessHealthy(page);
+});
+
+test("composer mode: markdown keeps the caret visible while typing short multiline input", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=markdown");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(".CodeMirror-scroll");
+    (window as any).__cmScrollTops = [];
+    scroller?.addEventListener("scroll", () => {
+      (window as any).__cmScrollTops.push(scroller.scrollTop);
+    });
+  });
+
+  await typeInCodeMirror(page, "a\nb\nc\nd\ne\nf\ng\nhx kdkdkdkdk");
+  await expectMarkdownCaretVisible(page);
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        const scrollTops = ((window as any).__cmScrollTops ?? []) as number[];
+        return Math.max(0, ...scrollTops);
+      });
+    })
+    .toBe(0);
+});
+
+test("composer mode: markdown keeps the caret visible while moving upward", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=markdown");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    const cm = (document.querySelector(".CodeMirror") as any)?.CodeMirror;
+    const scroller = document.querySelector<HTMLElement>(".CodeMirror-scroll");
+    (window as any).__cmArrowUpVisibility = [];
+    document.addEventListener(
+      "keyup",
+      (event) => {
+        if (event.key !== "ArrowUp" || cm == null || scroller == null) return;
+        const cursorBox = cm.cursorCoords(cm.getDoc().getCursor(), "page");
+        const scrollerBox = scroller.getBoundingClientRect();
+        (window as any).__cmArrowUpVisibility.push(
+          cursorBox.top >= scrollerBox.top - 1 &&
+            cursorBox.bottom <= scrollerBox.bottom + 1,
+        );
+      },
+      true,
+    );
+  });
+
+  await typeInCodeMirror(
+    page,
+    Array.from({ length: 20 }, (_, i) => `${i + 1}`).join("\n"),
+  );
+
+  for (let i = 0; i < 10; i++) {
+    await page.keyboard.press("ArrowUp");
+    await expectMarkdownCaretVisible(page);
+  }
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => (window as any).__cmArrowUpVisibility ?? []);
+    })
+    .toEqual(Array.from({ length: 10 }, () => true));
 });
 
 test("composer editor mode: send button appears while typing", async ({ page }) => {
