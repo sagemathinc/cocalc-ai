@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   WORKSPACES_STORE_RECORDS_KEY,
+  WORKSPACES_STORE_ORDER_KEY,
   WORKSPACES_STORE_VERSION_KEY,
   createStoredWorkspaceRecord,
   createWorkspaceRecord,
@@ -12,8 +13,10 @@ import {
   normalizeWorkspaceSelection,
   openWorkspaceStore,
   pathMatchesWorkspaceRoot,
+  readWorkspaceOrderFromStore,
   readStoredWorkspaceRecords,
   readWorkspaceRecordsFromStore,
+  reorderWorkspaceRecords,
   resolveWorkspaceForPath as resolveWorkspaceForPathCore,
   selectionForWorkspacePath as selectionForWorkspacePathCore,
   selectionMatchesWorkspacePath,
@@ -71,10 +74,13 @@ export function selectionForPath(
   return selectionForWorkspacePathCore(records, path);
 }
 
-
 function sameSelection(a: WorkspaceSelection, b: WorkspaceSelection): boolean {
-  return a.kind === b.kind &&
-    (a.kind !== "workspace" || a.workspace_id === (b as WorkspaceSelection & { workspace_id?: string }).workspace_id);
+  return (
+    a.kind === b.kind &&
+    (a.kind !== "workspace" ||
+      a.workspace_id ===
+        (b as WorkspaceSelection & { workspace_id?: string }).workspace_id)
+  );
 }
 
 export function useProjectWorkspaces(
@@ -85,6 +91,7 @@ export function useProjectWorkspaces(
     typeof account_id === "string" && account_id.trim().length > 0;
   const [loading, setLoading] = useState(canPersist);
   const [records, setRecords] = useState<WorkspaceRecord[]>([]);
+  const [order, setOrderState] = useState<string[]>([]);
   const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
     loadSessionSelection(project_id),
   );
@@ -165,6 +172,7 @@ export function useProjectWorkspaces(
         storeRef.current = store;
 
         const storeRecords = readWorkspaceRecordsFromStore(store);
+        const storeOrder = readWorkspaceOrderFromStore(store, storeRecords);
         const storeSelection = readSelectionForProject(
           project_id,
           storeRecords,
@@ -174,25 +182,29 @@ export function useProjectWorkspaces(
         const hasSeedState = recordsRef.current.length > 0;
 
         if (!hasStoreState && hasSeedState) {
-          writeWorkspaceRecordsToStore(store, recordsRef.current);
+          writeWorkspaceRecordsToStore(store, recordsRef.current, order);
         } else {
           setRecords(storeRecords);
+          setOrderState(storeOrder);
           setSelectionState(storeSelection);
         }
 
         onChange = (event) => {
           if (
             event.key !== WORKSPACES_STORE_RECORDS_KEY &&
+            event.key !== WORKSPACES_STORE_ORDER_KEY &&
             event.key !== WORKSPACES_STORE_VERSION_KEY
           ) {
             return;
           }
           const nextRecords = readWorkspaceRecordsFromStore(store!);
+          const nextOrder = readWorkspaceOrderFromStore(store!, nextRecords);
           const nextSelection = readSelectionForProject(
             project_id,
             nextRecords,
           );
           setRecords(nextRecords);
+          setOrderState(nextOrder);
           setSelectionState(nextSelection);
         };
 
@@ -223,11 +235,11 @@ export function useProjectWorkspaces(
   }, [account_id, project_id, canPersist]);
 
   const persistState = useCallback(
-    (nextRecords: WorkspaceRecord[]) => {
+    (nextRecords: WorkspaceRecord[], nextOrder: string[]) => {
       if (!canPersist || storeRef.current == null) {
         return;
       }
-      writeWorkspaceRecordsToStore(storeRef.current, nextRecords);
+      writeWorkspaceRecordsToStore(storeRef.current, nextRecords, nextOrder);
     },
     [canPersist],
   );
@@ -243,10 +255,43 @@ export function useProjectWorkspaces(
 
   const setSelection = useCallback(
     (next: WorkspaceSelection) => {
-      setSelectionState(next);
-      persistSessionSelection(project_id, next);
+      const normalized = normalizeWorkspaceSelection(next, recordsRef.current);
+      const changed = !sameSelection(selection, normalized);
+      if (
+        changed &&
+        normalized.kind === "workspace" &&
+        normalized.workspace_id.trim()
+      ) {
+        const updated =
+          storeRef.current != null
+            ? touchStoredWorkspaceRecord(
+                storeRef.current,
+                normalized.workspace_id,
+              )
+            : null;
+        const nextRecords =
+          storeRef.current != null
+            ? readStoredWorkspaceRecords(storeRef.current)
+            : touchWorkspaceRecords(
+                recordsRef.current,
+                normalized.workspace_id,
+                Date.now(),
+                order,
+              ).records;
+        const nextOrder =
+          storeRef.current != null
+            ? readWorkspaceOrderFromStore(storeRef.current, nextRecords)
+            : order;
+        setRecords(nextRecords);
+        setOrderState(nextOrder);
+        if (storeRef.current == null && updated == null) {
+          persistState(nextRecords, nextOrder);
+        }
+      }
+      setSelectionState(normalized);
+      persistSessionSelection(project_id, normalized);
     },
-    [project_id],
+    [order, persistState, project_id, selection],
   );
 
   const createWorkspace = useCallback(
@@ -261,20 +306,31 @@ export function useProjectWorkspaces(
       const nextRecords =
         storeRef.current != null
           ? readStoredWorkspaceRecords(storeRef.current)
-          : createWorkspaceRecords(records, record);
+          : createWorkspaceRecords(records, record, [
+              ...order,
+              record.workspace_id,
+            ]);
+      const nextOrder =
+        storeRef.current != null
+          ? readWorkspaceOrderFromStore(storeRef.current, nextRecords)
+          : [
+              ...order.filter((id) => id !== record.workspace_id),
+              record.workspace_id,
+            ];
       const nextSelection: WorkspaceSelection = {
         kind: "workspace",
         workspace_id: record.workspace_id,
       };
       setRecords(nextRecords);
+      setOrderState(nextOrder);
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
       if (storeRef.current == null) {
-        persistState(nextRecords);
+        persistState(nextRecords, nextOrder);
       }
       return record;
     },
-    [project_id, records, persistState],
+    [order, persistState, project_id, records],
   );
 
   const updateWorkspace = useCallback(
@@ -286,8 +342,19 @@ export function useProjectWorkspaces(
       const nextRecords =
         storeRef.current != null
           ? readStoredWorkspaceRecords(storeRef.current)
-          : updateWorkspaceRecords(records, workspace_id, patch).records;
+          : updateWorkspaceRecords(
+              records,
+              workspace_id,
+              patch,
+              Date.now(),
+              order,
+            ).records;
+      const nextOrder =
+        storeRef.current != null
+          ? readWorkspaceOrderFromStore(storeRef.current, nextRecords)
+          : order;
       setRecords(nextRecords);
+      setOrderState(nextOrder);
       const nextSelection =
         selection.kind === "workspace" &&
         selection.workspace_id === workspace_id &&
@@ -297,11 +364,11 @@ export function useProjectWorkspaces(
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
       if (storeRef.current == null) {
-        persistState(nextRecords);
+        persistState(nextRecords, nextOrder);
       }
       return updated;
     },
-    [project_id, records, selection, persistState],
+    [order, project_id, records, selection, persistState],
   );
 
   const deleteWorkspace = useCallback(
@@ -310,19 +377,24 @@ export function useProjectWorkspaces(
         storeRef.current != null
           ? deleteStoredWorkspaceRecord(storeRef.current, workspace_id)
           : deleteWorkspaceRecords(records, workspace_id);
+      const nextOrder =
+        storeRef.current != null
+          ? readWorkspaceOrderFromStore(storeRef.current, nextRecords)
+          : order.filter((id) => id !== workspace_id);
       const nextSelection =
         selection.kind === "workspace" &&
         selection.workspace_id === workspace_id
           ? ({ kind: "all" } as WorkspaceSelection)
           : selection;
       setRecords(nextRecords);
+      setOrderState(nextOrder);
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
       if (storeRef.current == null) {
-        persistState(nextRecords);
+        persistState(nextRecords, nextOrder);
       }
     },
-    [project_id, records, selection, persistState],
+    [order, project_id, records, selection, persistState],
   );
 
   const touchWorkspace = useCallback(
@@ -334,14 +406,40 @@ export function useProjectWorkspaces(
       const nextRecords =
         storeRef.current != null
           ? readStoredWorkspaceRecords(storeRef.current)
-          : touchWorkspaceRecords(records, workspace_id).records;
+          : touchWorkspaceRecords(records, workspace_id, Date.now(), order)
+              .records;
+      const nextOrder =
+        storeRef.current != null
+          ? readWorkspaceOrderFromStore(storeRef.current, nextRecords)
+          : order;
       setRecords(nextRecords);
+      setOrderState(nextOrder);
       if (storeRef.current == null) {
-        persistState(nextRecords);
+        persistState(nextRecords, nextOrder);
       }
       return updated;
     },
-    [records, persistState],
+    [order, records, persistState],
+  );
+
+  const reorderWorkspaces = useCallback(
+    (nextOrderInput: string[]) => {
+      const nextOrder = nextOrderInput.filter(
+        (id, i) => nextOrderInput.indexOf(id) === i,
+      );
+      const nextRecords = reorderWorkspaceRecords(
+        recordsRef.current,
+        nextOrder,
+      );
+      setRecords(nextRecords);
+      setOrderState(nextOrder);
+      if (storeRef.current != null) {
+        writeWorkspaceRecordsToStore(storeRef.current, nextRecords, nextOrder);
+      } else {
+        persistState(nextRecords, nextOrder);
+      }
+    },
+    [persistState],
   );
 
   const resolve = useCallback(
@@ -371,6 +469,7 @@ export function useProjectWorkspaces(
     setSelection,
     createWorkspace,
     updateWorkspace,
+    reorderWorkspaces,
     deleteWorkspace,
     touchWorkspace,
   };

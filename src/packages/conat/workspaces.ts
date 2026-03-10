@@ -10,6 +10,7 @@ import { uuid } from "@cocalc/util/misc";
 export const WORKSPACES_STORE_VERSION = 1;
 export const WORKSPACES_STORE_VERSION_KEY = "version";
 export const WORKSPACES_STORE_RECORDS_KEY = "records";
+export const WORKSPACES_STORE_ORDER_KEY = "order";
 
 export type WorkspaceTheme = {
   title: string;
@@ -65,7 +66,7 @@ export type WorkspaceUpdatePatch = Partial<{
   source: WorkspaceSource;
 }>;
 
-export type WorkspaceStore = DKV<WorkspaceRecord[] | number>;
+export type WorkspaceStore = DKV<WorkspaceRecord[] | string[] | number>;
 
 type WorkspaceStoreOpenOptions = Omit<DKVOptions, "client">;
 
@@ -104,8 +105,8 @@ export async function openWorkspaceStore({
     name: workspaceStoreName(account_id),
   };
   const store = hasFrontendConatClient(client)
-    ? await client.dkv<WorkspaceRecord[] | number>(opts)
-    : await client.sync.dkv<WorkspaceRecord[] | number>(opts);
+    ? await client.dkv<WorkspaceRecord[] | string[] | number>(opts)
+    : await client.sync.dkv<WorkspaceRecord[] | string[] | number>(opts);
   store.setMaxListeners(100);
   return store;
 }
@@ -194,15 +195,55 @@ export function normalizeWorkspaceRecord(
   };
 }
 
-export function sortWorkspaceRecords(
-  records: WorkspaceRecord[],
-): WorkspaceRecord[] {
+function legacyWorkspaceSort(records: WorkspaceRecord[]): WorkspaceRecord[] {
   return [...records].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     const aUsed = a.last_used_at ?? 0;
     const bUsed = b.last_used_at ?? 0;
     if (aUsed !== bUsed) return bUsed - aUsed;
     return a.theme.title.localeCompare(b.theme.title);
+  });
+}
+
+export function defaultWorkspaceOrder(records: WorkspaceRecord[]): string[] {
+  return legacyWorkspaceSort(records).map(({ workspace_id }) => workspace_id);
+}
+
+export function normalizeWorkspaceOrder(
+  order: readonly string[] | undefined | null,
+  records: WorkspaceRecord[],
+  missingOrder?: readonly string[],
+): string[] {
+  const validIds = new Set(records.map(({ workspace_id }) => workspace_id));
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const workspace_id of order ?? []) {
+    if (!validIds.has(workspace_id) || seen.has(workspace_id)) continue;
+    seen.add(workspace_id);
+    next.push(workspace_id);
+  }
+  const fallback = missingOrder ?? defaultWorkspaceOrder(records);
+  for (const workspace_id of fallback) {
+    if (!validIds.has(workspace_id) || seen.has(workspace_id)) continue;
+    seen.add(workspace_id);
+    next.push(workspace_id);
+  }
+  return next;
+}
+
+export function sortWorkspaceRecords(
+  records: WorkspaceRecord[],
+  order?: readonly string[],
+): WorkspaceRecord[] {
+  const normalizedOrder = normalizeWorkspaceOrder(order, records);
+  const index = new Map(
+    normalizedOrder.map((workspace_id, i) => [workspace_id, i] as const),
+  );
+  return [...records].sort((a, b) => {
+    return (
+      (index.get(a.workspace_id) ?? Number.MAX_SAFE_INTEGER) -
+      (index.get(b.workspace_id) ?? Number.MAX_SAFE_INTEGER)
+    );
   });
 }
 
@@ -294,7 +335,16 @@ export function readWorkspaceRecordsFromStore(
 ): WorkspaceRecord[] {
   const raw = store.get(WORKSPACES_STORE_RECORDS_KEY);
   if (!Array.isArray(raw)) return [];
-  return sortWorkspaceRecords(raw.map(normalizeWorkspaceRecord));
+  const records = raw
+    .filter(
+      (value): value is WorkspaceRecord =>
+        typeof value === "object" && value != null && !Array.isArray(value),
+    )
+    .map(normalizeWorkspaceRecord);
+  return sortWorkspaceRecords(
+    records,
+    readWorkspaceOrderFromStore(store, records),
+  );
 }
 
 export function readStoredWorkspaceRecords(
@@ -303,13 +353,30 @@ export function readStoredWorkspaceRecords(
   return readWorkspaceRecordsFromStore(store);
 }
 
+export function readWorkspaceOrderFromStore(
+  store: WorkspaceStore,
+  records?: WorkspaceRecord[],
+): string[] {
+  const nextRecords = records ?? readWorkspaceRecordsFromStore(store);
+  const raw = store.get(WORKSPACES_STORE_ORDER_KEY);
+  return normalizeWorkspaceOrder(
+    Array.isArray(raw)
+      ? raw.filter((value): value is string => typeof value === "string")
+      : undefined,
+    nextRecords,
+  );
+}
+
 export function writeWorkspaceRecordsToStore(
   store: WorkspaceStore,
   records: WorkspaceRecord[],
+  order?: readonly string[],
 ): void {
+  const normalizedOrder = normalizeWorkspaceOrder(order, records);
   store.setMany({
     [WORKSPACES_STORE_VERSION_KEY]: WORKSPACES_STORE_VERSION,
     [WORKSPACES_STORE_RECORDS_KEY]: records,
+    [WORKSPACES_STORE_ORDER_KEY]: normalizedOrder,
   });
 }
 
@@ -334,17 +401,22 @@ export function createStoredWorkspaceRecord(
     workspace_id?: string;
   },
 ): WorkspaceRecord {
+  const currentRecords = readWorkspaceRecordsFromStore(store);
+  const currentOrder = readWorkspaceOrderFromStore(store, currentRecords);
   const record = createWorkspaceRecord({
     project_id,
     input,
     now,
     workspace_id,
   });
-  const nextRecords = createWorkspaceRecords(
-    readWorkspaceRecordsFromStore(store),
-    record,
-  );
-  writeWorkspaceRecordsToStore(store, nextRecords);
+  const nextRecords = createWorkspaceRecords(currentRecords, record, [
+    ...currentOrder,
+    record.workspace_id,
+  ]);
+  writeWorkspaceRecordsToStore(store, nextRecords, [
+    ...currentOrder,
+    record.workspace_id,
+  ]);
   return record;
 }
 
@@ -354,13 +426,15 @@ export function updateStoredWorkspaceRecord(
   patch: WorkspaceUpdatePatch,
   now = Date.now(),
 ): WorkspaceRecord | null {
+  const currentRecords = readWorkspaceRecordsFromStore(store);
+  const currentOrder = readWorkspaceOrderFromStore(store, currentRecords);
   const { records, updated } = updateWorkspaceRecords(
-    readWorkspaceRecordsFromStore(store),
+    currentRecords,
     workspace_id,
     patch,
     now,
   );
-  writeWorkspaceRecordsToStore(store, records);
+  writeWorkspaceRecordsToStore(store, records, currentOrder);
   return updated;
 }
 
@@ -368,11 +442,14 @@ export function deleteStoredWorkspaceRecord(
   store: WorkspaceStore,
   workspace_id: string,
 ): WorkspaceRecord[] {
-  const records = deleteWorkspaceRecords(
-    readWorkspaceRecordsFromStore(store),
-    workspace_id,
+  const currentRecords = readWorkspaceRecordsFromStore(store);
+  const currentOrder = readWorkspaceOrderFromStore(store, currentRecords);
+  const records = deleteWorkspaceRecords(currentRecords, workspace_id);
+  writeWorkspaceRecordsToStore(
+    store,
+    records,
+    currentOrder.filter((id) => id !== workspace_id),
   );
-  writeWorkspaceRecordsToStore(store, records);
   return records;
 }
 
@@ -381,12 +458,14 @@ export function touchStoredWorkspaceRecord(
   workspace_id: string,
   at = Date.now(),
 ): WorkspaceRecord | null {
+  const currentRecords = readWorkspaceRecordsFromStore(store);
+  const currentOrder = readWorkspaceOrderFromStore(store, currentRecords);
   const { records, updated } = touchWorkspaceRecords(
-    readWorkspaceRecordsFromStore(store),
+    currentRecords,
     workspace_id,
     at,
   );
-  writeWorkspaceRecordsToStore(store, records);
+  writeWorkspaceRecordsToStore(store, records, currentOrder);
   return updated;
 }
 
@@ -446,11 +525,12 @@ export function createWorkspaceRecord({
 export function createWorkspaceRecords(
   records: WorkspaceRecord[],
   record: WorkspaceRecord,
+  order?: readonly string[],
 ): WorkspaceRecord[] {
-  return sortWorkspaceRecords([
-    ...records.filter((x) => x.root_path !== record.root_path),
-    record,
-  ]);
+  return sortWorkspaceRecords(
+    [...records.filter((x) => x.root_path !== record.root_path), record],
+    order,
+  );
 }
 
 export function updateWorkspaceRecords(
@@ -458,6 +538,7 @@ export function updateWorkspaceRecords(
   workspace_id: string,
   patch: WorkspaceUpdatePatch,
   now = Date.now(),
+  order?: readonly string[],
 ): { records: WorkspaceRecord[]; updated: WorkspaceRecord | null } {
   let updated: WorkspaceRecord | null = null;
   const nextRecords = sortWorkspaceRecords(
@@ -485,6 +566,7 @@ export function updateWorkspaceRecords(
       });
       return updated;
     }),
+    order,
   );
   return { records: nextRecords, updated };
 }
@@ -500,11 +582,20 @@ export function touchWorkspaceRecords(
   records: WorkspaceRecord[],
   workspace_id: string,
   at = Date.now(),
+  order?: readonly string[],
 ): { records: WorkspaceRecord[]; updated: WorkspaceRecord | null } {
   return updateWorkspaceRecords(
     records,
     workspace_id,
     { last_used_at: at },
     at,
+    order,
   );
+}
+
+export function reorderWorkspaceRecords(
+  records: WorkspaceRecord[],
+  order: readonly string[],
+): WorkspaceRecord[] {
+  return sortWorkspaceRecords(records, order);
 }
