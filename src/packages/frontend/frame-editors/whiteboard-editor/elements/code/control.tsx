@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Tooltip } from "antd";
+import { Button, Switch, Tooltip } from "antd";
 import { delay } from "awaiting";
 
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -88,38 +88,58 @@ export default function CodeControlBar({ element }: Props) {
       </Tooltip>
       {!element.locked && (
         <Tooltip title="Toggle display of input">
-          <Checkbox
-            checked={!element.data?.hideInput}
-            style={{ fontWeight: 250, marginLeft: "10px" }}
-            onChange={(e) => {
-              actions.setElementData({
-                element,
-                obj: { hideInput: !e.target.checked },
-              });
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontWeight: 250,
+              marginLeft: "10px",
             }}
           >
-            Input
-          </Checkbox>
+            <span>Input</span>
+            <Switch
+              size="small"
+              aria-label="Toggle display of input"
+              checked={!element.data?.hideInput}
+              onChange={(checked) => {
+                actions.setElementData({
+                  element,
+                  obj: { hideInput: !checked },
+                });
+              }}
+            />
+          </label>
         </Tooltip>
       )}
       {!element.locked && (
         <Tooltip title="Toggle display of output">
-          <Checkbox
-            disabled={
-              element.data?.output == null ||
-              Object.keys(element.data?.output).length == 0
-            }
-            checked={!element.data?.hideOutput}
-            style={{ fontWeight: 250, marginLeft: "10px" }}
-            onChange={(e) => {
-              actions.setElementData({
-                element,
-                obj: { hideOutput: !e.target.checked },
-              });
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontWeight: 250,
+              marginLeft: "10px",
             }}
           >
-            Output
-          </Checkbox>
+            <span>Output</span>
+            <Switch
+              size="small"
+              aria-label="Toggle display of output"
+              disabled={
+                element.data?.output == null ||
+                Object.keys(element.data?.output).length == 0
+              }
+              checked={!element.data?.hideOutput}
+              onChange={(checked) => {
+                actions.setElementData({
+                  element,
+                  obj: { hideOutput: !checked },
+                });
+              }}
+            />
+          </label>
         </Tooltip>
       )}
     </div>

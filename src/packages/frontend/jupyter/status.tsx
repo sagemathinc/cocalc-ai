@@ -127,6 +127,7 @@ interface KernelProps {
   is_fullscreen?: boolean;
   onOpenSingleDoc?: () => void;
   hideHeader?: boolean;
+  compact?: boolean;
 }
 
 export function Kernel({
@@ -137,6 +138,7 @@ export function Kernel({
   is_fullscreen,
   onOpenSingleDoc,
   hideHeader,
+  compact,
 }: KernelProps) {
   const intl = useIntl();
   const name = actions.name;
@@ -269,7 +271,10 @@ export function Kernel({
       if (display_name == null) {
         display_name = kernel ?? "No Kernel";
       }
-      const style = { ...KERNEL_NAME_STYLE, maxWidth: "20em" };
+      const style = {
+        ...KERNEL_NAME_STYLE,
+        maxWidth: compact ? "14em" : "20em",
+      };
       return (
         <div style={style} onClick={openKernelDrawer}>
           {display_name}
@@ -332,6 +337,7 @@ export function Kernel({
   }
 
   function render_trust() {
+    if (compact) return;
     if (IS_MOBILE) return;
     if (trust) {
       return (
@@ -453,6 +459,30 @@ export function Kernel({
     return null;
   }
 
+  function kernelStateCompact(): ReactNode {
+    if (kernel === null) {
+      return intl.formatMessage({
+        id: "jupyter.status.no_kernel",
+        defaultMessage: "No kernel",
+      });
+    }
+    if (backend_state === "running") {
+      switch (kernel_state) {
+        case "busy":
+          return "Busy";
+        case "idle":
+          return "Idle";
+      }
+    } else if (backendIsStarting) {
+      return intl.formatMessage({
+        id: "jupyter.status.backend_starting",
+        defaultMessage: "Starting",
+        description: "The kernel of a Jupyter Notebook is starting",
+      });
+    }
+    return null;
+  }
+
   function get_kernel_name(): React.JSX.Element {
     if (kernel_info != null) {
       const name = kernel_info.get(
@@ -496,21 +526,22 @@ export function Kernel({
 
   function renderKernelState() {
     if (!backend_state) return <div></div>;
+    const value = compact ? kernelStateCompact() : kernelState();
     return (
       <Tooltip title={kernelState()} placement="bottom">
         <div
           style={{
-            flex: 1,
+            flex: compact ? "0 0 auto" : 1,
             color: COLORS.GRAY_M,
             textAlign: "center",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
-            marginTop: "2.5px",
+            marginTop: compact ? 0 : "2.5px",
             fontSize: IS_MOBILE ? "10pt" : undefined,
           }}
         >
-          {kernelState()}
+          {value}
         </div>
       </Tooltip>
     );
@@ -634,6 +665,7 @@ export function Kernel({
   // or if the memory usage is eating up almost all of the reminining (shared) memory.
 
   function renderUsage() {
+    if (compact) return;
     if (kernel == null) return;
 
     const style: CSS = {
@@ -835,7 +867,45 @@ export function Kernel({
 
   return (
     <>
-      {!hideHeader && (
+      {!hideHeader && compact && (
+        <div
+          style={{
+            overflow: "hidden",
+            width: "100%",
+            padding: "4px 6px",
+            backgroundColor: COLORS.GRAY_LLL,
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            borderBottom: "1px solid #ccc",
+            ...style,
+          }}
+        >
+          <div>{renderLogo()}</div>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            {body}
+            {renderKernelState()}
+          </div>
+          {onOpenSingleDoc != null && (
+            <Button
+              size="small"
+              data-cocalc-test="jupyter-open-singledoc"
+              onClick={onOpenSingleDoc}
+            >
+              Single Doc
+            </Button>
+          )}
+        </div>
+      )}
+      {!hideHeader && !compact && (
         <div
           style={{
             overflow: "hidden",
