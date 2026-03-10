@@ -36,6 +36,8 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("files:sandbox:install");
 
 const SYSTEM_BIN_PATH = "/opt/cocalc/tools/current";
+const INSTALL_MAX_RETRIES = 3;
+const INSTALL_RETRY_DELAY_MS = 2000;
 
 function hasBinary(dir: string | undefined, name: string): boolean {
   if (!dir) return false;
@@ -188,7 +190,8 @@ export const SPEC = {
       const a = effectiveArch() === "x64" ? "amd64" : effectiveArch();
       return `${SPEC.restServer.BASE}/v${SPEC.restServer.VERSION}/rest-server_${SPEC.restServer.VERSION}_linux_${a}.tar.gz`;
     },
-    pathInArchive: () => `rest-server_${SPEC.restServer.VERSION}_linux_${effectiveArch() === "x64" ? "amd64" : effectiveArch()}/${SPEC.restServer.binary}`,
+    pathInArchive: () =>
+      `rest-server_${SPEC.restServer.VERSION}_linux_${effectiveArch() === "x64" ? "amd64" : effectiveArch()}/${SPEC.restServer.binary}`,
   },
   // sshpiper -- used by the project-host
   // See https://github.com/sagemathinc/sshpiper-binaries/releases
@@ -350,6 +353,10 @@ export async function installedVersion(app: App): Promise<string | undefined> {
   return;
 }
 
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function versions() {
   const v: { [app: string]: string | undefined } = {};
   await Promise.all(
@@ -374,6 +381,81 @@ export async function alreadyInstalled(app: App) {
     return true;
   }
   return v == VERSION;
+}
+
+async function installOnce(app: App, spec: Spec) {
+  const { script } = spec;
+  if (script != null) {
+    const s = script();
+    console.log(`Running '${s}' in ${process.cwd()}`);
+    if (!(await exists(process.cwd()))) {
+      await mkdir(process.cwd(), { recursive: true });
+    }
+
+    try {
+      execSync(s);
+    } catch (err) {
+      if (spec.fix) {
+        console.warn(`BUILD OF ${app} FAILED: Suggested fix -- ${spec.fix}`);
+      }
+      throw err;
+    }
+    if (isCrossBuild()) {
+      if (!(await exists(spec.path))) {
+        throw Error(`failed to install ${app}`);
+      }
+    } else if (!(await alreadyInstalled(app))) {
+      throw Error(`failed to install ${app}`);
+    }
+    return;
+  }
+
+  if (!(await exists(binPath))) {
+    await mkdir(binPath, { recursive: true });
+  }
+
+  const url = getUrl(app);
+  if (!url) {
+    logger.debug("install: skipping ", app);
+    return;
+  }
+  logger.debug("install", { app, url });
+  // - 1. Fetch the tarball from the github url (using the fetch library)
+  const response = await downloadFromGithub(url);
+  const tarballBuffer = Buffer.from(await response.arrayBuffer());
+
+  // - 2. Extract the file "rg" from the tarball to ${__dirname}/rg
+  // The tarball contains this one file "rg" at the top level, i.e., for
+  //   ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz
+  // we have "tar tvf ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz" outputs
+  //    ...
+  //    ripgrep-14.1.1-x86_64-unknown-linux-musl/rg
+
+  const { VERSION, binary, path, stripComponents = 1, pathInArchive } = spec;
+
+  const archivePath =
+    pathInArchive?.() ?? `${app}-${VERSION}-${getOS()}/${binary}`;
+
+  const tmpFile = join(__dirname, `${app}-${VERSION}.tar.gz`);
+  try {
+    await writeFile(tmpFile, tarballBuffer);
+    // sync is fine since this is run at *build time*.
+    execFileSync("tar", [
+      "xzf",
+      tmpFile,
+      `--strip-components=${stripComponents}`,
+      `-C`,
+      binPath,
+      archivePath,
+    ]);
+
+    // - 3. Make the file executable
+    await chmod(path, 0o755);
+  } finally {
+    try {
+      await unlink(tmpFile);
+    } catch {}
+  }
 }
 
 export async function install(
@@ -409,78 +491,22 @@ export async function install(
     return;
   }
 
-  const { script } = spec;
   try {
-    if (script != null) {
-      const s = script();
-      console.log(`Running '${s}' in ${process.cwd()}`);
-      if (!(await exists(process.cwd()))) {
-        await mkdir(process.cwd(), { recursive: true });
-      }
-
+    for (let attempt = 1; attempt <= INSTALL_MAX_RETRIES + 1; attempt++) {
       try {
-        execSync(s);
+        await installOnce(app, spec);
+        return;
       } catch (err) {
-        if (spec.fix) {
-          console.warn(`BUILD OF ${app} FAILED: Suggested fix -- ${spec.fix}`);
+        if (attempt === INSTALL_MAX_RETRIES + 1) {
+          throw err;
         }
-        throw err;
+        const waitMs = INSTALL_RETRY_DELAY_MS * attempt;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `Install of ${app} failed on attempt ${attempt}/${INSTALL_MAX_RETRIES + 1}: ${message}. Retrying in ${waitMs}ms (retry ${attempt}/${INSTALL_MAX_RETRIES}).`,
+        );
+        await delay(waitMs);
       }
-      if (isCrossBuild()) {
-        if (!(await exists(spec.path))) {
-          throw Error(`failed to install ${app}`);
-        }
-      } else if (!(await alreadyInstalled(app))) {
-        throw Error(`failed to install ${app}`);
-      }
-      return;
-    }
-
-    if (!(await exists(binPath))) {
-      await mkdir(binPath, { recursive: true });
-    }
-
-    const url = getUrl(app);
-    if (!url) {
-      logger.debug("install: skipping ", app);
-      return;
-    }
-    logger.debug("install", { app, url });
-    // - 1. Fetch the tarball from the github url (using the fetch library)
-    const response = await downloadFromGithub(url);
-    const tarballBuffer = Buffer.from(await response.arrayBuffer());
-
-    // - 2. Extract the file "rg" from the tarball to ${__dirname}/rg
-    // The tarball contains this one file "rg" at the top level, i.e., for
-    //   ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz
-    // we have "tar tvf ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz" outputs
-    //    ...
-    //    ripgrep-14.1.1-x86_64-unknown-linux-musl/rg
-
-    const { VERSION, binary, path, stripComponents = 1, pathInArchive } = spec;
-
-    const archivePath =
-      pathInArchive?.() ?? `${app}-${VERSION}-${getOS()}/${binary}`;
-
-    const tmpFile = join(__dirname, `${app}-${VERSION}.tar.gz`);
-    try {
-      await writeFile(tmpFile, tarballBuffer);
-      // sync is fine since this is run at *build time*.
-      execFileSync("tar", [
-        "xzf",
-        tmpFile,
-        `--strip-components=${stripComponents}`,
-        `-C`,
-        binPath,
-        archivePath,
-      ]);
-
-      // - 3. Make the file executable
-      await chmod(path, 0o755);
-    } finally {
-      try {
-        await unlink(tmpFile);
-      } catch {}
     }
   } catch (err) {
     if (spec.nonFatal) {
