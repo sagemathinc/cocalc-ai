@@ -1,4 +1,5 @@
 import { render } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { createEditor, Descendant, Range } from "slate";
 
 import {
@@ -12,7 +13,11 @@ import { createMentionStatic } from "../elements/mention";
 
 const INLINE_TYPES = new Set(["link", "mention"]);
 
-const renderElement = ({ attributes, children, element }: RenderElementProps) => {
+const renderElement = ({
+  attributes,
+  children,
+  element,
+}: RenderElementProps) => {
   const Tag =
     element.type === "paragraph"
       ? "p"
@@ -21,6 +26,16 @@ const renderElement = ({ attributes, children, element }: RenderElementProps) =>
         : "div";
   return <Tag {...attributes}>{children}</Tag>;
 };
+
+function MutateSelectionToNonLeaf({ editor }: { editor: ReactEditor }) {
+  useLayoutEffect(() => {
+    editor.selection = {
+      anchor: { path: [0, 0], offset: 0 },
+      focus: { path: [0, 0], offset: 0 },
+    };
+  });
+  return null;
+}
 
 test("slate selection mapping handles zero-width and void nodes", () => {
   const editor = withReact(createEditor());
@@ -62,9 +77,7 @@ test("slate selection mapping works with placeholders", () => {
   const editor = withReact(createEditor());
   editor.isVoid = (element) => element.type === "hr";
 
-  const value: Descendant[] = [
-    { type: "paragraph", children: [{ text: "" }] },
-  ];
+  const value: Descendant[] = [{ type: "paragraph", children: [{ text: "" }] }];
 
   const { unmount } = render(
     <Slate editor={editor} value={value} onChange={() => undefined}>
@@ -129,6 +142,48 @@ test("slate selection mapping handles inline void nodes", () => {
   }
 
   unmount();
+});
+
+test("slate normalizes non-leaf selections before placeholder mark timers run", () => {
+  jest.useFakeTimers();
+  const editor = withReact(createEditor());
+
+  const value: Descendant[] = [
+    {
+      type: "list_item",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            { text: "new " },
+            { text: "src/packages/frontend/keyboard/", code: true },
+            { text: " helpers" },
+          ],
+        },
+      ],
+    },
+  ];
+
+  editor.selection = {
+    anchor: { path: [0, 0, 0], offset: 0 },
+    focus: { path: [0, 0, 0], offset: 0 },
+  };
+
+  const { unmount } = render(
+    <Slate editor={editor} value={value} onChange={() => undefined}>
+      <Editable renderElement={renderElement} />
+      <MutateSelectionToNonLeaf editor={editor} />
+    </Slate>,
+  );
+
+  expect(() => {
+    jest.runOnlyPendingTimers();
+  }).not.toThrow();
+  expect(editor.selection?.anchor.path).toEqual([0, 0, 0]);
+  expect(editor.selection?.focus.path).toEqual([0, 0, 0]);
+
+  unmount();
+  jest.useRealTimers();
 });
 
 test("slate selection mapping round-trips ranges across inline nodes", () => {
