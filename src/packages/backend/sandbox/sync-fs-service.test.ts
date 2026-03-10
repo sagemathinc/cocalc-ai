@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { once } from "events";
@@ -530,6 +530,72 @@ describe("SyncFsService", () => {
     });
 
     // Existing stream message + one published reconciliation patch.
+    expect(fake.messages.length).toBe(2);
+    expect((svc as any).store.get(path)?.content).toBe("disk-new");
+    svc.close();
+  }, 10_000);
+
+  it("does not reconcile an older on-disk file over newer patchflow history on init", async () => {
+    const path = join(dir, "older-disk.txt");
+    writeFileSync(path, "disk-old");
+    utimesSync(path, 10, 10);
+
+    const dbPath = tmpNameSync({
+      prefix: "sync-fs-older-disk-",
+      postfix: ".db",
+    });
+    const store = new SyncFsWatchStore(dbPath);
+    store.setContent(path, "stale-cache");
+
+    const fake = new FakeAStream([
+      {
+        mesg: { time: legacyPatchId(50_000), parents: [], version: 1 },
+        seq: 1,
+      },
+    ]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => "stream-new";
+
+    await (svc as any).initPath(path, {
+      project_id: "p7a",
+      syncPath: "older-disk.txt",
+    });
+
+    // Existing stream message only; no rollback patch published from stale disk.
+    expect(fake.messages.length).toBe(1);
+    expect((svc as any).store.get(path)?.content).toBe("stream-new");
+    svc.close();
+  }, 10_000);
+
+  it("still reconciles a newer on-disk file over older patchflow history on init", async () => {
+    const path = join(dir, "newer-disk.txt");
+    writeFileSync(path, "disk-new");
+    utimesSync(path, 200, 200);
+
+    const dbPath = tmpNameSync({
+      prefix: "sync-fs-newer-disk-",
+      postfix: ".db",
+    });
+    const store = new SyncFsWatchStore(dbPath);
+    store.setContent(path, "stale-cache");
+
+    const fake = new FakeAStream([
+      {
+        mesg: { time: legacyPatchId(50_000), parents: [], version: 1 },
+        seq: 1,
+      },
+    ]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => "stream-old";
+
+    await (svc as any).initPath(path, {
+      project_id: "p7b",
+      syncPath: "newer-disk.txt",
+    });
+
+    // Existing stream message + one published reconciliation patch from disk.
     expect(fake.messages.length).toBe(2);
     expect((svc as any).store.get(path)?.content).toBe("disk-new");
     svc.close();

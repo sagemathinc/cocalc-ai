@@ -1,5 +1,5 @@
 import { watch as chokidarWatch, type FSWatcher } from "chokidar";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { EventEmitter } from "events";
 import { dirname } from "path";
 import { createHash } from "node:crypto";
@@ -516,7 +516,7 @@ export class SyncFsService extends EventEmitter {
       // (e.g. file written via backend API before watcher starts). In that
       // case we MUST force an empty baseline so opening the file publishes the
       // first patch; otherwise clients see an empty live document.
-      const { heads, maxVersion } = await this.getStreamHeads({
+      const { heads, maxVersion, maxTimeMs } = await this.getStreamHeads({
         project_id: meta.project_id,
         string_id,
         path: meta.syncPath,
@@ -546,6 +546,20 @@ export class SyncFsService extends EventEmitter {
         // Explicitly reset to an empty baseline when stream history is empty.
         // This prevents cached snapshots from suppressing the initial patch.
         this.store.setContent(path, "");
+      }
+
+      if (
+        hasHistory &&
+        !(await this.shouldReconcileDiskOnInit(path, maxTimeMs))
+      ) {
+        if (process.env.SYNC_FS_DEBUG) {
+          console.log("sync-fs initPath: skip stale disk reconciliation", {
+            path: meta.syncPath,
+            string_id,
+            maxTimeMs,
+          });
+        }
+        return;
       }
 
       const change = await this.store.handleExternalChange(
@@ -791,6 +805,28 @@ export class SyncFsService extends EventEmitter {
 
   // Reconstruct the current document value from the patch stream to seed the
   // snapshot store without emitting a bogus "initial" patch.
+  private async shouldReconcileDiskOnInit(
+    path: string,
+    maxTimeMs: number,
+  ): Promise<boolean> {
+    if (!(maxTimeMs > 0)) {
+      return true;
+    }
+    try {
+      const stats = await stat(path);
+      if (!stats.isFile()) {
+        return true;
+      }
+      return Number(stats.mtimeMs) > maxTimeMs;
+    } catch (err: any) {
+      if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
+        return true;
+      }
+      this.emit("error", err);
+      return true;
+    }
+  }
+
   private async loadDocViaSyncDoc({
     project_id,
     string_id,
