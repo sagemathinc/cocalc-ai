@@ -89,6 +89,18 @@ export function builtinAppTemplateCatalog(): AppTemplateCatalogV1 {
   return builtinCatalogJson as AppTemplateCatalogV1;
 }
 
+export function isAppTemplateCatalogV1(value: unknown): value is AppTemplateCatalogV1 {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const catalog = value as Record<string, unknown>;
+  return (
+    catalog.version === 1 &&
+    catalog.kind === "cocalc-app-template-catalog" &&
+    Array.isArray(catalog.templates)
+  );
+}
+
 export function mergeAppTemplateCatalogs(
   catalogs: Array<AppTemplateCatalogV1 | undefined | null>,
 ): AppTemplateCatalogEntryV1[] {
