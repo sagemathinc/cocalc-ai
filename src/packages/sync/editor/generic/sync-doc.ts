@@ -78,6 +78,7 @@ import type { JSONValue } from "@cocalc/util/types";
 const fallbackCursorPresence = new PatchflowMemoryPresenceAdapter();
 
 const DEBUG = false;
+const BACKEND_FS_WATCH_DISABLED_EXTENSIONS = new Set(["chat", "sage-chat"]);
 
 export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
@@ -120,6 +121,10 @@ export interface SyncOpts0 {
   // if true, never saves to disk or loads from disk -- this is NOT
   // ephemeral -- the history is tracked in the conat database!
   noSaveToDisk?: boolean;
+
+  // if true, do not register backend sync-fs watching for this document.
+  // This still allows explicit save_to_disk writes.
+  noBackendFsWatch?: boolean;
 
   // optional timeout for how long to wait from when a file is
   // deleted until emitting a 'deleted' event.
@@ -2821,8 +2826,24 @@ export class SyncDoc extends EventEmitter {
     }
   }, 60000);
 
+  private shouldUseBackendFsWatch(): boolean {
+    if (this.opts?.noSaveToDisk || this.opts?.noBackendFsWatch) {
+      return false;
+    }
+    const normalizedPath = `${this.path ?? ""}`.trim().toLowerCase();
+    if (!normalizedPath) {
+      return true;
+    }
+    for (const ext of BACKEND_FS_WATCH_DISABLED_EXTENSIONS) {
+      if (normalizedPath.endsWith(`.${ext}`)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private async sendBackendFsWatch(active: boolean): Promise<void> {
-    if (this.opts?.noSaveToDisk) return;
+    if (!this.shouldUseBackendFsWatch()) return;
     const syncFsWatch = (this.fs as any)?.syncFsWatch;
     if (typeof syncFsWatch !== "function") return;
     try {
@@ -2837,7 +2858,7 @@ export class SyncDoc extends EventEmitter {
   }
 
   private async startBackendFsWatch(): Promise<void> {
-    if (this.opts.noSaveToDisk) return;
+    if (!this.shouldUseBackendFsWatch()) return;
     if (process.env.SYNC_FS_DEBUG) {
       console.log("startBackendFsWatch", {
         path: this.path,
