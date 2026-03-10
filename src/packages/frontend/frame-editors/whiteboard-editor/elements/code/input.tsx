@@ -52,7 +52,13 @@ export default function Input({
     undefined,
   );
   const actions = useMemo(() => {
-    return new Actions(frame, element.id, setComplete, mergeHelperRef);
+    return new Actions(
+      frame,
+      element.id,
+      setComplete,
+      setLocalValue,
+      mergeHelperRef,
+    );
   }, [element.id]); // frame can't change meaningfully.
 
   // Reset baseline when switching elements.
@@ -139,18 +145,20 @@ class Actions implements EditorActions {
   private id: string;
   private _complete: Map<string, any> | undefined = undefined;
   private setComplete: (complete: Map<string, any> | undefined) => void;
+  private setLocalValue: (value: string) => void;
   private introspect: Map<string, any> | undefined = undefined;
   private setIntrospect: (complete: Map<string, any> | undefined) => void;
   private jupyter_actions: JupyterActions | undefined = undefined;
   private mergeHelperRef;
 
-  constructor(frame, id, setComplete, mergeHelperRef) {
+  constructor(frame, id, setComplete, setLocalValue, mergeHelperRef) {
     this.frame = frame;
     this.id = id;
     this.setComplete = (complete) => {
       this._complete = complete;
       setComplete(complete);
     };
+    this.setLocalValue = setLocalValue;
     this.setIntrospect = (introspect) => {
       this.introspect = introspect;
       this.frame.actions.setState({ introspect });
@@ -223,6 +231,7 @@ class Actions implements EditorActions {
       remote:
         this.frame.actions.store.getIn(["elements", this.id, "str"]) ?? "",
     });
+    this.setLocalValue(new_input);
     this.set_cell_input(this.id, new_input);
   }
 

@@ -22,6 +22,7 @@ export default function CodeControlBar({ element }: Props) {
     display: "inline-flex",
     alignItems: "center",
     gap: "4px",
+    height: "24px",
   } as const;
   return (
     <div
@@ -97,6 +98,7 @@ export default function CodeControlBar({ element }: Props) {
               gap: "6px",
               fontWeight: 250,
               lineHeight: 1,
+              height: "24px",
             }}
           >
             <span>Input</span>
@@ -123,6 +125,7 @@ export default function CodeControlBar({ element }: Props) {
               gap: "6px",
               fontWeight: 250,
               lineHeight: 1,
+              height: "24px",
             }}
           >
             <span>Output</span>

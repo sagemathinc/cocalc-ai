@@ -1,4 +1,6 @@
 import { render } from "@testing-library/react";
+import { act } from "react";
+import { fromJS } from "immutable";
 
 const useFrameContext = jest.fn();
 const getStore = jest.fn();
@@ -88,5 +90,52 @@ describe("whiteboard code input", () => {
     expect(noteSaved).toHaveBeenCalledWith("2+3");
     expect(runCodeElement).toHaveBeenCalledWith({ id: "cell1", str: "2+3" });
     expect(selectNextCodeCell).toHaveBeenCalledWith("frame-1", "cell1");
+  });
+
+  it("applies a selected completion to the local editor value immediately", () => {
+    const setElement = jest.fn();
+    useFrameContext.mockReturnValue({
+      id: "frame-1",
+      project_id: "project-1",
+      path: "example.board",
+      actions: {
+        setElement,
+        runCodeElement: jest.fn(),
+        selectNextCodeCell: jest.fn(),
+        store: {
+          getIn: jest.fn().mockReturnValue("i"),
+        },
+      },
+    });
+
+    render(
+      <Input
+        element={{ id: "cell1", str: "i", data: {}, type: "code" } as any}
+        canvasScale={1}
+        getValueRef={{ current: () => "i" } as any}
+      />,
+    );
+
+    const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
+    act(() => {
+      props.actions.select_complete(
+        "cell1",
+        "input",
+        fromJS({
+          code: "i",
+          base: "i",
+          cursor_start: 0,
+          cursor_end: 1,
+        }),
+      );
+    });
+
+    expect(setElement).toHaveBeenCalledWith({
+      obj: { id: "cell1", str: "input" },
+      commit: undefined,
+    });
+    expect(noteSaved).toHaveBeenCalledWith("input");
+    const latestProps = codeMirrorEditor.mock.calls.at(-1)?.[0] as any;
+    expect(latestProps.value).toBe("input");
   });
 });
