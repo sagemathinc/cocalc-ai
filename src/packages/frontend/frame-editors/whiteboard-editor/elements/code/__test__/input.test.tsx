@@ -43,12 +43,15 @@ describe("whiteboard code input", () => {
   it("marks the current value saved before running Shift+Enter", () => {
     const setElement = jest.fn();
     const runCodeElement = jest.fn();
+    const selectNextCodeCell = jest.fn();
     useFrameContext.mockReturnValue({
+      id: "frame-1",
       project_id: "project-1",
       path: "example.board",
       actions: {
         setElement,
         runCodeElement,
+        selectNextCodeCell,
       },
     });
 
@@ -84,5 +87,6 @@ describe("whiteboard code input", () => {
     });
     expect(noteSaved).toHaveBeenCalledWith("2+3");
     expect(runCodeElement).toHaveBeenCalledWith({ id: "cell1", str: "2+3" });
+    expect(selectNextCodeCell).toHaveBeenCalledWith("frame-1", "cell1");
   });
 });

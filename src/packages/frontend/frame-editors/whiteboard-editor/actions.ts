@@ -9,6 +9,7 @@ Whiteboard frame Editor Actions
 
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { Map as ImmutableMap, fromJS } from "immutable";
+import { alert_message } from "@cocalc/frontend/alerts";
 import type { FrameTree } from "../frame-tree/types";
 import {
   StructuredEditorActions as BaseActions,
@@ -49,6 +50,10 @@ import {
 import { Position as EdgeCreatePosition } from "./focused-edge-create";
 import { cloneDeep, debounce, size } from "lodash";
 import runCode from "./elements/code/run";
+import {
+  getCodeTreeOrder,
+  getNextCodeTreeSuccessor,
+} from "./elements/code/graph";
 import { getName } from "./elements/chat";
 import { clearChat, lastMessageNumber } from "./elements/chat-static";
 import { copyToClipboard } from "./tools/clipboard";
@@ -818,7 +823,7 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
 
   // There may be a lot of options for this...
 
-  runCodeElement({
+  async runCodeElement({
     id,
     str,
   }: {
@@ -826,14 +831,14 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     // str of input-- we allow specifying this instead of taking it from the store,
     // in case it just changed and hasn't been saved to the store yet.
     str?: string;
-  }) {
+  }): Promise<void> {
     const element = this.store.get("elements")?.get(id)?.toJS();
     if (element == null || element.type != "code") {
       // no-op no such element
       console.warn("no cell with id", id);
       return;
     }
-    runCode({
+    await runCode({
       project_id: this.project_id,
       path: this.path,
       input: str ?? element.str ?? "",
@@ -846,6 +851,47 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
           cursors: [{}],
         }),
     });
+  }
+
+  private getCodeElementsById(): Record<string, Element | undefined> {
+    const elementsById: Record<string, Element | undefined> = {};
+    for (const element of this.getElements()) {
+      elementsById[element.id] = element;
+    }
+    return elementsById;
+  }
+
+  selectNextCodeCell(frameId: string, id: string): string | undefined {
+    const nextId = getNextCodeTreeSuccessor(
+      this.getCodeElementsById(),
+      id,
+      this.sortedPageIds()?.toJS(),
+    );
+    if (nextId == null) return;
+    this.setSelection(frameId, nextId);
+    this.scrollElementIntoView(nextId, frameId);
+    return nextId;
+  }
+
+  async runCodeTree(
+    frameId: string,
+    id: string,
+  ): Promise<string[] | undefined> {
+    const tree = getCodeTreeOrder(
+      this.getCodeElementsById(),
+      id,
+      this.sortedPageIds()?.toJS(),
+    );
+    if ("error" in tree) {
+      alert_message({ type: "error", message: tree.error });
+      return;
+    }
+    for (const cellId of tree.order) {
+      this.setSelection(frameId, cellId);
+      this.scrollElementIntoView(cellId, frameId);
+      await this.runCodeElement({ id: cellId });
+    }
+    return tree.order;
   }
 
   saveChat({ id, input }: { id: string; input: string }) {

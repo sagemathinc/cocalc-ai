@@ -113,23 +113,12 @@ export default function Input({
             const str = cm.getValue();
             actions.set_cell_input(element.id, str, false);
             // evaluate in all cases
-            frame.actions.runCodeElement({ id: element.id, str });
+            void frame.actions.runCodeElement({ id: element.id, str });
             // TODO: handle these cases
             if (e.altKey || e.metaKey) {
               // this is "evaluate and make new cell"...?
             } else if (e.shiftKey) {
-              // This is super annoying.
-              /*
-              // this is "evaluate and move to next cell, making one if there isn't one."
-              const id = frame.actions.createAdjacentElement(
-                element.id,
-                "bottom"
-              );
-              if (!id) return;
-              frame.actions.setSelectedTool(frame.id, "select");
-              frame.actions.setSelection(frame.id, id);
-              frame.actions.scrollElementIntoView(id);
-              */
+              frame.actions.selectNextCodeCell(frame.id, element.id);
             } else if (e.ctrlKey) {
               // this is "evaluate keeping focus", so nothing further to do.
             }
