@@ -8,6 +8,7 @@ import { delay } from "awaiting";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { JupyterEditorActions } from "@cocalc/frontend/frame-editors/jupyter-editor/actions";
+import { createInitialIpynbContent } from "@cocalc/frontend/jupyter/new-notebook";
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { once } from "@cocalc/util/async-utils";
 import { aux_file } from "@cocalc/util/misc";
@@ -33,6 +34,37 @@ async function getJupyterActions0({
 type F = (X: { project_id: string; path: string }) => Promise<JupyterActions>;
 export const getJupyterActions: F = reuseInFlight(getJupyterActions0);
 
+async function ensureAuxNotebookExists({
+  project_id,
+  aux_path,
+}: {
+  project_id: string;
+  aux_path: string;
+}): Promise<void> {
+  const projectActions = redux.getProjectActions(project_id);
+  const fs = projectActions.fs();
+  try {
+    if (await fs.exists(aux_path)) {
+      const content = await fs.readFile(aux_path);
+      if (Buffer.from(content).length > 0) {
+        return;
+      }
+    }
+  } catch (err) {
+    if ((err as any)?.code !== "ENOENT") {
+      throw err;
+    }
+  }
+  const preferredKernel = redux
+    .getStore("account")
+    ?.getIn(["editor_settings", "jupyter", "kernel"]);
+  await projectActions.ensureContainingDirectoryExists(aux_path);
+  await fs.writeFile(
+    aux_path,
+    await createInitialIpynbContent(project_id, preferredKernel),
+  );
+}
+
 export async function getJupyterFrameEditorActions({
   project_id,
   path,
@@ -46,6 +78,7 @@ export async function getJupyterFrameEditorActions({
     | undefined;
   if (actions == null) {
     const projectActions = redux.getProjectActions(project_id);
+    await ensureAuxNotebookExists({ project_id, aux_path });
     await projectActions.initFileRedux(aux_path, "ipynb");
     actions = redux.getEditorActions(project_id, aux_path) as
       | JupyterEditorActions
