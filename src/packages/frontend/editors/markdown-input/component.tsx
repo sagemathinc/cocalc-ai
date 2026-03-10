@@ -169,6 +169,8 @@ export function MarkdownInput(props: Props) {
   const { actions, isVisible } = useFrameContext();
   const cm = useRef<CodeMirror.Editor | undefined>(undefined);
   const textarea_ref = useRef<HTMLTextAreaElement | null>(null);
+  const internalDivRef = useRef<HTMLDivElement | null>(null);
+  const editorHostRef = divRef ?? internalDivRef;
   const editor_settings = useRedux(["account", "editor_settings"]);
   const options = useMemo(() => {
     return {
@@ -199,18 +201,20 @@ export function MarkdownInput(props: Props) {
     undefined | { left: number; top: number }
   >(undefined);
   const [mentions_search, set_mentions_search] = useState<string>("");
-  const mentions_cursor_ref = useRef<{
-    cursor: EventHandlerFunction;
-    change: EventHandlerFunction;
-    from: { line: number; ch: number };
-  } | undefined>(undefined);
+  const mentions_cursor_ref = useRef<
+    | {
+        cursor: EventHandlerFunction;
+        change: EventHandlerFunction;
+        from: { line: number; ch: number };
+      }
+    | undefined
+  >(undefined);
 
   const mentionableUsers = useMentionableUsers();
   const onSelectionReadyRef = useRef<typeof onSelectionReady>(onSelectionReady);
   onSelectionReadyRef.current = onSelectionReady;
 
-  const showInstructions =
-    chromeLayout !== "external" && !!value?.trim();
+  const showInstructions = chromeLayout !== "external" && !!value?.trim();
 
   const emitSelectionReady = useCallback(() => {
     queueMicrotask(() => {
@@ -254,10 +258,7 @@ export function MarkdownInput(props: Props) {
   const refreshMaxHeight = useCallback(() => {
     let nextMaxHeight: number;
     if (autoGrowMaxHeight != null && Number.isFinite(autoGrowMaxHeight)) {
-      nextMaxHeight = Math.max(
-        initialMinHeight,
-        Math.round(autoGrowMaxHeight),
-      );
+      nextMaxHeight = Math.max(initialMinHeight, Math.round(autoGrowMaxHeight));
     } else if (typeof window !== "undefined") {
       nextMaxHeight = Math.max(
         initialMinHeight,
@@ -309,13 +310,44 @@ export function MarkdownInput(props: Props) {
     [],
   );
 
-  const ensureCaretVisibleIfNeeded = useCallback((editor: CodeMirror.Editor) => {
-    const scrollInfo = editor.getScrollInfo();
-    if (scrollInfo.height <= scrollInfo.clientHeight + 1) {
-      return;
+  const measureAvailableEditorHeight = useCallback((): number | null => {
+    const host = editorHostRef.current;
+    if (host == null) return null;
+    const height = Math.round(host.getBoundingClientRect().height);
+    return Number.isFinite(height) && height > 0 ? height : null;
+  }, [editorHostRef]);
+
+  const ensureCaretVisibleIfNeeded = useCallback(
+    (editor: CodeMirror.Editor) => {
+      const scrollInfo = editor.getScrollInfo();
+      if (scrollInfo.height <= scrollInfo.clientHeight + 1) {
+        return;
+      }
+      editor.scrollIntoView(editor.getDoc().getCursor(), 20);
+    },
+    [],
+  );
+
+  const resetEditorHostScroll = useCallback(() => {
+    const host = editorHostRef.current;
+    if (host != null && host.scrollTop !== 0) {
+      host.scrollTop = 0;
     }
-    editor.scrollIntoView(editor.getDoc().getCursor(), 20);
-  }, []);
+  }, [editorHostRef]);
+
+  const resetScrollTopWhenContentFits = useCallback(
+    (editor: CodeMirror.Editor) => {
+      const scrollInfo = editor.getScrollInfo();
+      if (scrollInfo.height > scrollInfo.clientHeight + 1) {
+        return;
+      }
+      const scroller = editor.getScrollerElement?.() as HTMLElement | null;
+      if (scroller != null && scroller.scrollTop !== 0) {
+        scroller.scrollTop = 0;
+      }
+    },
+    [],
+  );
 
   const syncCodeMirrorLayout = useCallback(
     ({
@@ -330,15 +362,23 @@ export function MarkdownInput(props: Props) {
         refreshMaxHeight();
         const maxHeight = maxHeightRef.current;
         const desired = measureRenderedContentHeight(editor);
-        const clamped = Math.min(
+        const availableHeight = measureAvailableEditorHeight();
+        let clamped = Math.min(
           maxHeight,
           Math.max(initialMinHeight, Math.round(desired)),
         );
+        if (availableHeight != null) {
+          clamped = Math.min(clamped, Math.max(1, availableHeight));
+        }
+        clamped = Math.max(1, clamped);
+        const appliedMinHeight = Math.min(initialMinHeight, clamped);
+        const appliedMaxHeight =
+          availableHeight != null ? Math.min(maxHeight, clamped) : maxHeight;
         editor.setSize(null, clamped);
         applyWrapperDimensions(editor, {
           height: `${clamped}px`,
-          minHeight: `${initialMinHeight}px`,
-          maxHeight: `${maxHeight}px`,
+          minHeight: `${appliedMinHeight}px`,
+          maxHeight: `${appliedMaxHeight}px`,
         });
       } else {
         editor.setSize(null, "100%");
@@ -350,6 +390,8 @@ export function MarkdownInput(props: Props) {
       }
 
       editor.refresh();
+      resetEditorHostScroll();
+      resetScrollTopWhenContentFits(editor);
       if (ensureCaret) {
         ensureCaretVisibleIfNeeded(editor);
       }
@@ -359,7 +401,10 @@ export function MarkdownInput(props: Props) {
       ensureCaretVisibleIfNeeded,
       initialMinHeight,
       isAutoGrow,
+      measureAvailableEditorHeight,
       measureRenderedContentHeight,
+      resetEditorHostScroll,
+      resetScrollTopWhenContentFits,
       refreshMaxHeight,
     ],
   );
@@ -411,7 +456,13 @@ export function MarkdownInput(props: Props) {
   useEffect(() => {
     if (cm.current == null) return;
     syncCodeMirrorLayout();
-  }, [explicitEditorHeight, isAutoGrow, isVisible, showInstructions, syncCodeMirrorLayout]);
+  }, [
+    explicitEditorHeight,
+    isAutoGrow,
+    isVisible,
+    showInstructions,
+    syncCodeMirrorLayout,
+  ]);
 
   useEffect(() => {
     if (!isAutoGrow || cm.current == null) return;
@@ -753,7 +804,9 @@ export function MarkdownInput(props: Props) {
   }, [options]);
 
   const ignoreChangeRef = useRef<boolean>(false);
-  const mergeHelperRef = useRef<SimpleInputMerge>(new SimpleInputMerge(value ?? ""));
+  const mergeHelperRef = useRef<SimpleInputMerge>(
+    new SimpleInputMerge(value ?? ""),
+  );
   // use valueRef since we can't just refer to value in saveValue
   // below, due to not wanted to regenerate the saveValue function
   // every time, due to debouncing, etc.
@@ -826,7 +879,13 @@ export function MarkdownInput(props: Props) {
     if (upload_close_preview_ref.current != null) {
       upload_close_preview_ref.current(true);
     }
-  }, [value, setValueNoJump, saveValue, emitSelectionReady, syncCodeMirrorLayout]);
+  }, [
+    value,
+    setValueNoJump,
+    saveValue,
+    emitSelectionReady,
+    syncCodeMirrorLayout,
+  ]);
 
   function upload_sending(file: { name: string }): void {
     if (project_id == null || path == null) {
@@ -1108,7 +1167,8 @@ export function MarkdownInput(props: Props) {
         onCancel={close_mentions}
         onSelect={(account_id) => {
           if (mentions_cursor_ref.current == null) return;
-          const name = redux.getStore("users").get_name(account_id) ?? account_id;
+          const name =
+            redux.getStore("users").get_name(account_id) ?? account_id;
           const text = "@" + trunc_middle(name, 64);
           if (cm.current == null) return;
           const from = mentions_cursor_ref.current.from;
@@ -1152,7 +1212,7 @@ export function MarkdownInput(props: Props) {
     >
       {showInstructions ? render_instructions() : undefined}
       <div
-        ref={divRef}
+        ref={editorHostRef}
         style={{
           ...(isFocusedStyle ? FOCUSED_STYLE : BLURED_STYLE),
           ...style,

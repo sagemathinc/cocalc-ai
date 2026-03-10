@@ -7,7 +7,7 @@ type HandlerMap = Record<string, Array<(...args: any[]) => void>>;
 
 let latestEditor: any = null;
 
-function createMockEditor() {
+function createMockEditor(node?: HTMLTextAreaElement | null) {
   const handlers: HandlerMap = {};
   let currentValue = "";
   let currentCursor = { line: 0, ch: 0 };
@@ -18,7 +18,37 @@ function createMockEditor() {
     },
   ];
   const wrapper = document.createElement("div");
+  wrapper.className = "CodeMirror";
   wrapper.remove = jest.fn();
+  const scroller = document.createElement("div");
+  scroller.className = "CodeMirror-scroll";
+  const sizer = document.createElement("div");
+  sizer.className = "CodeMirror-sizer";
+  sizer.getBoundingClientRect = () =>
+    ({
+      top: 0,
+      bottom: Math.max(20, currentValue.split("\n").length * 20),
+      left: 0,
+      right: 300,
+      width: 300,
+      height: Math.max(20, currentValue.split("\n").length * 20),
+      x: 0,
+      y: 0,
+      toJSON: () => undefined,
+    }) as DOMRect;
+  scroller.appendChild(sizer);
+  wrapper.appendChild(scroller);
+  if (node?.parentNode != null) {
+    node.parentNode.insertBefore(wrapper, node);
+  }
+  let currentScrollInfo = {
+    left: 0,
+    top: 0,
+    height: 0,
+    width: 0,
+    clientHeight: 0,
+    clientWidth: 0,
+  };
   const inputField = {
     blur: jest.fn(() => {
       editor.__trigger("blur", editor);
@@ -38,6 +68,12 @@ function createMockEditor() {
     __setValue(value: string) {
       currentValue = value;
     },
+    __setScrollInfo(info: Partial<typeof currentScrollInfo>) {
+      currentScrollInfo = { ...currentScrollInfo, ...info };
+      if (info.top != null) {
+        scroller.scrollTop = info.top;
+      }
+    },
     addKeyMap: jest.fn(),
     defaultTextHeight: jest.fn(() => 20),
     execCommand: jest.fn(),
@@ -55,7 +91,8 @@ function createMockEditor() {
     getGutterElement: jest.fn(() => document.createElement("div")),
     getInputField: jest.fn(() => inputField),
     getLine: jest.fn((line: number) => currentValue.split("\n")[line] ?? ""),
-    getScrollInfo: jest.fn(() => ({ top: 0, height: 0, clientHeight: 0 })),
+    getScrollerElement: jest.fn(() => scroller),
+    getScrollInfo: jest.fn(() => currentScrollInfo),
     getValue: jest.fn(() => currentValue),
     getWrapperElement: jest.fn(() => wrapper),
     lastLine: jest.fn(() => Math.max(0, currentValue.split("\n").length - 1)),
@@ -95,7 +132,7 @@ jest.mock("codemirror", () => ({
     goLineDown: jest.fn(),
     goLineUp: jest.fn(),
   },
-  fromTextArea: jest.fn(() => createMockEditor()),
+  fromTextArea: jest.fn((node: HTMLTextAreaElement) => createMockEditor(node)),
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -373,7 +410,8 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
       />,
     );
 
-    const editorHost = container.querySelector("textarea")?.parentElement as HTMLElement;
+    const editorHost = container.querySelector("textarea")
+      ?.parentElement as HTMLElement;
     expect(editorHost.style.width).toBe("100%");
     expect(editorHost.style.clear).toBe("right");
   });
@@ -392,5 +430,46 @@ describe("MarkdownInput CodeMirror wrapper contract", () => {
 
     const body = container.firstElementChild as HTMLElement;
     expect(body.children).toHaveLength(1);
+  });
+
+  it("clamps auto-grow to the allocated host height and clears stale host scroll", () => {
+    const { rerender } = render(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+      />,
+    );
+
+    const wrapper = latestEditor.getWrapperElement() as HTMLElement;
+    const host = wrapper.parentElement as HTMLElement;
+    host.scrollTop = 78;
+    host.getBoundingClientRect = () =>
+      ({
+        top: 0,
+        bottom: 108,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 108,
+        x: 0,
+        y: 0,
+        toJSON: () => undefined,
+      }) as DOMRect;
+
+    rerender(
+      <MarkdownInput
+        value={"1\n2\n3\n4\n5\n6\n7\n8\n9\n10"}
+        onChange={() => {}}
+        saveDebounceMs={0}
+        autoGrow
+        refresh={1}
+      />,
+    );
+
+    expect(latestEditor.setSize).toHaveBeenLastCalledWith(null, 108);
+    expect(wrapper.style.height).toBe("108px");
+    expect(host.scrollTop).toBe(0);
   });
 });
