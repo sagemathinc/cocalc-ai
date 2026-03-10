@@ -843,6 +843,10 @@ export class CodexExecAgent implements AcpAgent {
           cwd,
           preContentCache,
         );
+        const commandFinished =
+          item.exit_code !== undefined ||
+          item.aggregated_output !== undefined ||
+          item.status === "completed";
         {
           const readInfo = this.parseReadOnlyCommand(item.command, cwd);
           if (readInfo) {
@@ -871,7 +875,7 @@ export class CodexExecAgent implements AcpAgent {
           const writePaths = this.parseWriteCommand(item.command, cwd);
           const commandSucceeded =
             item.exit_code == null || item.exit_code === 0;
-          if (commandSucceeded) {
+          if (commandFinished && commandSucceeded) {
             for (const pathAbs of writePaths) {
               // Keep write heuristics conservative: only emit when the command
               // appears successful and the target resolves to an actual file.
