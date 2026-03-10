@@ -1,11 +1,12 @@
 import type {
   AppTemplateCatalogEntryV1,
-  AppTemplateCatalogV1,
   AppTemplateKind,
   AppTemplateServiceOpenMode,
 } from "@cocalc/util/apps/template-catalog";
-import { sortAppTemplateCatalogEntries } from "@cocalc/util/apps/template-catalog";
-import builtinCatalogJson from "./builtin-app-template-catalog.json";
+import {
+  builtinAppTemplateCatalog,
+  mergeAppTemplateCatalogs,
+} from "@cocalc/util/apps/template-catalog";
 
 export type AppServiceOpenMode = AppTemplateServiceOpenMode;
 
@@ -40,10 +41,6 @@ function joinPath(head: string, tail: string): string {
   const h = `${head ?? ""}`.replace(/\/+$/, "");
   const t = `${tail ?? ""}`.replace(/^\/+/, "");
   return `${h}/${t}`;
-}
-
-function builtinCatalog(): AppTemplateCatalogV1 {
-  return builtinCatalogJson as AppTemplateCatalogV1;
 }
 
 function toPreset(
@@ -82,7 +79,7 @@ function toPreset(
 }
 
 export function builtinAppServerPresets(homeDirectory: string): AppServerPreset[] {
-  return sortAppTemplateCatalogEntries(builtinCatalog().templates).map(
+  return mergeAppTemplateCatalogs([builtinAppTemplateCatalog()]).map(
     (template) => toPreset(template, homeDirectory),
   );
 }

@@ -20,7 +20,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo",
-    "build": "pnpm exec tsc --build",
+    "build": "pnpm exec tsc --build && node ./scripts/copy-assets.js",
     "test": "pnpm exec jest",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores events",
     "prepublishOnly": "pnpm test"

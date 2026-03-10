@@ -1,5 +1,6 @@
 export type AppTemplateKind = "service" | "static";
 export type AppTemplateServiceOpenMode = "proxy" | "port";
+import builtinCatalogJson from "./builtin-template-catalog.json";
 
 export interface AppTemplateDetectV1 {
   commands?: string[];
@@ -69,6 +70,11 @@ export interface AppTemplateCatalogV1 {
   templates: AppTemplateCatalogEntryV1[];
 }
 
+export interface AppTemplateCatalogSourceV1 {
+  source: string;
+  catalog: AppTemplateCatalogV1;
+}
+
 export function sortAppTemplateCatalogEntries<T extends { priority?: number; title?: string }>(
   entries: T[],
 ): T[] {
@@ -77,4 +83,22 @@ export function sortAppTemplateCatalogEntries<T extends { priority?: number; tit
     if (byPriority !== 0) return byPriority;
     return `${a.title ?? ""}`.localeCompare(`${b.title ?? ""}`);
   });
+}
+
+export function builtinAppTemplateCatalog(): AppTemplateCatalogV1 {
+  return builtinCatalogJson as AppTemplateCatalogV1;
+}
+
+export function mergeAppTemplateCatalogs(
+  catalogs: Array<AppTemplateCatalogV1 | undefined | null>,
+): AppTemplateCatalogEntryV1[] {
+  const merged = new Map<string, AppTemplateCatalogEntryV1>();
+  for (const catalog of catalogs) {
+    if (!catalog) continue;
+    for (const template of catalog.templates ?? []) {
+      if (!template?.id) continue;
+      merged.set(template.id, template);
+    }
+  }
+  return sortAppTemplateCatalogEntries(Array.from(merged.values()));
 }

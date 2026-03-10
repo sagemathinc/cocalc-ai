@@ -1,3 +1,5 @@
+import type { AppTemplateCatalogEntryV1 } from "@cocalc/util/apps/template-catalog";
+
 export const apps = {
   start: true,
   stop: true,
@@ -20,6 +22,7 @@ export const apps = {
   listAppMetrics: true,
   detectApps: true,
   detectInstalledTemplates: true,
+  listAppTemplates: true,
   auditAppPublicReadiness: true,
 };
 
@@ -97,6 +100,8 @@ export interface InstalledAppTemplate {
   status?: "available" | "missing" | "unknown";
   details?: string;
 }
+
+export type AppTemplateCatalogEntry = AppTemplateCatalogEntryV1;
 
 export interface AppAuditCheck {
   id: string;
@@ -220,6 +225,7 @@ export interface Apps {
   }) => Promise<DetectedAppPort[]>;
 
   detectInstalledTemplates: () => Promise<InstalledAppTemplate[]>;
+  listAppTemplates: () => Promise<AppTemplateCatalogEntry[]>;
 
   auditAppPublicReadiness: (id: string) => Promise<AppPublicReadinessAudit>;
 }
