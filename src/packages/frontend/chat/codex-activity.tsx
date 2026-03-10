@@ -1043,7 +1043,7 @@ function detectBasePath(
   return undefined;
 }
 
-function TerminalRow({
+export function TerminalRow({
   entry,
   fontSize,
 }: {
@@ -1082,11 +1082,6 @@ function TerminalRow({
             </Text>
           </TimestampTooltip>
         ) : null}
-        {emptyOutputLabel ? (
-          <Text type="secondary" style={{ fontSize: secondarySize }}>
-            {emptyOutputLabel}
-          </Text>
-        ) : null}
         {entry.truncated ? (
           <Tag color="red" style={{ margin: 0 }}>
             Output truncated
@@ -1094,6 +1089,18 @@ function TerminalRow({
         ) : null}
       </Space>
       <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 0 }} />
+      {emptyOutputLabel ? (
+        <Text
+          type="secondary"
+          style={{
+            display: "block",
+            fontSize: secondarySize,
+            marginTop: 4,
+          }}
+        >
+          {emptyOutputLabel}
+        </Text>
+      ) : null}
     </div>
   );
 }
