@@ -61,6 +61,7 @@ import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { evaluateHostOperational, hostLabel } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
@@ -97,6 +98,7 @@ export function FilesFlyout({
     project_id,
     actions,
     manageStarredFiles,
+    workspaces,
   } = useProjectContext();
   const rootRef = useRef<HTMLDivElement>(null as any);
   const refInput = useRef<InputRef>(null as any);
@@ -442,10 +444,13 @@ export function FilesFlyout({
 
     if (!skip) {
       const fullPath = path_to_file(effective_current_path, file.name);
+      const nextSelection = selectionForPath(workspaces.records, fullPath);
+      workspaces.setSelection(nextSelection);
 
       if (file.isDir) {
         // true: change history, false: do not show "files" page
         actions?.open_directory(fullPath, true, false);
+        setTimeout(() => workspaces.setSelection(nextSelection), 0);
         setSearchState("");
       } else {
         if (onOpenSpecial(fullPath, false)) {
@@ -462,6 +467,7 @@ export function FilesFlyout({
           foreground,
           explicit: true,
         });
+        setTimeout(() => workspaces.setSelection(nextSelection), 0);
       }
     }
 

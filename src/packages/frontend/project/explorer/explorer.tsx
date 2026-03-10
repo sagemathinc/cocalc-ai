@@ -23,6 +23,7 @@ import { ProjectStatus } from "@cocalc/frontend/todo-types";
 import { labels } from "@cocalc/frontend/i18n";
 import AskNewFilename from "../ask-filename";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import { ActionBar } from "./action-bar";
 import { ActionBox } from "./action-box";
 import BackupOps from "./backup-ops";
@@ -109,7 +110,7 @@ export function Explorer() {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const { actions, project_id } = useProjectContext();
+  const { actions, project_id, workspaces } = useProjectContext();
 
   const newFileRef = useRef<any>(null);
   const searchAndTerminalBar = useRef<any>(null);
@@ -303,11 +304,14 @@ export function Explorer() {
         if (x != null) {
           const { isDir, name } = x;
           const path = join(effective_current_path, name);
+          const nextSelection = selectionForPath(workspaces.records, path);
+          workspaces.setSelection(nextSelection);
           if (isDir) {
             actions.open_directory(path);
           } else {
             actions.open_file({ path, foreground: !e.ctrlKey });
           }
+          setTimeout(() => workspaces.setSelection(nextSelection), 0);
           if (!e.ctrlKey) {
             setTimeout(() => actions.set_file_search(""), 10);
             actions.clear_selected_file_index();

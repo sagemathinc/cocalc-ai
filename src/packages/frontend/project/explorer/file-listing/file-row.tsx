@@ -17,7 +17,9 @@ import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { should_open_in_foreground } from "@cocalc/frontend/lib/should-open-in-foreground";
 import { open_new_tab } from "@cocalc/frontend/misc";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
+import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
 import track from "@cocalc/frontend/user-tracking";
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -83,6 +85,7 @@ export function FileRow({
   onToggleStar,
   onOpenSpecial,
 }: Props) {
+  const { workspaces } = useProjectContext();
   const student_project_functionality = useStudentProjectFunctionality(
     actions.project_id,
   );
@@ -239,11 +242,14 @@ export function FileRow({
       return;
     }
     const path = full_path();
+    const nextSelection = selectionForPath(workspaces.records, path);
+    workspaces.setSelection(nextSelection);
     if (onOpenSpecial?.(path, isDir)) {
       return;
     }
     if (isDir) {
       actions.open_directory(full_path());
+      setTimeout(() => workspaces.setSelection(nextSelection), 0);
       actions.set_file_search("");
     } else {
       const foreground = should_open_in_foreground(e);
@@ -257,6 +263,7 @@ export function FileRow({
         foreground,
         explicit: true,
       });
+      setTimeout(() => workspaces.setSelection(nextSelection), 0);
       if (foreground) {
         // delay slightly since it looks weird to see the full listing right when you click on a file
         setTimeout(() => actions.set_file_search(""), 10);
