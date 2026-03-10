@@ -70,6 +70,10 @@ export function workspaceStoreName(account_id: string): string {
   return `workspaces/${account_id}`;
 }
 
+export function sanitizeWorkspaceAccountId(accountId: string): string {
+  return `${accountId ?? ""}`.replace(/[^a-zA-Z0-9_.-]/g, "-");
+}
+
 export async function openWorkspaceStore({
   client,
   project_id,
@@ -148,7 +152,10 @@ export function normalizeWorkspaceRecord(
       record.last_active_path.trim()
         ? normalizeWorkspacePath(record.last_active_path)
         : null,
-    chat_path: record.chat_path ?? null,
+    chat_path:
+      typeof record.chat_path === "string" && record.chat_path.trim()
+        ? record.chat_path.trim()
+        : null,
     created_at:
       typeof record.created_at === "number" && Number.isFinite(record.created_at)
         ? record.created_at
@@ -204,6 +211,12 @@ export function resolveWorkspaceForPath(
   path: string,
 ): WorkspaceRecord | null {
   const normalizedPath = normalizeWorkspacePath(path);
+  for (const record of records) {
+    const chatPath = record.chat_path?.trim();
+    if (chatPath && chatPath === normalizedPath) {
+      return record;
+    }
+  }
   let best: WorkspaceRecord | null = null;
   for (const record of records) {
     if (!pathMatchesWorkspaceRoot(normalizedPath, record.root_path)) continue;

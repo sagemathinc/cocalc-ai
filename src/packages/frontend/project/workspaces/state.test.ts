@@ -44,6 +44,21 @@ describe("project workspaces path matching", () => {
     ).toBe("2");
   });
 
+  it("treats the canonical workspace chat as inside the workspace", () => {
+    const records = [
+      {
+        ...record("/repo/a", "a"),
+        chat_path: "/home/user/.local/share/cocalc/workspaces/me/a.chat",
+      },
+    ];
+    expect(
+      resolveWorkspaceForPath(
+        records,
+        "/home/user/.local/share/cocalc/workspaces/me/a.chat",
+      )?.workspace_id,
+    ).toBe("a");
+  });
+
   it("supports all, unscoped, and specific workspace selections", () => {
     const records = [record("/repo/a", "a")];
     expect(

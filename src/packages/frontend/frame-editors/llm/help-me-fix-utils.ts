@@ -82,6 +82,7 @@ export async function getHelp({
     });
     const sent = await submitNavigatorPromptToCurrentThread({
       project_id,
+      path,
       prompt: intentPrompt,
       tag: `intent:error-fix:${tagSuffix}`,
       forceCodex: true,

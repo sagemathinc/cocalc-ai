@@ -64,6 +64,7 @@ export default function LLMError({ style, traceback, input }: Props) {
       await Promise.resolve(frameActions?.save?.(true));
       const sent = await submitNavigatorPromptToCurrentThread({
         project_id,
+        path,
         prompt: intentPrompt,
         tag: "intent:notebook-error",
         forceCodex: true,
