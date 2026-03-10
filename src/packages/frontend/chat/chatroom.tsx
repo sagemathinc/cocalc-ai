@@ -57,6 +57,7 @@ import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
+import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -207,7 +208,10 @@ export function ChatPanel({
     showThreadImagePreviewRaw === false || showThreadImagePreviewRaw === "false"
       ? false
       : true;
-  const hideChatTypeSelectorRaw = getDescValue(desc, "data-hideChatTypeSelector");
+  const hideChatTypeSelectorRaw = getDescValue(
+    desc,
+    "data-hideChatTypeSelector",
+  );
   const hideChatTypeSelector = asBoolean(hideChatTypeSelectorRaw);
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
   const preferLatestThreadFromDescRaw = getDescValue(
@@ -249,14 +253,15 @@ export function ChatPanel({
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
 
-  const { threads, archivedThreads, combinedThread, threadSections } = useThreadSections({
-    messages,
-    threadIndex,
-    activity,
-    accountId: account_id,
-    actions,
-    version: docVersion,
-  });
+  const { threads, archivedThreads, combinedThread, threadSections } =
+    useThreadSections({
+      messages,
+      threadIndex,
+      activity,
+      accountId: account_id,
+      actions,
+      version: docVersion,
+    });
 
   const {
     selectedThreadKey,
@@ -292,13 +297,40 @@ export function ChatPanel({
     actions?.frameId,
   ]);
 
-  const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (actions?.frameTreeActions?.set_frame_data && actions?.frameId) return;
+    const persistedSelectedThreadKey =
+      selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
+        ? selectedThreadKey
+        : null;
+    persistExternalSideChatSelectedThreadKey({
+      project_id,
+      path,
+      selectedThreadKey: persistedSelectedThreadKey,
+    });
+  }, [
+    project_id,
+    path,
+    selectedThreadKey,
+    actions?.frameTreeActions,
+    actions?.frameId,
+  ]);
+
+  const [composerTargetKey, setComposerTargetKey] = useState<string | null>(
+    null,
+  );
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
-    const title = asTrimmedString(getDescValue(desc, "data-newThreadTitleDefault"));
-    const icon = asTrimmedString(getDescValue(desc, "data-newThreadIconDefault"));
-    const color = asTrimmedString(getDescValue(desc, "data-newThreadColorDefault"));
+    const title = asTrimmedString(
+      getDescValue(desc, "data-newThreadTitleDefault"),
+    );
+    const icon = asTrimmedString(
+      getDescValue(desc, "data-newThreadIconDefault"),
+    );
+    const color = asTrimmedString(
+      getDescValue(desc, "data-newThreadColorDefault"),
+    );
     const navigatorWorkingDirectory = asTrimmedString(
       getDescValue(desc, "data-navigatorNewThreadWorkingDirectoryDefault"),
     );
@@ -316,8 +348,9 @@ export function ChatPanel({
       },
     };
   }, [desc]);
-  const [newThreadSetup, setNewThreadSetup] =
-    useState<NewThreadSetup>(defaultNewThreadSetup);
+  const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
+    defaultNewThreadSetup,
+  );
   const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
@@ -339,12 +372,13 @@ export function ChatPanel({
     return stableDraftKeyFromThreadKey(selectedThreadKey);
   }, [singleThreadView, selectedThreadKey]);
 
-  const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
-    account_id,
-    project_id,
-    path,
-    composerDraftKey,
-  });
+  const { input, setInput, clearInput, clearComposerDraft } =
+    useChatComposerDraft({
+      account_id,
+      project_id,
+      path,
+      composerDraftKey,
+    });
   const inputRef = useRef<string>(input);
   const composerSessionRef = useRef<number>(composerSession);
   useEffect(() => {
@@ -355,10 +389,7 @@ export function ChatPanel({
   }, [composerSession]);
   const setComposerInput = useCallback(
     (value: string, sessionToken?: number) => {
-      if (
-        sessionToken != null &&
-        sessionToken !== composerSessionRef.current
-      ) {
+      if (sessionToken != null && sessionToken !== composerSessionRef.current) {
         return;
       }
       if (value === inputRef.current) {
@@ -430,7 +461,7 @@ export function ChatPanel({
   const selectedThreadMessages = useMemo(
     () =>
       selectedThreadLookupKey != null
-        ? actions.getMessagesInThread(selectedThreadLookupKey) ?? []
+        ? (actions.getMessagesInThread(selectedThreadLookupKey) ?? [])
         : [],
     [actions, selectedThreadLookupKey, messages],
   );
@@ -481,10 +512,11 @@ export function ChatPanel({
       });
       const threadDateRaw =
         metadata?.thread_date ??
-        (thread.newestTime ? new Date(thread.newestTime).toISOString() : undefined);
+        (thread.newestTime
+          ? new Date(thread.newestTime).toISOString()
+          : undefined);
       const createdAt =
-        parseDateISOString(threadDateRaw) ??
-        new Date().toISOString();
+        parseDateISOString(threadDateRaw) ?? new Date().toISOString();
       const updatedAt =
         parseDateISOString(thread.newestTime) ??
         parseDateISOString(threadDateRaw) ??
@@ -528,11 +560,15 @@ export function ChatPanel({
             ? acpConfig.reasoning
             : undefined,
         thread_color:
-          typeof thread.threadColor === "string" ? thread.threadColor : undefined,
+          typeof thread.threadColor === "string"
+            ? thread.threadColor
+            : undefined,
         thread_icon:
           typeof thread.threadIcon === "string" ? thread.threadIcon : undefined,
         thread_image:
-          typeof thread.threadImage === "string" ? thread.threadImage : undefined,
+          typeof thread.threadImage === "string"
+            ? thread.threadImage
+            : undefined,
         thread_pin: thread.isPinned === true,
       });
     }
@@ -543,7 +579,9 @@ export function ChatPanel({
     if (!agentSessionRecords.length) return;
     for (const record of agentSessionRecords) {
       const serialized = JSON.stringify(record);
-      if (indexedAgentSessionsRef.current.get(record.session_id) === serialized) {
+      if (
+        indexedAgentSessionsRef.current.get(record.session_id) === serialized
+      ) {
         continue;
       }
       void upsertAgentSessionRecord(record)
@@ -721,8 +759,9 @@ export function ChatPanel({
         };
       }
       const thread_id = normalizeThreadKey(threadKey);
-      const threadMessages =
-        thread_id ? actions.getMessagesInThread(thread_id) ?? [] : [];
+      const threadMessages = thread_id
+        ? (actions.getMessagesInThread(thread_id) ?? [])
+        : [];
       const latestMessageId =
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim() ||
         undefined;
@@ -752,8 +791,9 @@ export function ChatPanel({
       actions,
       threadId: thread_id,
       threadKey: thread_id ?? "",
-      persistedSessionId:
-        thread_id ? actions.getCodexConfig(thread_id)?.sessionId : undefined,
+      persistedSessionId: thread_id
+        ? actions.getCodexConfig(thread_id)?.sessionId
+        : undefined,
     });
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
@@ -767,7 +807,8 @@ export function ChatPanel({
         (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
         acpState?.get?.(`${msgDate.valueOf()}`);
       const isActive =
-        (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
+        (typeof threadState === "string" &&
+          ACP_ACTIVE_STATES.has(threadState)) ||
         (typeof msgState === "string" && ACP_ACTIVE_STATES.has(msgState));
       if (!isActive) continue;
       const interruptTargetThreadId =
@@ -834,9 +875,9 @@ export function ChatPanel({
             return next;
           })()
         : reply_thread_id && existingThreadMetadata?.agent_kind === "acp"
-          ? existingThreadMetadata.acp_config ??
+          ? (existingThreadMetadata.acp_config ??
             actions.getCodexConfig?.(reply_thread_id) ??
-            undefined
+            undefined)
           : undefined;
 
     const timeStamp = actions.sendChat({
@@ -867,18 +908,16 @@ export function ChatPanel({
                   : undefined,
             }
           : undefined,
-      threadAppearance:
-        !reply_thread_id
-          ? {
-              color: newThreadSetup.color?.trim(),
-              icon: newThreadSetup.icon?.trim(),
-              image: newThreadSetup.image?.trim(),
-            }
-          : undefined,
+      threadAppearance: !reply_thread_id
+        ? {
+            color: newThreadSetup.color?.trim(),
+            icon: newThreadSetup.icon?.trim(),
+            image: newThreadSetup.image?.trim(),
+          }
+        : undefined,
       // Replies sent from Combined should keep Combined selected.
       // Brand new threads should always switch to the newly created thread.
-      preserveSelectedThread:
-        isCombinedFeedSelected && reply_thread_id != null,
+      preserveSelectedThread: isCombinedFeedSelected && reply_thread_id != null,
       acp_loop_config:
         composerLoopConfig?.enabled === true &&
         (isSelectedThreadCodex ||
@@ -1145,16 +1184,13 @@ export function ChatPanel({
             combinedThread={combinedThread}
             openRenameModal={
               modalHandlers?.openRenameModal ??
-              ((
-                _threadKey,
-                _label,
-                _useCurrentLabel,
-                _color,
-                _icon,
-              ) => undefined)
+              ((_threadKey, _label, _useCurrentLabel, _color, _icon) =>
+                undefined)
             }
             openGitBrowser={openGitBrowserForThread}
-            openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
+            openExportModal={
+              modalHandlers?.openExportModal ?? (() => undefined)
+            }
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
             confirmDeleteThread={
               threadActionHandlers?.confirmDeleteThread ?? (() => undefined)

@@ -43,6 +43,7 @@ import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspace
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
+import { getExternalSideChatDesc } from "@cocalc/frontend/chat/external-side-chat-selection";
 import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
@@ -96,15 +97,19 @@ export const Content: React.FC<Props> = (props: Props) => {
   // The overflowY is hidden for editors and the process-info tab, which each
   // manage their own internal scrolling. Other tabs (e.g., settings) still use
   // page-level scrolling. See https://github.com/sagemathinc/cocalc/pull/4708.
-  const hideOuterScroll =
-    tab_name.startsWith("editor-") || tab_name === "info";
+  const hideOuterScroll = tab_name.startsWith("editor-") || tab_name === "info";
   return (
     <div
       ref={contentRef}
       style={{
         ...MAIN_STYLE,
         ...(is_visible
-          ? { opacity: 1, pointerEvents: "auto", zIndex: 1, visibility: "visible" }
+          ? {
+              opacity: 1,
+              pointerEvents: "auto",
+              zIndex: 1,
+              visibility: "visible",
+            }
           : {
               opacity: 0,
               pointerEvents: "none",
@@ -152,7 +157,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
       // a tab changed to not be visible, so let it know, so it can
       // remove its keyboard handler.
       if (tab_name.startsWith("editor-")) {
-        const syncPath = (open_files.getIn([path, "sync_path"]) as string) ?? path;
+        const syncPath =
+          (open_files.getIn([path, "sync_path"]) as string) ?? path;
         // if the actions are defined and there is a blur method, call it.
         redux.getEditorActions(project_id, syncPath)?.["blur"]?.();
       }
@@ -287,6 +293,10 @@ const EditorContent: React.FC<EditorContentProps> = ({
   component,
 }: EditorContentProps) => {
   const editor_container_ref = useRef<any>(null);
+  const sideChatDesc = useMemo(
+    () => getExternalSideChatDesc(project_id, path),
+    [project_id, path],
+  );
 
   if (deleted) {
     return <DeletedFile project_id={project_id} path={path} time={deleted} />;
@@ -340,6 +350,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
             style={{ position: "absolute" }}
             project_id={project_id}
             path={chatMetaFile(path)}
+            desc={sideChatDesc}
           />
         </div>
       </div>
