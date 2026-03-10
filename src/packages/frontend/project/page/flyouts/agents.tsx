@@ -489,6 +489,10 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [inlineSession?.chat_path, project_id]);
 
   function openNavigatorSession(record: AgentSessionRecord): void {
+    if (record.entrypoint !== "global") {
+      actions?.open_file({ path: record.chat_path });
+      return;
+    }
     saveNavigatorSelectedThreadKey(record.thread_key);
     actions?.set_active_tab("home");
   }
@@ -523,10 +527,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function renderSessionMenu(record: AgentSessionRecord): React.JSX.Element {
+    const resumeLabel =
+      record.entrypoint === "global" ? "Go to Home Chat" : "Go to Chat";
     const items: MenuProps["items"] = [
       {
         key: "resume",
-        label: "Go to Home Chat",
+        label: resumeLabel,
       },
       {
         key: "float",
@@ -583,10 +589,12 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function renderInlineSessionMenu(record: AgentSessionRecord): React.JSX.Element {
+    const resumeLabel =
+      record.entrypoint === "global" ? "Go to Home Chat" : "Go to Chat";
     const items: MenuProps["items"] = [
       {
         key: "resume",
-        label: "Go to Home Chat",
+        label: resumeLabel,
       },
       {
         key: "float",

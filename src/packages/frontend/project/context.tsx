@@ -38,7 +38,11 @@ import { Project } from "./settings/types";
 import { lite } from "@cocalc/frontend/lite";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
-import { pathMatchesRoot, useProjectWorkspaces } from "./workspaces/state";
+import {
+  pathMatchesRoot,
+  selectionForPath,
+  useProjectWorkspaces,
+} from "./workspaces/state";
 import type { ProjectWorkspaceState } from "./workspaces/types";
 import { path_to_tab, tab_to_path } from "@cocalc/util/misc";
 
@@ -234,11 +238,8 @@ export function useProjectContextProvider({
         return;
       }
       if (current_path_abs && !selectionChanged) {
-        const resolved = workspaces.resolveWorkspaceForPath(current_path_abs);
         workspaces.setSelection(
-          resolved
-            ? { kind: "workspace", workspace_id: resolved.workspace_id }
-            : { kind: "unscoped" },
+          selectionForPath(workspaces.records, current_path_abs),
         );
         return;
       }
@@ -248,12 +249,7 @@ export function useProjectContextProvider({
     const activePath = tab_to_path(active_project_tab ?? "");
     if (activePath && workspaces.matchesPath(activePath)) return;
     if (activePath && !selectionChanged) {
-      const resolved = workspaces.resolveWorkspaceForPath(activePath);
-      workspaces.setSelection(
-        resolved
-          ? { kind: "workspace", workspace_id: resolved.workspace_id }
-          : { kind: "unscoped" },
-      );
+      workspaces.setSelection(selectionForPath(workspaces.records, activePath));
       return;
     }
 
@@ -283,7 +279,7 @@ export function useProjectContextProvider({
     open_files_order,
     workspaces.current,
     workspaces.matchesPath,
-    workspaces.resolveWorkspaceForPath,
+    workspaces.records,
     workspaces.selection,
   ]);
 

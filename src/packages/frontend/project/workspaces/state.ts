@@ -1,196 +1,59 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  WORKSPACES_STORE_RECORDS_KEY,
+  WORKSPACES_STORE_VERSION_KEY,
+  createStoredWorkspaceRecord,
+  createWorkspaceRecord,
+  createWorkspaceRecords,
+  defaultWorkspaceTitle as defaultWorkspaceTitleCore,
+  deleteWorkspaceRecords,
+  deleteStoredWorkspaceRecord,
+  hasWorkspaceStoreState,
+  normalizeWorkspaceSelection,
+  openWorkspaceStore,
+  pathMatchesWorkspaceRoot,
+  readStoredWorkspaceRecords,
+  readWorkspaceRecordsFromStore,
+  resolveWorkspaceForPath as resolveWorkspaceForPathCore,
+  selectionForWorkspacePath as selectionForWorkspacePathCore,
+  selectionMatchesWorkspacePath,
+  touchWorkspaceRecords,
+  touchStoredWorkspaceRecord,
+  updateWorkspaceRecords,
+  updateStoredWorkspaceRecord,
+  type WorkspaceStore,
+  writeWorkspaceRecordsToStore,
+} from "@cocalc/conat/workspaces";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { uuid } from "@cocalc/util/misc";
-import type { DKV } from "@cocalc/conat/sync/dkv";
 import type {
   ProjectWorkspaceState,
   WorkspaceCreateInput,
   WorkspaceRecord,
   WorkspaceSelection,
-  WorkspaceTheme,
   WorkspaceUpdatePatch,
 } from "./types";
-
-const STORAGE_VERSION = 1;
-const STORE_VERSION_KEY = "version";
-const STORE_RECORDS_KEY = "records";
-const SESSION_SELECTION_PREFIX = "project-workspace-selection";
-
-function normalizePath(path: string): string {
-  let next = `${path ?? ""}`.trim();
-  if (!next.startsWith("/")) {
-    next = `/${next}`;
-  }
-  if (next.length > 1) {
-    next = next.replace(/\/+$/g, "");
-  }
-  return next || "/";
-}
-
-function defaultTheme(root_path: string, title?: string): WorkspaceTheme {
-  const trimmedTitle = `${title ?? ""}`.trim();
-  const root = normalizePath(root_path);
-  const fallbackTitle = root === "/" ? "/" : root.split("/").filter(Boolean).at(-1) ?? root;
-  return {
-    title: trimmedTitle || fallbackTitle,
-    description: "",
-    color: null,
-    accent_color: null,
-    icon: null,
-    image_blob: null,
-  };
-}
-
-function normalizeRecord(record: WorkspaceRecord): WorkspaceRecord {
-  return {
-    ...record,
-    root_path: normalizePath(record.root_path),
-    theme: {
-      title: `${record.theme?.title ?? ""}`.trim() || defaultTheme(record.root_path).title,
-      description: `${record.theme?.description ?? ""}`,
-      color: record.theme?.color ?? null,
-      accent_color: record.theme?.accent_color ?? null,
-      icon: record.theme?.icon ?? null,
-      image_blob: record.theme?.image_blob ?? null,
-    },
-    pinned: record.pinned === true,
-    last_used_at:
-      typeof record.last_used_at === "number" && Number.isFinite(record.last_used_at)
-        ? record.last_used_at
-        : null,
-    last_active_path:
-      typeof record.last_active_path === "string" && record.last_active_path.trim()
-        ? normalizePath(record.last_active_path)
-        : null,
-    chat_path: record.chat_path ?? null,
-    created_at:
-      typeof record.created_at === "number" && Number.isFinite(record.created_at)
-        ? record.created_at
-        : Date.now(),
-    updated_at:
-      typeof record.updated_at === "number" && Number.isFinite(record.updated_at)
-        ? record.updated_at
-        : Date.now(),
-    source: record.source ?? "manual",
-  };
-}
-
-function sortRecords(records: WorkspaceRecord[]): WorkspaceRecord[] {
-  return [...records].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    const aUsed = a.last_used_at ?? 0;
-    const bUsed = b.last_used_at ?? 0;
-    if (aUsed !== bUsed) return bUsed - aUsed;
-    return a.theme.title.localeCompare(b.theme.title);
-  });
-}
-
-function normalizeSelection(
-  selection: WorkspaceSelection | undefined | null,
-  records: WorkspaceRecord[],
-): WorkspaceSelection {
-  if (!selection || typeof selection !== "object") return { kind: "all" };
-  if (selection.kind === "workspace") {
-    return records.some((record) => record.workspace_id === selection.workspace_id)
-      ? selection
-      : { kind: "all" };
-  }
-  return selection.kind === "unscoped" ? { kind: "unscoped" } : { kind: "all" };
-}
-
-function storeName(account_id: string): string {
-  return `workspaces/${account_id}`;
-}
-
-type WorkspaceStore = DKV<WorkspaceRecord[] | WorkspaceSelection | number>;
-
-function sessionSelectionKey(project_id: string): string {
-  return `${SESSION_SELECTION_PREFIX}:${project_id}`;
-}
-
-function loadSessionSelection(project_id: string): WorkspaceSelection {
-  if (typeof sessionStorage === "undefined") return { kind: "all" };
-  try {
-    const raw = sessionStorage.getItem(sessionSelectionKey(project_id));
-    if (!raw) return { kind: "all" };
-    const parsed = JSON.parse(raw);
-    if (parsed?.kind === "workspace" && typeof parsed.workspace_id === "string") {
-      return { kind: "workspace", workspace_id: parsed.workspace_id };
-    }
-    if (parsed?.kind === "unscoped") {
-      return { kind: "unscoped" };
-    }
-  } catch (err) {
-    console.warn(`workspace selection sessionStorage warning -- ${err}`);
-  }
-  return { kind: "all" };
-}
-
-function persistSessionSelection(
-  project_id: string,
-  selection: WorkspaceSelection,
-): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    sessionStorage.setItem(
-      sessionSelectionKey(project_id),
-      JSON.stringify(selection),
-    );
-  } catch (err) {
-    console.warn(`workspace selection sessionStorage warning -- ${err}`);
-  }
-}
-
-async function initStore(
-  account_id: string,
-  project_id: string,
-): Promise<WorkspaceStore> {
-  const store = await webapp_client.conat_client.dkv<
-    WorkspaceRecord[] | WorkspaceSelection | number
-  >({
-    project_id,
-    name: storeName(account_id),
-  });
-  store.setMaxListeners(100);
-  return store;
-}
-
-function readRecordsFromStore(store: WorkspaceStore): WorkspaceRecord[] {
-  const raw = store.get(STORE_RECORDS_KEY);
-  if (!Array.isArray(raw)) return [];
-  return sortRecords(raw.map(normalizeRecord));
-}
+import {
+  loadSessionSelection,
+  persistSessionSelection,
+  WORKSPACE_SELECTION_EVENT,
+} from "./selection-runtime";
 
 function readSelectionForProject(
   project_id: string,
   records: WorkspaceRecord[],
 ): WorkspaceSelection {
-  return normalizeSelection(loadSessionSelection(project_id), records);
+  return normalizeWorkspaceSelection(loadSessionSelection(project_id), records);
 }
 
 export function pathMatchesRoot(path: string, root_path: string): boolean {
-  const normalizedPath = normalizePath(path);
-  const normalizedRoot = normalizePath(root_path);
-  if (normalizedRoot === "/") return true;
-  return (
-    normalizedPath === normalizedRoot ||
-    normalizedPath.startsWith(`${normalizedRoot}/`)
-  );
+  return pathMatchesWorkspaceRoot(path, root_path);
 }
 
 export function resolveWorkspaceForPath(
   records: WorkspaceRecord[],
   path: string,
 ): WorkspaceRecord | null {
-  const normalizedPath = normalizePath(path);
-  let best: WorkspaceRecord | null = null;
-  for (const record of records) {
-    if (!pathMatchesRoot(normalizedPath, record.root_path)) continue;
-    if (!best || record.root_path.length > best.root_path.length) {
-      best = record;
-    }
-  }
-  return best;
+  return resolveWorkspaceForPathCore(records, path);
 }
 
 export function selectionMatchesPath(
@@ -198,10 +61,14 @@ export function selectionMatchesPath(
   records: WorkspaceRecord[],
   path: string,
 ): boolean {
-  if (selection.kind === "all") return true;
-  const resolved = resolveWorkspaceForPath(records, path);
-  if (selection.kind === "unscoped") return resolved == null;
-  return resolved?.workspace_id === selection.workspace_id;
+  return selectionMatchesWorkspacePath(selection, records, path);
+}
+
+export function selectionForPath(
+  records: WorkspaceRecord[],
+  path: string,
+): WorkspaceSelection {
+  return selectionForWorkspacePathCore(records, path);
 }
 
 export function useProjectWorkspaces(
@@ -214,12 +81,36 @@ export function useProjectWorkspaces(
   const [selection, setSelectionState] = useState<WorkspaceSelection>(() =>
     loadSessionSelection(project_id),
   );
-  const storeRef = useRef<WorkspaceStore | null>(null);
+  const storeRef = useRef<Awaited<ReturnType<typeof openWorkspaceStore>> | null>(null);
   const recordsRef = useRef(records);
 
   useEffect(() => {
     recordsRef.current = records;
   }, [records]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onSelection = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        project_id?: string;
+        selection?: WorkspaceSelection;
+      }>).detail;
+      if (`${detail?.project_id ?? ""}` !== project_id) return;
+      const nextSelection = normalizeWorkspaceSelection(
+        detail?.selection,
+        recordsRef.current,
+      );
+      setSelectionState(nextSelection);
+      persistSessionSelection(project_id, nextSelection);
+    };
+    window.addEventListener(WORKSPACE_SELECTION_EVENT, onSelection as EventListener);
+    return () => {
+      window.removeEventListener(
+        WORKSPACE_SELECTION_EVENT,
+        onSelection as EventListener,
+      );
+    };
+  }, [project_id]);
 
   useEffect(() => {
     if (!canPersist) {
@@ -239,42 +130,44 @@ export function useProjectWorkspaces(
     let onChange:
       | ((event: {
           key: string;
-          value?: WorkspaceRecord[] | WorkspaceSelection | number;
+          value?: WorkspaceRecord[] | number;
         }) => void)
       | null = null;
 
     const initialize = async () => {
       try {
-        store = await initStore(account_id!, project_id);
+        store = await openWorkspaceStore({
+          client: webapp_client.conat_client,
+          account_id: account_id!,
+          project_id,
+        });
         if (closed || store == null) {
           store?.close?.();
           return;
         }
         storeRef.current = store;
 
-        const storeRecords = readRecordsFromStore(store);
+        const storeRecords = readWorkspaceRecordsFromStore(store);
         const storeSelection = readSelectionForProject(project_id, storeRecords);
-        const hasStoreState =
-          store.get(STORE_VERSION_KEY) != null ||
-          store.get(STORE_RECORDS_KEY) != null;
+        const hasStoreState = hasWorkspaceStoreState(store);
 
         const hasSeedState = recordsRef.current.length > 0;
 
         if (!hasStoreState && hasSeedState) {
-          store.setMany({
-            [STORE_VERSION_KEY]: STORAGE_VERSION,
-            [STORE_RECORDS_KEY]: recordsRef.current,
-          });
+          writeWorkspaceRecordsToStore(store, recordsRef.current);
         } else {
           setRecords(storeRecords);
           setSelectionState(storeSelection);
         }
 
         onChange = (event) => {
-          if (event.key !== STORE_RECORDS_KEY && event.key !== STORE_VERSION_KEY) {
+          if (
+            event.key !== WORKSPACES_STORE_RECORDS_KEY &&
+            event.key !== WORKSPACES_STORE_VERSION_KEY
+          ) {
             return;
           }
-          const nextRecords = readRecordsFromStore(store!);
+          const nextRecords = readWorkspaceRecordsFromStore(store!);
           const nextSelection = readSelectionForProject(project_id, nextRecords);
           setRecords(nextRecords);
           setSelectionState(nextSelection);
@@ -311,10 +204,7 @@ export function useProjectWorkspaces(
       if (!canPersist || storeRef.current == null) {
         return;
       }
-      storeRef.current.setMany({
-        [STORE_VERSION_KEY]: STORAGE_VERSION,
-        [STORE_RECORDS_KEY]: nextRecords,
-      });
+      writeWorkspaceRecordsToStore(storeRef.current, nextRecords);
     },
     [canPersist],
   );
@@ -336,31 +226,17 @@ export function useProjectWorkspaces(
 
   const createWorkspace = useCallback(
     (input: WorkspaceCreateInput) => {
-      const now = Date.now();
-      const record: WorkspaceRecord = normalizeRecord({
-        workspace_id: uuid(),
-        project_id,
-        root_path: input.root_path,
-        theme: {
-          ...defaultTheme(input.root_path, input.title),
-          description: `${input.description ?? ""}`,
-          color: input.color ?? null,
-          accent_color: input.accent_color ?? null,
-          icon: input.icon ?? null,
-          image_blob: input.image_blob ?? null,
-        },
-        pinned: input.pinned === true,
-        last_used_at: now,
-        last_active_path:
-          typeof input.last_active_path === "string" && input.last_active_path.trim()
-            ? normalizePath(input.last_active_path)
-            : null,
-        chat_path: input.chat_path ?? null,
-        created_at: now,
-        updated_at: now,
-        source: input.source ?? "manual",
-      });
-      const nextRecords = sortRecords([...records.filter((x) => x.root_path !== record.root_path), record]);
+      const record: WorkspaceRecord =
+        storeRef.current != null
+          ? createStoredWorkspaceRecord(storeRef.current, {
+              project_id,
+              input,
+            })
+          : createWorkspaceRecord({ project_id, input });
+      const nextRecords =
+        storeRef.current != null
+          ? readStoredWorkspaceRecords(storeRef.current)
+          : createWorkspaceRecords(records, record);
       const nextSelection: WorkspaceSelection = {
         kind: "workspace",
         workspace_id: record.workspace_id,
@@ -368,7 +244,9 @@ export function useProjectWorkspaces(
       setRecords(nextRecords);
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
-      persistState(nextRecords);
+      if (storeRef.current == null) {
+        persistState(nextRecords);
+      }
       return record;
     },
     [project_id, records, persistState],
@@ -376,31 +254,14 @@ export function useProjectWorkspaces(
 
   const updateWorkspace = useCallback(
     (workspace_id: string, patch: WorkspaceUpdatePatch) => {
-      let updated: WorkspaceRecord | null = null;
-      const nextRecords = sortRecords(
-        records.map((record) => {
-          if (record.workspace_id !== workspace_id) return record;
-          updated = normalizeRecord({
-            ...record,
-            root_path: patch.root_path ?? record.root_path,
-            theme: {
-              ...record.theme,
-              ...(patch.theme ?? {}),
-            },
-            pinned: patch.pinned ?? record.pinned,
-            chat_path: patch.chat_path ?? record.chat_path,
-            last_used_at:
-              patch.last_used_at === undefined ? record.last_used_at : patch.last_used_at,
-            last_active_path:
-              patch.last_active_path === undefined
-                ? record.last_active_path
-                : patch.last_active_path,
-            updated_at: Date.now(),
-            source: patch.source ?? record.source,
-          });
-          return updated;
-        }),
-      );
+      const updated =
+        storeRef.current != null
+          ? updateStoredWorkspaceRecord(storeRef.current, workspace_id, patch)
+          : null;
+      const nextRecords =
+        storeRef.current != null
+          ? readStoredWorkspaceRecords(storeRef.current)
+          : updateWorkspaceRecords(records, workspace_id, patch).records;
       setRecords(nextRecords);
       const nextSelection =
         selection.kind === "workspace" && selection.workspace_id === workspace_id && !nextRecords.some((r) => r.workspace_id === workspace_id)
@@ -408,7 +269,9 @@ export function useProjectWorkspaces(
           : selection;
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
-      persistState(nextRecords);
+      if (storeRef.current == null) {
+        persistState(nextRecords);
+      }
       return updated;
     },
     [project_id, records, selection, persistState],
@@ -416,7 +279,10 @@ export function useProjectWorkspaces(
 
   const deleteWorkspace = useCallback(
     (workspace_id: string) => {
-      const nextRecords = records.filter((record) => record.workspace_id !== workspace_id);
+      const nextRecords =
+        storeRef.current != null
+          ? deleteStoredWorkspaceRecord(storeRef.current, workspace_id)
+          : deleteWorkspaceRecords(records, workspace_id);
       const nextSelection =
         selection.kind === "workspace" && selection.workspace_id === workspace_id
           ? ({ kind: "all" } as WorkspaceSelection)
@@ -424,17 +290,30 @@ export function useProjectWorkspaces(
       setRecords(nextRecords);
       setSelectionState(nextSelection);
       persistSessionSelection(project_id, nextSelection);
-      persistState(nextRecords);
+      if (storeRef.current == null) {
+        persistState(nextRecords);
+      }
     },
     [project_id, records, selection, persistState],
   );
 
   const touchWorkspace = useCallback(
     (workspace_id: string) => {
-      const next = updateWorkspace(workspace_id, { last_used_at: Date.now() });
-      return next;
+      const updated =
+        storeRef.current != null
+          ? touchStoredWorkspaceRecord(storeRef.current, workspace_id)
+          : null;
+      const nextRecords =
+        storeRef.current != null
+          ? readStoredWorkspaceRecords(storeRef.current)
+          : touchWorkspaceRecords(records, workspace_id).records;
+      setRecords(nextRecords);
+      if (storeRef.current == null) {
+        persistState(nextRecords);
+      }
+      return updated;
     },
-    [updateWorkspace],
+    [records, persistState],
   );
 
   const resolve = useCallback(
@@ -469,5 +348,5 @@ export function useProjectWorkspaces(
 }
 
 export function defaultWorkspaceTitle(path: string): string {
-  return defaultTheme(path).title;
+  return defaultWorkspaceTitleCore(path);
 }
