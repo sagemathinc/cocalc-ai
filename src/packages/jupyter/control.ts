@@ -5,6 +5,7 @@ import { initJupyterRedux, removeJupyterRedux } from "@cocalc/jupyter/kernel";
 import { syncdbPath, ipynbPath } from "@cocalc/util/jupyter/names";
 import { once } from "@cocalc/util/async-utils";
 import { OutputHandler } from "@cocalc/jupyter/execute/output-handler";
+import { readFile as readFileAbsolute } from "node:fs/promises";
 import { throttle } from "lodash";
 import { type RunOptions } from "@cocalc/conat/project/jupyter/run-code";
 import { type JupyterActions } from "@cocalc/jupyter/redux/project-actions";
@@ -15,13 +16,55 @@ const logger = getLogger("jupyter:control");
 
 const jupyterActions: { [ipynbPath: string]: JupyterActions } = {};
 
+export async function restoreKernelFromIpynb({
+  actions,
+  fs,
+  path,
+}: {
+  actions: Pick<JupyterActions, "store" | "syncdb"> & {
+    setState?: (state: any) => void;
+  };
+  fs: Pick<Filesystem, "readFile">;
+  path: string;
+}): Promise<boolean> {
+  const notebookPath = ipynbPath(path);
+  const currentKernel = actions.store.get("kernel");
+  const hasKernel = currentKernel != null && currentKernel !== "";
+  if (hasKernel) {
+    return false;
+  }
+  let raw: Buffer | Uint8Array | string;
+  try {
+    raw = await fs.readFile(notebookPath);
+  } catch (err) {
+    if (!notebookPath.startsWith("/") || (err as any)?.code !== "ENOENT") {
+      throw err;
+    }
+    raw = await readFileAbsolute(notebookPath);
+  }
+  const content = Buffer.from(raw);
+  if (content.length === 0) {
+    return false;
+  }
+  const ipynb = JSON.parse(content.toString());
+  const kernel = ipynb?.metadata?.kernelspec?.name;
+  if (hasKernel || kernel == null || kernel === "") {
+    return false;
+  }
+  actions.syncdb.set({ type: "settings", kernel });
+  actions.syncdb.commit();
+  await actions.syncdb.save();
+  actions.setState?.({ kernel });
+  return true;
+}
+
 export function isRunning(path): boolean {
   return jupyterActions[ipynbPath(path)] != null;
 }
 
 let project_id: string = "";
 
-export function start({
+export async function start({
   path,
   project_id: project_id0,
   client,
@@ -54,6 +97,20 @@ export function start({
   });
   const { actions } = initJupyterRedux(syncdb, client);
   jupyterActions[ipynbPath(path)] = actions;
+  if (syncdb.get_state() === "init") {
+    await once(syncdb, "ready");
+  }
+  if (syncdb.isClosed()) {
+    return;
+  }
+  try {
+    await restoreKernelFromIpynb({ actions, fs, path });
+  } catch (err) {
+    logger.debug("start: failed to initialize kernel from disk", {
+      path,
+      err: `${err}`,
+    });
+  }
 }
 
 export function stop({ path }: { path: string }) {

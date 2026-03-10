@@ -5,12 +5,7 @@
 
 // Kernel display
 
-import {
-  CSS,
-  React,
-  useActions,
-  useRedux,
-} from "@cocalc/frontend/app-framework";
+import { CSS, React, redux, useRedux } from "@cocalc/frontend/app-framework";
 import { A, Icon, IconName, Loading } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import type {
@@ -156,8 +151,13 @@ export function Kernel({
   const kernel: string | null = !redux_kernel ? null : redux_kernel;
   const kernels: undefined | immutable.List<any> = useRedux([name, "kernels"]);
   const runProgress = useRedux([name, "runProgress"]);
-  const project_id: string = useRedux([name, "project_id"]);
-  const project_actions = useActions({ project_id });
+  const redux_project_id: string | undefined = useRedux([name, "project_id"]);
+  const project_id = redux_project_id ?? actions.project_id;
+  const project_actions = React.useMemo(
+    () =>
+      project_id != null ? redux.getProjectActions(project_id) : undefined,
+    [project_id],
+  );
   const kernel_info: undefined | immutable.Map<string, any> = useRedux([
     name,
     "kernel_info",
