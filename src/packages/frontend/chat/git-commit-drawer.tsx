@@ -45,6 +45,7 @@ import {
   saveReviewRecord,
   type GitReviewRecordV2,
 } from "./git-review-store";
+import { buildAgentCommitPrompt } from "./git-commit-prompt";
 import {
   highlightPrismLines,
   isDiffContentLine,
@@ -109,7 +110,10 @@ interface GitCommitDrawerProps {
   onClose: () => void;
   fontSize?: number;
   onRequestAgentTurn?: (prompt: string) => void | Promise<void>;
-  onDirectCommitLogged?: (info: { hash: string; subject: string }) => void | Promise<void>;
+  onDirectCommitLogged?: (info: {
+    hash: string;
+    subject: string;
+  }) => void | Promise<void>;
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
 }
@@ -217,7 +221,9 @@ export function buildGitShowArgs({
 function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
   const allLines = `${stdout ?? ""}`.split(/\r?\n/);
   const linesTruncated = allLines.length > MAX_GIT_SHOW_LINES;
-  const lines = linesTruncated ? allLines.slice(0, MAX_GIT_SHOW_LINES) : allLines;
+  const lines = linesTruncated
+    ? allLines.slice(0, MAX_GIT_SHOW_LINES)
+    : allLines;
   const files: GitShowFile[] = [];
   const summaryLines: string[] = [];
   let currentFile: GitShowFile | undefined;
@@ -320,7 +326,9 @@ function parseGitShowSummary(summaryLines: string[]): GitShowSummary {
 }
 
 function parseGitLogOutput(stdout: string): GitLogEntry[] {
-  const lines = `${stdout ?? ""}`.split(/\r?\n/).filter((line) => line.trim().length);
+  const lines = `${stdout ?? ""}`
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length);
   const entries: GitLogEntry[] = [];
   for (const line of lines) {
     const [hash, ...subjectParts] = line.split("\t");
@@ -335,7 +343,9 @@ function parseGitLogOutput(stdout: string): GitLogEntry[] {
 }
 
 function parseGitStatusOutput(stdout: string): HeadStatusEntry[] {
-  const lines = `${stdout ?? ""}`.split(/\r?\n/).filter((line) => line.trim().length);
+  const lines = `${stdout ?? ""}`
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length);
   const entries: HeadStatusEntry[] = [];
   for (const line of lines) {
     if (line.startsWith("##")) continue;
@@ -361,7 +371,13 @@ function parseGitStatusOutput(stdout: string): HeadStatusEntry[] {
               : primary === "M"
                 ? "modified"
                 : "changed";
-    entries.push({ path: displayPath, displayPath, statusCode, statusLabel, tracked });
+    entries.push({
+      path: displayPath,
+      displayPath,
+      statusCode,
+      statusLabel,
+      tracked,
+    });
   }
   return entries;
 }
@@ -384,7 +400,10 @@ function readDrawerSize(): number {
 
 function persistDrawerSize(size: number): void {
   try {
-    localStorage.setItem(DRAWER_SIZE_STORAGE_KEY, String(clampDrawerSize(size)));
+    localStorage.setItem(
+      DRAWER_SIZE_STORAGE_KEY,
+      String(clampDrawerSize(size)),
+    );
   } catch {
     // ignore
   }
@@ -398,7 +417,9 @@ function normalizeDrawerScrollState(raw: unknown): DrawerScrollState {
   const orderRaw = record.order;
   const entries: DrawerScrollState["entries"] = {};
   if (entriesRaw && typeof entriesRaw === "object") {
-    for (const [key, value] of Object.entries(entriesRaw as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(
+      entriesRaw as Record<string, unknown>,
+    )) {
       if (!key || !value || typeof value !== "object") continue;
       const top = Number((value as Record<string, unknown>).top);
       const updated = Number((value as Record<string, unknown>).updated_at);
@@ -406,14 +427,18 @@ function normalizeDrawerScrollState(raw: unknown): DrawerScrollState {
       entries[key] = {
         top: Math.round(top),
         updated_at:
-          Number.isFinite(updated) && updated > 0 ? Math.round(updated) : Date.now(),
+          Number.isFinite(updated) && updated > 0
+            ? Math.round(updated)
+            : Date.now(),
       };
     }
   }
   const order = Array.isArray(orderRaw)
     ? orderRaw
         .map((x) => `${x ?? ""}`.trim())
-        .filter((x, i, arr) => !!x && arr.indexOf(x) === i && entries[x] != null)
+        .filter(
+          (x, i, arr) => !!x && arr.indexOf(x) === i && entries[x] != null,
+        )
     : [];
   for (const key of Object.keys(entries)) {
     if (!order.includes(key)) order.push(key);
@@ -466,7 +491,10 @@ function persistDrawerScrollPosition(storageId: string, top: number): void {
   persistDrawerScrollState(state);
 }
 
-function resolveOpenPath(repoRoot: string | undefined, filePath: string): string {
+function resolveOpenPath(
+  repoRoot: string | undefined,
+  filePath: string,
+): string {
   if (!filePath) return filePath;
   if (filePath.startsWith("/")) return filePath;
   if (!repoRoot) return filePath;
@@ -489,7 +517,8 @@ function parseHunkStarts(
   if (!m) return undefined;
   const oldStart = Number(m[1]);
   const newStart = Number(m[2]);
-  if (!Number.isFinite(oldStart) || !Number.isFinite(newStart)) return undefined;
+  if (!Number.isFinite(oldStart) || !Number.isFinite(newStart))
+    return undefined;
   return { oldStart, newStart };
 }
 
@@ -563,7 +592,10 @@ function buildDiffLineMetas(lines: string[]): DiffLineMeta[] {
   });
 }
 
-function makeCommentAnchor(meta: DiffLineMeta, filePath: string): CommentAnchor | undefined {
+function makeCommentAnchor(
+  meta: DiffLineMeta,
+  filePath: string,
+): CommentAnchor | undefined {
   if (!meta.commentable || !meta.side || !meta.lineNumber) return undefined;
   return {
     filePath,
@@ -602,11 +634,11 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
       [
         '[contenteditable="true"]',
         '[data-slate-editor="true"]',
-        '.slate-editor',
-        '.CodeMirror',
-        '.CodeMirror-code',
-        '.cm-editor',
-        '.cm-content',
+        ".slate-editor",
+        ".CodeMirror",
+        ".CodeMirror-code",
+        ".cm-editor",
+        ".cm-content",
         '[role="textbox"]',
       ].join(", "),
     ),
@@ -644,12 +676,15 @@ function splitCommitMessage(message?: string): {
 
 export function isMergeCommitSummary(summary?: GitShowSummary): boolean {
   return (
-    summary?.extraHeaderLines?.some((line) => /^Merge:\s+/i.test(`${line ?? ""}`)) ??
-    false
+    summary?.extraHeaderLines?.some((line) =>
+      /^Merge:\s+/i.test(`${line ?? ""}`),
+    ) ?? false
   );
 }
 
-export function formatMergeCommitBodyMarkdown(body?: string): string | undefined {
+export function formatMergeCommitBodyMarkdown(
+  body?: string,
+): string | undefined {
   const text = `${body ?? ""}`.trim();
   if (!text) return undefined;
   const fence = backtickSequence(text);
@@ -712,8 +747,10 @@ function DiffBlock({
   const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
   const lineNumberWidth = useMemo(() => {
     const maxLine = lineMetas.reduce((max, meta) => {
-      const oldVal = typeof meta.oldLineNumber === "number" ? meta.oldLineNumber : 0;
-      const newVal = typeof meta.newLineNumber === "number" ? meta.newLineNumber : 0;
+      const oldVal =
+        typeof meta.oldLineNumber === "number" ? meta.oldLineNumber : 0;
+      const newVal =
+        typeof meta.newLineNumber === "number" ? meta.newLineNumber : 0;
       return Math.max(max, oldVal, newVal);
     }, 0);
     const digits = Math.max(1, `${Math.floor(maxLine)}`.length);
@@ -842,7 +879,7 @@ function DiffBlock({
         const anchor = makeCommentAnchor(meta, filePath);
         const anchorId = anchor == null ? "" : commentAnchorKey(anchor);
         const lineComments =
-          anchor == null ? [] : commentsByAnchor.get(anchorId) ?? [];
+          anchor == null ? [] : (commentsByAnchor.get(anchorId) ?? []);
         const showDraft = draftAnchorId !== "" && draftAnchorId === anchorId;
         return (
           <div key={idx}>
@@ -858,7 +895,9 @@ function DiffBlock({
               }}
               onMouseEnter={() => setHoveredLineIdx(idx)}
               onMouseLeave={() =>
-                setHoveredLineIdx((current) => (current === idx ? undefined : current))
+                setHoveredLineIdx((current) =>
+                  current === idx ? undefined : current,
+                )
               }
             >
               <div
@@ -895,7 +934,12 @@ function DiffBlock({
                     <Button
                       size="small"
                       type="primary"
-                      style={{ padding: 0, minWidth: 22, width: 22, height: 22 }}
+                      style={{
+                        padding: 0,
+                        minWidth: 22,
+                        width: 22,
+                        height: 22,
+                      }}
                       onClick={() => {
                         if (!commentEnabled) {
                           alert_message({
@@ -913,8 +957,8 @@ function DiffBlock({
                       title={
                         commentEnabled
                           ? "Add inline comment"
-                          : commentDisabledMessage ??
-                            "Please commit first, then comment."
+                          : (commentDisabledMessage ??
+                            "Please commit first, then comment.")
                       }
                     >
                       +
@@ -958,7 +1002,10 @@ function DiffBlock({
                         <Typography.Text strong style={{ fontSize: 13 }}>
                           Inline review comment
                         </Typography.Text>
-                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 11 }}
+                        >
                           {comment.side}:{comment.line ?? "?"}
                         </Typography.Text>
                       </div>
@@ -998,7 +1045,10 @@ function DiffBlock({
                           gap: 8,
                         }}
                       >
-                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 11 }}
+                        >
                           {comment.status === "resolved"
                             ? "Resolved"
                             : comment.status === "submitted"
@@ -1043,7 +1093,9 @@ function DiffBlock({
                                   size="small"
                                   type="primary"
                                   onClick={() => void reopenComment(comment.id)}
-                                  loading={pendingKey === `reopen:${comment.id}`}
+                                  loading={
+                                    pendingKey === `reopen:${comment.id}`
+                                  }
                                 >
                                   Reopen
                                 </Button>
@@ -1051,8 +1103,12 @@ function DiffBlock({
                                 <Button
                                   size="small"
                                   type="primary"
-                                  onClick={() => void resolveComment(comment.id)}
-                                  loading={pendingKey === `resolve:${comment.id}`}
+                                  onClick={() =>
+                                    void resolveComment(comment.id)
+                                  }
+                                  loading={
+                                    pendingKey === `resolve:${comment.id}`
+                                  }
                                 >
                                   Resolve
                                 </Button>
@@ -1142,7 +1198,9 @@ export function GitCommitDrawer({
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
   const [drawerSize, setDrawerSize] = useState<number>(readDrawerSize);
-  const [contextLines, setContextLines] = useState<number>(DEFAULT_CONTEXT_LINES);
+  const [contextLines, setContextLines] = useState<number>(
+    DEFAULT_CONTEXT_LINES,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
@@ -1155,15 +1213,20 @@ export function GitCommitDrawer({
   const [repoBootstrapBusy, setRepoBootstrapBusy] = useState(false);
   const [headStatusLoading, setHeadStatusLoading] = useState(false);
   const [headStatusError, setHeadStatusError] = useState("");
-  const [headStatusEntries, setHeadStatusEntries] = useState<HeadStatusEntry[]>([]);
+  const [headStatusEntries, setHeadStatusEntries] = useState<HeadStatusEntry[]>(
+    [],
+  );
   const [headStatusAction, setHeadStatusAction] = useState<string>("");
   const [headCommitBusy, setHeadCommitBusy] = useState(false);
   const [headCommitMessage, setHeadCommitMessage] = useState("");
   const [headCommitError, setHeadCommitError] = useState("");
-  const [reviewedByCommit, setReviewedByCommit] = useState<Record<string, boolean>>(
-    {},
+  const [reviewedByCommit, setReviewedByCommit] = useState<
+    Record<string, boolean>
+  >({});
+  const incomingCommit = useMemo(
+    () => parseCommitHash(commitHash),
+    [commitHash],
   );
-  const incomingCommit = useMemo(() => parseCommitHash(commitHash), [commitHash]);
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
   );
@@ -1181,14 +1244,14 @@ export function GitCommitDrawer({
     undefined,
   );
   const [reviewDirty, setReviewDirty] = useState(false);
-  const [reviewRecord, setReviewRecord] = useState<GitReviewRecordV2 | undefined>(
-    undefined,
-  );
+  const [reviewRecord, setReviewRecord] = useState<
+    GitReviewRecordV2 | undefined
+  >(undefined);
   const [reviewSubmitBusy, setReviewSubmitBusy] = useState(false);
   const [showResolvedComments, setShowResolvedComments] = useState(false);
-  const [reviewStateCommit, setReviewStateCommit] = useState<string | undefined>(
-    undefined,
-  );
+  const [reviewStateCommit, setReviewStateCommit] = useState<
+    string | undefined
+  >(undefined);
   const noteDirty = reviewNoteDraft !== reviewNote;
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
@@ -1259,7 +1322,11 @@ export function GitCommitDrawer({
         });
         if (rootResult.exit_code !== 0) {
           throw new Error(
-            (rootResult.stderr || rootResult.stdout || "not a git repository").trim(),
+            (
+              rootResult.stderr ||
+              rootResult.stdout ||
+              "not a git repository"
+            ).trim(),
           );
         }
         const root = `${rootResult.stdout ?? ""}`.trim();
@@ -1279,7 +1346,9 @@ export function GitCommitDrawer({
           ],
         });
         if (logResult.exit_code !== 0) {
-          throw new Error((logResult.stderr || logResult.stdout || "git log failed").trim());
+          throw new Error(
+            (logResult.stderr || logResult.stdout || "git log failed").trim(),
+          );
         }
         const entries = parseGitLogOutput(logResult.stdout ?? "");
         if (!cancelled) {
@@ -1316,7 +1385,11 @@ export function GitCommitDrawer({
         });
         if (statusResult.exit_code !== 0) {
           throw new Error(
-            (statusResult.stderr || statusResult.stdout || "git status failed").trim(),
+            (
+              statusResult.stderr ||
+              statusResult.stdout ||
+              "git status failed"
+            ).trim(),
           );
         }
         if (!cancelled) {
@@ -1350,8 +1423,17 @@ export function GitCommitDrawer({
   }, [gitLog, commit]);
 
   useEffect(() => {
-    if (!open || !commit || isHeadSelected || gitLog.length === 0 || commitIndex >= 0) return;
-    const prefixMatches = gitLog.filter((entry) => entry.hash.startsWith(commit));
+    if (
+      !open ||
+      !commit ||
+      isHeadSelected ||
+      gitLog.length === 0 ||
+      commitIndex >= 0
+    )
+      return;
+    const prefixMatches = gitLog.filter((entry) =>
+      entry.hash.startsWith(commit),
+    );
     if (prefixMatches.length === 1) {
       setSelectedCommit(prefixMatches[0].hash);
     }
@@ -1381,49 +1463,50 @@ export function GitCommitDrawer({
   const logOptions = useMemo(() => {
     const makeOptionLabel = (entry: GitLogEntry, fallback = false) => {
       const reviewed = Boolean(reviewedByCommit[entry.hash]);
-      const highlightNeedsReview = !fallback && !isHeadCommit(entry.hash) && !reviewed;
+      const highlightNeedsReview =
+        !fallback && !isHeadCommit(entry.hash) && !reviewed;
       return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          minWidth: 0,
-          width: "100%",
-          borderRadius: 6,
-          padding: "2px 6px",
-          background: highlightNeedsReview ? "#fffbe6" : undefined,
-          pointerEvents: "none",
-        }}
-      >
-        <Checkbox
-          checked={reviewed}
-          disabled
-          style={{ pointerEvents: "none", marginInlineEnd: 0 }}
-        />
-        <span
+        <div
           style={{
-            fontFamily: "monospace",
-            whiteSpace: "nowrap",
-            color: fallback ? COLORS.GRAY_D : undefined,
-          }}
-        >
-          {entry.hash.slice(0, 10)}
-        </span>
-        <span
-          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
             minWidth: 0,
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            color: fallback ? COLORS.GRAY_D : undefined,
+            width: "100%",
+            borderRadius: 6,
+            padding: "2px 6px",
+            background: highlightNeedsReview ? "#fffbe6" : undefined,
+            pointerEvents: "none",
           }}
-          title={entry.subject || (fallback ? "selected commit" : "")}
         >
-          {entry.subject || (fallback ? "(selected commit)" : "")}
-        </span>
-      </div>
+          <Checkbox
+            checked={reviewed}
+            disabled
+            style={{ pointerEvents: "none", marginInlineEnd: 0 }}
+          />
+          <span
+            style={{
+              fontFamily: "monospace",
+              whiteSpace: "nowrap",
+              color: fallback ? COLORS.GRAY_D : undefined,
+            }}
+          >
+            {entry.hash.slice(0, 10)}
+          </span>
+          <span
+            style={{
+              minWidth: 0,
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: fallback ? COLORS.GRAY_D : undefined,
+            }}
+            title={entry.subject || (fallback ? "selected commit" : "")}
+          >
+            {entry.subject || (fallback ? "(selected commit)" : "")}
+          </span>
+        </div>
       );
     };
     const options = [
@@ -1442,7 +1525,10 @@ export function GitCommitDrawer({
       })),
     ];
     if (commit && !options.some((opt) => opt.value === commit)) {
-      const fallback: GitLogEntry = { hash: commit, subject: "selected commit" };
+      const fallback: GitLogEntry = {
+        hash: commit,
+        subject: "selected commit",
+      };
       options.unshift({
         value: commit,
         label: makeOptionLabel(fallback, true),
@@ -1468,10 +1554,7 @@ export function GitCommitDrawer({
     if (!open || !accountId) return;
     const hashes = Array.from(
       new Set(
-        [
-          ...visibleLogEntries.map((entry) => entry.hash),
-          commit,
-        ].filter(
+        [...visibleLogEntries.map((entry) => entry.hash), commit].filter(
           (hash): hash is string =>
             Boolean(hash) && COMMIT_HASH_RE.test(`${hash ?? ""}`),
         ),
@@ -1508,7 +1591,9 @@ export function GitCommitDrawer({
     const token = ++reviewLoadTokenRef.current;
     const applyReset = (nextCommit?: string) => {
       const normalizedNext = normalizeCommitSha(nextCommit);
-      const draft = normalizedNext ? loadReviewDraft(normalizedNext) : undefined;
+      const draft = normalizedNext
+        ? loadReviewDraft(normalizedNext)
+        : undefined;
       setReviewLoading(false);
       setReviewError("");
       setReviewed(Boolean(draft?.reviewed));
@@ -1669,7 +1754,9 @@ export function GitCommitDrawer({
     [showResolvedComments, allInlineComments, unresolvedInlineComments],
   );
   const resolvedInlineCount = useMemo(
-    () => allInlineComments.filter((comment) => comment.status === "resolved").length,
+    () =>
+      allInlineComments.filter((comment) => comment.status === "resolved")
+        .length,
     [allInlineComments],
   );
   const actionableInlineComments = useMemo(
@@ -1915,7 +2002,10 @@ export function GitCommitDrawer({
             ).trim(),
           );
         }
-        const parsed = parseGitShowOutput(showResult.stdout ?? "", repoRoot || undefined);
+        const parsed = parseGitShowOutput(
+          showResult.stdout ?? "",
+          repoRoot || undefined,
+        );
         if (!cancelled) {
           setData(parsed);
           setError("");
@@ -1967,12 +2057,17 @@ export function GitCommitDrawer({
         });
       }
       if (result.exit_code !== 0) {
-        throw new Error((result.stderr || result.stdout || "git init failed").trim());
+        throw new Error(
+          (result.stderr || result.stdout || "git init failed").trim(),
+        );
       }
       setNonRepoError("");
       setSelectedCommit(HEAD_REF);
       refreshAll();
-      alert_message({ type: "info", message: "Initialized a new git repository." });
+      alert_message({
+        type: "info",
+        message: "Initialized a new git repository.",
+      });
     } catch (err) {
       setGitLogError(`${err ?? "Unable to initialize git repository."}`);
     } finally {
@@ -2014,7 +2109,9 @@ export function GitCommitDrawer({
         args: ["add", "--", path],
       });
       if (result.exit_code !== 0) {
-        throw new Error((result.stderr || result.stdout || "git add failed").trim());
+        throw new Error(
+          (result.stderr || result.stdout || "git add failed").trim(),
+        );
       }
       setReloadCounter((n) => n + 1);
     } catch (err) {
@@ -2041,7 +2138,11 @@ export function GitCommitDrawer({
       });
       if (result.exit_code !== 0) {
         throw new Error(
-          (result.stderr || result.stdout || "unable to update .gitignore").trim(),
+          (
+            result.stderr ||
+            result.stdout ||
+            "unable to update .gitignore"
+          ).trim(),
         );
       }
       setReloadCounter((n) => n + 1);
@@ -2052,7 +2153,9 @@ export function GitCommitDrawer({
     }
   };
 
-  const projectActions = projectId ? redux.getProjectActions(projectId) : undefined;
+  const projectActions = projectId
+    ? redux.getProjectActions(projectId)
+    : undefined;
 
   const openFile = async (filePath: string) => {
     if (!projectActions) return;
@@ -2108,25 +2211,14 @@ export function GitCommitDrawer({
   }: {
     includeSummary: boolean;
   }) => {
-    const trimmed = headCommitMessage.trim();
     if (!onRequestAgentTurn) {
       setHeadCommitError("No active codex thread available for this action.");
       return;
     }
-    let prompt = "";
-    if (includeSummary) {
-      prompt = trimmed
-        ? [
-            "Please commit changes in the current repository.",
-            `Use this exact first line for the commit message: "${trimmed}"`,
-            "Then include a detailed explanatory body.",
-          ].join("\n")
-        : "Please commit changes with a concise first line and a detailed explanatory body.";
-    } else {
-      prompt = trimmed
-        ? `Please commit changes with this exact commit message:\n${trimmed}`
-        : "Please commit changes.";
-    }
+    const prompt = buildAgentCommitPrompt({
+      message: headCommitMessage,
+      includeSummary,
+    });
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
@@ -2155,7 +2247,9 @@ export function GitCommitDrawer({
         args: ["commit", "-a", "-m", headCommitMessage],
       });
       if (result.exit_code !== 0) {
-        throw new Error((result.stderr || result.stdout || "git commit failed").trim());
+        throw new Error(
+          (result.stderr || result.stdout || "git commit failed").trim(),
+        );
       }
       let commitHash = "";
       let subject = "";
@@ -2166,7 +2260,9 @@ export function GitCommitDrawer({
           args: ["log", "-1", "--format=%H%x09%s"],
         });
         if (latest.exit_code === 0) {
-          const [hash, ...subjectParts] = `${latest.stdout ?? ""}`.trim().split("\t");
+          const [hash, ...subjectParts] = `${latest.stdout ?? ""}`
+            .trim()
+            .split("\t");
           commitHash = `${hash ?? ""}`.trim();
           subject = subjectParts.join("\t").trim();
         }
@@ -2256,7 +2352,15 @@ export function GitCommitDrawer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, canGoOlder, canGoNewer, commitIndex, gitLog, contextLines, isHeadSelected]);
+  }, [
+    open,
+    canGoOlder,
+    canGoNewer,
+    commitIndex,
+    gitLog,
+    contextLines,
+    isHeadSelected,
+  ]);
 
   return (
     <Drawer
@@ -2285,14 +2389,22 @@ export function GitCommitDrawer({
               <Space.Compact size="small">
                 <Tooltip title="Newer commit (shortcut: k)">
                   <span style={{ display: "inline-flex" }}>
-                    <Button size="small" onClick={goNewer} disabled={!canGoNewer}>
+                    <Button
+                      size="small"
+                      onClick={goNewer}
+                      disabled={!canGoNewer}
+                    >
                       Newer
                     </Button>
                   </span>
                 </Tooltip>
                 <Tooltip title="Older commit (shortcut: j)">
                   <span style={{ display: "inline-flex" }}>
-                    <Button size="small" onClick={goOlder} disabled={!canGoOlder}>
+                    <Button
+                      size="small"
+                      onClick={goOlder}
+                      disabled={!canGoOlder}
+                    >
                       Older
                     </Button>
                   </span>
@@ -2365,606 +2477,682 @@ export function GitCommitDrawer({
         }}
       >
         {gitLogError ? (
-        <Alert type="warning" message={gitLogError} showIcon style={{ marginBottom: 10 }} />
-      ) : null}
-      {nonRepoError ? (
-        <div
-          style={{
-            border: `1px solid ${CARD_BORDER_COLOR}`,
-            borderRadius: 8,
-            padding: 12,
-            marginBottom: 12,
-            background: "#fff",
-            boxShadow: CARD_SHADOW,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-          }}
-        >
-          <Typography.Text strong>This folder is not a git repository.</Typography.Text>
-          <Typography.Text type="secondary" style={{ whiteSpace: "pre-wrap" }}>
-            {nonRepoError}
-          </Typography.Text>
-          <Typography.Text type="secondary">
-            Path: <code>{cwd}</code>
-          </Typography.Text>
-          <Space wrap>
-            <Button
-              type="primary"
-              onClick={() => void initializeGitRepo()}
-              loading={repoBootstrapBusy}
-            >
-              Initialize Git Repo
-            </Button>
-            <Button
-              onClick={() => void requestAgentRepoSetup()}
-              disabled={!onRequestAgentTurn}
-              loading={repoBootstrapBusy}
-            >
-              Ask Agent to Set Up Repo
-            </Button>
-          </Space>
-        </div>
-      ) : isHeadSelected ? (
-        <div
-          style={{
-            border: `1px solid ${CARD_BORDER_COLOR}`,
-            borderRadius: 8,
-            borderLeft: `4px solid ${COLORS.BLUE}`,
-            padding: 12,
-            marginBottom: 12,
-            background: "#fff",
-            boxShadow: CARD_SHADOW,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-          }}
-        >
-          <div style={{ fontWeight: 600 }}>Commit changes</div>
-          <Input.TextArea
-            value={headCommitMessage}
-            disabled={headCommitBusy}
-            placeholder="or leave blank to let the agent write the message"
-            autoSize={{ minRows: 2, maxRows: 6 }}
-            onChange={(e) => setHeadCommitMessage(e.target.value)}
+          <Alert
+            type="warning"
+            message={gitLogError}
+            showIcon
+            style={{ marginBottom: 10 }}
           />
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Button
-              size="small"
-              type="primary"
-              onClick={() => void requestAgentCommit({ includeSummary: true })}
-              disabled={headCommitBusy || !hasTrackedHeadChanges}
-            >
-              Commit with AI Summary
-            </Button>
-            <Button
-              size="small"
-              onClick={() => void doHeadCommit()}
-              disabled={!hasTrackedHeadChanges}
-            >
-              Commit
-            </Button>
-            <Button
-              size="small"
-              onClick={() => setHeadCommitMessage("")}
-              disabled={headCommitBusy || headCommitMessage.length === 0}
-            >
-              Clear
-            </Button>
-          </div>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Commit uses all tracked changes only (`git commit -a`). Untracked files are excluded.
-          </Typography.Text>
-          {!hasTrackedHeadChanges ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              No tracked changes are currently staged for one-click commit.
-            </Typography.Text>
-          ) : null}
-          {headCommitError ? (
-            <Alert type="error" showIcon message={headCommitError} />
-          ) : null}
-
-          <div style={{ fontWeight: 600 }}>Uncommitted files</div>
-          {headStatusError ? (
-            <Alert type="warning" showIcon message={headStatusError} />
-          ) : null}
-          {headStatusLoading ? (
-            <div style={{ padding: "12px 0", textAlign: "center" }}>
-              <Spin size="small" />
-            </div>
-          ) : null}
-          {!headStatusLoading && headStatusEntries.length === 0 ? (
-            <Typography.Text type="secondary">
-              No uncommitted changes.
-            </Typography.Text>
-          ) : null}
-          {!headStatusLoading && headStatusEntries.length > 0
-            ? headStatusEntries.map((entry) => {
-                return (
-                  <div
-                    key={`${entry.statusCode}:${entry.path}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      border: `1px solid ${COLORS.GRAY_LL}`,
-                      borderRadius: 6,
-                      padding: "6px 8px",
-                    }}
-                  >
-                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, fontFamily: "monospace" }}
-                        onClick={() => void openFile(entry.path)}
-                      >
-                        {entry.displayPath}
-                      </Button>
-                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                        {entry.statusLabel}
-                        {!entry.tracked ? " (not included by Commit)" : ""}
-                      </Typography.Text>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Typography.Text code style={{ marginBottom: 0 }}>
-                        {entry.statusCode}
-                      </Typography.Text>
-                      {!entry.tracked ? (
-                        <Space.Compact size="small">
-                          <Button
-                            size="small"
-                            onClick={() => void addUntrackedFile(entry.path)}
-                            loading={headStatusAction === `add:${entry.path}`}
-                            disabled={Boolean(headStatusAction)}
-                          >
-                            Add
-                          </Button>
-                          <Button
-                            size="small"
-                            onClick={() => void ignoreUntrackedFile(entry.path)}
-                            loading={headStatusAction === `ignore:${entry.path}`}
-                            disabled={Boolean(headStatusAction)}
-                          >
-                            Ignore
-                          </Button>
-                        </Space.Compact>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })
-            : null}
-        </div>
-      ) : (
-        <div
-          style={{
-            border: `1px solid ${CARD_BORDER_COLOR}`,
-            borderRadius: 8,
-            borderLeft: `4px solid ${COLORS.BLUE}`,
-            padding: 12,
-            marginBottom: 12,
-            background: "#fff",
-            boxShadow: CARD_SHADOW,
-          }}
-        >
+        ) : null}
+        {nonRepoError ? (
           <div
             style={{
+              border: `1px solid ${CARD_BORDER_COLOR}`,
+              borderRadius: 8,
+              padding: 12,
+              marginBottom: 12,
+              background: "#fff",
+              boxShadow: CARD_SHADOW,
               display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              flexDirection: "column",
               gap: 10,
-              marginBottom: 8,
-              flexWrap: "wrap",
             }}
           >
-            <Checkbox
-              checked={reviewed}
-              disabled={reviewLoading || reviewSaving || !commit || isHeadSelected}
-              onChange={(e) => {
-                const next = e.target.checked;
-                setReviewed(next);
-                setReviewDirty(true);
-                void saveReview({ reviewed: next });
-              }}
+            <Typography.Text strong>
+              This folder is not a git repository.
+            </Typography.Text>
+            <Typography.Text
+              type="secondary"
+              style={{ whiteSpace: "pre-wrap" }}
             >
-              <span style={{ fontWeight: 600 }}>Reviewed</span>
-            </Checkbox>
-            <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-              <Space size={8} align="center">
-                {resolvedInlineCount > 0 ? (
-                  <>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Show resolved
-                    </Typography.Text>
-                    <Switch
-                      size="small"
-                      checked={showResolvedComments}
-                      onChange={setShowResolvedComments}
-                    />
-                  </>
-                ) : null}
-                <span>
-                  {reviewSaving ? "Saving..." : null}
-                  {!reviewSaving && reviewUpdatedAt ? (
-                    <>
-                      Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
-                    </>
-                  ) : null}
-                </span>
-              </Space>
-            </div>
+              {nonRepoError}
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              Path: <code>{cwd}</code>
+            </Typography.Text>
+            <Space wrap>
+              <Button
+                type="primary"
+                onClick={() => void initializeGitRepo()}
+                loading={repoBootstrapBusy}
+              >
+                Initialize Git Repo
+              </Button>
+              <Button
+                onClick={() => void requestAgentRepoSetup()}
+                disabled={!onRequestAgentTurn}
+                loading={repoBootstrapBusy}
+              >
+                Ask Agent to Set Up Repo
+              </Button>
+            </Space>
           </div>
-          {reviewNoteEditing ? (
-            <MarkdownHistoryInput
-              historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
-              key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
-              value={reviewNoteDraft}
-              onChange={(value) => {
-                if (reviewLoading || isHeadSelected || !currentReviewCommit) return;
-                if (activeReviewCommitRef.current !== currentReviewCommit) return;
-                setReviewNoteDraft(value);
-                setReviewDirty(true);
-                saveReviewDraft(currentReviewCommit, {
-                  reviewed: Boolean(reviewed),
-                  note: `${value ?? ""}`,
-                  comments: reviewRecord?.comments ?? {},
-                });
-              }}
-              placeholder="Private review note (not sent to agent)"
-              fontSize={Math.max(13, fontSize)}
-              autoGrow
-              autoGrowMaxHeight={220}
-              hideHelp
-              minimal
-              compact
-              enableMentions={false}
-              enableUpload={true}
+        ) : isHeadSelected ? (
+          <div
+            style={{
+              border: `1px solid ${CARD_BORDER_COLOR}`,
+              borderRadius: 8,
+              borderLeft: `4px solid ${COLORS.BLUE}`,
+              padding: 12,
+              marginBottom: 12,
+              background: "#fff",
+              boxShadow: CARD_SHADOW,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>Commit changes</div>
+            <Input.TextArea
+              value={headCommitMessage}
+              disabled={headCommitBusy}
+              placeholder="or leave blank to let the agent write the message"
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              onChange={(e) => setHeadCommitMessage(e.target.value)}
             />
-          ) : (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button
+                size="small"
+                type="primary"
+                onClick={() =>
+                  void requestAgentCommit({ includeSummary: true })
+                }
+                disabled={headCommitBusy || !hasTrackedHeadChanges}
+              >
+                Commit with AI Summary
+              </Button>
+              <Button
+                size="small"
+                onClick={() => void doHeadCommit()}
+                disabled={!hasTrackedHeadChanges}
+              >
+                Commit
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setHeadCommitMessage("")}
+                disabled={headCommitBusy || headCommitMessage.length === 0}
+              >
+                Clear
+              </Button>
+            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Commit uses all tracked changes only (`git commit -a`). Untracked
+              files are excluded.
+            </Typography.Text>
+            {!hasTrackedHeadChanges ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                No tracked changes are currently available for one-click commit.
+              </Typography.Text>
+            ) : null}
+            {headCommitError ? (
+              <Alert type="error" showIcon message={headCommitError} />
+            ) : null}
+
+            <div style={{ fontWeight: 600 }}>Uncommitted files</div>
+            {headStatusError ? (
+              <Alert type="warning" showIcon message={headStatusError} />
+            ) : null}
+            {headStatusLoading ? (
+              <div style={{ padding: "12px 0", textAlign: "center" }}>
+                <Spin size="small" />
+              </div>
+            ) : null}
+            {!headStatusLoading && headStatusEntries.length === 0 ? (
+              <Typography.Text type="secondary">
+                No uncommitted changes.
+              </Typography.Text>
+            ) : null}
+            {!headStatusLoading && headStatusEntries.length > 0
+              ? headStatusEntries.map((entry) => {
+                  return (
+                    <div
+                      key={`${entry.statusCode}:${entry.path}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: 6,
+                        padding: "6px 8px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          minWidth: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ padding: 0, fontFamily: "monospace" }}
+                          onClick={() => void openFile(entry.path)}
+                        >
+                          {entry.displayPath}
+                        </Button>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 11 }}
+                        >
+                          {entry.statusLabel}
+                          {!entry.tracked ? " (not included by Commit)" : ""}
+                        </Typography.Text>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <Typography.Text code style={{ marginBottom: 0 }}>
+                          {entry.statusCode}
+                        </Typography.Text>
+                        {!entry.tracked ? (
+                          <Space.Compact size="small">
+                            <Button
+                              size="small"
+                              onClick={() => void addUntrackedFile(entry.path)}
+                              loading={headStatusAction === `add:${entry.path}`}
+                              disabled={Boolean(headStatusAction)}
+                            >
+                              Add
+                            </Button>
+                            <Button
+                              size="small"
+                              onClick={() =>
+                                void ignoreUntrackedFile(entry.path)
+                              }
+                              loading={
+                                headStatusAction === `ignore:${entry.path}`
+                              }
+                              disabled={Boolean(headStatusAction)}
+                            >
+                              Ignore
+                            </Button>
+                          </Space.Compact>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+              : null}
+          </div>
+        ) : (
+          <div
+            style={{
+              border: `1px solid ${CARD_BORDER_COLOR}`,
+              borderRadius: 8,
+              borderLeft: `4px solid ${COLORS.BLUE}`,
+              padding: 12,
+              marginBottom: 12,
+              background: "#fff",
+              boxShadow: CARD_SHADOW,
+            }}
+          >
             <div
               style={{
-                border: `1px solid ${COLORS.GRAY_LL}`,
-                borderRadius: 6,
-                padding: "8px 10px",
-                background: "#fff",
-                minHeight: 40,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                marginBottom: 8,
+                flexWrap: "wrap",
               }}
             >
-              {reviewNote?.trim() ? (
-                <StaticMarkdown value={reviewNote} style={{ fontSize: Math.max(13, fontSize) }} />
-              ) : (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  No private review note yet.
-                </Typography.Text>
-              )}
-            </div>
-          )}
-          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 6 }}>
-            This note and the Reviewed checkbox are private state only. They are not sent to
-            the agent.
-          </Typography.Text>
-          <div
-            style={{
-              marginTop: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-start",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-              {reviewError || (reviewLoading ? "Loading review state..." : "")}
-              {!reviewError && !reviewLoading && inlineComments.length > 0
-                ? ` · ${inlineComments.length} inline comments`
-                : ""}
+              <Checkbox
+                checked={reviewed}
+                disabled={
+                  reviewLoading || reviewSaving || !commit || isHeadSelected
+                }
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setReviewed(next);
+                  setReviewDirty(true);
+                  void saveReview({ reviewed: next });
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>Reviewed</span>
+              </Checkbox>
+              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+                <Space size={8} align="center">
+                  {resolvedInlineCount > 0 ? (
+                    <>
+                      <Typography.Text
+                        type="secondary"
+                        style={{ fontSize: 12 }}
+                      >
+                        Show resolved
+                      </Typography.Text>
+                      <Switch
+                        size="small"
+                        checked={showResolvedComments}
+                        onChange={setShowResolvedComments}
+                      />
+                    </>
+                  ) : null}
+                  <span>
+                    {reviewSaving ? "Saving..." : null}
+                    {!reviewSaving && reviewUpdatedAt ? (
+                      <>
+                        Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
+                      </>
+                    ) : null}
+                  </span>
+                </Space>
+              </div>
             </div>
             {reviewNoteEditing ? (
-              <Space.Compact size="small">
+              <MarkdownHistoryInput
+                historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
+                key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
+                value={reviewNoteDraft}
+                onChange={(value) => {
+                  if (reviewLoading || isHeadSelected || !currentReviewCommit)
+                    return;
+                  if (activeReviewCommitRef.current !== currentReviewCommit)
+                    return;
+                  setReviewNoteDraft(value);
+                  setReviewDirty(true);
+                  saveReviewDraft(currentReviewCommit, {
+                    reviewed: Boolean(reviewed),
+                    note: `${value ?? ""}`,
+                    comments: reviewRecord?.comments ?? {},
+                  });
+                }}
+                placeholder="Private review note (not sent to agent)"
+                fontSize={Math.max(13, fontSize)}
+                autoGrow
+                autoGrowMaxHeight={220}
+                hideHelp
+                minimal
+                compact
+                enableMentions={false}
+                enableUpload={true}
+              />
+            ) : (
+              <div
+                style={{
+                  border: `1px solid ${COLORS.GRAY_LL}`,
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  background: "#fff",
+                  minHeight: 40,
+                }}
+              >
+                {reviewNote?.trim() ? (
+                  <StaticMarkdown
+                    value={reviewNote}
+                    style={{ fontSize: Math.max(13, fontSize) }}
+                  />
+                ) : (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    No private review note yet.
+                  </Typography.Text>
+                )}
+              </div>
+            )}
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 6 }}
+            >
+              This note and the Reviewed checkbox are private state only. They
+              are not sent to the agent.
+            </Typography.Text>
+            <div
+              style={{
+                marginTop: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-start",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+                {reviewError ||
+                  (reviewLoading ? "Loading review state..." : "")}
+                {!reviewError && !reviewLoading && inlineComments.length > 0
+                  ? ` · ${inlineComments.length} inline comments`
+                  : ""}
+              </div>
+              {reviewNoteEditing ? (
+                <Space.Compact size="small">
+                  <Button
+                    size="small"
+                    disabled={
+                      reviewSaving || !currentReviewCommit || isHeadSelected
+                    }
+                    onClick={() => {
+                      setReviewNoteDraft(reviewNote);
+                      setReviewNoteEditing(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={
+                      !noteDirty ||
+                      reviewSaving ||
+                      !currentReviewCommit ||
+                      isHeadSelected ||
+                      reviewStateCommit !== currentReviewCommit
+                    }
+                    onClick={() => {
+                      if (!currentReviewCommit) return;
+                      const nextNote = reviewNoteDraft;
+                      setReviewNote(nextNote);
+                      setReviewDirty(true);
+                      setReviewNoteEditing(false);
+                      void saveReview({ note: nextNote, reviewed });
+                    }}
+                  >
+                    Save note
+                  </Button>
+                </Space.Compact>
+              ) : (
                 <Button
                   size="small"
-                  disabled={reviewSaving || !currentReviewCommit || isHeadSelected}
+                  disabled={
+                    reviewSaving || !currentReviewCommit || isHeadSelected
+                  }
                   onClick={() => {
                     setReviewNoteDraft(reviewNote);
-                    setReviewNoteEditing(false);
+                    setReviewNoteEditing(true);
                   }}
                 >
-                  Cancel
+                  Edit
                 </Button>
+              )}
+            </div>
+            <div
+              style={{
+                marginTop: 8,
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: 6,
+                background: "#fff",
+                padding: "8px 10px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Send only draft inline diff comments (created with the{" "}
+                <code>+</code> buttons in the patch below).
+              </Typography.Text>
+              <Space.Compact size="small">
                 <Button
                   size="small"
                   type="primary"
                   disabled={
-                    !noteDirty ||
+                    actionableInlineComments.length === 0 ||
+                    reviewSubmitBusy ||
                     reviewSaving ||
-                    !currentReviewCommit ||
-                    isHeadSelected ||
-                    reviewStateCommit !== currentReviewCommit
+                    !onRequestAgentTurn
                   }
-                  onClick={() => {
-                    if (!currentReviewCommit) return;
-                    const nextNote = reviewNoteDraft;
-                    setReviewNote(nextNote);
-                    setReviewDirty(true);
-                    setReviewNoteEditing(false);
-                    void saveReview({ note: nextNote, reviewed });
-                  }}
+                  loading={reviewSubmitBusy}
+                  onClick={() => void sendInlineReviewToAgent()}
                 >
-                  Save note
+                  {`Send inline comments to agent${
+                    actionableInlineComments.length > 0
+                      ? ` (${actionableInlineComments.length})`
+                      : ""
+                  }`}
                 </Button>
               </Space.Compact>
-            ) : (
-              <Button
-                size="small"
-                disabled={reviewSaving || !currentReviewCommit || isHeadSelected}
-                onClick={() => {
-                  setReviewNoteDraft(reviewNote);
-                  setReviewNoteEditing(true);
-                }}
-              >
-                Edit
-              </Button>
-            )}
+            </div>
           </div>
-          <div
-            style={{
-              marginTop: 8,
-              border: `1px solid ${COLORS.GRAY_LL}`,
-              borderRadius: 6,
-              background: "#fff",
-              padding: "8px 10px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Send only draft inline diff comments (created with the <code>+</code> buttons in
-              the patch below).
-            </Typography.Text>
-            <Space.Compact size="small">
-              <Button
-                size="small"
-                type="primary"
-                disabled={
-                  actionableInlineComments.length === 0 ||
-                  reviewSubmitBusy ||
-                  reviewSaving ||
-                  !onRequestAgentTurn
-                }
-                loading={reviewSubmitBusy}
-                onClick={() => void sendInlineReviewToAgent()}
-              >
-                {`Send inline comments to agent${
-                  actionableInlineComments.length > 0
-                    ? ` (${actionableInlineComments.length})`
-                    : ""
-                }`}
-              </Button>
-            </Space.Compact>
+        )}
+        {loading ? (
+          <div style={{ padding: "32px 0", textAlign: "center" }}>
+            <Spin />
           </div>
-        </div>
-      )}
-      {loading ? (
-        <div style={{ padding: "32px 0", textAlign: "center" }}>
-          <Spin />
-        </div>
-      ) : null}
-      {!loading && error ? (
-        <Alert type="error" message={error} showIcon style={{ marginBottom: 12 }} />
-      ) : null}
-      {!loading && !error && data ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {data.summaryLines.length ? (
-            (() => {
-              const summary = data.summary;
-              const rows: Array<{
-                label: string;
-                value?: string;
-                asDate?: boolean;
-                monospace?: boolean;
-              }> = [
-                {
-                  label: "Commit",
-                  value: summary.commit ?? (isHeadSelected ? HEAD_REF : commit ?? ""),
-                  monospace: true,
-                },
-                { label: "Author", value: summary.author },
-                { label: "Author Date", value: summary.authorDate, asDate: true },
-                { label: "Committer", value: summary.committer },
-                { label: "Commit Date", value: summary.commitDate, asDate: true },
-              ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
-              const commitMessage = splitCommitMessage(summary.message);
-              return (
-                <div
-                  style={{
-                    border: `1px solid ${CARD_BORDER_COLOR}`,
-                    borderRadius: 8,
-                    borderLeft: `4px solid ${COLORS.BLUE}`,
-                    padding: "10px 12px",
-                    background: "#fff",
-                    boxShadow: CARD_SHADOW,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 10,
-                  }}
-                >
-                  <Typography.Text strong style={{ fontSize: 13 }}>
-                    Commit details
-                  </Typography.Text>
-                  {rows.length ? (
+        ) : null}
+        {!loading && error ? (
+          <Alert
+            type="error"
+            message={error}
+            showIcon
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
+        {!loading && !error && data ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {data.summaryLines.length
+              ? (() => {
+                  const summary = data.summary;
+                  const rows: Array<{
+                    label: string;
+                    value?: string;
+                    asDate?: boolean;
+                    monospace?: boolean;
+                  }> = [
+                    {
+                      label: "Commit",
+                      value:
+                        summary.commit ??
+                        (isHeadSelected ? HEAD_REF : (commit ?? "")),
+                      monospace: true,
+                    },
+                    { label: "Author", value: summary.author },
+                    {
+                      label: "Author Date",
+                      value: summary.authorDate,
+                      asDate: true,
+                    },
+                    { label: "Committer", value: summary.committer },
+                    {
+                      label: "Commit Date",
+                      value: summary.commitDate,
+                      asDate: true,
+                    },
+                  ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
+                  const commitMessage = splitCommitMessage(summary.message);
+                  return (
                     <div
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "120px 1fr",
-                        columnGap: 12,
-                        rowGap: 6,
-                      }}
-                    >
-                      {rows.map((row) => (
-                        <div
-                          key={`${row.label}:${row.value ?? ""}`}
-                          style={{ display: "contents" }}
-                        >
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            {row.label}
-                          </Typography.Text>
-                          <Typography.Text
-                            style={{
-                              fontSize: 12,
-                              fontFamily: row.monospace ? "monospace" : undefined,
-                              overflowWrap: "anywhere",
-                            }}
-                          >
-                            {row.asDate ? (
-                              (() => {
-                                const parsed = parseDateSafe(row.value);
-                                return parsed ? (
-                                  <TimeAgo date={parsed} />
-                                ) : (
-                                  row.value
-                                );
-                              })()
-                            ) : (
-                              row.value
-                            )}
-                          </Typography.Text>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {summary.message ? (
-                    <div
-                      style={{
-                        borderTop: `1px solid ${COLORS.GRAY_LL}`,
-                        paddingTop: 10,
+                        border: `1px solid ${CARD_BORDER_COLOR}`,
+                        borderRadius: 8,
+                        borderLeft: `4px solid ${COLORS.BLUE}`,
+                        padding: "10px 12px",
+                        background: "#fff",
+                        boxShadow: CARD_SHADOW,
                         display: "flex",
                         flexDirection: "column",
-                        gap: commitMessage.body ? 8 : 0,
+                        gap: 10,
                       }}
                     >
-                      {commitMessage.subject ? (
-                        <Typography.Text
-                          strong
+                      <Typography.Text strong style={{ fontSize: 13 }}>
+                        Commit details
+                      </Typography.Text>
+                      {rows.length ? (
+                        <div
                           style={{
-                            fontSize: Math.max(13, fontSize),
-                            lineHeight: 1.55,
-                            overflowWrap: "anywhere",
+                            display: "grid",
+                            gridTemplateColumns: "120px 1fr",
+                            columnGap: 12,
+                            rowGap: 6,
                           }}
                         >
-                          {commitMessage.subject}
-                        </Typography.Text>
+                          {rows.map((row) => (
+                            <div
+                              key={`${row.label}:${row.value ?? ""}`}
+                              style={{ display: "contents" }}
+                            >
+                              <Typography.Text
+                                type="secondary"
+                                style={{ fontSize: 12 }}
+                              >
+                                {row.label}
+                              </Typography.Text>
+                              <Typography.Text
+                                style={{
+                                  fontSize: 12,
+                                  fontFamily: row.monospace
+                                    ? "monospace"
+                                    : undefined,
+                                  overflowWrap: "anywhere",
+                                }}
+                              >
+                                {row.asDate
+                                  ? (() => {
+                                      const parsed = parseDateSafe(row.value);
+                                      return parsed ? (
+                                        <TimeAgo date={parsed} />
+                                      ) : (
+                                        row.value
+                                      );
+                                    })()
+                                  : row.value}
+                              </Typography.Text>
+                            </div>
+                          ))}
+                        </div>
                       ) : null}
-                      {commitMessage.body ? (
-                        <StaticMarkdown
-                          value={
-                            isMergeCommitSummary(summary)
-                              ? formatMergeCommitBodyMarkdown(commitMessage.body) ??
-                                commitMessage.body
-                              : commitMessage.body
-                          }
+                      {summary.message ? (
+                        <div
                           style={{
-                            fontSize: Math.max(13, fontSize),
-                            lineHeight: 1.55,
+                            borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                            paddingTop: 10,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: commitMessage.body ? 8 : 0,
                           }}
-                        />
+                        >
+                          {commitMessage.subject ? (
+                            <Typography.Text
+                              strong
+                              style={{
+                                fontSize: Math.max(13, fontSize),
+                                lineHeight: 1.55,
+                                overflowWrap: "anywhere",
+                              }}
+                            >
+                              {commitMessage.subject}
+                            </Typography.Text>
+                          ) : null}
+                          {commitMessage.body ? (
+                            <StaticMarkdown
+                              value={
+                                isMergeCommitSummary(summary)
+                                  ? (formatMergeCommitBodyMarkdown(
+                                      commitMessage.body,
+                                    ) ?? commitMessage.body)
+                                  : commitMessage.body
+                              }
+                              style={{
+                                fontSize: Math.max(13, fontSize),
+                                lineHeight: 1.55,
+                              }}
+                            />
+                          ) : null}
+                        </div>
+                      ) : summary.extraHeaderLines.length ? (
+                        <Typography.Paragraph
+                          style={{
+                            marginBottom: 0,
+                            fontFamily: "monospace",
+                            whiteSpace: "pre-wrap",
+                            fontSize: Math.max(11, fontSize - 1),
+                          }}
+                        >
+                          {summary.extraHeaderLines.join("\n")}
+                        </Typography.Paragraph>
                       ) : null}
                     </div>
-                  ) : summary.extraHeaderLines.length ? (
-                    <Typography.Paragraph
+                  );
+                })()
+              : null}
+            {data.files.length === 0 ? (
+              <Empty description="No file changes in this commit." />
+            ) : (
+              data.files.map((file, idx) => {
+                const languageHint = languageHintFromPath(file.path);
+                const fileComments = inlineComments.filter(
+                  (comment) => comment.file_path === file.path,
+                );
+                return (
+                  <div key={`${file.path}-${idx}`}>
+                    <div
                       style={{
-                        marginBottom: 0,
-                        fontFamily: "monospace",
-                        whiteSpace: "pre-wrap",
-                        fontSize: Math.max(11, fontSize - 1),
+                        marginBottom: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        flexWrap: "wrap",
                       }}
                     >
-                      {summary.extraHeaderLines.join("\n")}
-                    </Typography.Paragraph>
-                  ) : null}
-                </div>
-              );
-            })()
-          ) : null}
-          {data.files.length === 0 ? (
-            <Empty description="No file changes in this commit." />
-          ) : (
-            data.files.map((file, idx) => {
-              const languageHint = languageHintFromPath(file.path);
-              const fileComments = inlineComments.filter(
-                (comment) => comment.file_path === file.path,
-              );
-              return (
-                <div key={`${file.path}-${idx}`}>
-                  <div
-                    style={{
-                      marginBottom: 6,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: 0, fontFamily: "monospace" }}
-                      onClick={() => void openFile(file.path)}
-                    >
-                      {file.path}
-                    </Button>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {filenameMode(file.path, "text")}
-                      {fileComments.length > 0 ? ` · ${fileComments.length} comments` : ""}
-                    </Typography.Text>
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, fontFamily: "monospace" }}
+                        onClick={() => void openFile(file.path)}
+                      >
+                        {file.path}
+                      </Button>
+                      <Typography.Text
+                        type="secondary"
+                        style={{ fontSize: 11 }}
+                      >
+                        {filenameMode(file.path, "text")}
+                        {fileComments.length > 0
+                          ? ` · ${fileComments.length} comments`
+                          : ""}
+                      </Typography.Text>
+                    </div>
+                    <DiffBlock
+                      filePath={file.path}
+                      lines={file.lines}
+                      languageHint={languageHint}
+                      fontSize={fontSize}
+                      comments={fileComments}
+                      showResolvedComments={showResolvedComments}
+                      commentEnabled={!isHeadSelected}
+                      commentDisabledMessage={
+                        isHeadSelected
+                          ? "Please commit first, then comment."
+                          : undefined
+                      }
+                      onCreateComment={createInlineComment}
+                      onUpdateComment={updateInlineComment}
+                      onResolveComment={resolveInlineComment}
+                      onReopenComment={reopenInlineComment}
+                    />
                   </div>
-                  <DiffBlock
-                    filePath={file.path}
-                    lines={file.lines}
-                    languageHint={languageHint}
-                    fontSize={fontSize}
-                    comments={fileComments}
-                    showResolvedComments={showResolvedComments}
-                    commentEnabled={!isHeadSelected}
-                    commentDisabledMessage={
-                      isHeadSelected
-                        ? "Please commit first, then comment."
-                        : undefined
-                    }
-                    onCreateComment={createInlineComment}
-                    onUpdateComment={updateInlineComment}
-                    onResolveComment={resolveInlineComment}
-                    onReopenComment={reopenInlineComment}
-                  />
-                </div>
-              );
-            })
-          )}
-          {data.linesTruncated ? (
-            <Alert
-              type="warning"
-              showIcon
-              message={`Showing first ${MAX_GIT_SHOW_LINES.toLocaleString()} lines (${data.shownLineCount.toLocaleString()} loaded of ${data.originalLineCount.toLocaleString()}).`}
-              description={
-                <span>
-                  Output was truncated for UI performance. Use terminal for full output, e.g.{" "}
-                  <code>
-                    {isHeadSelected
-                      ? `git diff --no-color -U${contextLines} HEAD | less`
-                      : `git show --no-color -U${contextLines} ${commit} | less`}
-                  </code>
-                  .
-                </span>
-              }
-            />
-          ) : null}
-        </div>
-      ) : null}
+                );
+              })
+            )}
+            {data.linesTruncated ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={`Showing first ${MAX_GIT_SHOW_LINES.toLocaleString()} lines (${data.shownLineCount.toLocaleString()} loaded of ${data.originalLineCount.toLocaleString()}).`}
+                description={
+                  <span>
+                    Output was truncated for UI performance. Use terminal for
+                    full output, e.g.{" "}
+                    <code>
+                      {isHeadSelected
+                        ? `git diff --no-color -U${contextLines} HEAD | less`
+                        : `git show --no-color -U${contextLines} ${commit} | less`}
+                    </code>
+                    .
+                  </span>
+                }
+              />
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </Drawer>
   );
