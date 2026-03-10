@@ -13,7 +13,7 @@ function edge(from: string, to: string, id = `${from}-${to}`): any {
 }
 
 describe("whiteboard code graph helpers", () => {
-  it("orders direct children by y, then x, then id", () => {
+  it("orders direct children by x, then y, then id", () => {
     const elements = {
       root: code("root", 0, 0),
       low: code("low", 50, 100),
@@ -29,8 +29,8 @@ describe("whiteboard code graph helpers", () => {
     expect(getDirectCodeChildren(elements, "root", ["page1"])).toEqual([
       "upperLeftA",
       "upperLeftB",
-      "upperRight",
       "low",
+      "upperRight",
     ]);
   });
 

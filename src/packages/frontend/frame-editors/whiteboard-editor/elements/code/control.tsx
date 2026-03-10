@@ -30,7 +30,9 @@ export default function CodeControlBar({ element }: Props) {
         border: "1px solid #ccc",
         borderRadius: "3px",
         background: "white",
-        display: "inline-block",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "10px",
         boxShadow: "1px 5px 7px rgb(33 33 33 / 70%)",
         position: "absolute",
         top: "-34px",
@@ -78,7 +80,7 @@ export default function CodeControlBar({ element }: Props) {
         <Button
           disabled={element.data?.runState == "busy"}
           size="small"
-          style={{ ...actionButtonStyle, marginLeft: "6px" }}
+          style={actionButtonStyle}
           onClick={() => {
             void actions.runCodeTree(id, element.id);
           }}
@@ -94,7 +96,7 @@ export default function CodeControlBar({ element }: Props) {
               alignItems: "center",
               gap: "6px",
               fontWeight: 250,
-              marginLeft: "10px",
+              lineHeight: 1,
             }}
           >
             <span>Input</span>
@@ -120,7 +122,7 @@ export default function CodeControlBar({ element }: Props) {
               alignItems: "center",
               gap: "6px",
               fontWeight: 250,
-              marginLeft: "10px",
+              lineHeight: 1,
             }}
           >
             <span>Output</span>

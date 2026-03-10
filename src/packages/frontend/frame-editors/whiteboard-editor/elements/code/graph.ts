@@ -48,8 +48,8 @@ function compareCodeCells(
 ): number {
   const byPage = pageComparator(sortedPageIds, a.page, b.page);
   if (byPage != 0) return byPage;
-  if (a.y != b.y) return a.y - b.y;
   if (a.x != b.x) return a.x - b.x;
+  if (a.y != b.y) return a.y - b.y;
   return a.id.localeCompare(b.id);
 }
 

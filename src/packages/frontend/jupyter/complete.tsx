@@ -79,7 +79,15 @@ export function Complete({ actions, id, complete }: Props) {
           role="menuitem"
           style={{ display: "flex", fontSize: "13px" }}
           tabIndex={-1}
-          onClick={() => select(item)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            select(item);
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           data-item={item}
         >
           {item}
