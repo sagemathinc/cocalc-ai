@@ -61,3 +61,16 @@ export function initialPastedImageDimensions(opts: {
     height: `${height}px`,
   };
 }
+
+export function reportSlateUploadError(
+  actions: { set_error?: (message: string) => void } | undefined,
+  message: unknown,
+  alertMessage: (opts: { type: "error"; message: string }) => void,
+): void {
+  const normalized = `${message ?? ""}`;
+  if (actions?.set_error != null) {
+    actions.set_error(normalized);
+    return;
+  }
+  alertMessage({ type: "error", message: normalized });
+}

@@ -12,7 +12,9 @@ import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame
 import {
   initialPastedImageDimensions,
   pastedBlobFilename,
+  reportSlateUploadError,
 } from "./upload-utils";
+import { alert_message } from "@cocalc/frontend/alerts";
 
 async function loadImageDimensions(
   src: string | undefined,
@@ -83,11 +85,7 @@ export default function useUpload(
   const updloadEventHandlers = useMemo(() => {
     return {
       error: (_, message) => {
-        if (actions?.set_error != null) {
-          actions?.set_error(`${message}`);
-        } else {
-          console.warn("Error uploading file -- ", message);
-        }
+        reportSlateUploadError(actionsRef.current, message, alert_message);
       },
       sending: ({ name }) => {
         actionsRef.current?.set_status?.(`Uploading ${name}...`);

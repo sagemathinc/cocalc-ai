@@ -2,6 +2,7 @@ import {
   extensionForContentType,
   initialPastedImageDimensions,
   pastedBlobFilename,
+  reportSlateUploadError,
 } from "../upload-utils";
 
 test("maps image content types to useful file extensions", () => {
@@ -39,4 +40,10 @@ test("non-pasted images do not get a forced initial size", () => {
       devicePixelRatio: 2,
     }),
   ).toBeUndefined();
+});
+
+test("upload errors fall back to a user-visible alert when set_error is unavailable", () => {
+  const alert = jest.fn();
+  reportSlateUploadError(undefined, "too large", alert as any);
+  expect(alert).toHaveBeenCalledWith({ type: "error", message: "too large" });
 });
