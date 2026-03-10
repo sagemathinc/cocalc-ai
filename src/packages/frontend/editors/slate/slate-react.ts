@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useLayoutEffect, useState } from "react";
 import { Editor } from "slate";
 import type { BaseEditor, Descendant, Path, Point, Range } from "slate";
 import {
@@ -220,6 +220,10 @@ export const Slate = (props: SlateProps) => {
     setTicks((prev) => prev + 1);
   };
   Object.assign(editorWithExtras, rest);
+
+  useLayoutEffect(() => {
+    normalizeEditorSelection(editorWithExtras);
+  });
 
   return React.createElement(UpstreamSlate, {
     editor: editorWithExtras,

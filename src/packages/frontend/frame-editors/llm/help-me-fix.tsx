@@ -166,6 +166,7 @@ export default function HelpMeFix({
       });
       const sent = await submitNavigatorPromptToCurrentThread({
         project_id,
+        path,
         prompt,
         tag: `intent:error-fix:${tagSuffix}`,
         forceCodex: true,

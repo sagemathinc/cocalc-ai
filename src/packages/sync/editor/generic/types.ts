@@ -107,6 +107,7 @@ export interface ProjectClient extends EventEmitter {
   is_connected: () => boolean;
   is_signed_in: () => boolean;
   dbg: (desc: string) => Function;
+  alert_message?: (opts: any) => void;
 
   query: (opts: { query: any; cb: Function }) => void;
 

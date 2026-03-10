@@ -367,7 +367,16 @@ export async function sendQueuedAcpTurnImmediately({
     user_message_id: messageId,
     action: "send_immediately",
   });
-  return result?.ok === true;
+  if (!result?.ok) {
+    return false;
+  }
+  store.setState({
+    acpState: (store.get("acpState") ?? new Map()).set(
+      `message:${messageId}`,
+      "sent",
+    ),
+  });
+  return true;
 }
 
 function normalizeCodexMention(model?: string): string | undefined {

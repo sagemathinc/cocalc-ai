@@ -14,7 +14,6 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { TaskActions } from "./actions";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import ColorPicker from "@cocalc/frontend/components/color-picker";
-import { MAX_HEIGHT } from "./constants";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 import {
   createTasksHostServices,
@@ -87,7 +86,7 @@ export default function DescriptionEditor({
         onFocus={host.disableKeyHandler}
         enableUpload={true}
         enableMentions={true}
-        height={MAX_HEIGHT}
+        autoGrow
         placeholder={
           "Enter a description.  Use markdown with LaTeX.  Evaluate code blocks."
         }

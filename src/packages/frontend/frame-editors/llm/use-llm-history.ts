@@ -27,6 +27,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 // limit max prompts to keep in history per type
 const MAX_PROMPTS_NUM = 1000;
 const MAX_PROMPTS_BYTES = 1024 * 1024;
+const SHARED_STREAM_MAX_LISTENERS = 100;
 
 export type LLMHistoryType = "general" | "formula" | "generate";
 
@@ -62,6 +63,10 @@ const getDStream = reuseInFlight(async () => {
         max_bytes: MAX_PROMPTS_BYTES,
       },
     });
+    // This stream is intentionally shared across many mounted assistant surfaces.
+    // The default EventEmitter limit of 10 is too low and causes noisy warnings
+    // in normal use even when listeners are cleaned up correctly.
+    stream.setMaxListeners(SHARED_STREAM_MAX_LISTENERS);
 
     streamCache = stream;
     return stream;

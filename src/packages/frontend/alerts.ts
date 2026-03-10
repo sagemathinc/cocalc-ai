@@ -58,7 +58,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
   // is just annoying and useless.
   if (opts.message instanceof Error) {
     opts.message = `${opts.message}`;
-  } else if (opts.message === "string") {
+  } else if (typeof opts.message === "string") {
     const hash = hash_string(opts.message + opts.type);
     if (last_shown[hash] >= server_seconds_ago(5)) {
       return;

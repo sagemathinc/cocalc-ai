@@ -1,5 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import {
+  DiffBlock,
+  getCommitReviewIndicatorState,
   MarkdownHistoryInput,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -8,6 +10,9 @@ import {
 import { act, render } from "@testing-library/react";
 
 let latestMarkdownInputProps: any = null;
+const noopAsync = async () => {};
+const stableDiffLines = ["@@ -1 +1 @@", "-old", "+new"];
+const stableComments: any[] = [];
 
 jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
@@ -92,6 +97,25 @@ describe("git commit drawer merge commit formatting", () => {
     expect(latestMarkdownInputProps.redoMode).toBe("local");
   });
 
+  it("treats missing review state as unknown instead of not reviewed", () => {
+    expect(getCommitReviewIndicatorState({}, "abc1234")).toEqual({
+      reviewed: false,
+      known: false,
+    });
+    expect(
+      getCommitReviewIndicatorState({ abc1234: false }, "abc1234"),
+    ).toEqual({
+      reviewed: false,
+      known: true,
+    });
+    expect(
+      getCommitReviewIndicatorState({ abc1234: true }, "abc1234"),
+    ).toEqual({
+      reviewed: true,
+      known: true,
+    });
+  });
+
   it("preserves onModeChange forwarding for git review note/comment editors", () => {
     const onModeChange = jest.fn();
 
@@ -108,5 +132,54 @@ describe("git commit drawer merge commit formatting", () => {
       latestMarkdownInputProps.onModeChange("markdown");
     });
     expect(onModeChange).toHaveBeenCalledWith("markdown");
+  });
+
+  it("does not re-commit diff blocks on unrelated parent state changes", () => {
+    const renders: number[] = [];
+    const originalType = (DiffBlock as any).type;
+    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
+      renders.push(Date.now());
+      return originalType(props);
+    };
+
+    try {
+      function Harness() {
+        const [value, setValue] = useState(0);
+        return React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            "button",
+            { onClick: () => setValue((v) => v + 1) },
+            "bump",
+          ),
+          React.createElement("span", null, value),
+          React.createElement(DiffBlock, {
+            filePath: "src/example.ts",
+            lines: stableDiffLines,
+            languageHint: "ts",
+            fontSize: 14,
+            comments: stableComments,
+            showResolvedComments: false,
+            commentEnabled: true,
+            onCreateComment: noopAsync,
+            onUpdateComment: noopAsync,
+            onResolveComment: noopAsync,
+            onReopenComment: noopAsync,
+          }),
+        );
+      }
+
+      const rendered = render(React.createElement(Harness));
+      expect(renders).toHaveLength(1);
+
+      act(() => {
+        rendered.getByText("bump").click();
+      });
+
+      expect(renders).toHaveLength(1);
+    } finally {
+      (DiffBlock as any).type = originalType;
+    }
   });
 });

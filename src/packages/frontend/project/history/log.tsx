@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button } from "antd";
+import { Button, Flex, Space, Switch } from "antd";
 import { List } from "immutable";
 import { FormattedMessage, useIntl } from "react-intl";
 import { VirtuosoHandle } from "react-virtuoso";
@@ -23,6 +23,8 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { rowBackground, search_match, search_split } from "@cocalc/util/misc";
 import { LogEntry } from "./log-entry";
 import { LogSearch } from "./search";
@@ -32,9 +34,26 @@ interface Props {
   project_id: string;
 }
 
+const LOG_WORKSPACE_ONLY_STORAGE_PREFIX = "project-log-workspace-only";
+
+function workspaceOnlyStorageKey(project_id: string): string {
+  return `${LOG_WORKSPACE_ONLY_STORAGE_PREFIX}:${project_id}`;
+}
+
+function loadWorkspaceOnly(project_id: string): boolean {
+  const raw = get_local_storage(workspaceOnlyStorageKey(project_id));
+  if (typeof raw !== "string") return true;
+  return raw !== "false";
+}
+
+function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
+  set_local_storage(workspaceOnlyStorageKey(project_id), enabled ? "true" : "false");
+}
+
 export const ProjectLog: React.FC<Props> = ({ project_id }) => {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
+  const { workspaces } = useProjectContext();
   const project_log = useTypedRedux({ project_id }, "project_log");
   const project_log_all = useTypedRedux({ project_id }, "project_log_all");
   const search = useTypedRedux({ project_id }, "search") ?? "";
@@ -48,11 +67,18 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
     next_cursor_pos?: number;
   }>({ search_cache: {} });
   const [cursor_index, set_cursor_index] = useState<number>(0);
+  const [workspaceOnly, setWorkspaceOnly] = useState<boolean>(() =>
+    loadWorkspaceOnly(project_id),
+  );
   const force_update = useForceUpdate();
   useEffect(() => {
     delete state.current.log;
     force_update();
-  }, [project_log, project_log_all, search]);
+  }, [project_log, project_log_all, search, workspaceOnly, workspaces.current]);
+
+  useEffect(() => {
+    saveWorkspaceOnly(project_id, workspaceOnly);
+  }, [project_id, workspaceOnly]);
 
   function get_log(): List<TypedMap<EventRecord>> {
     if (state.current.log != null) {
@@ -65,6 +91,17 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
     }
 
     let log_seq = log.valueSeq().toList();
+    if (workspaceOnly && workspaces.current) {
+      const workspaceId = workspaces.current.workspace_id;
+      log_seq = log_seq.filter((entry) => {
+        const paths = getEntryPaths(entry);
+        if (paths.length === 0) return false;
+        return paths.some(
+          (path) =>
+            workspaces.resolveWorkspaceForPath(path)?.workspace_id === workspaceId,
+        );
+      });
+    }
     if (search) {
       if (state.current.search_cache == undefined) {
         state.current.search_cache = {};
@@ -107,6 +144,28 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
     });
     state.current.log = log_seq;
     return state.current.log;
+  }
+
+  function getEntryPaths(entry: TypedMap<EventRecord>): string[] {
+    const out: string[] = [];
+    const push = (value: unknown) => {
+      if (typeof value === "string" && value.length > 0) {
+        out.push(value);
+      }
+    };
+    const event = entry.get("event");
+    if (event == null || typeof event === "string") return out;
+    push(event.get("filename"));
+    push(event.get("path"));
+    push(event.get("src"));
+    push(event.get("dest"));
+    const files = event.get("files") as unknown;
+    if (Array.isArray(files)) {
+      for (const file of files) push(file);
+    } else if (files && typeof (files as any).forEach === "function") {
+      (files as any).forEach((file) => push(file));
+    }
+    return out;
   }
 
   function move_cursor_to(cursor_index): void {
@@ -252,6 +311,20 @@ export const ProjectLog: React.FC<Props> = ({ project_id }) => {
             values={{ projectLabel }}
           />
         </h1>
+        {workspaces.current ? (
+          <Flex justify="flex-end" style={{ marginBottom: 8 }}>
+            <Space size={8}>
+              <Switch
+                size="small"
+                checked={workspaceOnly}
+                onChange={setWorkspaceOnly}
+              />
+              <span style={{ fontSize: "12px", color: "#666" }}>
+                Only current workspace
+              </span>
+            </Space>
+          </Flex>
+        ) : null}
         {render_search()}
         {render_body()}
       </>

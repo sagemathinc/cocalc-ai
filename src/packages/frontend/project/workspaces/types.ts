@@ -1,51 +1,23 @@
-import type { EntityTheme } from "@cocalc/frontend/theme/types";
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
 
-export type WorkspaceTheme = EntityTheme;
+export type {
+  WorkspaceCreateInput,
+  WorkspaceRecord,
+  WorkspaceSelection,
+  WorkspaceSource,
+  WorkspaceTheme,
+  WorkspaceUpdatePatch,
+} from "@cocalc/conat/workspaces";
 
-export type WorkspaceSource = "manual" | "git-root" | "inferred";
-
-export type WorkspaceRecord = {
-  workspace_id: string;
-  project_id: string;
-  root_path: string;
-  theme: WorkspaceTheme;
-  pinned: boolean;
-  last_used_at: number | null;
-  last_active_path: string | null;
-  chat_path: string | null;
-  created_at: number;
-  updated_at: number;
-  source: WorkspaceSource;
-};
-
-export type WorkspaceSelection =
-  | { kind: "all" }
-  | { kind: "unscoped" }
-  | { kind: "workspace"; workspace_id: string };
-
-export type WorkspaceCreateInput = {
-  root_path: string;
-  title?: string;
-  description?: string;
-  color?: string | null;
-  accent_color?: string | null;
-  icon?: string | null;
-  image_blob?: string | null;
-  pinned?: boolean;
-  chat_path?: string | null;
-  last_active_path?: string | null;
-  source?: WorkspaceSource;
-};
-
-export type WorkspaceUpdatePatch = Partial<{
-  root_path: string;
-  theme: Partial<WorkspaceTheme>;
-  pinned: boolean;
-  chat_path: string | null;
-  last_used_at: number | null;
-  last_active_path: string | null;
-  source: WorkspaceSource;
-}>;
+import type {
+  WorkspaceCreateInput,
+  WorkspaceRecord,
+  WorkspaceSelection,
+  WorkspaceUpdatePatch,
+} from "@cocalc/conat/workspaces";
 
 export type ProjectWorkspaceState = {
   loading: boolean;

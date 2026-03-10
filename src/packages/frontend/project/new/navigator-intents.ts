@@ -5,6 +5,7 @@ import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
+import { ensureWorkspaceChatForPath } from "@cocalc/frontend/project/workspaces/runtime";
 import {
   loadNavigatorSelectedThreadKey,
   saveNavigatorSelectedThreadKey,
@@ -125,20 +126,24 @@ async function waitForThreadReady(opts: {
 function pickNavigatorSession({
   records,
   preferredThreadKey,
+  chatPath,
 }: {
   records: AgentSessionRecord[];
   preferredThreadKey?: string;
+  chatPath?: string;
 }): AgentSessionRecord | undefined {
-  const global = records.filter((record) => record.entrypoint === "global");
-  if (global.length === 0) return;
+  const candidates = chatPath
+    ? records.filter((record) => record.chat_path === chatPath)
+    : records.filter((record) => record.entrypoint === "global");
+  if (candidates.length === 0) return;
   const preferred = `${preferredThreadKey ?? ""}`.trim();
   if (preferred) {
-    const match = global.find((record) => record.thread_key === preferred);
+    const match = candidates.find((record) => record.thread_key === preferred);
     if (match) return match;
   }
   return (
-    global.find((record) => record.status !== "archived") ??
-    global[0]
+    candidates.find((record) => record.status !== "archived") ??
+    candidates[0]
   );
 }
 
@@ -263,33 +268,57 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
   tag?: string;
   forceCodex?: boolean;
   openFloating?: boolean;
+  path?: string;
 }): Promise<boolean> {
   try {
     const project_id = `${opts.project_id ?? ""}`.trim();
     const basePrompt = `${opts.prompt ?? ""}`.trim();
     if (!project_id || !basePrompt) return false;
     const input = basePrompt;
+    const account_id = `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+    const workspaceTarget =
+      opts.path && account_id
+        ? await ensureWorkspaceChatForPath({
+            project_id,
+            account_id,
+            path: opts.path,
+          })
+        : null;
+    const targetChatPath = workspaceTarget?.chat_path ?? resolveNavigatorChatPath(project_id);
 
-    const preferredThreadKey = loadNavigatorSelectedThreadKey(project_id);
+    const preferredThreadKey = workspaceTarget
+      ? undefined
+      : loadNavigatorSelectedThreadKey(project_id);
     const sessions = await listAgentSessionsForProject({ project_id });
     const indexedSession = pickNavigatorSession({
       records: sessions,
       preferredThreadKey,
+      chatPath: targetChatPath,
     });
     const fallbackSession: AgentSessionRecord = {
-      session_id: `navigator-${project_id}`,
+      session_id:
+        workspaceTarget?.workspace.workspace_id != null
+          ? `workspace-${workspaceTarget.workspace.workspace_id}`
+          : `navigator-${project_id}`,
       project_id,
-      account_id: `${redux.getStore("account")?.get?.("account_id") ?? ""}`,
-      chat_path: resolveNavigatorChatPath(project_id),
+      account_id,
+      chat_path: targetChatPath,
       thread_key: `${preferredThreadKey ?? ""}`.trim(),
-      title: "Navigator",
+      title: workspaceTarget?.workspace.theme.title?.trim() || "Navigator",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       status: "active",
-      entrypoint: "global",
+      entrypoint: workspaceTarget ? "file" : "global",
+      working_directory: workspaceTarget?.workspace.root_path,
+      thread_color: workspaceTarget?.workspace.theme.color ?? undefined,
+      thread_icon: workspaceTarget?.workspace.theme.icon ?? undefined,
+      thread_image: workspaceTarget?.workspace.theme.image_blob ?? undefined,
     };
     const session = indexedSession ?? fallbackSession;
     const queueFallbackIntent = (): boolean => {
+      if (workspaceTarget) {
+        return false;
+      }
       dispatchNavigatorPromptIntent({
         prompt: input,
         tag: opts.tag ?? "intent:navigator",
@@ -377,7 +406,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       (typeof timeStamp === "string"
         ? `${new Date(timeStamp).valueOf()}`
         : "");
-    if (nextThreadKey) {
+    if (nextThreadKey && !workspaceTarget) {
       saveNavigatorSelectedThreadKey(nextThreadKey);
     }
     if (opts.openFloating !== false) {

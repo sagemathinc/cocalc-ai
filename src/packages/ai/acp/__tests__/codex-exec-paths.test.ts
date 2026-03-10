@@ -179,6 +179,34 @@ describe("CodexExecAgent pre-content path heuristics", () => {
     expect(typeof fileWriteEvents[0].event.bytes).toBe("number");
   });
 
+  it("does not emit write events for in-progress write-like commands", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "codex-write-"));
+    await fs.writeFile(path.join(cwd, "dest.txt"), "existing");
+    const streamEvents: any[] = [];
+    const stream = async (msg: any) => {
+      streamEvents.push(msg);
+    };
+    const cache = (agent as any).createPreContentCache();
+    await (agent as any).handleItem(
+      {
+        type: "command_execution",
+        id: "cmd-write-started",
+        command: "cp source.txt dest.txt",
+      },
+      stream,
+      cwd,
+      cache,
+      () => {},
+    );
+    const fileWriteEvents = streamEvents.filter(
+      (msg) =>
+        msg?.type === "event" &&
+        msg?.event?.type === "file" &&
+        msg?.event?.operation === "write",
+    );
+    expect(fileWriteEvents).toHaveLength(0);
+  });
+
   it("does not report file-size bytes for command-heuristic read events", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "codex-read-"));
     await fs.writeFile(

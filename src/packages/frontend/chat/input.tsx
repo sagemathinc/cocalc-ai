@@ -95,7 +95,9 @@ export default function ChatInput({
   const intl = useIntl();
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
-  const [mode, setMode] = useState<"markdown" | "editor">(fixedMode ?? "editor");
+  const [mode, setMode] = useState<"markdown" | "editor">(
+    fixedMode ?? "editor",
+  );
   const mountedRef = useRef<boolean>(true);
   const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
   const previousSessionTokenRef = useRef<number | undefined>(sessionToken);
@@ -124,13 +126,10 @@ export default function ChatInput({
     currentInputRef.current = input;
   }, [input]);
 
-  const isStaleSessionCallback = useCallback(
-    (token?: number): boolean => {
-      const current = currentSessionTokenRef.current;
-      return token != null && current != null && token !== current;
-    },
-    [],
-  );
+  const isStaleSessionCallback = useCallback((token?: number): boolean => {
+    const current = currentSessionTokenRef.current;
+    return token != null && current != null && token !== current;
+  }, []);
 
   useEffect(() => {
     const next = propsInput ?? "";
@@ -165,10 +164,14 @@ export default function ChatInput({
     [resolvedPresenceThreadKey, syncdb],
   );
 
-  const savePresence = useDebouncedCallback(setComposingPresence, SAVE_DEBOUNCE_MS, {
-    leading: false,
-    trailing: true,
-  });
+  const savePresence = useDebouncedCallback(
+    setComposingPresence,
+    SAVE_DEBOUNCE_MS,
+    {
+      leading: false,
+      trailing: true,
+    },
+  );
 
   useEffect(() => {
     return () => {
@@ -190,12 +193,10 @@ export default function ChatInput({
 
   function getPlaceholder(): string {
     if (placeholder != null) return placeholder;
-    return intl.formatMessage(
-      {
-        id: "chat.input.placeholder",
-        defaultMessage: "Ask anything...",
-      },
-    );
+    return intl.formatMessage({
+      id: "chat.input.placeholder",
+      defaultMessage: "Ask anything...",
+    });
   }
 
   const hasInput = (input ?? "").trim().length > 0;
@@ -265,9 +266,7 @@ export default function ChatInput({
     <MarkdownInput
       key={`chat-input-session-${sessionToken ?? "default"}`}
       fixedMode={fixedMode}
-      slateExternalMultilinePasteAsCodeBlock={
-        externalMultilinePasteAsCodeBlock
-      }
+      slateExternalMultilinePasteAsCodeBlock={externalMultilinePasteAsCodeBlock}
       autoFocus={autoFocus}
       isFocused={isFocused}
       saveDebounceMs={CHAT_INPUT_SAVE_DEBOUNCE_MS}
@@ -326,6 +325,7 @@ export default function ChatInput({
       redoMode="local"
       height={height}
       autoGrowMaxHeight={autoGrowMaxHeight}
+      clampAutoGrowToHost
       placeholder={getPlaceholder()}
       fontSize={fontSize}
       hideHelp={true}

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CodexConfigButton } from "../codex";
 
 jest.mock("antd", () => {
@@ -110,5 +110,28 @@ describe("CodexConfigButton", () => {
       expect(screen.getByText("full-access")).not.toBeNull();
       expect(screen.getByText("high")).not.toBeNull();
     });
+  });
+
+  it("shows a codex usage link in the payment modal", () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={{
+          getCodexConfig: jest.fn(() => undefined),
+          setCodexConfig: jest.fn(),
+        } as any}
+        threadConfig={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("ChatGPT"));
+
+    const usageLink = screen.getByRole("link", {
+      name: /codex usage in chatgpt/i,
+    });
+    expect(usageLink.getAttribute("href")).toBe(
+      "https://chatgpt.com/codex/settings/usage",
+    );
   });
 });

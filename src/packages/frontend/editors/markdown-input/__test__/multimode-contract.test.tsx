@@ -250,6 +250,42 @@ describe("MultiMarkdownInput wrapper contract", () => {
     });
   });
 
+  it("keeps the captured markdown cursor through mouseup before the mode switch click", () => {
+    const setSelectionFromMarkdownPosition = jest.fn(() => true);
+    let editorReady = false;
+    markdownSelectionApi = {
+      setSelection: jest.fn(),
+      getSelection: jest.fn(() => [
+        {
+          anchor: { line: 2, ch: 4 },
+          head: { line: 2, ch: 4 },
+        },
+      ]),
+    };
+    editableControlApi = {
+      setSelectionFromMarkdownPosition,
+      isSelectionReady: jest.fn(() => editorReady),
+    };
+
+    render(<MultiMarkdownInput value="" onChange={() => {}} defaultMode="markdown" />);
+
+    const editorButton = screen.getByRole("button", { name: "editor" });
+    fireEvent.mouseDown(editorButton);
+    fireEvent.mouseUp(editorButton);
+    fireEvent.click(editorButton);
+    expect(setSelectionFromMarkdownPosition).not.toHaveBeenCalled();
+
+    editorReady = true;
+    act(() => {
+      latestEditableProps.onSelectionReady();
+    });
+
+    expect(setSelectionFromMarkdownPosition).toHaveBeenCalledWith({
+      line: 2,
+      ch: 4,
+    });
+  });
+
   it("mode switch from rich text to markdown preserves focusable cursor state", () => {
     const setSelection = jest.fn();
     const focus = jest.fn(() => true);

@@ -1,6 +1,7 @@
 import {
   pathMatchesRoot,
   resolveWorkspaceForPath,
+  selectionForPath,
   selectionMatchesPath,
 } from "./state";
 import type { WorkspaceRecord } from "./types";
@@ -43,6 +44,21 @@ describe("project workspaces path matching", () => {
     ).toBe("2");
   });
 
+  it("treats the canonical workspace chat as inside the workspace", () => {
+    const records = [
+      {
+        ...record("/repo/a", "a"),
+        chat_path: "/home/user/.local/share/cocalc/workspaces/me/a.chat",
+      },
+    ];
+    expect(
+      resolveWorkspaceForPath(
+        records,
+        "/home/user/.local/share/cocalc/workspaces/me/a.chat",
+      )?.workspace_id,
+    ).toBe("a");
+  });
+
   it("supports all, unscoped, and specific workspace selections", () => {
     const records = [record("/repo/a", "a")];
     expect(
@@ -65,5 +81,16 @@ describe("project workspaces path matching", () => {
     expect(
       selectionMatchesPath({ kind: "unscoped" }, records, "/repo/b/file.ts"),
     ).toBe(true);
+  });
+
+  it("resolves selection for paths inside and outside workspaces", () => {
+    const records = [record("/repo/a", "a")];
+    expect(selectionForPath(records, "/repo/a/file.ts")).toEqual({
+      kind: "workspace",
+      workspace_id: "a",
+    });
+    expect(selectionForPath(records, "/repo/b/file.ts")).toEqual({
+      kind: "unscoped",
+    });
   });
 });

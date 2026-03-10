@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Flex, Input, Space, Tooltip } from "antd";
+import { Alert, Button, Flex, Input, Space, Switch, Tooltip } from "antd";
 import immutable from "immutable";
 import { debounce } from "lodash";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -24,6 +24,8 @@ import {
 import { Icon, IconName, Loading, TimeAgo } from "@cocalc/frontend/components";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { labels } from "@cocalc/frontend/i18n";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { LogEntry } from "@cocalc/frontend/project/history/log-entry";
 import {
   EventRecordMap,
@@ -60,6 +62,22 @@ interface OpenedFile {
   account_id: string;
 }
 
+const LOG_WORKSPACE_ONLY_STORAGE_PREFIX = "project-log-workspace-only";
+
+function workspaceOnlyStorageKey(project_id: string): string {
+  return `${LOG_WORKSPACE_ONLY_STORAGE_PREFIX}:${project_id}`;
+}
+
+function loadWorkspaceOnly(project_id: string): boolean {
+  const raw = get_local_storage(workspaceOnlyStorageKey(project_id));
+  if (typeof raw !== "string") return true;
+  return raw !== "false";
+}
+
+function saveWorkspaceOnly(project_id: string, enabled: boolean): void {
+  set_local_storage(workspaceOnlyStorageKey(project_id), enabled ? "true" : "false");
+}
+
 export function getTime(a): number {
   try {
     return a?.get("time")?.getTime() ?? 0;
@@ -73,6 +91,7 @@ function deriveFiles(
   searchTerm: string,
   max: number,
   deduplicate: boolean,
+  pathMatches?: (path: string) => boolean,
 ) {
   const dedupe: string[] = [];
   const searchWords = search_split(searchTerm);
@@ -86,10 +105,13 @@ function deriveFiles(
     )
     .sort((a, b) => getTime(b) - getTime(a))
     .filter((entry: EventRecordMap) => {
+      const path = entry.getIn(["event", "filename"]) as unknown;
+      if (typeof path !== "string" || path.length === 0) return false;
+      if (pathMatches && !pathMatches(path)) return false;
       // pick all files if not deduplicated
       if (!deduplicate) return true;
       // otherwise, we check if the filename already appeared in the sorted list
-      const fn = entry.getIn(["event", "filename"]);
+      const fn = path;
       if (dedupe.includes(fn)) return false;
       dedupe.push(fn);
       return true;
@@ -174,6 +196,7 @@ function deriveHistory(
     showUser: boolean;
     showOther: boolean;
   },
+  pathMatches?: (path: string) => boolean,
 ) {
   const {
     showOpenFiles,
@@ -207,6 +230,12 @@ function deriveHistory(
       return showOther;
     })
     .filter((entry: EventRecordMap) => {
+      if (!pathMatches) return true;
+      const paths = getEntryPaths(entry);
+      if (paths.length === 0) return false;
+      return paths.some((path) => pathMatches(path));
+    })
+    .filter((entry: EventRecordMap) => {
       if (searchTerm === "") return true;
       const searchStr = to_search_string(entry.toJS());
       return search_match(searchStr, searchWords);
@@ -214,6 +243,26 @@ function deriveHistory(
     .sort((a, b) => getTime(b) - getTime(a))
     .slice(0, max)
     .toJS() as any;
+}
+
+function getEntryPaths(entry: EventRecordMap): string[] {
+  const out: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value === "string" && value.length > 0) {
+      out.push(value);
+    }
+  };
+  push(entry.getIn(["event", "filename"]));
+  push(entry.getIn(["event", "path"]));
+  push(entry.getIn(["event", "src"]));
+  push(entry.getIn(["event", "dest"]));
+  const files = entry.getIn(["event", "files"]) as unknown;
+  if (Array.isArray(files)) {
+    for (const file of files) push(file);
+  } else if (files && typeof (files as any).forEach === "function") {
+    (files as any).forEach((file) => push(file));
+  }
+  return out;
 }
 
 interface Props {
@@ -229,6 +278,7 @@ export function LogFlyout({
   wrap,
   flyoutWidth,
 }: Props): React.JSX.Element {
+  const { workspaces } = useProjectContext();
   const intl = useIntl();
   const actions = useActions({ project_id });
   const mode: FlyoutLogMode = useTypedRedux({ project_id }, "flyout_log_mode");
@@ -254,9 +304,27 @@ export function LogFlyout({
 
   const search = useTypedRedux({ project_id }, "search") ?? "";
   const [searchTerm, setSearchTerm] = useState<string>("");
+  const [workspaceOnly, setWorkspaceOnly] = useState<boolean>(() =>
+    loadWorkspaceOnly(project_id),
+  );
 
   const [scrollIdx, setScrollIdx] = useState<number | null>(null);
   const [scrollIdxHide, setScrollIdxHide] = useState<boolean>(false);
+
+  useEffect(() => {
+    saveWorkspaceOnly(project_id, workspaceOnly);
+  }, [project_id, workspaceOnly]);
+
+  const workspacePathMatches = useMemo(() => {
+    if (!workspaceOnly || !workspaces.current) return undefined;
+    const workspaceId = workspaces.current.workspace_id;
+    return (path: string) =>
+      workspaces.resolveWorkspaceForPath(path)?.workspace_id === workspaceId;
+  }, [
+    workspaceOnly,
+    workspaces.current,
+    workspaces.resolveWorkspaceForPath,
+  ]);
 
   // restore the logFilter from local storage (mode is similar, restored in the LogHeader)
   useEffect(() => {
@@ -275,7 +343,7 @@ export function LogFlyout({
 
     switch (mode) {
       case "files":
-        return deriveFiles(log, search, max, deduplicate);
+        return deriveFiles(log, search, max, deduplicate, workspacePathMatches);
       case "history":
         return deriveHistory(log, search, max, {
           showOpenFiles,
@@ -284,11 +352,20 @@ export function LogFlyout({
           showShare,
           showUser,
           showOther,
-        });
+        }, workspacePathMatches);
       default:
         unreachable(mode);
     }
-  }, [project_log, project_log_all, search, max, mode, deduplicate, logFilter]);
+  }, [
+    project_log,
+    project_log_all,
+    search,
+    max,
+    mode,
+    deduplicate,
+    logFilter,
+    workspacePathMatches,
+  ]);
 
   const [showExtra, showExtra2] = useMemo(() => {
     return [
@@ -694,6 +771,14 @@ export function LogFlyout({
             prefix={<Icon name="search" />}
             style={{ minWidth: "5em", flex: "1" }}
           />
+          {workspaces.current ? (
+            <Space size={6}>
+              <Switch size="small" checked={workspaceOnly} onChange={setWorkspaceOnly} />
+              <span style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
+                Only current workspace
+              </span>
+            </Space>
+          ) : null}
           {renderControls()}
         </Flex>
         {activeFilterWarning()}

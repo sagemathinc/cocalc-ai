@@ -69,10 +69,11 @@ export function MarkdownInputModeSwitch({
 
   return (
     <div
+      data-markdown-mode-switch="true"
       style={layout === "inline" ? { display: "flex", alignItems: "center" } : undefined}
-      onMouseDown={onInteractionStart}
+      onMouseDownCapture={onInteractionStart}
       onMouseUp={onInteractionEnd}
-      onTouchStart={onInteractionStart}
+      onTouchStartCapture={onInteractionStart}
       onTouchEnd={onInteractionEnd}
       onTouchCancel={onInteractionEnd}
     >
@@ -122,6 +123,15 @@ export function MarkdownInputModeSwitch({
           ]}
           onChange={(e) => {
             const nextMode = e.target.value;
+            if (typeof document !== "undefined") {
+              const active = document.activeElement;
+              if (
+                active instanceof HTMLElement &&
+                active.closest?.("[data-markdown-mode-switch='true']") != null
+              ) {
+                active.blur();
+              }
+            }
             if (nextMode === "menu") {
               toggleMenu();
             } else {

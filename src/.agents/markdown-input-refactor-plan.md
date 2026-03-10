@@ -1,5 +1,7 @@
 # Markdown Input Refactor And Quality Plan
 
+Status: DONE
+
 This document captures a concrete phased plan to improve the quality,
 predictability, and long-term maintainability of the frontend multimode markdown
 editor in:
@@ -31,10 +33,10 @@ Current overall status:
 
 1. Phase 0: completed
 2. Phase 1: completed
-3. Phase 2: mostly completed
-4. Phase 3: partially completed
-5. Phase 4: mostly completed for the current embedded-editor targets
-6. Phase 5: partially completed
+3. Phase 2: completed enough for current goals
+4. Phase 3: completed enough for current goals
+5. Phase 4: completed enough for the current embedded-editor targets
+6. Phase 5: completed enough for the main non-collaborative consumers
 7. Phase 6: intentionally deferred
 8. Phase 7: not started
 
@@ -48,12 +50,57 @@ What is already true:
 5. chat composer and git review note/comment editors have already been migrated
    off compensating wrapper-owned undo hacks
 
-What is still open:
+What remains is mostly edge-case monitoring, not foundational refactor work.
 
-1. more selection cleanup remains
-2. more embedded consumers still need migration
-3. browser-level coverage is still lighter than ideal
-4. backend evaluation is intentionally not the current priority
+## Issues To Watch For
+
+These are the main remaining risks worth monitoring after the refactor.
+
+### 1. Whiteboard Scaling
+
+Markdown mode inside whiteboard notes is still a special case. The whiteboard
+uses CSS scaling and geometry that CodeMirror 5 has historically handled poorly.
+The current integration is much better, but this remains a likely source of
+layout or cursor bugs.
+
+One practical fallback, if this becomes a persistent problem again, is to avoid
+CodeMirror entirely in that surface and use a lighter textarea-like editor or a
+different embedded markdown input for scaled whiteboard editing.
+
+### 2. Exact Caret Preservation Across Mode Switches
+
+Typing remains live across markdown and rich-text mode switches, but exact
+logical caret placement is still worth watching in more complex content:
+
+1. lists
+2. fenced code blocks
+3. tables
+4. repeated blank lines
+5. non-collapsed selections
+
+### 3. Remote Value Changes While Focused
+
+Thread switches, draft switches, or remote updates while the editor is focused
+are still inherently timing-sensitive. They are much safer than before, but
+they remain a plausible source of edge-case selection bugs.
+
+### 4. Paste / IME / Spellcheck Paths
+
+The markdown editor still uses CodeMirror 5 with `inputStyle: "contenteditable"`
+for spellcheck support. That is intentional, but it means IME composition,
+spellcheck replacements, and large paste flows deserve continued scrutiny.
+
+### 5. Hidden-Then-Shown Editors
+
+Any consumer mounted in a hidden drawer, popover, tab, or overlay can still
+surface stale CodeMirror measurements if its visibility lifecycle changes in a
+new way.
+
+### 6. Collaborative Editors
+
+Collaborative document surfaces should continue using document-level undo/redo
+and should not be migrated to local embedded-editor undo semantics. That line is
+now much clearer in the code and should remain so.
 
 ## Current Scope
 

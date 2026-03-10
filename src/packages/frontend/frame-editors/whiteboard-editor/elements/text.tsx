@@ -238,6 +238,7 @@ function EditText({
       onChange={() => {
         saveValueRef.current?.();
       }}
+      autoGrow
       cmOptions={{
         lineNumbers: false, // implementation of line numbers in codemirror is incompatible with CSS scaling, so ensure disabled, even if on in account prefs
       }}

@@ -158,6 +158,7 @@ export function FileListing({
 
     return (
       <NoFiles
+        current_path={current_path}
         file_search={file_search}
         project_id={project_id}
       />

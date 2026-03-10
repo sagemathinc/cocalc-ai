@@ -73,6 +73,7 @@ import { useCodexLog } from "./use-codex-log";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
+import { formatTurnDuration } from "./turn-duration";
 
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
@@ -1891,46 +1892,6 @@ export default function Message({
       ) : undefined}
     </Row>
   );
-}
-
-function formatTurnDuration({
-  startMs,
-  history,
-}: {
-  startMs?: number;
-  history?: any;
-}): string {
-  if (!startMs || !history) return "";
-  const entries = Array.isArray(history)
-    ? history
-    : typeof history?.toArray === "function"
-      ? history.toArray()
-      : typeof history?.toJS === "function"
-        ? history.toJS()
-        : [];
-  if (!entries.length) return "";
-  const last = entries[entries.length - 1];
-  const endDate =
-    last?.date ??
-    (typeof last?.get === "function" ? last.get("date") : undefined);
-  const endMs =
-    endDate instanceof Date
-      ? endDate.valueOf()
-      : typeof endDate === "number"
-        ? endDate
-        : new Date(endDate ?? 0).valueOf();
-  if (!Number.isFinite(endMs) || endMs <= 0) return "";
-  const elapsed = Math.max(0, endMs - startMs);
-  if (!Number.isFinite(elapsed) || elapsed <= 0) return "";
-  const totalSeconds = Math.floor(elapsed / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  if (hours > 0) {
-    return `${hours}:${pad(minutes)}:${pad(seconds)}`;
-  }
-  return `${minutes}:${pad(seconds)}`;
 }
 
 // Used for exporting chat to markdown file

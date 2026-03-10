@@ -89,6 +89,10 @@ import {
   terminalClient,
   type TerminalClient as ProjectTerminalClient,
 } from "@cocalc/conat/project/terminal";
+import {
+  coerceWorkspaceSelection,
+  type WorkspaceSelection,
+} from "@cocalc/conat/workspaces";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { ConatService } from "@cocalc/conat/service";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
@@ -98,6 +102,11 @@ import {
   memoizePromiseFactory,
   newQuickJSAsyncWASMModuleFromVariant,
 } from "quickjs-emscripten-core";
+import {
+  dispatchWorkspaceSelectionEvent,
+  loadSessionSelection,
+  persistSessionSelection,
+} from "@cocalc/frontend/project/workspaces/selection-runtime";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -422,6 +431,22 @@ export function createBrowserSessionAutomation({
           await closeFileInProject({ project_id, path });
         }
         return { closed: cleanPaths.length, paths: cleanPaths };
+      },
+      workspaces: {
+        getSelection: (): WorkspaceSelection => {
+          assertExecNotCanceled(isCanceled);
+          return loadSessionSelection(project_id);
+        },
+        setSelection: async (
+          selection: WorkspaceSelection,
+        ): Promise<{ ok: true; selection: WorkspaceSelection }> => {
+          assertExecNotCanceled(isCanceled);
+          const nextSelection = coerceWorkspaceSelection(selection);
+          persistSessionSelection(project_id, nextSelection);
+          dispatchWorkspaceSelectionEvent(project_id, nextSelection);
+          assertExecNotCanceled(isCanceled);
+          return { ok: true, selection: nextSelection };
+        },
       },
       notebook: {
         listCells: async (

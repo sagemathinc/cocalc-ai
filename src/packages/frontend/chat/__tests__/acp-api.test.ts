@@ -1,13 +1,19 @@
 /** @jest-environment jsdom */
 
-import { processAcpLLM } from "../acp-api";
+import {
+  cancelQueuedAcpTurn,
+  processAcpLLM,
+  sendQueuedAcpTurnImmediately,
+} from "../acp-api";
 
 const mockStreamAcp = jest.fn();
+const mockControlAcp = jest.fn();
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       streamAcp: (...args: any[]) => mockStreamAcp(...args),
+      controlAcp: (...args: any[]) => mockControlAcp(...args),
       getProjectHostAcpBearer: async () => "",
     },
   },
@@ -347,5 +353,71 @@ describe("processAcpLLM", () => {
     });
 
     expect(acpState.get("message:user-msg-4")).toBe("queue");
+  });
+});
+
+describe("queued ACP controls", () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("updates local state after sending a queued turn immediately", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true });
+    const acpState = new FakeAcpState();
+    acpState.set("message:user-msg-queued", "queue");
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+    const actions: any = { store };
+    const message: any = {
+      message_id: "user-msg-queued",
+      thread_id: "thread-queued",
+    };
+
+    await expect(
+      sendQueuedAcpTurnImmediately({ actions, message }),
+    ).resolves.toBe(true);
+
+    expect(mockControlAcp).toHaveBeenCalledWith({
+      project_id: "proj",
+      path: "x.chat",
+      thread_id: "thread-queued",
+      user_message_id: "user-msg-queued",
+      action: "send_immediately",
+    });
+    expect(store.setState).toHaveBeenCalledWith({
+      acpState,
+    });
+    expect(acpState.get("message:user-msg-queued")).toBe("sent");
+  });
+
+  it("updates local state after cancelling a queued turn", async () => {
+    mockControlAcp.mockResolvedValue({ ok: true });
+    const acpState = new FakeAcpState();
+    acpState.set("message:user-msg-queued", "queue");
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+    const actions: any = { store };
+    const message: any = {
+      message_id: "user-msg-queued",
+      thread_id: "thread-queued",
+    };
+
+    await expect(cancelQueuedAcpTurn({ actions, message })).resolves.toBe(true);
+
+    expect(acpState.get("message:user-msg-queued")).toBe("not-sent");
   });
 });

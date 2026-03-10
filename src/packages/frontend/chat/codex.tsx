@@ -32,6 +32,7 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
+import { getDefaultCodexSessionMode } from "./codex-defaults";
 import {
   getCodexPaymentSourceShortLabel,
   getCodexPaymentSourceTooltip,
@@ -39,9 +40,7 @@ import {
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
-const DEFAULT_CODEX_SESSION_MODE: CodexSessionMode = lite
-  ? "read-only"
-  : "workspace-write";
+const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -122,6 +121,7 @@ export function CodexConfigButton({
   paymentSourceLoading = false,
   refreshPaymentSource,
 }: CodexConfigButtonProps): React.ReactElement {
+  const defaultSessionMode = getDefaultCodexSessionMode();
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [liteCodexStatus, setLiteCodexStatus] = useState<
@@ -159,7 +159,7 @@ export function CodexConfigButton({
       sessionId: "",
       model: baseModel,
       reasoning: baseReasoning,
-      sessionMode: DEFAULT_CODEX_SESSION_MODE,
+      sessionMode: defaultSessionMode,
     };
     const saved = threadConfig ?? actions?.getCodexConfig?.(threadId);
     const merged: CodexThreadConfig = { ...defaults, ...saved };
@@ -171,7 +171,7 @@ export function CodexConfigButton({
       modelValue: model,
       desired: merged.reasoning,
     });
-    const sessionMode = normalizeSessionMode(merged) ?? DEFAULT_CODEX_SESSION_MODE;
+    const sessionMode = normalizeSessionMode(merged) ?? defaultSessionMode;
     form.resetFields();
     const currentValue = {
       ...merged,
@@ -181,7 +181,16 @@ export function CodexConfigButton({
     };
     form.setFieldsValue(currentValue);
     setValue(currentValue);
-  }, [models, threadKey, chatPath, actions, form, open, threadConfig]);
+  }, [
+    models,
+    threadKey,
+    chatPath,
+    actions,
+    form,
+    open,
+    threadConfig,
+    defaultSessionMode,
+  ]);
 
   const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
   const selectedReasoningValue =
@@ -208,7 +217,7 @@ export function CodexConfigButton({
   const saveConfig = () => {
     const values = form.getFieldsValue();
     const sessionMode: CodexSessionMode =
-      normalizeSessionMode(values) ?? DEFAULT_CODEX_SESSION_MODE;
+      normalizeSessionMode(values) ?? defaultSessionMode;
     const finalValues = {
       ...values,
       sessionMode,
@@ -226,7 +235,7 @@ export function CodexConfigButton({
     const base = value ?? form.getFieldsValue();
     const next = { ...base, ...patch };
     const sessionMode: CodexSessionMode =
-      normalizeSessionMode(next) ?? DEFAULT_CODEX_SESSION_MODE;
+      normalizeSessionMode(next) ?? defaultSessionMode;
     const finalValues = {
       ...next,
       sessionMode,
@@ -481,7 +490,11 @@ export function CodexConfigButton({
               Plan is used.
             </Text>
             {liteCodexStatusLoading ? (
-              <Alert type="info" showIcon message="Checking local Codex install..." />
+              <Alert
+                type="info"
+                showIcon
+                message="Checking local Codex install..."
+              />
             ) : liteCodexStatus?.installed === false ? (
               <Alert
                 type="warning"
@@ -499,9 +512,7 @@ export function CodexConfigButton({
                 showIcon
                 message="Codex CLI detected"
                 description={`${liteCodexStatus.binaryPath ?? "codex"}${
-                  liteCodexStatus.version
-                    ? ` (${liteCodexStatus.version})`
-                    : ""
+                  liteCodexStatus.version ? ` (${liteCodexStatus.version})` : ""
                 }`}
               />
             ) : null}
@@ -510,15 +521,27 @@ export function CodexConfigButton({
               hidePanelChrome
               defaultProjectId={projectId}
             />
+            <Text type="secondary">
+              <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                View Codex usage in ChatGPT
+              </a>
+            </Text>
             <Divider style={{ margin: "8px 0" }} />
             <LiteAISettings onSaved={refreshPaymentSource} showTitle />
           </Space>
         ) : (
-          <CodexCredentialsPanel
-            embedded
-            hidePanelChrome
-            defaultProjectId={projectId}
-          />
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <CodexCredentialsPanel
+              embedded
+              hidePanelChrome
+              defaultProjectId={projectId}
+            />
+            <Text type="secondary">
+              <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
+                View Codex usage in ChatGPT
+              </a>
+            </Text>
+          </Space>
         )}
       </Modal>
     </>

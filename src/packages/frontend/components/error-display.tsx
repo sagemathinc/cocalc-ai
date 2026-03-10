@@ -83,9 +83,6 @@ export function ErrorDisplay({
 
   function render_alert() {
     const [title, description] = msgdesc();
-    // tweak the case where it's not a banner
-    const closable =
-      onClose != null || banner ? (onClose ? { onClose } : true) : false;
     return (
       <Alert
         banner={banner}
@@ -94,7 +91,8 @@ export function ErrorDisplay({
         type={type() as any}
         title={title}
         description={description}
-        closable={closable}
+        closable={onClose != null || banner}
+        onClose={onClose}
       />
     );
   }

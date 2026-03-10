@@ -79,6 +79,9 @@ export function getCodexPaymentSourceShortLabel(
     ) {
       return "OpenAI API Key";
     }
+    if (source === "shared-home") {
+      return "Local Codex auth";
+    }
     return "Unconfigured";
   }
   switch (source) {

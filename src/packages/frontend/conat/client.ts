@@ -985,6 +985,11 @@ export class ConatClient extends EventEmitter {
 
   dstream = dstream;
   astream = astream;
+  // NOTE: this higher-level frontend wrapper exposes sync primitives directly,
+  // e.g. `webapp_client.conat_client.dkv(...)`. Shared helpers in packages that
+  // also run in backend/CLI should not assume this object is the low-level core
+  // client from `@cocalc/conat/core/client`, which instead exposes these under
+  // `client.sync.*` and is returned by `conat()`.
   dkv = dkv;
   akv = akv;
   dko = dko;
