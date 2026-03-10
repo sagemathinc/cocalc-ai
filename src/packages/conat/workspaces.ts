@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { dkv, type DKV } from "./sync/dkv";
+import type { Client as CoreConatClient } from "./core/client";
+import type { DKV, DKVOptions } from "./sync/dkv";
 import { uuid } from "@cocalc/util/misc";
 
 export const WORKSPACES_STORE_VERSION = 1;
@@ -66,6 +67,21 @@ export type WorkspaceUpdatePatch = Partial<{
 
 export type WorkspaceStore = DKV<WorkspaceRecord[] | number>;
 
+type WorkspaceStoreOpenOptions = Omit<DKVOptions, "client">;
+
+// Frontend code does not pass the low-level core Conat client directly. It uses
+// the higher-level `webapp_client.conat_client` wrapper from
+// `src/packages/frontend/conat/client.ts`, which exposes `dkv(...)` directly.
+// Backend and CLI callers pass the core client from `conat/core/client.ts`,
+// which exposes the same functionality under `client.sync.dkv(...)`.
+export interface WorkspaceFrontendConatClient {
+  dkv<T>(opts: WorkspaceStoreOpenOptions): Promise<DKV<T>>;
+}
+
+export type WorkspaceStoreClient =
+  | CoreConatClient
+  | WorkspaceFrontendConatClient;
+
 export function workspaceStoreName(account_id: string): string {
   return `workspaces/${account_id}`;
 }
@@ -79,30 +95,25 @@ export async function openWorkspaceStore({
   project_id,
   account_id,
 }: {
-  client: unknown;
+  client: WorkspaceStoreClient;
   project_id: string;
   account_id: string;
 }): Promise<WorkspaceStore> {
-  const name = workspaceStoreName(account_id);
-  const clientAny = client as {
-    dkv?: (opts: {
-      project_id: string;
-      name: string;
-    }) => Promise<WorkspaceStore>;
+  const opts = {
+    project_id,
+    name: workspaceStoreName(account_id),
   };
-  const store =
-    typeof clientAny?.dkv === "function"
-      ? await clientAny.dkv({
-          project_id,
-          name,
-        })
-      : await dkv<WorkspaceRecord[] | number>({
-          client: client as any,
-          project_id,
-          name,
-        });
+  const store = hasFrontendConatClient(client)
+    ? await client.dkv<WorkspaceRecord[] | number>(opts)
+    : await client.sync.dkv<WorkspaceRecord[] | number>(opts);
   store.setMaxListeners(100);
   return store;
+}
+
+function hasFrontendConatClient(
+  client: WorkspaceStoreClient,
+): client is WorkspaceFrontendConatClient {
+  return "dkv" in client;
 }
 
 export function normalizeWorkspacePath(path: string): string {
