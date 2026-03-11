@@ -1005,7 +1005,15 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }));
   }
 
-  async function sendAgentPrompt(prompt: string, tag: string) {
+  async function sendAgentPrompt(
+    prompt: string,
+    tag: string,
+    codexConfig?: {
+      sessionMode?: "read-only" | "workspace-write" | "full-access";
+      allowWrite?: boolean;
+      workingDirectory?: string;
+    },
+  ) {
     const text = `${prompt ?? ""}`.trim();
     if (!text) return;
     try {
@@ -1016,12 +1024,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         tag,
         forceCodex: true,
         openFloating: true,
+        codexConfig,
       });
       if (!sent) {
         dispatchNavigatorPromptIntent({
           prompt: text,
           tag,
           forceCodex: true,
+          codexConfig,
         });
       }
     } finally {
@@ -1056,7 +1066,11 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         action: installWithCodexTarget.action,
         snapshotName: createdSnapshotName,
       });
-      await sendAgentPrompt(prompt, "intent:app-server-install");
+      await sendAgentPrompt(prompt, "intent:app-server-install", {
+        sessionMode: "full-access",
+        allowWrite: true,
+        workingDirectory: homeDirectory,
+      });
       setInstallWithCodexTarget(null);
     } catch (err) {
       setError(normalizeError(err));

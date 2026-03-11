@@ -64,6 +64,11 @@ describe("submitNavigatorPromptToCurrentThread", () => {
       tag: "intent:test",
       forceCodex: true,
       openFloating: true,
+      codexConfig: {
+        sessionMode: "full-access",
+        allowWrite: true,
+        workingDirectory: "/home/wstein",
+      },
     });
 
     expect(ok).toBe(true);
@@ -71,6 +76,11 @@ describe("submitNavigatorPromptToCurrentThread", () => {
     expect(queued).toHaveLength(1);
     expect(queued[0].prompt).toBe("Help me fix this error");
     expect(queued[0].tag).toBe("intent:test");
+    expect(queued[0].codexConfig).toEqual({
+      sessionMode: "full-access",
+      allowWrite: true,
+      workingDirectory: "/home/wstein",
+    });
     expect(mockOpenFloating).toHaveBeenCalledTimes(1);
   });
 

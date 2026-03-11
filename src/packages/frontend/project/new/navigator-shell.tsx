@@ -702,6 +702,19 @@ export function NavigatorShell({
         typeof launchAcpConfig?.model === "string"
           ? launchAcpConfig.model
           : undefined;
+      const nextCodexConfig = {
+        ...launchAcpConfig,
+        ...(intent.codexConfig ?? {}),
+        model,
+        workingDirectory: homeDirectory,
+      };
+      if (resolvedThreadKey && isCodex && intent.codexConfig) {
+        actions.setThreadAgentMode?.(
+          resolvedThreadKey,
+          "codex",
+          intent.codexConfig,
+        );
+      }
       const timeStamp = actions.sendChat({
         input,
         reply_thread_id: replyThreadId,
@@ -712,11 +725,7 @@ export function NavigatorShell({
             ? {
                 mode: "codex",
                 model,
-                codexConfig: {
-                  ...launchAcpConfig,
-                  model,
-                  workingDirectory: homeDirectory,
-                },
+                codexConfig: nextCodexConfig,
               }
             : undefined,
       });

@@ -2,6 +2,7 @@ import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-ind
 import { listAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
 import { redux } from "@cocalc/frontend/app-framework";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import type { CodexThreadConfig } from "@cocalc/chat";
 import { lite } from "@cocalc/frontend/lite";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
@@ -26,6 +27,7 @@ export interface NavigatorSubmitPromptDetail {
   prompt: string;
   tag?: string;
   forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -238,6 +240,7 @@ export function createNavigatorPromptIntent(opts: {
   prompt: string;
   tag?: string;
   forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
 }): NavigatorSubmitPromptDetail {
   return {
     id: uuid(),
@@ -245,6 +248,7 @@ export function createNavigatorPromptIntent(opts: {
     prompt: opts.prompt,
     tag: opts.tag,
     forceCodex: opts.forceCodex ?? true,
+    codexConfig: opts.codexConfig,
   };
 }
 
@@ -252,6 +256,7 @@ export function dispatchNavigatorPromptIntent(opts: {
   prompt: string;
   tag?: string;
   forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
 }): NavigatorSubmitPromptDetail {
   const intent = createNavigatorPromptIntent(opts);
   queueNavigatorPromptIntent(intent);
@@ -268,6 +273,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
   prompt: string;
   tag?: string;
   forceCodex?: boolean;
+  codexConfig?: Partial<CodexThreadConfig>;
   openFloating?: boolean;
   path?: string;
 }): Promise<boolean> {
@@ -326,6 +332,7 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         prompt: input,
         tag: opts.tag ?? "intent:navigator",
         forceCodex: opts.forceCodex ?? true,
+        codexConfig: opts.codexConfig,
       });
       if (opts.openFloating !== false) {
         openFloatingAgentSession(project_id, {
@@ -369,6 +376,13 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       typeof session.model === "string" && session.model.trim().length > 0
         ? session.model.trim()
         : undefined;
+    const threadAgentCodexConfig = {
+      model,
+      reasoning: session.reasoning as any,
+      sessionMode: session.mode as any,
+      workingDirectory: session.working_directory,
+      ...(opts.codexConfig ?? {}),
+    };
     if (replyThreadKey) {
       const rootReady = await waitForThreadReady({
         actions,
@@ -382,6 +396,9 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
         replyThreadId = undefined;
       }
     }
+    if (replyThreadKey && opts.forceCodex !== false && opts.codexConfig) {
+      actions.setThreadAgentMode?.(replyThreadKey, "codex", opts.codexConfig);
+    }
     const timeStamp = actions.sendChat({
       input,
       reply_thread_id: replyThreadId,
@@ -389,17 +406,12 @@ export async function submitNavigatorPromptToCurrentThread(opts: {
       noNotification: true,
       threadAgent:
         !replyThreadId && opts.forceCodex !== false
-          ? {
-              mode: "codex",
-              model,
-              codexConfig: {
+            ? {
+                mode: "codex",
                 model,
-                reasoning: session.reasoning as any,
-                sessionMode: session.mode as any,
-                workingDirectory: session.working_directory,
-              },
-            }
-          : undefined,
+                codexConfig: threadAgentCodexConfig,
+              }
+            : undefined,
     });
     if (!timeStamp) {
       return queueFallbackIntent();
