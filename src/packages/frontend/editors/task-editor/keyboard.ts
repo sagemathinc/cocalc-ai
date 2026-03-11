@@ -8,6 +8,7 @@ Keyboard shortcuts
 */
 
 import { HEADINGS } from "./headings-info";
+import { shouldSuppressGlobalShortcuts } from "@cocalc/frontend/keyboard/boundary";
 
 import { is_sortable as is_sortable_header } from "./headings-info";
 
@@ -19,6 +20,9 @@ function is_sortable(actions): boolean {
 
 export function create_key_handler(actions): (any) => void {
   return (evt) => {
+    if (shouldSuppressGlobalShortcuts(evt)) {
+      return;
+    }
     if (actions.isEditing()) {
       return;
     }

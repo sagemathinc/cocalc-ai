@@ -29,6 +29,8 @@ interface Props {
   project_id: string;
   desc;
   read_only?: boolean;
+  is_visible?: boolean;
+  tab_is_visible?: boolean;
 }
 
 export function TaskEditor({
@@ -37,6 +39,8 @@ export function TaskEditor({
   project_id,
   desc,
   read_only,
+  is_visible = true,
+  tab_is_visible = true,
 }: Props) {
   const useEditor = useEditorRedux<TaskState>({ project_id, path });
   const tasks = useEditor("tasks");
@@ -49,16 +53,23 @@ export function TaskEditor({
   const search_terms = desc.get("data-search_terms");
   const search_desc = desc.get("data-search_desc");
   const focus_find_box = desc.get("data-focus_find_box");
+  const editorIsVisible = is_visible && tab_is_visible;
 
   useEffect(() => {
-    if (tasks == null || visible == null) {
+    if (
+      tasks == null ||
+      visible == null ||
+      !editorIsVisible ||
+      focus_find_box
+    ) {
+      actions.disable_key_handler();
       return;
     }
     actions.enable_key_handler();
     return () => {
       actions.disable_key_handler();
     };
-  }, [actions, tasks, visible]);
+  }, [actions, tasks, visible, editorIsVisible, focus_find_box]);
 
   if (tasks == null || visible == null) {
     return (
