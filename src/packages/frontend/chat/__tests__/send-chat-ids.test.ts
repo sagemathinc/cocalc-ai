@@ -34,8 +34,26 @@ function makeActions(messages: Map<string, any> = new Map()): any {
   actions.messageCache = {
     getMessages: () => messages,
     getThreadIndex: () => new Map(),
-    getByMessageId: () => undefined,
-    getMessageIdIndex: () => new Map(),
+    getByMessageId: (messageId: string) => {
+      const trimmed = `${messageId ?? ""}`.trim();
+      if (!trimmed) return undefined;
+      for (const msg of messages.values()) {
+        if (`${msg?.message_id ?? ""}`.trim() === trimmed) {
+          return msg;
+        }
+      }
+      return undefined;
+    },
+    getMessageIdIndex: () => {
+      const index = new Map<string, string>();
+      for (const [key, msg] of messages) {
+        const messageId = `${msg?.message_id ?? ""}`.trim();
+        if (messageId) {
+          index.set(messageId, key);
+        }
+      }
+      return index;
+    },
     getByDateKey: (key: string) => messages.get(key),
     getThreadKeyByThreadId: (threadId: string) => {
       const trimmed = `${threadId ?? ""}`.trim();
@@ -976,6 +994,172 @@ describe("deleteThread identity targeting", () => {
       deletes.find(
         (row: any) =>
           row?.event === "chat-thread-state" && row?.thread_id === thread,
+      ),
+    ).toBeTruthy();
+  });
+});
+
+describe("deleteMessage rewiring", () => {
+  it("rewires direct children to the deleted message parent", () => {
+    const threadId = "12121212-1212-4212-8212-121212121212";
+    const d1 = new Date("2026-02-21T22:00:00.000Z");
+    const d2 = new Date("2026-02-21T22:01:00.000Z");
+    const d3 = new Date("2026-02-21T22:02:00.000Z");
+    const d4 = new Date("2026-02-21T22:03:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${d1.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d1,
+          thread_id: threadId,
+          message_id: "root",
+          history: [],
+        },
+      ],
+      [
+        `${d2.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d2,
+          thread_id: threadId,
+          message_id: "middle",
+          parent_message_id: "root",
+          reply_to: d1.toISOString(),
+          reply_to_message_id: "root",
+          history: [],
+        },
+      ],
+      [
+        `${d3.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u2",
+          date: d3,
+          thread_id: threadId,
+          message_id: "leaf",
+          parent_message_id: "middle",
+          reply_to: d2.toISOString(),
+          reply_to_message_id: "middle",
+          history: [],
+        },
+      ],
+      [
+        `${d4.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u3",
+          date: d4,
+          thread_id: "34343434-3434-4343-8343-343434343434",
+          message_id: "other",
+          history: [],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+
+    const deleted = actions.deleteMessage(messages.get(`${d2.valueOf()}`));
+
+    expect(deleted).toBe(true);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+    expect(actions.syncdb.delete).toHaveBeenCalledWith({
+      event: "chat",
+      date: d2.toISOString(),
+      sender_id: "u1",
+    });
+    const rewired = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((row: any) => row?.event === "chat" && row?.message_id === "leaf");
+    expect(rewired).toBeTruthy();
+    expect(rewired.parent_message_id).toBe("root");
+    expect(rewired.reply_to_message_id).toBe("root");
+    expect(rewired.reply_to).toBe(d1.toISOString());
+  });
+
+  it("clears child reply links when deleting the root message", () => {
+    const threadId = "56565656-5656-4565-8565-565656565656";
+    const d1 = new Date("2026-02-21T23:00:00.000Z");
+    const d2 = new Date("2026-02-21T23:01:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${d1.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d1,
+          thread_id: threadId,
+          message_id: "root",
+          history: [],
+        },
+      ],
+      [
+        `${d2.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u2",
+          date: d2,
+          thread_id: threadId,
+          message_id: "child",
+          parent_message_id: "root",
+          reply_to: d1.toISOString(),
+          reply_to_message_id: "root",
+          history: [],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+
+    const deleted = actions.deleteMessage(messages.get(`${d1.valueOf()}`));
+
+    expect(deleted).toBe(true);
+    const rewired = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((row: any) => row?.event === "chat" && row?.message_id === "child");
+    expect(rewired).toBeTruthy();
+    expect(rewired.parent_message_id).toBeNull();
+    expect(rewired.reply_to_message_id).toBeNull();
+    expect(rewired.reply_to).toBeNull();
+    expect(
+      actions.syncdb.delete.mock.calls
+        .map((x) => x[0])
+        .filter((row: any) => row?.event === "chat-thread-config"),
+    ).toHaveLength(0);
+  });
+
+  it("removes thread metadata when deleting the only remaining message", () => {
+    const threadId = "78787878-7878-4787-8787-787878787878";
+    const d1 = new Date("2026-02-22T00:00:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${d1.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d1,
+          thread_id: threadId,
+          message_id: "solo",
+          history: [],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+
+    const deleted = actions.deleteMessage(messages.get(`${d1.valueOf()}`));
+
+    expect(deleted).toBe(true);
+    const deletes = actions.syncdb.delete.mock.calls.map((x) => x[0]);
+    expect(
+      deletes.find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === threadId,
+      ),
+    ).toBeTruthy();
+    expect(
+      deletes.find(
+        (row: any) =>
+          row?.event === "chat-thread-state" && row?.thread_id === threadId,
       ),
     ).toBeTruthy();
   });

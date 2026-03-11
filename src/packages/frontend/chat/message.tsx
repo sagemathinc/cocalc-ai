@@ -5,7 +5,18 @@
 
 // cSpell:ignore blankcolumn
 
-import { Badge, Button, Col, Divider, Drawer, Row, Tag, Tooltip } from "antd";
+import {
+  Badge,
+  Button,
+  Col,
+  Divider,
+  Drawer,
+  Modal,
+  Row,
+  Tag,
+  Tooltip,
+  message as antdMessage,
+} from "antd";
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -488,6 +499,7 @@ export default function Message({
     // visually live after reconnect/refresh.
     return generating === true;
   }, [generating, isCodexThread]);
+  const showDeleteButton = showEditButton && !effectiveGenerating;
 
   useEffect(() => {
     if (isEditing) return;
@@ -865,6 +877,35 @@ export default function Message({
     scroll_into_view?.();
   }
 
+  function confirm_delete_message() {
+    if (!actions) {
+      return;
+    }
+    const preview = newest_content(message).trim().replace(/\s+/g, " ");
+    const snippet =
+      preview.length > 0
+        ? preview.length > 120
+          ? `${preview.slice(0, 117)}...`
+          : preview
+        : null;
+    Modal.confirm({
+      title: snippet ? `Delete message "${snippet}"?` : "Delete message?",
+      content:
+        "This removes the message from the current chat for everyone. It remains available in TimeTravel.",
+      okText: "Delete",
+      okType: "danger",
+      cancelText: "Cancel",
+      onOk: () => {
+        const deleted = actions.deleteMessage(message);
+        if (!deleted) {
+          antdMessage.error("Deleting this message failed.");
+          return;
+        }
+        antdMessage.success("Message deleted.");
+      },
+    });
+  }
+
   function avatar_column() {
     const sender_id = field<string>(message, "sender_id");
     let style: CSSProperties = {};
@@ -1147,6 +1188,24 @@ export default function Message({
             onClick={edit_message}
             icon={<Icon name="pencil" />}
           ></Button>
+        </Tip>,
+      );
+    }
+
+    if (showDeleteButton) {
+      buttons.push(
+        <Tip
+          key="delete"
+          title="Delete this message from the current chat. It remains available in TimeTravel."
+          placement="bottom"
+        >
+          <Button
+            size="small"
+            type="text"
+            danger
+            onClick={confirm_delete_message}
+            icon={<Icon name="trash" />}
+          />
         </Tip>,
       );
     }
