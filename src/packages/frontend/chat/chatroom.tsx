@@ -280,7 +280,6 @@ export function ChatPanel({
     useState<ChatRoomThreadActionHandlers | null>(null);
   const submitMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
   const scrollToBottomRef = useRef<any>(null);
-  const focusLogRef = useRef<(() => void) | null>(null);
   const lastScrollRequestRef = useRef<{
     thread: string;
     reason: "unread" | "allread";
@@ -1025,11 +1024,6 @@ export function ChatPanel({
           })()
         : null;
     const consumedLoopThreadKey = (reply_thread_id ?? threadKey)?.trim();
-    const sentAgentMessage =
-      reply_thread_id != null
-        ? existingThreadMetadata?.agent_kind != null &&
-          existingThreadMetadata.agent_kind !== "none"
-        : newThreadSetup.agentMode !== "human";
     if (composerLoopConfig?.enabled === true && consumedLoopThreadKey) {
       setSuppressedLoopThreads((prev) => {
         if (prev.has(consumedLoopThreadKey)) return prev;
@@ -1052,9 +1046,6 @@ export function ChatPanel({
     setTimeout(() => {
       if (anyOverlayOpen) return;
       scrollToBottomRef.current?.(true);
-      if (sentAgentMessage) {
-        focusLogRef.current?.();
-      }
     }, 100);
   }
   function on_send(value?: string): void {
@@ -1193,7 +1184,6 @@ export function ChatPanel({
         threadIndex={combinedFeedIndex ?? threadIndex}
         acpState={acpState}
         scrollToBottomRef={scrollToBottomRef}
-        focusLogRef={focusLogRef}
         scrollCacheId={scrollCacheId}
         fontSize={fontSize}
         selectedThreadKey={selectedThreadKey}

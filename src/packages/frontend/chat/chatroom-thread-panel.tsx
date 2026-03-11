@@ -122,7 +122,6 @@ interface ChatRoomThreadPanelProps {
   threadIndex?: Map<string, ThreadIndexEntry>;
   acpState: immutable.Map<string, string>;
   scrollToBottomRef: React.MutableRefObject<any>;
-  focusLogRef?: React.MutableRefObject<(() => void) | null>;
   scrollCacheId: string;
   fontSize?: number;
   selectedThreadKey: string | null;
@@ -154,7 +153,6 @@ export function ChatRoomThreadPanel({
   threadIndex,
   acpState,
   scrollToBottomRef,
-  focusLogRef,
   scrollCacheId,
   fontSize,
   selectedThreadKey,
@@ -1636,7 +1634,6 @@ export function ChatRoomThreadPanel({
         onAtTopStateChange={setThreadNearTop}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
-        focusLogRef={focusLogRef}
       />
     </div>
   );
