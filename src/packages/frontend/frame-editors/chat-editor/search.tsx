@@ -7,6 +7,7 @@ import { throttle } from "lodash";
 import { TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { ChatMessages } from "@cocalc/frontend/chat/types";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type { ChatStoreSearchHit } from "@cocalc/conat/hub/api/projects";
@@ -229,10 +230,9 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   }, [selectedThreadKey, threadOptions]);
 
   useEffect(() => {
-    if (externalSearch === search && externalSearch === searchInput) return;
     setSearchInput(externalSearch);
     setSearch(externalSearch);
-  }, [externalSearch, search, searchInput]);
+  }, [externalSearch]);
 
   useEffect(() => {
     if (!externalSearchThread) return;
@@ -469,7 +469,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
   const totalCount = combinedResult.length;
 
   return (
-    <div className="smc-vfill">
+    <KeyboardBoundary className="smc-vfill" boundary="chat-search">
       <Card
         title={
           <>
@@ -577,7 +577,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
           ))}
         </div>
       </div>
-    </div>
+    </KeyboardBoundary>
   );
 }
 
