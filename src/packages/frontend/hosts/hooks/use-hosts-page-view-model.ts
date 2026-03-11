@@ -1,6 +1,7 @@
 import { Form } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useHostActions } from "./use-host-actions";
 import { useHostAi } from "./use-host-ai";
@@ -18,6 +19,7 @@ import { useHostOps } from "./use-host-ops";
 import { useHostProviders } from "./use-host-providers";
 import { useHostSelection } from "./use-host-selection";
 import { useHostSoftwareVersions } from "./use-host-software-versions";
+import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
 import { buildRegionGroupOptions } from "../utils/normalize-catalog";
 import {
   buildCreateHostPayload,
@@ -326,6 +328,14 @@ export const useHostsPageViewModel = () => {
           base_url: opts?.base_url,
         });
         if (!recovered) {
+          alert_message({
+            type: "error",
+            message: formatHostUpgradeFailureMessage({
+              hostName: host.name,
+              err,
+            }),
+            timeout: 20,
+          });
           console.error(err);
         }
       }
