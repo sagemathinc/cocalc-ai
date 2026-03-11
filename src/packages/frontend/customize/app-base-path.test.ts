@@ -14,6 +14,17 @@ describe("inferAppBasePath", () => {
     ).toBe("/base");
     expect(inferAppBasePath("/base/auth/sign-in")).toBe("/base");
     expect(inferAppBasePath("/base/settings/profile")).toBe("/base");
+    expect(inferAppBasePath("/base/ssh")).toBe("/base");
+    expect(
+      inferAppBasePath(
+        "/base/projects/00000000-1000-4000-8000-000000000000/apps",
+      ),
+    ).toBe("/base");
+    expect(
+      inferAppBasePath(
+        "/base/projects/00000000-1000-4000-8000-000000000000/project-home",
+      ),
+    ).toBe("/base");
   });
 
   it("keeps the route itself when refreshing the app root under a base path", () => {

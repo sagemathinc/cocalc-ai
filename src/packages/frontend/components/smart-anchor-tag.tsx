@@ -14,6 +14,7 @@ import { Popover } from "antd";
 import { join } from "path";
 import { CSSProperties, ReactNode } from "react";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
+import { hasHostAbsoluteRoutePrefix } from "@cocalc/util/routing/app";
 import { redux } from "@cocalc/frontend/app-framework";
 import { A, Icon, IconName } from "@cocalc/frontend/components";
 import { file_associations } from "@cocalc/frontend/file-associations";
@@ -103,19 +104,6 @@ export default function SmartAnchorTag({
 }
 
 const INTERNAL_FILE_LINK_PREFIX = "cocalc-file://";
-const WEB_ROUTE_PREFIXES = [
-  "/projects",
-  "/settings",
-  "/account",
-  "/admin",
-  "/software",
-  "/help",
-  "/blobs",
-  "/auth",
-  "/register",
-  "/about",
-  "/billing",
-];
 
 function isInternalFileHref(href?: string): boolean {
   return typeof href === "string" && href.startsWith(INTERNAL_FILE_LINK_PREFIX);
@@ -267,9 +255,7 @@ function isLikelyAbsoluteFilePathHref(href: string): boolean {
   if (!href.startsWith("/")) return false;
   if (href.startsWith("//")) return false;
   if (/^\/[A-Za-z]:\//.test(href)) return true;
-  for (const prefix of WEB_ROUTE_PREFIXES) {
-    if (href === prefix || href.startsWith(`${prefix}/`)) return false;
-  }
+  if (hasHostAbsoluteRoutePrefix(href)) return false;
   return true;
 }
 

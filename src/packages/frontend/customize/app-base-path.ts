@@ -1,17 +1,4 @@
-const ROUTE_MARKERS = [
-  "/projects/",
-  "/settings",
-  "/preferences",
-  "/notifications",
-  "/admin",
-  "/hosts",
-  "/auth",
-  "/ssh",
-  "/support",
-  "/store",
-  "/software",
-  "/terminal",
-];
+import { APP_BASE_PATH_ROUTE_MARKERS } from "@cocalc/util/routing/app";
 
 export function inferAppBasePath(pathname?: string): string {
   const normalizedPathname = `${pathname ?? ""}`.trim();
@@ -26,7 +13,7 @@ export function inferAppBasePath(pathname?: string): string {
     return staticIndex === 0 ? "/" : normalizedPathname.slice(0, staticIndex);
   }
 
-  for (const marker of ROUTE_MARKERS) {
+  for (const marker of APP_BASE_PATH_ROUTE_MARKERS) {
     const index = normalizedPathname.indexOf(marker);
     if (index !== -1) {
       return index === 0 ? "/" : normalizedPathname.slice(0, index);
