@@ -25,7 +25,7 @@ import { useProjectContext } from "../context";
 
 const MIN_WIDTH = 48;
 
-function Label({ path, project_id, label }) {
+function Label({ path, project_id, label, onClose }) {
   const { width } = useItemContext();
   const { active } = useSortable({ id: project_id });
   return (
@@ -40,6 +40,7 @@ function Label({ path, project_id, label }) {
           ? { width: Math.max(MIN_WIDTH, width + 15), marginRight: "-10px" }
           : undefined),
       }}
+      onClose={onClose}
     />
   );
 }
@@ -88,6 +89,38 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     keys.push(pathToKey(path));
   });
 
+  const activePath = activeTab.startsWith(EDITOR_PREFIX)
+    ? activeTab.slice(EDITOR_PREFIX.length)
+    : "";
+
+  function closeVisibleTab(path: string): void {
+    if (actions == null) return;
+    if (path !== activePath || workspaces.selection.kind !== "workspace") {
+      actions.close_tab(path);
+      return;
+    }
+    const current = workspaces.current;
+    const visiblePaths = paths;
+    const currentIndex = visiblePaths.indexOf(path);
+    const fallbackPath =
+      currentIndex === -1
+        ? undefined
+        : currentIndex === visiblePaths.length - 1
+          ? visiblePaths[currentIndex - 1]
+          : visiblePaths[currentIndex + 1];
+
+    if (fallbackPath) {
+      actions.set_active_tab(path_to_tab(fallbackPath), {
+        change_history: false,
+      });
+    } else if (current != null) {
+      void actions.open_directory(current.root_path, false, true);
+    } else {
+      actions.set_active_tab("files", { change_history: false });
+    }
+    actions.close_tab(path);
+  }
+
   const labels = file_tab_labels(paths);
   const items: TabsProps["items"] = [];
 
@@ -99,6 +132,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
           path={paths[index]}
           project_id={project_id}
           label={labels[index]}
+          onClose={closeVisibleTab}
         />
       ),
     });
@@ -111,7 +145,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
       if (key) {
         const path = keyToPath(key);
         // close given file
-        actions.close_tab(path);
+        closeVisibleTab(path);
       }
     }
   };
@@ -138,9 +172,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     });
   }
 
-  const activeKey = activeTab.startsWith(EDITOR_PREFIX)
-    ? pathToKey(activeTab.slice(EDITOR_PREFIX.length))
-    : "";
+  const activeKey = activePath ? pathToKey(activePath) : "";
 
   function focusTabStripSoon(): void {
     setTimeout(() => {
