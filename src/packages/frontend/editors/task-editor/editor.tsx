@@ -9,6 +9,7 @@ Top-level react component for task list
 
 import { Button } from "antd";
 import { fromJS } from "immutable";
+import { useEffect } from "react";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import { useEditorRedux } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
@@ -48,6 +49,16 @@ export function TaskEditor({
   const search_terms = desc.get("data-search_terms");
   const search_desc = desc.get("data-search_desc");
   const focus_find_box = desc.get("data-focus_find_box");
+
+  useEffect(() => {
+    if (tasks == null || visible == null) {
+      return;
+    }
+    actions.enable_key_handler();
+    return () => {
+      actions.disable_key_handler();
+    };
+  }, [actions, tasks, visible]);
 
   if (tasks == null || visible == null) {
     return (
