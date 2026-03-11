@@ -437,6 +437,15 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       }),
     [workspaces.records],
   );
+  const recordById = useMemo(
+    () =>
+      new Map(
+        workspaces.records.map(
+          (record) => [record.workspace_id, record] as const,
+        ),
+      ),
+    [workspaces.records],
+  );
 
   const sections = useMemo(() => {
     const grouped: Record<WorkspaceSectionKey, WorkspaceRecord[]> = {
@@ -559,6 +568,20 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                     items={sectionRecords.map(
                       ({ workspace_id }) => workspace_id,
                     )}
+                    Item={({ id }: { id: string }) => {
+                      const record = recordById.get(id);
+                      if (!record) return null;
+                      return (
+                        <div
+                          style={{
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                            borderRadius: 8,
+                          }}
+                        >
+                          {renderRecord(record)}
+                        </div>
+                      );
+                    }}
                     onDragStop={(oldIndex, newIndex) =>
                       reorderSection(section, oldIndex, newIndex)
                     }

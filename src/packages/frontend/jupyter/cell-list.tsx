@@ -454,6 +454,77 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     return `cell ${index + 1}`;
   }
 
+  function dragPreviewTextForCell(id: string, index: number): string {
+    const cell = cells.get(id);
+    const input = cell?.get?.("input");
+    if (typeof input === "string" && input.trim()) {
+      return input
+        .split("\n")
+        .slice(0, 10)
+        .join("\n")
+        .slice(0, 1200);
+    }
+    return placeholderTextForCell(id, index);
+  }
+
+  function renderDragPreview(id: string): React.JSX.Element {
+    const index = cell_list.indexOf(id);
+    const cell = cells.get(id);
+    const cellType =
+      typeof cell?.get?.("cell_type") === "string" ? cell.get("cell_type") : "";
+    const label =
+      cellType === "code"
+        ? "Code"
+        : cellType === "markdown"
+          ? "Markdown"
+          : cellType === "raw"
+            ? "Raw"
+            : "Cell";
+    const number = index >= 0 ? index + 1 : "?";
+    return (
+      <div
+        style={{
+          minWidth: "360px",
+          maxWidth: "720px",
+          padding: "10px 12px",
+          borderRadius: "8px",
+          background: "white",
+          border: "1px solid #dbe2ea",
+          boxShadow: "0 10px 28px rgba(15, 23, 42, 0.18)",
+          color: "#1e293b",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            letterSpacing: "0.02em",
+            textTransform: "uppercase",
+            color: "#64748b",
+            marginBottom: "6px",
+          }}
+        >
+          {label} cell {number}
+        </div>
+        <div
+          style={{
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+            fontSize: `${Math.max(11, Math.floor(font_size * 0.85))}px`,
+            lineHeight: 1.35,
+            whiteSpace: "pre-wrap",
+            overflow: "hidden",
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 10,
+          }}
+        >
+          {dragPreviewTextForCell(id, Math.max(index, 0))}
+        </div>
+      </div>
+    );
+  }
+
   function renderLazyCell({
     id,
     index,
@@ -682,21 +753,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       <SortableList
         disabled={actions == null}
         items={cell_list.toJS()}
-        Item={({ id }) => (
-          /* This is what is displayed when dragging the given cell. */
-          <div
-            style={{
-              background: "white",
-              boxShadow: "8px 8px 4px 4px #ccc",
-              fontSize: `${font_size}px`,
-            }}
-          >
-            {renderCell({ id, isDragging: true })}
-          </div>
-        )}
-        onDragStart={(id) => {
-          frameActions.current?.set_cur_id(id);
-        }}
+        Item={({ id }) => renderDragPreview(`${id}`)}
         onDragStop={(oldIndex, newIndex) => {
           const delta = newIndex - oldIndex;
           frameActions.current?.move_selected_cells(delta);
