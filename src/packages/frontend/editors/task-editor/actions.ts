@@ -119,7 +119,11 @@ export class TaskActions extends Actions<TaskState> {
     if (this.key_handler == null) {
       this.key_handler = create_key_handler(this);
     }
-    this.frameActions.set_active_key_handler(this.key_handler);
+    const displayPath = this.getFrameData("display_path");
+    this.frameActions.set_active_key_handler(
+      this.key_handler,
+      typeof displayPath === "string" ? displayPath : undefined,
+    );
   }
 
   public disable_key_handler(): void {
@@ -564,6 +568,8 @@ export class TaskActions extends Actions<TaskState> {
 
   // null=unselect all.
   public edit_desc(task_id: string | undefined | null): void {
+    const resolvedTaskId =
+      task_id === undefined ? this.getFrameData("current_task_id") : task_id;
     // close any that were currently in edit state before opening new one
     const local = this.getFrameData("local_task_state") ?? fromJS({});
     for (const [id, state] of local) {
@@ -571,11 +577,11 @@ export class TaskActions extends Actions<TaskState> {
         this.stop_editing_desc(id);
       }
     }
-    if (task_id != null) {
-      this.set_local_task_state(task_id, {
+    if (resolvedTaskId != null) {
+      this.set_local_task_state(resolvedTaskId, {
         editing_desc: true,
         editing_desc_last_edited:
-          this.store.getIn(["tasks", task_id, "last_edited"]) ?? null,
+          this.store.getIn(["tasks", resolvedTaskId, "last_edited"]) ?? null,
       });
     }
     this.disable_key_handler();

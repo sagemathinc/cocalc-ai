@@ -56,6 +56,10 @@ export function TaskEditor({
   const editorIsVisible = is_visible && tab_is_visible;
 
   useEffect(() => {
+    actions.setFrameData({ display_path: path });
+  }, [actions, path]);
+
+  useEffect(() => {
     if (
       tasks == null ||
       visible == null ||

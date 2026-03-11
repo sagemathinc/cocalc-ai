@@ -65,6 +65,7 @@ describe("TaskEditor key handler lifecycle", () => {
     const actions = {
       enable_key_handler: jest.fn(),
       disable_key_handler: jest.fn(),
+      setFrameData: jest.fn(),
     } as any;
     const desc = fromJS({
       "data-visible": ["task-1"],
@@ -113,6 +114,7 @@ describe("TaskEditor key handler lifecycle", () => {
     const actions = {
       enable_key_handler: jest.fn(),
       disable_key_handler: jest.fn(),
+      setFrameData: jest.fn(),
     } as any;
     const desc = fromJS({
       "data-visible": ["task-1"],

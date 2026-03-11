@@ -121,6 +121,7 @@ import {
   history_path,
   len,
   path_to_tab,
+  tab_to_path,
   path_split,
   uuid,
 } from "@cocalc/util/misc";
@@ -3125,11 +3126,34 @@ export class BaseEditorActions<
     }
   }
 
-  public set_active_key_handler(key_handler: (e: any) => void): void {
+  public set_active_key_handler(
+    key_handler: (e: any) => void,
+    pathOverride?: string,
+  ): void {
+    const projectStore = this.redux.getProjectStore(this.project_id);
+    const activeProjectTab = projectStore?.get("active_project_tab");
+    let tabPath = pathOverride ?? this.path;
+    if (
+      pathOverride == null &&
+      typeof activeProjectTab === "string" &&
+      activeProjectTab.startsWith("editor-")
+    ) {
+      const activeDisplayPath = tab_to_path(activeProjectTab);
+      if (typeof activeDisplayPath === "string") {
+        const activeSyncPath = projectStore?.getIn([
+          "open_files",
+          activeDisplayPath,
+          "sync_path",
+        ]);
+        if (activeSyncPath === this.path) {
+          tabPath = activeDisplayPath;
+        }
+      }
+    }
     (this.redux.getActions("page") as PageActions).set_active_key_handler(
       key_handler,
       this.project_id,
-      this.path,
+      tabPath,
     );
     this._key_handler = key_handler;
   }
