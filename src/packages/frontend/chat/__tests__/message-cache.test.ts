@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { EventEmitter } from "events";
+import { threadConfigRecordKey } from "@cocalc/chat";
 import { ChatMessageCache } from "../message-cache";
 
 class MockSyncdb extends EventEmitter {
@@ -258,6 +259,86 @@ describe("ChatMessageCache message_id index", () => {
     expect(cache.getThreadKeyByThreadId("preview-thread")).toBe(
       `${new Date(rows[0].date).valueOf()}`,
     );
+    cache.dispose();
+  });
+
+  it("prefers the canonical thread-config row in preview snapshots", async () => {
+    const threadId = "preview-thread-config";
+    const legacyRow = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-01-04T00:00:00.000Z",
+      thread_id: threadId,
+      acp_config: {
+        model: "gpt-5.4-codex",
+        reasoning: "medium",
+        sessionMode: "workspace-write",
+      },
+    };
+    const canonicalRow = {
+      ...threadConfigRecordKey(threadId),
+      updated_at: "2026-01-05T00:00:00.000Z",
+      acp_config: {
+        model: "gpt-5.4-codex",
+        reasoning: "high",
+        sessionMode: "full-access",
+      },
+    };
+    const syncdb = new MockSyncdb([legacyRow, canonicalRow]);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cache.getThreadConfigPreviewById(threadId)).toMatchObject({
+      thread_id: threadId,
+      acp_config: expect.objectContaining({
+        reasoning: "high",
+        sessionMode: "full-access",
+      }),
+    });
+    cache.dispose();
+  });
+
+  it("refreshes thread-config preview rows after live updates", async () => {
+    const threadId = "live-thread-config";
+    const initialRow = {
+      ...threadConfigRecordKey(threadId),
+      updated_at: "2026-01-06T00:00:00.000Z",
+      acp_config: {
+        model: "gpt-5.4-codex",
+        reasoning: "medium",
+        sessionMode: "workspace-write",
+      },
+    };
+    const syncdb = new MockSyncdb([initialRow]);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cache.getThreadConfigPreviewById(threadId)).toMatchObject({
+      acp_config: expect.objectContaining({
+        reasoning: "medium",
+        sessionMode: "workspace-write",
+      }),
+    });
+
+    const updatedRow = {
+      ...initialRow,
+      updated_at: "2026-01-07T00:00:00.000Z",
+      acp_config: {
+        model: "gpt-5.4-codex",
+        reasoning: "high",
+        sessionMode: "full-access",
+      },
+    };
+    syncdb.replaceRows([updatedRow]);
+    syncdb.emit("change", new Set([updatedRow]));
+    syncdb.setSyncState("loading");
+
+    expect(cache.getThreadConfigPreviewById(threadId)).toMatchObject({
+      acp_config: expect.objectContaining({
+        reasoning: "high",
+        sessionMode: "full-access",
+      }),
+    });
     cache.dispose();
   });
 
