@@ -2998,17 +2998,30 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   key: "prompt-preview",
                   label: "Prompt preview",
                   children: (
-                    <Typography.Paragraph
-                      copyable={{ text: installWithCodexPromptPreview }}
-                      style={{
-                        marginBottom: 0,
-                        fontFamily: "monospace",
-                        whiteSpace: "pre-wrap",
-                        overflowWrap: "anywhere",
-                      }}
-                    >
-                      {installWithCodexPromptPreview}
-                    </Typography.Paragraph>
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <div>
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            navigator.clipboard
+                              .writeText(installWithCodexPromptPreview)
+                              .catch(() => {})
+                          }
+                        >
+                          Copy Prompt
+                        </Button>
+                      </div>
+                      <div
+                        style={{
+                          padding: "10px 12px",
+                          border: "1px solid #eee",
+                          borderRadius: "8px",
+                          background: "#fafafa",
+                        }}
+                      >
+                        <StaticMarkdown value={installWithCodexPromptPreview} />
+                      </div>
+                    </div>
                   ),
                 },
               ]}
