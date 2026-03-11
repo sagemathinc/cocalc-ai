@@ -1335,15 +1335,23 @@ export class ChatActions extends Actions<ChatState> {
     this.scrollToIndex(Number.MAX_SAFE_INTEGER);
   };
 
-  // this scrolls the message with given date into view and sets it as the selected message.
-  scrollToDate = (date) => {
+  // this scrolls the message with given date into view and optionally keeps
+  // the message selected via the fragment state.
+  scrollToDate = (
+    date,
+    opts?: {
+      persistFragment?: boolean;
+    },
+  ) => {
     if (isAnyChatOverlayOpen()) return;
     this.clearScrollRequest();
-    this.frameTreeActions?.set_frame_data({
-      id: this.frameId,
-      fragmentId: toMsString(date),
-    });
-    this.setFragment(date);
+    if (opts?.persistFragment !== false) {
+      this.frameTreeActions?.set_frame_data({
+        id: this.frameId,
+        fragmentId: toMsString(date),
+      });
+      this.setFragment(date);
+    }
     setTimeout(() => {
       if (isAnyChatOverlayOpen()) return;
       this.frameTreeActions?.set_frame_data({

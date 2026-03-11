@@ -266,7 +266,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     }
     for (const d of [1, 10, 50, 500, 1000]) {
       const actions = this.getChatActions(frameId);
-      actions?.scrollToDate(chat);
+      actions?.scrollToDate(chat, { persistFragment: false });
       await delay(d);
     }
   }

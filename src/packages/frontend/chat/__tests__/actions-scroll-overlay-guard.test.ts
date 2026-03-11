@@ -56,4 +56,25 @@ describe("ChatActions scroll guards with overlays", () => {
     jest.runAllTimers();
     expect(actions.frameTreeActions.set_frame_data).toHaveBeenCalledTimes(2);
   });
+
+  it("can scroll to a date without re-persisting the chat fragment", () => {
+    const actions = makeActions();
+    const setFragment = jest.spyOn(actions, "setFragment");
+    jest.useFakeTimers();
+
+    actions.scrollToDate(1234, { persistFragment: false });
+    jest.runAllTimers();
+
+    expect(setFragment).not.toHaveBeenCalled();
+    expect(actions.frameTreeActions.set_frame_data).toHaveBeenNthCalledWith(1, {
+      id: "frame-1",
+      scrollToIndex: null,
+      scrollToDate: null,
+    });
+    expect(actions.frameTreeActions.set_frame_data).toHaveBeenNthCalledWith(2, {
+      id: "frame-1",
+      scrollToDate: "1234",
+      scrollToIndex: null,
+    });
+  });
 });
