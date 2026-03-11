@@ -368,7 +368,12 @@ function buildInstallWithCodexPrompt(opts: {
     lines.push(
       "",
       "Before making changes, create a project snapshot if possible and report the snapshot name you used.",
-      `Suggested command: cocalc project snapshot create --project=${shellQuoteCliArg(opts.projectId)} --name=${shellQuoteCliArg(makeInstallSnapshotName(preset.id))}`,
+      "",
+      "Suggested command:",
+      toFencedCodeBlock(
+        `cocalc project snapshot create --project=${shellQuoteCliArg(opts.projectId)} --name=${shellQuoteCliArg(makeInstallSnapshotName(preset.id))}`,
+        "sh",
+      ),
     );
   }
   lines.push(
@@ -392,7 +397,11 @@ function buildInstallWithCodexPrompt(opts: {
     lines.push("", `Install hint: ${preset.installHint}`);
   }
   if (preset.installCommand) {
-    lines.push("", "Suggested starting command:", `- ${preset.installCommand}`);
+    lines.push(
+      "",
+      "Suggested starting command:",
+      toFencedCodeBlock(preset.installCommand, "sh"),
+    );
   }
   if (preset.installRecipes?.length) {
     lines.push("", "Curated install recipes:");
@@ -414,16 +423,17 @@ function buildInstallWithCodexPrompt(opts: {
     }
   }
   if (preset.verifyCommands?.length) {
-    lines.push("", "Verification commands:");
-    for (const command of preset.verifyCommands) {
-      lines.push(`- ${command}`);
-    }
+    lines.push(
+      "",
+      "Verification commands:",
+      toFencedCodeBlock(preset.verifyCommands.join("\n"), "sh"),
+    );
   }
   if (preset.command) {
     lines.push(
       "",
       "Managed app launch command after install:",
-      `- ${preset.command}`,
+      toFencedCodeBlock(preset.command, "sh"),
     );
   }
   if (preset.agentPromptSeed) {
