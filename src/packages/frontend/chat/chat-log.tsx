@@ -546,6 +546,7 @@ export function MessageList({
   activityJumpDate,
   activityJumpToken,
   anyOverlayOpen = false,
+  focusLogRef,
 }: {
   messages: ChatMessages;
   account_id: string;
@@ -575,6 +576,7 @@ export function MessageList({
   activityJumpDate?: string;
   activityJumpToken?: number;
   anyOverlayOpen?: boolean;
+  focusLogRef?: MutableRefObject<(() => void) | null>;
 }) {
   const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
   const listContainerRef = useRef<HTMLDivElement | null>(null);
@@ -583,6 +585,20 @@ export function MessageList({
   const initialIndex = Math.max(sortedDates.length - 1, 0); // start at newest
   const endRef = useRef<HTMLDivElement | null>(null);
   const blockScrollInput = anyOverlayOpen === true;
+
+  const focusLog = useCallback(() => {
+    listContainerRef.current?.focus?.({ preventScroll: true } as FocusOptions);
+  }, []);
+
+  useEffect(() => {
+    if (focusLogRef == null) return;
+    focusLogRef.current = focusLog;
+    return () => {
+      if (focusLogRef.current === focusLog) {
+        focusLogRef.current = null;
+      }
+    };
+  }, [focusLogRef, focusLog]);
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
@@ -799,6 +815,8 @@ export function MessageList({
   if (!USE_VIRTUOSO) {
     return (
       <div
+        ref={listContainerRef}
+        tabIndex={-1}
         style={MESSAGE_LIST_CONTAINER_STYLE}
         onWheelCapture={maybeBlockScrollEvent}
         onTouchMoveCapture={maybeBlockScrollEvent}

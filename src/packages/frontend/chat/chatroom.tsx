@@ -32,7 +32,7 @@ import {
   type NewThreadSetup,
 } from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
-import type { ChatMessages, SubmitMentionsFn } from "./types";
+import type { ChatMessage, ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageByLookup,
@@ -93,6 +93,48 @@ export function clearThreadLoopRuntime(
   if (!normalizedThreadKey) return;
   actions.setThreadLoopConfig?.(normalizedThreadKey, null);
   actions.setThreadLoopState?.(normalizedThreadKey, null);
+}
+
+export function hasActiveAcpTurnForComposer({
+  isSelectedThreadAI,
+  selectedThreadId,
+  selectedThreadMessages,
+  acpState,
+}: {
+  isSelectedThreadAI: boolean;
+  selectedThreadId?: string | null;
+  selectedThreadMessages: readonly ChatMessage[];
+  acpState?: immutable.Map<string, string>;
+}): boolean {
+  if (!isSelectedThreadAI) return false;
+  if (selectedThreadId) {
+    const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
+    if (byThread === "running") {
+      return true;
+    }
+  }
+  if (!selectedThreadMessages.length) return false;
+  for (const msg of selectedThreadMessages) {
+    if (field<boolean>(msg, "generating") !== true) continue;
+    const isAcpTurn = !!field<string>(msg, "acp_account_id");
+    if (!isAcpTurn) return true;
+    const d = dateValue(msg);
+    if (!d) continue;
+    const threadId = field<string>(msg, "thread_id");
+    const threadState =
+      threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+    const messageId = field<string>(msg, "message_id");
+    const state =
+      (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+      acpState?.get?.(`${d.valueOf()}`);
+    if (
+      (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
+      (typeof state === "string" && ACP_ACTIVE_STATES.has(state))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseDateISOString(value: unknown): string | undefined {
@@ -238,6 +280,7 @@ export function ChatPanel({
     useState<ChatRoomThreadActionHandlers | null>(null);
   const submitMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
   const scrollToBottomRef = useRef<any>(null);
+  const focusLogRef = useRef<(() => void) | null>(null);
   const lastScrollRequestRef = useRef<{
     thread: string;
     reason: "unread" | "allread";
@@ -490,31 +533,13 @@ export function ChatPanel({
     [actions, selectedThreadLookupKey, messages],
   );
   const hasRunningAcpTurn = useMemo(() => {
-    if (!isSelectedThreadAI) return false;
-    if (selectedThreadId) {
-      const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
-      if (byThread === "running") {
-        return true;
-      }
-    }
-    if (!selectedThreadMessages.length) return false;
-    for (const msg of selectedThreadMessages) {
-      const d = dateValue(msg);
-      if (!d) continue;
-      if (field<boolean>(msg, "generating") === true) return true;
-      const threadId = field<string>(msg, "thread_id");
-      if (threadId) {
-        const threadState = acpState?.get?.(`thread:${threadId}`);
-        if (threadState === "running") return true;
-      }
-      const messageId = field<string>(msg, "message_id");
-      const state =
-        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
-        acpState?.get?.(`${d.valueOf()}`);
-      if (state === "running") return true;
-    }
-    return false;
-  }, [isSelectedThreadAI, selectedThreadMessages, acpState, selectedThread]);
+    return hasActiveAcpTurnForComposer({
+      isSelectedThreadAI,
+      selectedThreadId,
+      selectedThreadMessages,
+      acpState,
+    });
+  }, [isSelectedThreadAI, selectedThreadId, selectedThreadMessages, acpState]);
 
   const agentSessionRecords = useMemo<AgentSessionRecord[]>(() => {
     if (typeof account_id !== "string" || !account_id.trim()) {
@@ -1000,6 +1025,11 @@ export function ChatPanel({
           })()
         : null;
     const consumedLoopThreadKey = (reply_thread_id ?? threadKey)?.trim();
+    const sentAgentMessage =
+      reply_thread_id != null
+        ? existingThreadMetadata?.agent_kind != null &&
+          existingThreadMetadata.agent_kind !== "none"
+        : newThreadSetup.agentMode !== "human";
     if (composerLoopConfig?.enabled === true && consumedLoopThreadKey) {
       setSuppressedLoopThreads((prev) => {
         if (prev.has(consumedLoopThreadKey)) return prev;
@@ -1022,6 +1052,9 @@ export function ChatPanel({
     setTimeout(() => {
       if (anyOverlayOpen) return;
       scrollToBottomRef.current?.(true);
+      if (sentAgentMessage) {
+        focusLogRef.current?.();
+      }
     }, 100);
   }
   function on_send(value?: string): void {
@@ -1160,6 +1193,7 @@ export function ChatPanel({
         threadIndex={combinedFeedIndex ?? threadIndex}
         acpState={acpState}
         scrollToBottomRef={scrollToBottomRef}
+        focusLogRef={focusLogRef}
         scrollCacheId={scrollCacheId}
         fontSize={fontSize}
         selectedThreadKey={selectedThreadKey}
