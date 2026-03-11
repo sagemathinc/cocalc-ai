@@ -10,6 +10,7 @@ The current bug-hunt workflow is useful, but too much time is still lost to:
 
 - stale or under-specified tasks,
 - browser/session targeting mistakes,
+- orphaned spawned Playwright/Chromium sessions that accumulate RAM,
 - manual repro scripting,
 - weak artifact capture,
 - poor commit hygiene during long autonomous runs,
@@ -88,7 +89,25 @@ Desired outcome:
 
 - one command to attach to the intended environment with explicit target context,
 - stronger spawned-session ergonomics,
+- hard browser cleanup rules so bug hunts do not leak dozens of Chromium processes,
 - clearer detection of stale bundles and bad targets.
+
+### 2b. Browser process hygiene
+
+The March 11 run also leaked a large number of headless Chromium processes.
+
+This is not a cosmetic issue. It can:
+
+- consume significant RAM,
+- slow later repros,
+- make the host unstable,
+- invalidate conclusions drawn from a degraded environment.
+
+Desired outcome:
+
+- spawned browser sessions are treated like scarce resources,
+- each spawned session is destroyed in the same iteration unless there is a documented reason not to,
+- every bug-hunt turn starts from a known-clean browser-process baseline.
 
 ### 3. Ad hoc runtime probing
 
@@ -188,7 +207,8 @@ Behavior:
 Acceptance criteria:
 
 - a bug hunter can start on lite or hub without manually stitching together env vars,
-- bad target context is obvious before any repro begins.
+- bad target context is obvious before any repro begins,
+- stale spawned sessions are cleaned up before new repro work starts.
 
 ### Workstream C: Better browser/harness primitives
 
@@ -219,6 +239,26 @@ Acceptance criteria:
 
 - common repros no longer require custom JS every time,
 - failed iterations leave behind enough evidence to review later.
+
+Required browser hygiene rules for any spawned-session workflow:
+
+1. Before starting a new spawned repro, list existing spawned sessions and destroy stale ones.
+2. Keep at most one spawned browser session alive per active bug-hunt turn unless a comparison explicitly requires two.
+3. Destroy spawned sessions immediately after:
+   - a repro is complete,
+   - a result is recorded,
+   - or the agent decides to move on.
+4. If the browser count or Chromium/Chrome process count looks unexpectedly high, stop and clean up before continuing.
+5. Prefer:
+   - code-backed checks first,
+   - live user-session inspection second,
+   - spawned Playwright sessions only when determinism is actually needed.
+
+Recommended preflight command pattern:
+
+- inspect local spawned sessions,
+- destroy stopped/stale sessions,
+- if needed, kill leftover Chromium processes from prior spawned runs before starting another long bug-hunt pass.
 
 ### Workstream D: Fixture and scratch helpers
 
@@ -339,6 +379,7 @@ The repo-owned `cocalc-bug-hunter` skill should be updated to require:
 1. A preflight step
    - confirm environment,
    - attach browser,
+   - clean up stale spawned browser sessions and leftover Chromium processes,
    - capture starting git status,
    - create a run ledger entry.
 2. A task selection step
@@ -353,6 +394,7 @@ The repo-owned `cocalc-bug-hunter` skill should be updated to require:
    - otherwise record why not.
 5. A stop/recovery step
    - if browser targeting or bundle freshness is suspect, reattach or refresh before continuing.
+   - if spawned browser processes accumulate, stop and clean them up before continuing.
 
 The skill should also explicitly define these outcome classes:
 
@@ -362,6 +404,13 @@ The skill should also explicitly define these outcome classes:
 - `already_fixed`
 - `blocked_by_environment`
 - `intermittent_unconfirmed`
+
+The skill should also include a non-optional browser cleanup checklist:
+
+- `browser session spawned`
+- destroy stale spawned sessions
+- verify Chromium process count is reasonable before continuing
+- destroy the active spawned session before ending the iteration unless intentionally preserved and documented
 
 ## Proposed Repo Layout
 
@@ -394,6 +443,7 @@ src/
 - add repo-owned skill copy,
 - add skill sync script,
 - add dirty-tree preflight check,
+- add browser-process cleanup preflight,
 - add a basic task extractor.
 
 ### Phase 1: Faster and safer live repro
