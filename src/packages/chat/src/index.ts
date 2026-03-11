@@ -62,6 +62,31 @@ export interface ChatThreadLoopState {
   stop_reason?: string;
 }
 
+export interface ChatThreadAutomationConfig {
+  enabled?: boolean;
+  automation_id?: string;
+  title?: string;
+  prompt?: string;
+  schedule_type?: "daily";
+  local_time?: string;
+  timezone?: string;
+  pause_after_unacknowledged_runs?: number;
+}
+
+export interface ChatThreadAutomationState {
+  automation_id?: string;
+  status?: "active" | "running" | "paused" | "error";
+  next_run_at_ms?: number;
+  last_run_started_at_ms?: number;
+  last_run_finished_at_ms?: number;
+  last_acknowledged_at_ms?: number;
+  unacknowledged_runs?: number;
+  paused_reason?: string;
+  last_error?: string;
+  last_job_op_id?: string;
+  last_message_id?: string;
+}
+
 export interface MessageHistory {
   author_id: string;
   content: string;
@@ -253,6 +278,8 @@ export interface ChatThreadConfigRecord {
   acp_config?: CodexThreadConfig;
   loop_config?: ChatThreadLoopConfig;
   loop_state?: ChatThreadLoopState;
+  automation_config?: ChatThreadAutomationConfig;
+  automation_state?: ChatThreadAutomationState;
   updated_at: string;
   updated_by: string;
   schema_version: number;
@@ -275,6 +302,8 @@ export interface BuildThreadConfigRecordOptions {
   acp_config?: CodexThreadConfig;
   loop_config?: ChatThreadLoopConfig;
   loop_state?: ChatThreadLoopState;
+  automation_config?: ChatThreadAutomationConfig;
+  automation_state?: ChatThreadAutomationState;
   schema_version?: number;
 }
 
@@ -300,6 +329,8 @@ export function buildThreadConfigRecord(
     acp_config: options.acp_config,
     loop_config: options.loop_config,
     loop_state: options.loop_state,
+    automation_config: options.automation_config,
+    automation_state: options.automation_state,
     updated_at: updatedAt,
     updated_by: options.updated_by,
     schema_version: options.schema_version ?? CHAT_SCHEMA_V2,

@@ -18,6 +18,10 @@ import {
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
 import { init as initConatAcp } from "@cocalc/conat/ai/acp/server";
 import type {
+  AcpAutomationConfig,
+  AcpAutomationRequest,
+  AcpAutomationResponse,
+  AcpAutomationRecord,
   AcpControlRequest,
   AcpControlResponse,
   AcpRequest,
@@ -53,6 +57,8 @@ import {
   computeChatIntegrityReport,
   deriveAcpLogRefs,
   threadConfigRecordKey,
+  type ChatThreadAutomationConfig,
+  type ChatThreadAutomationState,
   type MessageHistory,
 } from "@cocalc/chat";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
@@ -96,6 +102,18 @@ import {
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
+  deleteAcpAutomationByThread,
+  getAcpAutomationById,
+  getAcpAutomationByThread,
+  listAllAcpAutomations,
+  listDueAcpAutomations,
+  toAutomationConfig,
+  toAutomationRecord,
+  toAutomationState,
+  upsertAcpAutomation,
+  type AcpAutomationRow,
+} from "../sqlite/acp-automations";
+import {
   decodeAcpInterruptCandidateIds,
   decodeAcpInterruptChat,
   enqueueAcpInterrupt,
@@ -105,6 +123,7 @@ import {
 } from "../sqlite/acp-interrupts";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
+import type { DKV } from "@cocalc/conat/sync/dkv";
 import { rotateChatStore } from "@cocalc/backend/chat-store/sqlite-offload";
 import {
   ensureAcpWorkerRunning,
@@ -125,6 +144,9 @@ const CHAT_OFFLOAD_AUTOROTATE_COOLDOWN_MS = 60_000;
 const CHAT_OFFLOAD_AUTOROTATE_KEEP_MESSAGES = 500;
 const CHAT_OFFLOAD_AUTOROTATE_MAX_BYTES = 2 * 1024 * 1024;
 const CHAT_OFFLOAD_AUTOROTATE_MAX_MESSAGES = 500;
+const ACP_AUTOMATION_STORE = "cocalc-thread-automations-v1";
+const ACP_AUTOMATION_POLL_MS = 30_000;
+const AUTOMATION_DEFAULT_UNACK_LIMIT = 7;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -138,6 +160,9 @@ let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
 let acpExecutionOwnedByCurrentProcess = false;
 let acpInterruptPollerStarted = false;
 let acpInterruptPollInFlight = false;
+let acpAutomationPollerStarted = false;
+let acpAutomationPollInFlight = false;
+const automationStores = new Map<string, Promise<DKV<AcpAutomationRecord>>>();
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
@@ -403,6 +428,166 @@ function normalizeLoopConfig(
       60_000,
     ),
   };
+}
+
+function normalizeAutomationLocalTime(value?: string): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (!match) return undefined;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return undefined;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return undefined;
+  return `${hour.toString().padStart(2, "0")}:${minute
+    .toString()
+    .padStart(2, "0")}`;
+}
+
+function normalizeAutomationTimezone(value?: string): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: raw }).format(new Date());
+    return raw;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeAcpAutomationConfig(
+  config?: AcpAutomationConfig | ChatThreadAutomationConfig | null,
+): AcpAutomationConfig | undefined {
+  if (!config) return undefined;
+  const enabled = config.enabled !== false;
+  const prompt = `${config.prompt ?? ""}`.trim();
+  const local_time = normalizeAutomationLocalTime(config.local_time);
+  const timezone =
+    normalizeAutomationTimezone(config.timezone) ??
+    Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!prompt || !local_time || !timezone) return undefined;
+  return {
+    enabled,
+    automation_id: `${config.automation_id ?? ""}`.trim() || undefined,
+    title: `${config.title ?? ""}`.trim() || undefined,
+    prompt,
+    schedule_type: "daily",
+    local_time,
+    timezone,
+    pause_after_unacknowledged_runs: clampLoopNumber(
+      config.pause_after_unacknowledged_runs,
+      AUTOMATION_DEFAULT_UNACK_LIMIT,
+      1,
+      365,
+    ),
+  };
+}
+
+function zonedParts(
+  date: Date,
+  timeZone: string,
+): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+} {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) =>
+    Number(parts.find((x) => x.type === type)?.value ?? "0");
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour"),
+    minute: get("minute"),
+    second: get("second"),
+  };
+}
+
+function zonedEpochMs(opts: {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  timeZone: string;
+}): number {
+  let candidate = Date.UTC(
+    opts.year,
+    opts.month - 1,
+    opts.day,
+    opts.hour,
+    opts.minute,
+    0,
+    0,
+  );
+  for (let i = 0; i < 4; i++) {
+    const parts = zonedParts(new Date(candidate), opts.timeZone);
+    const asUtc = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
+      0,
+    );
+    const targetUtc = Date.UTC(
+      opts.year,
+      opts.month - 1,
+      opts.day,
+      opts.hour,
+      opts.minute,
+      0,
+      0,
+    );
+    candidate += targetUtc - asUtc;
+  }
+  return candidate;
+}
+
+function computeNextAutomationRunAt(opts: {
+  local_time: string;
+  timezone: string;
+  nowMs?: number;
+}): number {
+  const now = new Date(opts.nowMs ?? Date.now());
+  const [hour, minute] = opts.local_time.split(":").map((x) => Number(x));
+  const nowParts = zonedParts(now, opts.timezone);
+  const candidateToday = zonedEpochMs({
+    year: nowParts.year,
+    month: nowParts.month,
+    day: nowParts.day,
+    hour,
+    minute,
+    timeZone: opts.timezone,
+  });
+  if (candidateToday > now.getTime()) {
+    return candidateToday;
+  }
+  const tomorrowUtc = new Date(
+    Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day + 1, 12, 0, 0),
+  );
+  const tomorrowParts = zonedParts(tomorrowUtc, opts.timezone);
+  return zonedEpochMs({
+    year: tomorrowParts.year,
+    month: tomorrowParts.month,
+    day: tomorrowParts.day,
+    hour,
+    minute,
+    timeZone: opts.timezone,
+  });
 }
 
 function normalizeLoopDecision(
@@ -3612,6 +3797,519 @@ async function persistQueuedUserMessageProjection({
   });
 }
 
+function automationMessageLabel(
+  row: AcpAutomationRow,
+  manual: boolean,
+): string {
+  const base = `${row.title ?? ""}`.trim() || "Automation";
+  return manual ? `Manual run: ${base}` : `Scheduled run: ${base}`;
+}
+
+async function enqueueAutomationRun(
+  row: AcpAutomationRow,
+  opts: { manual: boolean },
+): Promise<AcpAutomationRow> {
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  if (!row.prompt?.trim()) {
+    throw new Error("automation is missing a prompt");
+  }
+  if (row.status === "running") {
+    return row;
+  }
+  const now = Date.now();
+  const user_message_id = randomUUID();
+  const assistant_message_id = randomUUID();
+  const userDate = new Date(now).toISOString();
+  const assistantDate = new Date(now + 1).toISOString();
+
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: row.project_id,
+    path: row.path,
+    fn: async (syncdb) => {
+      const parent_message_id = latestThreadMessageIdInSyncDB({
+        syncdb,
+        threadId: row.thread_id,
+      });
+      syncdb.set(
+        buildChatMessage({
+          sender_id: row.account_id,
+          date: userDate,
+          prevHistory: [],
+          content: automationMessageLabel(row, opts.manual),
+          generating: false,
+          message_id: user_message_id,
+          thread_id: row.thread_id,
+          parent_message_id,
+        }),
+      );
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+
+  const request: AcpRequest = {
+    project_id: row.project_id,
+    account_id: row.account_id,
+    prompt: row.prompt,
+    chat: {
+      project_id: row.project_id,
+      path: row.path,
+      sender_id: row.account_id,
+      thread_id: row.thread_id,
+      parent_message_id: user_message_id,
+      message_id: assistant_message_id,
+      message_date: assistantDate,
+      automation_id: row.automation_id,
+      automation_title: row.title ?? undefined,
+    },
+  };
+
+  const job = enqueueAcpJob(request);
+  await persistQueuedUserMessageProjection({
+    client: conatClient,
+    project_id: row.project_id,
+    path: row.path,
+    thread_id: row.thread_id,
+    user_message_id,
+    queued: true,
+  });
+
+  const updated = upsertAcpAutomation({
+    ...row,
+    status: "running",
+    last_run_started_at: now,
+    last_error: null,
+    last_job_op_id: job.op_id,
+    last_message_id: assistant_message_id,
+    updated_at: now,
+  });
+  await patchThreadAutomationProjection({
+    project_id: updated.project_id,
+    path: updated.path,
+    thread_id: updated.thread_id,
+    updated_by: row.account_id,
+    automation_config: toAutomationConfig(
+      updated,
+    ) as ChatThreadAutomationConfig,
+    automation_state: toAutomationState(updated) as ChatThreadAutomationState,
+  });
+  await publishAutomationRecordToProjectIndex(updated);
+  if (liteUseDetachedAcpWorker()) {
+    await ensureDetachedWorkerRunning({ force: true });
+  } else {
+    kickAllQueuedAcpJobs();
+  }
+  return updated;
+}
+
+async function finalizeAutomationRun(opts: {
+  automation_id?: string;
+  terminalState: "completed" | "error" | "interrupted";
+  last_job_op_id?: string;
+  last_message_id?: string;
+  error?: string;
+}): Promise<void> {
+  const automation_id = `${opts.automation_id ?? ""}`.trim();
+  if (!automation_id) return;
+  const current = getAcpAutomationById(automation_id);
+  if (!current) return;
+  const now = Date.now();
+  const nextUnacknowledgedRuns = (current.unacknowledged_runs ?? 0) + 1;
+  const unattendedLimit =
+    current.pause_after_unacknowledged_runs ?? AUTOMATION_DEFAULT_UNACK_LIMIT;
+  let status: AcpAutomationRow["status"];
+  let paused_reason: string | null = null;
+  if (nextUnacknowledgedRuns >= unattendedLimit) {
+    status = "paused";
+    paused_reason = "unacknowledged_runs_limit";
+  } else if (opts.terminalState === "error") {
+    status = "error";
+  } else {
+    status = current.enabled ? "active" : "paused";
+  }
+  const next_run_at =
+    current.enabled &&
+    status !== "paused" &&
+    current.local_time &&
+    current.timezone
+      ? computeNextAutomationRunAt({
+          local_time: current.local_time,
+          timezone: current.timezone,
+          nowMs: now,
+        })
+      : (current.next_run_at ?? null);
+  const updated = upsertAcpAutomation({
+    ...current,
+    status,
+    next_run_at,
+    last_run_finished_at: now,
+    unacknowledged_runs: nextUnacknowledgedRuns,
+    paused_reason,
+    last_error:
+      opts.error ??
+      (opts.terminalState === "error" ? "automation run failed" : null),
+    last_job_op_id: opts.last_job_op_id ?? current.last_job_op_id ?? null,
+    last_message_id: opts.last_message_id ?? current.last_message_id ?? null,
+    updated_at: now,
+  });
+  await patchThreadAutomationProjection({
+    project_id: updated.project_id,
+    path: updated.path,
+    thread_id: updated.thread_id,
+    updated_by: updated.account_id,
+    automation_config: toAutomationConfig(
+      updated,
+    ) as ChatThreadAutomationConfig,
+    automation_state: toAutomationState(updated) as ChatThreadAutomationState,
+  });
+  await publishAutomationRecordToProjectIndex(updated);
+}
+
+async function acknowledgeAutomationFromHumanTurn(
+  request: Pick<AcpRequest, "project_id" | "account_id" | "chat">,
+): Promise<void> {
+  const project_id =
+    `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
+  const path = `${request.chat?.path ?? ""}`.trim();
+  const thread_id = `${request.chat?.thread_id ?? ""}`.trim();
+  if (!project_id || !path || !thread_id) return;
+  if (`${request.chat?.automation_id ?? ""}`.trim()) return;
+  const current = getAcpAutomationByThread({ project_id, path, thread_id });
+  if (!current) return;
+  const now = Date.now();
+  const updated = upsertAcpAutomation({
+    ...current,
+    last_acknowledged_at: now,
+    unacknowledged_runs: 0,
+    updated_at: now,
+  });
+  await patchThreadAutomationProjection({
+    project_id: updated.project_id,
+    path: updated.path,
+    thread_id: updated.thread_id,
+    updated_by: request.account_id || updated.account_id,
+    automation_config: toAutomationConfig(
+      updated,
+    ) as ChatThreadAutomationConfig,
+    automation_state: toAutomationState(updated) as ChatThreadAutomationState,
+  });
+  await publishAutomationRecordToProjectIndex(updated);
+}
+
+async function pollDueAcpAutomations(): Promise<void> {
+  if (acpAutomationPollInFlight) return;
+  if (!conatClient) return;
+  acpAutomationPollInFlight = true;
+  try {
+    const due = listDueAcpAutomations(Date.now());
+    for (const row of due) {
+      try {
+        await enqueueAutomationRun(row, { manual: false });
+      } catch (err) {
+        logger.warn("failed to enqueue due automation", {
+          automation_id: row.automation_id,
+          err,
+        });
+      }
+    }
+  } finally {
+    acpAutomationPollInFlight = false;
+  }
+}
+
+function startAcpAutomationPoller(): void {
+  if (acpAutomationPollerStarted) return;
+  acpAutomationPollerStarted = true;
+  void pollDueAcpAutomations();
+  const handle = setInterval(() => {
+    void pollDueAcpAutomations();
+  }, ACP_AUTOMATION_POLL_MS);
+  if (typeof handle?.unref === "function") {
+    handle.unref();
+  }
+}
+
+async function republishAcpAutomationProjectIndexes(): Promise<void> {
+  for (const row of listAllAcpAutomations()) {
+    await publishAutomationRecordToProjectIndex(row);
+  }
+}
+
+async function handleAcpAutomationRequest(
+  request: AcpAutomationRequest,
+): Promise<AcpAutomationResponse> {
+  const project_id = `${request.project_id ?? ""}`.trim();
+  const path = `${request.path ?? ""}`.trim();
+  const thread_id = `${request.thread_id ?? ""}`.trim();
+  if (!project_id || !path || !thread_id) {
+    throw new Error("ACP automation request is missing required fields");
+  }
+  const existing = getAcpAutomationByThread({ project_id, path, thread_id });
+  if (request.action === "delete") {
+    deleteAcpAutomationByThread({ project_id, path, thread_id });
+    await patchThreadAutomationProjection({
+      project_id,
+      path,
+      thread_id,
+      updated_by: request.account_id,
+      automation_config: null,
+      automation_state: null,
+    });
+    await deleteAutomationRecordFromProjectIndex({
+      project_id,
+      path,
+      thread_id,
+    });
+    return { ok: true, config: null, state: null, record: null };
+  }
+  if (request.action === "upsert") {
+    const config = normalizeAcpAutomationConfig(request.config);
+    if (!config) {
+      throw new Error("invalid automation config");
+    }
+    const automation_id =
+      existing?.automation_id ??
+      (`${config.automation_id ?? ""}`.trim() || undefined) ??
+      randomUUID();
+    const enabled = config.enabled !== false;
+    const now = Date.now();
+    const row = upsertAcpAutomation({
+      automation_id,
+      project_id,
+      path,
+      thread_id,
+      account_id: existing?.account_id ?? request.account_id,
+      enabled,
+      title: config.title ?? null,
+      prompt: config.prompt ?? null,
+      schedule_type: "daily",
+      local_time: config.local_time ?? null,
+      timezone: config.timezone ?? null,
+      pause_after_unacknowledged_runs:
+        config.pause_after_unacknowledged_runs ??
+        AUTOMATION_DEFAULT_UNACK_LIMIT,
+      status: enabled ? "active" : "paused",
+      next_run_at:
+        enabled && config.local_time && config.timezone
+          ? computeNextAutomationRunAt({
+              local_time: config.local_time,
+              timezone: config.timezone,
+            })
+          : null,
+      last_run_started_at: existing?.last_run_started_at ?? null,
+      last_run_finished_at: existing?.last_run_finished_at ?? null,
+      last_acknowledged_at: existing?.last_acknowledged_at ?? null,
+      unacknowledged_runs: existing?.unacknowledged_runs ?? 0,
+      paused_reason: enabled ? null : "disabled",
+      last_error: existing?.last_error ?? null,
+      last_job_op_id: existing?.last_job_op_id ?? null,
+      last_message_id: existing?.last_message_id ?? null,
+      created_at: existing?.created_at ?? now,
+      updated_at: now,
+    });
+    await patchThreadAutomationProjection({
+      project_id,
+      path,
+      thread_id,
+      updated_by: request.account_id,
+      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
+      automation_state: toAutomationState(row) as ChatThreadAutomationState,
+    });
+    await publishAutomationRecordToProjectIndex(row);
+    return {
+      ok: true,
+      config: toAutomationConfig(row) ?? null,
+      state: toAutomationState(row) ?? null,
+      record: toAutomationRecord(row) ?? null,
+    };
+  }
+  if (!existing) {
+    throw new Error("automation not found");
+  }
+  if (request.action === "pause") {
+    const row = upsertAcpAutomation({
+      ...existing,
+      enabled: false,
+      status: "paused",
+      paused_reason: "user_paused",
+      updated_at: Date.now(),
+    });
+    await patchThreadAutomationProjection({
+      project_id,
+      path,
+      thread_id,
+      updated_by: request.account_id,
+      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
+      automation_state: toAutomationState(row) as ChatThreadAutomationState,
+    });
+    await publishAutomationRecordToProjectIndex(row);
+    return {
+      ok: true,
+      config: toAutomationConfig(row) ?? null,
+      state: toAutomationState(row) ?? null,
+      record: toAutomationRecord(row) ?? null,
+    };
+  }
+  if (request.action === "resume") {
+    const row = upsertAcpAutomation({
+      ...existing,
+      enabled: true,
+      status: "active",
+      paused_reason: null,
+      next_run_at:
+        existing.local_time && existing.timezone
+          ? computeNextAutomationRunAt({
+              local_time: existing.local_time,
+              timezone: existing.timezone,
+            })
+          : (existing.next_run_at ?? null),
+      updated_at: Date.now(),
+    });
+    await patchThreadAutomationProjection({
+      project_id,
+      path,
+      thread_id,
+      updated_by: request.account_id,
+      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
+      automation_state: toAutomationState(row) as ChatThreadAutomationState,
+    });
+    await publishAutomationRecordToProjectIndex(row);
+    return {
+      ok: true,
+      config: toAutomationConfig(row) ?? null,
+      state: toAutomationState(row) ?? null,
+      record: toAutomationRecord(row) ?? null,
+    };
+  }
+  if (request.action === "acknowledge") {
+    const row = upsertAcpAutomation({
+      ...existing,
+      last_acknowledged_at: Date.now(),
+      unacknowledged_runs: 0,
+      updated_at: Date.now(),
+    });
+    await patchThreadAutomationProjection({
+      project_id,
+      path,
+      thread_id,
+      updated_by: request.account_id,
+      automation_config: toAutomationConfig(row) as ChatThreadAutomationConfig,
+      automation_state: toAutomationState(row) as ChatThreadAutomationState,
+    });
+    await publishAutomationRecordToProjectIndex(row);
+    return {
+      ok: true,
+      config: toAutomationConfig(row) ?? null,
+      state: toAutomationState(row) ?? null,
+      record: toAutomationRecord(row) ?? null,
+    };
+  }
+  if (request.action === "run_now") {
+    const row = await enqueueAutomationRun(existing, { manual: true });
+    return {
+      ok: true,
+      config: toAutomationConfig(row) ?? null,
+      state: toAutomationState(row) ?? null,
+      record: toAutomationRecord(row) ?? null,
+    };
+  }
+  throw new Error(`unsupported ACP automation action: ${request.action}`);
+}
+
+function automationRecordKey(opts: {
+  path: string;
+  thread_id: string;
+}): string {
+  return `${opts.path}::${opts.thread_id}`;
+}
+
+async function getAutomationStore(
+  project_id: string,
+): Promise<DKV<AcpAutomationRecord>> {
+  const existing = automationStores.get(project_id);
+  if (existing) return await existing;
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  const promise = conatClient.sync.dkv<AcpAutomationRecord>({
+    project_id,
+    name: ACP_AUTOMATION_STORE,
+  });
+  automationStores.set(project_id, promise);
+  return await promise;
+}
+
+async function publishAutomationRecordToProjectIndex(
+  row?: AcpAutomationRow,
+): Promise<void> {
+  if (!row) return;
+  try {
+    const store = await getAutomationStore(row.project_id);
+    store.set(
+      automationRecordKey({ path: row.path, thread_id: row.thread_id }),
+      toAutomationRecord(row)!,
+    );
+  } catch (err) {
+    logger.debug("failed to publish automation record", {
+      automation_id: row.automation_id,
+      err,
+    });
+  }
+}
+
+async function deleteAutomationRecordFromProjectIndex(opts: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): Promise<void> {
+  try {
+    const store = await getAutomationStore(opts.project_id);
+    store.delete(
+      automationRecordKey({ path: opts.path, thread_id: opts.thread_id }),
+    );
+  } catch (err) {
+    logger.debug("failed to delete automation record", { ...opts, err });
+  }
+}
+
+async function patchThreadAutomationProjection(opts: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  updated_by: string;
+  automation_config?: ChatThreadAutomationConfig | null;
+  automation_state?: ChatThreadAutomationState | null;
+}): Promise<void> {
+  if (!conatClient) {
+    throw new Error("conat client must be initialized");
+  }
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: opts.project_id,
+    path: opts.path,
+    fn: async (syncdb) => {
+      const current = preferredThreadConfigRow(syncdb, opts.thread_id);
+      const base = current && typeof current === "object" ? { ...current } : {};
+      replaceThreadScopedRow(syncdb, THREAD_CONFIG_EVENT, opts.thread_id, {
+        ...base,
+        ...buildThreadConfigRecord({
+          thread_id: opts.thread_id,
+          updated_at: new Date().toISOString(),
+          updated_by: opts.updated_by,
+          schema_version: THREAD_STATE_SCHEMA_VERSION,
+        }),
+        automation_config: opts.automation_config ?? null,
+        automation_state: opts.automation_state ?? null,
+      });
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
 async function prepareQueuedUserMessageForExecution({
   client,
   project_id,
@@ -3753,6 +4451,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       ...request,
       stream: async () => {},
     });
+    await finalizeAutomationRun({
+      automation_id: request.chat?.automation_id,
+      terminalState: result.terminalState,
+      last_job_op_id: job.op_id,
+      last_message_id: request.chat?.message_id,
+    });
     setAcpJobState({
       op_id: job.op_id,
       state: result.terminalState,
@@ -3765,6 +4469,13 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     await writeQueuedJobFailureToChat({
       request,
+      error: message,
+    });
+    await finalizeAutomationRun({
+      automation_id: request.chat?.automation_id,
+      terminalState: "error",
+      last_job_op_id: job.op_id,
+      last_message_id: request.chat?.message_id,
       error: message,
     });
     setAcpJobState({
@@ -4030,6 +4741,7 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  await acknowledgeAutomationFromHumanTurn(request);
   const row = enqueueAcpJob(request);
   const projectedState = await persistQueuedUserMessageProjection({
     client: conatClient,
@@ -4166,9 +4878,14 @@ export async function init(
       interrupt: handleInterruptRequest,
       forkSession: handleForkSessionRequest,
       control: handleAcpControlRequest,
+      automation: handleAcpAutomationRequest,
     },
     client,
   );
+  startAcpAutomationPoller();
+  void republishAcpAutomationProjectIndexes().catch((err) => {
+    logger.warn("failed to republish ACP automation project indexes", err);
+  });
   if (options.manageDetachedWorker !== false) {
     if (liteUseDetachedAcpWorker()) {
       acpExecutionOwnedByCurrentProcess = false;

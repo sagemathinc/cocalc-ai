@@ -1,5 +1,7 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  AcpAutomationConfig,
+  AcpAutomationResponse,
   AcpChatContext,
   AcpLoopConfig,
   AcpLoopState,
@@ -377,6 +379,118 @@ export async function sendQueuedAcpTurnImmediately({
     ),
   });
   return true;
+}
+
+async function automationRequest({
+  actions,
+  threadId,
+  action,
+  config,
+}: {
+  actions: ChatActions;
+  threadId: string;
+  action: "upsert" | "pause" | "resume" | "run_now" | "acknowledge" | "delete";
+  config?: AcpAutomationConfig | null;
+}): Promise<AcpAutomationResponse | undefined> {
+  const { store } = actions;
+  if (!store) return undefined;
+  const project_id = store.get("project_id");
+  const path = store.get("path");
+  if (!project_id || !path || !threadId) return undefined;
+  return await webapp_client.conat_client.automationAcp({
+    project_id,
+    path,
+    thread_id: threadId,
+    action,
+    config,
+  });
+}
+
+export async function upsertThreadAutomation({
+  actions,
+  threadId,
+  config,
+}: {
+  actions: ChatActions;
+  threadId: string;
+  config: AcpAutomationConfig;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "upsert",
+    config,
+  });
+}
+
+export async function pauseThreadAutomation({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "pause",
+  });
+}
+
+export async function resumeThreadAutomation({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "resume",
+  });
+}
+
+export async function runThreadAutomationNow({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "run_now",
+  });
+}
+
+export async function acknowledgeThreadAutomation({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "acknowledge",
+  });
+}
+
+export async function deleteThreadAutomation({
+  actions,
+  threadId,
+}: {
+  actions: ChatActions;
+  threadId: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  return await automationRequest({
+    actions,
+    threadId,
+    action: "delete",
+  });
 }
 
 function normalizeCodexMention(model?: string): string | undefined {

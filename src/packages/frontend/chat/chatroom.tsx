@@ -4,6 +4,7 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
+import { Alert, Button, Space, Tag } from "antd";
 import {
   React,
   useCallback,
@@ -14,7 +15,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
+import { Loading, TimeAgo } from "@cocalc/frontend/components";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -46,14 +47,25 @@ import * as immutable from "immutable";
 import { useChatThreadSelection } from "./thread-selection";
 import { dateValue, field } from "./access";
 import { useCodexPaymentSource } from "./use-codex-payment-source";
-import { resetAcpThreadState } from "./acp-api";
+import {
+  acknowledgeThreadAutomation,
+  pauseThreadAutomation,
+  resetAcpThreadState,
+  resumeThreadAutomation,
+  runThreadAutomationNow,
+  upsertThreadAutomation,
+} from "./acp-api";
 import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
 } from "./agent-session-index";
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { findInChatAndOpenFirstResult } from "./find-in-chat";
-import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpAutomationConfig,
+  AcpAutomationState,
+  AcpLoopConfig,
+} from "@cocalc/conat/ai/acp/types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
@@ -83,6 +95,22 @@ export function enabledLoopConfig(
   config?: AcpLoopConfig,
 ): AcpLoopConfig | undefined {
   return config?.enabled === true ? config : undefined;
+}
+
+function visibleAutomationConfig(
+  config?: AcpAutomationConfig,
+): AcpAutomationConfig | undefined {
+  if (!config) return undefined;
+  if (
+    !config.automation_id &&
+    !config.prompt &&
+    !config.title &&
+    !config.local_time &&
+    !config.timezone
+  ) {
+    return undefined;
+  }
+  return config;
 }
 
 export function clearThreadLoopRuntime(
@@ -435,6 +463,17 @@ export function ChatPanel({
     () => enabledLoopConfig(selectedThreadMetadata?.loop_config),
     [selectedThreadMetadata?.loop_config],
   );
+  const selectedThreadAutomationConfig = useMemo(
+    () => visibleAutomationConfig(selectedThreadMetadata?.automation_config),
+    [selectedThreadMetadata?.automation_config],
+  );
+  const selectedThreadAutomationState = useMemo(
+    () =>
+      selectedThreadMetadata?.automation_state as
+        | AcpAutomationState
+        | undefined,
+    [selectedThreadMetadata?.automation_state],
+  );
   const visiblePersistedLoopConfig = useMemo(() => {
     if (
       selectedThreadKey != null &&
@@ -480,6 +519,38 @@ export function ChatPanel({
     },
     [actions, selectedThreadKey],
   );
+
+  const handleAutomationSave = useCallback(
+    async (config: AcpAutomationConfig) => {
+      if (!selectedThreadId) return;
+      await upsertThreadAutomation({
+        actions,
+        threadId: selectedThreadId,
+        config,
+      });
+    },
+    [actions, selectedThreadId],
+  );
+
+  const handleAutomationPause = useCallback(async () => {
+    if (!selectedThreadId) return;
+    await pauseThreadAutomation({ actions, threadId: selectedThreadId });
+  }, [actions, selectedThreadId]);
+
+  const handleAutomationResume = useCallback(async () => {
+    if (!selectedThreadId) return;
+    await resumeThreadAutomation({ actions, threadId: selectedThreadId });
+  }, [actions, selectedThreadId]);
+
+  const handleAutomationRunNow = useCallback(async () => {
+    if (!selectedThreadId) return;
+    await runThreadAutomationNow({ actions, threadId: selectedThreadId });
+  }, [actions, selectedThreadId]);
+
+  const handleAutomationAcknowledge = useCallback(async () => {
+    if (!selectedThreadId) return;
+    await acknowledgeThreadAutomation({ actions, threadId: selectedThreadId });
+  }, [actions, selectedThreadId]);
 
   const selectedThreadLookupKey = selectedThreadId;
   const selectedThreadMessages = useMemo(
@@ -1150,6 +1221,108 @@ export function ChatPanel({
     setSelectedThreadKey,
   ]);
 
+  const automationBanner =
+    isSelectedThreadCodex && selectedThreadAutomationConfig ? (
+      <Alert
+        type={
+          selectedThreadAutomationState?.status === "error"
+            ? "error"
+            : selectedThreadAutomationState?.status === "paused"
+              ? "warning"
+              : "info"
+        }
+        style={{ margin: "8px 8px 0 8px" }}
+        message={
+          <Space size="small" wrap>
+            <strong>
+              {selectedThreadAutomationConfig.title?.trim() ||
+                "Scheduled automation"}
+            </strong>
+            <Tag
+              color={
+                selectedThreadAutomationConfig.enabled === false
+                  ? "default"
+                  : "blue"
+              }
+            >
+              {selectedThreadAutomationState?.status ??
+                (selectedThreadAutomationConfig.enabled === false
+                  ? "paused"
+                  : "active")}
+            </Tag>
+            {selectedThreadAutomationConfig.local_time ? (
+              <span>
+                Daily at {selectedThreadAutomationConfig.local_time}
+                {selectedThreadAutomationConfig.timezone
+                  ? ` ${selectedThreadAutomationConfig.timezone}`
+                  : ""}
+              </span>
+            ) : null}
+            {selectedThreadAutomationState?.next_run_at_ms ? (
+              <span>
+                Next run{" "}
+                <TimeAgo
+                  date={new Date(selectedThreadAutomationState.next_run_at_ms)}
+                />
+              </span>
+            ) : null}
+            {selectedThreadAutomationState?.last_run_finished_at_ms ? (
+              <span>
+                Last run{" "}
+                <TimeAgo
+                  date={
+                    new Date(
+                      selectedThreadAutomationState.last_run_finished_at_ms,
+                    )
+                  }
+                />
+              </span>
+            ) : null}
+            {typeof selectedThreadAutomationState?.unacknowledged_runs ===
+              "number" &&
+            selectedThreadAutomationState.unacknowledged_runs > 0 ? (
+              <Tag color="orange">
+                {selectedThreadAutomationState.unacknowledged_runs}{" "}
+                unacknowledged
+              </Tag>
+            ) : null}
+          </Space>
+        }
+        description={
+          <Space size="small" wrap>
+            {selectedThreadAutomationState?.paused_reason ? (
+              <span>{selectedThreadAutomationState.paused_reason}</span>
+            ) : null}
+            {selectedThreadAutomationState?.last_error ? (
+              <span>{selectedThreadAutomationState.last_error}</span>
+            ) : null}
+            <Button size="small" onClick={() => void handleAutomationRunNow()}>
+              Run now
+            </Button>
+            {selectedThreadAutomationState?.status === "paused" ||
+            selectedThreadAutomationConfig.enabled === false ? (
+              <Button
+                size="small"
+                onClick={() => void handleAutomationResume()}
+              >
+                Resume
+              </Button>
+            ) : (
+              <Button size="small" onClick={() => void handleAutomationPause()}>
+                Pause
+              </Button>
+            )}
+            <Button
+              size="small"
+              onClick={() => void handleAutomationAcknowledge()}
+            >
+              Acknowledge
+            </Button>
+          </Space>
+        }
+      />
+    ) : null;
+
   const renderChatContent = () => (
     <div className="smc-vfill" style={GRID_STYLE}>
       <ChatRoomThreadPanel
@@ -1184,6 +1357,7 @@ export function ChatPanel({
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
       />
+      {automationBanner}
       <ChatRoomComposer
         actions={actions}
         project_id={project_id}
@@ -1210,6 +1384,8 @@ export function ChatPanel({
         showLoopControls={isSelectedThreadCodex}
         loopConfig={composerLoopConfig}
         onLoopConfigChange={handleLoopConfigChange}
+        automationConfig={selectedThreadAutomationConfig}
+        onAutomationSave={handleAutomationSave}
       />
     </div>
   );
