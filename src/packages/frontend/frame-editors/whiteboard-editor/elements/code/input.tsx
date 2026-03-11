@@ -271,6 +271,7 @@ class Actions implements EditorActions {
   }
 
   set_cell_input(_id: string, input: string, commit?: boolean) {
+    this.setLocalValue(input);
     this.frame.actions.setElement({
       obj: { id: this.id, str: input },
       commit,
@@ -344,6 +345,11 @@ class Actions implements EditorActions {
     offset?: any,
   ): Promise<boolean> {
     const actions = await this.getJupyterActions();
+    if (actions.store.get("backend_state") != "running") {
+      await actions.initBackend();
+      await actions.getConnectionFile();
+      await actions.refreshKernelStatus();
+    }
     const popup = await actions.complete(code, pos, id, offset);
     this.setComplete(actions.store.get("complete"));
     return popup;
