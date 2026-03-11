@@ -247,6 +247,9 @@ export interface ChatThreadConfigRecord {
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
+  archived?: boolean;
+  archived_chat_rows?: number;
+  latest_chat_date_ms?: number;
   agent_kind?: "acp" | "llm" | "none";
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
@@ -269,6 +272,9 @@ export interface BuildThreadConfigRecordOptions {
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
+  archived?: boolean;
+  archived_chat_rows?: number;
+  latest_chat_date_ms?: number;
   agent_kind?: "acp" | "llm" | "none";
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
@@ -294,6 +300,9 @@ export function buildThreadConfigRecord(
     thread_icon: options.thread_icon,
     thread_image: options.thread_image,
     pin: options.pin,
+    archived: options.archived,
+    archived_chat_rows: options.archived_chat_rows,
+    latest_chat_date_ms: options.latest_chat_date_ms,
     agent_kind: options.agent_kind,
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,

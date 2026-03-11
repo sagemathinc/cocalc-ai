@@ -8,7 +8,7 @@ Chat schema v2 introduces explicit records:
 
 - `chat` (messages) with `message_id`, `thread_id`, `parent_message_id`
 - `chat-thread` (thread identity)
-- `chat-thread-config` (title/icon/color/pin/codex config)
+- `chat-thread-config` (title/icon/color/pin/codex config, archive metadata)
 - `chat-thread-state` (runtime state: queued/running/interrupted/etc.)
 
 `schema_version` is defined by `CHAT_SCHEMA_V2` in [src/packages/chat/src/index.ts](./src/index.ts).
