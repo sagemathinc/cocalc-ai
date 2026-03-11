@@ -19,6 +19,7 @@ module.exports = {
     "^@cocalc/frontend/frame-editors/generic/chat$":
       "<rootDir>/test/mocks/generic-chat.js",
     "^@cocalc/frontend/(.*)$": "<rootDir>/$1",
+    "^antd-img-crop$": "<rootDir>/test/mocks/antd-img-crop.js",
     "^p-limit$": "<rootDir>/test/mocks/p-limit.js",
     "^dropzone$": "<rootDir>/test/mocks/dropzone.js",
     "^\\.\\./users$": "<rootDir>/test/mocks/frontend-users.js",
