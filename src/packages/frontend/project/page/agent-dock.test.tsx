@@ -13,6 +13,11 @@ const mockEraseActiveKeyHandler = jest.fn();
 const mockChatActions = {
   setSelectedThread: jest.fn(),
   scrollToIndex: jest.fn(),
+  sendChat: jest.fn(),
+  getMessageByDate: jest.fn(),
+  messageCache: {
+    getThreadIndex: jest.fn(() => new Map()),
+  },
 } as any;
 
 jest.mock("antd", () => {
@@ -118,12 +123,19 @@ const { AgentDock } = require("./agent-dock");
 
 describe("AgentDock keyboard suppression", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     mockEraseActiveKeyHandler.mockClear();
     mockChatActions.setSelectedThread.mockClear();
     mockChatActions.scrollToIndex.mockClear();
+    mockChatActions.sendChat.mockReset();
+    mockChatActions.getMessageByDate.mockReset();
+    mockChatActions.messageCache.getThreadIndex.mockClear();
+    mockChatActions.messageCache.getThreadIndex.mockImplementation(
+      () => new Map(),
+    );
   });
 
-  async function openDock() {
+  async function openDock(threadKey = "thread-1") {
     render(<AgentDock project_id="project-1" is_active={true} />);
 
     act(() => {
@@ -134,7 +146,7 @@ describe("AgentDock keyboard suppression", () => {
             session: {
               session_id: "session-1",
               chat_path: ".local/share/cocalc/navigator-acct.chat",
-              thread_key: "thread-1",
+              thread_key: threadKey,
               title: "Agent session",
             },
           },
@@ -164,5 +176,37 @@ describe("AgentDock keyboard suppression", () => {
 
     expect(onWindowClick).not.toHaveBeenCalled();
     window.removeEventListener("click", onWindowClick);
+  });
+
+  it("submits queued navigator prompts when the floating dock opens", async () => {
+    mockChatActions.sendChat.mockReturnValue("2026-03-11T06:00:00.000Z");
+    window.localStorage.setItem(
+      "cocalc:navigator:intent-queue",
+      JSON.stringify([
+        {
+          id: "intent-1",
+          createdAt: "2026-03-11T06:00:00.000Z",
+          prompt: "Help me fix this error",
+          tag: "intent:test",
+          forceCodex: true,
+        },
+      ]),
+    );
+
+    await openDock("");
+
+    await waitFor(() =>
+      expect(mockChatActions.sendChat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: "Help me fix this error",
+          tag: "intent:test",
+          noNotification: true,
+          threadAgent: expect.objectContaining({ mode: "codex" }),
+        }),
+      ),
+    );
+    expect(window.localStorage.getItem("cocalc:navigator:intent-queue")).toBe(
+      null,
+    );
   });
 });

@@ -155,4 +155,78 @@ describe("useChatThreadSelection", () => {
     expect(actions.clearAllFilters).not.toHaveBeenCalled();
     expect(actions.setFragment).not.toHaveBeenCalled();
   });
+
+  it("syncs external selected-thread changes without re-emitting selection side effects", () => {
+    const actions = {
+      clearAllFilters: jest.fn(),
+      setFragment: jest.fn(),
+      setSelectedThread: jest.fn(),
+    } as any;
+
+    let latest: any = null;
+
+    function Harness({
+      threads,
+      storedThreadFromDesc,
+    }: {
+      threads: ThreadMeta[];
+      storedThreadFromDesc: string | null;
+    }) {
+      latest = useChatThreadSelection({
+        actions,
+        threads,
+        messages: undefined,
+        fragmentId: null,
+        storedThreadFromDesc,
+      });
+      return null;
+    }
+
+    const threads: ThreadMeta[] = [
+      {
+        key: "fork-thread",
+        label: "Fork thread",
+        displayLabel: "Fork thread",
+        newestTime: 200,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 0,
+        unreadCount: 0,
+        isAI: false,
+        isPinned: false,
+        isArchived: false,
+      },
+      {
+        key: "source-thread",
+        label: "Source thread",
+        displayLabel: "Source thread",
+        newestTime: 100,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 0,
+        unreadCount: 0,
+        isAI: false,
+        isPinned: false,
+        isArchived: false,
+      },
+    ];
+
+    const { rerender } = render(
+      <Harness threads={threads} storedThreadFromDesc={"fork-thread"} />,
+    );
+    expect(latest.selectedThreadKey).toBe("fork-thread");
+
+    act(() => {
+      rerender(
+        <Harness threads={threads} storedThreadFromDesc={"source-thread"} />,
+      );
+    });
+
+    expect(latest.selectedThreadKey).toBe("source-thread");
+    expect(actions.setSelectedThread).not.toHaveBeenCalled();
+    expect(actions.clearAllFilters).not.toHaveBeenCalled();
+    expect(actions.setFragment).not.toHaveBeenCalled();
+  });
 });

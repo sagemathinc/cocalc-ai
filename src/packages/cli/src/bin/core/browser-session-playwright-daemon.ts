@@ -535,6 +535,16 @@ async function main(): Promise<void> {
     process.exit(0);
   };
 
+  browser.on("disconnected", () => {
+    void stop("browser-disconnected");
+  });
+  context.on("close", () => {
+    void stop("context-closed");
+  });
+  page.on("close", () => {
+    void stop("page-closed");
+  });
+
   process.on("SIGTERM", () => {
     void stop("SIGTERM");
   });

@@ -123,7 +123,6 @@ interface Props {
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
-  focusLogRef?: MutableRefObject<(() => void) | null>;
 }
 
 export function ChatLog({
@@ -150,7 +149,6 @@ export function ChatLog({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
-  focusLogRef,
 }: Props) {
   const singleThreadView = selectedThread != null;
   const messages = messagesProp ?? new Map();
@@ -363,7 +361,6 @@ export function ChatLog({
           activityJumpDate,
           activityJumpToken,
           anyOverlayOpen,
-          focusLogRef,
         }}
       />
       <Composing

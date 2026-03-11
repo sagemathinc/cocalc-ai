@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 
-import { opendir, stat } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import {
+  opendir,
+  stat,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -8,6 +17,11 @@ import { spawn } from "node:child_process";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const staticRoot = resolve(__dirname, "..");
 const packagesRoot = resolve(__dirname, "../..");
+const srcRoot = resolve(packagesRoot, "..");
+const stateDir = resolve(srcRoot, ".local", "static-watch-low-mem");
+const lockPath = join(stateDir, "watch-low-mem.lock.json");
+const statusPath = join(stateDir, "watch-low-mem.status.json");
+const logPath = join(stateDir, "watch-low-mem.log");
 
 const pollMs = Math.max(
   250,
@@ -16,10 +30,8 @@ const pollMs = Math.max(
 );
 const debounceMs = Math.max(
   100,
-  Number.parseInt(
-    process.env.COCALC_STATIC_WATCH_DEBOUNCE_MS ?? "500",
-    10,
-  ) || 500,
+  Number.parseInt(process.env.COCALC_STATIC_WATCH_DEBOUNCE_MS ?? "500", 10) ||
+    500,
 );
 
 const args = new Set(process.argv.slice(2));
@@ -51,10 +63,128 @@ Environment:
   COCALC_STATIC_WATCH_POLL_MS       Poll interval in ms (default: ${pollMs})
   COCALC_STATIC_WATCH_DEBOUNCE_MS   Change debounce in ms (default: ${debounceMs})
 
+State:
+  Lock file:  ${lockPath}
+  Status:     ${statusPath}
+  Log file:   ${logPath}
+
 Flags:
   --skip-initial   Do not run the initial build on startup
 `);
   process.exit(0);
+}
+
+await mkdir(stateDir, { recursive: true });
+const logStream = createWriteStream(logPath, { flags: "a" });
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function writeLogLine(line) {
+  logStream.write(`${line}\n`);
+}
+
+function log(message, { stderr = false } = {}) {
+  const line = `[low-mem-watch] ${message}`;
+  if (stderr) {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
+  writeLogLine(`${nowIso()} ${line}`);
+}
+
+function relayOutput(stream, { stderr = false, label }) {
+  if (!stream) return;
+  stream.on("data", (chunk) => {
+    const text = chunk.toString();
+    if (stderr) {
+      process.stderr.write(text);
+    } else {
+      process.stdout.write(text);
+    }
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      writeLogLine(`${nowIso()} [${label}] ${line}`);
+    }
+  });
+}
+
+async function writeStatus(extra = {}) {
+  await writeFile(
+    statusPath,
+    JSON.stringify(
+      {
+        pid: process.pid,
+        started_at: startedAtIso,
+        cwd: process.cwd(),
+        static_root: staticRoot,
+        packages_root: packagesRoot,
+        lock_path: lockPath,
+        log_path: logPath,
+        ...extra,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+const startedAtIso = nowIso();
+let ownsLock = false;
+
+async function readLockInfo() {
+  try {
+    const raw = await readFile(lockPath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+async function acquireLock() {
+  try {
+    const handle = await open(lockPath, "wx");
+    try {
+      await handle.writeFile(
+        JSON.stringify(
+          {
+            pid: process.pid,
+            started_at: startedAtIso,
+            cwd: process.cwd(),
+            static_root: staticRoot,
+            packages_root: packagesRoot,
+            log_path: logPath,
+            status_path: statusPath,
+          },
+          null,
+          2,
+        ),
+      );
+      ownsLock = true;
+    } finally {
+      await handle.close();
+    }
+  } catch (err) {
+    if (err?.code !== "EEXIST") {
+      throw err;
+    }
+    const info = await readLockInfo();
+    const suffix = info?.pid
+      ? ` already running (pid ${info.pid}, started ${info.started_at ?? "unknown"}).`
+      : " already running.";
+    throw new Error(
+      `watch:low-mem${suffix} See ${logPath} and ${statusPath} for details.`,
+    );
+  }
+}
+
+async function releaseLock({ stopped = true } = {}) {
+  if (!ownsLock) return;
+  ownsLock = false;
+  await writeStatus({ running: false, stopped_at: nowIso(), stopped });
+  await rm(lockPath, { force: true });
 }
 
 async function newestMtimeMs(root) {
@@ -88,14 +218,14 @@ function sleep(ms) {
 }
 
 async function runStep({ label, cwd, args, env }) {
-  console.log(
-    `[low-mem-watch] ${label} start (${formatTs(Date.now())}) cwd=${cwd}`,
-  );
+  log(`${label} start (${formatTs(Date.now())}) cwd=${cwd}`);
   const child = spawn("pnpm", args, {
     cwd,
     env,
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  relayOutput(child.stdout, { label, stderr: false });
+  relayOutput(child.stderr, { label, stderr: true });
   const exitCode = await new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("exit", resolve);
@@ -103,16 +233,12 @@ async function runStep({ label, cwd, args, env }) {
   if (exitCode !== 0) {
     throw new Error(`${label} failed with exit code ${exitCode}`);
   }
-  console.log(
-    `[low-mem-watch] ${label} done  (${formatTs(Date.now())}) cwd=${cwd}`,
-  );
+  log(`${label} done  (${formatTs(Date.now())}) cwd=${cwd}`);
 }
 
 async function runBuild(targetMtimeMs) {
-  console.log(
-    `[low-mem-watch] build start (${formatTs(Date.now())}) target=${Math.trunc(
-      targetMtimeMs,
-    )}`,
+  log(
+    `build start (${formatTs(Date.now())}) target=${Math.trunc(targetMtimeMs)}`,
   );
   const env = {
     ...process.env,
@@ -131,10 +257,8 @@ async function runBuild(targetMtimeMs) {
     args: ["rspack", "build"],
     env,
   });
-  console.log(
-    `[low-mem-watch] build done  (${formatTs(Date.now())}) target=${Math.trunc(
-      targetMtimeMs,
-    )}`,
+  log(
+    `build done  (${formatTs(Date.now())}) target=${Math.trunc(targetMtimeMs)}`,
   );
 }
 
@@ -147,51 +271,58 @@ process.on("SIGTERM", () => {
 });
 
 async function main() {
-  let lastObservedMtimeMs = await newestMtimeMs(packagesRoot);
-  let lastHandledMtimeMs = 0;
-  let queuedAtMs = skipInitial ? undefined : Date.now();
+  try {
+    await acquireLock();
+    await writeStatus({ running: true });
+    log(`acquired single-instance lock pid=${process.pid}`);
+    log(`status=${statusPath}`);
+    log(`log=${logPath}`);
+    let lastObservedMtimeMs = await newestMtimeMs(packagesRoot);
+    let lastHandledMtimeMs = 0;
+    let queuedAtMs = skipInitial ? undefined : Date.now();
 
-  if (skipInitial) {
-    lastHandledMtimeMs = lastObservedMtimeMs;
-  } else {
-    console.log("[low-mem-watch] initial build queued");
-  }
-
-  while (!stopping) {
-    const observed = await newestMtimeMs(packagesRoot);
-    if (observed > lastObservedMtimeMs) {
-      lastObservedMtimeMs = observed;
-      queuedAtMs = Date.now();
-      console.log(
-        `[low-mem-watch] change detected newest=${Math.trunc(observed)}`,
-      );
+    if (skipInitial) {
+      lastHandledMtimeMs = lastObservedMtimeMs;
+    } else {
+      log("initial build queued");
     }
 
-    if (
-      queuedAtMs != null &&
-      Date.now() - queuedAtMs >= debounceMs &&
-      lastHandledMtimeMs < lastObservedMtimeMs
-    ) {
-      const target = lastObservedMtimeMs;
-      queuedAtMs = undefined;
-      try {
-        await runBuild(target);
-      } catch (err) {
-        console.error(
-          `[low-mem-watch] ${err instanceof Error ? err.message : err}`,
-        );
+    while (!stopping) {
+      const observed = await newestMtimeMs(packagesRoot);
+      if (observed > lastObservedMtimeMs) {
+        lastObservedMtimeMs = observed;
+        queuedAtMs = Date.now();
+        log(`change detected newest=${Math.trunc(observed)}`);
       }
-      lastHandledMtimeMs = target;
-      continue;
+
+      if (
+        queuedAtMs != null &&
+        Date.now() - queuedAtMs >= debounceMs &&
+        lastHandledMtimeMs < lastObservedMtimeMs
+      ) {
+        const target = lastObservedMtimeMs;
+        queuedAtMs = undefined;
+        try {
+          await runBuild(target);
+        } catch (err) {
+          log(`${err instanceof Error ? err.message : err}`, { stderr: true });
+        }
+        lastHandledMtimeMs = target;
+        continue;
+      }
+
+      await sleep(pollMs);
     }
 
-    await sleep(pollMs);
+    log("stopped");
+  } finally {
+    await releaseLock();
+    logStream.end();
   }
 }
 
 main().catch((err) => {
-  console.error(
-    `[low-mem-watch] fatal: ${err instanceof Error ? err.message : err}`,
-  );
+  log(`fatal: ${err instanceof Error ? err.message : err}`, { stderr: true });
+  logStream.end();
   process.exit(1);
 });

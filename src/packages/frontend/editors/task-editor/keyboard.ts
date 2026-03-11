@@ -8,6 +8,10 @@ Keyboard shortcuts
 */
 
 import { HEADINGS } from "./headings-info";
+import {
+  getKeyboardBoundaryElement,
+  isEditableOrKeyboardInteractiveTarget,
+} from "@cocalc/frontend/keyboard/boundary";
 
 import { is_sortable as is_sortable_header } from "./headings-info";
 
@@ -17,8 +21,45 @@ function is_sortable(actions): boolean {
   );
 }
 
+function isChoiceInputTarget(
+  target: EventTarget | null | undefined,
+): target is HTMLInputElement {
+  return (
+    target instanceof HTMLInputElement &&
+    (target.type === "checkbox" || target.type === "radio")
+  );
+}
+
+function shouldSuppressTaskShortcuts(evt?: Event | null): boolean {
+  const activeElement =
+    typeof document === "undefined" ? null : document.activeElement;
+  if (
+    getKeyboardBoundaryElement(evt) != null ||
+    getKeyboardBoundaryElement(activeElement) != null
+  ) {
+    return true;
+  }
+  const target = evt?.target;
+  if (
+    !isChoiceInputTarget(target) &&
+    isEditableOrKeyboardInteractiveTarget(target)
+  ) {
+    return true;
+  }
+  if (
+    !isChoiceInputTarget(activeElement) &&
+    isEditableOrKeyboardInteractiveTarget(activeElement)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function create_key_handler(actions): (any) => void {
   return (evt) => {
+    if (shouldSuppressTaskShortcuts(evt)) {
+      return;
+    }
     if (actions.isEditing()) {
       return;
     }

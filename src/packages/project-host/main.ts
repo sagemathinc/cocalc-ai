@@ -86,6 +86,15 @@ import {
 } from "./hub/acp/worker-manager";
 
 const logger = getLogger("project-host:main");
+
+export function reportFatalStartupError(message: string, err: unknown): void {
+  if (logger.isEnabled("error")) {
+    logger.error(message, err);
+    return;
+  }
+  console.error(message, err);
+}
+
 const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
 const PROJECT_HTTP_PORT_WAIT_MS = Math.max(
   1000,
@@ -473,7 +482,7 @@ export async function main(
     stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
     stopRuntimePostureMonitor = startRuntimePostureMonitor();
   } catch (err) {
-    logger.error("FATAL: Failed to init file server", err);
+    reportFatalStartupError("FATAL: Failed to init file server", err);
     process.exit(1);
   }
 

@@ -5,6 +5,11 @@
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
+  delete_local_storage,
+  get_local_storage,
+  set_local_storage,
+} from "@cocalc/frontend/misc";
+import {
   React,
   useCallback,
   useEditorRedux,
@@ -32,7 +37,7 @@ import {
   type NewThreadSetup,
 } from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
-import type { ChatMessages, SubmitMentionsFn } from "./types";
+import type { ChatMessage, ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
 import {
   getMessageByLookup,
@@ -58,7 +63,11 @@ import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
-import { resolveCombinedComposerTargetKey } from "./combined-composer-target";
+import {
+  combinedComposerTargetStorageKey,
+  readStoredCombinedComposerTargetKey,
+  resolveCombinedComposerTargetKey,
+} from "./combined-composer-target";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -93,6 +102,48 @@ export function clearThreadLoopRuntime(
   if (!normalizedThreadKey) return;
   actions.setThreadLoopConfig?.(normalizedThreadKey, null);
   actions.setThreadLoopState?.(normalizedThreadKey, null);
+}
+
+export function hasActiveAcpTurnForComposer({
+  isSelectedThreadAI,
+  selectedThreadId,
+  selectedThreadMessages,
+  acpState,
+}: {
+  isSelectedThreadAI: boolean;
+  selectedThreadId?: string | null;
+  selectedThreadMessages: readonly ChatMessage[];
+  acpState?: immutable.Map<string, string>;
+}): boolean {
+  if (!isSelectedThreadAI) return false;
+  if (selectedThreadId) {
+    const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
+    if (byThread === "running") {
+      return true;
+    }
+  }
+  if (!selectedThreadMessages.length) return false;
+  for (const msg of selectedThreadMessages) {
+    if (field<boolean>(msg, "generating") !== true) continue;
+    const isAcpTurn = !!field<string>(msg, "acp_account_id");
+    if (!isAcpTurn) return true;
+    const d = dateValue(msg);
+    if (!d) continue;
+    const threadId = field<string>(msg, "thread_id");
+    const threadState =
+      threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+    const messageId = field<string>(msg, "message_id");
+    const state =
+      (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+      acpState?.get?.(`${d.valueOf()}`);
+    if (
+      (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
+      (typeof state === "string" && ACP_ACTIVE_STATES.has(state))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseDateISOString(value: unknown): string | undefined {
@@ -282,24 +333,6 @@ export function ChatPanel({
   });
 
   useEffect(() => {
-    if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
-    const persistedSelectedThreadKey =
-      selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
-        ? selectedThreadKey
-        : null;
-    if ((storedThreadFromDesc ?? null) === persistedSelectedThreadKey) return;
-    actions.frameTreeActions.set_frame_data({
-      id: actions.frameId,
-      selectedThreadKey: persistedSelectedThreadKey,
-    });
-  }, [
-    selectedThreadKey,
-    storedThreadFromDesc,
-    actions?.frameTreeActions,
-    actions?.frameId,
-  ]);
-
-  useEffect(() => {
     if (actions?.frameTreeActions?.set_frame_data && actions?.frameId) return;
     const persistedSelectedThreadKey =
       selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
@@ -369,6 +402,17 @@ export function ChatPanel({
   );
   const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const combinedComposerTargetStorage = useMemo(
+    () => combinedComposerTargetStorageKey(project_id, path),
+    [project_id, path],
+  );
+  const storedCombinedComposerTargetKey = useMemo(
+    () =>
+      readStoredCombinedComposerTargetKey(
+        get_local_storage(combinedComposerTargetStorage),
+      ),
+    [combinedComposerTargetStorage],
+  );
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -490,31 +534,13 @@ export function ChatPanel({
     [actions, selectedThreadLookupKey, messages],
   );
   const hasRunningAcpTurn = useMemo(() => {
-    if (!isSelectedThreadAI) return false;
-    if (selectedThreadId) {
-      const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
-      if (byThread === "running") {
-        return true;
-      }
-    }
-    if (!selectedThreadMessages.length) return false;
-    for (const msg of selectedThreadMessages) {
-      const d = dateValue(msg);
-      if (!d) continue;
-      if (field<boolean>(msg, "generating") === true) return true;
-      const threadId = field<string>(msg, "thread_id");
-      if (threadId) {
-        const threadState = acpState?.get?.(`thread:${threadId}`);
-        if (threadState === "running") return true;
-      }
-      const messageId = field<string>(msg, "message_id");
-      const state =
-        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
-        acpState?.get?.(`${d.valueOf()}`);
-      if (state === "running") return true;
-    }
-    return false;
-  }, [isSelectedThreadAI, selectedThreadMessages, acpState, selectedThread]);
+    return hasActiveAcpTurnForComposer({
+      isSelectedThreadAI,
+      selectedThreadId,
+      selectedThreadMessages,
+      acpState,
+    });
+  }, [isSelectedThreadAI, selectedThreadId, selectedThreadMessages, acpState]);
 
   const agentSessionRecords = useMemo<AgentSessionRecord[]>(() => {
     if (typeof account_id !== "string" || !account_id.trim()) {
@@ -668,13 +694,32 @@ export function ChatPanel({
   useEffect(() => {
     const nextTargetKey = resolveCombinedComposerTargetKey(
       composerTargetKey,
+      storedCombinedComposerTargetKey,
       threads,
       isCombinedFeedSelected,
     );
     if (nextTargetKey !== composerTargetKey) {
       setComposerTargetKey(nextTargetKey);
     }
-  }, [isCombinedFeedSelected, threads, composerTargetKey]);
+  }, [
+    isCombinedFeedSelected,
+    threads,
+    composerTargetKey,
+    storedCombinedComposerTargetKey,
+  ]);
+
+  useEffect(() => {
+    if (!isCombinedFeedSelected) return;
+    if (composerTargetKey == null) {
+      delete_local_storage(combinedComposerTargetStorage);
+      return;
+    }
+    set_local_storage(combinedComposerTargetStorage, composerTargetKey);
+  }, [
+    isCombinedFeedSelected,
+    composerTargetKey,
+    combinedComposerTargetStorage,
+  ]);
 
   const combinedUnreadThreads = useMemo(
     () => threads.filter((thread) => (thread.unreadCount ?? 0) > 0),
@@ -798,9 +843,13 @@ export function ChatPanel({
       inputRef.current = "";
       // Clear current composer draft before send switches selected thread context.
       actions.deleteDraft(draftKey);
+      if (draftKey === 0) {
+        delete_local_storage(combinedComposerTargetStorage);
+        setComposerTargetKey(null);
+      }
       void clearInput();
     },
-    [actions, clearInput],
+    [actions, clearInput, combinedComposerTargetStorage],
   );
 
   function resolveReplyTarget(): {
@@ -1038,6 +1087,8 @@ export function ChatPanel({
     inputRef.current = "";
     setInput("");
     actions.deleteDraft(0);
+    delete_local_storage(combinedComposerTargetStorage);
+    setComposerTargetKey(null);
     void clearComposerDraft(0);
     setAllowAutoSelectThread(false);
     setSelectedThreadKey(null);

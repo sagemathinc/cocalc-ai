@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { enableMapSet, produce } from "immer";
+import { threadConfigRecordKey } from "@cocalc/chat";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import type { PlainChatMessage } from "./types";
 import { dateValue, parentMessageId } from "./access";
@@ -158,6 +159,63 @@ export class ChatMessageCache extends EventEmitter {
     const id = (message as any)?.message_id;
     if (typeof id === "string" && id.length > 0) return id;
     return undefined;
+  }
+
+  private toArray<T>(value: T[] | { toJS?: () => T[] } | undefined): T[] {
+    if (Array.isArray(value)) return value;
+    if (typeof (value as any)?.toJS === "function") {
+      return (value as any).toJS();
+    }
+    return [];
+  }
+
+  private threadConfigRank(row: Record<string, unknown>, threadId: string) {
+    const canonical = threadConfigRecordKey(threadId);
+    const isCanonical =
+      row.sender_id === canonical.sender_id && row.date === canonical.date;
+    const updatedAt = Date.parse(`${row.updated_at ?? ""}`);
+    const rowDate = Date.parse(`${row.date ?? ""}`);
+    return (
+      (isCanonical ? 1_000_000_000_000_000 : 0) +
+      (Number.isFinite(updatedAt) ? updatedAt : 0) +
+      (Number.isFinite(rowDate) ? rowDate : 0)
+    );
+  }
+
+  private pickPreferredThreadConfigRow(
+    rows: unknown[],
+    threadId: string,
+  ): Record<string, unknown> | undefined {
+    const normalized = `${threadId ?? ""}`.trim();
+    if (!normalized) return undefined;
+    let best: Record<string, unknown> | undefined;
+    let bestRank = Number.NEGATIVE_INFINITY;
+    for (const row0 of rows) {
+      if ((row0 as any)?.event !== "chat-thread-config") continue;
+      const row = row0 as Record<string, unknown>;
+      const rank = this.threadConfigRank(row, normalized);
+      if (best == null || rank > bestRank) {
+        best = row;
+        bestRank = rank;
+      }
+    }
+    return best;
+  }
+
+  private getPreferredThreadConfigRowFromSyncdb(
+    threadId: string,
+  ): Record<string, unknown> | undefined {
+    const normalized = `${threadId ?? ""}`.trim();
+    if (!normalized || typeof this.syncdb?.get !== "function") return undefined;
+    return this.pickPreferredThreadConfigRow(
+      this.toArray(
+        this.syncdb.get({
+          event: "chat-thread-config",
+          thread_id: normalized,
+        }),
+      ),
+      normalized,
+    );
   }
 
   private addToThreadIndex(
@@ -343,6 +401,10 @@ export class ChatMessageCache extends EventEmitter {
     const threadIndex = new Map<string, ThreadIndexEntry>();
     const threadKeyByThreadId = new Map<string, string>();
     const threadConfigByThreadId = new Map<string, Record<string, unknown>>();
+    const threadConfigRowsByThreadId = new Map<
+      string,
+      Record<string, unknown>[]
+    >();
     const list = Array.isArray(rows) ? rows : [];
     let chatRows = 0;
 
@@ -350,7 +412,15 @@ export class ChatMessageCache extends EventEmitter {
       if ((row0 as any)?.event !== "chat-thread-config") continue;
       const threadId = `${(row0 as any)?.thread_id ?? ""}`.trim();
       if (!threadId) continue;
-      threadConfigByThreadId.set(threadId, row0 as Record<string, unknown>);
+      const existing = threadConfigRowsByThreadId.get(threadId) ?? [];
+      existing.push(row0 as Record<string, unknown>);
+      threadConfigRowsByThreadId.set(threadId, existing);
+    }
+    for (const [threadId, configRows] of threadConfigRowsByThreadId) {
+      const preferred = this.pickPreferredThreadConfigRow(configRows, threadId);
+      if (preferred) {
+        threadConfigByThreadId.set(threadId, preferred);
+      }
     }
 
     // Build thread_id -> root-date-key mapping for compatibility helpers that
@@ -420,6 +490,22 @@ export class ChatMessageCache extends EventEmitter {
     log("handleChange", changes);
     if (this.syncdb.get_state() !== "ready") return;
     const rows: Record<string, unknown>[] = Array.from(changes);
+    const changedThreadConfigIds = new Set<string>();
+    for (const row0 of rows) {
+      if (row0?.event !== "chat-thread-config") continue;
+      const threadId = `${row0?.thread_id ?? ""}`.trim();
+      if (threadId) {
+        changedThreadConfigIds.add(threadId);
+      }
+    }
+    for (const threadId of changedThreadConfigIds) {
+      const next = this.getPreferredThreadConfigRowFromSyncdb(threadId);
+      if (next) {
+        this.threadConfigByThreadId.set(threadId, next);
+      } else {
+        this.threadConfigByThreadId.delete(threadId);
+      }
+    }
     const nextByDate = produce(this.messagesByDate, (dateDraft) => {
       this.messagesById = produce(this.messagesById, (idMapDraft) => {
         this.threadIndex = produce(this.threadIndex, (threadDraft) => {

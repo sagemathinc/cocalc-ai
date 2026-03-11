@@ -20,8 +20,21 @@ const cp = require("node:child_process");
 const ROOT = path.resolve(__dirname, "../..");
 const LITE_DAEMON = path.join(ROOT, "scripts", "dev", "lite-daemon.sh");
 const HUB_DAEMON = path.join(ROOT, "scripts", "dev", "hub-daemon.sh");
-const LOCAL_CLI_BIN = path.join(ROOT, "packages", "cli", "dist", "bin", "cocalc.js");
-const LOCAL_CLI_BIN_DIR = path.join(ROOT, "packages", "cli", "node_modules", ".bin");
+const LOCAL_CLI_BIN = path.join(
+  ROOT,
+  "packages",
+  "cli",
+  "dist",
+  "bin",
+  "cocalc.js",
+);
+const LOCAL_CLI_BIN_DIR = path.join(
+  ROOT,
+  "packages",
+  "cli",
+  "node_modules",
+  ".bin",
+);
 const LOCAL_PROJECT_ID = "00000000-1000-4000-8000-000000000000";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,7 +111,8 @@ function getAuthConfig() {
   const cfgPath =
     `${process.env.COCALC_CLI_CONFIG ?? ""}`.trim() ||
     path.join(
-      `${process.env.XDG_CONFIG_HOME ?? ""}`.trim() || path.join(os.homedir(), ".config"),
+      `${process.env.XDG_CONFIG_HOME ?? ""}`.trim() ||
+        path.join(os.homedir(), ".config"),
       "cocalc",
       "config.json",
     );
@@ -109,7 +123,8 @@ function getAuthConfig() {
   return {
     path: cfgPath,
     current: `${cfg.current_profile ?? ""}`.trim() || undefined,
-    profiles: cfg.profiles && typeof cfg.profiles === "object" ? cfg.profiles : {},
+    profiles:
+      cfg.profiles && typeof cfg.profiles === "object" ? cfg.profiles : {},
   };
 }
 
@@ -118,11 +133,13 @@ function chooseProfileForApi(profiles, current, targetApi) {
   if (!names.length) return undefined;
   const normTarget = normalizeUrl(targetApi);
   const explicitProfile = `${process.env.COCALC_PROFILE ?? ""}`.trim();
-  if (explicitProfile && profiles[explicitProfile]) return profiles[explicitProfile];
+  if (explicitProfile && profiles[explicitProfile])
+    return profiles[explicitProfile];
 
   if (current && profiles[current]) {
     const curApi = normalizeUrl(profiles[current].api || "");
-    if (!normTarget || !curApi || curApi === normTarget) return profiles[current];
+    if (!normTarget || !curApi || curApi === normTarget)
+      return profiles[current];
   }
   for (const name of names) {
     const p = profiles[name] || {};
@@ -146,7 +163,9 @@ function ensureDaemon(mode, autoStart) {
   const before = daemonStatus(mode);
   let started = false;
   if (!before.running && autoStart) {
-    const start = run("bash", [script, "start"], { stdio: ["ignore", "pipe", "pipe"] });
+    const start = run("bash", [script, "start"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     if (start.status !== 0) {
       throw new Error(
         `${mode} daemon failed to start:\n${start.stdout ?? ""}\n${start.stderr ?? ""}`.trim(),
@@ -161,10 +180,14 @@ function ensureDaemon(mode, autoStart) {
 function getLiteEnvValues() {
   const envOut = run("bash", [LITE_DAEMON, "env"]);
   if (envOut.status !== 0) {
-    throw new Error(`failed to read lite daemon env:\n${envOut.stderr ?? ""}`.trim());
+    throw new Error(
+      `failed to read lite daemon env:\n${envOut.stderr ?? ""}`.trim(),
+    );
   }
   const vars = parseKeyValueLines(envOut.stdout);
-  const connPath = vars.LITE_CONNECTION_INFO || path.join(ROOT, ".local", "lite-daemon", "connection-info.json");
+  const connPath =
+    vars.LITE_CONNECTION_INFO ||
+    path.join(ROOT, ".local", "lite-daemon", "connection-info.json");
   const conn = loadJsonIfExists(connPath) || {};
   const url =
     `${conn.url ?? ""}`.trim() ||
@@ -172,7 +195,8 @@ function getLiteEnvValues() {
       const protocol = `${conn.protocol ?? "http"}`.trim() || "http";
       const host = `${conn.host ?? "localhost"}`.trim() || "localhost";
       const port = Number(conn.port);
-      if (Number.isFinite(port) && port > 0) return `${protocol}://${host}:${port}`;
+      if (Number.isFinite(port) && port > 0)
+        return `${protocol}://${host}:${port}`;
       return "";
     })();
   return {
@@ -186,7 +210,9 @@ function getLiteEnvValues() {
 function getHubEnvValues() {
   const envOut = run("bash", [HUB_DAEMON, "env"]);
   if (envOut.status !== 0) {
-    throw new Error(`failed to read hub daemon env:\n${envOut.stderr ?? ""}`.trim());
+    throw new Error(
+      `failed to read hub daemon env:\n${envOut.stderr ?? ""}`.trim(),
+    );
   }
   const vars = parseKeyValueLines(envOut.stdout);
   const hostRaw = `${vars.HUB_BIND_HOST ?? "localhost"}`.trim() || "localhost";
@@ -229,11 +255,17 @@ function resolveHubPostgresConnection(statusInfo) {
   if (fromStatus.pgHost) return fromStatus;
 
   const localEnvCandidates = [];
-  localEnvCandidates.push(path.join(ROOT, "data", "app", "postgres", "local-postgres.env"));
-  localEnvCandidates.push(path.join(ROOT, "data", "postgres", "local-postgres.env"));
+  localEnvCandidates.push(
+    path.join(ROOT, "data", "app", "postgres", "local-postgres.env"),
+  );
+  localEnvCandidates.push(
+    path.join(ROOT, "data", "postgres", "local-postgres.env"),
+  );
   const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
   if (pgDataDir) {
-    localEnvCandidates.push(path.join(path.dirname(pgDataDir), "local-postgres.env"));
+    localEnvCandidates.push(
+      path.join(path.dirname(pgDataDir), "local-postgres.env"),
+    );
   }
 
   for (const file of localEnvCandidates) {
@@ -255,11 +287,7 @@ function runPsqlQuery(connection, sql) {
     PGUSER: connection.pgUser || "smc",
     PGDATABASE: connection.pgDatabase || "smc",
   };
-  const res = run(
-    "psql",
-    ["-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
-    { env },
-  );
+  const res = run("psql", ["-At", "-v", "ON_ERROR_STOP=1", "-c", sql], { env });
   if (res.status !== 0) return undefined;
   return firstNonEmptyLine(res.stdout);
 }
@@ -326,24 +354,36 @@ LIMIT 1;`,
   };
 }
 
-function resolveHubPassword(statusInfo) {
-  const explicit = `${process.env.COCALC_HUB_PASSWORD ?? ""}`.trim();
-  const explicitLooksLikePath =
-    explicit.includes(path.sep) || explicit.startsWith(".") || explicit.startsWith("~");
-
+function hubPasswordCandidates(statusInfo, opts = {}) {
+  const root = opts.root ?? ROOT;
+  const envSecretsDir = `${process.env.SECRETS ?? ""}`.trim();
+  const secretsDir =
+    opts.secretsDir ?? (envSecretsDir.length > 0 ? envSecretsDir : undefined);
   const candidates = [];
-  if (process.env.SECRETS?.trim()) {
-    candidates.push(path.join(process.env.SECRETS.trim(), "conat-password"));
+  if (secretsDir) {
+    candidates.push(path.join(secretsDir, "conat-password"));
   }
-  candidates.push(path.join(ROOT, "data", "app", "postgres", "secrets", "conat-password"));
-  candidates.push(path.join(ROOT, "data", "secrets", "conat-password"));
-  candidates.push(path.join(ROOT, "data.0", "secrets", "conat-password"));
+  candidates.push(
+    path.join(root, "data", "app", "postgres", "secrets", "conat-password"),
+  );
   const pgDataDir = `${statusInfo?.pgDataDir ?? ""}`.trim();
   if (pgDataDir) {
-    candidates.push(path.join(path.dirname(pgDataDir), "secrets", "conat-password"));
+    candidates.push(
+      path.join(path.dirname(pgDataDir), "secrets", "conat-password"),
+    );
   }
+  return candidates;
+}
 
-  for (const candidate of candidates) {
+function resolveHubPassword(statusInfo, opts = {}) {
+  const explicit =
+    `${opts.explicit ?? process.env.COCALC_HUB_PASSWORD ?? ""}`.trim();
+  const explicitLooksLikePath =
+    explicit.includes(path.sep) ||
+    explicit.startsWith(".") ||
+    explicit.startsWith("~");
+
+  for (const candidate of hubPasswordCandidates(statusInfo, opts)) {
     if (candidate && fs.existsSync(candidate)) return candidate;
   }
   if (explicit && !explicitLooksLikePath) return explicit;
@@ -411,7 +451,9 @@ function emitShell(exportsMap, meta) {
     console.log(`# start it with: pnpm ${meta.mode}:daemon:start`);
   }
   if (meta.prependPath && `${meta.prependPath}`.trim()) {
-    console.log(`export PATH=${shellEscape(`${meta.prependPath}`.trim())}:"$PATH"`);
+    console.log(
+      `export PATH=${shellEscape(`${meta.prependPath}`.trim())}:"$PATH"`,
+    );
   }
   for (const [k, v] of Object.entries(exportsMap)) {
     console.log(`export ${k}=${shellEscape(v)}`);
@@ -430,19 +472,31 @@ function main() {
   const asJson = flags.has("--json");
   const shell = !asJson || flags.has("--shell");
   const defaultStart = mode === "lite";
-  const autoStart = flags.has("--start") ? true : flags.has("--no-start") ? false : defaultStart;
+  const autoStart = flags.has("--start")
+    ? true
+    : flags.has("--no-start")
+      ? false
+      : defaultStart;
   const withBrowser = flags.has("--with-browser");
 
   const daemon = ensureDaemon(mode, autoStart);
   if (mode === "lite" && !daemon.running) {
-    throw new Error(`lite daemon is not running. Start it with: pnpm lite:daemon:start`);
+    throw new Error(
+      `lite daemon is not running. Start it with: pnpm lite:daemon:start`,
+    );
   }
   const source = mode === "lite" ? getLiteEnvValues() : getHubEnvValues();
-  const hubStatusInfo = mode === "hub" ? parseHubStatusInfo(daemon.statusText) : undefined;
-  const hubDbContext = mode === "hub" ? resolveHubProjectAndAccount(hubStatusInfo) : {};
+  const hubStatusInfo =
+    mode === "hub" ? parseHubStatusInfo(daemon.statusText) : undefined;
+  const hubDbContext =
+    mode === "hub" ? resolveHubProjectAndAccount(hubStatusInfo) : {};
   const hubPassword = mode === "hub" ? resolveHubPassword(hubStatusInfo) : "";
   const auth = getAuthConfig();
-  const profile = chooseProfileForApi(auth.profiles, auth.current, source.apiUrl);
+  const profile = chooseProfileForApi(
+    auth.profiles,
+    auth.current,
+    source.apiUrl,
+  );
 
   const apiUrl = source.apiUrl || `${process.env.COCALC_API_URL ?? ""}`.trim();
   if (!apiUrl) {
@@ -451,26 +505,29 @@ function main() {
 
   // For lite, only use daemon connection token (never agent_token, never profile/env bearer).
   // agent_token is ACP-scoped and can break account RPC auth.
-  const liteConnectionBearer = `${mode === "lite" ? source.connectionInfo?.token ?? "" : ""}`.trim();
+  const liteConnectionBearer =
+    `${mode === "lite" ? (source.connectionInfo?.token ?? "") : ""}`.trim();
   const explicitBearer =
     mode === "hub" ? "" : `${process.env.COCALC_BEARER_TOKEN ?? ""}`.trim();
   const profileBearer = mode === "hub" ? "" : `${profile?.bearer ?? ""}`.trim();
   const bearer =
-    mode === "lite" ? liteConnectionBearer : explicitBearer || profileBearer || "";
+    mode === "lite"
+      ? liteConnectionBearer
+      : explicitBearer || profileBearer || "";
 
   // Export a whitespace sentinel when bearer is empty so downstream CLI
   // does not silently fall back to auth-profile bearer.
   const bearerExport = !bearer ? " " : bearer;
 
   const accountId =
-    `${mode === "lite" ? source.connectionInfo?.account_id ?? "" : ""}`.trim() ||
-    `${mode === "hub" ? hubDbContext.accountId ?? "" : ""}`.trim() ||
+    `${mode === "lite" ? (source.connectionInfo?.account_id ?? "") : ""}`.trim() ||
+    `${mode === "hub" ? (hubDbContext.accountId ?? "") : ""}`.trim() ||
     `${process.env.COCALC_ACCOUNT_ID ?? ""}`.trim() ||
     `${profile?.account_id ?? ""}`.trim() ||
     "";
 
   const projectId =
-    `${mode === "hub" ? hubDbContext.projectId ?? "" : ""}`.trim() ||
+    `${mode === "hub" ? (hubDbContext.projectId ?? "") : ""}`.trim() ||
     `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
     LOCAL_PROJECT_ID;
 
@@ -541,9 +598,16 @@ function main() {
   console.log(payload);
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`dev-env error: ${err?.message ?? err}`);
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`dev-env error: ${err?.message ?? err}`);
+    process.exit(1);
+  }
 }
+
+module.exports = {
+  hubPasswordCandidates,
+  resolveHubPassword,
+};

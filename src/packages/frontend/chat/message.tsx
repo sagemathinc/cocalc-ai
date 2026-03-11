@@ -111,6 +111,52 @@ export function resolveThreadMetadataLookup({
   };
 }
 
+export function resolveForkThreadNavigation({
+  actions,
+  message,
+}: {
+  actions?: Pick<ChatActions, "getMessageByDate">;
+  message: ChatMessageTyped;
+}): {
+  threadKey?: string;
+  fragment?: string;
+  title?: string;
+} {
+  if (parentMessageId(message) != null) {
+    return {};
+  }
+  const forkedFromRoot = field<string>(message, "forked_from_root_date");
+  if (!forkedFromRoot) {
+    return {};
+  }
+  const forkedTitle = field<string>(message, "forked_from_title")?.trim();
+  const forkedLatest = field<string>(
+    message,
+    "forked_from_latest_message_date",
+  );
+  const rootDate = new Date(forkedFromRoot);
+  if (Number.isNaN(rootDate.valueOf())) {
+    return {};
+  }
+  const latestDate = forkedLatest ? new Date(forkedLatest) : undefined;
+  const fragmentDate =
+    latestDate && !Number.isNaN(latestDate.valueOf()) ? latestDate : rootDate;
+  const fragment = toMsString(fragmentDate);
+  const resolveThreadId = (date?: Date): string | undefined => {
+    if (!date || Number.isNaN(date.valueOf())) return undefined;
+    const target = actions?.getMessageByDate?.(date);
+    const threadId = field<string>(target, "thread_id");
+    return typeof threadId === "string" && threadId.trim().length > 0
+      ? threadId.trim()
+      : undefined;
+  };
+  return {
+    threadKey: resolveThreadId(latestDate) ?? resolveThreadId(rootDate),
+    fragment,
+    title: forkedTitle,
+  };
+}
+
 const THREAD_STYLE_SINGLE: CSS = {
   marginLeft: "15px",
   marginRight: "15px",
@@ -1425,21 +1471,8 @@ export default function Message({
   }
 
   function renderForkNotice() {
-    if (parentMessageId(message) != null) return null;
-    const forkedFromRoot = field<string>(message, "forked_from_root_date");
-    if (!forkedFromRoot) return null;
-    const forkedTitle = field<string>(message, "forked_from_title")?.trim();
-    const forkedLatest = field<string>(
-      message,
-      "forked_from_latest_message_date",
-    );
-    const rootDate = new Date(forkedFromRoot);
-    if (Number.isNaN(rootDate.valueOf())) return null;
-    const rootKey = toMsString(rootDate);
-    const latestDate = forkedLatest ? new Date(forkedLatest) : undefined;
-    const latestKey =
-      latestDate && !Number.isNaN(latestDate.valueOf()) ? latestDate : rootDate;
-    const latestFragment = toMsString(latestKey);
+    const navigation = resolveForkThreadNavigation({ actions, message });
+    if (!navigation.fragment) return null;
     return (
       <div style={{ marginBottom: 6 }}>
         <Button
@@ -1448,16 +1481,16 @@ export default function Message({
           style={{ padding: 0 }}
           onClick={(event) => {
             event.stopPropagation();
-            if (rootKey) {
-              actions?.setSelectedThread?.(rootKey);
+            if (navigation.threadKey) {
+              actions?.setSelectedThread?.(navigation.threadKey);
             }
-            if (latestFragment) {
+            if (navigation.fragment) {
               // Defer so thread selection doesn't immediately clear the fragment.
-              setTimeout(() => actions?.setFragment?.(latestFragment), 0);
+              setTimeout(() => actions?.setFragment?.(navigation.fragment), 0);
             }
           }}
         >
-          Forked from {forkedTitle || "another chat"} →
+          Forked from {navigation.title || "another chat"} →
         </Button>
       </div>
     );

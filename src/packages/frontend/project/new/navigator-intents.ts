@@ -71,7 +71,7 @@ function chooseThreadKeyFromIndex(opts: {
   return bestKey || fallback;
 }
 
-function resolveThreadIdFromIndex(
+export function resolveThreadIdFromIndex(
   actions: any,
   threadKey?: string,
 ): string | undefined {

@@ -119,7 +119,11 @@ export class TaskActions extends Actions<TaskState> {
     if (this.key_handler == null) {
       this.key_handler = create_key_handler(this);
     }
-    this.frameActions.set_active_key_handler(this.key_handler);
+    const displayPath = this.getFrameData("display_path");
+    this.frameActions.set_active_key_handler(
+      this.key_handler,
+      typeof displayPath === "string" ? displayPath : undefined,
+    );
   }
 
   public disable_key_handler(): void {
@@ -564,6 +568,8 @@ export class TaskActions extends Actions<TaskState> {
 
   // null=unselect all.
   public edit_desc(task_id: string | undefined | null): void {
+    const resolvedTaskId =
+      task_id === undefined ? this.getFrameData("current_task_id") : task_id;
     // close any that were currently in edit state before opening new one
     const local = this.getFrameData("local_task_state") ?? fromJS({});
     for (const [id, state] of local) {
@@ -571,8 +577,12 @@ export class TaskActions extends Actions<TaskState> {
         this.stop_editing_desc(id);
       }
     }
-    if (task_id !== null) {
-      this.set_local_task_state(task_id, { editing_desc: true });
+    if (resolvedTaskId != null) {
+      this.set_local_task_state(resolvedTaskId, {
+        editing_desc: true,
+        editing_desc_last_edited:
+          this.store.getIn(["tasks", resolvedTaskId, "last_edited"]) ?? null,
+      });
     }
     this.disable_key_handler();
     setTimeout(() => {
@@ -693,26 +703,30 @@ export class TaskActions extends Actions<TaskState> {
     }
     const visible = this.getFrameData("visible");
     const old_id = visible.get(old_index);
-    const new_id = visible.get(new_index);
-    if (new_id == null) return;
-    const new_pos = this.store.getIn(["tasks", new_id, "position"]);
-    if (new_pos == null) {
-      return;
-    }
+    if (old_id == null) return;
+    const visible1 = visible.delete(old_index).insert(new_index, old_id);
+    const before_id = new_index > 0 ? visible1.get(new_index - 1) : undefined;
+    const after_id =
+      new_index < visible1.size - 1 ? visible1.get(new_index + 1) : undefined;
+    const before_pos =
+      before_id == null
+        ? undefined
+        : this.store.getIn(["tasks", before_id, "position"]);
+    const after_pos =
+      after_id == null
+        ? undefined
+        : this.store.getIn(["tasks", after_id, "position"]);
+    const descending =
+      this.getFrameData("local_view_state")?.getIn(["sort", "dir"]) === "desc";
     let position;
-    if (new_index === 0) {
-      // moving to very beginning
-      position = new_pos - 1;
-    } else if (new_index < old_index) {
-      const before_id = visible.get(new_index - 1);
-      const before_pos =
-        this.store.getIn(["tasks", before_id ?? "", "position"]) ?? new_pos - 1;
-      position = (new_pos + before_pos) / 2;
-    } else if (new_index > old_index) {
-      const after_id = visible.get(new_index + 1);
-      const after_pos =
-        this.store.getIn(["tasks", after_id ?? "", "position"]) ?? new_pos + 1;
-      position = (new_pos + after_pos) / 2;
+    if (before_pos != null && after_pos != null) {
+      position = (before_pos + after_pos) / 2;
+    } else if (before_pos != null) {
+      position = before_pos + (descending ? -1 : 1);
+    } else if (after_pos != null) {
+      position = after_pos + (descending ? 1 : -1);
+    } else {
+      return;
     }
     this.set_task(old_id, { position }, true);
     this.__update_visible();

@@ -122,7 +122,15 @@ export function update_visible(
       if (id === current_task_id) {
         current_is_visible = true;
       }
-      const sortValue = task.get(sort_key) as string | number | undefined;
+      const liveSortValue = task.get(sort_key) as string | number | undefined;
+      const editingSortValue = local_task_state?.getIn([
+        id,
+        "editing_desc_last_edited",
+      ]) as string | number | undefined;
+      const sortValue =
+        editing_desc && sort_key === "last_edited"
+          ? (editingSortValue ?? liveSortValue)
+          : liveSortValue;
       v.push([sortValue ?? sort_default, id]);
     } else {
       visible = false; // not a tag of any currently visible task

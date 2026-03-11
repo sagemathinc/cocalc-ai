@@ -10,7 +10,14 @@ being virtualized with react-virtuoso.
 
 */
 
-import { CSSProperties, ReactNode, useState } from "react";
+import {
+  CSSProperties,
+  ReactNode,
+  createContext,
+  useContext,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "./icon";
 import { DndContext, DragOverlay } from "@dnd-kit/core";
 import {
@@ -32,6 +39,17 @@ interface Props {
   onDragMove?: () => void;
   disabled?: boolean;
 }
+
+interface SortableHandleContextValue {
+  id: string | number;
+  attributes: Record<string, any>;
+  listeners: Record<string, any> | undefined;
+  setActivatorNodeRef?: (element: HTMLElement | null) => void;
+}
+
+const SortableHandleContext = createContext<SortableHandleContextValue | null>(
+  null,
+);
 
 export function SortableList({
   items,
@@ -77,43 +95,67 @@ export function SortableList({
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
     >
       <SortableContext items={items} strategy={verticalListSortingStrategy}>
-        <DragOverlay>
-          {dragId != null && Item != null && (
-            <div style={{ height: "48px" }}>
-              <Item id={dragId} />
-            </div>
-          )}
-        </DragOverlay>
+        {Item != null && (
+          <>
+            {typeof document !== "undefined" &&
+              createPortal(
+                <DragOverlay zIndex={50000}>
+                  {dragId != null && <Item id={dragId} />}
+                </DragOverlay>,
+                document.body,
+              )}
+          </>
+        )}
         {children}
       </SortableContext>
     </DndContext>
   );
 }
 
-export function SortableItem({ id, children }) {
-  const { active, transform, transition, setNodeRef } = useSortable({
+export function SortableItem({
+  id,
+  children,
+  hideActive = true,
+}: {
+  id: string | number;
+  children: ReactNode;
+  hideActive?: boolean;
+}) {
+  const {
+    active,
+    transform,
+    transition,
+    setNodeRef,
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+  } = useSortable({
     id,
   });
   return (
-    <div
-      ref={setNodeRef}
-      style={
-        active != null
-          ? {
-              transform: transform
-                ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
-                : undefined,
-              transition,
-              opacity:
-                active?.id == id
-                  ? 0
-                  : undefined /* render it invisible in case its the active one -- want the space it takes up*/,
-            }
-          : undefined
-      }
+    <SortableHandleContext.Provider
+      value={{ id, attributes, listeners, setActivatorNodeRef }}
     >
-      {children}
-    </div>
+      <div
+        ref={setNodeRef}
+        style={
+          active != null
+            ? {
+                transform: transform
+                  ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+                  : undefined,
+                transition,
+                opacity:
+                  hideActive && active?.id == id
+                    ? 0
+                    : undefined /* render it invisible in case its the active one -- want the space it takes up*/,
+              }
+            : undefined
+        }
+      >
+        {children}
+      </div>
+    </SortableHandleContext.Provider>
   );
 }
 
@@ -126,10 +168,45 @@ export function DragHandle({
   children?: ReactNode;
   style?: CSSProperties;
 }) {
-  const { attributes, listeners } = useSortable({ id });
+  const context = useContext(SortableHandleContext);
+  if (context != null && context.id == id) {
+    const { attributes, listeners, setActivatorNodeRef } = context;
+    return (
+      <div
+        ref={setActivatorNodeRef}
+        style={{
+          display: "inline-block",
+          cursor: "move",
+          ...style,
+        }}
+        {...attributes}
+        {...listeners}
+      >
+        {children ? children : <Icon name="bars" />}
+      </div>
+    );
+  }
 
   return (
+    <StandaloneDragHandle id={id} style={style}>
+      {children}
+    </StandaloneDragHandle>
+  );
+}
+
+function StandaloneDragHandle({
+  id,
+  children,
+  style,
+}: {
+  id: string | number;
+  children?: ReactNode;
+  style?: CSSProperties;
+}) {
+  const { attributes, listeners, setActivatorNodeRef } = useSortable({ id });
+  return (
     <div
+      ref={setActivatorNodeRef}
       style={{
         display: "inline-block",
         cursor: "move",

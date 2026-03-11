@@ -20,6 +20,7 @@ import {
   createEnvironment,
   addFirewallRule,
   createVolume,
+  deleteVolume,
   getVolumes,
   attachVolume,
   attachPublicIP,
@@ -612,12 +613,41 @@ export class HyperstackProvider implements CloudProvider {
   async deleteHost(
     runtime: HostRuntime,
     creds: HyperstackCreds,
+    opts?: { preserveDataDisk?: boolean },
   ): Promise<void> {
     logger.debug("HyperstackProvider: deleteHost", runtime);
     ensureHyperstackConfig(creds);
     const id = parseInstanceId(runtime.instance_id);
     await deleteVirtualMachine(id);
     await waitForHyperstackDelete(id);
+    if (opts?.preserveDataDisk) {
+      return;
+    }
+    const volumeId = Number(
+      (runtime.metadata as { data_volume_id?: number } | undefined)
+        ?.data_volume_id,
+    );
+    if (!Number.isFinite(volumeId) || volumeId <= 0) {
+      return;
+    }
+    try {
+      await deleteVolume(volumeId);
+    } catch (err) {
+      const message = String(err).toLowerCase();
+      if (
+        message.includes("not found") ||
+        message.includes("does not exist") ||
+        message.includes("no such")
+      ) {
+        logger.info("Hyperstack data volume already deleted", { volumeId });
+        return;
+      }
+      logger.warn("Hyperstack deleteHost data volume delete failed", {
+        volumeId,
+        err: String(err),
+      });
+      throw err;
+    }
   }
 
   async resizeDisk(): Promise<void> {

@@ -27,6 +27,13 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
+import {
+  queueNavigatorPromptIntent,
+  removeQueuedNavigatorPromptIntent,
+  resolveThreadIdFromIndex,
+  takeQueuedNavigatorPromptIntents,
+  type NavigatorSubmitPromptDetail,
+} from "@cocalc/frontend/project/new/navigator-intents";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
@@ -64,6 +71,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   const [session, setSession] = useState<AgentSessionRecord | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions | null>(null);
   const [error, setError] = useState<string>("");
+  const [intentRetryTick, setIntentRetryTick] = useState(0);
   const [position, setPosition] = useState(DEFAULT_POSITION);
   const [dockSize, setDockSize] = useState(DEFAULT_DOCK_SIZE);
   const [isResizing, setIsResizing] = useState(false);
@@ -213,6 +221,88 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     }, 0);
     return () => clearTimeout(timer);
   }, [chatActions, session?.thread_key]);
+
+  const submitQueuedIntent = useCallback(
+    (intent: NavigatorSubmitPromptDetail): boolean => {
+      if (!chatActions || !session) return false;
+      const input = `${intent?.prompt ?? ""}`.trim();
+      if (!input) {
+        removeQueuedNavigatorPromptIntent(intent.id);
+        return true;
+      }
+      const threadKey = `${session.thread_key ?? ""}`.trim();
+      const replyThreadId = resolveThreadIdFromIndex(chatActions, threadKey);
+      const model =
+        typeof session.model === "string" && session.model.trim().length > 0
+          ? session.model.trim()
+          : undefined;
+      const timeStamp = chatActions.sendChat({
+        input,
+        reply_thread_id: replyThreadId,
+        tag: intent.tag ?? "intent:navigator",
+        noNotification: true,
+        threadAgent:
+          !replyThreadId && intent.forceCodex !== false
+            ? {
+                mode: "codex",
+                model,
+                codexConfig: {
+                  model,
+                  reasoning: session.reasoning as any,
+                  sessionMode: session.mode as any,
+                  workingDirectory: session.working_directory,
+                },
+              }
+            : undefined,
+      });
+      if (!timeStamp) return false;
+      removeQueuedNavigatorPromptIntent(intent.id);
+      if (!replyThreadId && typeof timeStamp === "string") {
+        const nextThreadKey = `${new Date(timeStamp).valueOf()}`;
+        if (nextThreadKey) {
+          setSession((current) =>
+            current == null
+              ? current
+              : {
+                  ...current,
+                  thread_key: nextThreadKey,
+                  updated_at: new Date().toISOString(),
+                },
+          );
+        }
+      }
+      setTimeout(() => {
+        chatActions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+      }, 100);
+      return true;
+    },
+    [chatActions, session],
+  );
+
+  useEffect(() => {
+    if (!chatActions || !session) return;
+    let retryNeeded = false;
+    const queued = takeQueuedNavigatorPromptIntents();
+    for (const intent of queued) {
+      try {
+        const consumed = submitQueuedIntent(intent);
+        if (!consumed) {
+          queueNavigatorPromptIntent(intent);
+          retryNeeded = true;
+          break;
+        }
+      } catch (err) {
+        queueNavigatorPromptIntent(intent);
+        setError(`${err}`);
+        retryNeeded = true;
+      }
+    }
+    if (!retryNeeded) return;
+    const timer = setTimeout(() => {
+      setIntentRetryTick((value) => value + 1);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [chatActions, intentRetryTick, session, submitQueuedIntent]);
 
   useEffect(() => {
     if (!isResizing) return;

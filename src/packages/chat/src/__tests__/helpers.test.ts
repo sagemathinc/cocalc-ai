@@ -62,6 +62,9 @@ describe("chat helpers", () => {
       thread_color: "#123456",
       thread_image: "https://example.com/image.png",
       pin: true,
+      archived: true,
+      archived_chat_rows: 42,
+      latest_chat_date_ms: 1767225600000,
       agent_kind: "acp",
       agent_model: "gpt-5.3-codex",
       agent_mode: "interactive",
@@ -73,6 +76,9 @@ describe("chat helpers", () => {
     expect(cfg.thread_id).toBe("thread-1");
     expect(cfg.thread_image).toBe("https://example.com/image.png");
     expect(cfg.pin).toBe(true);
+    expect(cfg.archived).toBe(true);
+    expect(cfg.archived_chat_rows).toBe(42);
+    expect(cfg.latest_chat_date_ms).toBe(1767225600000);
     expect(cfg.agent_kind).toBe("acp");
     expect(cfg.agent_model).toBe("gpt-5.3-codex");
     expect(cfg.agent_mode).toBe("interactive");

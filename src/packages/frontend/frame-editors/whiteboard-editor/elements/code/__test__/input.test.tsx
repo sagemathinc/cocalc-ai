@@ -5,6 +5,7 @@ import { fromJS } from "immutable";
 const useFrameContext = jest.fn();
 const getStore = jest.fn();
 const codeMirrorEditor = jest.fn((_props?: any) => null);
+const getJupyterActions = jest.fn();
 const noteSaved = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -29,6 +30,10 @@ jest.mock("../../../hooks", () => ({
   useFrameContext: (...args) => useFrameContext(...args),
 }));
 
+jest.mock("../actions", () => ({
+  getJupyterActions: (...args) => getJupyterActions(...args),
+}));
+
 import Input from "../input";
 
 describe("whiteboard code input", () => {
@@ -36,9 +41,10 @@ describe("whiteboard code input", () => {
     useFrameContext.mockReset();
     getStore.mockReset();
     codeMirrorEditor.mockReset();
+    getJupyterActions.mockReset();
     noteSaved.mockReset();
     getStore.mockReturnValue({
-      get: () => undefined,
+      get: (key?: string) => (key === "account_id" ? "acct-1" : undefined),
     });
   });
 
@@ -46,14 +52,17 @@ describe("whiteboard code input", () => {
     const setElement = jest.fn();
     const runCodeElement = jest.fn();
     const selectNextCodeCell = jest.fn();
+    const selectPreviousCodeCell = jest.fn();
     useFrameContext.mockReturnValue({
       id: "frame-1",
       project_id: "project-1",
       path: "example.board",
+      desc: fromJS({}),
       actions: {
         setElement,
         runCodeElement,
         selectNextCodeCell,
+        selectPreviousCodeCell,
       },
     });
 
@@ -68,19 +77,21 @@ describe("whiteboard code input", () => {
     const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
     expect(props).toBeDefined();
     const preventDefault = jest.fn();
-    props.onKeyDown(
-      {
-        getValue: () => "2+3",
-      },
-      {
-        key: "Enter",
-        shiftKey: true,
-        altKey: false,
-        metaKey: false,
-        ctrlKey: false,
-        preventDefault,
-      },
-    );
+    act(() => {
+      props.onKeyDown(
+        {
+          getValue: () => "2+3",
+        },
+        {
+          key: "Enter",
+          shiftKey: true,
+          altKey: false,
+          metaKey: false,
+          ctrlKey: false,
+          preventDefault,
+        },
+      );
+    });
 
     expect(preventDefault).toHaveBeenCalled();
     expect(setElement).toHaveBeenCalledWith({
@@ -92,6 +103,84 @@ describe("whiteboard code input", () => {
     expect(selectNextCodeCell).toHaveBeenCalledWith("frame-1", "cell1");
   });
 
+  it("moves to adjacent code cells with arrow keys at the boundaries", () => {
+    const setElement = jest.fn();
+    const selectNextCodeCell = jest.fn();
+    const selectPreviousCodeCell = jest.fn();
+    const set_frame_tree = jest.fn();
+    useFrameContext.mockReturnValue({
+      id: "frame-1",
+      project_id: "project-1",
+      path: "example.board",
+      desc: fromJS({}),
+      actions: {
+        setElement,
+        runCodeElement: jest.fn(),
+        selectNextCodeCell,
+        selectPreviousCodeCell,
+        set_frame_tree,
+        getElement: jest.fn().mockReturnValue({ id: "prev", str: "a\nbc" }),
+      },
+    });
+    selectNextCodeCell.mockReturnValue("next");
+    selectPreviousCodeCell.mockReturnValue("prev");
+
+    render(
+      <Input
+        element={{ id: "cell1", str: "2+3", data: {}, type: "code" } as any}
+        canvasScale={1}
+        getValueRef={{ current: () => "2+3" } as any}
+      />,
+    );
+
+    const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
+
+    const preventDown = jest.fn();
+    act(() => {
+      props.onKeyDown(
+        {
+          getCursor: () => ({ line: 0, ch: 3 }),
+          firstLine: () => 0,
+          lastLine: () => 0,
+          getLine: () => "2+3",
+        },
+        {
+          key: "ArrowDown",
+          preventDefault: preventDown,
+        },
+      );
+    });
+
+    const preventUp = jest.fn();
+    act(() => {
+      props.onKeyDown(
+        {
+          getCursor: () => ({ line: 0, ch: 0 }),
+          firstLine: () => 0,
+          lastLine: () => 0,
+          getLine: () => "2+3",
+        },
+        {
+          key: "ArrowUp",
+          preventDefault: preventUp,
+        },
+      );
+    });
+
+    expect(preventDown).toHaveBeenCalled();
+    expect(selectNextCodeCell).toHaveBeenCalledWith("frame-1", "cell1");
+    expect(set_frame_tree).toHaveBeenCalledWith({
+      id: "frame-1",
+      pendingCodeCursor: { id: "next", x: 0, y: 0 },
+    });
+    expect(preventUp).toHaveBeenCalled();
+    expect(selectPreviousCodeCell).toHaveBeenCalledWith("frame-1", "cell1");
+    expect(set_frame_tree).toHaveBeenCalledWith({
+      id: "frame-1",
+      pendingCodeCursor: { id: "prev", x: 2, y: 1 },
+    });
+  });
+
   it("applies a selected completion to the local editor value immediately", () => {
     const setElement = jest.fn();
     const focus = jest.fn();
@@ -100,10 +189,13 @@ describe("whiteboard code input", () => {
       id: "frame-1",
       project_id: "project-1",
       path: "example.board",
+      desc: fromJS({}),
       actions: {
         setElement,
         runCodeElement: jest.fn(),
         selectNextCodeCell: jest.fn(),
+        selectPreviousCodeCell: jest.fn(),
+        set_frame_tree: jest.fn(),
         store: {
           getIn: jest.fn().mockReturnValue("i"),
         },
@@ -147,5 +239,149 @@ describe("whiteboard code input", () => {
     expect(set_cursor).toHaveBeenCalledWith({ x: 5, y: 0 });
     const latestProps = codeMirrorEditor.mock.calls.at(-1)?.[0] as any;
     expect(latestProps.value).toBe("input");
+  });
+
+  it("keeps the local editor value in sync when saving typed input", () => {
+    const setElement = jest.fn();
+    useFrameContext.mockReturnValue({
+      id: "frame-1",
+      project_id: "project-1",
+      path: "example.board",
+      desc: fromJS({}),
+      actions: {
+        setElement,
+        runCodeElement: jest.fn(),
+        selectNextCodeCell: jest.fn(),
+        selectPreviousCodeCell: jest.fn(),
+        set_frame_tree: jest.fn(),
+        store: {
+          getIn: jest.fn().mockReturnValue(""),
+        },
+      },
+    });
+
+    render(
+      <Input
+        element={{ id: "cell1", str: "", data: {}, type: "code" } as any}
+        canvasScale={1}
+        getValueRef={{ current: () => "impor" } as any}
+      />,
+    );
+
+    const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
+    act(() => {
+      props.actions.set_cell_input("cell1", "impor", true);
+    });
+
+    expect(setElement).toHaveBeenCalledWith({
+      obj: { id: "cell1", str: "impor" },
+      commit: true,
+    });
+    const latestProps = codeMirrorEditor.mock.calls.at(-1)?.[0] as any;
+    expect(latestProps.value).toBe("impor");
+  });
+
+  it("restores a pending destination cursor when a focused code cell mounts", () => {
+    const set_cursor = jest.fn();
+    const set_frame_tree = jest.fn();
+    useFrameContext.mockReturnValue({
+      id: "frame-1",
+      project_id: "project-1",
+      path: "example.board",
+      desc: fromJS({
+        pendingCodeCursor: { id: "cell1", x: 3, y: 2 },
+      }),
+      actions: {
+        setElement: jest.fn(),
+        runCodeElement: jest.fn(),
+        selectNextCodeCell: jest.fn(),
+        selectPreviousCodeCell: jest.fn(),
+        set_frame_tree,
+        getElement: jest.fn(),
+        store: {
+          getIn: jest.fn().mockReturnValue(""),
+        },
+      },
+    });
+
+    render(
+      <Input
+        element={{ id: "cell1", str: "", data: {}, type: "code" } as any}
+        canvasScale={1}
+        isFocused={true}
+        getValueRef={{ current: () => "" } as any}
+      />,
+    );
+
+    const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
+    act(() => {
+      props.registerEditor({ focus: jest.fn(), set_cursor });
+    });
+
+    expect(set_cursor).toHaveBeenCalledWith({ x: 3, y: 2 });
+    expect(set_frame_tree).toHaveBeenCalledWith({
+      id: "frame-1",
+      pendingCodeCursor: undefined,
+    });
+  });
+
+  it("warms the aux notebook backend before the first completion request", async () => {
+    const setElement = jest.fn();
+    const initBackend = jest.fn(async () => {});
+    const getConnectionFile = jest.fn(async () => "conn.json");
+    const refreshKernelStatus = jest.fn(async () => {});
+    const complete = jest.fn(async () => false);
+    getJupyterActions.mockResolvedValue({
+      store: {
+        get: (key?: string) => (key === "backend_state" ? "off" : undefined),
+      },
+      initBackend,
+      getConnectionFile,
+      refreshKernelStatus,
+      complete,
+    });
+    useFrameContext.mockReturnValue({
+      id: "frame-1",
+      project_id: "project-1",
+      path: "example.board",
+      desc: fromJS({}),
+      actions: {
+        setElement,
+        runCodeElement: jest.fn(),
+        selectNextCodeCell: jest.fn(),
+        selectPreviousCodeCell: jest.fn(),
+        set_frame_tree: jest.fn(),
+        store: {
+          getIn: jest.fn().mockReturnValue("impor"),
+        },
+      },
+    });
+
+    render(
+      <Input
+        element={{ id: "cell1", str: "", data: {}, type: "code" } as any}
+        canvasScale={1}
+        getValueRef={{ current: () => "impor" } as any}
+      />,
+    );
+
+    const props = codeMirrorEditor.mock.calls[0]?.[0] as any;
+    await act(async () => {
+      await props.actions.complete("impor", { line: 0, ch: 5 }, "cell1", {
+        top: 0,
+        left: 0,
+        gutter: 0,
+      });
+    });
+
+    expect(initBackend).toHaveBeenCalledTimes(1);
+    expect(getConnectionFile).toHaveBeenCalledTimes(1);
+    expect(refreshKernelStatus).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledWith(
+      "impor",
+      { line: 0, ch: 5 },
+      "cell1",
+      { top: 0, left: 0, gutter: 0 },
+    );
   });
 });

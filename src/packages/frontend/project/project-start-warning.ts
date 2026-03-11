@@ -25,6 +25,8 @@ NOTE:
 // This explicitly_started is because otherwise is_running_or_starting
 // can't **immediately* detect starting the project.
 const explicitly_started: { [project_id: string]: number } = {};
+const pendingEnsureProjectRunning: { [project_id: string]: Promise<boolean> } =
+  {};
 
 export function is_running_or_starting(project_id: string): boolean {
   if (lite) {
@@ -72,39 +74,58 @@ export async function ensure_project_running(
   project_id: string,
   what: string,
 ): Promise<boolean> {
-  const intl = await getIntl();
-  const project_actions = redux.getProjectActions(project_id);
-  await project_actions.wait_until_no_modals();
   if (is_running_or_starting(project_id)) {
     return true;
   }
-
-  let result: string = "";
-
-  const project_title = redux.getStore("projects").get_title(project_id);
-  const title = intl.formatMessage(dialogs.project_start_warning_title);
-  const content = intl.formatMessage(dialogs.project_start_warning_content, {
-    project_title,
-    title,
-    what,
-  });
-
-  const interval = setInterval(() => {
-    if (result != "") {
-      clearInterval(interval);
-      return;
-    }
-    if (is_running_or_starting(project_id)) {
-      clearInterval(interval);
-      project_actions.clear_modal();
-    }
-  }, 1000);
-
-  result = await project_actions.show_modal({ title, content });
-  if (result == "ok") {
-    explicitly_started[project_id] = Date.now();
-    redux.getActions("projects").start_project(project_id);
-    return true;
+  const pending = pendingEnsureProjectRunning[project_id];
+  if (pending != null) {
+    return await pending;
   }
-  return is_running_or_starting(project_id);
+
+  const request = (async () => {
+    const intl = await getIntl();
+    const project_actions = redux.getProjectActions(project_id);
+    await project_actions.wait_until_no_modals();
+    if (is_running_or_starting(project_id)) {
+      return true;
+    }
+
+    let result: string = "";
+
+    const project_title = redux.getStore("projects").get_title(project_id);
+    const title = intl.formatMessage(dialogs.project_start_warning_title);
+    const content = intl.formatMessage(dialogs.project_start_warning_content, {
+      project_title,
+      title,
+      what,
+    });
+
+    const interval = setInterval(() => {
+      if (result != "") {
+        clearInterval(interval);
+        return;
+      }
+      if (is_running_or_starting(project_id)) {
+        clearInterval(interval);
+        project_actions.clear_modal();
+      }
+    }, 1000);
+
+    result = await project_actions.show_modal({ title, content });
+    if (result == "ok") {
+      explicitly_started[project_id] = Date.now();
+      redux.getActions("projects").start_project(project_id);
+      return true;
+    }
+    return is_running_or_starting(project_id);
+  })();
+
+  pendingEnsureProjectRunning[project_id] = request;
+  try {
+    return await request;
+  } finally {
+    if (pendingEnsureProjectRunning[project_id] === request) {
+      delete pendingEnsureProjectRunning[project_id];
+    }
+  }
 }

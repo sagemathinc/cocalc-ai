@@ -46,6 +46,7 @@ export default function Input({
   const frame = useFrameContext();
   const [localValue, setLocalValue] = useState<string>(element.str ?? "");
   const editorRef = useRef<any>(undefined);
+  const [editorVersion, setEditorVersion] = useState(0);
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(element.str ?? ""),
   );
@@ -86,6 +87,25 @@ export default function Input({
     });
   }, [element.str]);
 
+  useEffect(() => {
+    if (!isFocused || editorRef.current?.set_cursor == null) return;
+    const pendingCursor = frame.desc.get("pendingCodeCursor");
+    if (pendingCursor?.get("id") !== element.id) return;
+    editorRef.current.set_cursor({
+      x: pendingCursor.get("x", 0),
+      y: pendingCursor.get("y", 0),
+    });
+    frame.actions.set_frame_tree({
+      id: frame.id,
+      pendingCodeCursor: undefined,
+    });
+  }, [
+    frame.desc.get("pendingCodeCursor"),
+    element.id,
+    isFocused,
+    editorVersion,
+  ]);
+
   return (
     <div>
       <CodeMirrorEditor
@@ -108,15 +128,60 @@ export default function Input({
         onBlur={onBlur}
         registerEditor={(editor) => {
           editorRef.current = editor;
+          setEditorVersion((n) => n + 1);
         }}
         unregisterEditor={() => {
           editorRef.current = undefined;
+          setEditorVersion((n) => n + 1);
         }}
         options={getCMOptions(mode)}
         value={localValue}
         complete={complete}
         cursors={fromJS(cursors)}
         onKeyDown={(cm, e) => {
+          if (e.key == "ArrowUp") {
+            const cur = cm.getCursor();
+            if (cur.line === cm.firstLine() && cur.ch === 0) {
+              e.preventDefault();
+              const previousId = frame.actions.selectPreviousCodeCell(
+                frame.id,
+                element.id,
+              );
+              const previousElement =
+                previousId == null
+                  ? undefined
+                  : frame.actions.getElement(previousId);
+              if (previousId != null) {
+                frame.actions.set_frame_tree({
+                  id: frame.id,
+                  pendingCodeCursor: {
+                    id: previousId,
+                    ...getBottomCursor(previousElement),
+                  },
+                });
+              }
+              return;
+            }
+          }
+          if (e.key == "ArrowDown") {
+            const cur = cm.getCursor();
+            const lastLine = cm.lastLine();
+            const line = cm.getLine(lastLine);
+            if (cur.line === lastLine && cur.ch === (line?.length ?? 0)) {
+              e.preventDefault();
+              const nextId = frame.actions.selectNextCodeCell(
+                frame.id,
+                element.id,
+              );
+              if (nextId != null) {
+                frame.actions.set_frame_tree({
+                  id: frame.id,
+                  pendingCodeCursor: { id: nextId, x: 0, y: 0 },
+                });
+              }
+              return;
+            }
+          }
           if (
             e.key == "Enter" &&
             (e.altKey || e.metaKey || e.shiftKey || e.ctrlKey)
@@ -206,6 +271,7 @@ class Actions implements EditorActions {
   }
 
   set_cell_input(_id: string, input: string, commit?: boolean) {
+    this.setLocalValue(input);
     this.frame.actions.setElement({
       obj: { id: this.id, str: input },
       commit,
@@ -279,6 +345,11 @@ class Actions implements EditorActions {
     offset?: any,
   ): Promise<boolean> {
     const actions = await this.getJupyterActions();
+    if (actions.store.get("backend_state") != "running") {
+      await actions.initBackend();
+      await actions.getConnectionFile();
+      await actions.refreshKernelStatus();
+    }
     const popup = await actions.complete(code, pos, id, offset);
     this.setComplete(actions.store.get("complete"));
     return popup;
@@ -329,4 +400,14 @@ function indexToPos(input: string): { x: number; y: number } {
     x: lines.at(-1)?.length ?? 0,
     y: lines.length - 1,
   };
+}
+
+function getBottomCursor(element: Element | undefined): {
+  x: number;
+  y: number;
+} {
+  if (element == null) {
+    return { x: 0, y: 0 };
+  }
+  return indexToPos(element.str ?? "");
 }

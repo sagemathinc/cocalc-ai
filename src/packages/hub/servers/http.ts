@@ -34,6 +34,11 @@ export default function init({ cert, key, app }: Options) {
   }
   httpServer.on("error", (err) => {
     logger.error(`WARNING -- hub http server error: ${err.stack || err}`);
+    // Treat bind/startup server errors as fatal instead of leaving the hub
+    // process alive in a broken state.
+    setImmediate(() => {
+      throw err;
+    });
   });
 
   return httpServer;

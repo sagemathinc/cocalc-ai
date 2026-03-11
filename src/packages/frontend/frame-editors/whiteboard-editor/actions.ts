@@ -53,6 +53,7 @@ import { cloneDeep, debounce, size } from "lodash";
 import runCode from "./elements/code/run";
 import {
   getCodeTreeOrder,
+  getPreviousCodeTreePredecessor,
   getNextCodeTreeSuccessor,
 } from "./elements/code/graph";
 import { getName } from "./elements/chat";
@@ -872,6 +873,18 @@ export class Actions<T extends State = State> extends BaseActions<T | State> {
     this.setSelection(frameId, nextId);
     this.revealElementIfCompletelyHidden(nextId, frameId);
     return nextId;
+  }
+
+  selectPreviousCodeCell(frameId: string, id: string): string | undefined {
+    const previousId = getPreviousCodeTreePredecessor(
+      this.getCodeElementsById(),
+      id,
+      this.sortedPageIds()?.toJS(),
+    );
+    if (previousId == null) return;
+    this.setSelection(frameId, previousId);
+    this.revealElementIfCompletelyHidden(previousId, frameId);
+    return previousId;
   }
 
   async runCodeTree(
