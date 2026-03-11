@@ -5,6 +5,11 @@
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
+  delete_local_storage,
+  get_local_storage,
+  set_local_storage,
+} from "@cocalc/frontend/misc";
+import {
   React,
   useCallback,
   useEditorRedux,
@@ -58,7 +63,11 @@ import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
-import { resolveCombinedComposerTargetKey } from "./combined-composer-target";
+import {
+  combinedComposerTargetStorageKey,
+  readStoredCombinedComposerTargetKey,
+  resolveCombinedComposerTargetKey,
+} from "./combined-composer-target";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -393,6 +402,17 @@ export function ChatPanel({
   );
   const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const combinedComposerTargetStorage = useMemo(
+    () => combinedComposerTargetStorageKey(project_id, path),
+    [project_id, path],
+  );
+  const storedCombinedComposerTargetKey = useMemo(
+    () =>
+      readStoredCombinedComposerTargetKey(
+        get_local_storage(combinedComposerTargetStorage),
+      ),
+    [combinedComposerTargetStorage],
+  );
 
   const composerDraftKey = useMemo(() => {
     if (!singleThreadView || !selectedThreadKey) return 0;
@@ -674,13 +694,32 @@ export function ChatPanel({
   useEffect(() => {
     const nextTargetKey = resolveCombinedComposerTargetKey(
       composerTargetKey,
+      storedCombinedComposerTargetKey,
       threads,
       isCombinedFeedSelected,
     );
     if (nextTargetKey !== composerTargetKey) {
       setComposerTargetKey(nextTargetKey);
     }
-  }, [isCombinedFeedSelected, threads, composerTargetKey]);
+  }, [
+    isCombinedFeedSelected,
+    threads,
+    composerTargetKey,
+    storedCombinedComposerTargetKey,
+  ]);
+
+  useEffect(() => {
+    if (!isCombinedFeedSelected) return;
+    if (composerTargetKey == null) {
+      delete_local_storage(combinedComposerTargetStorage);
+      return;
+    }
+    set_local_storage(combinedComposerTargetStorage, composerTargetKey);
+  }, [
+    isCombinedFeedSelected,
+    composerTargetKey,
+    combinedComposerTargetStorage,
+  ]);
 
   const combinedUnreadThreads = useMemo(
     () => threads.filter((thread) => (thread.unreadCount ?? 0) > 0),
@@ -804,9 +843,13 @@ export function ChatPanel({
       inputRef.current = "";
       // Clear current composer draft before send switches selected thread context.
       actions.deleteDraft(draftKey);
+      if (draftKey === 0) {
+        delete_local_storage(combinedComposerTargetStorage);
+        setComposerTargetKey(null);
+      }
       void clearInput();
     },
-    [actions, clearInput],
+    [actions, clearInput, combinedComposerTargetStorage],
   );
 
   function resolveReplyTarget(): {
@@ -1044,6 +1087,8 @@ export function ChatPanel({
     inputRef.current = "";
     setInput("");
     actions.deleteDraft(0);
+    delete_local_storage(combinedComposerTargetStorage);
+    setComposerTargetKey(null);
     void clearComposerDraft(0);
     setAllowAutoSelectThread(false);
     setSelectedThreadKey(null);
