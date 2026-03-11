@@ -1,5 +1,6 @@
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
+import { getFrontendSourceFingerprint as getFrontendSourceFingerprint0 } from "@cocalc/backend/frontend-build-fingerprint";
 import getPool from "@cocalc/database/pool";
 import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { db } from "@cocalc/database";
@@ -86,6 +87,10 @@ export async function logClientError({
 
 export async function webappError(opts: object): Promise<void> {
   await callback2(db().webapp_error, opts);
+}
+
+export async function getFrontendSourceFingerprint() {
+  return await getFrontendSourceFingerprint0();
 }
 
 export {

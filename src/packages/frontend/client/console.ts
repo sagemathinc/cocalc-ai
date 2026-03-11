@@ -29,6 +29,7 @@ declare const DEBUG; //  this comes from rspack.
 
 import { IS_TOUCH } from "../feature";
 import { redux } from "../app-framework";
+import { initDebugBuildCheck } from "../debug-build-check";
 
 declare global {
   interface Window {
@@ -56,6 +57,7 @@ export async function setup_global_cocalc(client) {
     "DEBUG: Enabling extra CoCalc library functionality.  Type cocalc or cc.[tab].",
   );
   window.cocalc = window.cc = cocalc;
+  initDebugBuildCheck(client);
 
   if (IS_TOUCH) {
     // Debug mode and on a touch device: always load eruda so we

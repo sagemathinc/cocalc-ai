@@ -3,6 +3,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 */
 
 import getLogger from "@cocalc/backend/logger";
+import { getFrontendSourceFingerprint } from "@cocalc/backend/frontend-build-fingerprint";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
@@ -191,6 +192,10 @@ async function getCodexLocalStatus(): Promise<{
       checkedAt,
     };
   }
+}
+
+async function getFrontendSourceFingerprintInfo() {
+  return await getFrontendSourceFingerprint();
 }
 
 export async function init({
@@ -383,6 +388,7 @@ export const hubApi: HubApi = {
     getNames,
     getCodexPaymentSource,
     getCodexLocalStatus,
+    getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,
     logClientError,
     userTracking,
     webappError,

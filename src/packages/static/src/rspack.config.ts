@@ -39,6 +39,7 @@ import type { WebpackPluginInstance } from "@rspack/core";
 import { ProvidePlugin } from "@rspack/core";
 import { execSync } from "child_process";
 import { resolve as path_resolve } from "path";
+import { getFrontendSourceFingerprintSync } from "@cocalc/backend/frontend-build-fingerprint";
 import getLogger from "@cocalc/backend/logger";
 import { versions as CDN_VERSIONS } from "@cocalc/cdn";
 import { version as SMC_VERSION } from "@cocalc/util/smc-version";
@@ -96,6 +97,9 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   const date = new Date();
   const BUILD_DATE = date.toISOString();
   const BUILD_TS = date.getTime();
+  const frontendSourceFingerprint = getFrontendSourceFingerprintSync({
+    now: date,
+  });
   const COCALC_CLEAN = !!process.env.COCALC_CLEAN;
   const RSPACK_DEV_SERVER =
     NODE_ENV != "production" && !process.env.NO_RSPACK_DEV_SERVER;
@@ -108,6 +112,9 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
   console.log(`OUTPUT              = ${OUTPUT}`);
   console.log(`COCALC_CLEAN        = ${COCALC_CLEAN}`);
   console.log(`RSPACK_DEV_SERVER   = ${RSPACK_DEV_SERVER}`);
+  console.log(
+    `FRONTEND_BUILD_FP    = ${frontendSourceFingerprint.fingerprint}`,
+  );
 
   const plugins: WebpackPluginInstance[] = [];
   function registerPlugin(
@@ -143,6 +150,14 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
     COCALC_GIT_REVISION,
     BUILD_DATE,
     BUILD_TS,
+    FRONTEND_BUILD_FINGERPRINT: frontendSourceFingerprint.fingerprint,
+    FRONTEND_BUILD_AVAILABLE: frontendSourceFingerprint.available,
+    FRONTEND_BUILD_LATEST_MTIME_MS:
+      frontendSourceFingerprint.latest_mtime_ms ?? 0,
+    FRONTEND_BUILD_LATEST_MTIME_ISO:
+      frontendSourceFingerprint.latest_mtime_iso ?? "N/A",
+    FRONTEND_BUILD_LATEST_PATH: frontendSourceFingerprint.latest_path ?? "N/A",
+    FRONTEND_BUILD_WATCHED_ROOTS: frontendSourceFingerprint.watched_roots,
     DEBUG: !PRODMODE,
     CDN_VERSIONS,
     "process.env": {}, // the util polyfill assumes this is defined.
