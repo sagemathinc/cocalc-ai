@@ -1,0 +1,23 @@
+import { inferAppBasePath } from "./app-base-path";
+
+describe("inferAppBasePath", () => {
+  it("uses the prefix before /static when booting from a static asset URL", () => {
+    expect(inferAppBasePath("/base/static/app.js")).toBe("/base");
+    expect(inferAppBasePath("/static/app.js")).toBe("/");
+  });
+
+  it("infers a subpath from refreshed app routes", () => {
+    expect(
+      inferAppBasePath(
+        "/base/projects/00000000-1000-4000-8000-000000000000/files",
+      ),
+    ).toBe("/base");
+    expect(inferAppBasePath("/base/auth/sign-in")).toBe("/base");
+    expect(inferAppBasePath("/base/settings/profile")).toBe("/base");
+  });
+
+  it("keeps the route itself when refreshing the app root under a base path", () => {
+    expect(inferAppBasePath("/base")).toBe("/base");
+    expect(inferAppBasePath("/")).toBe("/");
+  });
+});
