@@ -129,6 +129,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 80,
       homepage: "https://posit.co/products/open-source/rstudio-server/",
       description: "Browser IDE for R and data science workflows.",
+      detect: {
+        commands: ["command -v rserver"],
+      },
       install: {
         strategy: "agent",
         hint: "RStudio Server installation is more system-specific. Let an agent set it up or follow your platform packaging workflow.",
@@ -152,6 +155,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       priority: 40,
       description:
         "Minimal HTTP hello-world app for testing the managed app flow.",
+      detect: {
+        commands: ["command -v python3"],
+      },
       preset: {
         id: "python-hello",
         title: "Python Hello World",
@@ -169,6 +175,9 @@ export const BUILTIN_APP_TEMPLATE_CATALOG: AppTemplateCatalogV1 = {
       category: "core",
       priority: 35,
       description: "Minimal Node HTTP app for testing the managed app flow.",
+      detect: {
+        commands: ["command -v node"],
+      },
       preset: {
         id: "node-hello",
         title: "Node.js Hello World",

@@ -15,6 +15,7 @@ import { conat } from "@cocalc/conat/client";
 import { project_id } from "@cocalc/project/data";
 import { hubApi } from "@cocalc/project/conat/hub";
 import { getLogger } from "@cocalc/project/logger";
+import type { AppTemplateCatalogEntry } from "@cocalc/conat/project/api/apps";
 import {
   type AppStaticSpec,
   type AppServiceSpec,
@@ -42,7 +43,8 @@ import {
   listAppMetrics as listAppMetricsState,
   recordAppWake,
 } from "./metrics";
-export { listAppTemplates } from "./template-catalog";
+import { listAppTemplates as listAppTemplatesFromCatalog } from "./template-catalog";
+export { listAppTemplatesFromCatalog as listAppTemplates };
 
 const logger = getLogger("app-servers:control");
 export const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -385,7 +387,7 @@ async function runAvailabilityCheck({
   available: boolean;
   status: "available" | "missing" | "unknown";
   details?: string;
-  }> {
+}> {
   return await new Promise((resolve) => {
     const child = spawn("bash", ["-lc", cmd], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -430,12 +432,101 @@ async function runAvailabilityCheck({
       resolve({
         available: code === 0,
         status: code === 0 ? "available" : "missing",
-        details: text
-          ? text.split(/\r?\n/)[0].slice(0, 160)
-          : defaultDetails,
+        details: text ? text.split(/\r?\n/)[0].slice(0, 160) : defaultDetails,
       });
     });
   });
+}
+
+function templateInstallLabel(
+  template: Pick<AppTemplateCatalogEntry, "title" | "short_label">,
+): string {
+  return template.short_label ?? template.title;
+}
+
+export async function detectInstalledTemplatesFromCatalog(
+  templates: Array<
+    Pick<
+      AppTemplateCatalogEntry,
+      "id" | "title" | "short_label" | "detect" | "preset"
+    >
+  >,
+  runCheck: (opts: { cmd: string; timeoutMs?: number }) => Promise<{
+    available: boolean;
+    status: "available" | "missing" | "unknown";
+    details?: string;
+  }> = runAvailabilityCheck,
+): Promise<InstalledAppTemplate[]> {
+  return await Promise.all(
+    templates.map(async (template) => {
+      const key = template.id;
+      const label = templateInstallLabel(template);
+      if (template.preset.kind === "static") {
+        return {
+          key,
+          label,
+          available: true,
+          status: "available",
+          details: "built in static hosting",
+        };
+      }
+      const commands = (template.detect?.commands ?? []).filter(
+        (cmd): cmd is string => typeof cmd === "string" && cmd.trim() !== "",
+      );
+      if (commands.length === 0) {
+        return {
+          key,
+          label,
+          available: false,
+          status: "unknown",
+          details: "no install check defined in template catalog",
+        };
+      }
+
+      let firstMissing:
+        | {
+            status: "missing";
+            details?: string;
+          }
+        | undefined;
+      let firstUnknown:
+        | {
+            status: "unknown";
+            details?: string;
+          }
+        | undefined;
+
+      for (const cmd of commands) {
+        const result = await runCheck({ cmd });
+        if (result.available) {
+          return {
+            key,
+            label,
+            available: true,
+            status: "available",
+            details: result.details,
+          };
+        }
+        if (result.status === "missing" && firstMissing == null) {
+          firstMissing = { status: "missing", details: result.details };
+        } else if (result.status === "unknown" && firstUnknown == null) {
+          firstUnknown = { status: "unknown", details: result.details };
+        }
+      }
+
+      const finalStatus = firstUnknown != null ? "unknown" : "missing";
+      const details =
+        (firstUnknown?.details ?? firstMissing?.details) ||
+        "install check unavailable";
+      return {
+        key,
+        label,
+        available: false,
+        status: finalStatus,
+        details,
+      };
+    }),
+  );
 }
 
 function auditSummary(checks: AppAuditCheck[]) {
@@ -1287,63 +1378,8 @@ export async function detectApps(opts?: {
 export async function detectInstalledTemplates(): Promise<
   InstalledAppTemplate[]
 > {
-  const checks: Array<InstalledAppTemplate & { cmd?: string }> = [
-    {
-      key: "jupyterlab",
-      label: "JupyterLab",
-      cmd: "if command -v jupyter-lab >/dev/null 2>&1; then command -v jupyter-lab; elif command -v jupyter >/dev/null 2>&1; then command -v jupyter; else exit 1; fi",
-      available: false,
-    },
-    {
-      key: "code-server",
-      label: "code-server",
-      cmd: "command -v code-server",
-      available: false,
-    },
-    {
-      key: "pluto",
-      label: "Pluto",
-      cmd: "command -v julia >/dev/null 2>&1 && julia -e 'path = Base.find_package(\"Pluto\"); if path === nothing; exit(1); end; println(path)'",
-      available: false,
-    },
-    {
-      key: "rserver",
-      label: "RStudio / rserver",
-      cmd: "command -v rserver",
-      available: false,
-    },
-    {
-      key: "python-hello",
-      label: "Python runtime",
-      cmd: "command -v python3",
-      available: false,
-    },
-    {
-      key: "node-hello",
-      label: "Node.js runtime",
-      cmd: "command -v node",
-      available: false,
-    },
-    {
-      key: "static-hello",
-      label: "Static site hosting",
-      available: true,
-      status: "available",
-      details: "built in",
-    },
-  ];
-  return await Promise.all(
-    checks.map(async ({ key, label, cmd, available, status, details }) => {
-      if (!cmd) return { key, label, available, status, details };
-      const result = await runAvailabilityCheck({ cmd });
-      return {
-        key,
-        label,
-        available: result.available,
-        status: result.status,
-        details: result.details,
-      };
-    }),
+  return await detectInstalledTemplatesFromCatalog(
+    await listAppTemplatesFromCatalog(),
   );
 }
 
