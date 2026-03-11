@@ -19,10 +19,23 @@ import target from "@cocalc/frontend/client/handle-target";
 import { load_target } from "./history";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import signInAction from "@cocalc/frontend/app/sign-in-action";
+import { lite } from "@cocalc/frontend/lite";
 
 const log = (..._args) => {
   // console.log("session: ", ..._args);
 };
+
+export function projectsReadyForSessionRestore(
+  store,
+  opts?: { minimal?: boolean; liteMode?: boolean },
+): boolean {
+  const minimal = opts?.minimal ?? COCALC_MINIMAL;
+  const liteMode = opts?.liteMode ?? lite;
+  if (minimal || liteMode) {
+    return store.get("open_projects") != null;
+  }
+  return store.get("project_map") != null;
+}
 
 export function session_manager(name, redux): SessionManager | undefined {
   const sm = new SessionManager(name, redux);
@@ -110,13 +123,7 @@ class SessionManager {
       // minimal mode doesn't init any projects
       await callback2(this.redux.getStore("projects").wait, {
         until(store) {
-          if (COCALC_MINIMAL) {
-            // this is actually an empty "List"
-            return store.get("open_projects") != null;
-          } else {
-            // wait for some data
-            return store.get("project_map") != null;
-          }
+          return projectsReadyForSessionRestore(store);
         },
       });
 
