@@ -157,16 +157,21 @@ jest.mock("../external-side-chat-selection", () => ({
   persistExternalSideChatSelectedThreadKey: jest.fn(),
 }));
 
-jest.mock("../combined-composer-target", () => ({
-  resolveCombinedComposerTargetKey: () => null,
-}));
+jest.mock("../combined-composer-target", () => {
+  const actual = jest.requireActual("../combined-composer-target");
+  return {
+    ...actual,
+    resolveCombinedComposerTargetKey: () => null,
+    combinedComposerTargetStorageKey: () => "combined-target:test",
+  };
+});
 
 describe("ChatPanel combined feed read tracking", () => {
   beforeEach(() => {
     markChatAsReadIfUnseen.mockClear();
   });
 
-  it("marks unread threads read when the combined feed is interacted with", () => {
+  function renderPanel() {
     const actions = {
       markThreadRead: jest.fn(),
       getCodexConfig: jest.fn(),
@@ -187,8 +192,27 @@ describe("ChatPanel combined feed read tracking", () => {
         docVersion={0}
       />,
     );
+    return { actions, container };
+  }
+
+  it("marks unread threads read when the combined feed is interacted with", () => {
+    const { actions, container } = renderPanel();
 
     fireEvent.mouseMove(container.firstChild as HTMLElement);
+
+    expect(markChatAsReadIfUnseen).toHaveBeenCalledWith(
+      "project-1",
+      "chat/test.chat",
+    );
+    expect(actions.markThreadRead).toHaveBeenCalledTimes(2);
+    expect(actions.markThreadRead).toHaveBeenNthCalledWith(1, "t1", 5, false);
+    expect(actions.markThreadRead).toHaveBeenNthCalledWith(2, "t2", 3, true);
+  });
+
+  it("marks unread threads read when the combined feed is scrolled with the wheel", () => {
+    const { actions, container } = renderPanel();
+
+    fireEvent.wheel(container.firstChild as HTMLElement);
 
     expect(markChatAsReadIfUnseen).toHaveBeenCalledWith(
       "project-1",

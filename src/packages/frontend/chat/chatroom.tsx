@@ -1273,6 +1273,8 @@ export function ChatPanel({
     <div
       onMouseMove={mark_as_read}
       onClick={mark_as_read}
+      onWheel={mark_as_read}
+      onTouchMove={mark_as_read}
       onFocusCapture={onFocus}
       className="smc-vfill"
       style={{
