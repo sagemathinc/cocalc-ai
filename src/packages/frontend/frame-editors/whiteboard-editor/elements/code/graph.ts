@@ -197,6 +197,30 @@ export function getNextCodeTreeSuccessor(
   currentId: string,
   sortedPageIds?: string[],
 ): string | undefined {
+  const tree = getCurrentCodeTree(elementsById, currentId, sortedPageIds);
+  if (tree == null) return;
+  const index = tree.order.indexOf(currentId);
+  if (index == -1 || index >= tree.order.length - 1) return;
+  return tree.order[index + 1];
+}
+
+export function getPreviousCodeTreePredecessor(
+  elementsById: ElementsById,
+  currentId: string,
+  sortedPageIds?: string[],
+): string | undefined {
+  const tree = getCurrentCodeTree(elementsById, currentId, sortedPageIds);
+  if (tree == null) return;
+  const index = tree.order.indexOf(currentId);
+  if (index <= 0) return;
+  return tree.order[index - 1];
+}
+
+function getCurrentCodeTree(
+  elementsById: ElementsById,
+  currentId: string,
+  sortedPageIds?: string[],
+): CodeTreeOrder | undefined {
   if (!isVisibleCodeCell(elementsById[currentId])) return;
   const parents = getIncomingCodeParents(elementsById);
   let rootId = currentId;
@@ -211,7 +235,5 @@ export function getNextCodeTreeSuccessor(
   }
   const tree = getCodeTreeOrder(elementsById, rootId, sortedPageIds);
   if ("error" in tree) return;
-  const index = tree.order.indexOf(currentId);
-  if (index == -1 || index >= tree.order.length - 1) return;
-  return tree.order[index + 1];
+  return tree;
 }

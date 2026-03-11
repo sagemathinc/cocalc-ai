@@ -2,6 +2,7 @@ import {
   getCodeTreeOrder,
   getDirectCodeChildren,
   getNextCodeTreeSuccessor,
+  getPreviousCodeTreePredecessor,
 } from "../graph";
 
 function code(id: string, x: number, y: number, page = "page1"): any {
@@ -57,6 +58,18 @@ describe("whiteboard code graph helpers", () => {
     );
     expect(getNextCodeTreeSuccessor(elements, "right", ["page1"])).toBe(
       undefined,
+    );
+    expect(getPreviousCodeTreePredecessor(elements, "root", ["page1"])).toBe(
+      undefined,
+    );
+    expect(getPreviousCodeTreePredecessor(elements, "left", ["page1"])).toBe(
+      "root",
+    );
+    expect(
+      getPreviousCodeTreePredecessor(elements, "leftLeaf", ["page1"]),
+    ).toBe("left");
+    expect(getPreviousCodeTreePredecessor(elements, "right", ["page1"])).toBe(
+      "leftLeaf",
     );
   });
 
