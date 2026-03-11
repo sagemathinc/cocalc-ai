@@ -62,11 +62,20 @@ interface StartupFailureDetails {
   appId: string;
   action: "start" | "start-after-save";
   errorMessage: string;
+  preset?: AppServerPreset;
+  templateDetails?: string;
   stdoutTail?: string;
   stderrTail?: string;
   installCommand?: string;
   installHint?: string;
   installAgentPrompt?: string;
+}
+
+interface InstallWithCodexTarget {
+  preset: AppServerPreset;
+  templateDetails?: string;
+  appId?: string;
+  action?: "create" | "start" | "start-after-save";
 }
 
 interface PortableAppSpecBundle {
@@ -286,6 +295,151 @@ function shellQuoteCliArg(value: string): string {
 
 function buildTunnelLocallyCommand(projectId: string, appId: string): string {
   return `cocalc project app forward --project=${shellQuoteCliArg(projectId)} ${shellQuoteCliArg(appId)}`;
+}
+
+function canInstallWithCodex(preset: AppServerPreset | undefined): boolean {
+  if (!preset) return false;
+  if (preset.installStrategy === "none") return false;
+  return Boolean(
+    preset.installAgentPrompt ||
+      preset.installCommand ||
+      preset.installRecipes?.length ||
+      preset.agentPromptSeed,
+  );
+}
+
+function formatSnapshotNameTimestamp(date = new Date()): string {
+  const pad = (n: number) => `${n}`.padStart(2, "0");
+  return [
+    `${date.getFullYear()}`,
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    "-",
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join("");
+}
+
+function makeInstallSnapshotName(templateId: string): string {
+  const safeId = `${templateId ?? "app"}`
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `pre-install-${safeId || "app"}-${formatSnapshotNameTimestamp()}`;
+}
+
+function buildInstallWithCodexPrompt(opts: {
+  projectId: string;
+  preset: AppServerPreset;
+  templateDetails?: string;
+  appId?: string;
+  action?: "create" | "start" | "start-after-save";
+  snapshotName?: string;
+}): string {
+  const lines: string[] = [];
+  const { preset } = opts;
+  const actionText =
+    opts.action === "start-after-save"
+      ? "after saving the managed app"
+      : opts.action === "start"
+        ? "before starting the managed app"
+        : "for a managed app template";
+  lines.push(
+    `Install the '${preset.label}' app runtime in CoCalc project ${opts.projectId} ${actionText}.`,
+    "",
+    "Environment assumptions:",
+    "- This is a CoCalc Launchpad-style project environment.",
+    "- The project usually runs inside a podman container.",
+    "- The user is typically root inside the container.",
+    "- Prefer systemwide installation when practical.",
+    "- apt-get is usually the right first choice on maintained Ubuntu images, but detect the actual distro before assuming Debian/Ubuntu.",
+    "- snap is not supported here and should not be used.",
+  );
+  if (opts.snapshotName) {
+    lines.push(
+      "",
+      `A project filesystem snapshot was already created before this install: ${opts.snapshotName}`,
+      "Mention that snapshot name in your final summary so the user can roll back if needed.",
+    );
+  } else {
+    lines.push(
+      "",
+      "Before making changes, create a project snapshot if possible and report the snapshot name you used.",
+      `Suggested command: cocalc project snapshot create --project=${shellQuoteCliArg(opts.projectId)} --name=${shellQuoteCliArg(makeInstallSnapshotName(preset.id))}`,
+    );
+  }
+  lines.push(
+    "",
+    `Template id: ${preset.id}`,
+    `Category: ${preset.category ?? "uncategorized"}`,
+  );
+  if (preset.description) {
+    lines.push(`Description: ${preset.description}`);
+  }
+  if (preset.homepage) {
+    lines.push(`Docs/homepage: ${preset.homepage}`);
+  }
+  if (opts.appId) {
+    lines.push(`Managed app id: ${opts.appId}`);
+  }
+  if (`${opts.templateDetails ?? ""}`.trim()) {
+    lines.push(`Current detection status: ${`${opts.templateDetails}`.trim()}`);
+  }
+  if (preset.installHint) {
+    lines.push("", `Install hint: ${preset.installHint}`);
+  }
+  if (preset.installCommand) {
+    lines.push("", "Suggested starting command:", `- ${preset.installCommand}`);
+  }
+  if (preset.installRecipes?.length) {
+    lines.push("", "Curated install recipes:");
+    for (const recipe of preset.installRecipes) {
+      const match: string[] = [];
+      if (recipe.match?.os_family?.length) {
+        match.push(`os_family=${recipe.match.os_family.join(",")}`);
+      }
+      if (recipe.match?.distro?.length) {
+        match.push(`distro=${recipe.match.distro.join(",")}`);
+      }
+      lines.push(
+        `- ${recipe.id}${match.length ? ` (${match.join("; ")})` : ""}`,
+        ...recipe.commands.map((command) => `  ${command}`),
+      );
+      if (recipe.notes) {
+        lines.push(`  Notes: ${recipe.notes}`);
+      }
+    }
+  }
+  if (preset.verifyCommands?.length) {
+    lines.push("", "Verification commands:");
+    for (const command of preset.verifyCommands) {
+      lines.push(`- ${command}`);
+    }
+  }
+  if (preset.command) {
+    lines.push(
+      "",
+      "Managed app launch command after install:",
+      `- ${preset.command}`,
+    );
+  }
+  if (preset.agentPromptSeed) {
+    lines.push("", `Extra guidance: ${preset.agentPromptSeed}`);
+  }
+  lines.push(
+    "",
+    "Requirements:",
+    "1. Inspect the environment briefly and choose an appropriate install path.",
+    "2. Avoid unnecessary reinstalls if the runtime is already present.",
+    "3. Install systemwide when practical for this project environment.",
+    "4. Verify the relevant commands work after installation.",
+    "5. If install succeeds, mention how to start or retry the managed app.",
+    "6. In the final summary, report the snapshot name, exact commands used, and any rollback guidance.",
+  );
+  return lines.join("\n");
 }
 
 function formatBytes(value?: number): string {
@@ -514,6 +668,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [securityOpen, setSecurityOpen] = useState<boolean>(false);
   const [localTunnelTarget, setLocalTunnelTarget] =
     useState<ManagedAppStatus | null>(null);
+  const [installWithCodexTarget, setInstallWithCodexTarget] =
+    useState<InstallWithCodexTarget | null>(null);
+  const [installWithCodexSnapshot, setInstallWithCodexSnapshot] =
+    useState<boolean>(true);
+  const [installWithCodexSnapshotName, setInstallWithCodexSnapshotName] =
+    useState<string>("");
+  const [installWithCodexLaunching, setInstallWithCodexLaunching] =
+    useState<boolean>(false);
   const [specById, setSpecById] = useState<Record<string, AppSpec | undefined>>(
     {},
   );
@@ -572,6 +734,33 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     !activePresetTemplate.available
       ? activePreset
       : undefined;
+  const installWithCodexPromptPreview = useMemo(() => {
+    if (!installWithCodexTarget) return "";
+    return buildInstallWithCodexPrompt({
+      projectId: project_id,
+      preset: installWithCodexTarget.preset,
+      templateDetails: installWithCodexTarget.templateDetails,
+      appId: installWithCodexTarget.appId,
+      action: installWithCodexTarget.action,
+      snapshotName: installWithCodexSnapshot
+        ? `${installWithCodexSnapshotName ?? ""}`.trim() ||
+          makeInstallSnapshotName(installWithCodexTarget.preset.id)
+        : undefined,
+    });
+  }, [
+    installWithCodexSnapshot,
+    installWithCodexSnapshotName,
+    installWithCodexTarget,
+    project_id,
+  ]);
+
+  useEffect(() => {
+    if (!installWithCodexTarget) return;
+    setInstallWithCodexSnapshot(true);
+    setInstallWithCodexSnapshotName(
+      makeInstallSnapshotName(installWithCodexTarget.preset.id),
+    );
+  }, [installWithCodexTarget]);
 
   const canSaveForm = useMemo(() => {
     const id = `${appId ?? ""}`.trim();
@@ -830,6 +1019,42 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
+  function openInstallWithCodex(target: InstallWithCodexTarget) {
+    setInstallWithCodexTarget(target);
+  }
+
+  async function launchInstallWithCodex() {
+    if (!installWithCodexTarget) return;
+    const snapshotName = `${installWithCodexSnapshotName ?? ""}`.trim();
+    try {
+      setInstallWithCodexLaunching(true);
+      setError(undefined);
+      let createdSnapshotName: string | undefined;
+      if (installWithCodexSnapshot) {
+        createdSnapshotName =
+          snapshotName || makeInstallSnapshotName(installWithCodexTarget.preset.id);
+        await webapp_client.conat_client.hub.projects.createSnapshot({
+          project_id,
+          name: createdSnapshotName,
+        });
+      }
+      const prompt = buildInstallWithCodexPrompt({
+        projectId: project_id,
+        preset: installWithCodexTarget.preset,
+        templateDetails: installWithCodexTarget.templateDetails,
+        appId: installWithCodexTarget.appId,
+        action: installWithCodexTarget.action,
+        snapshotName: createdSnapshotName,
+      });
+      await sendAgentPrompt(prompt, "intent:app-server-install");
+      setInstallWithCodexTarget(null);
+    } catch (err) {
+      setError(normalizeError(err));
+    } finally {
+      setInstallWithCodexLaunching(false);
+    }
+  }
+
   async function resolveInstalledTemplateMap(): Promise<
     Record<string, InstalledAppTemplate | undefined>
   > {
@@ -880,6 +1105,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         appId,
         action,
         errorMessage: details ? `${message} (${details})` : message,
+        preset,
+        templateDetails: details || undefined,
         installCommand: preset.installCommand,
         installHint: preset.installHint,
         installAgentPrompt: preset.installAgentPrompt,
@@ -1752,19 +1979,20 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         {unavailableActivePreset.installCommand}
                       </div>
                     ) : null}
-                    {unavailableActivePreset.installAgentPrompt ? (
+                    {canInstallWithCodex(unavailableActivePreset) ? (
                       <div>
                         <Button
                           size="small"
                           onClick={() =>
-                            void sendAgentPrompt(
-                              unavailableActivePreset.installAgentPrompt ?? "",
-                              "intent:app-server-install",
-                            )
+                            openInstallWithCodex({
+                              preset: unavailableActivePreset,
+                              templateDetails: activePresetTemplate.details,
+                              action: "create",
+                            })
                           }
-                          loading={submittingToAgent}
+                          loading={submittingToAgent || installWithCodexLaunching}
                         >
-                          Install with agent
+                          Install with Codex
                         </Button>
                       </div>
                     ) : null}
@@ -2540,18 +2768,26 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           >
                             View full logs
                           </Button>
-                          {startupFailure.installAgentPrompt ? (
+                          {canInstallWithCodex(startupFailure.preset) ? (
                             <Button
                               size="small"
                               onClick={() =>
-                                void sendAgentPrompt(
-                                  startupFailure.installAgentPrompt ?? "",
-                                  "intent:app-server-install",
-                                )
+                                openInstallWithCodex({
+                                  preset: startupFailure.preset ?? {
+                                    key: row.id,
+                                    label: row.title || row.id,
+                                    kind: row.kind ?? "service",
+                                    id: row.id,
+                                    title: row.title || row.id,
+                                  },
+                                  templateDetails: startupFailure.templateDetails,
+                                  appId: row.id,
+                                  action: startupFailure.action,
+                                })
                               }
-                              loading={submittingToAgent}
+                              loading={submittingToAgent || installWithCodexLaunching}
                             >
-                              Install with agent
+                              Install with Codex
                             </Button>
                           ) : null}
                         </Space>
@@ -2645,6 +2881,141 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           </Space>
         </div>
       ) : null}
+      <Modal
+        open={!!installWithCodexTarget}
+        onCancel={() => setInstallWithCodexTarget(null)}
+        title={
+          installWithCodexTarget
+            ? `Install with Codex: ${installWithCodexTarget.preset.label}`
+            : "Install with Codex"
+        }
+        width={820}
+        footer={[
+          <Button
+            key="close"
+            onClick={() => setInstallWithCodexTarget(null)}
+            disabled={installWithCodexLaunching}
+          >
+            Cancel
+          </Button>,
+          <Button
+            key="launch"
+            type="primary"
+            loading={installWithCodexLaunching || submittingToAgent}
+            onClick={() => void launchInstallWithCodex()}
+          >
+            {installWithCodexSnapshot
+              ? "Create snapshot and open Codex"
+              : "Open Codex"}
+          </Button>,
+        ]}
+      >
+        {installWithCodexTarget ? (
+          <div style={{ display: "grid", gap: "12px" }}>
+            <Paragraph style={{ marginBottom: 0 }}>
+              Codex will open in this project with a launchpad-specific install
+              prompt for <strong>{installWithCodexTarget.preset.label}</strong>.
+              The prompt prefers systemwide installs, avoids snaps, and records
+              rollback guidance.
+            </Paragraph>
+            {installWithCodexTarget.templateDetails ? (
+              <Alert
+                type="info"
+                showIcon
+                message="Current detection status"
+                description={installWithCodexTarget.templateDetails}
+              />
+            ) : null}
+            <div style={{ display: "grid", gap: "8px" }}>
+              <Checkbox
+                checked={installWithCodexSnapshot}
+                onChange={(e) => setInstallWithCodexSnapshot(e.target.checked)}
+              >
+                Create a filesystem snapshot before installing (recommended)
+              </Checkbox>
+              {installWithCodexSnapshot ? (
+                <Input
+                  value={installWithCodexSnapshotName}
+                  onChange={(e) =>
+                    setInstallWithCodexSnapshotName(e.target.value)
+                  }
+                  placeholder="Snapshot name"
+                />
+              ) : null}
+            </div>
+            {installWithCodexTarget.preset.installCommand ? (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                  Suggested starting command
+                </div>
+                <Typography.Paragraph
+                  copyable={{
+                    text: installWithCodexTarget.preset.installCommand,
+                  }}
+                  style={{
+                    marginBottom: 0,
+                    padding: "10px 12px",
+                    border: "1px solid #eee",
+                    borderRadius: "8px",
+                    background: "#fafafa",
+                    fontFamily: "monospace",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {installWithCodexTarget.preset.installCommand}
+                </Typography.Paragraph>
+              </div>
+            ) : null}
+            {installWithCodexTarget.preset.verifyCommands?.length ? (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                  Verification
+                </div>
+                <Typography.Paragraph
+                  copyable={{
+                    text: installWithCodexTarget.preset.verifyCommands.join(
+                      "\n",
+                    ),
+                  }}
+                  style={{
+                    marginBottom: 0,
+                    padding: "10px 12px",
+                    border: "1px solid #eee",
+                    borderRadius: "8px",
+                    background: "#fafafa",
+                    fontFamily: "monospace",
+                    overflowWrap: "anywhere",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {installWithCodexTarget.preset.verifyCommands.join("\n")}
+                </Typography.Paragraph>
+              </div>
+            ) : null}
+            <Collapse
+              items={[
+                {
+                  key: "prompt-preview",
+                  label: "Prompt preview",
+                  children: (
+                    <Typography.Paragraph
+                      copyable={{ text: installWithCodexPromptPreview }}
+                      style={{
+                        marginBottom: 0,
+                        fontFamily: "monospace",
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {installWithCodexPromptPreview}
+                    </Typography.Paragraph>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        ) : null}
+      </Modal>
       <Modal
         open={!!localTunnelTarget}
         onCancel={() => setLocalTunnelTarget(null)}

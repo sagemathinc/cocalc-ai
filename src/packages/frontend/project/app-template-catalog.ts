@@ -1,5 +1,6 @@
 import type {
   AppTemplateCatalogEntryV1,
+  AppTemplateInstallRecipeV1,
   AppTemplateKind,
   AppTemplateServiceOpenMode,
 } from "@cocalc/util/apps/template-catalog";
@@ -31,6 +32,10 @@ export interface AppServerPreset {
   installCommand?: string;
   installHint?: string;
   installAgentPrompt?: string;
+  installStrategy?: "curated" | "agent" | "none";
+  installRecipes?: AppTemplateInstallRecipeV1[];
+  verifyCommands?: string[];
+  agentPromptSeed?: string;
   description?: string;
   homepage?: string;
   category?: string;
@@ -71,6 +76,10 @@ function toPreset(
     installCommand: template.install?.command,
     installHint: template.install?.hint,
     installAgentPrompt: template.install?.agent_prompt,
+    installStrategy: template.install?.strategy,
+    installRecipes: template.install?.recipes,
+    verifyCommands: template.verify?.commands,
+    agentPromptSeed: template.agent_prompt_seed,
     description: template.description,
     homepage: template.homepage,
     category: template.category,
