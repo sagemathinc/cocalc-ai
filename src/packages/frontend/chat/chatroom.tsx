@@ -126,7 +126,7 @@ export function hasActiveAcpTurnForComposer({
   for (const msg of selectedThreadMessages) {
     if (field<boolean>(msg, "generating") !== true) continue;
     const isAcpTurn = !!field<string>(msg, "acp_account_id");
-    if (!isAcpTurn) return true;
+    if (!isAcpTurn) continue;
     const d = dateValue(msg);
     if (!d) continue;
     const threadId = field<string>(msg, "thread_id");
