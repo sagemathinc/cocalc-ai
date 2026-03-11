@@ -385,7 +385,7 @@ async function runAvailabilityCheck({
   available: boolean;
   status: "available" | "missing" | "unknown";
   details?: string;
-}> {
+  }> {
   return await new Promise((resolve) => {
     const child = spawn("bash", ["-lc", cmd], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -419,10 +419,20 @@ async function runAvailabilityCheck({
       const text = Buffer.concat([...stdout, ...stderr])
         .toString("utf8")
         .trim();
+      const defaultDetails = (() => {
+        if (code === 0) return undefined;
+        const commandV = cmd.match(/^\s*command -v\s+([A-Za-z0-9._-]+)/);
+        if (commandV?.[1]) {
+          return `${commandV[1]} not found in PATH`;
+        }
+        return `install check exited with code ${code ?? "unknown"}`;
+      })();
       resolve({
         available: code === 0,
         status: code === 0 ? "available" : "missing",
-        details: text ? text.split(/\r?\n/)[0].slice(0, 160) : undefined,
+        details: text
+          ? text.split(/\r?\n/)[0].slice(0, 160)
+          : defaultDetails,
       });
     });
   });
@@ -1297,7 +1307,7 @@ export async function detectInstalledTemplates(): Promise<
       available: false,
     },
     {
-      key: "rstudio",
+      key: "rserver",
       label: "RStudio / rserver",
       cmd: "command -v rserver",
       available: false,
