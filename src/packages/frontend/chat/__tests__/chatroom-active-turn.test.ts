@@ -47,4 +47,25 @@ describe("hasActiveAcpTurnForComposer", () => {
       }),
     ).toBe(true);
   });
+
+  it("ignores non-ACP generating rows for queue/send-now state", () => {
+    expect(
+      hasActiveAcpTurnForComposer({
+        isSelectedThreadAI: true,
+        selectedThreadId: "thread-1",
+        acpState: immutable.Map<string, string>(),
+        selectedThreadMessages: [
+          {
+            event: "chat",
+            sender_id: "assistant",
+            generating: true,
+            thread_id: "thread-1",
+            message_id: "msg-1",
+            date: "2026-03-11T08:00:00.000Z",
+            history: [],
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
 });

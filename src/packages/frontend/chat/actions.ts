@@ -900,6 +900,103 @@ export class ChatActions extends Actions<ChatState> {
     return deleted;
   };
 
+  deleteMessage = (message: ChatMessageTyped): boolean => {
+    if (this.syncdb == null) {
+      return false;
+    }
+    const targetDate = dateValue(message);
+    const targetDateIso = toISOString(targetDate);
+    const targetSenderId = senderId(message);
+    if (!targetDateIso || !targetSenderId) {
+      return false;
+    }
+
+    const targetThreadId =
+      `${field<string>(message, "thread_id") ?? ""}`.trim();
+    const targetMessageId =
+      `${field<string>(message, "message_id") ?? ""}`.trim() || undefined;
+    const targetParentId = parentMessageId(message);
+    const targetParent = this.getMessageById(targetParentId);
+    const targetParentDateIso = toISOString(dateValue(targetParent));
+    const messages = this.getAllMessages();
+
+    let remainingInThread = 0;
+    for (const candidate of messages.values()) {
+      if (candidate == null || candidate === message) continue;
+      if (
+        `${field<string>(candidate, "thread_id") ?? ""}`.trim() !==
+        targetThreadId
+      )
+        continue;
+      const candidateDateIso = toISOString(dateValue(candidate));
+      const candidateSenderId = senderId(candidate);
+      if (
+        candidateDateIso === targetDateIso &&
+        candidateSenderId === targetSenderId
+      ) {
+        continue;
+      }
+      remainingInThread += 1;
+    }
+
+    for (const child of messages.values()) {
+      if (child == null || child === message) continue;
+      const childDateIso = toISOString(dateValue(child));
+      const childSenderId = senderId(child);
+      if (!childDateIso || !childSenderId) {
+        continue;
+      }
+      const childParentId = parentMessageId(child);
+      const childThreadId = `${field<string>(child, "thread_id") ?? ""}`.trim();
+      const childReplyTo = `${field<string>(child, "reply_to") ?? ""}`.trim();
+      const sameThreadOrLegacy =
+        !targetThreadId || !childThreadId || childThreadId === targetThreadId;
+      const matchesParentId =
+        targetMessageId != null && childParentId === targetMessageId;
+      const matchesLegacyReplyTo =
+        !childParentId &&
+        sameThreadOrLegacy &&
+        !!targetDateIso &&
+        childReplyTo === targetDateIso;
+      if (!matchesParentId && !matchesLegacyReplyTo) {
+        continue;
+      }
+      const childRecord =
+        typeof (child as any)?.toJS === "function"
+          ? (child as any).toJS()
+          : { ...(child as any) };
+      this.setSyncdb({
+        ...childRecord,
+        event: "chat",
+        date: childDateIso,
+        sender_id: childSenderId,
+        parent_message_id: targetParentId ?? null,
+        reply_to_message_id: targetParentId ?? null,
+        reply_to: targetParentDateIso ?? null,
+      });
+    }
+
+    this.syncdb.delete({
+      event: "chat",
+      date: targetDateIso,
+      sender_id: targetSenderId,
+    });
+
+    if (targetThreadId && remainingInThread === 0) {
+      this.syncdb.delete({
+        event: THREAD_CONFIG_EVENT,
+        thread_id: targetThreadId,
+      });
+      this.syncdb.delete({
+        event: "chat-thread-state",
+        thread_id: targetThreadId,
+      });
+    }
+
+    this.syncdb.commit();
+    return true;
+  };
+
   renameThread = (threadKey: string, name: string): boolean => {
     return this.setThreadAppearance(threadKey, { name });
   };
@@ -1335,15 +1432,23 @@ export class ChatActions extends Actions<ChatState> {
     this.scrollToIndex(Number.MAX_SAFE_INTEGER);
   };
 
-  // this scrolls the message with given date into view and sets it as the selected message.
-  scrollToDate = (date) => {
+  // this scrolls the message with given date into view and optionally keeps
+  // the message selected via the fragment state.
+  scrollToDate = (
+    date,
+    opts?: {
+      persistFragment?: boolean;
+    },
+  ) => {
     if (isAnyChatOverlayOpen()) return;
     this.clearScrollRequest();
-    this.frameTreeActions?.set_frame_data({
-      id: this.frameId,
-      fragmentId: toMsString(date),
-    });
-    this.setFragment(date);
+    if (opts?.persistFragment !== false) {
+      this.frameTreeActions?.set_frame_data({
+        id: this.frameId,
+        fragmentId: toMsString(date),
+      });
+      this.setFragment(date);
+    }
     setTimeout(() => {
       if (isAnyChatOverlayOpen()) return;
       this.frameTreeActions?.set_frame_data({

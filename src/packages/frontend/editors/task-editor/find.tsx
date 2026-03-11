@@ -11,6 +11,7 @@ import { Input } from "antd";
 import { CSSProperties } from "react";
 
 import { useEffect, useRef } from "@cocalc/frontend/app-framework";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { TaskActions } from "./actions";
 import { EmptyTrash } from "./empty-trash";
 import { ShowToggle } from "./show-toggle";
@@ -39,7 +40,10 @@ export function Find({
   }, [focus_find_box]);
 
   return (
-    <div style={{ display: "flex", marginLeft: "5px", ...style }}>
+    <KeyboardBoundary
+      boundary="task-search"
+      style={{ display: "flex", marginLeft: "5px", ...style }}
+    >
       <Input.Search
         ref={inputRef}
         allowClear
@@ -73,7 +77,7 @@ export function Find({
         local_view_state={local_view_state}
         actions={actions}
       />
-    </div>
+    </KeyboardBoundary>
   );
 }
 

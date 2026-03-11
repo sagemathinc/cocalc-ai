@@ -1,6 +1,7 @@
 import { join } from "path";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
 import { containingPath } from "@cocalc/util/misc";
+import { hasHostAbsoluteRoutePrefix } from "@cocalc/util/routing/app";
 import { isCoCalcURL, parseCoCalcURL } from "@cocalc/frontend/lib/cocalc-urls";
 
 interface Options {
@@ -9,27 +10,8 @@ interface Options {
 }
 // NOTE: there is a similar function in next/lib/share/url-transform.ts
 
-const WEB_ROUTE_PREFIXES = [
-  "/projects",
-  "/settings",
-  "/account",
-  "/admin",
-  "/software",
-  "/help",
-  "/blobs",
-  "/auth",
-  "/register",
-  "/about",
-  "/billing",
-];
-
 function isHostAbsoluteResource(href: string): boolean {
-  return WEB_ROUTE_PREFIXES.some(
-    (prefix) =>
-      href === prefix ||
-      href.startsWith(`${prefix}/`) ||
-      href.startsWith(`${prefix}?`),
-  );
+  return hasHostAbsoluteRoutePrefix(href);
 }
 
 export default function getUrlTransform({ project_id, path }: Options) {
