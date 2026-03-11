@@ -33,6 +33,13 @@ export function useChatThreadSelection({
   const [allowAutoSelectThread, setAllowAutoSelectThread] =
     useState<boolean>(true);
 
+  const syncSelectedThreadKeyFromExternal = (x: string | null) => {
+    if (x === selectedThreadKey) {
+      return;
+    }
+    setSelectedThreadKey0(x);
+  };
+
   const setSelectedThreadKey = (x: string | null) => {
     if (x === selectedThreadKey) {
       return;
@@ -42,7 +49,9 @@ export function useChatThreadSelection({
       actions.setFragment();
     }
     setSelectedThreadKey0(x);
-    actions.setSelectedThread?.(x);
+    actions.setSelectedThread?.(
+      x != null && x !== COMBINED_FEED_KEY ? x : null,
+    );
   };
 
   const isCombinedFeedSelected = selectedThreadKey === COMBINED_FEED_KEY;
@@ -53,7 +62,7 @@ export function useChatThreadSelection({
       storedThreadFromDesc != null &&
       storedThreadFromDesc !== selectedThreadKey
     ) {
-      setSelectedThreadKey(storedThreadFromDesc);
+      syncSelectedThreadKeyFromExternal(storedThreadFromDesc);
       setAllowAutoSelectThread(false);
     }
   }, [storedThreadFromDesc]);
@@ -66,7 +75,7 @@ export function useChatThreadSelection({
         storedThreadFromDesc !== COMBINED_FEED_KEY;
       if (explicitRequestedThread) {
         if (selectedThreadKey !== storedThreadFromDesc) {
-          setSelectedThreadKey(storedThreadFromDesc);
+          syncSelectedThreadKeyFromExternal(storedThreadFromDesc);
         }
         setAllowAutoSelectThread(false);
         return;
@@ -92,7 +101,7 @@ export function useChatThreadSelection({
       threads.some((thread) => thread.key === storedThreadFromDesc)
     ) {
       if (selectedThreadKey !== storedThreadFromDesc) {
-        setSelectedThreadKey(storedThreadFromDesc);
+        syncSelectedThreadKeyFromExternal(storedThreadFromDesc);
       }
       setAllowAutoSelectThread(false);
       return;
@@ -142,7 +151,7 @@ export function useChatThreadSelection({
     const threadKey = threadId;
     if (threadKey !== selectedThreadKey) {
       setAllowAutoSelectThread(false);
-      setSelectedThreadKey(threadKey);
+      syncSelectedThreadKeyFromExternal(threadKey);
     }
   }, [fragmentId, messages, selectedThreadKey]);
 
