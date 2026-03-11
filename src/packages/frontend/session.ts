@@ -129,7 +129,7 @@ class SessionManager {
 
       // we're done -- restore session
       if (this.name) {
-        this.restore();
+        await this.restore();
       }
 
       this._initialized = true;
@@ -183,18 +183,18 @@ class SessionManager {
     LS.set(this._local_storage_name_closed, this._state_closed);
   }
 
-  restore(project_id?: string): void {
+  async restore(project_id?: string): Promise<void> {
     log("restore", project_id);
     if (project_id != null) {
-      this._restore_project(project_id);
+      await this._restore_project(project_id);
     } else {
-      this._restore_all();
+      await this._restore_all();
     }
   }
 
   // Call right when you open a project.  It returns all files that should automatically
   // be opened, then removes that list from localStorage.  Returns undefined if nothing known.
-  private _restore_project(project_id): void {
+  private async _restore_project(project_id): Promise<void> {
     log("_restore_project");
     if (this._state_closed == null || !this._initialized) {
       return;
@@ -203,17 +203,18 @@ class SessionManager {
     delete this._state_closed[project_id];
     if (open_files != null && !this._ignore) {
       const project = this.redux.getProjectActions(project_id);
-      open_files.map((path) =>
-        project.open_file({
+      for (const path of open_files) {
+        await project.open_file({
           path,
           foreground: false,
           foreground_project: false,
-        }),
-      );
+          change_history: false,
+        });
+      }
     }
   }
 
-  private _restore_all(): void {
+  private async _restore_all(): Promise<void> {
     if (this._local_storage_name == null || this._state == null) {
       log("_restore_all -- not setup yet");
       return;
@@ -221,7 +222,7 @@ class SessionManager {
     log("_restore_all -- doing it");
     try {
       this._ignore = true; // don't want to save state **while** restoring it, obviously.
-      restoreSessionState(this.redux, this._state);
+      await restoreSessionState(this.redux, this._state);
     } catch (err) {
       console.warn("FAILED to restore state", err);
       this._save_to_local_storage(); // set back to a valid state
@@ -279,7 +280,10 @@ function getSessionState(redux: AppRedux): State[] {
   return state;
 }
 
-function restoreSessionState(redux: AppRedux, state: State[]): void {
+export async function restoreSessionState(
+  redux: AppRedux,
+  state: State[],
+): Promise<void> {
   log("restoreSessionState", state);
   const projects = redux.getActions("projects");
   for (const openTabsInProject of state) {
@@ -287,10 +291,11 @@ function restoreSessionState(redux: AppRedux, state: State[]): void {
       const paths = openTabsInProject[project_id];
       // restore_session false, b/c we only want to see the tabs from the session
       try {
-        projects.open_project({
+        await projects.open_project({
           project_id,
           switch_to: false,
           restore_session: false,
+          change_history: false,
         });
       } catch (err) {
         // this could happen, e.g., invalid project_id, and shouldn't be fatal.
@@ -301,10 +306,11 @@ function restoreSessionState(redux: AppRedux, state: State[]): void {
         const project = redux.getProjectActions(project_id);
         for (const path of paths) {
           try {
-            project.open_file({
+            await project.open_file({
               path,
               foreground: false,
               foreground_project: false,
+              change_history: false,
             });
           } catch (err) {
             // no clue if this could happen or not now, but maybe someday, and also shouldn't be fatal.
