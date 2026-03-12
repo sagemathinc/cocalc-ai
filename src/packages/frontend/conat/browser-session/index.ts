@@ -89,6 +89,9 @@ import {
 } from "@cocalc/conat/project/terminal";
 import {
   coerceWorkspaceSelection,
+  openWorkspaceStore,
+  readStoredWorkspaceRecords,
+  type WorkspaceRecord,
   type WorkspaceSelection,
 } from "@cocalc/conat/workspaces";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -182,6 +185,117 @@ export function createBrowserSessionAutomation({
         ...(cleanOpts.block != null ? { block: cleanOpts.block } : {}),
       });
       return { ok: true, type, message: cleanMessage };
+    };
+
+    const accountId = (): string => {
+      const value = `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+      if (!value) {
+        throw Error("account id unavailable");
+      }
+      return value;
+    };
+
+    const resolveWorkspaceRecord = async (
+      workspace_id: string,
+    ): Promise<WorkspaceRecord> => {
+      const cleanWorkspaceId = `${workspace_id ?? ""}`.trim();
+      if (!cleanWorkspaceId) {
+        throw Error("workspace_id must be non-empty");
+      }
+      const store = await openWorkspaceStore({
+        client: client.conat_client,
+        project_id,
+        account_id: accountId(),
+      });
+      try {
+        const record = readStoredWorkspaceRecords(store).find(
+          (entry) => entry.workspace_id === cleanWorkspaceId,
+        );
+        if (!record) {
+          throw Error(`workspace '${cleanWorkspaceId}' not found`);
+        }
+        return record;
+      } finally {
+        store.close();
+      }
+    };
+
+    const resolveChatActionsForPath = async (
+      chat_path: string,
+    ): Promise<{
+      chatActions: import("@cocalc/frontend/chat/actions").ChatActions;
+      cleanup?: () => void;
+    }> => {
+      const {
+        getChatActions,
+        initChat,
+        isChatActions,
+        removeWithInstance: removeChatWithInstance,
+      } = await import("@cocalc/frontend/chat/register");
+      const directActions = redux.getEditorActions(project_id, chat_path);
+      const sharedActions =
+        (isChatActions(directActions) ? directActions : undefined) ??
+        getChatActions(project_id, chat_path, {
+          instanceKey: "browser-workspace-exec",
+        });
+      if (sharedActions) {
+        return { chatActions: sharedActions };
+      }
+
+      const chatActions = initChat(project_id, chat_path, {
+        instanceKey: "browser-workspace-exec",
+      });
+      const syncdb = (chatActions as any)?.syncdb;
+      try {
+        if (syncdb?.get_state?.() !== "ready") {
+          await new Promise<void>((resolve, reject) => {
+            const onReady = () => {
+              cleanup();
+              resolve();
+            };
+            const onClose = () => {
+              cleanup();
+              reject(new Error("Chat closed before ready."));
+            };
+            const cleanup = () => {
+              syncdb?.removeListener?.("ready", onReady);
+              syncdb?.removeListener?.("close", onClose);
+            };
+            syncdb?.once?.("ready", onReady);
+            syncdb?.once?.("close", onClose);
+          });
+        }
+      } catch (err) {
+        removeChatWithInstance(chat_path, redux, project_id, {
+          instanceKey: "browser-workspace-exec",
+        });
+        throw err;
+      }
+      return {
+        chatActions,
+        cleanup: () => {
+          removeChatWithInstance(chat_path, redux, project_id, {
+            instanceKey: "browser-workspace-exec",
+          });
+        },
+      };
+    };
+
+    const ensureWorkspaceChatTarget = async (
+      workspace_id: string,
+    ): Promise<{
+      workspace: WorkspaceRecord;
+      chat_path: string;
+      assigned: boolean;
+    }> => {
+      const { ensureWorkspaceChatPath } = await import(
+        "@cocalc/frontend/project/workspaces/runtime"
+      );
+      return await ensureWorkspaceChatPath({
+        project_id,
+        account_id: accountId(),
+        workspace_id,
+      });
     };
 
     const runBash = async (
@@ -451,6 +565,134 @@ export function createBrowserSessionAutomation({
           dispatchWorkspaceSelectionEvent(project_id, nextSelection);
           assertExecNotCanceled(isCanceled);
           return { ok: true, selection: nextSelection };
+        },
+        openChat: async ({
+          workspace_id,
+          foreground = true,
+        }: {
+          workspace_id: string;
+          foreground?: boolean;
+        }): Promise<{
+          ok: true;
+          workspace_id: string;
+          chat_path: string;
+          assigned: boolean;
+          foreground: boolean;
+        }> => {
+          assertExecNotCanceled(isCanceled);
+          const workspace = await resolveWorkspaceRecord(workspace_id);
+          const { chat_path, assigned } = await ensureWorkspaceChatTarget(
+            workspace.workspace_id,
+          );
+          const { ensureWorkspaceChatDirectory } = await import(
+            "@cocalc/frontend/project/workspaces/runtime"
+          );
+          await ensureWorkspaceChatDirectory({ project_id, chat_path });
+          const selection = {
+            kind: "workspace" as const,
+            workspace_id: workspace.workspace_id,
+          };
+          persistSessionSelection(project_id, selection);
+          dispatchWorkspaceSelectionEvent(project_id, selection);
+          assertExecNotCanceled(isCanceled);
+          if (foreground) {
+            await openFileInProject({
+              project_id,
+              path: chat_path,
+              foreground: true,
+              foreground_project: true,
+            });
+          } else {
+            await openFileInProject({
+              project_id,
+              path: chat_path,
+              foreground: false,
+              foreground_project: false,
+            });
+          }
+          return {
+            ok: true,
+            workspace_id: workspace.workspace_id,
+            chat_path,
+            assigned,
+            foreground,
+          };
+        },
+        message: async ({
+          workspace_id,
+          text,
+          open = true,
+          foreground = true,
+          tag,
+        }: {
+          workspace_id: string;
+          text: unknown;
+          open?: boolean;
+          foreground?: boolean;
+          tag?: string;
+        }): Promise<{
+          ok: true;
+          workspace_id: string;
+          chat_path: string;
+          assigned: boolean;
+          opened: boolean;
+          tag?: string;
+          timestamp: string;
+        }> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanText = asText(text).trim();
+          if (!cleanText) {
+            throw Error("workspace message text must be non-empty");
+          }
+          const workspace = await resolveWorkspaceRecord(workspace_id);
+          const { chat_path, assigned } = await ensureWorkspaceChatTarget(
+            workspace.workspace_id,
+          );
+          const { ensureWorkspaceChatDirectory } = await import(
+            "@cocalc/frontend/project/workspaces/runtime"
+          );
+          await ensureWorkspaceChatDirectory({ project_id, chat_path });
+          const selection = {
+            kind: "workspace" as const,
+            workspace_id: workspace.workspace_id,
+          };
+          persistSessionSelection(project_id, selection);
+          dispatchWorkspaceSelectionEvent(project_id, selection);
+          if (open) {
+            await openFileInProject({
+              project_id,
+              path: chat_path,
+              foreground,
+              foreground_project: foreground,
+            });
+          }
+          assertExecNotCanceled(isCanceled);
+          let cleanup: (() => void) | undefined;
+          const { chatActions, cleanup: release } =
+            await resolveChatActionsForPath(chat_path);
+          cleanup = release;
+          try {
+            const timestamp = chatActions.sendChat({
+              input: cleanText,
+              tag: typeof tag === "string" && tag.trim() ? tag.trim() : undefined,
+            });
+            if (!timestamp) {
+              throw Error("failed to send workspace message");
+            }
+            return {
+              ok: true,
+              workspace_id: workspace.workspace_id,
+              chat_path,
+              assigned,
+              opened: open,
+              ...(typeof tag === "string" && tag.trim()
+                ? { tag: tag.trim() }
+                : {}),
+              timestamp,
+            };
+          } finally {
+            cleanup?.();
+          }
         },
       },
       notebook: {
