@@ -208,4 +208,17 @@ describe("AgentsPanel session cards", () => {
 
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
   });
+
+  it("does not open the inline chat when the menu button handles Enter", async () => {
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-menu-session-1")).toBeTruthy(),
+    );
+    fireEvent.keyDown(screen.getByTestId("agent-session-menu-session-1"), {
+      key: "Enter",
+    });
+
+    expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
+  });
 });

@@ -599,6 +599,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       <div
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
       >
         <Dropdown
           trigger={["click"]}
