@@ -216,7 +216,7 @@ export class Session {
   init = async () => {
     const { head, tail } = path_split(this.termPath);
     const HISTFILE = historyFile(this.options.path);
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...envForSpawn(),
       ...this.options.env,
       TERM: this.options.env?.TERM ?? BROWSER_TERM,
@@ -226,11 +226,12 @@ export class Session {
       ...(HISTFILE ? { HISTFILE } : undefined),
       COCALC_TERMINAL_FILENAME: tail,
       COCALC_CONTROL_DIR: this.spoolDirectory,
-      TMUX: undefined, // ensure not set
-      TMUX_PANE: undefined,
-      TMUX_TMPDIR: undefined,
-      TERMCAP: undefined,
     };
+    // The browser terminal should describe xterm.js, not the host shell.
+    delete env.TMUX;
+    delete env.TMUX_PANE;
+    delete env.TMUX_TMPDIR;
+    delete env.TERMCAP;
     let command = this.options.command ?? DEFAULT_COMMAND;
     let args = this.options.args ?? [];
     const initFilename: string = console_init_filename(this.termPath);
