@@ -1007,6 +1007,13 @@ export class ConatClient extends EventEmitter {
     );
   };
 
+  automationAcp = async (request) => {
+    return await acp.automationAcp(
+      { account_id: this.client.account_id, ...request },
+      this.conat(),
+    );
+  };
+
   dstream = dstream;
   astream = astream;
   // NOTE: this higher-level frontend wrapper exposes sync primitives directly,

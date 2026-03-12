@@ -330,11 +330,11 @@ export async function main(
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
+  // Local persist must exist before ACP startup so automation indexes can
+  // republish into the project-scoped DKV stores on restart.
+  const persistServer = createPersistServer({ client: conatClient });
   configureAcpDetachedWorkerRunning(ensureProjectHostAcpWorkerRunning);
   await initAcp(conatClient, { manageDetachedWorker: false });
-
-  // Minimal local persistence so DKV/state works (no external hub needed).
-  const persistServer = createPersistServer({ client: conatClient });
 
   logger.info("Proxy HTTP/WS traffic to running project containers.");
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });

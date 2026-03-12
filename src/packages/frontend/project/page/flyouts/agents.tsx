@@ -35,6 +35,8 @@ import {
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
+import type { AcpAutomationRecord } from "@cocalc/conat/ai/acp/types";
+import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
   initChat,
   getChatActions,
@@ -65,6 +67,7 @@ import {
 } from "@cocalc/frontend/project/workspaces/runtime";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "processing",
@@ -242,6 +245,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
+  const [automations, setAutomations] = useState<AcpAutomationRecord[]>([]);
   const [missingChatPaths, setMissingChatPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -304,6 +308,33 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [account_id, project_id]);
 
   useEffect(() => {
+    let closed = false;
+    let unsubscribe: (() => void) | undefined;
+    void watchAutomationsForProject(
+      { project_id },
+      (records: AcpAutomationRecord[]) => {
+        if (closed) return;
+        setAutomations(records);
+      },
+    )
+      .then((cleanup) => {
+        if (closed) {
+          cleanup();
+          return;
+        }
+        unsubscribe = cleanup;
+      })
+      .catch((err) => {
+        if (closed) return;
+        setError((prev) => prev || `${err}`);
+      });
+    return () => {
+      closed = true;
+      unsubscribe?.();
+    };
+  }, [project_id]);
+
+  useEffect(() => {
     const node = panelRef.current;
     if (!node) return;
     const update = () => {
@@ -330,15 +361,16 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const knownChatPaths = useMemo(() => {
     return Array.from(
       new Set(
-        sessions
-          .map((session) => session.chat_path)
-          .filter(
-            (path): path is string =>
-              typeof path === "string" && path.trim().length > 0,
-          ),
+        [
+          ...sessions.map((session) => session.chat_path),
+          ...automations.map((a) => a.path),
+        ].filter(
+          (path): path is string =>
+            typeof path === "string" && path.trim().length > 0,
+        ),
       ),
     );
-  }, [sessions]);
+  }, [automations, sessions]);
 
   useEffect(() => {
     const fs = actions?.fs?.();
@@ -646,6 +678,23 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   function openFloatingSession(record: AgentSessionRecord): void {
     openFloatingAgentSession(project_id, record);
+  }
+
+  function openAutomation(record: AcpAutomationRecord): void {
+    saveNavigatorSelectedThreadKey(record.thread_id);
+    actions?.open_file({ path: record.path });
+  }
+
+  async function controlAutomation(
+    record: AcpAutomationRecord,
+    action: "run_now" | "pause" | "resume" | "acknowledge",
+  ): Promise<void> {
+    await webapp_client.conat_client.automationAcp({
+      project_id,
+      path: record.path,
+      thread_id: record.thread_id,
+      action,
+    });
   }
 
   function recordMetaLine(record: AgentSessionRecord): string {
@@ -1104,6 +1153,141 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     );
   }
 
+  function renderAutomation(record: AcpAutomationRecord): React.JSX.Element {
+    const title =
+      html_to_text(record.title ?? "").trim() || "Scheduled automation";
+    const status =
+      record.status ?? (record.enabled === false ? "paused" : "active");
+    const updatedAt = record.updated_at;
+    return (
+      <div key={`${record.path}::${record.thread_id}`}>
+        <div
+          style={{
+            width: "100%",
+            border: "1px solid #e8e8e8",
+            borderRadius: 8,
+            padding: isFlyout ? 8 : 10,
+            background: "#fff",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              marginBottom: 6,
+            }}
+          >
+            <Typography.Text strong title={title}>
+              {ellipsize(title, isFlyout ? 48 : 56)}
+            </Typography.Text>
+            <Tag
+              color={
+                status === "error"
+                  ? "red"
+                  : status === "paused"
+                    ? "orange"
+                    : "blue"
+              }
+            >
+              {status}
+            </Tag>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              marginBottom: 8,
+            }}
+          >
+            {record.next_run_at_ms ? (
+              <Typography.Text type="secondary">
+                Next run{" "}
+                <TimeAgo
+                  date={new Date(record.next_run_at_ms)}
+                  click_to_toggle={false}
+                />
+              </Typography.Text>
+            ) : null}
+            {record.last_run_finished_at_ms ? (
+              <Typography.Text type="secondary">
+                Last run{" "}
+                <TimeAgo
+                  date={new Date(record.last_run_finished_at_ms)}
+                  click_to_toggle={false}
+                />
+              </Typography.Text>
+            ) : null}
+            {typeof record.unacknowledged_runs === "number" &&
+            record.unacknowledged_runs > 0 ? (
+              <Typography.Text type="secondary">
+                {record.unacknowledged_runs} unacknowledged run(s)
+              </Typography.Text>
+            ) : null}
+            {record.paused_reason ? (
+              <Typography.Text type="secondary">
+                {record.paused_reason}
+              </Typography.Text>
+            ) : null}
+            {record.last_error ? (
+              <Typography.Text type="danger">
+                {record.last_error}
+              </Typography.Text>
+            ) : null}
+            {updatedAt ? (
+              <Typography.Text type="secondary">
+                Updated <TimeAgo date={updatedAt} click_to_toggle={false} />
+              </Typography.Text>
+            ) : null}
+          </div>
+          <Space size={[4, 4]} wrap>
+            <Button
+              size="small"
+              type="primary"
+              onClick={() => openAutomation(record)}
+            >
+              Open
+            </Button>
+            <Button
+              size="small"
+              onClick={() => void controlAutomation(record, "run_now")}
+            >
+              Run now
+            </Button>
+            {status === "paused" || record.enabled === false ? (
+              <Button
+                size="small"
+                onClick={() => void controlAutomation(record, "resume")}
+              >
+                Resume
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                onClick={() => void controlAutomation(record, "pause")}
+              >
+                Pause
+              </Button>
+            )}
+            <Button
+              size="small"
+              onClick={() => void controlAutomation(record, "acknowledge")}
+            >
+              Acknowledge
+            </Button>
+          </Space>
+        </div>
+      </div>
+    );
+  }
+
+  const visibleAutomations = useMemo(
+    () => automations.filter((record) => !missingChatPaths.has(record.path)),
+    [automations, missingChatPaths],
+  );
+
   if (loading) {
     return <Loading theme="medium" />;
   }
@@ -1224,6 +1408,24 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           message={error}
           style={{ marginBottom: 8 }}
         />
+      ) : null}
+      {visibleAutomations.length > 0 ? (
+        <div style={{ marginBottom: 16 }}>
+          <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+            Scheduled automations
+          </Typography.Text>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isFlyout
+                ? "1fr"
+                : "repeat(auto-fit, minmax(360px, 1fr))",
+              gap: isFlyout ? 8 : 12,
+            }}
+          >
+            {visibleAutomations.map((record) => renderAutomation(record))}
+          </div>
+        </div>
       ) : null}
       <div style={{ marginBottom: 12 }}>
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
