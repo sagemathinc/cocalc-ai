@@ -903,6 +903,7 @@ export class SyncDoc extends EventEmitter {
     this.emit("close");
 
     this.stopBackendFsWatch();
+    this.client.removeListener("closed", this.close);
 
     // must be after the emits above, so clients know
     // what happened and can respond.

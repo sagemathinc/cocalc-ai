@@ -305,3 +305,16 @@ describe("syncdoc close waits for async table cleanup", () => {
     expect(resolved).toBe(true);
   });
 });
+
+describe("syncdoc close releases the client closed-listener", () => {
+  it("removes the client listener after manual close", async () => {
+    const { client_id, project_id, path, init_queries } = a_txt();
+    const client = new Client(init_queries, client_id);
+    const doc = new SyncString({ project_id, path, client, fs });
+    await once(doc, "ready");
+
+    expect(client.listenerCount("closed")).toBe(1);
+    await doc.close();
+    expect(client.listenerCount("closed")).toBe(0);
+  });
+});
