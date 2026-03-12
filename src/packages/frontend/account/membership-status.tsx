@@ -14,7 +14,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { type ReactElement, useMemo, useState } from "react";
+import { type ReactElement, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
 import api from "@cocalc/frontend/client/api";
@@ -172,12 +172,24 @@ export function MembershipStatusPanel({
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
+  const previousAccountIdRef = useRef(account_id);
 
   useAsyncEffect(
     async (isMounted) => {
+      const accountChanged = previousAccountIdRef.current !== account_id;
+      previousAccountIdRef.current = account_id;
       if (!account_id) {
+        setError("");
+        setMembership(null);
+        setTiers([]);
+        setDetails(null);
         setLoading(false);
         return;
+      }
+      if (accountChanged) {
+        setMembership(null);
+        setTiers([]);
+        setDetails(null);
       }
       setLoading(true);
       setError("");
