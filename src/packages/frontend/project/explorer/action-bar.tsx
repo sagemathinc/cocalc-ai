@@ -4,9 +4,8 @@
  */
 
 import { Modal, Radio, Space, message } from "antd";
-import useAsyncEffect from "use-async-effect";
 import * as immutable from "immutable";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Button, ButtonToolbar } from "@cocalc/frontend/antd-bootstrap";
 import { Gap, Icon } from "@cocalc/frontend/components";
@@ -80,28 +79,42 @@ export function ActionBar({
   const [backupsLoading, setBackupsLoading] = useState<boolean>(false);
   const [backupsErr, setBackupsErr] = useState<any>(null);
   const [backupsTick, setBackupsTick] = useState(0);
+  const backupsRequestIdRef = useRef(0);
 
-  useAsyncEffect(async () => {
-    if (!inBackups || !project_id) return;
-    try {
-      setBackupsLoading(true);
+  useEffect(() => {
+    const requestId = backupsRequestIdRef.current + 1;
+    backupsRequestIdRef.current = requestId;
+    if (!inBackups || !project_id) {
+      setBackupsMeta(null);
       setBackupsErr(null);
-      const backups = await webapp_client.conat_client.hub.projects.getBackups({
-        project_id,
-        indexed_only: true,
-      });
-      setBackupsMeta(
-        backups.map(({ id, time }) => ({
-          id,
-          name: new Date(time).toISOString(),
-          mtime: new Date(time).getTime(),
-        })),
-      );
-    } catch (err) {
-      setBackupsErr(err);
-    } finally {
       setBackupsLoading(false);
+      return;
     }
+    (async () => {
+      try {
+        setBackupsLoading(true);
+        setBackupsErr(null);
+        const backups =
+          await webapp_client.conat_client.hub.projects.getBackups({
+            project_id,
+            indexed_only: true,
+          });
+        if (backupsRequestIdRef.current !== requestId) return;
+        setBackupsMeta(
+          backups.map(({ id, time }) => ({
+            id,
+            name: new Date(time).toISOString(),
+            mtime: new Date(time).getTime(),
+          })),
+        );
+      } catch (err) {
+        if (backupsRequestIdRef.current !== requestId) return;
+        setBackupsErr(err);
+      } finally {
+        if (backupsRequestIdRef.current !== requestId) return;
+        setBackupsLoading(false);
+      }
+    })();
   }, [inBackups, project_id, current_path, backupsTick]);
 
   interface BackupSelection {
