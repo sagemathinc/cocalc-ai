@@ -3,6 +3,7 @@ import { useBottomScroller } from "@cocalc/frontend/app-framework/use-bottom-scr
 import { Paragraph } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { COLORS } from "@cocalc/util/theme";
+import type { RefObject } from "react";
 
 const STYLE = {
   border: "1px solid lightgrey",
@@ -30,16 +31,17 @@ export function RawPrompt({
   scrollBottom = false,
   rawText = false,
 }: Props) {
-  const ref = useBottomScroller(scrollBottom, input);
+  const ref = useBottomScroller<HTMLElement>(scrollBottom, input);
   const style = { ...STYLE, ...style0 };
   if (typeof input == "string" && !rawText) {
-    // this looks so much nicer; I realize it doesn't implement scrollBottom.
-    // But just dropping the input as plain text like below just seems
-    // utterly broken!
-    return <StaticMarkdown style={style} value={input} />;
+    return (
+      <div ref={ref as RefObject<HTMLDivElement>} style={style}>
+        <StaticMarkdown value={input} />
+      </div>
+    );
   } else {
     return (
-      <Paragraph ref={ref} style={style}>
+      <Paragraph ref={ref as RefObject<HTMLParagraphElement>} style={style}>
         {input}
       </Paragraph>
     );
