@@ -131,6 +131,7 @@ function CodexCredentialsPanelBody({
     uploadedAt: number;
   } | null>(null);
   const authFileInputRef = useRef<HTMLInputElement | null>(null);
+  const previousProjectKeyRef = useRef(selectedProjectId.trim());
 
   const refresh = () => setRefreshToken((x) => x + 1);
 
@@ -154,10 +155,18 @@ function CodexCredentialsPanelBody({
 
   useAsyncEffect(
     async (isMounted) => {
+      const projectKey = selectedProjectId.trim();
+      const projectChanged = previousProjectKeyRef.current !== projectKey;
+      previousProjectKeyRef.current = projectKey;
+      if (projectChanged) {
+        setPaymentSource(undefined);
+        setCredentials([]);
+        setApiKeyStatus(undefined);
+      }
       setLoading(true);
       setError("");
       try {
-        const project_id = selectedProjectId.trim() || undefined;
+        const project_id = projectKey || undefined;
         let payment: CodexPaymentSourceInfo;
         let list: ExternalCredentialInfo[] = [];
         let keyStatus: any = {};
