@@ -53,6 +53,7 @@ interface Props {
   fixedMode?: "markdown" | "editor";
   externalMultilinePasteAsCodeBlock?: boolean;
   inputControlRef?: MutableRefObject<ChatInputControl | null>;
+  onControlReady?: (control: ChatInputControl | null) => void;
 }
 
 export interface ChatInputControl {
@@ -91,6 +92,7 @@ export default function ChatInput({
   fixedMode,
   externalMultilinePasteAsCodeBlock,
   inputControlRef,
+  onControlReady,
 }: Props) {
   const intl = useIntl();
   const controlRef = useRef<any>(null);
@@ -251,16 +253,20 @@ export default function ChatInput({
   }, [focusInput, propsInput, sessionToken]);
 
   useEffect(() => {
-    if (inputControlRef == null) return;
-    inputControlRef.current = {
+    const control: ChatInputControl = {
       focus: focusInput,
     };
+    if (inputControlRef != null) {
+      inputControlRef.current = control;
+    }
+    onControlReady?.(control);
     return () => {
-      if (inputControlRef.current?.focus === focusInput) {
+      if (inputControlRef?.current?.focus === focusInput) {
         inputControlRef.current = null;
       }
+      onControlReady?.(null);
     };
-  }, [focusInput, inputControlRef]);
+  }, [focusInput, inputControlRef, onControlReady]);
 
   return (
     <MarkdownInput

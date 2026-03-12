@@ -11,6 +11,7 @@ import { AGENT_DOCK_OPEN_EVENT } from "./agent-dock-state";
 
 const mockEraseActiveKeyHandler = jest.fn();
 const mockRefocusChatComposerInput = jest.fn();
+let mockSideChatDelayMs = 0;
 const mockChatActions = {
   setSelectedThread: jest.fn(),
   scrollToIndex: jest.fn(),
@@ -79,7 +80,36 @@ jest.mock("@cocalc/frontend/chat/register", () => ({
 
 jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   __esModule: true,
-  default: () => <input data-testid="agent-dock-composer" />,
+  default: ({ onComposerReady }: any) => {
+    const React = require("react");
+    const [ready, setReady] = React.useState(mockSideChatDelayMs === 0);
+    const inputRef = React.useRef(null as HTMLInputElement | null);
+
+    React.useEffect(() => {
+      if (mockSideChatDelayMs === 0) return;
+      const timer = window.setTimeout(
+        () => setReady(true),
+        mockSideChatDelayMs,
+      );
+      return () => window.clearTimeout(timer);
+    }, []);
+
+    React.useEffect(() => {
+      if (!ready) return;
+      onComposerReady?.(
+        {
+          focus: () => {
+            inputRef.current?.focus();
+            return document.activeElement === inputRef.current;
+          },
+        },
+        inputRef.current?.parentElement ?? null,
+      );
+    }, [onComposerReady, ready]);
+
+    if (!ready) return <div data-testid="agent-dock-loading" />;
+    return <input ref={inputRef} data-testid="agent-dock-composer" />;
+  },
 }));
 
 jest.mock("@cocalc/frontend/chat/composer-focus", () => ({
@@ -138,12 +168,19 @@ describe("AgentDock keyboard suppression", () => {
     mockChatActions.getMessageByDate.mockReset();
     mockChatActions.messageCache.getThreadIndex.mockClear();
     mockRefocusChatComposerInput.mockReset();
+    mockRefocusChatComposerInput.mockImplementation((_root, control) => {
+      if (typeof control?.focus === "function") {
+        return control.focus() !== false;
+      }
+      return false;
+    });
+    mockSideChatDelayMs = 0;
     mockChatActions.messageCache.getThreadIndex.mockImplementation(
       () => new Map(),
     );
   });
 
-  async function openDock(threadKey = "thread-1") {
+  async function openDock(threadKey = "thread-1", awaitComposer = true) {
     render(<AgentDock project_id="project-1" is_active={true} />);
 
     act(() => {
@@ -162,14 +199,17 @@ describe("AgentDock keyboard suppression", () => {
       );
     });
 
-    await waitFor(() =>
-      expect(screen.getByTestId("agent-dock-composer")).toBeTruthy(),
-    );
+    if (awaitComposer) {
+      await waitFor(() =>
+        expect(screen.getByTestId("agent-dock-composer")).toBeTruthy(),
+      );
+    }
   }
 
   it("clears the active page key handler when focus enters the floating dock", async () => {
     await openDock();
 
+    mockEraseActiveKeyHandler.mockClear();
     fireEvent.focus(screen.getByTestId("agent-dock-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
@@ -179,24 +219,27 @@ describe("AgentDock keyboard suppression", () => {
     await openDock();
 
     await waitFor(() =>
-      expect(mockRefocusChatComposerInput).toHaveBeenCalled(),
+      expect(document.activeElement).toBe(
+        screen.getByTestId("agent-dock-composer"),
+      ),
     );
   });
 
-  it("retries composer focus when the input mounts a little later", async () => {
+  it("focuses the composer when it mounts after the initial retry window", async () => {
     jest.useFakeTimers();
-    mockRefocusChatComposerInput
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(false)
-      .mockReturnValue(true);
+    mockSideChatDelayMs = 1000;
 
-    await openDock();
+    await openDock("thread-1", false);
 
     await act(async () => {
-      jest.advanceTimersByTime(700);
+      jest.advanceTimersByTime(1200);
     });
 
-    expect(mockRefocusChatComposerInput).toHaveBeenCalledTimes(3);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId("agent-dock-composer"),
+      ),
+    );
   });
 
   it("stops dock clicks from bubbling to window listeners", async () => {

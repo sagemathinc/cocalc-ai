@@ -68,6 +68,7 @@ import {
   readStoredCombinedComposerTargetKey,
   resolveCombinedComposerTargetKey,
 } from "./combined-composer-target";
+import type { ChatInputControl } from "./input";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -207,6 +208,10 @@ export interface ChatPanelProps {
   variant?: "default" | "compact";
   hideSidebar?: boolean;
   onFocus?: () => void;
+  onComposerReady?: (
+    control: ChatInputControl | null,
+    root: ParentNode | null,
+  ) => void;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -240,6 +245,7 @@ export function ChatPanel({
   variant = "default",
   hideSidebar = false,
   onFocus,
+  onComposerReady,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const activity: undefined | immutable.Map<string, number> =
@@ -1284,6 +1290,7 @@ export function ChatPanel({
         selectedThread={selectedThread}
         onComposerTargetChange={setComposerTargetKey}
         onComposerFocusChange={setComposerFocused}
+        onComposerReady={onComposerReady}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
         showLoopControls={isSelectedThreadCodex}

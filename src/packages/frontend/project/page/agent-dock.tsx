@@ -16,6 +16,7 @@ import {
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import { watchAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
+import type { ChatInputControl } from "@cocalc/frontend/chat/input";
 import {
   getChatActions,
   initChat,
@@ -403,6 +404,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     };
   }, [session?.thread_key]);
 
+  const handleComposerReady = useCallback(
+    (control: ChatInputControl | null, root: ParentNode | null): void => {
+      if (!session) return;
+      refocusChatComposerInput(root ?? nodeRef.current, control ?? undefined);
+    },
+    [session],
+  );
+
   const fileContext = useMemo(() => {
     if (!session?.chat_path) return undefined;
     return {
@@ -583,6 +592,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   fontSize={fontSize}
                   hideSidebar
                   desc={desc}
+                  onComposerReady={handleComposerReady}
                 />
               </FileContext.Provider>
             ) : (

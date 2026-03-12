@@ -53,6 +53,10 @@ export interface ChatRoomComposerProps {
   selectedThread?: ThreadMeta | null;
   onComposerTargetChange: (key: string | null) => void;
   onComposerFocusChange: (focused: boolean) => void;
+  onComposerReady?: (
+    control: ChatInputControl | null,
+    root: ParentNode | null,
+  ) => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
   showLoopControls?: boolean;
@@ -83,6 +87,7 @@ export function ChatRoomComposer({
   selectedThread,
   onComposerTargetChange,
   onComposerFocusChange,
+  onComposerReady,
   codexPaymentSource: _codexPaymentSource,
   codexPaymentSourceLoading: _codexPaymentSourceLoading = false,
   showLoopControls = false,
@@ -527,6 +532,9 @@ export function ChatRoomComposer({
           <ChatInput
             key={`${path}${project_id}-draft-${composerDraftKey}`}
             inputControlRef={chatInputControlRef}
+            onControlReady={(control) =>
+              onComposerReady?.(control, inputContainerRef.current)
+            }
             fontSize={fontSize}
             autoFocus
             isFocused={isInputFocused}
