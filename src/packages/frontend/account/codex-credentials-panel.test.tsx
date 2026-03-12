@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 
 const getCodexPaymentSource = jest.fn();
+const codexDeviceAuthStart = jest.fn();
 
 jest.mock("antd", () => {
   const Button = ({ children, onClick }: any) => (
@@ -16,10 +17,21 @@ jest.mock("antd", () => {
       {children}
     </div>
   );
+  const Collapse = ({ children, items }: any) => (
+    <div>
+      {items?.map((item: any) => (
+        <div key={item.key}>
+          {item.label}
+          {item.children}
+        </div>
+      ))}
+      {children}
+    </div>
+  );
   return {
     Alert: Div,
     Button,
-    Collapse: Div,
+    Collapse,
     Input: () => null,
     Popconfirm: Div,
     Space: Div,
@@ -68,6 +80,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       hub: {
+        projects: {
+          codexDeviceAuthStart: (...args: any[]) =>
+            codexDeviceAuthStart(...args),
+        },
         system: {
           getCodexPaymentSource: (...args: any[]) =>
             getCodexPaymentSource(...args),
@@ -124,6 +140,51 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Not configured")).toBeTruthy();
+    });
+  });
+
+  it("clears stale device auth state when the project changes", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "none" });
+    codexDeviceAuthStart.mockResolvedValue({
+      id: "auth-1",
+      projectId: "project-1",
+      accountId: "account-1",
+      codexHome: "/tmp/.codex",
+      state: "pending",
+      output: "",
+      startedAt: 1,
+      updatedAt: 1,
+    });
+
+    const { rerender } = render(
+      <CodexCredentialsPanel embedded defaultProjectId="project-1" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Not configured")).toBeTruthy();
+    });
+
+    await act(async () => {
+      screen.getByText("Start device login").click();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText((text) =>
+          text.includes("Device auth status: pending"),
+        ),
+      ).toBeTruthy();
+    });
+
+    rerender(<CodexCredentialsPanel embedded defaultProjectId="project-2" />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText((text) =>
+          text.includes("Device auth status: pending"),
+        ),
+      ).toBeNull();
+      expect(screen.getByText("loading")).toBeTruthy();
     });
   });
 });

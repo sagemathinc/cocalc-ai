@@ -162,6 +162,9 @@ function CodexCredentialsPanelBody({
         setPaymentSource(undefined);
         setCredentials([]);
         setApiKeyStatus(undefined);
+        setDeviceAuth(null);
+        setDeviceAuthError("");
+        setUploadedAuthFileStatus(null);
       }
       setLoading(true);
       setError("");
