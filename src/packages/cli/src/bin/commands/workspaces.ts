@@ -8,6 +8,7 @@ import {
   readStoredWorkspaceRecords,
   resolveWorkspaceForPath,
   resolveWorkspaceIdentifier,
+  type WorkspaceRecord,
   type WorkspaceSelection,
   type WorkspaceUpdatePatch,
   updateStoredWorkspaceRecord,
@@ -77,6 +78,16 @@ type WorkspaceSelectCliOptions = WorkspaceProjectCliOptions & {
   allowRawExec?: boolean;
 };
 
+type WorkspaceBrowserCliOptions = WorkspaceSelectCliOptions;
+
+type WorkspaceMessageCliOptions = WorkspaceBrowserCliOptions & {
+  stdin?: boolean;
+  open?: boolean;
+  background?: boolean;
+  foreground?: boolean;
+  tag?: string;
+};
+
 function normalizeWorkspaceCliPath(path: string): string {
   const raw = `${path ?? ""}`.trim();
   if (!raw) {
@@ -97,7 +108,16 @@ function parseOptionalBoolean(value: string | undefined): boolean | undefined {
   throw new Error(`invalid boolean value '${value}'`);
 }
 
-function workspaceSummary(record: any): Record<string, unknown> {
+async function readAllStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function workspaceSummary(record: WorkspaceRecord): Record<string, unknown> {
   return {
     workspace_id: record.workspace_id,
     project_id: record.project_id,
@@ -129,7 +149,10 @@ function buildThemePatch(
   return Object.keys(theme).length > 0 ? theme : undefined;
 }
 
-function requireWorkspaceRecord(records: any[], identifier: string) {
+function requireWorkspaceRecord(
+  records: WorkspaceRecord[],
+  identifier: string,
+): WorkspaceRecord {
   const record = resolveWorkspaceIdentifier(records, identifier);
   if (!record) {
     throw new Error(`workspace '${identifier}' not found`);
@@ -434,6 +457,194 @@ export function registerWorkspacesCommand(
             project_id: project.project_id,
             browser_id: sessionInfo.browser_id,
             selection: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project.project_id),
+          };
+        });
+      },
+    );
+
+  workspaces
+    .command("open-chat <workspace>")
+    .description(
+      "open the canonical chat for a workspace in a target browser session",
+    )
+    .option("--project <project>", "project id/title")
+    .option("--browser <id>", "browser id or unique prefix")
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this project open",
+    )
+    .option("--active-only", "only target active browser sessions")
+    .option("--require-discovery", "force browser session discovery")
+    .option("--posture <posture>", "browser exec posture")
+    .option("--policy-file <path>", "browser exec policy file")
+    .option("--allow-raw-exec", "allow raw browser exec")
+    .option("--background", "open the workspace chat without focusing it")
+    .action(
+      async (
+        workspace: string,
+        opts: WorkspaceBrowserCliOptions & { background?: boolean },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "workspaces open-chat", async (ctx) => {
+          const { project, client } = await deps.resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const store = await openWorkspaceStore({
+            client,
+            project_id: project.project_id,
+            account_id: ctx.accountId,
+          });
+          let record: WorkspaceRecord;
+          try {
+            record = requireWorkspaceRecord(
+              readStoredWorkspaceRecords(store),
+              workspace,
+            );
+          } finally {
+            store.close();
+          }
+
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser) ?? "",
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: !!opts.requireDiscovery,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || project.project_id,
+            activeOnly: !!opts.activeOnly,
+          });
+          const browserClient = createBrowserSessionClient({
+            client: ctx.remote.client,
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            allowRawExec: opts.allowRawExec,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const response = await browserClient.exec({
+            project_id: project.project_id,
+            code: `return await api.workspaces.openChat(${JSON.stringify({
+              workspace_id: record.workspace_id,
+              foreground: !opts.background,
+            })});`,
+            posture,
+            policy,
+          });
+          return {
+            project_id: project.project_id,
+            browser_id: sessionInfo.browser_id,
+            workspace: workspaceSummary(record),
+            result: response?.result ?? null,
+            ...sessionTargetContext(ctx, sessionInfo, project.project_id),
+          };
+        });
+      },
+    );
+
+  workspaces
+    .command("message <workspace> [text...]")
+    .description(
+      "send a message to a workspace's canonical chat in a target browser session",
+    )
+    .option("--project <project>", "project id/title")
+    .option("--browser <id>", "browser id or unique prefix")
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this project open",
+    )
+    .option("--active-only", "only target active browser sessions")
+    .option("--require-discovery", "force browser session discovery")
+    .option("--posture <posture>", "browser exec posture")
+    .option("--policy-file <path>", "browser exec policy file")
+    .option("--allow-raw-exec", "allow raw browser exec")
+    .option("--stdin", "append stdin to the message text")
+    .option("--no-open", "send without opening/focusing the workspace chat")
+    .option(
+      "--background",
+      "when opening, keep the workspace chat in the background",
+    )
+    .option("--tag <tag>", "optional message tag")
+    .action(
+      async (
+        workspace: string,
+        textParts: string[],
+        opts: WorkspaceMessageCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(command, "workspaces message", async (ctx) => {
+          const stdinText = opts.stdin ? (await readAllStdin()).trim() : "";
+          const text = [textParts.join(" ").trim(), stdinText]
+            .filter((part) => part.length > 0)
+            .join("\n\n")
+            .trim();
+          if (!text) {
+            throw new Error(
+              "message text is required (pass text arguments or use --stdin)",
+            );
+          }
+          const { project, client } = await deps.resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const store = await openWorkspaceStore({
+            client,
+            project_id: project.project_id,
+            account_id: ctx.accountId,
+          });
+          let record: WorkspaceRecord;
+          try {
+            record = requireWorkspaceRecord(
+              readStoredWorkspaceRecords(store),
+              workspace,
+            );
+          } finally {
+            store.close();
+          }
+
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser) ?? "",
+            fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: !!opts.requireDiscovery,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || project.project_id,
+            activeOnly: !!opts.activeOnly,
+          });
+          const browserClient = createBrowserSessionClient({
+            client: ctx.remote.client,
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+          });
+          const { posture, policy } = await resolveBrowserPolicyAndPosture({
+            posture: opts.posture,
+            policyFile: opts.policyFile,
+            allowRawExec: opts.allowRawExec,
+            apiBaseUrl: ctx.apiBaseUrl,
+          });
+          const response = await browserClient.exec({
+            project_id: project.project_id,
+            code: `return await api.workspaces.message(${JSON.stringify({
+              workspace_id: record.workspace_id,
+              text,
+              open: opts.open !== false,
+              foreground: !opts.background,
+              tag: opts.tag?.trim() || undefined,
+            })});`,
+            posture,
+            policy,
+          });
+          return {
+            project_id: project.project_id,
+            browser_id: sessionInfo.browser_id,
+            workspace: workspaceSummary(record),
+            result: response?.result ?? null,
             ...sessionTargetContext(ctx, sessionInfo, project.project_id),
           };
         });

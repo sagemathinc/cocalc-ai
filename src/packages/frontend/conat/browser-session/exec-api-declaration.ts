@@ -200,6 +200,31 @@ export type BrowserExecApi = {
         | { kind: "unscoped" }
         | { kind: "workspace"; workspace_id: string };
     }>;
+    openChat: (opts: {
+      workspace_id: string;
+      foreground?: boolean;
+    }) => Promise<{
+      ok: true;
+      workspace_id: string;
+      chat_path: string;
+      assigned: boolean;
+      foreground: boolean;
+    }>;
+    message: (opts: {
+      workspace_id: string;
+      text: unknown;
+      open?: boolean;
+      foreground?: boolean;
+      tag?: string;
+    }) => Promise<{
+      ok: true;
+      workspace_id: string;
+      chat_path: string;
+      assigned: boolean;
+      opened: boolean;
+      tag?: string;
+      timestamp: string;
+    }>;
   };
   notebook: {
     listCells: (path: string) => Promise<BrowserNotebookCell[]>;
