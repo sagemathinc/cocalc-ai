@@ -22,6 +22,7 @@ import {
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { refocusChatComposerInput } from "@cocalc/frontend/chat/composer-focus";
 import { Loading } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -221,6 +222,24 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     }, 0);
     return () => clearTimeout(timer);
   }, [chatActions, session?.thread_key]);
+
+  useEffect(() => {
+    if (!chatActions || !session) return;
+    const focusComposer = () => {
+      refocusChatComposerInput(nodeRef.current);
+    };
+    const timer = window.setTimeout(focusComposer, 0);
+    let frame: number | undefined;
+    if (typeof window.requestAnimationFrame === "function") {
+      frame = window.requestAnimationFrame(focusComposer);
+    }
+    return () => {
+      window.clearTimeout(timer);
+      if (frame != null && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [chatActions, session?.session_id, session?.thread_key]);
 
   const submitQueuedIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {

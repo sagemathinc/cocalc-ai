@@ -10,6 +10,7 @@ import {
 import { AGENT_DOCK_OPEN_EVENT } from "./agent-dock-state";
 
 const mockEraseActiveKeyHandler = jest.fn();
+const mockRefocusChatComposerInput = jest.fn();
 const mockChatActions = {
   setSelectedThread: jest.fn(),
   scrollToIndex: jest.fn(),
@@ -81,6 +82,11 @@ jest.mock("@cocalc/frontend/chat/side-chat", () => ({
   default: () => <input data-testid="agent-dock-composer" />,
 }));
 
+jest.mock("@cocalc/frontend/chat/composer-focus", () => ({
+  refocusChatComposerInput: (...args: any[]) =>
+    mockRefocusChatComposerInput(...args),
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Loading: () => <div>Loading...</div>,
 }));
@@ -130,6 +136,7 @@ describe("AgentDock keyboard suppression", () => {
     mockChatActions.sendChat.mockReset();
     mockChatActions.getMessageByDate.mockReset();
     mockChatActions.messageCache.getThreadIndex.mockClear();
+    mockRefocusChatComposerInput.mockReset();
     mockChatActions.messageCache.getThreadIndex.mockImplementation(
       () => new Map(),
     );
@@ -165,6 +172,14 @@ describe("AgentDock keyboard suppression", () => {
     fireEvent.focus(screen.getByTestId("agent-dock-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the composer when the floating dock opens", async () => {
+    await openDock();
+
+    await waitFor(() =>
+      expect(mockRefocusChatComposerInput).toHaveBeenCalled(),
+    );
   });
 
   it("stops dock clicks from bubbling to window listeners", async () => {
