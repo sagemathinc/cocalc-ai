@@ -50,6 +50,7 @@ import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import { resolveThreadStatusDot } from "./chatroom-sidebar";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -100,6 +101,35 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
+
+export function resolveCompactThreadBadgeAppearance({
+  thread,
+  acpState,
+  activityNow,
+}: {
+  thread?: ThreadMeta;
+  acpState: immutable.Map<string, string>;
+  activityNow: number;
+}): { badgeColor?: string; badgeSize: number } {
+  if (!thread?.hasCustomAppearance) {
+    return { badgeColor: thread?.threadColor, badgeSize: 18 };
+  }
+  if (`${thread.threadImage ?? ""}`.trim()) {
+    return { badgeColor: thread.threadColor, badgeSize: 18 };
+  }
+  const status = resolveThreadStatusDot({
+    thread,
+    acpState,
+    activityNow,
+  });
+  if (!status.showDot) {
+    return { badgeColor: thread.threadColor, badgeSize: 18 };
+  }
+  return {
+    badgeColor: status.dotColor,
+    badgeSize: 16,
+  };
+}
 
 export function applyNewThreadSetupPatch(
   current: NewThreadSetup,
@@ -909,9 +939,16 @@ export function ChatRoomThreadPanel({
       : undefined;
   const compactThreadLabel = threadMeta?.displayLabel ?? selectedThread?.label;
   const compactThreadIcon = threadMeta?.threadIcon;
-  const compactThreadColor = threadMeta?.threadColor;
   const compactThreadImage = threadMeta?.threadImage;
   const compactThreadHasAppearance = threadMeta?.hasCustomAppearance ?? false;
+  const {
+    badgeColor: compactThreadBadgeColor,
+    badgeSize: compactThreadBadgeSize,
+  } = resolveCompactThreadBadgeAppearance({
+    thread: threadMeta,
+    acpState,
+    activityNow: Date.now(),
+  });
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
@@ -987,9 +1024,9 @@ export function ChatRoomThreadPanel({
           {compactThreadHasAppearance && (
             <ThreadBadge
               icon={compactThreadIcon}
-              color={compactThreadColor}
+              color={compactThreadBadgeColor}
               image={compactThreadImage}
-              size={18}
+              size={compactThreadBadgeSize}
             />
           )}
           {compactThreadLabel}

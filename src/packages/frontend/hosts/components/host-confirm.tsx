@@ -1,3 +1,4 @@
+import { map as awaitMap } from "awaiting";
 import { Checkbox, Input, InputNumber, Modal, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -6,6 +7,8 @@ import type {
   HostStopOptions,
 } from "../types";
 import { HostProjectsTable } from "./host-projects-table";
+
+const MAX_BULK_HOST_DEPROVISION_PARALLEL = 20;
 
 function isHostRunningForDeprovision(status?: Host["status"]) {
   return (
@@ -29,6 +32,23 @@ export function resolveHostDeprovisionOptions(
 
 export function bulkHostDeprovisionConfirmPhrase(count: number): string {
   return `deprovision ${count}`;
+}
+
+export async function runBulkHostDeprovision({
+  hosts,
+  skipRunningBackups,
+  onConfirm,
+}: {
+  hosts: Host[];
+  skipRunningBackups: boolean;
+  onConfirm: (host: Host, opts?: HostDeleteOptions) => void | Promise<void>;
+}) {
+  await awaitMap(hosts, MAX_BULK_HOST_DEPROVISION_PARALLEL, async (host) => {
+    await onConfirm(
+      host,
+      resolveHostDeprovisionOptions(host, skipRunningBackups),
+    );
+  });
 }
 
 function getBackupCounts(host?: Host) {
@@ -343,9 +363,11 @@ export function confirmBulkHostDeprovision({
       if (state.text.trim().toLowerCase() !== phrase) {
         throw new Error("bulk deprovision confirmation phrase does not match");
       }
-      for (const host of hosts) {
-        await onConfirm(host, resolveHostDeprovisionOptions(host, state.skip));
-      }
+      await runBulkHostDeprovision({
+        hosts,
+        skipRunningBackups: state.skip,
+        onConfirm,
+      });
     },
   });
 }
