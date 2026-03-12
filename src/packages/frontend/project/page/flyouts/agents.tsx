@@ -67,6 +67,21 @@ const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   archived: "purple",
   failed: "red",
 };
+
+function statusLabel(status: AgentSessionStatus): string {
+  switch (status) {
+    case "active":
+      return "active";
+    case "idle":
+      return "idle";
+    case "running":
+      return "running";
+    case "archived":
+      return "archived";
+    case "failed":
+      return "failed";
+  }
+}
 const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
@@ -581,33 +596,44 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       },
     ];
     return (
-      <Dropdown
-        trigger={["click"]}
-        menu={{
-          items,
-          onClick: ({ key }) => {
-            switch (key) {
-              case "resume":
-                openNavigatorSession(record);
-                return;
-              case "float":
-                openFloatingSession(record);
-                return;
-              case "open-file":
-                actions?.open_file({ path: record.chat_path });
-                return;
-              case "pin":
-                void togglePin(record);
-                return;
-              case "archive":
-                void toggleArchive(record);
-                return;
-            }
-          },
-        }}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        <Button size="small" type="text" icon={<Icon name="ellipsis" />} />
-      </Dropdown>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items,
+            onClick: ({ key }) => {
+              switch (key) {
+                case "resume":
+                  openNavigatorSession(record);
+                  return;
+                case "float":
+                  openFloatingSession(record);
+                  return;
+                case "open-file":
+                  actions?.open_file({ path: record.chat_path });
+                  return;
+                case "pin":
+                  void togglePin(record);
+                  return;
+                case "archive":
+                  void toggleArchive(record);
+                  return;
+              }
+            },
+          }}
+        >
+          <Button
+            size="small"
+            type="text"
+            icon={<Icon name="ellipsis" />}
+            aria-label="Session actions"
+            data-testid={`agent-session-menu-${record.session_id}`}
+          />
+        </Dropdown>
+      </div>
     );
   }
 
@@ -820,18 +846,27 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const metaLine = recordMetaLine(record);
     const updatedAt = record.updated_at ?? record.created_at;
     const showCornerImage = Boolean(image);
-    const statusTag =
-      record.status === "running" || record.status === "failed" ? (
-        <Tag
-          color={STATUS_COLORS[record.status] ?? "default"}
-          style={{ marginInlineEnd: 0 }}
-        >
-          {record.status}
-        </Tag>
-      ) : null;
+    const statusTag = (
+      <Tag
+        color={STATUS_COLORS[record.status] ?? "default"}
+        style={{ marginInlineEnd: 0 }}
+      >
+        {statusLabel(record.status)}
+      </Tag>
+    );
     return (
       <div key={record.session_id}>
         <div
+          role="button"
+          tabIndex={0}
+          data-testid={`agent-session-card-${record.session_id}`}
+          onClick={() => openInlineSession(record)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openInlineSession(record);
+            }
+          }}
           style={{
             width: "100%",
             border: "1px solid #e8e8e8",
@@ -841,6 +876,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             borderLeft: color ? `4px solid ${color}` : undefined,
             position: "relative",
             overflow: "hidden",
+            cursor: "pointer",
           }}
         >
           {showCornerImage ? (
@@ -963,16 +999,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               ) : null}
             </div>
           </div>
-          <Space size={[4, 0]}>
-            <Button
-              size="small"
-              type="primary"
-              onClick={() => openInlineSession(record)}
-            >
-              Open
-            </Button>
-            {renderSessionMenu(record)}
-          </Space>
+          <Space size={[4, 0]}>{renderSessionMenu(record)}</Space>
         </div>
       </div>
     );
