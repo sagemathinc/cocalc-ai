@@ -81,6 +81,6 @@ export async function set_state(
     cm.refresh();
   }
   if (state.sel) {
-    cm.getDoc().setSelections(state.sel);
+    cm.getDoc().setSelections(state.sel, undefined, { scroll: false });
   }
 }

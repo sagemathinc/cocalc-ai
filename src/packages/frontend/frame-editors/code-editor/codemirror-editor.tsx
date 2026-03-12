@@ -765,6 +765,10 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     }
     detachSyncListenersRef.current?.();
     detachSyncListenersRef.current = null;
+    const state = get_state(cmRef.current);
+    if (state != null) {
+      (cmRef.current as any).__saved_state = state;
+    }
     // remove from DOM -- "Remove this from your tree to delete an editor instance."
     // NOTE: there is still potentially a reference to the cm in actions._cm[id];
     // that's how we can bring back this frame (with given id) very efficiently.
@@ -832,15 +836,21 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
         node.parentNode.insertBefore(cm.getWrapperElement(), node.nextSibling);
         update_codemirror(options);
       }
+      const savedState = (cm as any).__saved_state;
+      if (savedState) {
+        set_state(cm, savedState);
+        delete (cm as any).__saved_state;
+      } else if (props.editor_state != null && props.editor_state.size > 0) {
+        set_state(cm, props.editor_state.toJS() as any);
+      }
     } else {
       cmRef.current = CodeMirror.fromTextArea(node, options);
       // We explicitly re-add all the extraKeys due to weird precedence.
       cmRef.current.addKeyMap(options.extraKeys);
       init_new_codemirror();
-    }
-
-    if (props.editor_state != null) {
-      set_state(cmRef.current, props.editor_state.toJS() as any);
+      if (props.editor_state != null) {
+        set_state(cmRef.current, props.editor_state.toJS() as any);
+      }
     }
 
     cm_highlight_misspelled_words();
