@@ -9,15 +9,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Button,
-  Input,
-  InputNumber,
-  Modal,
-  Select,
-  Switch,
-  Tooltip,
-} from "antd";
+import { Button, InputNumber, Modal, Select, Switch, Tooltip } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -34,10 +26,7 @@ import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
 import type { ChatInputControl } from "./input";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
-import type {
-  AcpAutomationConfig,
-  AcpLoopConfig,
-} from "@cocalc/conat/ai/acp/types";
+import type { AcpLoopConfig } from "@cocalc/conat/ai/acp/types";
 import {
   findChatComposerFocusTarget,
   refocusChatComposerInput,
@@ -73,9 +62,6 @@ export interface ChatRoomComposerProps {
   showLoopControls?: boolean;
   loopConfig?: AcpLoopConfig;
   onLoopConfigChange?: (config?: AcpLoopConfig) => void;
-  automationConfig?: AcpAutomationConfig;
-  onAutomationSave?: (config: AcpAutomationConfig) => Promise<void> | void;
-  openAutomationModalToken?: number;
 }
 
 export { findChatComposerFocusTarget, refocusChatComposerInput };
@@ -107,9 +93,6 @@ export function ChatRoomComposer({
   showLoopControls = false,
   loopConfig,
   onLoopConfigChange,
-  automationConfig,
-  onAutomationSave,
-  openAutomationModalToken,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -128,22 +111,6 @@ export function ChatRoomComposer({
   const [loopModalOpen, setLoopModalOpen] = useState<boolean>(false);
   const [loopDraft, setLoopDraft] = useState<AcpLoopConfig>(
     loopConfig ?? LOOP_DEFAULTS,
-  );
-  const AUTOMATION_DEFAULTS: AcpAutomationConfig = {
-    enabled: true,
-    schedule_type: "daily",
-    local_time: "05:00",
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    pause_after_unacknowledged_runs: 7,
-  };
-  const [automationModalOpen, setAutomationModalOpen] =
-    useState<boolean>(false);
-  const [automationSaving, setAutomationSaving] = useState<boolean>(false);
-  const [automationDraft, setAutomationDraft] = useState<AcpAutomationConfig>(
-    automationConfig ?? AUTOMATION_DEFAULTS,
-  );
-  const lastAutomationModalTokenRef = useRef<number | undefined>(
-    openAutomationModalToken,
   );
 
   const stripHtml = (value: string): string =>
@@ -445,24 +412,6 @@ export function ChatRoomComposer({
     setLoopDraft(loopConfig ?? LOOP_DEFAULTS);
   }, [loopModalOpen, loopConfig]);
 
-  useEffect(() => {
-    if (!automationModalOpen) return;
-    setAutomationDraft(
-      automationConfig ?? {
-        ...AUTOMATION_DEFAULTS,
-        prompt: `${input ?? ""}`.trim() || undefined,
-      },
-    );
-  }, [automationConfig, automationModalOpen, input]);
-
-  useEffect(() => {
-    if (openAutomationModalToken == null) return;
-    if (lastAutomationModalTokenRef.current === openAutomationModalToken)
-      return;
-    lastAutomationModalTokenRef.current = openAutomationModalToken;
-    setAutomationModalOpen(true);
-  }, [openAutomationModalToken]);
-
   const applyLoopConfig = useCallback(() => {
     const normalized: AcpLoopConfig = {
       enabled: loopDraft.enabled === true,
@@ -487,7 +436,6 @@ export function ChatRoomComposer({
   }, [loopDraft, onLoopConfigChange]);
 
   const loopEnabled = loopConfig?.enabled === true;
-  const automationEnabled = automationConfig?.enabled === true;
 
   const onLoopToggle = useCallback(
     (checked: boolean) => {
@@ -500,45 +448,6 @@ export function ChatRoomComposer({
     },
     [loopConfig, onLoopConfigChange],
   );
-
-  const applyAutomationConfig = useCallback(async () => {
-    if (!onAutomationSave) {
-      setAutomationModalOpen(false);
-      return;
-    }
-    const prompt = `${automationDraft.prompt ?? ""}`.trim();
-    const local_time = `${automationDraft.local_time ?? ""}`.trim();
-    const timezone =
-      `${automationDraft.timezone ?? ""}`.trim() ||
-      Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (!prompt || !local_time || !timezone) {
-      return;
-    }
-    setAutomationSaving(true);
-    try {
-      await onAutomationSave({
-        enabled: automationDraft.enabled !== false,
-        automation_id: automationConfig?.automation_id,
-        title: `${automationDraft.title ?? ""}`.trim() || undefined,
-        prompt,
-        schedule_type: "daily",
-        local_time,
-        timezone,
-        pause_after_unacknowledged_runs: Number(
-          automationDraft.pause_after_unacknowledged_runs ??
-            AUTOMATION_DEFAULTS.pause_after_unacknowledged_runs,
-        ),
-      });
-      setAutomationModalOpen(false);
-    } finally {
-      setAutomationSaving(false);
-    }
-  }, [
-    AUTOMATION_DEFAULTS.pause_after_unacknowledged_runs,
-    automationConfig?.automation_id,
-    automationDraft,
-    onAutomationSave,
-  ]);
 
   return (
     <div ref={zenContainerRef} style={composerStyle}>
@@ -710,15 +619,6 @@ export function ChatRoomComposer({
                     />
                   </Tooltip>
                 </div>
-                <Tooltip title="Configure a scheduled Codex automation for this thread">
-                  <Button
-                    size="small"
-                    onClick={() => setAutomationModalOpen(true)}
-                    icon={<Icon name="clock" />}
-                  >
-                    {automationEnabled ? "Automation On" : "Automation"}
-                  </Button>
-                </Tooltip>
               </div>
             ) : null}
             <Tooltip
@@ -903,92 +803,6 @@ export function ChatRoomComposer({
               }
             />
           </div>
-        </div>
-      </Modal>
-      <Modal
-        title="Codex Automation"
-        open={automationModalOpen}
-        onCancel={() => setAutomationModalOpen(false)}
-        onOk={() => {
-          void applyAutomationConfig();
-        }}
-        okText="Save"
-        confirmLoading={automationSaving}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Switch
-              checked={automationDraft.enabled !== false}
-              onChange={(checked) =>
-                setAutomationDraft((prev) => ({ ...prev, enabled: checked }))
-              }
-            />
-            <span>Enable scheduled automation for this thread</span>
-          </div>
-          <label>Title</label>
-          <Input
-            value={automationDraft.title ?? ""}
-            placeholder="Daily project status"
-            onChange={(e) =>
-              setAutomationDraft((prev) => ({
-                ...prev,
-                title: e.target.value,
-              }))
-            }
-          />
-          <label>Prompt</label>
-          <Input.TextArea
-            autoSize={{ minRows: 4, maxRows: 10 }}
-            value={automationDraft.prompt ?? ""}
-            placeholder="What should Codex do on each scheduled run?"
-            onChange={(e) =>
-              setAutomationDraft((prev) => ({
-                ...prev,
-                prompt: e.target.value,
-              }))
-            }
-          />
-          <label>Run daily at (24h)</label>
-          <Input
-            value={automationDraft.local_time ?? "05:00"}
-            placeholder="05:00"
-            onChange={(e) =>
-              setAutomationDraft((prev) => ({
-                ...prev,
-                local_time: e.target.value,
-              }))
-            }
-          />
-          <label>Timezone</label>
-          <Input
-            value={
-              automationDraft.timezone ??
-              Intl.DateTimeFormat().resolvedOptions().timeZone
-            }
-            placeholder="America/Los_Angeles"
-            onChange={(e) =>
-              setAutomationDraft((prev) => ({
-                ...prev,
-                timezone: e.target.value,
-              }))
-            }
-          />
-          <label>Pause after unacknowledged runs</label>
-          <InputNumber
-            min={1}
-            max={365}
-            style={{ width: "100%" }}
-            value={
-              automationDraft.pause_after_unacknowledged_runs ??
-              AUTOMATION_DEFAULTS.pause_after_unacknowledged_runs
-            }
-            onChange={(value) =>
-              setAutomationDraft((prev) => ({
-                ...prev,
-                pause_after_unacknowledged_runs: Number(value ?? 7),
-              }))
-            }
-          />
         </div>
       </Modal>
     </div>

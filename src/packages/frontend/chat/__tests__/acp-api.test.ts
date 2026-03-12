@@ -437,6 +437,87 @@ describe("processAcpLLM", () => {
     expect(arg.prompt).not.toContain("System loop contract");
   });
 
+  it("suppresses loop-contract json on a later normal turn after loop history", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(3600);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
+    mockStreamAcp.mockResolvedValue(queuedAckStream());
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const messageDate = new Date(3600);
+    const actions: any = {
+      syncdb: {},
+      store,
+      chatStreams: new Set<string>(),
+      getAllMessages: () =>
+        new Map<string, any>([
+          [
+            "3600",
+            {
+              date: messageDate,
+              message_id: "root-msg-loop-history",
+              thread_id: "thread-loop-history",
+            },
+          ],
+        ]),
+      getCodexConfig: jest.fn(() => undefined),
+      getThreadMetadata: jest.fn(() => ({
+        loop_state: {
+          loop_id: "loop-1",
+          status: "stopped",
+          iteration: 2,
+          started_at_ms: 1000,
+          updated_at_ms: 2000,
+          stop_reason: "completed",
+        },
+      })),
+      getMessagesInThread: jest.fn(() => []),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: messageDate,
+      message_id: "user-msg-loop-history",
+      thread_id: "thread-loop-history",
+      history: [
+        {
+          author_id: "user-1",
+          content: "normal turn after loop",
+          date: messageDate.toISOString(),
+        },
+      ],
+    };
+
+    await processAcpLLM({
+      message,
+      model: "codex-agent",
+      input: "normal turn after loop",
+      actions,
+    });
+
+    const arg = mockStreamAcp.mock.calls.at(-1)[0];
+    expect(arg.chat.loop_config).toBeUndefined();
+    expect(arg.prompt).not.toContain("System loop contract (required):");
+    expect(arg.prompt).toContain("System loop mode: OFF for this turn.");
+    expect(arg.prompt).toContain(
+      'Do not include the special loop-control JSON block with schema {"loop":...}',
+    );
+  });
+
   it("keeps queued state on the submitted message after backend acknowledgement", async () => {
     jest.spyOn(Date, "now").mockReturnValue(4000);
     jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {

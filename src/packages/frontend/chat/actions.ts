@@ -114,6 +114,18 @@ function nextChatMessageDate(actions: ChatActions): Date {
 export type ThreadAgentKind = "acp" | "llm" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
 
+export interface NewThreadAgentOptions {
+  mode: "codex" | "human" | "model";
+  model?: string;
+  codexConfig?: Partial<CodexThreadConfig>;
+}
+
+export interface NewThreadAppearanceOptions {
+  color?: string;
+  icon?: string;
+  image?: string;
+}
+
 export interface ThreadMetadataSnapshot {
   thread_date?: string;
   name?: string;
@@ -166,6 +178,68 @@ function normalizeSessionMode(
     return mode;
   }
   return undefined;
+}
+
+function buildNewThreadConfig({
+  name,
+  threadAgent,
+  threadAppearance,
+}: {
+  name?: string;
+  threadAgent?: NewThreadAgentOptions;
+  threadAppearance?: NewThreadAppearanceOptions;
+}): {
+  threadConfigPatch: Record<string, unknown>;
+  acpConfigOverride?: Partial<CodexThreadConfig>;
+} {
+  const threadConfigPatch: Record<string, unknown> = {};
+  const trimmedName = name?.trim();
+  if (trimmedName) {
+    threadConfigPatch.name = trimmedName;
+  }
+  const threadColor = threadAppearance?.color?.trim();
+  const threadIcon = threadAppearance?.icon?.trim();
+  const threadImage = threadAppearance?.image?.trim();
+  if (threadColor) {
+    threadConfigPatch.thread_color = threadColor;
+  }
+  if (threadIcon) {
+    threadConfigPatch.thread_icon = threadIcon;
+  }
+  if (threadImage) {
+    threadConfigPatch.thread_image = threadImage;
+  }
+  const agentMode = threadAgent?.mode;
+  const agentModel = threadAgent?.model?.trim();
+  let acpConfigOverride: Partial<CodexThreadConfig> | undefined;
+  if (agentMode === "human") {
+    threadConfigPatch.acp_config = null;
+    threadConfigPatch.agent_kind = "none";
+    threadConfigPatch.agent_model = null;
+    threadConfigPatch.agent_mode = null;
+  } else if (agentMode === "codex") {
+    const model = agentModel || DEFAULT_CODEX_MODEL_NAME;
+    const defaultSessionMode = getDefaultCodexSessionMode();
+    const codexConfig = {
+      ...(threadAgent?.codexConfig ?? {}),
+      model,
+    } as CodexThreadConfig;
+    const normalizedSessionMode = normalizeSessionMode(codexConfig);
+    const sessionMode = normalizedSessionMode ?? defaultSessionMode;
+    codexConfig.sessionMode = sessionMode;
+    codexConfig.allowWrite = sessionMode !== "read-only";
+    threadConfigPatch.acp_config = codexConfig;
+    acpConfigOverride = codexConfig;
+    threadConfigPatch.agent_kind = "acp";
+    threadConfigPatch.agent_model = model;
+    threadConfigPatch.agent_mode = "interactive";
+  } else if (agentMode === "model" && agentModel) {
+    threadConfigPatch.acp_config = null;
+    threadConfigPatch.agent_kind = "llm";
+    threadConfigPatch.agent_model = agentModel;
+    threadConfigPatch.agent_mode = "single_turn";
+  }
+  return { threadConfigPatch, acpConfigOverride };
 }
 
 export function collectThreadMessages({
@@ -459,17 +533,9 @@ export class ChatActions extends Actions<ChatState> {
     // if name is given, rename thread to have that name
     name?: string;
     // optional thread-level AI behavior for new root threads
-    threadAgent?: {
-      mode: "codex" | "human" | "model";
-      model?: string;
-      codexConfig?: Partial<CodexThreadConfig>;
-    };
+    threadAgent?: NewThreadAgentOptions;
     // optional thread-level appearance defaults for new root threads
-    threadAppearance?: {
-      color?: string;
-      icon?: string;
-      image?: string;
-    };
+    threadAppearance?: NewThreadAppearanceOptions;
     // if true, don't switch selected thread (e.g., combined feed)
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
@@ -555,51 +621,16 @@ export class ChatActions extends Actions<ChatState> {
     this.setSyncdb(message);
     if (!explicitReplyThreadId) {
       const threadKey = thread_id;
-      const threadConfigPatch: Record<string, unknown> = {};
-      if (trimmedName) {
-        threadConfigPatch.name = trimmedName;
-      }
-      const threadColor = threadAppearance?.color?.trim();
-      const threadIcon = threadAppearance?.icon?.trim();
-      const threadImage = threadAppearance?.image?.trim();
-      if (threadColor) {
-        threadConfigPatch.thread_color = threadColor;
-      }
-      if (threadIcon) {
-        threadConfigPatch.thread_icon = threadIcon;
-      }
-      if (threadImage) {
-        threadConfigPatch.thread_image = threadImage;
-      }
-      const agentMode = threadAgent?.mode;
-      const agentModel = threadAgent?.model?.trim();
-      if (agentMode === "human") {
-        threadConfigPatch.acp_config = null;
-        threadConfigPatch.agent_kind = "none";
-        threadConfigPatch.agent_model = null;
-        threadConfigPatch.agent_mode = null;
-      } else if (agentMode === "codex") {
-        const model = agentModel || DEFAULT_CODEX_MODEL_NAME;
-        const defaultSessionMode = getDefaultCodexSessionMode();
-        const codexConfig = {
-          ...(threadAgent?.codexConfig ?? {}),
-          model,
-        } as CodexThreadConfig;
-        const normalizedSessionMode = normalizeSessionMode(codexConfig);
-        const sessionMode = normalizedSessionMode ?? defaultSessionMode;
-        codexConfig.sessionMode = sessionMode;
-        codexConfig.allowWrite = sessionMode !== "read-only";
-        threadConfigPatch.acp_config = codexConfig;
-        effectiveAcpConfigOverride = codexConfig;
-        threadConfigPatch.agent_kind = "acp";
-        threadConfigPatch.agent_model = model;
-        threadConfigPatch.agent_mode = "interactive";
-      } else if (agentMode === "model" && agentModel) {
-        threadConfigPatch.acp_config = null;
-        threadConfigPatch.agent_kind = "llm";
-        threadConfigPatch.agent_model = agentModel;
-        threadConfigPatch.agent_mode = "single_turn";
-      }
+      const {
+        threadConfigPatch,
+        acpConfigOverride: newThreadAcpConfigOverride,
+      } = buildNewThreadConfig({
+        name: trimmedName,
+        threadAgent,
+        threadAppearance,
+      });
+      effectiveAcpConfigOverride =
+        newThreadAcpConfigOverride ?? effectiveAcpConfigOverride;
       this.setThreadConfigRecord(threadKey, threadConfigPatch, {
         threadId: thread_id,
         date: time_stamp,
@@ -662,6 +693,59 @@ export class ChatActions extends Actions<ChatState> {
       })();
     }
     return time_stamp_str;
+  };
+
+  createEmptyThread = ({
+    name,
+    threadAgent,
+    threadAppearance,
+    preserveSelectedThread,
+  }: {
+    name?: string;
+    threadAgent?: NewThreadAgentOptions;
+    threadAppearance?: NewThreadAppearanceOptions;
+    preserveSelectedThread?: boolean;
+  } = {}): string => {
+    if (this.syncdb == null || this.store == null) {
+      console.warn(
+        "attempt to createEmptyThread before chat actions initialized",
+      );
+      return "";
+    }
+    const thread_id = uuid();
+    const time_stamp = nextChatMessageDate(this);
+    const { threadConfigPatch } = buildNewThreadConfig({
+      name,
+      threadAgent,
+      threadAppearance,
+    });
+    if (
+      !this.setThreadConfigRecord(thread_id, threadConfigPatch, {
+        threadId: thread_id,
+        date: time_stamp,
+      })
+    ) {
+      return "";
+    }
+    this.deleteDraft(0);
+    if (!preserveSelectedThread) {
+      this.clearAllFilters();
+      this.setSelectedThread(thread_id);
+    }
+    this.syncdb.commit();
+
+    const project_id = this.store?.get("project_id");
+    const path = this.store?.get("path");
+    if (path) {
+      webapp_client.mark_file({
+        project_id,
+        path,
+        action: "edit",
+        ttl: 10000,
+      });
+      track("create_chat_thread", { project_id, path });
+    }
+    return thread_id;
   };
 
   setEditing = (message: ChatMessageTyped, is_editing: boolean) => {

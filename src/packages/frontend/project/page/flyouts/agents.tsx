@@ -8,6 +8,7 @@ import {
   Button,
   Dropdown,
   Empty,
+  Popconfirm,
   Space,
   Tag,
   Tooltip,
@@ -36,6 +37,7 @@ import {
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
 import type { AcpAutomationRecord } from "@cocalc/conat/ai/acp/types";
+import { formatAutomationPausedReason } from "@cocalc/frontend/chat/automation-form";
 import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
   initChat,
@@ -1228,7 +1230,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             ) : null}
             {record.paused_reason ? (
               <Typography.Text type="secondary">
-                {record.paused_reason}
+                {formatAutomationPausedReason(record.paused_reason)}
               </Typography.Text>
             ) : null}
             {record.last_error ? (
@@ -1277,13 +1279,17 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             >
               Acknowledge
             </Button>
-            <Button
-              danger
-              size="small"
-              onClick={() => void controlAutomation(record, "delete")}
+            <Popconfirm
+              title="Delete scheduled automation?"
+              description="This removes the schedule from this chat thread."
+              okText="Delete"
+              cancelText="Cancel"
+              onConfirm={() => void controlAutomation(record, "delete")}
             >
-              Delete
-            </Button>
+              <Button danger size="small">
+                Delete schedule
+              </Button>
+            </Popconfirm>
           </Space>
         </div>
       </div>

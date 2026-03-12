@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Popover, Select, Space, Tooltip } from "antd";
+import {
+  Button,
+  Input,
+  Modal,
+  Popover,
+  Select,
+  Space,
+  Switch,
+  Tooltip,
+} from "antd";
 import {
   React,
   useCallback,
@@ -25,6 +34,7 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import type { AcpAutomationConfig } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
 import CodexConfigButton from "./codex";
 import { ThreadBadge } from "./thread-badge";
@@ -50,6 +60,11 @@ import { getDefaultCodexSessionMode } from "./codex-defaults";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import {
+  AutomationConfigFields,
+  buildAutomationDraft,
+  getDefaultAutomationConfig,
+} from "./automation-form";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -57,6 +72,15 @@ const CHAT_LOG_STYLE: React.CSSProperties = {
   flex: "1 1 0",
   minHeight: 0,
   position: "relative",
+} as const;
+
+const SETUP_CARD_STYLE: React.CSSProperties = {
+  width: "min(840px, 96%)",
+  margin: "0 auto",
+  padding: "18px 20px",
+  border: "1px solid #eee",
+  borderRadius: 12,
+  background: "#fcfcfc",
 } as const;
 
 const DEFAULT_CODEX_MODEL =
@@ -79,6 +103,7 @@ export interface NewThreadSetup {
   agentMode: NewThreadAgentMode;
   model: string;
   codexConfig: Partial<CodexThreadConfig>;
+  automationConfig?: AcpAutomationConfig;
 }
 
 export function getDefaultNewThreadSetup(): NewThreadSetup {
@@ -95,6 +120,7 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
       sessionMode: defaultSessionMode,
       reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
     },
+    automationConfig: getDefaultAutomationConfig({ enabled: false }),
   };
 }
 
@@ -139,6 +165,7 @@ interface ChatRoomThreadPanelProps {
   refreshCodexPaymentSource?: () => void;
   newThreadSetup: NewThreadSetup;
   onNewThreadSetupChange: React.Dispatch<React.SetStateAction<NewThreadSetup>>;
+  onCreateThread: () => void | Promise<void>;
   showThreadImagePreview?: boolean;
   hideChatTypeSelector?: boolean;
   activityJumpDate?: string;
@@ -170,6 +197,7 @@ export function ChatRoomThreadPanel({
   refreshCodexPaymentSource,
   newThreadSetup,
   onNewThreadSetupChange,
+  onCreateThread,
   showThreadImagePreview = true,
   hideChatTypeSelector = false,
   activityJumpDate,
@@ -653,6 +681,11 @@ export function ChatRoomThreadPanel({
       default: r.default,
     }));
     const shouldHideChatType = hideChatTypeSelector;
+    const automationDraft = buildAutomationDraft({
+      config: newThreadSetup.automationConfig,
+      enabled: newThreadSetup.automationConfig?.enabled === true,
+    });
+    const automationEnabled = automationDraft.enabled === true;
     return (
       <div
         className="smc-vfill"
@@ -662,17 +695,35 @@ export function ChatRoomThreadPanel({
           padding: "14px 10px",
         }}
       >
-        <div
-          style={{
-            width: "min(840px, 96%)",
-            margin: "0 auto",
-            padding: "18px 20px",
-            border: "1px solid #eee",
-            borderRadius: 12,
-            background: "#fcfcfc",
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>New chat setup</div>
+        <div style={SETUP_CARD_STYLE}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              marginBottom: 6,
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>New chat setup</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: COLORS.GRAY_D, fontSize: 13 }}>
+                Automation
+              </span>
+              <Switch
+                checked={automationEnabled}
+                disabled={newThreadSetup.agentMode !== "codex"}
+                onChange={(checked) =>
+                  update({
+                    automationConfig: {
+                      ...automationDraft,
+                      enabled: checked,
+                    },
+                  })
+                }
+              />
+            </div>
+          </div>
           <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
             All fields are optional and can be edited later from settings. Codex
             is selected by default.
@@ -882,15 +933,50 @@ export function ChatRoomThreadPanel({
               )}
               <span style={{ color: "#666", fontSize: 13 }}>
                 {threadsCount === 0
-                  ? "No chats yet. Send your first message below."
-                  : "Use these defaults for the next new chat you send."}
+                  ? "No chats yet. Create the chat now, or send a first message below if you want."
+                  : "Use these defaults for the next new chat you create or send."}
               </span>
             </div>
-            <Button size="small" onClick={onNewChat}>
-              Reset
-            </Button>
+            <Space>
+              <Button size="small" onClick={onNewChat}>
+                Reset
+              </Button>
+              <Button type="primary" onClick={() => void onCreateThread()}>
+                {automationEnabled ? "Create automation chat" : "Create chat"}
+              </Button>
+            </Space>
           </div>
         </div>
+        {automationEnabled ? (
+          <div
+            style={{
+              ...SETUP_CARD_STYLE,
+              marginTop: 32,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>
+              New automation setup
+            </div>
+            <div style={{ color: "#666", marginBottom: 14, fontSize: 13 }}>
+              Configure the next new Codex chat as a scheduled automation. Once
+              created, it will live in the Automations section and can still be
+              edited from thread settings later.
+            </div>
+            <AutomationConfigFields
+              draft={automationDraft}
+              disabled={newThreadSetup.agentMode !== "codex"}
+              showEnableToggle={false}
+              onChange={(patch) =>
+                update({
+                  automationConfig: {
+                    ...automationDraft,
+                    ...patch,
+                  },
+                })
+              }
+            />
+          </div>
+        ) : null}
       </div>
     );
   }

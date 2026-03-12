@@ -45,6 +45,7 @@ import type {
   TerminalStartOptions,
 } from "@cocalc/ai/acp/adapters";
 import { type AcpExecutor, ContainerExecutor, LocalExecutor } from "./executor";
+import { ensureLoopContractPrompt } from "./loop-contract";
 import {
   preferContainerExecutor,
   resolveWorkspaceRoot,
@@ -3425,7 +3426,7 @@ async function executeAcpRequest({
       loopId: loopState?.loop_id,
       iteration: loopState?.iteration,
     });
-    let iterationPrompt = prompt;
+    let iterationPrompt = ensureLoopContractPrompt(prompt, loopConfig);
     let continueLoop = true;
     while (continueLoop) {
       stream({ type: "status", state: "running" });
@@ -3612,7 +3613,7 @@ async function executeAcpRequest({
         await sleep(sleepMs);
       }
 
-      iterationPrompt = nextPrompt;
+      iterationPrompt = ensureLoopContractPrompt(nextPrompt, loopConfig);
       loopState = {
         ...loopState,
         status: "running",

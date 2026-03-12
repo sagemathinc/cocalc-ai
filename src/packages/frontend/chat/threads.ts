@@ -24,6 +24,7 @@ export interface ThreadListItem {
 export type ThreadSectionKey =
   | "pinned"
   | "today"
+  | "automations"
   | "yesterday"
   | "last7days"
   | "older";
@@ -44,6 +45,7 @@ export type ThreadMeta = ThreadListItem & {
   readCount: number;
   unreadCount: number;
   isAI: boolean;
+  isAutomation: boolean;
   isPinned: boolean;
   isArchived: boolean;
   lastActivityAt?: number;
@@ -120,6 +122,7 @@ type RecencyKey = Exclude<ThreadSectionKey, "pinned">;
 
 const RECENCY_SECTIONS: { key: RecencyKey; title: string }[] = [
   { key: "today", title: "Today" },
+  { key: "automations", title: "Automations" },
   { key: "yesterday", title: "Yesterday" },
   { key: "last7days", title: "Last 7 Days" },
   { key: "older", title: "Older" },
@@ -152,20 +155,26 @@ function parseEpochMs(value: unknown): number | undefined {
 }
 
 export function groupThreadsByRecency<
-  T extends ThreadListItem & { isPinned?: boolean },
+  T extends ThreadListItem & { isPinned?: boolean; isAutomation?: boolean },
 >(threads: T[], options: GroupOptions = {}): ThreadSection<T>[] {
   if (!threads || threads.length === 0) {
     return [];
   }
   const now = options.now ?? Date.now();
   const sections: ThreadSection<T>[] = [];
-  const pinned = threads.filter((thread) => !!thread.isPinned);
-  const remainder = threads.filter((thread) => !thread.isPinned);
+  const pinned = threads.filter(
+    (thread) => !!thread.isPinned && !thread.isAutomation,
+  );
+  const automations = threads.filter((thread) => !!thread.isAutomation);
+  const remainder = threads.filter(
+    (thread) => !thread.isPinned && !thread.isAutomation,
+  );
   if (pinned.length > 0) {
     sections.push({ key: "pinned", title: "Pinned", threads: pinned });
   }
   const buckets: Record<RecencyKey, T[]> = {
     today: [],
+    automations: [],
     yesterday: [],
     last7days: [],
     older: [],
@@ -175,6 +184,7 @@ export function groupThreadsByRecency<
     const key = recencyKeyForDelta(delta);
     buckets[key].push(thread);
   }
+  buckets.automations = automations;
   for (const def of RECENCY_SECTIONS) {
     const list = buckets[def.key];
     if (list.length > 0) {
@@ -271,6 +281,15 @@ export function useThreadSections({
       const hasCustomAppearance = Boolean(
         threadColor || threadIcon || threadImage,
       );
+      const automationConfig = threadMeta?.automation_config;
+      const isAutomation = !!(
+        automationConfig &&
+        (automationConfig.automation_id ||
+          automationConfig.prompt ||
+          automationConfig.title ||
+          automationConfig.local_time ||
+          automationConfig.timezone)
+      );
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
       const isArchived = threadMeta?.archived ?? false;
@@ -309,6 +328,7 @@ export function useThreadSections({
         readCount,
         unreadCount,
         isAI: !!isAI,
+        isAutomation,
         isPinned,
         isArchived,
         lastActivityAt,
@@ -366,6 +386,7 @@ export function useThreadSections({
       readCount,
       unreadCount,
       isAI: false,
+      isAutomation: false,
       isPinned: false,
       isArchived: false,
       lastActivityAt,

@@ -291,7 +291,7 @@ export function ChatRoomSidebarContent({
       ? [
           {
             key: "automation",
-            label: "Automation…",
+            label: "Automation settings…",
           },
         ]
       : [];

@@ -198,6 +198,57 @@ describe("sendChat identity fields", () => {
     );
   });
 
+  it("creates config-only threads without requiring an initial message", async () => {
+    const actions = makeActions();
+
+    const threadId = actions.createEmptyThread({
+      name: "Automation thread",
+      threadAgent: {
+        mode: "codex",
+        model: "gpt-5.4",
+        codexConfig: {
+          model: "gpt-5.4",
+          sessionMode: "workspace-write",
+          reasoning: "high",
+        } as any,
+      },
+      threadAppearance: {
+        color: "#123456",
+        icon: "robot",
+        image: "https://example.com/thread.png",
+      },
+    });
+    await Promise.resolve();
+
+    expect(threadId).toBeTruthy();
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    expect(rows.find((row: any) => row?.event === "chat")).toBeUndefined();
+
+    const cfgSet = rows.find(
+      (row: any) =>
+        row?.event === "chat-thread-config" && row?.thread_id === threadId,
+    );
+    expect(cfgSet).toBeTruthy();
+    expect(cfgSet.name).toBe("Automation thread");
+    expect(cfgSet.thread_color).toBe("#123456");
+    expect(cfgSet.thread_icon).toBe("robot");
+    expect(cfgSet.thread_image).toBe("https://example.com/thread.png");
+    expect(cfgSet.agent_kind).toBe("acp");
+    expect(cfgSet.agent_mode).toBe("interactive");
+    expect(cfgSet.agent_model).toBe("gpt-5.4");
+    expect(cfgSet.acp_config).toEqual(
+      expect.objectContaining({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+        reasoning: "high",
+        allowWrite: true,
+      }),
+    );
+    expect(actions.clearAllFilters).toHaveBeenCalled();
+    expect(actions.setSelectedThread).toHaveBeenCalledWith(threadId);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+  });
+
   it("passes normalized new-thread codex config directly to ACP dispatch", async () => {
     const actions = makeActions();
 

@@ -4,7 +4,7 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Alert, Button, Space, Tag } from "antd";
+import { Alert, Button, Modal, Popconfirm, Space, Tag } from "antd";
 import {
   delete_local_storage,
   get_local_storage,
@@ -61,6 +61,12 @@ import {
   runThreadAutomationNow,
   upsertThreadAutomation,
 } from "./acp-api";
+import {
+  AutomationConfigFields,
+  buildAutomationDraft,
+  formatAutomationPausedReason,
+  normalizeAutomationConfigForSave,
+} from "./automation-form";
 import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
@@ -399,8 +405,6 @@ export function ChatPanel({
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(
     null,
   );
-  const [openAutomationModalToken, setOpenAutomationModalToken] =
-    useState<number>(0);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
@@ -433,6 +437,14 @@ export function ChatPanel({
   }, [desc]);
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
+  );
+  const [automationModalOpen, setAutomationModalOpen] = useState(false);
+  const [automationModalThreadKey, setAutomationModalThreadKey] = useState<
+    string | null
+  >(null);
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationDraft, setAutomationDraft] = useState<AcpAutomationConfig>(
+    () => buildAutomationDraft(),
   );
   const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
@@ -475,6 +487,11 @@ export function ChatPanel({
     });
   const inputRef = useRef<string>(input);
   const composerSessionRef = useRef<number>(composerSession);
+  const pendingThreadDraftTransferRef = useRef<{
+    threadKey: string;
+    text: string;
+    sourceDraftKey: number;
+  } | null>(null);
   useEffect(() => {
     inputRef.current = input;
   }, [input]);
@@ -494,6 +511,20 @@ export function ChatPanel({
     },
     [setInput],
   );
+  useEffect(() => {
+    const pending = pendingThreadDraftTransferRef.current;
+    if (!pending || selectedThreadKey !== pending.threadKey) {
+      return;
+    }
+    pendingThreadDraftTransferRef.current = null;
+    if (pending.text.length > 0) {
+      inputRef.current = pending.text;
+      setInput(pending.text);
+    }
+    if (pending.sourceDraftKey !== composerDraftKey) {
+      void clearComposerDraft(pending.sourceDraftKey);
+    }
+  }, [clearComposerDraft, composerDraftKey, selectedThreadKey, setInput]);
   const hasInput = input.trim().length > 0;
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
   const [composerLoopConfig, setComposerLoopConfig] = useState<
@@ -536,6 +567,23 @@ export function ChatPanel({
         | AcpAutomationState
         | undefined,
     [selectedThreadMetadata?.automation_state],
+  );
+  const automationModalThreadId = useMemo(
+    () => normalizeThreadKey(automationModalThreadKey ?? selectedThreadKey),
+    [automationModalThreadKey, selectedThreadKey],
+  );
+  const automationModalMetadata = useMemo(
+    () =>
+      automationModalThreadId
+        ? actions.getThreadMetadata?.(automationModalThreadId, {
+            threadId: automationModalThreadId,
+          })
+        : undefined,
+    [actions, automationModalThreadId, docVersion],
+  );
+  const automationModalConfig = useMemo(
+    () => visibleAutomationConfig(automationModalMetadata?.automation_config),
+    [automationModalMetadata?.automation_config],
   );
   const selectedThreadLoopState = useMemo(
     () => selectedThreadMetadata?.loop_state as AcpLoopState | undefined,
@@ -607,15 +655,21 @@ export function ChatPanel({
   );
 
   const handleAutomationSave = useCallback(
-    async (config: AcpAutomationConfig) => {
-      if (!selectedThreadId) return;
+    async ({
+      threadId,
+      config,
+    }: {
+      threadId?: string | null;
+      config: AcpAutomationConfig;
+    }) => {
+      if (!threadId) return;
       await upsertThreadAutomation({
         actions,
-        threadId: selectedThreadId,
+        threadId,
         config,
       });
     },
-    [actions, selectedThreadId],
+    [actions],
   );
 
   const handleAutomationPause = useCallback(async () => {
@@ -642,6 +696,110 @@ export function ChatPanel({
     if (!selectedThreadId) return;
     await deleteThreadAutomation({ actions, threadId: selectedThreadId });
   }, [actions, selectedThreadId]);
+
+  const createThreadWithoutMessage = useCallback(async () => {
+    const threadAgent =
+      newThreadSetup.agentMode != null
+        ? {
+            mode: newThreadSetup.agentMode,
+            model:
+              newThreadSetup.codexConfig.model?.trim() ||
+              newThreadSetup.model?.trim(),
+            codexConfig:
+              newThreadSetup.agentMode === "codex"
+                ? {
+                    ...newThreadSetup.codexConfig,
+                    model:
+                      newThreadSetup.codexConfig.model?.trim() ||
+                      newThreadSetup.model?.trim(),
+                  }
+                : undefined,
+          }
+        : undefined;
+    const threadKey = actions.createEmptyThread?.({
+      name: newThreadSetup.title.trim() || undefined,
+      threadAgent,
+      threadAppearance: {
+        color: newThreadSetup.color?.trim(),
+        icon: newThreadSetup.icon?.trim(),
+        image: newThreadSetup.image?.trim(),
+      },
+    });
+    if (!threadKey) {
+      return;
+    }
+
+    pendingThreadDraftTransferRef.current = {
+      threadKey,
+      text: inputRef.current ?? "",
+      sourceDraftKey: composerDraftKey,
+    };
+    setAllowAutoSelectThread(false);
+    setSelectedThreadKey(threadKey);
+    setNewThreadSetup(defaultNewThreadSetup);
+
+    const newThreadAutomationConfig =
+      newThreadSetup.agentMode === "codex"
+        ? normalizeAutomationConfigForSave({
+            draft: newThreadSetup.automationConfig,
+          })
+        : undefined;
+    if (
+      newThreadSetup.automationConfig?.enabled === true &&
+      newThreadAutomationConfig
+    ) {
+      try {
+        await handleAutomationSave({
+          threadId: threadKey,
+          config: newThreadAutomationConfig,
+        });
+      } catch (err) {
+        console.error("Failed to create thread automation", err);
+      }
+    }
+  }, [
+    actions,
+    composerDraftKey,
+    defaultNewThreadSetup,
+    handleAutomationSave,
+    newThreadSetup,
+    setAllowAutoSelectThread,
+    setSelectedThreadKey,
+  ]);
+
+  useEffect(() => {
+    if (!automationModalOpen) return;
+    setAutomationDraft(
+      buildAutomationDraft({
+        config: automationModalConfig,
+        enabled: automationModalConfig?.enabled !== false,
+      }),
+    );
+  }, [automationModalConfig, automationModalOpen]);
+
+  const handleAutomationModalSave = useCallback(async () => {
+    if (!automationModalThreadId) return;
+    const config = normalizeAutomationConfigForSave({
+      draft: automationDraft,
+      automationId: automationModalConfig?.automation_id,
+    });
+    if (!config) return;
+    setAutomationSaving(true);
+    try {
+      await handleAutomationSave({
+        threadId: automationModalThreadId,
+        config,
+      });
+      setAutomationModalOpen(false);
+    } finally {
+      setAutomationSaving(false);
+    }
+  }, [
+    automationDraft,
+    automationModalConfig?.automation_id,
+    automationModalThreadId,
+    handleAutomationSave,
+  ]);
 
   const selectedThreadLookupKey = selectedThreadId;
   const selectedThreadMessages = useMemo(
@@ -1166,6 +1324,25 @@ export function ChatPanel({
             return threadId?.trim() || null;
           })()
         : null;
+    const newThreadAutomationConfig =
+      !reply_thread_id && newThreadSetup.agentMode === "codex"
+        ? normalizeAutomationConfigForSave({
+            draft: newThreadSetup.automationConfig,
+          })
+        : undefined;
+    if (
+      !reply_thread_id &&
+      threadKey &&
+      newThreadSetup.automationConfig?.enabled === true &&
+      newThreadAutomationConfig
+    ) {
+      void handleAutomationSave({
+        threadId: threadKey,
+        config: newThreadAutomationConfig,
+      }).catch((err) => {
+        console.error("Failed to create thread automation", err);
+      });
+    }
     const consumedLoopThreadKey = (reply_thread_id ?? threadKey)?.trim();
     if (composerLoopConfig?.enabled === true && consumedLoopThreadKey) {
       setSuppressedLoopThreads((prev) => {
@@ -1247,7 +1424,8 @@ export function ChatPanel({
         setComposerTargetKey(normalized);
       }
       setAllowAutoSelectThread(false);
-      setOpenAutomationModalToken((n) => n + 1);
+      setAutomationModalThreadKey(normalized);
+      setAutomationModalOpen(true);
     },
     [
       selectedThreadKey,
@@ -1467,7 +1645,11 @@ export function ChatPanel({
         description={
           <Space size="small" wrap>
             {selectedThreadAutomationState?.paused_reason ? (
-              <span>{selectedThreadAutomationState.paused_reason}</span>
+              <span>
+                {formatAutomationPausedReason(
+                  selectedThreadAutomationState.paused_reason,
+                )}
+              </span>
             ) : null}
             {selectedThreadAutomationState?.last_error ? (
               <span>{selectedThreadAutomationState.last_error}</span>
@@ -1502,13 +1684,17 @@ export function ChatPanel({
                 Edit
               </Button>
             ) : null}
-            <Button
-              danger
-              size="small"
-              onClick={() => void handleAutomationDelete()}
+            <Popconfirm
+              title="Delete scheduled automation?"
+              description="This removes the schedule from this chat thread."
+              okText="Delete"
+              cancelText="Cancel"
+              onConfirm={() => void handleAutomationDelete()}
             >
-              Delete
-            </Button>
+              <Button danger size="small">
+                Delete schedule
+              </Button>
+            </Popconfirm>
           </Space>
         }
       />
@@ -1543,6 +1729,7 @@ export function ChatPanel({
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
+        onCreateThread={createThreadWithoutMessage}
         showThreadImagePreview={showThreadImagePreview}
         hideChatTypeSelector={hideChatTypeSelector}
         activityJumpDate={activityJumpDate}
@@ -1577,10 +1764,25 @@ export function ChatPanel({
         showLoopControls={isSelectedThreadCodex}
         loopConfig={composerLoopConfig}
         onLoopConfigChange={handleLoopConfigChange}
-        automationConfig={selectedThreadAutomationConfig}
-        onAutomationSave={handleAutomationSave}
-        openAutomationModalToken={openAutomationModalToken}
       />
+      <Modal
+        title="Codex Automation"
+        open={automationModalOpen}
+        destroyOnHidden
+        onCancel={() => setAutomationModalOpen(false)}
+        onOk={() => {
+          void handleAutomationModalSave();
+        }}
+        okText="Save"
+        confirmLoading={automationSaving}
+      >
+        <AutomationConfigFields
+          draft={automationDraft}
+          onChange={(patch) =>
+            setAutomationDraft((prev) => ({ ...prev, ...patch }))
+          }
+        />
+      </Modal>
     </div>
   );
 
