@@ -135,6 +135,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
     ctx: Ctx,
     options: TasksDocumentBindingOptions,
   ): BoundTasksDocument<Project> {
+    let preferWritableReads = false;
     const binding = {
       projectIdentifier: options.projectIdentifier,
       path: options.path,
@@ -171,7 +172,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
             tasks: [...snapshot.tasks],
             revision: snapshot.revision ?? null,
           };
-        }, true);
+        }, !preferWritableReads);
       },
       async getTask(taskId: string) {
         return await withSession(
@@ -180,12 +181,13 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
             path,
             task: await session.getTask(taskId),
           }),
-          true,
+          !preferWritableReads,
         );
       },
       async setDone(taskId: string, done: boolean) {
         return await withSession(async ({ project, session, path }) => {
           const result = await session.setDone(taskId, done);
+          preferWritableReads = true;
           return {
             project,
             path,
@@ -198,6 +200,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
       async appendToDescription(taskId: string, text: string) {
         return await withSession(async ({ project, session, path }) => {
           const result = await session.appendToDescription(taskId, text);
+          preferWritableReads = true;
           return {
             project,
             path,
@@ -210,6 +213,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
       async updateTask(taskId: string, changes: Partial<TaskMutableFields>) {
         return await withSession(async ({ project, session, path }) => {
           const result = await session.updateTask(taskId, changes);
+          preferWritableReads = true;
           return {
             project,
             path,
@@ -220,11 +224,15 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
         });
       },
       async createTask(input?: TaskCreateInput) {
-        return await withSession(async ({ project, session, path }) => ({
-          project,
-          path,
-          task: await session.createTask(input),
-        }));
+        return await withSession(async ({ project, session, path }) => {
+          const task = await session.createTask(input);
+          preferWritableReads = true;
+          return {
+            project,
+            path,
+            task,
+          };
+        });
       },
       async withSession<T>(
         fn: (args: {
