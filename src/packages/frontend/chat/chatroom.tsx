@@ -54,6 +54,7 @@ import { dateValue, field } from "./access";
 import { useCodexPaymentSource } from "./use-codex-payment-source";
 import {
   acknowledgeThreadAutomation,
+  deleteThreadAutomation,
   pauseThreadAutomation,
   resetAcpThreadState,
   resumeThreadAutomation,
@@ -70,6 +71,7 @@ import type {
   AcpAutomationConfig,
   AcpAutomationState,
   AcpLoopConfig,
+  AcpLoopState,
 } from "@cocalc/conat/ai/acp/types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
@@ -535,6 +537,10 @@ export function ChatPanel({
         | undefined,
     [selectedThreadMetadata?.automation_state],
   );
+  const selectedThreadLoopState = useMemo(
+    () => selectedThreadMetadata?.loop_state as AcpLoopState | undefined,
+    [selectedThreadMetadata?.loop_state],
+  );
   const visiblePersistedLoopConfig = useMemo(() => {
     if (
       selectedThreadKey != null &&
@@ -630,6 +636,11 @@ export function ChatPanel({
   const handleAutomationAcknowledge = useCallback(async () => {
     if (!selectedThreadId) return;
     await acknowledgeThreadAutomation({ actions, threadId: selectedThreadId });
+  }, [actions, selectedThreadId]);
+
+  const handleAutomationDelete = useCallback(async () => {
+    if (!selectedThreadId) return;
+    await deleteThreadAutomation({ actions, threadId: selectedThreadId });
   }, [actions, selectedThreadId]);
 
   const selectedThreadLookupKey = selectedThreadId;
@@ -1329,6 +1340,63 @@ export function ChatPanel({
     setSelectedThreadKey,
   ]);
 
+  const activeLoopState =
+    isSelectedThreadCodex &&
+    selectedThreadLoopState &&
+    selectedThreadLoopState.status !== "stopped"
+      ? selectedThreadLoopState
+      : undefined;
+
+  const loopBanner = activeLoopState ? (
+    <Alert
+      type={activeLoopState.status === "paused" ? "warning" : "info"}
+      style={{ margin: "8px 8px 0 8px" }}
+      message={
+        <Space size="small" wrap>
+          <strong>Codex loop</strong>
+          <Tag
+            color={
+              activeLoopState.status === "paused" ? "orange" : "processing"
+            }
+          >
+            {activeLoopState.status}
+          </Tag>
+          <span>
+            Iteration {activeLoopState.iteration}
+            {typeof activeLoopState.max_turns === "number"
+              ? ` / ${activeLoopState.max_turns}`
+              : ""}
+          </span>
+          {typeof activeLoopState.max_wall_time_ms === "number" ? (
+            <span>
+              Max wall time{" "}
+              {Math.max(
+                1,
+                Math.round(activeLoopState.max_wall_time_ms / 60000),
+              )}{" "}
+              min
+            </span>
+          ) : null}
+          {typeof activeLoopState.updated_at_ms === "number" ? (
+            <span>
+              Updated <TimeAgo date={new Date(activeLoopState.updated_at_ms)} />
+            </span>
+          ) : null}
+        </Space>
+      }
+      description={
+        <Space size="small" wrap>
+          {activeLoopState.next_prompt ? (
+            <span>Next prompt queued.</span>
+          ) : null}
+          {activeLoopState.stop_reason ? (
+            <span>{activeLoopState.stop_reason}</span>
+          ) : null}
+        </Space>
+      }
+    />
+  ) : null;
+
   const automationBanner =
     isSelectedThreadCodex && selectedThreadAutomationConfig ? (
       <Alert
@@ -1426,6 +1494,21 @@ export function ChatPanel({
             >
               Acknowledge
             </Button>
+            {selectedThreadKey ? (
+              <Button
+                size="small"
+                onClick={() => openAutomationModalForThread(selectedThreadKey)}
+              >
+                Edit
+              </Button>
+            ) : null}
+            <Button
+              danger
+              size="small"
+              onClick={() => void handleAutomationDelete()}
+            >
+              Delete
+            </Button>
           </Space>
         }
       />
@@ -1465,6 +1548,7 @@ export function ChatPanel({
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
       />
+      {loopBanner}
       {automationBanner}
       <ChatRoomComposer
         actions={actions}

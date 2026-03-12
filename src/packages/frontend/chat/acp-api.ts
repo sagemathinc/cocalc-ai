@@ -183,9 +183,6 @@ export async function processAcpLLM({
     });
     return;
   }
-  const threadMeta = actions.getThreadMetadata?.(thread_id, {
-    threadId: thread_id,
-  });
   const loopConfigFromMessage = field<AcpLoopConfig>(
     message as any,
     "acp_loop_config",
@@ -194,13 +191,12 @@ export async function processAcpLLM({
     message as any,
     "acp_loop_state",
   );
-  const loopConfig = loopConfigFromMessage ?? threadMeta?.loop_config;
+  const loopConfig = loopConfigFromMessage;
   const loopState =
-    loopStateFromMessage ??
-    (typeof threadMeta?.loop_state?.loop_id === "string" &&
-    threadMeta.loop_state.loop_id.trim()
-      ? (threadMeta.loop_state as AcpLoopState)
-      : undefined);
+    typeof loopStateFromMessage?.loop_id === "string" &&
+    loopStateFromMessage.loop_id.trim()
+      ? loopStateFromMessage
+      : undefined;
   const config = {
     ...(actions.getCodexConfig?.(thread_id) ?? {}),
     ...(acpConfigOverride ?? {}),

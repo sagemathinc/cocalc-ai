@@ -52,7 +52,6 @@ import {
 import { getBlobstore } from "../blobs/download";
 import {
   buildChatMessage,
-  buildThreadConfigRecord,
   buildThreadStateRecord,
   computeChatIntegrityReport,
   deriveAcpLogRefs,
@@ -378,6 +377,23 @@ function replaceThreadScopedRow(
     thread_id: threadId,
   });
   syncdb.set(row);
+}
+
+function threadConfigMetadataPatch(opts: {
+  thread_id: string;
+  updated_by: string;
+  updated_at?: string;
+}): Record<string, unknown> {
+  const key = threadConfigRecordKey(opts.thread_id);
+  return {
+    event: key.event,
+    sender_id: key.sender_id,
+    date: key.date,
+    thread_id: key.thread_id,
+    updated_at: opts.updated_at ?? new Date().toISOString(),
+    updated_by: opts.updated_by,
+    schema_version: THREAD_STATE_SCHEMA_VERSION,
+  };
 }
 
 function clampLoopNumber(
@@ -2456,11 +2472,10 @@ export class ChatStreamWriter {
       const base = this.toPlainRecord(threadCfgCurrent);
       replaceThreadScopedRow(this.syncdb, THREAD_CONFIG_EVENT, threadId, {
         ...base,
-        ...buildThreadConfigRecord({
+        ...threadConfigMetadataPatch({
           thread_id: threadId,
           updated_at: new Date().toISOString(),
           updated_by: this.approverAccountId,
-          schema_version: THREAD_STATE_SCHEMA_VERSION,
         }),
         ...patch,
       });
@@ -2833,12 +2848,12 @@ export async function recoverOrphanedAcpTurns(
                   : (cfgRow ?? {});
               replaceThreadScopedRow(syncdb, THREAD_CONFIG_EVENT, threadId, {
                 ...cfgObj,
-                ...buildThreadConfigRecord({
+                ...threadConfigMetadataPatch({
                   thread_id: threadId,
                   updated_at: new Date().toISOString(),
                   updated_by: "__system__",
-                  schema_version: THREAD_STATE_SCHEMA_VERSION,
                 }),
+                loop_config: null,
                 loop_state: {
                   ...loopStateCurrent,
                   status: "stopped",
@@ -3387,8 +3402,14 @@ async function executeAcpRequest({
 
   const persistLoopState = async () => {
     if (!chatWriter || !loopEnabled) return;
+    const persistConfig =
+      loopState &&
+      loopState.status !== "stopped" &&
+      loopState.status !== "paused"
+        ? loopConfig
+        : undefined;
     await chatWriter.persistLoopState({
-      loopConfig,
+      loopConfig: persistConfig,
       loopState,
     });
   };
@@ -4295,11 +4316,10 @@ async function patchThreadAutomationProjection(opts: {
       const base = current && typeof current === "object" ? { ...current } : {};
       replaceThreadScopedRow(syncdb, THREAD_CONFIG_EVENT, opts.thread_id, {
         ...base,
-        ...buildThreadConfigRecord({
+        ...threadConfigMetadataPatch({
           thread_id: opts.thread_id,
           updated_at: new Date().toISOString(),
           updated_by: opts.updated_by,
-          schema_version: THREAD_STATE_SCHEMA_VERSION,
         }),
         automation_config: opts.automation_config ?? null,
         automation_state: opts.automation_state ?? null,

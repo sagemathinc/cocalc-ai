@@ -687,7 +687,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
   async function controlAutomation(
     record: AcpAutomationRecord,
-    action: "run_now" | "pause" | "resume" | "acknowledge",
+    action: "run_now" | "pause" | "resume" | "acknowledge" | "delete",
   ): Promise<void> {
     await webapp_client.conat_client.automationAcp({
       project_id,
@@ -1276,6 +1276,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               onClick={() => void controlAutomation(record, "acknowledge")}
             >
               Acknowledge
+            </Button>
+            <Button
+              danger
+              size="small"
+              onClick={() => void controlAutomation(record, "delete")}
+            >
+              Delete
             </Button>
           </Space>
         </div>
