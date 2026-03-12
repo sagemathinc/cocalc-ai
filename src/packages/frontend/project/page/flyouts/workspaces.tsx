@@ -17,8 +17,12 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  type AgentSessionRecord,
+  watchAgentSessionsForProject,
+} from "@cocalc/frontend/chat/agent-session-index";
 import {
   Icon,
   ThemeEditorModal,
@@ -35,6 +39,7 @@ import {
   ensureWorkspaceChatDirectory,
   ensureWorkspaceChatPath,
 } from "@cocalc/frontend/project/workspaces/runtime";
+import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import type {
   WorkspaceCreateInput,
@@ -51,6 +56,7 @@ import {
 
 const DEFAULT_ICON = "cube";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const WORKSPACE_ACTIVITY_VIEWED_KEY = "project-workspaces-activity-viewed-v1";
 
 type WorkspaceSectionKey = "pinned" | "today" | "last7" | "older";
 
@@ -72,7 +78,17 @@ type EditorDraft = {
   root_path: string;
   theme: ThemeEditorDraft;
   pinned: boolean;
+  chat_path: string | null;
 };
+
+type WorkspaceActivityState =
+  | {
+      kind: "running" | "done" | "failed";
+      label: string;
+      color: string;
+      updatedAt: string;
+    }
+  | undefined;
 
 function iconFor(record?: WorkspaceRecord | null): IconName {
   return (record?.theme.icon?.trim() as IconName | undefined) || DEFAULT_ICON;
@@ -101,6 +117,7 @@ function makeDraft(
         fallbackPath ? defaultWorkspaceTitle(fallbackPath) : "",
       ),
       pinned: false,
+      chat_path: null,
     };
   }
   return {
@@ -108,6 +125,7 @@ function makeDraft(
     root_path: record.root_path,
     theme: themeDraftFromTheme(record.theme),
     pinned: record.pinned,
+    chat_path: record.chat_path ?? null,
   };
 }
 
@@ -170,30 +188,147 @@ function moveItem<T>(
   return next;
 }
 
+function loadViewedActivity(project_id: string): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(
+      `${WORKSPACE_ACTIVITY_VIEWED_KEY}:${project_id}`,
+    );
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed != null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistViewedActivity(
+  project_id: string,
+  viewed: Record<string, number>,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      `${WORKSPACE_ACTIVITY_VIEWED_KEY}:${project_id}`,
+      JSON.stringify(viewed),
+    );
+  } catch {
+    // best effort only
+  }
+}
+
+function dateMs(value?: string): number {
+  if (!value) return 0;
+  const ms = new Date(value).valueOf();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function getWorkspaceActivityState(
+  record: WorkspaceRecord,
+  sessions: AgentSessionRecord[],
+  viewedAt: number,
+): WorkspaceActivityState {
+  const chatPath = `${record.chat_path ?? ""}`.trim();
+  if (!chatPath) return undefined;
+  const matching = sessions
+    .filter((session) => session.chat_path === chatPath)
+    .sort((a, b) => dateMs(b.updated_at) - dateMs(a.updated_at));
+  if (matching.length === 0) return undefined;
+
+  const latest = matching[0];
+  if (matching.some((session) => session.status === "running")) {
+    return {
+      kind: "running",
+      label: "Codex running",
+      color: "processing",
+      updatedAt: latest.updated_at,
+    };
+  }
+  if (latest.status === "failed" && dateMs(latest.updated_at) > viewedAt) {
+    return {
+      kind: "failed",
+      label: "Codex error",
+      color: "error",
+      updatedAt: latest.updated_at,
+    };
+  }
+  if (dateMs(latest.updated_at) > viewedAt) {
+    return {
+      kind: "done",
+      label: "Codex done",
+      color: "success",
+      updatedAt: latest.updated_at,
+    };
+  }
+  return undefined;
+}
+
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const { actions, active_project_tab, workspaces } = useProjectContext();
   const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
   const current_path_abs =
     useTypedRedux({ project_id }, "current_path_abs") ?? "/";
+  const activePath = useMemo(
+    () => tab_to_path(active_project_tab ?? ""),
+    [active_project_tab],
+  );
   const [editing, setEditing] = useState<EditorDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [openingChatId, setOpeningChatId] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
+  const [agentSessions, setAgentSessions] = useState<AgentSessionRecord[]>([]);
+  const [viewedActivity, setViewedActivity] = useState<Record<string, number>>(
+    () => loadViewedActivity(project_id),
+  );
   const isFlyout = layout === "flyout";
   const now = Date.now();
 
   const defaultRootPath = useMemo(() => {
-    const activePath = tab_to_path(active_project_tab ?? "");
     if (activePath) {
       const split = path_split(activePath);
       return split.head || "/";
     }
     return current_path_abs || "/";
-  }, [active_project_tab, current_path_abs]);
+  }, [activePath, current_path_abs]);
+  const activeChatPath =
+    activePath && activePath.endsWith(".chat") ? activePath : null;
 
   function select(next: WorkspaceSelection): void {
     workspaces.setSelection(next);
   }
+
+  useEffect(() => {
+    let closed = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void watchAgentSessionsForProject(
+      { project_id },
+      (records: AgentSessionRecord[]) => {
+        if (!closed) {
+          setAgentSessions(records);
+        }
+      },
+    )
+      .then((cleanup) => {
+        unsubscribe = cleanup;
+      })
+      .catch(() => {});
+
+    return () => {
+      closed = true;
+      unsubscribe?.();
+    };
+  }, [project_id]);
+
+  useEffect(() => {
+    if (workspaces.selection.kind !== "workspace") return;
+    const workspaceId = workspaces.selection.workspace_id;
+    setViewedActivity((current) => {
+      const next = { ...current, [workspaceId]: Date.now() };
+      persistViewedActivity(project_id, next);
+      return next;
+    });
+  }, [project_id, workspaces.selection]);
 
   function openCreate(): void {
     const draft = makeDraft(null, defaultRootPath);
@@ -238,12 +373,14 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           root_path: values.root_path,
           theme: themeFromDraft(values.theme),
           pinned: values.pinned,
+          chat_path: values.chat_path,
         });
       } else {
         workspaces.createWorkspace({
           root_path: values.root_path,
           ...themeFromDraft(values.theme),
           pinned: values.pinned,
+          chat_path: values.chat_path,
           source: "manual",
         } satisfies WorkspaceCreateInput);
       }
@@ -299,6 +436,11 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     const imageUrl = record.theme.image_blob?.trim()
       ? `/blobs/theme-image.png?uuid=${encodeURIComponent(record.theme.image_blob.trim())}`
       : undefined;
+    const activity = getWorkspaceActivityState(
+      record,
+      agentSessions,
+      viewedActivity[record.workspace_id] ?? 0,
+    );
     return (
       <Card
         key={record.workspace_id}
@@ -381,6 +523,14 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 {record.theme.description}
               </Typography.Paragraph>
             ) : null}
+            {activity ? (
+              <Space size={8} wrap style={{ marginTop: 8 }}>
+                <Tag color={activity.color}>{activity.label}</Tag>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <TimeAgo date={activity.updatedAt} />
+                </Typography.Text>
+              </Space>
+            ) : null}
             <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
                 size="small"
@@ -459,6 +609,10 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
     return grouped;
   }, [now, workspaces.records]);
+  const canUseActiveChat =
+    editing != null &&
+    activeChatPath != null &&
+    pathMatchesRoot(activeChatPath, editing.root_path);
 
   function reorderSection(
     section: WorkspaceSectionKey,
@@ -634,6 +788,41 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         }
         extraAfterTheme={
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
+            <div>
+              <Typography.Text strong>Workspace chat</Typography.Text>
+              <div style={{ marginTop: 8 }}>
+                {editing?.chat_path ? (
+                  <Typography.Paragraph
+                    type="secondary"
+                    style={{ marginBottom: 8 }}
+                    ellipsis={{ rows: 2 }}
+                  >
+                    {editing.chat_path}
+                  </Typography.Paragraph>
+                ) : (
+                  <Typography.Text type="secondary">
+                    Uses the generated workspace chat until you set one.
+                  </Typography.Text>
+                )}
+              </div>
+              <Space wrap>
+                <Button
+                  size="small"
+                  disabled={!canUseActiveChat}
+                  onClick={() => patchEditing({ chat_path: activeChatPath })}
+                >
+                  Use current chat tab
+                </Button>
+                {editing?.chat_path ? (
+                  <Button
+                    size="small"
+                    onClick={() => patchEditing({ chat_path: null })}
+                  >
+                    Reset to generated chat
+                  </Button>
+                ) : null}
+              </Space>
+            </div>
             <div>
               <Typography.Text strong>Pinned</Typography.Text>
               <div style={{ marginTop: 8 }}>
