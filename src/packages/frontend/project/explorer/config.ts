@@ -138,5 +138,5 @@ export function setSort({
   // on device causing it to change on another could be annoying...
   redux
     .getProjectActions(location.project_id)
-    .setState({ active_file_sort: Math.random() });
+    .setState({ active_file_sort: { column_name, is_descending } });
 }

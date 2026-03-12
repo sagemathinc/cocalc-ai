@@ -63,6 +63,7 @@ import {
   FLYOUT_LOG_FILTER_DEFAULT,
   FlyoutLogFilter,
 } from "@cocalc/frontend/project/page/flyouts/utils";
+import { migrateStarsOnMove } from "@cocalc/frontend/project/page/flyouts/store";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
@@ -939,7 +940,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         if (opts.change_history) {
           this.push_state(this.toUrlPath(path, false));
         }
-        this.set_current_path(misc.path_split(path).head);
+        const fileDir = misc.path_split(path).head;
+        this.set_current_path(fileDir);
+        this.setState({
+          new_page_path_abs: fileDir,
+          flyout_new_path_abs: fileDir,
+        });
 
         const info = store.get("open_files").getIn([path, "component"]) as any;
         if (info == null) {
@@ -1740,6 +1746,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     if (show_files) {
+      this.setState({
+        explorer_browsing_path_abs: nextPathAbs,
+        explorer_history_path_abs: nextPathAbs,
+        new_page_path_abs: nextPathAbs,
+        flyout_new_path_abs: nextPathAbs,
+      });
+    }
+    if (show_files) {
       this.set_active_tab("files", {
         update_file_listing: false,
         change_history: false, // see "if" below
@@ -2507,6 +2521,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           fs.move(path, moveDestinationPath(dest, path), { overwrite: true }),
         ),
       );
+      await migrateStarsOnMove(this.project_id, src, dest);
       this.log({
         event: "file_action",
         action: "moved",

@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { CONAT_BOOKMARKS_KEY } from "@cocalc/util/consts/bookmarks";
+import { path_split, path_to_file } from "@cocalc/util/misc";
 import type { FlyoutActiveStarred } from "./state";
 
 // Starred files are now managed entirely through conat with in-memory state.
@@ -154,4 +155,43 @@ export function useStarredFilesManager(
     starred,
     setStarredPath,
   };
+}
+
+export async function migrateStarsOnMove(
+  project_id: string,
+  srcPaths: string[],
+  destDir: string,
+): Promise<void> {
+  try {
+    const store = redux.getStore("account");
+    const account_id = store.get_account_id();
+    if (!account_id) return;
+
+    const bookmarks = await webapp_client.conat_client.dkv<string[]>({
+      account_id,
+      name: CONAT_BOOKMARKS_KEY,
+    });
+    const current: string[] = bookmarks.get(project_id) ?? [];
+    if (current.length === 0) return;
+
+    const starredSet = new Set(current);
+    let changed = false;
+
+    for (const src of srcPaths) {
+      const tail = path_split(src).tail;
+      const newPath = path_to_file(destDir, tail);
+      for (const oldKey of [src, `${src}/`]) {
+        if (!starredSet.has(oldKey)) continue;
+        starredSet.delete(oldKey);
+        starredSet.add(oldKey.endsWith("/") ? `${newPath}/` : newPath);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      bookmarks.set(project_id, sortBy(Array.from(starredSet)));
+    }
+  } catch (err) {
+    console.warn("migrateStarsOnMove failed:", err);
+  }
 }

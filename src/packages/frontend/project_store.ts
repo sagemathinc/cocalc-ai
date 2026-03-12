@@ -61,6 +61,11 @@ export type ModalInfo = TypedMap<{
   onCancel?: any;
 }>;
 
+export interface ActiveFileSort {
+  column_name: string;
+  is_descending: boolean;
+}
+
 export interface ProjectStoreState {
   // Shared
   current_path_abs: string;
@@ -101,6 +106,15 @@ export interface ProjectStoreState {
   file_search?: string;
   show_hidden?: boolean;
   show_masked?: boolean;
+  hide_masked_files?: boolean;
+  type_filter?: string;
+  show_directory_tree?: boolean;
+  explorer_browsing_path_abs?: string;
+  explorer_history_path_abs?: string;
+  flyout_browsing_path_abs?: string;
+  flyout_history_path_abs?: string;
+  new_page_path_abs?: string;
+  flyout_new_path_abs?: string;
   error?: string;
   checked_files: immutable.Set<string>;
 
@@ -184,8 +198,7 @@ export interface ProjectStoreState {
   // while true, explorer keyhandler will not be enabled
   disableExplorerKeyhandler?: boolean;
 
-  // whe change this when any sort changes, so the UI can update
-  active_file_sort?: number;
+  active_file_sort?: ActiveFileSort;
 
   // error controlling the state of a project, e.g., starting or stopping it.
   control_error?: string;
@@ -276,6 +289,7 @@ export class ProjectStore extends Store<ProjectStoreState> {
 
   getInitialState = (): ProjectStoreState => {
     const initialPath = getProjectHomeDirectory(this.project_id);
+    const other_settings = redux.getStore("account")?.get("other_settings");
     return {
       // Shared
       current_path_abs: initialPath,
@@ -307,6 +321,18 @@ export class ProjectStore extends Store<ProjectStoreState> {
       move_lro: undefined,
       checked_files: immutable.Set(),
       file_listing_scroll_top: undefined,
+      active_file_sort: {
+        column_name: other_settings?.get("default_file_sort") ?? "time",
+        is_descending: false,
+      },
+      show_directory_tree: false,
+      hide_masked_files: false,
+      explorer_browsing_path_abs: initialPath,
+      explorer_history_path_abs: initialPath,
+      flyout_browsing_path_abs: initialPath,
+      flyout_history_path_abs: initialPath,
+      new_page_path_abs: initialPath,
+      flyout_new_path_abs: initialPath,
 
       // Project New
       downloading_file: false,
