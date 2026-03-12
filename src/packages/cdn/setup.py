@@ -53,7 +53,6 @@ with open('index.js', 'w') as out:
     out.write(f"""
 "use strict";
 exports.__esModule = true;
-exports.path = exports.versions = void 0;
+exports.versions = void 0;
 exports.versions = {json.dumps(versions)};
-exports.path = __dirname;
 """)

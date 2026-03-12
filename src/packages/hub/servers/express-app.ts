@@ -10,7 +10,7 @@ import { join } from "path";
 import { parse as parseURL } from "url";
 import * as Module from "module";
 import { path as WEBAPP_PATH } from "@cocalc/assets";
-import { path as CDN_PATH } from "@cocalc/cdn";
+import { path as CDN_PATH } from "@cocalc/cdn/path";
 import vhostShare from "@cocalc/next/lib/share/virtual-hosts";
 import { path as STATIC_PATH } from "@cocalc/static";
 import { setup_health_checks as setupHealthChecks } from "../health-checks";

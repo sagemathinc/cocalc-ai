@@ -1,8 +1,9 @@
 describe("test that the built module description object exists and has some properties", () => {
   const obj = require(".");
+  const { path } = require("./path");
 
   it("has a path that contains cdn", () => {
-    expect(obj.path).toContain("/cdn/");
+    expect(path).toContain("/cdn/");
   });
 
   it("has versions for the five modules it should have", () => {
