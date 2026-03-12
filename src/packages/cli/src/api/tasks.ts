@@ -1,5 +1,5 @@
 import type {
-  OpenTasksSessionOptions,
+  OpenSyncDBTasksSessionOptions,
   TaskCreateInput,
   TaskMutableFields,
   TaskQuery,
@@ -347,10 +347,12 @@ export async function openTasksApi(
             client,
             projectId,
             path,
+            persistent: true,
+            fileUseInterval: 0,
             ...(cacheEntry.readOnly ? { readOnly: true } : {}),
             openTimeoutMs:
               options.sessionOpenTimeoutMs ?? DEFAULT_SESSION_OPEN_TIMEOUT_MS,
-          } satisfies OpenTasksSessionOptions & {
+          } satisfies OpenSyncDBTasksSessionOptions & {
             client: ConatClient;
           });
           return { project, session, path };

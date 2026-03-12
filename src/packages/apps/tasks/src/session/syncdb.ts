@@ -44,6 +44,7 @@ interface TaskSyncDBLike {
   delete(where?: unknown): void;
   commit(): boolean;
   save(): Promise<void>;
+  save_to_disk?(): Promise<void>;
 }
 
 export interface SyncDBTasksSessionOptions {
@@ -184,6 +185,7 @@ export class SyncDBTasksSession implements TasksSession {
     }
     this.syncdb.commit();
     await this.syncdb.save();
+    await this.syncdb.save_to_disk?.();
   }
 
   private assertOpen(): void {
