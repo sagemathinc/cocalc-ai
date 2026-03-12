@@ -39,6 +39,9 @@ const PROJECT_INIT = `${HARD_RESET}; history -d $(history 1);\n`;
 
 const DEFAULT_COMMAND = "bash";
 const INFINITY = 999999;
+const BROWSER_TERM = "xterm-256color";
+const BROWSER_COLORTERM = "truecolor";
+const BROWSER_TERM_PROGRAM = "cocalc";
 
 const HISTORY_LIMIT_BYTES = parseInt(
   process.env.COCALC_TERMINAL_HISTORY_LIMIT_BYTES ?? "1000000",
@@ -214,13 +217,19 @@ export class Session {
     const { head, tail } = path_split(this.termPath);
     const HISTFILE = historyFile(this.options.path);
     const env = {
+      ...envForSpawn(),
+      ...this.options.env,
+      TERM: this.options.env?.TERM ?? BROWSER_TERM,
+      COLORTERM: this.options.env?.COLORTERM ?? BROWSER_COLORTERM,
+      TERM_PROGRAM: this.options.env?.TERM_PROGRAM ?? BROWSER_TERM_PROGRAM,
       PROMPT_COMMAND: "history -a",
       ...(HISTFILE ? { HISTFILE } : undefined),
-      ...this.options.env,
-      ...envForSpawn(),
       COCALC_TERMINAL_FILENAME: tail,
       COCALC_CONTROL_DIR: this.spoolDirectory,
       TMUX: undefined, // ensure not set
+      TMUX_PANE: undefined,
+      TMUX_TMPDIR: undefined,
+      TERMCAP: undefined,
     };
     let command = this.options.command ?? DEFAULT_COMMAND;
     let args = this.options.args ?? [];
