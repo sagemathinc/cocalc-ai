@@ -1,3 +1,4 @@
+import { map as awaitMap } from "awaiting";
 import { Checkbox, Input, InputNumber, Modal, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -42,24 +43,12 @@ export async function runBulkHostDeprovision({
   skipRunningBackups: boolean;
   onConfirm: (host: Host, opts?: HostDeleteOptions) => void | Promise<void>;
 }) {
-  for (
-    let start = 0;
-    start < hosts.length;
-    start += MAX_BULK_HOST_DEPROVISION_PARALLEL
-  ) {
-    const batch = hosts.slice(
-      start,
-      start + MAX_BULK_HOST_DEPROVISION_PARALLEL,
+  await awaitMap(hosts, MAX_BULK_HOST_DEPROVISION_PARALLEL, async (host) => {
+    await onConfirm(
+      host,
+      resolveHostDeprovisionOptions(host, skipRunningBackups),
     );
-    await Promise.all(
-      batch.map((host) =>
-        onConfirm(
-          host,
-          resolveHostDeprovisionOptions(host, skipRunningBackups),
-        ),
-      ),
-    );
-  }
+  });
 }
 
 function getBackupCounts(host?: Host) {
