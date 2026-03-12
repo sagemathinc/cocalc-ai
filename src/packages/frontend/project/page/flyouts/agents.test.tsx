@@ -4,18 +4,28 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AgentsPanel } from "./agents";
 
 const mockOpenFile = jest.fn();
+const mockCreateFile = jest.fn();
 const mockUpsertAgentSessionRecord = jest.fn();
 const mockOpenFloatingAgentSession = jest.fn();
 const mockChatActions = {
   setSelectedThread: jest.fn(),
   scrollToIndex: jest.fn(),
 } as any;
+const mockEnsureWorkspaceChatPath = jest.fn();
+const mockEnsureWorkspaceChatDirectory = jest.fn();
 
 let mockSessions: any[] = [];
+let mockCurrentPath = "/home/user";
+let mockActiveProjectTab = "";
+let mockWorkspaceCurrent: any = null;
+let mockResolveWorkspaceForPath: jest.Mock<any, [string]> = jest.fn(
+  (_path: string) => null,
+);
+let mockDirEntries = [] as string[];
 
 jest.mock("antd", () => {
   const Div = ({ children, ...props }: any) => <div {...props}>{children}</div>;
-  const Button = ({ children, onClick, ...props }: any) => (
+  const Button = ({ children, onClick, loading: _loading, ...props }: any) => (
     <button type="button" onClick={onClick} {...props}>
       {children}
     </button>
@@ -53,8 +63,10 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: () =>
     ({
       open_file: mockOpenFile,
+      createFile: mockCreateFile,
       fs: () => ({
         stat: async () => ({ mtimeMs: 1 }),
+        readdir: async () => mockDirEntries,
       }),
     }) as any,
   useTypedRedux: (store: any, key: string) => {
@@ -63,6 +75,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     }
     if (store === "account" && key === "font_size") {
       return 13;
+    }
+    if (
+      (store as any)?.project_id === "project-1" &&
+      key === "current_path_abs"
+    ) {
+      return mockCurrentPath;
     }
     return undefined;
   },
@@ -141,11 +159,21 @@ jest.mock("@cocalc/frontend/project/page/agent-chat-font-size", () => ({
   }),
 }));
 
+jest.mock("@cocalc/frontend/project/workspaces/runtime", () => ({
+  ensureWorkspaceChatPath: (...args: any[]) =>
+    mockEnsureWorkspaceChatPath(...args),
+  ensureWorkspaceChatDirectory: (...args: any[]) =>
+    mockEnsureWorkspaceChatDirectory(...args),
+}));
+
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => ({
+    active_project_tab: mockActiveProjectTab,
     workspaces: {
-      current: null,
-      resolveWorkspaceForPath: () => null,
+      current: mockWorkspaceCurrent,
+      resolveWorkspaceForPath: (path: string) =>
+        mockResolveWorkspaceForPath(path),
+      setSelection: jest.fn(),
     },
   }),
 }));
@@ -154,10 +182,13 @@ describe("AgentsPanel session cards", () => {
   beforeEach(() => {
     window.localStorage.clear();
     mockOpenFile.mockClear();
+    mockCreateFile.mockClear();
     mockUpsertAgentSessionRecord.mockClear();
     mockOpenFloatingAgentSession.mockClear();
     mockChatActions.setSelectedThread.mockClear();
     mockChatActions.scrollToIndex.mockClear();
+    mockEnsureWorkspaceChatPath.mockReset();
+    mockEnsureWorkspaceChatDirectory.mockReset();
     mockSessions = [
       {
         session_id: "session-1",
@@ -172,6 +203,11 @@ describe("AgentsPanel session cards", () => {
         model: "gpt-5-codex",
       },
     ];
+    mockCurrentPath = "/home/user";
+    mockActiveProjectTab = "";
+    mockWorkspaceCurrent = null;
+    mockResolveWorkspaceForPath = jest.fn((_path: string) => null);
+    mockDirEntries = [];
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
@@ -220,5 +256,83 @@ describe("AgentsPanel session cards", () => {
     });
 
     expect(screen.queryByTestId("agents-inline-chat")).toBeNull();
+  });
+
+  it("creates a new agent chat in the active folder when no chat exists there", async () => {
+    mockCurrentPath = "/home/user/project";
+    mockDirEntries = ["notes.tex"];
+
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-new-agent-button")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agents-new-agent-button"));
+
+    await waitFor(() =>
+      expect(mockCreateFile).toHaveBeenCalledWith({
+        name: "agent",
+        ext: "chat",
+        current_path: "/home/user/project",
+        switch_over: true,
+      }),
+    );
+  });
+
+  it("opens the only chat file in the target folder instead of creating another", async () => {
+    mockCurrentPath = "/home/user/project";
+    mockDirEntries = ["agent.chat"];
+
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-new-agent-button")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agents-new-agent-button"));
+
+    await waitFor(() =>
+      expect(mockOpenFile).toHaveBeenCalledWith({
+        path: "/home/user/project/agent.chat",
+        foreground: true,
+      }),
+    );
+    expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  it("reuses the workspace chat when the target folder belongs to a workspace", async () => {
+    mockCurrentPath = "/home/user/project";
+    mockWorkspaceCurrent = { workspace_id: "ws-1" };
+    mockResolveWorkspaceForPath = jest.fn((_path: string) => ({
+      workspace_id: "ws-1",
+    }));
+    mockEnsureWorkspaceChatPath.mockResolvedValue({
+      workspace: { workspace_id: "ws-1" },
+      chat_path: "/home/user/.local/share/cocalc/workspaces/acct/ws-1.chat",
+      assigned: false,
+    });
+
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-new-agent-button")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agents-new-agent-button"));
+
+    await waitFor(() =>
+      expect(mockEnsureWorkspaceChatPath).toHaveBeenCalledWith({
+        project_id: "project-1",
+        account_id: "acct-1",
+        workspace_id: "ws-1",
+      }),
+    );
+    expect(mockEnsureWorkspaceChatDirectory).toHaveBeenCalledWith({
+      project_id: "project-1",
+      chat_path: "/home/user/.local/share/cocalc/workspaces/acct/ws-1.chat",
+    });
+    expect(mockOpenFile).toHaveBeenCalledWith({
+      path: "/home/user/.local/share/cocalc/workspaces/acct/ws-1.chat",
+      foreground: true,
+    });
+    expect(mockCreateFile).not.toHaveBeenCalled();
   });
 });

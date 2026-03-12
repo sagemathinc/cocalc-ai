@@ -59,6 +59,12 @@ import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/nav
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import {
+  ensureWorkspaceChatDirectory,
+  ensureWorkspaceChatPath,
+} from "@cocalc/frontend/project/workspaces/runtime";
+import { path_split, tab_to_path } from "@cocalc/util/misc";
+import { joinAbsolutePath } from "@cocalc/util/path-model";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "processing",
@@ -88,6 +94,7 @@ const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
 const AGENTS_OPEN_SESSION_STORAGE_PREFIX = "agents-panel-open-session";
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
+const NEW_AGENT_BASENAME = "agent";
 
 function shortAccountId(accountId?: string): string {
   if (!accountId) return "unknown";
@@ -127,6 +134,36 @@ function normalizedTitle(record: AgentSessionRecord): string {
   const plain = html_to_text(raw).replace(/\s+/g, " ").trim();
   if (plain) return plain;
   return "Navigator session";
+}
+
+function deriveAgentRootPath(opts: {
+  activeProjectTab?: string;
+  currentPath?: string;
+}): string {
+  const activePath = tab_to_path(opts.activeProjectTab ?? "");
+  if (activePath) {
+    return path_split(activePath).head || "/";
+  }
+  return opts.currentPath || "/";
+}
+
+function isChatFileName(name: string): boolean {
+  return name.toLowerCase().endsWith(".chat");
+}
+
+function nextAgentChatFilename(names: readonly string[]): string {
+  const used = new Set(names.map((name) => name.toLowerCase()));
+  const preferred = `${NEW_AGENT_BASENAME}.chat`;
+  if (!used.has(preferred)) {
+    return preferred;
+  }
+  for (let i = 2; i < 1000; i += 1) {
+    const candidate = `${NEW_AGENT_BASENAME}-${i}.chat`;
+    if (!used.has(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("Could not find an available agent chat filename.");
 }
 
 interface SessionListItem {
@@ -199,10 +236,11 @@ interface AgentsPanelProps {
 }
 
 export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
-  const { workspaces } = useProjectContext();
+  const { active_project_tab, workspaces } = useProjectContext();
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
   const [missingChatPaths, setMissingChatPaths] = useState<Set<string>>(
     () => new Set(),
@@ -214,6 +252,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     loadWorkspaceOnly(project_id),
   );
   const [error, setError] = useState<string>("");
+  const [creatingAgent, setCreatingAgent] = useState(false);
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
   const [inlineSessionId, setInlineSessionId] = useState<string | null>(() =>
     loadOpenedSessionId(project_id, layout),
@@ -426,6 +465,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return scopedSessions.filter((session) => session.status === "archived");
   }, [scopedSessions]);
 
+  const defaultAgentRootPath = useMemo(() => {
+    return deriveAgentRootPath({
+      activeProjectTab: active_project_tab,
+      currentPath: current_path_abs ?? "/",
+    });
+  }, [active_project_tab, current_path_abs]);
+
   useEffect(() => {
     if (!inlineSessionId) return;
     if (inlineSession) return;
@@ -436,6 +482,58 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   useEffect(() => {
     saveOpenedSessionId(project_id, layout, inlineSessionId);
   }, [inlineSessionId, layout, project_id]);
+
+  async function openOrCreateAgentChat(): Promise<void> {
+    if (!actions) return;
+    const fs = actions.fs?.();
+    if (!fs || typeof fs.readdir !== "function") {
+      setError("Project filesystem is unavailable.");
+      return;
+    }
+    setCreatingAgent(true);
+    setError("");
+    try {
+      const accountId = `${account_id ?? ""}`.trim();
+      const workspace =
+        accountId && workspaces.resolveWorkspaceForPath(defaultAgentRootPath);
+      if (workspace) {
+        const { chat_path } = await ensureWorkspaceChatPath({
+          project_id,
+          account_id: accountId,
+          workspace_id: workspace.workspace_id,
+        });
+        await ensureWorkspaceChatDirectory({ project_id, chat_path });
+        workspaces.setSelection({
+          kind: "workspace",
+          workspace_id: workspace.workspace_id,
+        });
+        await actions.open_file({ path: chat_path, foreground: true });
+        return;
+      }
+
+      const names = await fs.readdir(defaultAgentRootPath);
+      const chatNames = names.filter(isChatFileName);
+      if (chatNames.length === 1) {
+        await actions.open_file({
+          path: joinAbsolutePath(defaultAgentRootPath, chatNames[0]),
+          foreground: true,
+        });
+        return;
+      }
+
+      const filename = nextAgentChatFilename(names);
+      await actions.createFile({
+        name: filename.slice(0, -".chat".length),
+        ext: "chat",
+        current_path: defaultAgentRootPath,
+        switch_over: true,
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setCreatingAgent(false);
+    }
+  }
 
   useEffect(() => {
     const chatPath = inlineSession?.chat_path;
@@ -1141,6 +1239,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           }}
         >
           <Space size={[6, 6]} wrap>
+            <Button
+              size="small"
+              type="primary"
+              loading={creatingAgent}
+              onClick={() => void openOrCreateAgentChat()}
+              data-testid="agents-new-agent-button"
+            >
+              New Agent
+            </Button>
             <Button
               size="small"
               type={scope === "mine" ? "primary" : "default"}
