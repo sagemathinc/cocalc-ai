@@ -14,7 +14,6 @@ import {
   message,
 } from "antd";
 import immutable from "immutable";
-import useAsyncEffect from "use-async-effect";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import {
@@ -38,7 +37,7 @@ import {
 } from "@cocalc/frontend/project/listing/use-backups";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import path from "path";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 interface FilesSelectedControlsProps {
   checked_files: immutable.Set<string>;
@@ -85,6 +84,7 @@ export function FilesSelectedControls({
   const [backupsErr, setBackupsErr] = useState<any>(null);
   const [backupsLoading, setBackupsLoading] = useState<boolean>(false);
   const [backupsTick, setBackupsTick] = useState(0);
+  const backupsRequestIdRef = useRef(0);
   const [restoreOpen, setRestoreOpen] = useState<boolean>(false);
   const [restoreMode, setRestoreMode] = useState<"original" | "scratch">(
     "original",
@@ -92,27 +92,40 @@ export function FilesSelectedControls({
   const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
   const [restoreError, setRestoreError] = useState<any>(null);
 
-  useAsyncEffect(async () => {
-    if (!inBackups || !project_id) return;
-    try {
-      setBackupsLoading(true);
+  useEffect(() => {
+    const requestId = backupsRequestIdRef.current + 1;
+    backupsRequestIdRef.current = requestId;
+    if (!inBackups || !project_id) {
+      setBackupsMeta(null);
       setBackupsErr(null);
-      const backups = await webapp_client.conat_client.hub.projects.getBackups({
-        project_id,
-        indexed_only: true,
-      });
-      setBackupsMeta(
-        backups.map(({ id, time }) => ({
-          id,
-          name: new Date(time).toISOString(),
-          mtime: new Date(time).getTime(),
-        })),
-      );
-    } catch (err) {
-      setBackupsErr(err);
-    } finally {
       setBackupsLoading(false);
+      return;
     }
+    (async () => {
+      try {
+        setBackupsLoading(true);
+        setBackupsErr(null);
+        const backups =
+          await webapp_client.conat_client.hub.projects.getBackups({
+            project_id,
+            indexed_only: true,
+          });
+        if (backupsRequestIdRef.current !== requestId) return;
+        setBackupsMeta(
+          backups.map(({ id, time }) => ({
+            id,
+            name: new Date(time).toISOString(),
+            mtime: new Date(time).getTime(),
+          })),
+        );
+      } catch (err) {
+        if (backupsRequestIdRef.current !== requestId) return;
+        setBackupsErr(err);
+      } finally {
+        if (backupsRequestIdRef.current !== requestId) return;
+        setBackupsLoading(false);
+      }
+    })();
   }, [inBackups, project_id, effective_current_path, backupsTick]);
 
   interface BackupSelection {
