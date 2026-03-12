@@ -1,6 +1,7 @@
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import {
   bulkHostDeprovisionConfirmPhrase,
+  runBulkHostDeprovision,
   resolveHostDeprovisionOptions,
 } from "./host-confirm";
 
@@ -37,5 +38,31 @@ describe("host bulk deprovision helpers", () => {
     expect(resolveHostDeprovisionOptions(host, true)).toEqual({
       skip_backups: true,
     });
+  });
+
+  it("deprovisions up to 20 hosts at once", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const hosts = Array.from({ length: 21 }, (_, i) => ({
+      id: `host-${i + 1}`,
+      name: `Host ${i + 1}`,
+      status: "running",
+    })) as Host[];
+
+    const onConfirm = jest.fn(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+    });
+
+    await runBulkHostDeprovision({
+      hosts,
+      skipRunningBackups: false,
+      onConfirm,
+    });
+
+    expect(onConfirm).toHaveBeenCalledTimes(21);
+    expect(maxInFlight).toBe(20);
   });
 });

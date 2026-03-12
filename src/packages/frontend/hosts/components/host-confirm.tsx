@@ -7,6 +7,8 @@ import type {
 } from "../types";
 import { HostProjectsTable } from "./host-projects-table";
 
+const MAX_BULK_HOST_DEPROVISION_PARALLEL = 20;
+
 function isHostRunningForDeprovision(status?: Host["status"]) {
   return (
     status === "running" ||
@@ -29,6 +31,35 @@ export function resolveHostDeprovisionOptions(
 
 export function bulkHostDeprovisionConfirmPhrase(count: number): string {
   return `deprovision ${count}`;
+}
+
+export async function runBulkHostDeprovision({
+  hosts,
+  skipRunningBackups,
+  onConfirm,
+}: {
+  hosts: Host[];
+  skipRunningBackups: boolean;
+  onConfirm: (host: Host, opts?: HostDeleteOptions) => void | Promise<void>;
+}) {
+  for (
+    let start = 0;
+    start < hosts.length;
+    start += MAX_BULK_HOST_DEPROVISION_PARALLEL
+  ) {
+    const batch = hosts.slice(
+      start,
+      start + MAX_BULK_HOST_DEPROVISION_PARALLEL,
+    );
+    await Promise.all(
+      batch.map((host) =>
+        onConfirm(
+          host,
+          resolveHostDeprovisionOptions(host, skipRunningBackups),
+        ),
+      ),
+    );
+  }
 }
 
 function getBackupCounts(host?: Host) {
@@ -343,9 +374,11 @@ export function confirmBulkHostDeprovision({
       if (state.text.trim().toLowerCase() !== phrase) {
         throw new Error("bulk deprovision confirmation phrase does not match");
       }
-      for (const host of hosts) {
-        await onConfirm(host, resolveHostDeprovisionOptions(host, state.skip));
-      }
+      await runBulkHostDeprovision({
+        hosts,
+        skipRunningBackups: state.skip,
+        onConfirm,
+      });
     },
   });
 }
