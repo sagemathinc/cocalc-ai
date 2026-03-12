@@ -101,7 +101,9 @@ export default function Task({
       style={style}
       onClick={() => {
         actions?.set_current_task(task.get("task_id"));
-        actions?.enable_key_handler();
+        if (!editing_desc && !editing_due_date) {
+          actions?.enable_key_handler();
+        }
       }}
     >
       <Row>
