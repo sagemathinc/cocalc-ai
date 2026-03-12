@@ -176,6 +176,22 @@ export function prevSeqForMoreHistoryFromHistory(
   return history.length > 0 ? 0 : undefined;
 }
 
+export function patchesHaveFullHistoryFromPatches(
+  patches: {
+    is_snapshot?: boolean;
+    parents?: PatchId[];
+    seq_info?: { prev_seq?: number };
+  }[],
+): boolean {
+  const first = patches[0];
+  if (first == null) return true;
+  if (first.is_snapshot) {
+    const prevSeq = first.seq_info?.prev_seq;
+    return prevSeq == null || prevSeq <= 1;
+  }
+  return (first.parents?.length ?? 0) === 0;
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -2014,10 +2030,7 @@ export class SyncDoc extends EventEmitter {
   };
 
   private patchesHaveFullHistory = (patches: Patch[]): boolean => {
-    const first = patches[0];
-    if (first == null) return true;
-    if (first.is_snapshot) return false;
-    return (first.parents?.length ?? 0) === 0;
+    return patchesHaveFullHistoryFromPatches(patches);
   };
 
   hasFullHistory = (): boolean => {
