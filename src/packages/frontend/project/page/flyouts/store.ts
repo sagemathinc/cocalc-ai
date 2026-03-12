@@ -18,8 +18,7 @@ bm.on('change', (e) => console.log('Bookmark change:', e))
  */
 
 import { sortBy, uniq } from "lodash";
-import { useState } from "react";
-import useAsyncEffect from "use-async-effect";
+import { useEffect, useRef, useState } from "react";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -35,24 +34,59 @@ export function useStarredFilesManager(
   const [starred, setStarred] = useState<FlyoutActiveStarred>([]);
   const [bookmarks, setBookmarks] = useState<any>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const listenerRef = useRef<
+    | ((changeEvent: {
+        key: string;
+        value?: string[];
+        prev?: string[];
+      }) => void)
+    | null
+  >(null);
 
   // Initialize conat bookmarks once on mount, waiting for authentication
-  useAsyncEffect(async () => {
-    if (!enabled) {
-      setIsInitialized(true);
-      return;
-    }
+  useEffect(() => {
+    let conatBookmarks: any = null;
+    let isMounted = true;
+    (async () => {
+      if (!enabled) {
+        setBookmarks(null);
+        setStarred([]);
+        setIsInitialized(true);
+        return;
+      }
 
-    // Wait until account is authenticated
-    const store = redux.getStore("account");
-    await store.async_wait({
-      until: () => store.get_account_id() != null,
-      timeout: 0, // indefinite timeout
-    });
+      setBookmarks(null);
+      setStarred([]);
+      setIsInitialized(false);
 
-    const account_id = store.get_account_id();
-    await initializeConatBookmarks(account_id);
-  }, [enabled]);
+      // Wait until account is authenticated
+      const store = redux.getStore("account");
+      await store.async_wait({
+        until: () => store.get_account_id() != null,
+        timeout: 0, // indefinite timeout
+      });
+
+      const account_id = store.get_account_id();
+      try {
+        conatBookmarks = await initializeConatBookmarks(account_id);
+      } finally {
+        if (!isMounted) {
+          if (conatBookmarks && listenerRef.current) {
+            conatBookmarks.off("change", listenerRef.current);
+            listenerRef.current = null;
+          }
+        }
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+      if (conatBookmarks && listenerRef.current) {
+        conatBookmarks.off("change", listenerRef.current);
+        listenerRef.current = null;
+      }
+    };
+  }, [enabled, project_id]);
 
   async function initializeConatBookmarks(account_id: string) {
     try {
@@ -66,15 +100,17 @@ export function useStarredFilesManager(
       setBookmarks(conatBookmarks);
 
       // Listen for changes from other clients
-      conatBookmarks.on(
-        "change",
-        (changeEvent: { key: string; value?: string[]; prev?: string[] }) => {
-          if (changeEvent.key === project_id) {
-            const remoteStars = changeEvent.value || [];
-            setStarred(sortBy(uniq(remoteStars)));
-          }
-        },
-      );
+      listenerRef.current = (changeEvent: {
+        key: string;
+        value?: string[];
+        prev?: string[];
+      }) => {
+        if (changeEvent.key === project_id) {
+          const remoteStars = changeEvent.value || [];
+          setStarred(sortBy(uniq(remoteStars)));
+        }
+      };
+      conatBookmarks.on("change", listenerRef.current);
 
       // Load initial data from conat
       const initialStars = conatBookmarks.get(project_id) || [];
@@ -83,9 +119,11 @@ export function useStarredFilesManager(
       }
 
       setIsInitialized(true);
+      return conatBookmarks;
     } catch (err) {
       console.warn(`conat bookmark initialization warning -- ${err}`);
       setIsInitialized(true); // Set initialized even on error to avoid infinite loading
+      return null;
     }
   }
 
