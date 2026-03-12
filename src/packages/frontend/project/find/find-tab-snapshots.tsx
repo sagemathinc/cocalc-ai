@@ -153,14 +153,17 @@ export function SnapshotsTab({
 
   useEffect(() => {
     if (!restoreTarget) {
+      previewRequestRef.current += 1;
       setPreview(null);
       return;
     }
     if (scopeOutsideHome) {
+      previewRequestRef.current += 1;
       setPreview({ error: "Snapshots only include files under HOME." });
       return;
     }
     if (restoreTarget.isDir) {
+      previewRequestRef.current += 1;
       setPreview({ error: "Directory preview is not available." });
       return;
     }
@@ -169,6 +172,7 @@ export function SnapshotsTab({
       "",
     );
     if (!relative) {
+      previewRequestRef.current += 1;
       setPreview({ error: "Directory preview is not available." });
       return;
     }
