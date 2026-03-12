@@ -39,6 +39,7 @@ import {
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { DirectoryListingEntry } from "@cocalc/util/types";
 import { WebappClient } from "./client";
+import { isDirViaFs } from "./is-dir";
 import { throttle } from "lodash";
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
@@ -595,14 +596,10 @@ export class ProjectClient {
     project_id: string;
     path: string;
   }): Promise<boolean> => {
-    // [ ] TODO: rewrite to use new fs.stat!
-    const { stdout, exit_code } = await this.exec({
-      project_id,
-      command: "file",
-      args: ["-Eb", path],
-      err_on_exit: false,
-    });
-    return !exit_code && stdout.trim() == "directory";
+    return await isDirViaFs(
+      this.client.conat_client.conat().fs({ project_id }),
+      path,
+    );
   };
 
   // getting, setting, editing, deleting, etc., the  api keys for a project
