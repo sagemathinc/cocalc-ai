@@ -187,7 +187,12 @@ describe("backend sync-fs watch policy", () => {
   const project_id = "12345678-1234-4234-8234-123456789abc";
   const client_id = "abcdefab-cdef-4def-8def-abcdefabcdef";
 
-  async function openDoc(path: string) {
+  async function openDoc(
+    path: string,
+    opts: {
+      watchDebounce?: number;
+    } = {},
+  ) {
     const client = new Client({}, client_id);
     const syncFsWatch = jest.fn(async () => undefined);
     const fs1 = {
@@ -199,6 +204,7 @@ describe("backend sync-fs watch policy", () => {
       path,
       client,
       fs: fs1,
+      watchDebounce: opts.watchDebounce,
     });
     await once(doc, "ready");
     return { doc, syncFsWatch };
@@ -211,6 +217,21 @@ describe("backend sync-fs watch policy", () => {
       true,
       expect.objectContaining({
         project_id,
+      }),
+    );
+    await doc.close();
+  });
+
+  it("passes watchDebounce through to backend sync-fs watch", async () => {
+    const { doc, syncFsWatch } = await openDoc("ordinary.txt", {
+      watchDebounce: 75,
+    });
+    expect(syncFsWatch).toHaveBeenCalledWith(
+      "ordinary.txt",
+      true,
+      expect.objectContaining({
+        project_id,
+        watchDebounce: 75,
       }),
     );
     await doc.close();

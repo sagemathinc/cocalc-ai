@@ -2880,6 +2880,7 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         history_epoch: this.history_epoch,
         doctype: this.doctype,
+        watchDebounce: this.opts.watchDebounce,
       });
     } catch (err) {
       this.dbg("syncFsWatch")(`failed: ${err?.message ?? err}`);

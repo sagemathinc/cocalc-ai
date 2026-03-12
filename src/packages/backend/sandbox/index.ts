@@ -2295,6 +2295,7 @@ export class SandboxedFilesystem {
       project_id?: string;
       history_epoch?: number;
       doctype?: any;
+      watchDebounce?: number;
     },
   ): Promise<void> => {
     const syncPath = await this.canonicalSyncFsPath(path);
@@ -2304,6 +2305,7 @@ export class SandboxedFilesystem {
       syncPath,
       history_epoch: info?.history_epoch,
       doctype: info?.doctype,
+      watchDebounce: info?.watchDebounce,
     });
   };
 }
