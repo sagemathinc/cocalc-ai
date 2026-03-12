@@ -1322,6 +1322,7 @@ export function ChatPanel({
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}
+            acpState={acpState}
             isCompact={isCompact}
             selectedThreadKey={selectedThreadKey}
             setSelectedThreadKey={setSelectedThreadKey}
