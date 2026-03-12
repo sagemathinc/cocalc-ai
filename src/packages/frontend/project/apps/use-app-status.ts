@@ -22,13 +22,14 @@ export function useAppStatus({
     try {
       setLoading(true);
       setError(null);
+      setStatus(null);
       setStatus(await api.apps.status(name));
     } catch (err) {
       setError(err);
     } finally {
       setLoading(false);
     }
-  }, [counter, name]);
+  }, [counter, name, project_id]);
 
   useInterval(() => {
     setCounter((prev) => prev + 1);
