@@ -5,6 +5,7 @@ import {
 import { original_path } from "@cocalc/util/misc";
 
 const EXTERNAL_SIDE_CHAT_SELECTED_THREAD_KEY = "selectedThreadKey";
+const EXTERNAL_SIDE_CHAT_FLAG = "data-externalSideChat";
 
 function normalizeSelectedThreadKey(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -20,11 +21,14 @@ export function getExternalSideChatDesc(project_id: string, path: string) {
       EXTERNAL_SIDE_CHAT_SELECTED_THREAD_KEY,
     ),
   );
-  if (!selectedThreadKey) return undefined;
-  return {
-    "data-selectedThreadKey": selectedThreadKey,
-    "data-preferLatestThread": false,
+  const desc: Record<string, string | boolean> = {
+    [EXTERNAL_SIDE_CHAT_FLAG]: true,
   };
+  if (selectedThreadKey) {
+    desc["data-selectedThreadKey"] = selectedThreadKey;
+    desc["data-preferLatestThread"] = false;
+  }
+  return desc;
 }
 
 export function persistExternalSideChatSelectedThreadKey({

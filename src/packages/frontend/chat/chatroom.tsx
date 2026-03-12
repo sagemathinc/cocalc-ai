@@ -270,10 +270,12 @@ export function ChatPanel({
     desc,
     "data-preferLatestThread",
   );
+  const externalSideChatRaw = getDescValue(desc, "data-externalSideChat");
   const preferLatestThreadFromDesc =
     preferLatestThreadFromDescRaw === true ||
     preferLatestThreadFromDescRaw === "true" ||
     preferLatestThreadFromDescRaw === 1;
+  const isExternalSideChat = asBoolean(externalSideChatRaw);
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     typeof storedSidebarWidth === "number" && storedSidebarWidth > 50
       ? storedSidebarWidth
@@ -333,11 +335,17 @@ export function ChatPanel({
   });
 
   useEffect(() => {
-    if (actions?.frameTreeActions?.set_frame_data && actions?.frameId) return;
     const persistedSelectedThreadKey =
       selectedThreadKey != null && selectedThreadKey !== COMBINED_FEED_KEY
         ? selectedThreadKey
         : null;
+    if (
+      !isExternalSideChat &&
+      actions?.frameTreeActions?.set_frame_data &&
+      actions?.frameId
+    ) {
+      return;
+    }
     persistExternalSideChatSelectedThreadKey({
       project_id,
       path,
@@ -347,6 +355,7 @@ export function ChatPanel({
     project_id,
     path,
     selectedThreadKey,
+    isExternalSideChat,
     actions?.frameTreeActions,
     actions?.frameId,
   ]);
