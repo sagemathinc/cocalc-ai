@@ -1,6 +1,7 @@
 import getPool, { PoolClient } from "@cocalc/database/pool";
 import type { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
+import { applyMembershipTierTemplateFallbacks } from "@cocalc/util/membership-tier-templates";
 
 export interface MembershipTierPricing {
   price_monthly?: number;
@@ -49,7 +50,9 @@ export async function getMembershipTiers({
             project_defaults, llm_limits, features, disabled
      FROM membership_tiers`,
   );
-  let tiers = rows as MembershipTierRecord[];
+  let tiers = (rows as MembershipTierRecord[]).map(
+    applyMembershipTierTemplateFallbacks,
+  );
   if (!includeDisabled) {
     tiers = tiers.filter((tier) => !tier.disabled);
   }
