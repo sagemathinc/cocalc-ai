@@ -499,6 +499,17 @@ export function ChatPanel({
   }, [persistedLoopConfig, selectedThreadKey, suppressedLoopThreads]);
 
   useEffect(() => {
+    const threadKey = selectedThreadKey?.trim();
+    if (!threadKey || persistedLoopConfig != null) return;
+    setSuppressedLoopThreads((prev) => {
+      if (!prev.has(threadKey)) return prev;
+      const next = new Set(prev);
+      next.delete(threadKey);
+      return next;
+    });
+  }, [selectedThreadKey, persistedLoopConfig]);
+
+  useEffect(() => {
     // When switching threads, reflect persisted loop state for that thread.
     setComposerLoopConfig(visiblePersistedLoopConfig);
     setComposerLoopConfigDirty(false);
@@ -523,6 +534,14 @@ export function ChatPanel({
         });
       }
       if (config?.enabled !== true) {
+        if (threadKey) {
+          setSuppressedLoopThreads((prev) => {
+            if (prev.has(threadKey)) return prev;
+            const next = new Set(prev);
+            next.add(threadKey);
+            return next;
+          });
+        }
         clearThreadLoopRuntime(actions, selectedThreadKey);
         setComposerLoopConfig(undefined);
         setComposerLoopConfigDirty(false);
