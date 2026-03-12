@@ -927,6 +927,13 @@ export class BaseEditorActions<
     } else {
       frame_tree = tree_ops.assign_ids(frame_tree);
       frame_tree = tree_ops.ensure_ids_are_unique(frame_tree);
+      frame_tree = tree_ops.migrateToNary(frame_tree);
+      frame_tree = tree_ops.collapse_trivial(frame_tree);
+      try {
+        tree_ops.get_some_leaf_id(frame_tree);
+      } catch {
+        frame_tree = this._default_frame_tree();
+      }
     }
     local_view_state = local_view_state.set("frame_tree", frame_tree);
 
@@ -1143,6 +1150,8 @@ export class BaseEditorActions<
     let frame_tree = fromJS(rawTree) as Map<string, any>;
     frame_tree = tree_ops.assign_ids(frame_tree);
     frame_tree = tree_ops.ensure_ids_are_unique(frame_tree);
+    frame_tree = tree_ops.migrateToNary(frame_tree);
+    frame_tree = tree_ops.collapse_trivial(frame_tree);
     return frame_tree;
   }
 
@@ -1216,6 +1225,62 @@ export class BaseEditorActions<
 
   set_frame_tree_leafs(obj): void {
     this._tree_op("set_leafs", obj);
+  }
+
+  swap_frames(idA: string, idB: string): void {
+    this._tree_op("swap_nodes", idA, idB);
+    this.set_resize?.();
+  }
+
+  move_frame(
+    sourceId: string,
+    targetId: string,
+    position: tree_ops.DropPosition,
+  ): void {
+    this._tree_op("move_node", sourceId, targetId, position);
+    this._tree_op("collapse_trivial");
+    const tree = this._get_tree();
+    let local = this.store.get("local_view_state");
+    const fullId = local?.get("full_id");
+    if (fullId) {
+      if (position === "tab" || !tree_ops.is_leaf_id(tree, fullId)) {
+        local = local.delete("full_id");
+        this.setState({ local_view_state: local });
+        this._save_local_view_state();
+      }
+    }
+    this.set_active_id(sourceId, true);
+    this.set_resize?.();
+  }
+
+  add_tab(tabsId: string, type: string, path?: string): void {
+    const before = this._get_leaf_ids();
+    this._tree_op("add_tab", tabsId, type, path);
+    const after = this._get_leaf_ids();
+    for (const newId in after) {
+      if (!before[newId]) {
+        this.set_active_id(newId);
+        this.store.emit("new-frame", { id: newId, type });
+        break;
+      }
+    }
+    this.set_resize?.();
+  }
+
+  reorder_tab(
+    tabsId: string,
+    sourceFrameId: string,
+    beforeFrameId: string | null,
+  ): void {
+    this._tree_op("reorder_tab", tabsId, sourceFrameId, beforeFrameId);
+    this.set_active_id(sourceFrameId, true);
+  }
+
+  extract_tab(sourceId: string, position: tree_ops.DropPosition): void {
+    this._tree_op("extract_from_tabs", sourceId, position);
+    this._tree_op("collapse_trivial");
+    this.set_active_id(sourceId, true);
+    this.set_resize?.();
   }
 
   // Set the type of the given node, e.g., 'cm', 'markdown', etc.

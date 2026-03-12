@@ -67,6 +67,31 @@
 .close
   font-size : 20pt
 
+.cc-frame-drag-handle
+  cursor: grab
+  padding: 0 10px
+  color: colors.$COL_GRAY
+  display: flex
+  align-items: center
+  border-right: 1px solid colors.$COL_GRAY_L
+  margin-right: 4px
+  transition: background 0.15s, color 0.15s
+
+  &:hover
+    background: colors.$COL_BLUE_LLLL
+    color: colors.$COL_BLUE_D
+
+.cc-frame-leaf-container:has(.cc-frame-drag-handle:hover)
+  outline: 2px dashed colors.$COL_BLUE_L
+  outline-offset: -2px
+
+body.cc-frame-dragging
+  cursor: grabbing !important
+  user-select: none
+
+  *
+    cursor: grabbing !important
+
 .center
   text-align : center
 

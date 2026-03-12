@@ -15,14 +15,19 @@ import type { Command } from "./commands";
 
 export type FrameDirection = "row" | "col";
 
-/* Interface for object that describes a binary tree. */
+/* Shape for the frame layout tree kept in local_view_state. */
 export interface FrameTree {
   direction?: FrameDirection;
   type: string;
+  // Legacy binary fields (migrated on load).
   first?: FrameTree;
   second?: FrameTree;
-  font_size?: number;
   pos?: number;
+  // N-ary/tab fields.
+  children?: FrameTree[];
+  sizes?: number[];
+  activeTab?: number;
+  font_size?: number;
 }
 
 // Someday!

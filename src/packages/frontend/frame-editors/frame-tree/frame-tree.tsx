@@ -40,15 +40,17 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
+import { isIntlMessage } from "@cocalc/frontend/i18n";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { copy, hidden_meta_file, is_different } from "@cocalc/util/misc";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { cm as cm_spec } from "../code-editor/editor";
 import { TimeTravelActions } from "../time-travel-editor/actions";
-import { FrameContext } from "./frame-context";
+import { FrameLeafContainer } from "./frame-leaf-container";
 import { FrameTreeDragBar } from "./frame-tree-drag-bar";
 import { FrameTreeLeaf } from "./leaf";
 import { get_file_editor } from "./register";
+import { TabsContainer } from "./tabs-container";
 import { FrameTitleBar } from "./title-bar";
 import * as tree_ops from "./tree-ops";
 import { EditorDescription, EditorSpec, EditorState, NodeDesc } from "./types";
@@ -359,6 +361,17 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       if (type === "node") {
         return render_frame_tree(desc);
       }
+      if (type === "tabs") {
+        return (
+          <TabsContainer
+            frame_tree={desc}
+            actions={actions}
+            renderChild={render_one}
+            editor_spec={editor_spec}
+            active_id={active_id}
+          />
+        );
+      }
       // NOTE: get_editor_actions may mutate props.editor_spec
       // if necessary for subframe, etc. So we call it first!
       let editor_actions: Actions | undefined,
@@ -386,8 +399,14 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
         return <div>{mesg}</div>;
       }
       return (
-        <FrameContext.Provider
-          value={{
+        <FrameLeafContainer
+          id={desc.get("id")}
+          frameLabel={
+            isIntlMessage(spec?.short)
+              ? spec.short.defaultMessage
+              : (spec?.short ?? desc.get("type"))
+          }
+          contextValue={{
             id: desc.get("id"),
             project_id,
             path,
@@ -398,17 +417,12 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
             isVisible: tab_is_visible,
             redux,
           }}
-        >
-          <div
-            className={"smc-vfill"}
-            onClick={() => actions.set_active_id(desc.get("id"), true)}
-            onTouchStart={() => actions.set_active_id(desc.get("id"))}
-            style={spec != null ? spec.style : undefined}
-          >
-            {render_titlebar(desc, spec, editor_actions)}
-            {render_leaf(desc, component, spec, editor_actions)}
-          </div>
-        </FrameContext.Provider>
+          style={spec != null ? spec.style : undefined}
+          onClick={() => actions.set_active_id(desc.get("id"), true)}
+          onTouchStart={() => actions.set_active_id(desc.get("id"))}
+          titlebar={render_titlebar(desc, spec, editor_actions)}
+          leaf={render_leaf(desc, component, spec, editor_actions)}
+        />
       );
     }
 
@@ -444,7 +458,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       return data;
     }
 
-    function render_cols() {
+    function render_cols_legacy() {
       const data = get_data("row");
       return (
         <div ref={cols_container_ref} style={data.outer_style}>
@@ -464,7 +478,7 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       );
     }
 
-    function render_rows() {
+    function render_rows_legacy() {
       const data = get_data("column");
       return (
         <div
@@ -488,6 +502,70 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
       );
     }
 
+    function render_children() {
+      const children = frame_tree.get("children");
+      if (!children) {
+        const direction = frame_tree.get("direction");
+        return direction === "col"
+          ? render_cols_legacy()
+          : render_rows_legacy();
+      }
+
+      const direction = frame_tree.get("direction");
+      const sizes = frame_tree.get("sizes");
+      const isHorizontal = direction === "col";
+      const containerRef = isHorizontal
+        ? cols_container_ref
+        : rows_container_ref;
+
+      const elements: React.ReactNode[] = [];
+      children.forEach((child: any, i: number) => {
+        if (i > 0) {
+          elements.push(
+            <FrameTreeDragBar
+              key={`drag-${i}`}
+              actions={actions}
+              containerRef={containerRef}
+              dir={direction}
+              frame_tree={frame_tree}
+              childIndex={i}
+            />,
+          );
+        }
+        const flex = sizes
+          ? sizes.get(i, 1.0 / children.size)
+          : 1.0 / children.size;
+        elements.push(
+          <div
+            key={child.get("id")}
+            className="smc-vfill"
+            style={{ display: "flex", flex }}
+          >
+            {render_one(child)}
+          </div>,
+        );
+      });
+
+      const outerStyle: React.CSSProperties = isHorizontal
+        ? {
+            display: "flex",
+            flexDirection: "row",
+            flex: 1,
+            overflow: "hidden",
+          }
+        : {};
+
+      return (
+        <div
+          ref={containerRef}
+          className={isHorizontal ? undefined : "smc-vfill"}
+          style={outerStyle}
+        >
+          {elements}
+        </div>
+      );
+    }
+
     if (value == null) {
       return <Loading />;
     }
@@ -505,13 +583,22 @@ export const FrameTree: React.FC<FrameTreeProps> = React.memo(
         }
       }
 
-      if (frame_tree.get("type") !== "node") {
+      const type = frame_tree.get("type");
+      if (type !== "node" && type !== "tabs") {
         return render_one(frame_tree);
-      } else if (frame_tree.get("direction") === "col") {
-        return render_cols();
-      } else {
-        return render_rows();
       }
+      if (type === "tabs") {
+        return (
+          <TabsContainer
+            frame_tree={frame_tree}
+            actions={actions}
+            renderChild={render_one}
+            editor_spec={editor_spec}
+            active_id={active_id}
+          />
+        );
+      }
+      return render_children();
     }
 
     // TODO we only need this additional div for that safari hack. one that's no longer an issue, remove it.

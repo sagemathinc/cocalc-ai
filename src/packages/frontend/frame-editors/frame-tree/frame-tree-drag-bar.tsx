@@ -57,10 +57,12 @@ interface Props {
   // the direction
   dir: "col" | "row";
   frame_tree: Map<string, any>;
+  // index of the child after this drag bar for N-ary trees.
+  childIndex?: number;
 }
 
 export const FrameTreeDragBar: React.FC<Props> = React.memo((props: Props) => {
-  const { dir, frame_tree, actions, containerRef } = props;
+  const { dir, frame_tree, actions, containerRef, childIndex } = props;
 
   const dragBarRef = React.useRef<Draggable>(null);
 
@@ -88,10 +90,30 @@ export const FrameTreeDragBar: React.FC<Props> = React.memo((props: Props) => {
         ? (offset - elt.offsetLeft) / elt.offsetWidth
         : (offset - elt.offsetTop) / elt.offsetHeight;
     reset();
-    actions.set_frame_tree({
-      id: frame_tree.get("id"),
-      pos,
-    });
+    if (childIndex != null) {
+      const sizes = frame_tree.get("sizes");
+      if (!sizes) return;
+      const i = childIndex - 1;
+      const j = childIndex;
+      const combined = sizes.get(i) + sizes.get(j);
+      let startOffset = 0;
+      for (let k = 0; k < i; k++) startOffset += sizes.get(k);
+      const newSizeI = Math.max(
+        0.05,
+        Math.min(combined - 0.05, pos - startOffset),
+      );
+      const newSizeJ = combined - newSizeI;
+      const newSizes = sizes.set(i, newSizeI).set(j, newSizeJ);
+      actions.set_frame_tree({
+        id: frame_tree.get("id"),
+        sizes: newSizes.toJS(),
+      });
+    } else {
+      actions.set_frame_tree({
+        id: frame_tree.get("id"),
+        pos,
+      });
+    }
     actions.set_resize?.();
     actions.focus(); // see https://github.com/sagemathinc/cocalc/issues/3269
   }
