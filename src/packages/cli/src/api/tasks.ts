@@ -244,6 +244,35 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
 const DEFAULT_SESSION_OPEN_TIMEOUT_MS = 15_000;
 const DEFAULT_SESSION_LEASE_MS = 30_000;
 
+export function resolveTasksSessionCacheEntry({
+  projectId,
+  path,
+  readOnly,
+  sessionPromises,
+}: {
+  projectId: string;
+  path: string;
+  readOnly?: boolean;
+  sessionPromises: Map<string, unknown>;
+}): { key: string; readOnly: boolean } {
+  const baseSessionKey = {
+    project_id: projectId,
+    path,
+  };
+  const writableKey = JSON.stringify({
+    ...baseSessionKey,
+    readOnly: false,
+  });
+  const readOnlyKey = JSON.stringify({
+    ...baseSessionKey,
+    readOnly: true,
+  });
+  if (readOnly === true && !sessionPromises.has(writableKey)) {
+    return { key: readOnlyKey, readOnly: true };
+  }
+  return { key: writableKey, readOnly: false };
+}
+
 function normalizeTasksPath(path: string): string {
   const trimmed = `${path ?? ""}`.trim();
   if (!trimmed) {
@@ -294,11 +323,13 @@ export async function openTasksApi(
       throw new Error("tasks api is closed");
     }
     const path = normalizeTasksPath(docOptions.path);
-    const key = JSON.stringify({
-      project_id: projectId,
+    const cacheEntry = resolveTasksSessionCacheEntry({
+      projectId,
       path,
-      readOnly: docOptions.readOnly === true,
+      readOnly: docOptions.readOnly,
+      sessionPromises,
     });
+    const { key } = cacheEntry;
     const release = await sessionLeases.acquire(key);
     try {
       let entryPromise = sessionPromises.get(key);
@@ -308,7 +339,7 @@ export async function openTasksApi(
             client,
             projectId,
             path,
-            readOnly: docOptions.readOnly,
+            ...(cacheEntry.readOnly ? { readOnly: true } : {}),
             openTimeoutMs:
               options.sessionOpenTimeoutMs ?? DEFAULT_SESSION_OPEN_TIMEOUT_MS,
           } satisfies OpenTasksSessionOptions & {
