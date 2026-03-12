@@ -101,6 +101,22 @@ function maybeDecorateLoopPrompt({
   ].join("\n");
 }
 
+function maybeDecorateLoopSuppressionPrompt({
+  prompt,
+  suppressLoopContract,
+}: {
+  prompt: string;
+  suppressLoopContract: boolean;
+}): string {
+  if (!suppressLoopContract) return prompt;
+  return [
+    prompt,
+    "",
+    "System loop mode: OFF for this turn.",
+    'Do not include the special loop-control JSON block with schema {"loop":...} unless loop mode is explicitly enabled for this turn.',
+  ].join("\n");
+}
+
 // Clear transient frontend-rendered ACP state for a thread. Persisted queue and
 // running state is rehydrated from SyncDB, so there is no browser-owned queue
 // to reset anymore.
@@ -183,9 +199,6 @@ export async function processAcpLLM({
     });
     return;
   }
-  const threadMeta = actions.getThreadMetadata?.(thread_id, {
-    threadId: thread_id,
-  });
   const loopConfigFromMessage = field<AcpLoopConfig>(
     message as any,
     "acp_loop_config",
@@ -194,13 +207,21 @@ export async function processAcpLLM({
     message as any,
     "acp_loop_state",
   );
-  const loopConfig = loopConfigFromMessage ?? threadMeta?.loop_config;
+  const loopConfig = loopConfigFromMessage;
   const loopState =
-    loopStateFromMessage ??
-    (typeof threadMeta?.loop_state?.loop_id === "string" &&
-    threadMeta.loop_state.loop_id.trim()
-      ? (threadMeta.loop_state as AcpLoopState)
-      : undefined);
+    typeof loopStateFromMessage?.loop_id === "string" &&
+    loopStateFromMessage.loop_id.trim()
+      ? loopStateFromMessage
+      : undefined;
+  const threadMetadata = actions.getThreadMetadata?.(thread_id, {
+    threadId: thread_id,
+  });
+  const persistedLoopState = threadMetadata?.loop_state as
+    | AcpLoopState
+    | undefined;
+  const threadHasLoopHistory =
+    typeof persistedLoopState?.loop_id === "string" &&
+    persistedLoopState.loop_id.trim().length > 0;
   const config = {
     ...(actions.getCodexConfig?.(thread_id) ?? {}),
     ...(acpConfigOverride ?? {}),
@@ -247,10 +268,16 @@ export async function processAcpLLM({
   };
 
   const sessionKey = effectiveSessionId ?? thread_id;
-  const promptForRunWithLoop = maybeDecorateLoopPrompt({
-    prompt: workingInput,
-    loopConfig,
-  });
+  const promptForRunWithLoop =
+    loopConfig?.enabled === true
+      ? maybeDecorateLoopPrompt({
+          prompt: workingInput,
+          loopConfig,
+        })
+      : maybeDecorateLoopSuppressionPrompt({
+          prompt: workingInput,
+          suppressLoopContract: threadHasLoopHistory,
+        });
   // Generate a stable assistant-reply key for this turn, but do NOT write any
   // corresponding chat row here. The backend is the sole writer of the assistant
   // reply row (avoids frontend/backend sync races on the same row).
