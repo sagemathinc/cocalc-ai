@@ -2,6 +2,10 @@
 
 Status: active implementation spec; partially completed as of March 5, 2026.
 
+TODO:
+
+- [ ] "Install with codex" is NOT robust yet. This is a separate problem though involving how the AI floating assistant panel works, and is out of scope of this plan.
+
 ## 1. Purpose
 
 Define a single, extensible app/proxy system for CoCalc Lite and Launchpad that supports:
