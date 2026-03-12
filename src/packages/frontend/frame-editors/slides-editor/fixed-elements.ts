@@ -7,8 +7,8 @@ const SLIDE = {
   w: 3 * 350,
   type: "slide",
   id: "the-slide",
-  x: (-3 * 197) / 2,
-  y: (-3 * 350) / 2,
+  x: (-3 * 350) / 2,
+  y: (-3 * 197) / 2,
   z: -Infinity,
 } as Element;
 
