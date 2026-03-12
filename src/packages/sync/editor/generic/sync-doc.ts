@@ -152,6 +152,30 @@ export interface SyncOpts extends SyncOpts0 {
 const logger = getLogger("sync-doc");
 logger.debug("init");
 
+export function prevSeqForMoreHistoryFromHistory(
+  history: {
+    time: PatchId;
+    isSnapshot?: boolean;
+    seqInfo?: { prevSeq?: number };
+  }[],
+): number | undefined {
+  let prevSeq: number | undefined;
+  let oldestTimeMs: number | undefined;
+  for (const p of history) {
+    if (p.isSnapshot && p.seqInfo?.prevSeq != null) {
+      const timeMs = decodePatchId(p.time).timeMs;
+      if (oldestTimeMs == null || timeMs < oldestTimeMs) {
+        oldestTimeMs = timeMs;
+        prevSeq = p.seqInfo.prevSeq;
+      }
+    }
+  }
+  if (prevSeq != null) {
+    return prevSeq;
+  }
+  return history.length > 0 ? 0 : undefined;
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -2476,18 +2500,7 @@ export class SyncDoc extends EventEmitter {
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
     const history = this.patchflowSession.history({ includeSnapshots: true });
-    let prevSeq: number | undefined;
-    let oldestTimeMs: number | undefined;
-    for (const p of history) {
-      if (p.isSnapshot && p.seqInfo?.prevSeq != null) {
-        const timeMs = decodePatchId(p.time).timeMs;
-        if (oldestTimeMs == null || timeMs < oldestTimeMs) {
-          oldestTimeMs = timeMs;
-          prevSeq = p.seqInfo.prevSeq;
-        }
-      }
-    }
-    return prevSeq;
+    return prevSeqForMoreHistoryFromHistory(history);
   };
 
   private patchflowSnapshotCandidate = (
