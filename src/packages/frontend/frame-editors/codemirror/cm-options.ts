@@ -22,8 +22,6 @@ import { extra_alt_keys } from "./mobile";
 import { AccountState } from "../../account/types";
 import { valid_indent } from "./util";
 
-const HISTORY_EVENT_DELAY_MS = 1000;
-
 function save(cm) {
   (CodeMirror as any).commands.save(cm);
 }
@@ -329,7 +327,6 @@ export function cm_options(
     extraKeys,
     cursorScrollMargin: 3,
     viewportMargin: 10,
-    historyEventDelay: HISTORY_EVENT_DELAY_MS,
   };
 
   if (opts.match_xml_tags) {
