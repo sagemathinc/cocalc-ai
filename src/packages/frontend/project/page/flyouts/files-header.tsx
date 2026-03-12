@@ -42,7 +42,6 @@ import { FilesSelectButtons } from "./files-select-extra";
 import { FlyoutClearFilter, FlyoutFilterWarning } from "./filter-warning";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { setSort } from "@cocalc/frontend/project/explorer/config";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
 import { dirname } from "path";
@@ -84,6 +83,9 @@ interface Props {
   selectAllFiles: () => void;
   publicFiles: Set<string>;
   refreshBackups?: () => void;
+  currentPath: string;
+  onNavigate: (path: string) => void;
+  setActiveFileSort: (sort: ActiveFileSort) => void;
 }
 
 export function FilesHeader({
@@ -108,6 +110,9 @@ export function FilesHeader({
   clearAllSelections,
   publicFiles,
   refreshBackups,
+  currentPath,
+  onNavigate,
+  setActiveFileSort,
 }: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
 
@@ -127,8 +132,7 @@ export function FilesHeader({
     { project_id },
     "file_creation_error",
   );
-  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
+  const effective_current_path = currentPath;
   const isReadonlyVirtualPath =
     effective_current_path === SNAPSHOTS ||
     effective_current_path?.startsWith(`${SNAPSHOTS}/`) ||
@@ -184,11 +188,9 @@ export function FilesHeader({
       if (effective_current_path !== "/") {
         const normalizedPath = effective_current_path.replace(/^\/+/, "");
         if (normalizedPath.startsWith(".")) {
-          actions?.set_current_path(
-            normalizedPath.split("/").slice(0, -1).join("/"),
-          );
+          onNavigate(normalizedPath.split("/").slice(0, -1).join("/"));
         } else {
-          actions?.set_current_path(dirname(effective_current_path));
+          onNavigate(dirname(effective_current_path));
         }
       }
     }
@@ -250,10 +252,9 @@ export function FilesHeader({
         value={name}
         style={{ background: isActive ? COLORS.ANTD_BG_BLUE_L : undefined }}
         onClick={() =>
-          setSort({
+          setActiveFileSort({
             column_name: name,
-            project_id,
-            path: effective_current_path,
+            is_descending: isActive ? !activeFileSort.is_descending : false,
           })
         }
       >
@@ -477,7 +478,7 @@ export function FilesHeader({
                           key: "snapshots-open",
                           label: "Browse Snapshots",
                           onClick: () => {
-                            actions?.open_directory(SNAPSHOTS);
+                            onNavigate(SNAPSHOTS);
                             track("snapshots", {
                               action: "open",
                               where: "flyout-files",
@@ -488,7 +489,7 @@ export function FilesHeader({
                           key: "snapshots-config",
                           label: "Configure Snapshots",
                           onClick: () => {
-                            actions?.open_directory(SNAPSHOTS);
+                            onNavigate(SNAPSHOTS);
                             actions?.setState({ open_snapshot_schedule: true });
                           },
                         },
@@ -496,7 +497,7 @@ export function FilesHeader({
                           key: "snapshots-create",
                           label: "Create Snapshot",
                           onClick: () => {
-                            actions?.open_directory(SNAPSHOTS);
+                            onNavigate(SNAPSHOTS);
                             actions?.setState({ open_create_snapshot: true });
                           },
                         },
@@ -505,7 +506,7 @@ export function FilesHeader({
                           key: "backups-open",
                           label: "Browse Backups",
                           onClick: () => {
-                            actions?.open_directory(BACKUPS);
+                            onNavigate(BACKUPS);
                             track("backups", {
                               action: "open",
                               where: "flyout-files",
@@ -516,7 +517,7 @@ export function FilesHeader({
                           key: "backups-config",
                           label: "Configure Backups",
                           onClick: () => {
-                            actions?.open_directory(BACKUPS);
+                            onNavigate(BACKUPS);
                             actions?.setState({ open_backup_schedule: true });
                           },
                         },
@@ -524,7 +525,7 @@ export function FilesHeader({
                           key: "backups-create",
                           label: "Create Backup",
                           onClick: () => {
-                            actions?.open_directory(BACKUPS);
+                            onNavigate(BACKUPS);
                             actions?.setState({ open_create_backup: true });
                           },
                         },

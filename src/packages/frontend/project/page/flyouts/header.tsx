@@ -23,6 +23,7 @@ import { FLYOUT_PADDING } from "./consts";
 import { LogHeader } from "./log-header";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
+import { useFlyoutNavigation } from "./use-flyout-navigation";
 
 const FLYOUT_FULLPAGE_TOUR_NAME: TourName = "flyout-fullpage";
 
@@ -36,6 +37,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
   const { flyout, flyoutWidth, narrowerPX = 0 } = _;
   const intl = useIntl();
   const { actions, project_id, is_active } = useProjectContext();
+  const flyoutNavigation = useFlyoutNavigation(project_id);
   // the flyout fullpage button explanation isn't an Antd tour, but has the same effect.
   const tours = useTypedRedux("account", "tours");
   const [highlightFullpage, setHighlightFullpage] = useState<boolean>(false);
@@ -175,6 +177,15 @@ export function FlyoutHeader(_: Readonly<Props>) {
                 project_id={project_id}
                 showSourceSelector
                 className={"cc-project-flyout-path-navigator"}
+                currentPath={flyoutNavigation.flyoutPath}
+                historyPath={flyoutNavigation.flyoutHistory}
+                onNavigate={flyoutNavigation.navigateFlyout}
+                canGoBack={flyoutNavigation.canGoBack}
+                canGoForward={flyoutNavigation.canGoForward}
+                onGoBack={flyoutNavigation.goBack}
+                onGoForward={flyoutNavigation.goForward}
+                backHistory={flyoutNavigation.backHistory}
+                forwardHistory={flyoutNavigation.forwardHistory}
               />
               {!lite && (
                 <DiskUsage

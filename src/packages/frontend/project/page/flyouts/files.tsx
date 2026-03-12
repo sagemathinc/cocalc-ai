@@ -57,8 +57,8 @@ import useBackupsListing, {
 } from "@cocalc/frontend/project/listing/use-backups";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import ShowError from "@cocalc/frontend/components/error";
-import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
+import { useFlyoutSettings } from "@cocalc/frontend/project/explorer/use-explorer-settings";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { selectionForPath } from "@cocalc/frontend/project/workspaces/state";
@@ -73,6 +73,8 @@ import {
   shouldSuppressTransientRoutingError,
 } from "@cocalc/frontend/projects/host-routing-error";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
+import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
+import { useFlyoutNavigation } from "./use-flyout-navigation";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -109,8 +111,8 @@ export function FilesFlyout({
   const [showCheckboxIndex, setShowCheckboxIndex] = useState<number | null>(
     null,
   );
-  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
+  const { flyoutPath: effective_current_path, navigateFlyout } =
+    useFlyoutNavigation(project_id);
   const project_map = useTypedRedux("projects", "project_map");
   const host_id = project_map?.getIn([project_id, "host_id"]) as
     | string
@@ -139,15 +141,7 @@ export function FilesFlyout({
   const strippedPublicPaths = useStrippedPublicPaths(project_id);
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
 
-  const sort = useTypedRedux({ project_id }, "active_file_sort");
-  const activeFileSort = useMemo(
-    () =>
-      getSort({
-        project_id,
-        path: effective_current_path,
-      }),
-    [sort, effective_current_path, project_id],
-  );
+  const [activeFileSort, setActiveFileSort] = useFlyoutSettings(project_id);
 
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
   const show_masked = useTypedRedux({ project_id }, "show_masked");
@@ -454,7 +448,7 @@ export function FilesFlyout({
 
       if (file.isDir) {
         // true: change history, false: do not show "files" page
-        actions?.open_directory(fullPath, true, false);
+        navigateFlyout(fullPath);
         setTimeout(() => workspaces.setSelection(nextSelection), 0);
         setSearchState("");
       } else {
@@ -692,6 +686,12 @@ export function FilesFlyout({
             item.isDir && !fullPath.endsWith("/") ? `${fullPath}/` : fullPath;
           manageStarredFiles.setStarredPath(normalizedPath, starState);
         }}
+        currentPath={effective_current_path}
+        dragPaths={
+          checked_files.includes(fullPath)
+            ? checked_files.toArray()
+            : [fullPath]
+        }
       />
     );
   }
@@ -754,23 +754,25 @@ export function FilesFlyout({
     }
 
     return (
-      <StatefulVirtuoso
-        ref={virtuosoRef}
-        cacheId={`${project_id}::flyout::files::${effective_current_path}`}
-        style={{}}
-        increaseViewportBy={10}
-        onMouseLeave={() => setShowCheckboxIndex(null)}
-        totalCount={directoryFiles.length}
-        initialTopMostItemIndex={0}
-        itemContent={(index) => {
-          const file = directoryFiles[index];
-          if (file == null) {
-            // shouldn't happen
-            return <div key={index} style={{ height: "1px" }}></div>;
-          }
-          return renderListItem(index, file);
-        }}
-      />
+      <FileDndProvider project_id={project_id}>
+        <StatefulVirtuoso
+          ref={virtuosoRef}
+          cacheId={`${project_id}::flyout::files::${effective_current_path}`}
+          style={{}}
+          increaseViewportBy={10}
+          onMouseLeave={() => setShowCheckboxIndex(null)}
+          totalCount={directoryFiles.length}
+          initialTopMostItemIndex={0}
+          itemContent={(index) => {
+            const file = directoryFiles[index];
+            if (file == null) {
+              // shouldn't happen
+              return <div key={index} style={{ height: "1px" }}></div>;
+            }
+            return renderListItem(index, file);
+          }}
+        />
+      </FileDndProvider>
     );
   }
 
@@ -818,6 +820,9 @@ export function FilesFlyout({
         selectAllFiles={selectAllFiles}
         publicFiles={publicFiles}
         refreshBackups={refreshBackups}
+        currentPath={effective_current_path}
+        onNavigate={navigateFlyout}
+        setActiveFileSort={setActiveFileSort}
       />
       {disableUploads ? (
         renderListing()

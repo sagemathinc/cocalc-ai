@@ -3,12 +3,21 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { ProjectActions } from "@cocalc/frontend/project_actions";
-import { file_actions, type FileAction } from "@cocalc/frontend/project_store";
+import type {
+  FileAction,
+  ProjectActions,
+} from "@cocalc/frontend/project_actions";
+import { FILE_ACTIONS } from "@cocalc/frontend/project_actions";
 
+export const TERM_MODE_CHARS = ["/", "!"] as const;
 export const TERM_MODE_CHAR = "/";
 
+export function isTerminalMode(search: string): boolean {
+  return search.length > 0 && TERM_MODE_CHARS.includes(search[0] as any);
+}
+
 type Extension =
+  | "sagews"
   | "ipynb"
   | "tex"
   | "term"
@@ -24,9 +33,57 @@ type Extension =
   | "slides"
   | "py"
   | "chat"
-  | "sage-chat";
+  | "sage-chat"
+  | "txt";
 
-// default extensions, in their order of precendence
+export const VIEWABLE_FILE_EXT: Readonly<string[]> = [
+  "c",
+  "cc",
+  "cfg",
+  "conf",
+  "cpp",
+  "css",
+  "csv",
+  "go",
+  "h",
+  "hpp",
+  "html",
+  "ini",
+  "java",
+  "jpeg",
+  "jpg",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "lua",
+  "md",
+  "pdf",
+  "pl",
+  "png",
+  "py",
+  "qmd",
+  "r",
+  "rb",
+  "rmd",
+  "rs",
+  "rst",
+  "rtex",
+  "sass",
+  "scss",
+  "sh",
+  "svg",
+  "tex",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml",
+] as const;
+
+// default extensions, in their order of precedence
 // the order of these buttons also determines the precedence of suggested file extensions
 // see also @cocalc/frontend/project-files.ts
 export const EXTs: ReadonlyArray<Extension> = Object.freeze([
@@ -35,6 +92,7 @@ export const EXTs: ReadonlyArray<Extension> = Object.freeze([
   "board",
   "slides",
   "md",
+  "sagews",
   "tex",
   "course",
   "py",
@@ -82,10 +140,34 @@ export function generate_click_for(
   return (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!file_actions[file_action_name].allows_multiple_files) {
+    if (!FILE_ACTIONS[file_action_name].allows_multiple_files) {
       project_actions.set_all_files_unchecked();
     }
     project_actions.set_file_checked(full_path, true);
     project_actions.set_file_action(file_action_name);
   };
 }
+
+export function sortedTypeFilterOptions(
+  extensions: Iterable<string>,
+): string[] {
+  const extSet = new Set(extensions);
+  const result: string[] = [];
+
+  if (extSet.has("folder")) {
+    result.push("folder");
+    extSet.delete("folder");
+  }
+
+  for (const ext of EXTs) {
+    if (extSet.has(ext)) {
+      result.push(ext);
+      extSet.delete(ext);
+    }
+  }
+
+  result.push(...Array.from(extSet).sort());
+  return result;
+}
+
+export { TypeFilterLabel } from "./components";

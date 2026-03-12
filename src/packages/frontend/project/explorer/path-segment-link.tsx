@@ -16,6 +16,7 @@ interface Props {
   active?: boolean;
   key: number;
   style?: CSS;
+  dropPath?: string;
 }
 
 export interface PathSegmentItem {
@@ -36,17 +37,30 @@ export function createPathSegmentLink({
   active = false,
   key,
   style,
+  dropPath,
 }: Readonly<Props>): PathSegmentItem {
   function render_content(): React.JSX.Element | string | undefined {
-    if (full_name && full_name !== display) {
-      return (
+    const content =
+      full_name && full_name !== display ? (
         <Tooltip title={full_name} placement="bottom">
           {display}
         </Tooltip>
+      ) : (
+        display
       );
-    } else {
-      return display;
+
+    if (dropPath == null) {
+      return content;
     }
+
+    return (
+      <span
+        data-folder-drop-path={dropPath}
+        style={{ display: "inline-flex", alignItems: "center" }}
+      >
+        {content}
+      </span>
+    );
   }
 
   function cls() {

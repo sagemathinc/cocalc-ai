@@ -30,6 +30,10 @@ import { generate_click_for } from "./utils";
 import { type DirectoryListing } from "@cocalc/frontend/project/explorer/types";
 import { FILE_ITEM_OPENED_STYLE } from "@cocalc/frontend/project/page/flyouts/file-list-item";
 import { isISODate } from "@cocalc/util/misc";
+import {
+  useFileDrag,
+  useFolderDrop,
+} from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 
 export const VIEWABLE_FILE_EXT: Readonly<string[]> = [
   "md",
@@ -62,6 +66,8 @@ interface Props {
   isStarred?: boolean;
   onToggleStar?: (path: string, starred: boolean) => void;
   onOpenSpecial?: (path: string, isDir: boolean) => boolean;
+  dragPaths?: string[];
+  onNavigateDirectory?: (path: string) => void;
 }
 
 export function FileRow({
@@ -84,6 +90,8 @@ export function FileRow({
   isStarred,
   onToggleStar,
   onOpenSpecial,
+  dragPaths,
+  onNavigateDirectory,
 }: Props) {
   const { workspaces } = useProjectContext();
   const student_project_functionality = useStudentProjectFunctionality(
@@ -228,6 +236,26 @@ export function FileRow({
     return misc.path_to_file(current_path, name);
   }
 
+  const enableDnD = !student_project_functionality.disableActions;
+  const fullPath = full_path();
+  const { dragRef, dragListeners, dragAttributes, isDragging } = useFileDrag(
+    `explorer-row-${fullPath}`,
+    dragPaths ?? [fullPath],
+    actions.project_id,
+  );
+  const { dropRef, isOver, isInvalidDrop } = useFolderDrop(
+    isDir ? `explorer-folder-${fullPath}` : `noop-folder-${fullPath}`,
+    fullPath,
+    enableDnD && isDir,
+  );
+  const combinedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      dragRef(node);
+      dropRef(node);
+    },
+    [dragRef, dropRef],
+  );
+
   function handle_mouse_down() {
     set_selection_at_last_mouse_down(window.getSelection()?.toString() ?? "");
   }
@@ -248,7 +276,11 @@ export function FileRow({
       return;
     }
     if (isDir) {
-      actions.open_directory(full_path());
+      if (onNavigateDirectory) {
+        onNavigateDirectory(path);
+      } else {
+        actions.open_directory(path);
+      }
       setTimeout(() => workspaces.setSelection(nextSelection), 0);
       actions.set_file_search("");
     } else {
@@ -386,10 +418,15 @@ export function FileRow({
   const row_styles: CSS = {
     cursor: "pointer",
     borderRadius: "4px",
-    backgroundColor: color,
+    backgroundColor: isOver
+      ? COLORS.BLUE_LLL
+      : isInvalidDrop
+        ? COLORS.ANTD_RED_WARN
+        : color,
     borderStyle: "solid",
     borderColor: selected ? "#08c" : "transparent",
     margin: "1px 1px 1px 1px",
+    opacity: isDragging ? 0.45 : 1,
   } as const;
 
   // See https://github.com/sagemathinc/cocalc/issues/1020
@@ -398,9 +435,12 @@ export function FileRow({
 
   return (
     <Row
+      ref={combinedRef}
       style={row_styles}
       onMouseDown={handle_mouse_down}
       className={no_select ? "noselect" : undefined}
+      data-folder-drop-path={isDir ? fullPath : undefined}
+      {...(enableDnD ? { ...dragListeners, ...dragAttributes } : {})}
     >
       <Col sm={2} xs={6} style={{ textAlign: "center" }}>
         {!student_project_functionality.disableActions && (

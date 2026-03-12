@@ -4,7 +4,8 @@
  */
 
 import { HomeOutlined } from "@ant-design/icons";
-import { Breadcrumb, Button, Flex, Tooltip } from "antd";
+import { Breadcrumb, Button, Dropdown, Flex, Tooltip } from "antd";
+import type { MenuProps } from "antd";
 import { dirname } from "path";
 
 import {
@@ -31,6 +32,167 @@ interface Props {
   className?: string;
   mode?: "files" | "flyout";
   showSourceSelector?: boolean;
+  currentPath?: string;
+  historyPath?: string;
+  onNavigate?: (path: string) => void;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  onGoBack?: () => void;
+  onGoForward?: () => void;
+  backHistory?: string[];
+  forwardHistory?: string[];
+}
+
+const LONG_PRESS_MS = 400;
+const DROPDOWN_MENU_STYLE: React.CSSProperties = {
+  maxHeight: "30vh",
+  overflowY: "auto",
+  overflowX: "hidden",
+  maxWidth: 350,
+};
+
+function historyMenuItems(
+  paths: string[],
+  navigate: (path: string) => void,
+): MenuProps["items"] {
+  return paths.map((path, index) => ({
+    key: `${index}-${path}`,
+    label: (
+      <span
+        title={path || "Home"}
+        style={{
+          display: "block",
+          maxWidth: 320,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {path || "Home"}
+      </span>
+    ),
+    onClick: () => navigate(path),
+  }));
+}
+
+function LongPressButton({
+  icon,
+  disabled,
+  onClick,
+  title,
+  dropdownItems,
+}: {
+  icon: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+  title: string;
+  dropdownItems?: MenuProps["items"];
+}) {
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressedRef = React.useRef(false);
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+  const [dropdownOpen, setDropdownOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!dropdownOpen) return;
+
+    function handlePointerUpOnDocument(e: PointerEvent) {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const menuItem = el?.closest?.(
+        ".ant-dropdown-menu-item",
+      ) as HTMLElement | null;
+      if (menuItem) {
+        menuItem.click();
+        return;
+      }
+      if (
+        wrapperRef.current &&
+        !wrapperRef.current.contains(e.target as Node)
+      ) {
+        setDropdownOpen(false);
+      }
+    }
+
+    const timer = setTimeout(
+      () => document.addEventListener("pointerup", handlePointerUpOnDocument),
+      0,
+    );
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("pointerup", handlePointerUpOnDocument);
+    };
+  }, [dropdownOpen]);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current != null) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const handlePointerDown = () => {
+    if (disabled) return;
+    longPressedRef.current = false;
+    timerRef.current = setTimeout(() => {
+      longPressedRef.current = true;
+      if ((dropdownItems?.length ?? 0) > 0) {
+        setDropdownOpen(true);
+      }
+    }, LONG_PRESS_MS);
+  };
+
+  const handlePointerUp = () => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (!longPressedRef.current && !disabled) {
+      onClick();
+    }
+  };
+
+  const handlePointerLeave = () => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const button = (
+    <Tooltip title={dropdownOpen ? "" : title}>
+      <Button
+        icon={icon}
+        type="text"
+        disabled={disabled}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
+        onClick={(e) => e.preventDefault()}
+      />
+    </Tooltip>
+  );
+
+  if ((dropdownItems?.length ?? 0) === 0) {
+    return button;
+  }
+
+  return (
+    <div ref={wrapperRef} style={{ display: "inline-block" }}>
+      <Dropdown
+        open={dropdownOpen}
+        onOpenChange={setDropdownOpen}
+        trigger={[]}
+        menu={{
+          items: dropdownItems,
+          style: DROPDOWN_MENU_STYLE,
+          onClick: () => setDropdownOpen(false),
+        }}
+      >
+        {button}
+      </Dropdown>
+    </div>
+  );
 }
 
 // This path consists of several PathSegmentLinks
@@ -41,6 +203,15 @@ export const PathNavigator: React.FC<Props> = React.memo(
     className = "cc-path-navigator",
     mode = "files",
     showSourceSelector = false,
+    currentPath: currentPathOverride,
+    historyPath: historyPathOverride,
+    onNavigate,
+    canGoBack,
+    canGoForward,
+    onGoBack,
+    onGoForward,
+    backHistory = [],
+    forwardHistory = [],
   }: Readonly<Props>) => {
     const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
     const historyPathAbs = useTypedRedux({ project_id }, "history_path_abs");
@@ -53,6 +224,13 @@ export const PathNavigator: React.FC<Props> = React.memo(
       lite && typeof liteHome === "string" && liteHome.length > 0
         ? normalizeAbsolutePath(liteHome)
         : "/root";
+    const navigate = (path: string) => {
+      if (onNavigate) {
+        onNavigate(path);
+      } else {
+        actions?.open_directory(path, true, false);
+      }
+    };
 
     const normalizePathForNav = (path: string): string => {
       const normalized = path.replace(/^\/+/, "");
@@ -107,8 +285,12 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return path.split("/").filter(Boolean);
     };
 
-    const currentPath = normalizePathForNav(currentPathAbs ?? homePath);
-    const historyPath = normalizePathForNav(historyPathAbs ?? currentPath);
+    const currentPath = normalizePathForNav(
+      currentPathOverride ?? currentPathAbs ?? homePath,
+    );
+    const historyPath = normalizePathForNav(
+      historyPathOverride ?? historyPathAbs ?? currentPath,
+    );
     const currentSource = sourceForPath(currentPath);
     const historySource = sourceForPath(historyPath);
     const historyInSameRoot = currentSource.rootPath === historySource.rootPath;
@@ -118,24 +300,24 @@ export const PathNavigator: React.FC<Props> = React.memo(
       {
         key: "home",
         label: "Home",
-        onClick: () => actions?.open_directory(homePath, true, false),
+        onClick: () => navigate(homePath),
       },
       {
         key: "root",
         label: "/",
-        onClick: () => actions?.open_directory("/", true, false),
+        onClick: () => navigate("/"),
       },
       {
         key: "tmp",
         label: "/tmp",
-        onClick: () => actions?.open_directory("/tmp", true, false),
+        onClick: () => navigate("/tmp"),
       },
     ];
     if (!lite) {
       sourceMenuItems.push({
         key: "scratch",
         label: "/scratch",
-        onClick: () => actions?.open_directory("/scratch", true, false),
+        onClick: () => navigate("/scratch"),
       });
     }
 
@@ -198,9 +380,9 @@ export const PathNavigator: React.FC<Props> = React.memo(
             ),
             full_name: currentSource.rootPath,
             key: 0,
-            on_click: () =>
-              actions?.open_directory(currentSource.rootPath, true, false),
+            on_click: () => navigate(currentSource.rootPath),
             active: currentPath === currentSource.rootPath,
+            dropPath: currentSource.rootPath,
           }),
         );
       }
@@ -231,9 +413,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
             display: hide ? <>&bull;</> : trunc_middle(segment, 15),
             full_name: segment,
             key: i + 1,
-            on_click: (path) => actions?.open_directory(path, true, false),
+            on_click: (path) => navigate(path),
             active: is_current,
             history: is_history,
+            dropPath: path,
           }),
         );
       });
@@ -267,11 +450,33 @@ export const PathNavigator: React.FC<Props> = React.memo(
               ? currentPath.split("/").slice(0, -1).join("/")
               : dirname(currentPath);
             const parentPath = parent.length === 0 ? "/" : parent;
-            actions?.open_directory(parentPath, true, false);
+            navigate(parentPath);
           }}
           disabled={!canGoUp}
           title={canGoUp ? "Go up one directory" : "Already at root directory"}
         />
+      );
+    }
+
+    function renderBackForward() {
+      if (!onGoBack && !onGoForward) return null;
+      return (
+        <>
+          <LongPressButton
+            icon={<Icon name="chevron-left" />}
+            disabled={!canGoBack}
+            onClick={() => onGoBack?.()}
+            title="Back"
+            dropdownItems={historyMenuItems(backHistory, navigate)}
+          />
+          <LongPressButton
+            icon={<Icon name="chevron-right" />}
+            disabled={!canGoForward}
+            onClick={() => onGoForward?.()}
+            title="Forward"
+            dropdownItems={historyMenuItems(forwardHistory, navigate)}
+          />
+        </>
       );
     }
 
@@ -283,6 +488,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
 
     const pathBar = (
       <Flex align="center" style={{ width: "100%", minWidth: 0 }}>
+        {renderBackForward()}
         {renderSourceSelector()}
         <div style={{ flex: 1, minWidth: 0 }}>{bc}</div>
       </Flex>

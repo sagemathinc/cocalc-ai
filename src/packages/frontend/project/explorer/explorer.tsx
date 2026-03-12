@@ -9,6 +9,7 @@ import { Button, Space } from "antd";
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import {
   type CSSProperties,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -59,7 +60,6 @@ import {
 } from "@cocalc/frontend/project_store";
 import { Icon } from "@cocalc/frontend/components";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
-import { getSort, setSort } from "./config";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
@@ -73,6 +73,16 @@ import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { isHostRoutingUnavailableError } from "@cocalc/frontend/projects/host-routing-error";
 import { shouldSuppressTransientRoutingError } from "@cocalc/frontend/projects/host-routing-error";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
+import {
+  navigateBrowsingPath,
+  normalizeBrowsingPath,
+} from "./navigate-browsing-path";
+import {
+  fileListingFingerprint,
+  useDeferredListing,
+} from "./use-deferred-listing";
+import { useExplorerSettings } from "./use-explorer-settings";
+import { useNavigationHistory } from "./use-navigation-history";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -130,7 +140,18 @@ export function Explorer() {
   const checked_files = useTypedRedux({ project_id }, "checked_files");
   const configuration = useTypedRedux({ project_id }, "configuration");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
+  const explorer_browsing_path_abs = useTypedRedux(
+    { project_id },
+    "explorer_browsing_path_abs",
+  );
+  const explorer_history_path_abs = useTypedRedux(
+    { project_id },
+    "explorer_history_path_abs",
+  );
+  const effective_current_path =
+    explorer_browsing_path_abs ?? current_path_abs ?? "/";
+  const effective_history_path =
+    explorer_history_path_abs ?? effective_current_path;
   const error = useTypedRedux({ project_id }, "error");
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const file_action = useTypedRedux({ project_id }, "file_action");
@@ -170,15 +191,14 @@ export function Explorer() {
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
 
-  const sort = useTypedRedux({ project_id }, "active_file_sort");
-  const active_file_sort = useMemo(
-    () =>
-      getSort({
-        project_id,
-        path: effective_current_path,
-      }),
-    [sort, effective_current_path, project_id],
-  );
+  useExplorerSettings(project_id);
+  const active_file_sort = useTypedRedux(
+    { project_id },
+    "active_file_sort",
+  ) ?? {
+    column_name: "time",
+    is_descending: false,
+  };
 
   const fs = useFs({ project_id });
   const inBackupsPath = isBackupsPath(effective_current_path);
@@ -249,6 +269,32 @@ export function Explorer() {
   }
   const showHidden = useTypedRedux({ project_id }, "show_hidden");
   const flyout = useTypedRedux({ project_id }, "flyout");
+  const navigateExplorerRaw = useCallback(
+    (path: string) => {
+      navigateBrowsingPath(
+        project_id,
+        path,
+        effective_history_path,
+        "explorer_browsing_path_abs",
+        "explorer_history_path_abs",
+      );
+    },
+    [effective_history_path, project_id],
+  );
+  const navHistory = useNavigationHistory(
+    project_id,
+    effective_current_path,
+    navigateExplorerRaw,
+    "explorer",
+  );
+  const navigateExplorer = useCallback(
+    (path: string) => {
+      const normalized = normalizeBrowsingPath(path);
+      navigateExplorerRaw(normalized);
+      navHistory.recordNavigation(normalized);
+    },
+    [navigateExplorerRaw, navHistory],
+  );
 
   listing = listingError
     ? null
@@ -258,22 +304,39 @@ export function Explorer() {
         showHidden,
       });
 
+  const {
+    displayListing,
+    hasPending: hasPendingListingUpdate,
+    flush: flushListingUpdates,
+    allowNextUpdate: allowNextListingUpdate,
+  } = useDeferredListing({
+    liveListing: listing ?? undefined,
+    currentPath: effective_current_path,
+    alwaysPassThrough: false,
+    fingerprint: fileListingFingerprint,
+  });
+  const visibleListing = displayListing ?? listing;
+
   useEffect(() => {
-    actions?.setState({ numDisplayedFiles: listing?.length ?? 0 });
-  }, [listing?.length]);
+    actions?.setState({ numDisplayedFiles: visibleListing?.length ?? 0 });
+  }, [actions, visibleListing?.length]);
 
   // ensure that listing entries have isPublic set:
   const strippedPublicPaths = useStrippedPublicPaths(project_id);
   const publicFiles: Set<string> = useMemo(() => {
-    if (listing == null) {
+    if (visibleListing == null) {
       return new Set<string>();
     }
-    return getPublicFiles(listing, strippedPublicPaths, effective_current_path);
-  }, [listing, effective_current_path, strippedPublicPaths]);
+    return getPublicFiles(
+      visibleListing,
+      strippedPublicPaths,
+      effective_current_path,
+    );
+  }, [visibleListing, effective_current_path, strippedPublicPaths]);
 
   const { val: clicked, inc: clickedOnExplorer } = useCounter();
   useEffect(() => {
-    if (listing == null || file_action || disableExplorerKeyhandler) {
+    if (visibleListing == null || file_action || disableExplorerKeyhandler) {
       return;
     }
     const handleKeyDown = (e): void => {
@@ -290,7 +353,7 @@ export function Explorer() {
       if (e.key == "ArrowUp") {
         if (e.shiftKey || e.ctrlKey || e.metaKey) {
           const path = dirname(effective_current_path);
-          actions.open_directory(path == "." ? "/" : path);
+          navigateExplorer(path == "." ? "/" : path);
         } else {
           actions.decrement_selected_file_index();
         }
@@ -307,14 +370,14 @@ export function Explorer() {
         }
         const n =
           redux.getProjectStore(project_id).get("selected_file_index") ?? 0;
-        const x = listing?.[n];
+        const x = visibleListing?.[n];
         if (x != null) {
           const { isDir, name } = x;
           const path = join(effective_current_path, name);
           const nextSelection = selectionForPath(workspaces.records, path);
           workspaces.setSelection(nextSelection);
           if (isDir) {
-            actions.open_directory(path);
+            navigateExplorer(path);
           } else {
             actions.open_file({ path, foreground: !e.ctrlKey });
           }
@@ -342,11 +405,12 @@ export function Explorer() {
   }, [
     project_id,
     effective_current_path,
-    listing,
+    visibleListing,
     file_action,
     flyout,
     clicked,
     disableExplorerKeyhandler,
+    navigateExplorer,
   ]);
 
   if (actions == null) {
@@ -373,6 +437,7 @@ export function Explorer() {
       current_path: effective_current_path,
       switch_over,
     });
+    allowNextListingUpdate();
     actions.setState({ file_search: "" });
   };
 
@@ -382,6 +447,7 @@ export function Explorer() {
       current_path: effective_current_path,
       switch_over,
     });
+    allowNextListingUpdate();
     actions.setState({ file_search: "" });
   };
 
@@ -558,7 +624,19 @@ You can either wait for this host to become available again, or move this ${proj
                 ref={currentDirectoryRef}
                 className="cc-project-files-path-nav"
               >
-                <PathNavigator project_id={project_id} showSourceSelector />
+                <PathNavigator
+                  project_id={project_id}
+                  showSourceSelector
+                  currentPath={effective_current_path}
+                  historyPath={effective_history_path}
+                  onNavigate={navigateExplorer}
+                  canGoBack={navHistory.canGoBack}
+                  canGoForward={navHistory.canGoForward}
+                  onGoBack={navHistory.goBack}
+                  onGoForward={navHistory.goForward}
+                  backHistory={navHistory.backHistory}
+                  forwardHistory={navHistory.forwardHistory}
+                />
               </div>
             </div>
           </div>
@@ -621,9 +699,9 @@ You can either wait for this host to become available again, or move this ${proj
                 project_id={project_id}
               />
             )}
-            {listing != null && (
+            {visibleListing != null && (
               <ActionBar
-                listing={listing}
+                listing={visibleListing}
                 project_id={project_id}
                 checked_files={checked_files}
                 current_path={effective_current_path}
@@ -717,6 +795,13 @@ You can either wait for this host to become available again, or move this ${proj
             padding: "0 5px 5px 5px",
           }}
         >
+          {hasPendingListingUpdate && (
+            <div style={{ padding: "0 0 8px 0", textAlign: "right" }}>
+              <Button size="small" onClick={flushListingUpdates}>
+                <Icon name="refresh" /> Refresh Listing
+              </Button>
+            </div>
+          )}
           <FileUploadWrapper
             project_id={project_id}
             dest_path={effective_current_path}
@@ -728,21 +813,26 @@ You can either wait for this host to become available again, or move this ${proj
             }}
             className="smc-vfill"
           >
-            {listing == null ? (
+            {visibleListing == null ? (
               <div style={{ textAlign: "center" }}>
                 <Loading delay={1000} theme="medium" />
               </div>
             ) : (
               <FileListing
                 active_file_sort={active_file_sort}
-                sort_by={(column_name: string) =>
-                  setSort({
-                    column_name,
-                    project_id,
-                    path: effective_current_path,
-                  })
-                }
-                listing={listing}
+                sort_by={(column_name: string) => {
+                  const is_descending =
+                    active_file_sort.column_name === column_name
+                      ? !active_file_sort.is_descending
+                      : false;
+                  actions.setState({
+                    active_file_sort: {
+                      column_name,
+                      is_descending,
+                    },
+                  });
+                }}
+                listing={visibleListing}
                 file_search={file_search}
                 checked_files={checked_files}
                 current_path={effective_current_path}
@@ -750,6 +840,7 @@ You can either wait for this host to become available again, or move this ${proj
                 project_id={project_id}
                 shiftIsDown={shiftIsDown}
                 publicFiles={publicFiles}
+                onNavigateDirectory={navigateExplorer}
               />
             )}
           </FileUploadWrapper>

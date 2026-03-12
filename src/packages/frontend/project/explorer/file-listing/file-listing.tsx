@@ -23,6 +23,7 @@ import NoFiles from "./no-files";
 import { TERM_MODE_CHAR } from "./utils";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
+import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 
 interface Props {
   actions: ProjectActions;
@@ -36,6 +37,7 @@ interface Props {
   isRunning?: boolean; // true if this project is running
   publicFiles: Set<string>;
   sort_by: (column_name: string) => void;
+  onNavigateDirectory?: (path: string) => void;
 }
 
 export function FileListing({
@@ -49,6 +51,7 @@ export function FileListing({
   file_search = "",
   publicFiles,
   sort_by,
+  onNavigateDirectory,
 }: Props) {
   const isSnapshotsVirtualPath = isSnapshotsPath(current_path);
   const isBackupsVirtualPath = isBackupsPath(current_path);
@@ -66,13 +69,14 @@ export function FileListing({
   });
 
   function renderRow(index, file) {
-    const checked = checked_files.has(path_to_file(current_path, file.name));
+    const fullPath = path_to_file(current_path, file.name);
+    const checked = checked_files.has(fullPath);
     const color = rowBackground({ index, checked });
 
     return (
       <FileRow
         {...file}
-        isOpen={openFiles.has(path_to_file(current_path, file.name))}
+        isOpen={openFiles.has(fullPath)}
         isPublic={publicFiles.has(file.name)}
         color={color}
         checked={checked}
@@ -85,6 +89,8 @@ export function FileListing({
         no_select={shiftIsDown}
         listing={listing}
         onOpenSpecial={onOpenSpecial}
+        dragPaths={checked ? checked_files.toArray() : [fullPath]}
+        onNavigateDirectory={onNavigateDirectory}
       />
     );
   }
@@ -163,7 +169,7 @@ export function FileListing({
   }
 
   return (
-    <>
+    <FileDndProvider project_id={project_id}>
       <div
         className="smc-vfill"
         style={{
@@ -234,6 +240,6 @@ export function FileListing({
         )}
       </div>
       {modal}
-    </>
+    </FileDndProvider>
   );
 }

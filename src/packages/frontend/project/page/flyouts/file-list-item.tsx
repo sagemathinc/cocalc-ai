@@ -23,6 +23,10 @@ import {
   ACTION_BUTTONS_MULTI,
   isDisabledSnapshots,
 } from "@cocalc/frontend/project/explorer/action-utils";
+import {
+  useFileDrag,
+  useFolderDrop,
+} from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { VIEWABLE_FILE_EXT } from "@cocalc/frontend/project/explorer/file-listing/file-row";
 import { url_href } from "@cocalc/frontend/project/utils";
 import { FILE_ACTIONS } from "@cocalc/frontend/project_actions";
@@ -144,6 +148,8 @@ interface FileListItemProps {
   tooltip?: React.JSX.Element | string;
   noPublish?: boolean; // for layout only – indicate that there is never a publish indicator button
   dimFileExtensions?: boolean;
+  currentPath?: string;
+  dragPaths?: string[];
 }
 
 export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
@@ -171,6 +177,8 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     style,
     tooltip,
     dimFileExtensions = false,
+    currentPath,
+    dragPaths,
   } = props;
   const isActive = mode === "active";
   // only in files mode, we show the publish icon
@@ -178,7 +186,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   const intl = useIntl();
   const { project_id } = useProjectContext();
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
+  const effective_current_path = currentPath ?? current_path_abs ?? "/";
   const actions = useActions({ project_id });
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
@@ -186,6 +194,28 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   const selectable = onChecked != null;
   const itemRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const fullPath = path_to_file(effective_current_path, item.name);
+  const enableDnD =
+    !student_project_functionality.disableActions && item.name !== "..";
+  const { dragRef, dragListeners, dragAttributes, isDragging } = useFileDrag(
+    `flyout-row-${fullPath}`,
+    dragPaths ?? [fullPath],
+    project_id,
+  );
+  const { dropRef, isOver, isInvalidDrop } = useFolderDrop(
+    item.isDir && item.name !== ".."
+      ? `flyout-folder-${fullPath}`
+      : `noop-flyout-folder-${fullPath}`,
+    fullPath,
+    enableDnD && !!item.isDir,
+  );
+  const combinedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      dragRef(node);
+      dropRef(node);
+    },
+    [dragRef, dropRef],
+  );
 
   function renderCloseItem(item: Item): React.JSX.Element | null {
     if (onClose == null || !item.isOpen) return null;
@@ -563,6 +593,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   return (
     <Dropdown menu={{ items: getContextMenu() }} trigger={["contextMenu"]}>
       <div
+        ref={combinedRef}
         key={item.name}
         className="cc-project-flyout-file-item"
         // additional mouseLeave to prevent stale hover state icon
@@ -573,7 +604,14 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
           ...itemStyle,
           ...style,
           ...(selected ? FILE_ITEM_SELECTED_STYLE : {}),
+          ...(isOver ? { backgroundColor: COLORS.BLUE_LLL } : {}),
+          ...(isInvalidDrop ? { backgroundColor: COLORS.ANTD_RED_WARN } : {}),
+          opacity: isDragging ? 0.45 : 1,
         }}
+        data-folder-drop-path={
+          item.isDir && item.name !== ".." ? fullPath : undefined
+        }
+        {...(enableDnD ? { ...dragListeners, ...dragAttributes } : {})}
       >
         {renderBody()}
       </div>
