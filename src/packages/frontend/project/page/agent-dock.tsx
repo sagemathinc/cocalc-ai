@@ -16,12 +16,14 @@ import {
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import { watchAgentSessionsForProject } from "@cocalc/frontend/chat/agent-session-index";
+import type { ChatInputControl } from "@cocalc/frontend/chat/input";
 import {
   getChatActions,
   initChat,
   removeWithInstance as removeChatWithInstance,
 } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { refocusChatComposerInput } from "@cocalc/frontend/chat/composer-focus";
 import { Loading } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
@@ -222,6 +224,32 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     return () => clearTimeout(timer);
   }, [chatActions, session?.thread_key]);
 
+  useEffect(() => {
+    if (!chatActions || !session) return;
+    let done = false;
+    const timers: number[] = [];
+    const focusComposer = () => {
+      if (done) return;
+      done = refocusChatComposerInput(nodeRef.current);
+    };
+    for (const delayMs of [0, 50, 150, 300, 600]) {
+      timers.push(window.setTimeout(focusComposer, delayMs));
+    }
+    let frame: number | undefined;
+    if (typeof window.requestAnimationFrame === "function") {
+      frame = window.requestAnimationFrame(focusComposer);
+    }
+    return () => {
+      done = true;
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+      if (frame != null && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [chatActions, session?.session_id, session?.thread_key]);
+
   const submitQueuedIntent = useCallback(
     (intent: NavigatorSubmitPromptDetail): boolean => {
       if (!chatActions || !session) return false;
@@ -375,6 +403,14 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       "data-showThreadImagePreview": false,
     };
   }, [session?.thread_key]);
+
+  const handleComposerReady = useCallback(
+    (control: ChatInputControl | null, root: ParentNode | null): void => {
+      if (!session) return;
+      refocusChatComposerInput(root ?? nodeRef.current, control ?? undefined);
+    },
+    [session],
+  );
 
   const fileContext = useMemo(() => {
     if (!session?.chat_path) return undefined;
@@ -556,6 +592,7 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                   fontSize={fontSize}
                   hideSidebar
                   desc={desc}
+                  onComposerReady={handleComposerReady}
                 />
               </FileContext.Provider>
             ) : (

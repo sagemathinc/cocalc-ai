@@ -3,17 +3,20 @@
 import {
   cancelQueuedAcpTurn,
   processAcpLLM,
+  resetAcpApiStateForTests,
   sendQueuedAcpTurnImmediately,
 } from "../acp-api";
 
 const mockStreamAcp = jest.fn();
 const mockControlAcp = jest.fn();
+const mockInterruptAcp = jest.fn();
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
       streamAcp: (...args: any[]) => mockStreamAcp(...args),
       controlAcp: (...args: any[]) => mockControlAcp(...args),
+      interruptAcp: (...args: any[]) => mockInterruptAcp(...args),
       getProjectHostAcpBearer: async () => "",
     },
   },
@@ -47,6 +50,87 @@ describe("processAcpLLM", () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.clearAllMocks();
+    resetAcpApiStateForTests();
+  });
+
+  it("retries a no-ack ACP submission with interrupt and backoff", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(4500);
+    jest.spyOn(global, "setTimeout").mockImplementation(((fn: any) => {
+      fn();
+      return 0 as any;
+    }) as any);
+    mockStreamAcp
+      .mockResolvedValueOnce(
+        (async function* () {
+          return;
+        })(),
+      )
+      .mockResolvedValueOnce(queuedAckStream("queued"));
+    mockInterruptAcp.mockResolvedValue(undefined);
+
+    const acpState = new FakeAcpState();
+    const store: any = {
+      get: (key: string) => {
+        if (key === "project_id") return "proj";
+        if (key === "path") return "x.chat";
+        if (key === "acpState") return acpState;
+        return undefined;
+      },
+      setState: jest.fn(),
+    };
+
+    const actions: any = {
+      syncdb: { commit: jest.fn() },
+      store,
+      chatStreams: new Set<string>(),
+      getAllMessages: () =>
+        new Map<string, any>([
+          [
+            "4500",
+            {
+              date: new Date(4500),
+              message_id: "root-msg-45",
+              thread_id: "thread-45",
+            },
+          ],
+        ]),
+      getThreadMetadata: jest.fn(() => undefined),
+      getMessagesInThread: jest.fn(() => []),
+      getCodexConfig: jest.fn(() => undefined),
+      sendReply: jest.fn(),
+    };
+
+    const message: any = {
+      event: "chat",
+      sender_id: "user-1",
+      date: new Date(4500),
+      message_id: "user-msg-45",
+      thread_id: "thread-45",
+      history: [
+        {
+          author_id: "user-1",
+          content: "retry please",
+          date: new Date(4500).toISOString(),
+        },
+      ],
+    };
+
+    await processAcpLLM({
+      message,
+      model: "codex-agent",
+      input: "retry please",
+      actions,
+    });
+
+    expect(mockStreamAcp).toHaveBeenCalledTimes(2);
+    expect(mockStreamAcp.mock.calls[0][1]).toEqual({ timeout: 120000 });
+    expect(mockInterruptAcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj",
+        threadId: "thread-45",
+      }),
+    );
+    expect(acpState.get("message:user-msg-45")).toBe("queue");
   });
 
   it("chooses a unique assistant message timestamp", async () => {

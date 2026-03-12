@@ -121,7 +121,11 @@ export class CSILauncher {
       });
       return;
     }
-    this.actions.open_project({ project_id, switch_to: true });
+    this.actions.open_project({
+      project_id,
+      target: "project-home",
+      switch_to: true,
+    });
     return project_id;
   }
 }

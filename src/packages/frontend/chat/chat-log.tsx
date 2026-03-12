@@ -168,7 +168,8 @@ export function ChatLog({
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const isForegroundChatTab =
     activeTopTab === project_id && activeProjectTab === `editor-${path}`;
-  const canAutoScroll = !anyOverlayOpen && isForegroundChatTab;
+  const canAutoScroll =
+    !anyOverlayOpen && (mode === "sidechat" || isForegroundChatTab);
   const handleSelectThread = useCallback(
     (threadKey: string) => {
       actions.clearAllFilters?.();

@@ -38,6 +38,7 @@ import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostProjectStatus } from "./host-project-status";
 import {
+  confirmBulkHostDeprovision,
   confirmHostDeprovision,
   confirmHostDrain,
   confirmHostStop,
@@ -1004,14 +1005,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             size="small"
             danger
             onClick={() =>
-              runBulkAction(
-                "Deprovision",
-                deprovisionTargets,
-                (host) => onDelete(host.id),
-                {
-                  danger: true,
-                },
-              )
+              confirmBulkHostDeprovision({
+                hosts: deprovisionTargets,
+                onConfirm: (host, opts) => onDelete(host.id, opts),
+              })
             }
             disabled={!deprovisionTargets.length}
           >

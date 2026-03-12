@@ -66,4 +66,41 @@ describe("BaseEditorActions.set_active_key_handler", () => {
       "/home/wstein/wstein.tasks",
     );
   });
+
+  it("removes the syncstring closed-listener before manual close", async () => {
+    const handler = jest.fn();
+    const removeListener = jest.fn();
+    const close = jest.fn();
+    const target: any = {
+      _syncstring: {
+        get_state: () => "closed",
+        removeListener,
+        close,
+      },
+      handleSyncstringClosed: handler,
+    };
+
+    await BaseEditorActions.prototype["close_syncstring"].call(target);
+
+    expect(removeListener).toHaveBeenCalledWith("closed", handler);
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("removes the syncdb closed-listener before manual close", async () => {
+    const handler = jest.fn();
+    const removeListener = jest.fn();
+    const close = jest.fn();
+    const target: any = {
+      _syncdb: {
+        removeListener,
+        close,
+      },
+      handleSyncdbClosed: handler,
+    };
+
+    await BaseEditorActions.prototype["close_syncdb"].call(target);
+
+    expect(removeListener).toHaveBeenCalledWith("closed", handler);
+    expect(close).toHaveBeenCalled();
+  });
 });

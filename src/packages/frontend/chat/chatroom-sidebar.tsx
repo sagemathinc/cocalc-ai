@@ -22,10 +22,12 @@ import { Resizable } from "re-resizable";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { dateValue, field } from "./access";
 import type { ChatActions } from "./actions";
 import { ThreadBadge } from "./thread-badge";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
 import type { ChatExportOpenRequest } from "./export-types";
+import type * as immutable from "immutable";
 
 const THREAD_SIDEBAR_HEADER: React.CSSProperties = {
   padding: "0 20px 15px",
@@ -50,6 +52,72 @@ const THREAD_SECTION_HEADER_STYLE: React.CSSProperties = {
 } as const;
 
 const ACTIVITY_RECENT_MS = 7_500;
+const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
+
+type ThreadStatusDot = {
+  showDot: boolean;
+  dotColor: string;
+  dotTitle: string;
+};
+
+export function resolveThreadStatusDot({
+  thread,
+  acpState,
+  activityNow,
+}: {
+  thread: ThreadMeta;
+  acpState?: immutable.Map<string, string>;
+  activityNow: number;
+}): ThreadStatusDot {
+  const rootMessage = thread.rootMessage;
+  const rootThreadId =
+    `${field<string>(rootMessage, "thread_id") ?? ""}`.trim();
+  const threadStateCandidates = [
+    rootThreadId,
+    `${thread.key ?? ""}`.trim(),
+  ].filter(Boolean);
+  for (const threadId of threadStateCandidates) {
+    const state = acpState?.get?.(`thread:${threadId}`);
+    if (typeof state === "string" && ACP_ACTIVE_STATES.has(state)) {
+      return {
+        showDot: true,
+        dotColor: COLORS.RUN,
+        dotTitle: "Codex active",
+      };
+    }
+  }
+  const messageId = `${field<string>(rootMessage, "message_id") ?? ""}`.trim();
+  const rootDate = dateValue(rootMessage);
+  const messageStateCandidates = [
+    messageId ? acpState?.get?.(`message:${messageId}`) : undefined,
+    rootDate ? acpState?.get?.(`${rootDate.valueOf()}`) : undefined,
+  ];
+  if (
+    messageStateCandidates.some(
+      (state) => typeof state === "string" && ACP_ACTIVE_STATES.has(state),
+    )
+  ) {
+    return {
+      showDot: true,
+      dotColor: COLORS.RUN,
+      dotTitle: "Codex active",
+    };
+  }
+  const isRecentlyActive =
+    thread.lastActivityAt != null &&
+    activityNow - thread.lastActivityAt < ACTIVITY_RECENT_MS;
+  return isRecentlyActive
+    ? {
+        showDot: true,
+        dotColor: COLORS.BLUE,
+        dotTitle: "Recent activity",
+      }
+    : {
+        showDot: false,
+        dotColor: COLORS.BLUE,
+        dotTitle: "Recent activity",
+      };
+}
 
 function stripHtml(value: string): string {
   if (!value) return "";
@@ -149,6 +217,7 @@ export function ChatRoomSidebar({
 
 interface ChatRoomSidebarContentProps {
   actions: ChatActions;
+  acpState?: immutable.Map<string, string>;
   isCompact: boolean;
   selectedThreadKey: string | null;
   setSelectedThreadKey: (key: string | null) => void;
@@ -172,6 +241,7 @@ interface ChatRoomSidebarContentProps {
 
 export function ChatRoomSidebarContent({
   actions,
+  acpState,
   isCompact,
   selectedThreadKey,
   setSelectedThreadKey,
@@ -340,12 +410,11 @@ export function ChatRoomSidebarContent({
             | undefined);
     const isCodexThread =
       isAI && typeof model === "string" && isCodexModelName(model);
-    const isRecentlyActive =
-      thread.lastActivityAt != null &&
-      activityNow - thread.lastActivityAt < ACTIVITY_RECENT_MS;
-    const showDot = isRecentlyActive;
-    const dotColor = COLORS.BLUE;
-    const dotTitle = "Recent activity";
+    const { showDot, dotColor, dotTitle } = resolveThreadStatusDot({
+      thread,
+      acpState,
+      activityNow,
+    });
     const iconTooltip = thread.isAI
       ? "This chat started with an AI request, so the AI responds automatically."
       : "This chat started as human-only. AI replies only when explicitly mentioned.";

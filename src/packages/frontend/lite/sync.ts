@@ -75,49 +75,66 @@ export async function connectToRemote(doc: SyncDoc) {
     }
   }
 
-  doc.on("before-save-to-disk", async () => {
+  const beforeSaveLocal = async () => {
     if (doc2.get_state() != "ready") return;
     try {
       await doc2.fs.lockFile(savePath(doc2.path), WRITE_LOCK_TIME);
     } catch {}
-  });
+  };
 
-  doc2.on("before-save-to-disk", async () => {
+  const beforeSaveRemote = async () => {
     if (doc.get_state() != "ready") return;
     try {
       await doc.fs.lockFile(savePath(doc.path), WRITE_LOCK_TIME);
     } catch {}
-  });
+  };
 
-  doc.on(
-    "change",
-    debounce(
-      () => {
-        if (doc.get_state() != "ready" || doc2.get_state() != "ready") {
-          return;
-        }
-        doc.push(doc2, { source: "lite" });
-      },
-      CHANGE_DEBOUNCE,
-      { leading: false, trailing: true },
-    ),
+  const pushRemote = debounce(
+    () => {
+      if (doc.get_state() != "ready" || doc2.get_state() != "ready") {
+        return;
+      }
+      doc.push(doc2, { source: "lite" });
+    },
+    CHANGE_DEBOUNCE,
+    { leading: false, trailing: true },
   );
-  doc2.on(
-    "change",
-    debounce(
-      () => {
-        if (doc.get_state() != "ready" || doc2.get_state() != "ready") {
-          return;
-        }
-        doc.pull(doc2, { source: "base" });
-      },
-      CHANGE_DEBOUNCE,
-      { leading: false, trailing: true },
-    ),
+  const pullLocal = debounce(
+    () => {
+      if (doc.get_state() != "ready" || doc2.get_state() != "ready") {
+        return;
+      }
+      doc.pull(doc2, { source: "base" });
+    },
+    CHANGE_DEBOUNCE,
+    { leading: false, trailing: true },
   );
-  doc.on("closed", () => {
-    doc2.close();
-  });
+
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    pushRemote.cancel();
+    pullLocal.cancel();
+    doc.removeListener("before-save-to-disk", beforeSaveLocal);
+    doc2.removeListener("before-save-to-disk", beforeSaveRemote);
+    doc.removeListener("change", pushRemote);
+    doc2.removeListener("change", pullLocal);
+    doc.removeListener("closed", closeRemote);
+    doc2.removeListener("closed", cleanup);
+  };
+
+  const closeRemote = () => {
+    cleanup();
+    void doc2.close();
+  };
+
+  doc.on("before-save-to-disk", beforeSaveLocal);
+  doc2.on("before-save-to-disk", beforeSaveRemote);
+  doc.on("change", pushRemote);
+  doc2.on("change", pullLocal);
+  doc.on("closed", closeRemote);
+  doc2.on("closed", cleanup);
 }
 
 export async function remoteSyncDoc(doc: SyncDoc): Promise<SyncDoc> {

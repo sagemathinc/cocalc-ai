@@ -35,6 +35,7 @@ export function useBookmarkedProjects() {
     useState<BookmarkedProjects>([]);
   const [bookmarks, setBookmarks] = useState<any>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const bookmarkedProjectsRef = useRef<BookmarkedProjects>([]);
 
   // Use ref to store stable listener function
   const listenerRef = useRef<
@@ -78,7 +79,9 @@ export function useBookmarkedProjects() {
         // Load initial data from conat
         const initialBookmarks = conatBookmarks.get(PROJECTS_KEY) ?? [];
         if (Array.isArray(initialBookmarks)) {
-          setBookmarkedProjects(uniq(initialBookmarks));
+          const next = uniq(initialBookmarks);
+          bookmarkedProjectsRef.current = next;
+          setBookmarkedProjects(next);
         }
 
         // Create stable listener function
@@ -90,7 +93,9 @@ export function useBookmarkedProjects() {
           if (changeEvent.key === PROJECTS_KEY) {
             const remoteBookmarks =
               (changeEvent.value as BookmarkedProjects) ?? [];
-            setBookmarkedProjects(uniq(remoteBookmarks));
+            const next = uniq(remoteBookmarks);
+            bookmarkedProjectsRef.current = next;
+            setBookmarkedProjects(next);
           }
         };
 
@@ -124,11 +129,13 @@ export function useBookmarkedProjects() {
       return;
     }
 
+    const previous = bookmarkedProjectsRef.current;
     const next = bookmarked
-      ? uniq([project_id, ...bookmarkedProjects])
-      : bookmarkedProjects.filter((p) => p !== project_id);
+      ? uniq([project_id, ...previous])
+      : previous.filter((p) => p !== project_id);
 
     // Update local state immediately for responsive UI
+    bookmarkedProjectsRef.current = next;
     setBookmarkedProjects(next);
 
     // Store to conat (this will also trigger the change event for other clients)
@@ -137,7 +144,8 @@ export function useBookmarkedProjects() {
     } catch (err) {
       console.warn(`conat bookmark storage warning -- ${err}`);
       // Revert local state on error
-      setBookmarkedProjects(bookmarkedProjects);
+      bookmarkedProjectsRef.current = previous;
+      setBookmarkedProjects(previous);
     }
   }
 
@@ -149,7 +157,9 @@ export function useBookmarkedProjects() {
       return;
     }
 
+    const previous = bookmarkedProjectsRef.current;
     // Update local state immediately for responsive UI
+    bookmarkedProjectsRef.current = newBookmarkedProjects;
     setBookmarkedProjects(newBookmarkedProjects);
 
     // Store to conat (this will also trigger the change event for other clients)
@@ -158,7 +168,8 @@ export function useBookmarkedProjects() {
     } catch (err) {
       console.warn(`conat bookmark storage warning -- ${err}`);
       // Revert local state on error
-      setBookmarkedProjects(bookmarkedProjects);
+      bookmarkedProjectsRef.current = previous;
+      setBookmarkedProjects(previous);
     }
   }
 

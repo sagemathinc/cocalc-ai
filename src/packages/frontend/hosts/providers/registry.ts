@@ -220,6 +220,12 @@ const buildBasePayload = (
     bucket: vals.bucket,
   };
   const mergedMetadata = { ...baseMetadata, ...(machine.metadata ?? {}) };
+  const disk_gb =
+    typeof vals.disk_gb === "number"
+      ? vals.disk_gb
+      : typeof vals.disk === "number"
+        ? vals.disk
+        : undefined;
   return {
     name: vals.name ?? "My Host",
     region: getDefaultRegion(vals, options),
@@ -229,7 +235,7 @@ const buildBasePayload = (
       cloud:
         vals.provider !== "none" ? (vals.provider as HostProvider) : undefined,
       storage_mode,
-      disk_gb: vals.disk,
+      disk_gb,
       disk_type: vals.disk_type,
       ...machine,
       metadata: mergedMetadata,

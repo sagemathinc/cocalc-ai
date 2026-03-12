@@ -39,6 +39,9 @@ const PROJECT_INIT = `${HARD_RESET}; history -d $(history 1);\n`;
 
 const DEFAULT_COMMAND = "bash";
 const INFINITY = 999999;
+const BROWSER_TERM = "xterm-256color";
+const BROWSER_COLORTERM = "truecolor";
+const BROWSER_TERM_PROGRAM = "cocalc";
 
 const HISTORY_LIMIT_BYTES = parseInt(
   process.env.COCALC_TERMINAL_HISTORY_LIMIT_BYTES ?? "1000000",
@@ -213,15 +216,22 @@ export class Session {
   init = async () => {
     const { head, tail } = path_split(this.termPath);
     const HISTFILE = historyFile(this.options.path);
-    const env = {
+    const env: Record<string, string | undefined> = {
+      ...envForSpawn(),
+      ...this.options.env,
+      TERM: this.options.env?.TERM ?? BROWSER_TERM,
+      COLORTERM: this.options.env?.COLORTERM ?? BROWSER_COLORTERM,
+      TERM_PROGRAM: this.options.env?.TERM_PROGRAM ?? BROWSER_TERM_PROGRAM,
       PROMPT_COMMAND: "history -a",
       ...(HISTFILE ? { HISTFILE } : undefined),
-      ...this.options.env,
-      ...envForSpawn(),
       COCALC_TERMINAL_FILENAME: tail,
       COCALC_CONTROL_DIR: this.spoolDirectory,
-      TMUX: undefined, // ensure not set
     };
+    // The browser terminal should describe xterm.js, not the host shell.
+    delete env.TMUX;
+    delete env.TMUX_PANE;
+    delete env.TMUX_TMPDIR;
+    delete env.TERMCAP;
     let command = this.options.command ?? DEFAULT_COMMAND;
     let args = this.options.args ?? [];
     const initFilename: string = console_init_filename(this.termPath);

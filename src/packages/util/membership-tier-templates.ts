@@ -118,3 +118,23 @@ export const TIER_TEMPLATES = {
 export function getTierTemplate(id: keyof typeof TIER_TEMPLATES) {
   return TIER_TEMPLATES[id];
 }
+
+type TierTemplateFields = {
+  id?: string;
+  project_defaults?: Record<string, unknown>;
+  llm_limits?: Record<string, unknown>;
+  features?: Record<string, unknown>;
+};
+
+export function applyMembershipTierTemplateFallbacks<
+  T extends TierTemplateFields,
+>(tier: T): T {
+  const template = TIER_TEMPLATES[tier.id as keyof typeof TIER_TEMPLATES];
+  if (template == null) return tier;
+  return {
+    ...tier,
+    project_defaults: tier.project_defaults ?? template.project_defaults,
+    llm_limits: tier.llm_limits ?? template.llm_limits,
+    features: tier.features ?? template.features,
+  };
+}

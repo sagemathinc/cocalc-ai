@@ -35,7 +35,10 @@ import {
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
-import { TIER_TEMPLATES } from "@cocalc/util/membership-tier-templates";
+import {
+  applyMembershipTierTemplateFallbacks,
+  TIER_TEMPLATES,
+} from "@cocalc/util/membership-tier-templates";
 import { COLORS } from "@cocalc/util/theme";
 
 const { Paragraph, Text } = Typography;
@@ -118,9 +121,10 @@ function use_membership_tiers() {
       });
       const next = {};
       for (const row of result.query.membership_tiers ?? []) {
-        if (row.created) row.created = dayjs(row.created);
-        if (row.updated) row.updated = dayjs(row.updated);
-        next[row.id] = row;
+        const tier = applyMembershipTierTemplateFallbacks(row);
+        if (tier.created) tier.created = dayjs(tier.created);
+        if (tier.updated) tier.updated = dayjs(tier.updated);
+        next[tier.id] = tier;
       }
       set_error("");
       set_data(next);

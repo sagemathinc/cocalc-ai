@@ -36,6 +36,7 @@ export interface WatchMeta {
   syncPath?: string;
   string_id?: string;
   history_epoch?: number;
+  watchDebounce?: number;
   owner_id?: string;
   turn_id?: string;
   doctype?: {
@@ -103,6 +104,13 @@ function envNumber(name: string, fallback: number): number {
   if (value == null || value.trim() === "") return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function getWatchDebounceMs(meta?: WatchMeta): number {
+  const value = meta?.watchDebounce;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : DEBOUNCE_MS;
 }
 
 const activeServices = new Set<SyncFsService>();
@@ -735,67 +743,70 @@ export class SyncFsService extends EventEmitter {
     if (this.debounceTimers.has(path)) {
       clearTimeout(this.debounceTimers.get(path)!);
     }
-    const timer = setTimeout(async () => {
-      this.debounceTimers.delete(path);
-      const meta = this.pathStates.get(path)?.meta;
-      const codec = this.resolveCodec(meta);
-      if (event === "unlink") {
+    const timer = setTimeout(
+      async () => {
+        this.debounceTimers.delete(path);
+        const meta = this.pathStates.get(path)?.meta;
+        const codec = this.resolveCodec(meta);
+        if (event === "unlink") {
+          try {
+            const change = await this.store.handleExternalChange(
+              path,
+              async () => "",
+              true,
+              codec,
+            );
+            const payload = { ...change, deleted: true };
+            this.emitEvent({ path, type: "delete", change: payload });
+            if (meta) {
+              await this.appendPatch(meta, "delete", payload);
+            }
+          } catch (err) {
+            this.emit("error", err);
+          }
+          return;
+        }
+        // add/change
         try {
+          let preloaded: string | undefined;
+          const marker = this.suppressOnce.get(path);
+          if (marker != null) {
+            if (Date.now() <= marker.until) {
+              try {
+                preloaded = (await readFile(path, "utf8")) as string;
+              } catch {
+                preloaded = undefined;
+              }
+              if (preloaded != null && this.sha256(preloaded) === marker.hash) {
+                // Exact-content echo from our own recent write.
+                return;
+              }
+            }
+            // Different content arrived while suppression marker was active:
+            // treat this as an external mutation.
+            this.clearSuppress(path);
+          }
           const change = await this.store.handleExternalChange(
             path,
-            async () => "",
-            true,
+            async () => {
+              return preloaded ?? ((await readFile(path, "utf8")) as string);
+            },
+            false,
             codec,
           );
-          const payload = { ...change, deleted: true };
-          this.emitEvent({ path, type: "delete", change: payload });
+          if (!change.deleted && change.patch == null) {
+            return;
+          }
+          this.emitEvent({ path, type: "change", change });
           if (meta) {
-            await this.appendPatch(meta, "delete", payload);
+            await this.appendPatch(meta, "change", change);
           }
         } catch (err) {
           this.emit("error", err);
         }
-        return;
-      }
-      // add/change
-      try {
-        let preloaded: string | undefined;
-        const marker = this.suppressOnce.get(path);
-        if (marker != null) {
-          if (Date.now() <= marker.until) {
-            try {
-              preloaded = (await readFile(path, "utf8")) as string;
-            } catch {
-              preloaded = undefined;
-            }
-            if (preloaded != null && this.sha256(preloaded) === marker.hash) {
-              // Exact-content echo from our own recent write.
-              return;
-            }
-          }
-          // Different content arrived while suppression marker was active:
-          // treat this as an external mutation.
-          this.clearSuppress(path);
-        }
-        const change = await this.store.handleExternalChange(
-          path,
-          async () => {
-            return preloaded ?? ((await readFile(path, "utf8")) as string);
-          },
-          false,
-          codec,
-        );
-        if (!change.deleted && change.patch == null) {
-          return;
-        }
-        this.emitEvent({ path, type: "change", change });
-        if (meta) {
-          await this.appendPatch(meta, "change", change);
-        }
-      } catch (err) {
-        this.emit("error", err);
-      }
-    }, DEBOUNCE_MS);
+      },
+      getWatchDebounceMs(this.pathStates.get(path)?.meta),
+    );
     this.debounceTimers.set(path, timer);
   }
 

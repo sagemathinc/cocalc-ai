@@ -269,6 +269,13 @@ export class BaseEditorActions<
   private _suppress_remote_once: boolean = false;
   protected mergeCoordinator?: MergeCoordinator;
   protected syncAdapter?: SyncAdapter;
+  private readonly handleSyncstringClosed = () => {
+    this.syncAdapter?.dispose();
+    this.close();
+  };
+  private readonly handleSyncdbClosed = () => {
+    this.close();
+  };
 
   // Centralized merge state between local CM buffer and remote syncstring.
   protected getMergeCoordinator(): MergeCoordinator {
@@ -690,10 +697,7 @@ export class BaseEditorActions<
       this.set_error(`${err}\nFix this, then try opening the file again.`);
     });
 
-    this._syncstring.once("closed", () => {
-      this.syncAdapter?.dispose();
-      this.close();
-    });
+    this._syncstring.once("closed", this.handleSyncstringClosed);
 
     this._syncstring.on(
       "has-uncommitted-changes",
@@ -747,9 +751,7 @@ export class BaseEditorActions<
       this.set_error(`${err}.\nFix this, then try opening the file again.`);
     });
 
-    this._syncdb.once("closed", () => {
-      this.close();
-    });
+    this._syncdb.once("closed", this.handleSyncdbClosed);
 
     this._syncdb.once("ready", async () => {
       // TODO -- there is a race condition setting up tables; throwing in this delay makes it work.
@@ -868,6 +870,7 @@ export class BaseEditorActions<
     }
     // @ts-ignore
     delete this._syncstring;
+    s.removeListener?.("closed", this.handleSyncstringClosed);
     s.close(); // this should save synctables in syncstring
   }
 
@@ -875,6 +878,7 @@ export class BaseEditorActions<
     if (this._syncdb == null) return;
     const s = this._syncdb;
     delete this._syncdb;
+    s.removeListener?.("closed", this.handleSyncdbClosed);
     s.close();
   }
 

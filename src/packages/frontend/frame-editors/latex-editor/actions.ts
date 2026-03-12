@@ -50,6 +50,7 @@ import { once } from "@cocalc/util/async-utils";
 import { ExecOutput } from "@cocalc/util/db-schema/projects";
 import {
   change_filename_extension,
+  hash_string,
   path_split,
   separate_file_extension,
   sha1,
@@ -279,35 +280,39 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   private init_latexmk(): void {
-    const account: any = this.redux.getStore("account");
+    const handlePersistedSourceChange = reuseInFlight(async () => {
+      await this.maybeBuildAfterPersistedSourceChange();
+    });
+    this._syncstring.on("save-to-disk", handlePersistedSourceChange);
+    this._syncstring.on("filesystem-change", handlePersistedSourceChange);
+  }
 
-    this._syncstring.on(
-      "save-to-disk",
-      reuseInFlight(async () => {
-        if (this.not_ready()) return;
-        const hash = this._syncstring.hash_of_saved_version();
-        if (
-          account &&
-          account.getIn(["editor_settings", "build_on_save"]) &&
-          this._last_syncstring_hash != hash
-        ) {
-          this._last_syncstring_hash = hash;
-          // there are two cases: the parent "master" file triggers the build (usual case)
-          // or an included dependency – i.e. where parent_file is set
-          if (this.parent_file != null && this.parent_file != this.path) {
-            const parent_actions = this.redux.getEditorActions(
-              this.project_id,
-              this.parent_file,
-            ) as Actions;
-            // we're careful, maybe getEditorActions returns something else ...
-            await parent_actions?.build?.("", false);
-          } else if (this.parent_file == null && this.is_likely_master()) {
-            // also check is_likely_master, b/c there must be a \\document* command.
-            await this.build("", false);
-          }
-        }
-      }),
-    );
+  private async maybeBuildAfterPersistedSourceChange(): Promise<void> {
+    if (this.not_ready()) return;
+    const account: any = this.redux.getStore("account");
+    if (!account?.getIn(["editor_settings", "build_on_save"])) {
+      return;
+    }
+    const value = this._syncstring.to_str();
+    if (value == null) return;
+    const hash = hash_string(value);
+    if (this._last_syncstring_hash === hash) {
+      return;
+    }
+    this._last_syncstring_hash = hash;
+    // there are two cases: the parent "master" file triggers the build (usual case)
+    // or an included dependency – i.e. where parent_file is set
+    if (this.parent_file != null && this.parent_file != this.path) {
+      const parent_actions = this.redux.getEditorActions(
+        this.project_id,
+        this.parent_file,
+      ) as Actions;
+      // we're careful, maybe getEditorActions returns something else ...
+      await parent_actions?.build?.("", false);
+    } else if (this.parent_file == null && this.is_likely_master()) {
+      // also check is_likely_master, b/c there must be a \\document* command.
+      await this.build("", false);
+    }
   }
 
   public async rescan_latex_directive(): Promise<void> {

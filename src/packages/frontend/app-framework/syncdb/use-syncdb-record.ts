@@ -3,7 +3,7 @@ Hook that is like useState but for one record of the syncdb
 identified by a primary key.
 */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSyncdbContext } from "./syncdb-context";
 import { debounce, isEqual } from "lodash";
 
@@ -33,17 +33,24 @@ export default function useSyncdbRecord<T>({
 
   const lastCommitRef = useRef<T | null>(null);
 
-  const save = useCallback(
-    debounce((value: T) => {
-      if (syncdb != null) {
-        const x = { ...value, ...key };
-        lastCommitRef.current = x;
-        syncdb.set(x);
-        syncdb.commit();
-      }
-    }, debounceMs),
-    [syncdb, jkey],
+  const save = useMemo(
+    () =>
+      debounce((value: T) => {
+        if (syncdb != null) {
+          const x = { ...value, ...key };
+          lastCommitRef.current = x;
+          syncdb.set(x);
+          syncdb.commit();
+        }
+      }, debounceMs),
+    [syncdb, jkey, debounceMs],
   );
+
+  useEffect(() => {
+    return () => {
+      save.cancel();
+    };
+  }, [save]);
 
   const setValue = useCallback(
     (value: T) => {

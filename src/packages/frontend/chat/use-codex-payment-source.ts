@@ -197,7 +197,11 @@ export function useCodexPaymentSource({
       setPaymentSource(cached.paymentSource);
       setError("");
     } else if (cached?.error) {
+      setPaymentSource(undefined);
       setError(cached.error);
+    } else {
+      setPaymentSource(undefined);
+      setError("");
     }
     const load = async () => {
       setLoading(true);

@@ -15,9 +15,7 @@ import {
   CSS,
   React,
   redux,
-  useAsyncEffect,
   useMemo,
-  useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { useLocalizationCtx } from "@cocalc/frontend/app/localize";
@@ -33,9 +31,9 @@ import {
   DEFAULT_LOCALE,
   OTHER_SETTINGS_LOCALE_KEY,
 } from "@cocalc/frontend/i18n";
-import { once } from "@cocalc/util/async-utils";
 import { KEEP_EN_LOCALE } from "@cocalc/util/consts/locale";
 import { COLORS } from "@cocalc/util/theme";
+import { useAccountStoreReady } from "./account-store-ready";
 
 // no need to translate this message, since it only shows up when there is no locale set
 export const I18N_HINT_ACCOUNT_SETTINGS = `You can also change the language in your "Account" settings.`;
@@ -65,17 +63,7 @@ export function useShowI18NBanner() {
 export const I18NBanner: React.FC<{}> = () => {
   const intl = useIntl();
   const { setLocale } = useLocalizationCtx();
-
-  const [loaded, setLoaded] = useState<boolean>(false);
-
-  // wait until the account settings are loaded to show the banner
-  useAsyncEffect(async () => {
-    const store = redux.getStore("account");
-    if (!store.get("is_ready")) {
-      await once(store, "is_ready");
-    }
-    setLoaded(true);
-  }, []);
+  const loaded = useAccountStoreReady();
 
   function keep_english() {
     redux

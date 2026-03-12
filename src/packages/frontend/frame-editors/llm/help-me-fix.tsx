@@ -4,8 +4,7 @@ If chatgpt is disabled or not available it renders as null.
 */
 
 import { Alert, Space } from "antd";
-import { CSSProperties, useState } from "react";
-import useAsyncEffect from "use-async-effect";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
 import { AIAvatar } from "@cocalc/frontend/components";
@@ -17,6 +16,7 @@ import {
 } from "@cocalc/frontend/project/new/navigator-intents";
 import type { ProjectsStore } from "@cocalc/frontend/projects/store";
 import HelpMeFixButton from "./help-me-fix-button";
+import { getHelpMeFixTokenCounts } from "./help-me-fix-tokens";
 import {
   createMessage,
   createNavigatorIntentMessage,
@@ -65,6 +65,7 @@ export default function HelpMeFix({
   const [model, setModel] = useLanguageModelSetting(project_id);
   const [solutionTokens, setSolutionTokens] = useState<number>(0);
   const [hintTokens, setHintTokens] = useState<number>(0);
+  const tokenRequestIdRef = useRef(0);
   const canGetHintLegacy = projectsStore.hasLanguageModelEnabled(
     project_id,
     "help-me-fix-hint",
@@ -132,18 +133,24 @@ export default function HelpMeFix({
   const solutionText = createMessageMode("solution");
   const hintText = createMessageMode("hint");
 
-  useAsyncEffect(async () => {
+  useEffect(() => {
+    const requestId = tokenRequestIdRef.current + 1;
+    tokenRequestIdRef.current = requestId;
     if (!shouldRender) {
       setSolutionTokens(0);
       setHintTokens(0);
       return;
     }
-    // compute the number of tokens (this MUST be a lazy import):
-    const { getMaxTokens, numTokensUpperBound } =
-      await import("@cocalc/frontend/misc/llm");
-
-    setSolutionTokens(numTokensUpperBound(solutionText, getMaxTokens(model)));
-    setHintTokens(numTokensUpperBound(hintText, getMaxTokens(model)));
+    (async () => {
+      const { solutionTokens, hintTokens } = await getHelpMeFixTokenCounts({
+        hintText,
+        model,
+        solutionText,
+      });
+      if (tokenRequestIdRef.current !== requestId) return;
+      setSolutionTokens(solutionTokens);
+      setHintTokens(hintTokens);
+    })();
   }, [model, solutionText, hintText, shouldRender]);
 
   if (!shouldRender) {

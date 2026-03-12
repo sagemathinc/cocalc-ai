@@ -1150,6 +1150,11 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   paste = (): void => {
     this.terminal.clearSelection();
+    // Keep using xterm's native paste path. In March 2026 we investigated a
+    // Node REPL corruption report here and reproduced the same behavior in
+    // Ghostty and in a plain local PTY when raw text is pasted at the start of
+    // the line after Ctrl+A. Forcing bracketed paste when the application has
+    // not requested it is risky, so this remains the conservative default.
     this.terminal.paste(get_buffer());
     this.terminal.focus();
   };

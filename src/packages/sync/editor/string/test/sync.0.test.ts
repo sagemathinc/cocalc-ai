@@ -187,7 +187,12 @@ describe("backend sync-fs watch policy", () => {
   const project_id = "12345678-1234-4234-8234-123456789abc";
   const client_id = "abcdefab-cdef-4def-8def-abcdefabcdef";
 
-  async function openDoc(path: string) {
+  async function openDoc(
+    path: string,
+    opts: {
+      watchDebounce?: number;
+    } = {},
+  ) {
     const client = new Client({}, client_id);
     const syncFsWatch = jest.fn(async () => undefined);
     const fs1 = {
@@ -199,6 +204,7 @@ describe("backend sync-fs watch policy", () => {
       path,
       client,
       fs: fs1,
+      watchDebounce: opts.watchDebounce,
     });
     await once(doc, "ready");
     return { doc, syncFsWatch };
@@ -216,9 +222,99 @@ describe("backend sync-fs watch policy", () => {
     await doc.close();
   });
 
+  it("passes watchDebounce through to backend sync-fs watch", async () => {
+    const { doc, syncFsWatch } = await openDoc("ordinary.txt", {
+      watchDebounce: 75,
+    });
+    expect(syncFsWatch).toHaveBeenCalledWith(
+      "ordinary.txt",
+      true,
+      expect.objectContaining({
+        project_id,
+        watchDebounce: 75,
+      }),
+    );
+    await doc.close();
+  });
+
   it("disables backend sync-fs watch for chat documents", async () => {
     const { doc, syncFsWatch } = await openDoc("conversation.chat");
     expect(syncFsWatch).not.toHaveBeenCalled();
     await doc.close();
+  });
+
+  it("emits filesystem-change for backend file patches", async () => {
+    const { doc } = await openDoc("ordinary.txt");
+    const handler = jest.fn();
+    doc.on("filesystem-change", handler);
+    (doc as any).handlePatchflowPatch({
+      file: true,
+      meta: undefined,
+      time: legacyPatchId(Date.now()),
+    });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        file: true,
+      }),
+    );
+    await doc.close();
+  });
+});
+
+describe("syncdoc close waits for async table cleanup", () => {
+  it("does not resolve close until tables have closed", async () => {
+    const { client_id, project_id, path, init_queries } = a_txt();
+    const client = new Client(init_queries, client_id);
+    const doc = new SyncString({ project_id, path, client, fs });
+    await once(doc, "ready");
+
+    let releaseSyncstringTable!: () => void;
+    let releasePatchesTable!: () => void;
+    const syncstringTableClosed = new Promise<void>((resolve) => {
+      releaseSyncstringTable = resolve;
+    });
+    const patchesTableClosed = new Promise<void>((resolve) => {
+      releasePatchesTable = resolve;
+    });
+
+    (doc as any).syncstring_table = {
+      close: jest.fn(async () => {
+        await syncstringTableClosed;
+      }),
+    };
+    (doc as any).patches_table = {
+      close: jest.fn(async () => {
+        await patchesTableClosed;
+      }),
+    };
+
+    let resolved = false;
+    const closePromise = doc.close().then(() => {
+      resolved = true;
+    });
+
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    releaseSyncstringTable();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    releasePatchesTable();
+    await closePromise;
+    expect(resolved).toBe(true);
+  });
+});
+
+describe("syncdoc close releases the client closed-listener", () => {
+  it("removes the client listener after manual close", async () => {
+    const { client_id, project_id, path, init_queries } = a_txt();
+    const client = new Client(init_queries, client_id);
+    const doc = new SyncString({ project_id, path, client, fs });
+    await once(doc, "ready");
+
+    expect(client.listenerCount("closed")).toBe(1);
+    await doc.close();
+    expect(client.listenerCount("closed")).toBe(0);
   });
 });

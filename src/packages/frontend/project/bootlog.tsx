@@ -1,8 +1,8 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Progress, Space, Spin, Switch, Tooltip } from "antd";
 import { useProjectContext } from "./context";
-import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { LroEvent, LroScopeType } from "@cocalc/conat/hub/api/lro";
 import ShowError from "@cocalc/frontend/components/error";
 import {
@@ -61,24 +61,36 @@ export default function Bootlog({
         : undefined;
   const resolvedLro = lro ?? fallbackLro;
 
-  useAsyncEffect(async () => {
+  useEffect(() => {
     if (!resolvedLro?.op_id) {
       setLog(null);
       return;
     }
-    const stream = await webapp_client.conat_client.lroStream({
-      op_id: resolvedLro.op_id,
-      scope_type: resolvedLro.scope_type,
-      scope_id: resolvedLro.scope_id,
-    });
-    const update = () => {
-      const events = stream.getAll();
-      setLog(convertLroEvents(events));
-    };
-    update();
-    stream.on("change", update);
+    setLog(null);
+    let closed = false;
+    let stream: undefined | { close: () => void };
+    void (async () => {
+      const nextStream = await webapp_client.conat_client.lroStream({
+        op_id: resolvedLro.op_id,
+        scope_type: resolvedLro.scope_type,
+        scope_id: resolvedLro.scope_id,
+      });
+      if (closed) {
+        nextStream.close();
+        return;
+      }
+      stream = nextStream;
+      const update = () => {
+        if (closed) return;
+        const events = nextStream.getAll();
+        setLog(convertLroEvents(events));
+      };
+      update();
+      nextStream.on("change", update);
+    })();
     return () => {
-      stream.close();
+      closed = true;
+      stream?.close();
     };
   }, [resolvedLro?.op_id, resolvedLro?.scope_type, resolvedLro?.scope_id]);
 

@@ -1,5 +1,5 @@
 import type {
-  OpenTasksSessionOptions,
+  OpenSyncDBTasksSessionOptions,
   TaskCreateInput,
   TaskMutableFields,
   TaskQuery,
@@ -135,6 +135,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
     ctx: Ctx,
     options: TasksDocumentBindingOptions,
   ): BoundTasksDocument<Project> {
+    let preferWritableReads = false;
     const binding = {
       projectIdentifier: options.projectIdentifier,
       path: options.path,
@@ -171,7 +172,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
             tasks: [...snapshot.tasks],
             revision: snapshot.revision ?? null,
           };
-        }, true);
+        }, !preferWritableReads);
       },
       async getTask(taskId: string) {
         return await withSession(
@@ -180,12 +181,13 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
             path,
             task: await session.getTask(taskId),
           }),
-          true,
+          !preferWritableReads,
         );
       },
       async setDone(taskId: string, done: boolean) {
         return await withSession(async ({ project, session, path }) => {
           const result = await session.setDone(taskId, done);
+          preferWritableReads = true;
           return {
             project,
             path,
@@ -198,6 +200,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
       async appendToDescription(taskId: string, text: string) {
         return await withSession(async ({ project, session, path }) => {
           const result = await session.appendToDescription(taskId, text);
+          preferWritableReads = true;
           return {
             project,
             path,
@@ -210,6 +213,7 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
       async updateTask(taskId: string, changes: Partial<TaskMutableFields>) {
         return await withSession(async ({ project, session, path }) => {
           const result = await session.updateTask(taskId, changes);
+          preferWritableReads = true;
           return {
             project,
             path,
@@ -220,11 +224,15 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
         });
       },
       async createTask(input?: TaskCreateInput) {
-        return await withSession(async ({ project, session, path }) => ({
-          project,
-          path,
-          task: await session.createTask(input),
-        }));
+        return await withSession(async ({ project, session, path }) => {
+          const task = await session.createTask(input);
+          preferWritableReads = true;
+          return {
+            project,
+            path,
+            task,
+          };
+        });
       },
       async withSession<T>(
         fn: (args: {
@@ -243,6 +251,35 @@ export function createTasksApi<Ctx, Project extends ProjectIdentity>({
 
 const DEFAULT_SESSION_OPEN_TIMEOUT_MS = 15_000;
 const DEFAULT_SESSION_LEASE_MS = 30_000;
+
+export function resolveTasksSessionCacheEntry({
+  projectId,
+  path,
+  readOnly,
+  sessionPromises,
+}: {
+  projectId: string;
+  path: string;
+  readOnly?: boolean;
+  sessionPromises: Map<string, unknown>;
+}): { key: string; readOnly: boolean } {
+  const baseSessionKey = {
+    project_id: projectId,
+    path,
+  };
+  const writableKey = JSON.stringify({
+    ...baseSessionKey,
+    readOnly: false,
+  });
+  const readOnlyKey = JSON.stringify({
+    ...baseSessionKey,
+    readOnly: true,
+  });
+  if (readOnly === true && !sessionPromises.has(writableKey)) {
+    return { key: readOnlyKey, readOnly: true };
+  }
+  return { key: writableKey, readOnly: false };
+}
 
 function normalizeTasksPath(path: string): string {
   const trimmed = `${path ?? ""}`.trim();
@@ -294,11 +331,13 @@ export async function openTasksApi(
       throw new Error("tasks api is closed");
     }
     const path = normalizeTasksPath(docOptions.path);
-    const key = JSON.stringify({
-      project_id: projectId,
+    const cacheEntry = resolveTasksSessionCacheEntry({
+      projectId,
       path,
-      readOnly: docOptions.readOnly === true,
+      readOnly: docOptions.readOnly,
+      sessionPromises,
     });
+    const { key } = cacheEntry;
     const release = await sessionLeases.acquire(key);
     try {
       let entryPromise = sessionPromises.get(key);
@@ -308,10 +347,12 @@ export async function openTasksApi(
             client,
             projectId,
             path,
-            readOnly: docOptions.readOnly,
+            persistent: true,
+            fileUseInterval: 0,
+            ...(cacheEntry.readOnly ? { readOnly: true } : {}),
             openTimeoutMs:
               options.sessionOpenTimeoutMs ?? DEFAULT_SESSION_OPEN_TIMEOUT_MS,
-          } satisfies OpenTasksSessionOptions & {
+          } satisfies OpenSyncDBTasksSessionOptions & {
             client: ConatClient;
           });
           return { project, session, path };

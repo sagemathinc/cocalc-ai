@@ -47,6 +47,8 @@ import {
   addToHistory,
   threadConfigRecordKey,
   type CodexThreadConfig,
+  type ChatThreadAutomationConfig,
+  type ChatThreadAutomationState,
   type ChatThreadLoopConfig,
   type ChatThreadLoopState,
 } from "@cocalc/chat";
@@ -128,6 +130,8 @@ export interface ThreadMetadataSnapshot {
   acp_config?: CodexThreadConfig | null;
   loop_config?: ChatThreadLoopConfig;
   loop_state?: ChatThreadLoopState;
+  automation_config?: ChatThreadAutomationConfig;
+  automation_state?: ChatThreadAutomationState;
 }
 
 function normalizeAgentKind(value: unknown): ThreadAgentKind | undefined {
@@ -1277,6 +1281,14 @@ export class ChatActions extends Actions<ChatState> {
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
     const loop_config = field<ChatThreadLoopConfig>(cfg, "loop_config");
     const loop_state = field<ChatThreadLoopState>(cfg, "loop_state");
+    const automation_config = field<ChatThreadAutomationConfig>(
+      cfg,
+      "automation_config",
+    );
+    const automation_state = field<ChatThreadAutomationState>(
+      cfg,
+      "automation_state",
+    );
     const agent_model_raw =
       field<string>(cfg, "agent_model") ??
       (typeof acp_config?.model === "string" ? acp_config.model : undefined);
@@ -1310,6 +1322,8 @@ export class ChatActions extends Actions<ChatState> {
       acp_config,
       loop_config,
       loop_state,
+      automation_config,
+      automation_state,
     };
   };
 
@@ -1337,6 +1351,38 @@ export class ChatActions extends Actions<ChatState> {
     if (
       !this.setThreadConfigRecord(threadKey, {
         loop_state: loopState ?? null,
+      })
+    ) {
+      return false;
+    }
+    this.syncdb.commit();
+    return true;
+  };
+
+  setThreadAutomationConfig = (
+    threadKey: string,
+    automationConfig?: ChatThreadAutomationConfig | null,
+  ): boolean => {
+    if (this.syncdb == null) return false;
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        automation_config: automationConfig ?? null,
+      })
+    ) {
+      return false;
+    }
+    this.syncdb.commit();
+    return true;
+  };
+
+  setThreadAutomationState = (
+    threadKey: string,
+    automationState?: ChatThreadAutomationState | null,
+  ): boolean => {
+    if (this.syncdb == null) return false;
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        automation_state: automationState ?? null,
       })
     ) {
       return false;

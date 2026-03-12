@@ -14,7 +14,7 @@ import {
   Table,
   Typography,
 } from "antd";
-import { type ReactElement, useMemo, useState } from "react";
+import { type ReactElement, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
 import api from "@cocalc/frontend/client/api";
@@ -101,6 +101,39 @@ function formatQuotaValue(key: string, value: unknown): string {
   return unit ? `${rounded} ${unit}` : `${rounded}`;
 }
 
+export interface ProjectDefaultItem {
+  key: string;
+  label: string;
+  value: string;
+}
+
+export function getProjectDefaultsItems(
+  projectDefaults: Record<string, unknown>,
+): ProjectDefaultItem[] {
+  return PROJECT_DEFAULT_KEYS.map((key) => {
+    if (!(key in projectDefaults)) return null;
+    if (key === "member_host") return null;
+    const value = projectDefaults[key];
+    if (key === "cpu_shares" && typeof value === "number" && value <= 0) {
+      return null;
+    }
+    const spec = (upgrades as any).params?.[key];
+    const label =
+      key === "cores"
+        ? "CPU priority"
+        : (spec?.display ?? capitalize(key.replace(/_/g, " ")));
+    const formattedValue = formatQuotaValue(key, value);
+    return {
+      key,
+      label,
+      value:
+        key === "cores"
+          ? `${spec?.display ?? "Shared CPU"} - ${formattedValue}`
+          : formattedValue,
+    };
+  }).filter((item) => item != null) as ProjectDefaultItem[];
+}
+
 function extractLimit(
   limits: Record<string, unknown>,
   keys: string[],
@@ -139,12 +172,24 @@ export function MembershipStatusPanel({
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
   const [purchaseOpen, setPurchaseOpen] = useState<boolean>(false);
+  const previousAccountIdRef = useRef(account_id);
 
   useAsyncEffect(
     async (isMounted) => {
+      const accountChanged = previousAccountIdRef.current !== account_id;
+      previousAccountIdRef.current = account_id;
       if (!account_id) {
+        setError("");
+        setMembership(null);
+        setTiers([]);
+        setDetails(null);
         setLoading(false);
         return;
+      }
+      if (accountChanged) {
+        setMembership(null);
+        setTiers([]);
+        setDetails(null);
       }
       setLoading(true);
       setError("");
@@ -235,21 +280,7 @@ export function MembershipStatusPanel({
     });
   }, [details, tierById]);
 
-  const projectDefaultsItems = PROJECT_DEFAULT_KEYS.map((key) => {
-    if (!(key in projectDefaults)) return null;
-    const value = projectDefaults[key];
-    const spec = (upgrades as any).params?.[key];
-    const label = spec?.display ?? capitalize(key.replace(/_/g, " "));
-    return {
-      key,
-      label,
-      value: formatQuotaValue(key, value),
-    };
-  }).filter((item) => item != null) as Array<{
-    key: string;
-    label: string;
-    value: string;
-  }>;
+  const projectDefaultsItems = getProjectDefaultsItems(projectDefaults);
 
   return (
     <Panel

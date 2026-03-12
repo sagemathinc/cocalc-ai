@@ -7,6 +7,30 @@ import type {
 } from "../types";
 import { HostProjectsTable } from "./host-projects-table";
 
+function isHostRunningForDeprovision(status?: Host["status"]) {
+  return (
+    status === "running" ||
+    status === "starting" ||
+    status === "restarting" ||
+    status === "error"
+  );
+}
+
+export function resolveHostDeprovisionOptions(
+  host: Host,
+  skipRunningBackups: boolean,
+): HostDeleteOptions {
+  return {
+    skip_backups: isHostRunningForDeprovision(host.status ?? "off")
+      ? skipRunningBackups
+      : true,
+  };
+}
+
+export function bulkHostDeprovisionConfirmPhrase(count: number): string {
+  return `deprovision ${count}`;
+}
+
 function getBackupCounts(host?: Host) {
   const backup = host?.backup_status;
   return {
@@ -175,11 +199,7 @@ export function confirmHostDeprovision({
     getBackupCounts(host);
   const needs = needsBackup + running;
   const status = host.status ?? "off";
-  const hostRunning =
-    status === "running" ||
-    status === "starting" ||
-    status === "restarting" ||
-    status === "error";
+  const hostRunning = isHostRunningForDeprovision(status);
   const modal = Modal.confirm({
     title: `Deprovision ${hostName}?`,
     width: 900,
@@ -252,7 +272,80 @@ export function confirmHostDeprovision({
       if (state.name.trim() !== hostName) {
         throw new Error("host name does not match");
       }
-      await onConfirm({ skip_backups: hostRunning ? state.skip : true });
+      await onConfirm(resolveHostDeprovisionOptions(host, state.skip));
+    },
+  });
+}
+
+export function confirmBulkHostDeprovision({
+  hosts,
+  onConfirm,
+}: {
+  hosts: Host[];
+  onConfirm: (host: Host, opts?: HostDeleteOptions) => void | Promise<void>;
+}) {
+  const count = hosts.length;
+  const phrase = bulkHostDeprovisionConfirmPhrase(count);
+  const state = { text: "", skip: false };
+  const runningHosts = hosts.filter((host) =>
+    isHostRunningForDeprovision(host.status ?? "off"),
+  );
+  const nonRunningHosts = hosts.length - runningHosts.length;
+  const modal = Modal.confirm({
+    title: `Deprovision ${count} host${count === 1 ? "" : "s"}?`,
+    width: 900,
+    content: (
+      <div>
+        <Typography.Text type="secondary">
+          Type <code>{phrase}</code> to confirm bulk deprovisioning.
+        </Typography.Text>
+        <Input
+          style={{ marginTop: 8 }}
+          placeholder={phrase}
+          onChange={(event) => {
+            state.text = event.target.value;
+            modal.update({
+              okButtonProps: {
+                danger: true,
+                disabled: state.text.trim().toLowerCase() !== phrase,
+              },
+            });
+          }}
+        />
+        <div style={{ marginTop: 10 }}>
+          <Typography.Text strong>Selected hosts</Typography.Text>
+          <ul style={{ maxHeight: 240, overflowY: "auto", marginTop: 8 }}>
+            {hosts.map((host) => (
+              <li key={host.id}>{host.name ?? host.id}</li>
+            ))}
+          </ul>
+        </div>
+        {runningHosts.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <Checkbox onChange={(event) => (state.skip = event.target.checked)}>
+              Skip backups (force) for {runningHosts.length} running host
+              {runningHosts.length === 1 ? "" : "s"}
+            </Checkbox>
+          </div>
+        )}
+        {nonRunningHosts > 0 && (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+            {nonRunningHosts} host{nonRunningHosts === 1 ? "" : "s"} are not
+            running, so backups cannot run for them and these deprovisions will
+            use the latest available backups.
+          </Typography.Paragraph>
+        )}
+      </div>
+    ),
+    okText: "Deprovision",
+    okButtonProps: { danger: true, disabled: true },
+    onOk: async () => {
+      if (state.text.trim().toLowerCase() !== phrase) {
+        throw new Error("bulk deprovision confirmation phrase does not match");
+      }
+      for (const host of hosts) {
+        await onConfirm(host, resolveHostDeprovisionOptions(host, state.skip));
+      }
     },
   });
 }

@@ -32,16 +32,18 @@ export default function useDiskUsage({
         path,
         cache: counter == lastCounterRef.current,
       });
-      if (!key({ project_id, path }) == currentRef.current) {
+      if (key({ project_id, path }) !== currentRef.current) {
         return;
       }
       setUsage(x);
-      setQuota(
-        await getQuota({
-          project_id,
-          cache: counter == lastCounterRef.current,
-        }),
-      );
+      const nextQuota = await getQuota({
+        project_id,
+        cache: counter == lastCounterRef.current,
+      });
+      if (key({ project_id, path }) !== currentRef.current) {
+        return;
+      }
+      setQuota(nextQuota);
     } catch (err) {
       setError(err);
     } finally {
@@ -57,7 +59,7 @@ export default function useDiskUsage({
     error,
     setError,
     refresh: () => {
-      setCounter(counter + 1);
+      setCounter((prev) => prev + 1);
     },
   };
 }

@@ -2,6 +2,8 @@ import { conat } from "@cocalc/conat/client";
 import type { Client } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
+  AcpAutomationRequest,
+  AcpAutomationResponse,
   AcpControlRequest,
   AcpControlResponse,
   AcpForkSessionRequest,
@@ -10,6 +12,7 @@ import type {
   AcpStreamMessage,
 } from "./types";
 import {
+  acpAutomationSubject,
   acpControlSubject,
   acpForkSubject,
   acpInterruptSubject,
@@ -141,4 +144,24 @@ export async function controlAcp(
     throw Error(error);
   }
   return (resp?.data ?? { ok: false, state: "missing" }) as AcpControlResponse;
+}
+
+export async function automationAcp(
+  request: AcpAutomationRequest,
+  client?: Client,
+): Promise<AcpAutomationResponse> {
+  if (!isValidUUID(request.project_id)) {
+    throw Error("project_id must be a valid uuid");
+  }
+  if (!isValidUUID(request.account_id)) {
+    throw Error("account_id must be a valid uuid");
+  }
+  const subject = acpAutomationSubject({ project_id: request.project_id });
+  const cn = client ?? (await conat());
+  const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
+  const error = resp?.data?.error;
+  if (error) {
+    throw Error(error);
+  }
+  return (resp?.data ?? { ok: false }) as AcpAutomationResponse;
 }

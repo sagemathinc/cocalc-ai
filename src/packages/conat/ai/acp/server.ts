@@ -3,6 +3,8 @@ import type { Subscription } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
+  AcpAutomationRequest,
+  AcpAutomationResponse,
   AcpControlRequest,
   AcpControlResponse,
   AcpForkSessionRequest,
@@ -60,6 +62,13 @@ export function acpControlSubject(opts: {
   return `${buildSubjectPrefix(opts)}.control`;
 }
 
+export function acpAutomationSubject(opts: {
+  account_id?: string;
+  project_id?: string;
+}): string {
+  return `${buildSubjectPrefix(opts)}.automation`;
+}
+
 function getProjectId(subject: string): string | undefined {
   if (subject.startsWith(`${SUBJECT}.project-`)) {
     const id = subject.slice(
@@ -77,6 +86,7 @@ let apiSub: Subscription | null = null;
 let interruptSub: Subscription | null = null;
 let forkSub: Subscription | null = null;
 let controlSub: Subscription | null = null;
+let automationSub: Subscription | null = null;
 const MAX_CONCURRENCY = Number(process.env.COCALC_ACP_MAX_CONCURRENCY ?? 64);
 const limiter = pLimit(MAX_CONCURRENCY);
 const inFlightChatTurnKeys = new Map<
@@ -114,6 +124,9 @@ type ForkHandler = (
 type ControlHandler = (
   options: AcpControlRequest,
 ) => Promise<AcpControlResponse>;
+type AutomationHandler = (
+  options: AcpAutomationRequest,
+) => Promise<AcpAutomationResponse>;
 
 export async function init(
   handlers: {
@@ -121,6 +134,7 @@ export async function init(
     interrupt?: InterruptHandler;
     forkSession?: ForkHandler;
     control?: ControlHandler;
+    automation?: AutomationHandler;
   },
   client,
 ): Promise<void> {
@@ -145,6 +159,12 @@ export async function init(
     });
     listenControls(handlers.control);
   }
+  if (handlers.automation) {
+    automationSub = await client.subscribe(`${SUBJECT}.*.automation`, {
+      queue: "acp-automation-q",
+    });
+    listenAutomations(handlers.automation);
+  }
 }
 
 export async function close(): Promise<void> {
@@ -163,6 +183,10 @@ export async function close(): Promise<void> {
   if (controlSub != null) {
     controlSub.close();
     controlSub = null;
+  }
+  if (automationSub != null) {
+    automationSub.close();
+    automationSub = null;
   }
 }
 
@@ -211,6 +235,19 @@ function listenControls(controlHandler: ControlHandler): void {
     }
   })().catch((err) => {
     logger.warn("acp control listener stopped", err);
+  });
+}
+
+function listenAutomations(automationHandler: AutomationHandler): void {
+  if (automationSub == null) return;
+  (async () => {
+    for await (const mesg of automationSub!) {
+      void runLimited("automation", () =>
+        handleAutomationMessage(mesg, automationHandler),
+      );
+    }
+  })().catch((err) => {
+    logger.warn("acp automation listener stopped", err);
   });
 }
 
@@ -441,6 +478,28 @@ async function handleControlMessage(
   try {
     validateOptions(options, mesg.subject);
     const result = await control(options);
+    await respond(result);
+  } catch (err) {
+    await respond(undefined, `${err}`);
+  }
+}
+
+async function handleAutomationMessage(
+  mesg,
+  automation: AutomationHandler,
+): Promise<void> {
+  const options = mesg.data ?? {};
+  const respond = async (payload?: any, error?: string) => {
+    const data: any = payload ?? {};
+    if (error) {
+      data.error = error;
+    }
+    await mesg.respond(data, { noThrow: true });
+  };
+
+  try {
+    validateOptions(options, mesg.subject);
+    const result = await automation(options);
     await respond(result);
   } catch (err) {
     await respond(undefined, `${err}`);

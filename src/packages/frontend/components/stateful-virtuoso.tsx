@@ -23,6 +23,20 @@ const DEFAULT_VIEWPORT = 1000;
 const MIN_SNAPSHOT_VIEWPORT_PX = 80;
 const MIN_SNAPSHOT_SCROLL_HEIGHT_PX = 120;
 
+export function hasViableSnapshotMetrics({
+  viewportHeight,
+  scrollHeight,
+}: {
+  viewportHeight?: number;
+  scrollHeight?: number;
+}): boolean {
+  if (viewportHeight == null || scrollHeight == null) return true;
+  if (viewportHeight < MIN_SNAPSHOT_VIEWPORT_PX) return false;
+  if (scrollHeight < MIN_SNAPSHOT_SCROLL_HEIGHT_PX) return false;
+  if (scrollHeight <= viewportHeight + 8) return false;
+  return true;
+}
+
 const hasStorage =
   typeof window !== "undefined" &&
   typeof window.localStorage !== "undefined" &&
@@ -107,8 +121,20 @@ function StatefulVirtuosoCore(
   };
 
   const cached = cacheId ? cache.get(cacheId) : undefined;
-  if (cached && snapshotRef.current == null) {
+  if (
+    cached &&
+    snapshotRef.current == null &&
+    hasViableSnapshotMetrics(cached)
+  ) {
     snapshotRef.current = cached.snapshot;
+  } else if (
+    cached &&
+    snapshotRef.current == null &&
+    !hasViableSnapshotMetrics(cached)
+  ) {
+    cache.delete(cacheId);
+    schedulePersist();
+    snapshotRef.current = undefined;
   } else if (!cached && snapshotRef.current == null) {
     snapshotRef.current = undefined;
   }

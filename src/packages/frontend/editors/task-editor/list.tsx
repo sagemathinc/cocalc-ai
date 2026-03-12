@@ -8,7 +8,7 @@ List of Tasks -- we use windowing via Virtuoso, so that even task lists with 500
 */
 
 import { List, Set as immutableSet } from "immutable";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { TaskActions } from "./actions";
 import Task from "./task";
@@ -48,7 +48,6 @@ export default function TaskList({
   selected_hashtags,
   search_terms,
 }: Props) {
-  const mainDivRef = useRef<any>(null);
   const [visible, setVisible] = useState<List<string>>(visible0);
   useEffect(() => {
     setVisible(visible0);
@@ -112,16 +111,6 @@ export default function TaskList({
     return <SortableItem id={task_id}>{body}</SortableItem>;
   }
 
-  function on_click(e) {
-    if (e.target === mainDivRef.current) {
-      // The following from https://github.com/sagemathinc/cocalc/pull/6779 is definitely wrong.  E.g., open the find side
-      // panel, then open a task list and try to edit a task and type e.g., "s" and saves the tasks file.
-      // test, if e.target is a child of mainDivRef.current
-      //if (mainDivRef.current.contains(e.target)) {
-      actions?.enable_key_handler();
-    }
-  }
-
   return (
     <SortableList
       disabled={!sortable}
@@ -143,12 +132,7 @@ export default function TaskList({
         }, 0);
       }}
     >
-      <div
-        className="smc-vfill"
-        ref={mainDivRef}
-        onClick={on_click}
-        style={{ overflow: "hidden" }}
-      >
+      <div className="smc-vfill" style={{ overflow: "hidden" }}>
         <StatefulVirtuoso
           overscan={500}
           totalCount={visible.size + 1}

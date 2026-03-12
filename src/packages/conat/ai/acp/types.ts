@@ -50,6 +50,47 @@ export interface AcpLoopContractDecision {
   sleep_sec?: number;
 }
 
+export interface AcpAutomationConfig {
+  enabled?: boolean;
+  automation_id?: string;
+  title?: string;
+  prompt?: string;
+  schedule_type?: "daily";
+  local_time?: string;
+  timezone?: string;
+  pause_after_unacknowledged_runs?: number;
+}
+
+export interface AcpAutomationState {
+  automation_id?: string;
+  status?: "active" | "running" | "paused" | "error";
+  next_run_at_ms?: number;
+  last_run_started_at_ms?: number;
+  last_run_finished_at_ms?: number;
+  last_acknowledged_at_ms?: number;
+  unacknowledged_runs?: number;
+  paused_reason?: string;
+  last_error?: string;
+  last_job_op_id?: string;
+  last_message_id?: string;
+}
+
+export interface AcpAutomationRecord {
+  automation_id: string;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  title?: string;
+  status?: "active" | "running" | "paused" | "error";
+  enabled?: boolean;
+  next_run_at_ms?: number;
+  last_run_finished_at_ms?: number;
+  unacknowledged_runs?: number;
+  paused_reason?: string;
+  last_error?: string;
+  updated_at?: string;
+}
+
 export interface AcpChatContext {
   project_id: string;
   path: string;
@@ -70,6 +111,10 @@ export interface AcpChatContext {
   loop_config?: AcpLoopConfig;
   // Optional loop runtime snapshot from backend state machine.
   loop_state?: AcpLoopState;
+  // Optional scheduled automation identity when this turn is due to an
+  // automation attached to the thread.
+  automation_id?: string;
+  automation_title?: string;
 }
 
 export type AcpRequest = {
@@ -116,6 +161,22 @@ export type AcpControlResponse = {
     | "canceled"
     | "interrupted"
     | "missing";
+};
+
+export type AcpAutomationRequest = {
+  project_id: string;
+  account_id: string;
+  path: string;
+  thread_id: string;
+  action: "upsert" | "pause" | "resume" | "run_now" | "acknowledge" | "delete";
+  config?: AcpAutomationConfig | null;
+};
+
+export type AcpAutomationResponse = {
+  ok: boolean;
+  config?: AcpAutomationConfig | null;
+  state?: AcpAutomationState | null;
+  record?: AcpAutomationRecord | null;
 };
 
 export type AcpStreamUsage = {

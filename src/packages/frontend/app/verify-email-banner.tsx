@@ -9,9 +9,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { emailVerificationMsg } from "@cocalc/frontend/account/settings/email-verification";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
-  redux,
   useActions,
-  useAsyncEffect,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -20,7 +18,7 @@ import { Icon, Paragraph, Text } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { once } from "@cocalc/util/async-utils";
+import { useAccountStoreReady } from "./account-store-ready";
 
 const DISMISSED_KEY_LS = "verify-email-dismissed";
 
@@ -180,16 +178,7 @@ export function useShowVerifyEmail(): boolean {
     "account",
     "email_address_verified",
   );
-  const [loaded, setLoaded] = useState<boolean>(false);
-
-  // wait until the account settings are loaded to show the banner
-  useAsyncEffect(async () => {
-    const store = redux.getStore("account");
-    if (!store.get("is_ready")) {
-      await once(store, "is_ready");
-    }
-    setLoaded(true);
-  }, []);
+  const loaded = useAccountStoreReady();
 
   const emailSendingEnabled = useTypedRedux("customize", "email_enabled");
 

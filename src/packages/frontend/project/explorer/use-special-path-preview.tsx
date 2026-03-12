@@ -112,12 +112,14 @@ export function useSpecialPathPreview({
 
   useEffect(() => {
     if (!restoreTarget) {
+      previewRequestRef.current += 1;
       setPreview(null);
       backupIdRef.current = null;
       backupNameRef.current = null;
       return;
     }
     if (restoreTarget.isDir) {
+      previewRequestRef.current += 1;
       setPreview({ error: "Directory preview is not available." });
       return;
     }

@@ -66,6 +66,7 @@ const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
 const MAX_DRAWER_SIZE = 1800;
+const DRAWER_LINE_SCROLL_PX = 40;
 const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
@@ -82,6 +83,75 @@ export function getCommitReviewIndicatorState(
     reviewed: known ? Boolean(reviewedByCommit[hash]) : false,
     known,
   };
+}
+
+export type GitDrawerScrollCommand =
+  | "lineDown"
+  | "lineUp"
+  | "pageDown"
+  | "pageUp"
+  | "top";
+
+export function matchGitDrawerScrollCommand(
+  evt: Pick<
+    KeyboardEvent,
+    "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey"
+  >,
+): GitDrawerScrollCommand | undefined {
+  if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
+  switch (evt.key) {
+    case "ArrowDown":
+      return "lineDown";
+    case "ArrowUp":
+      return "lineUp";
+    case "PageDown":
+      return "pageDown";
+    case "PageUp":
+      return "pageUp";
+    case "Home":
+      return "top";
+    case " ":
+    case "Spacebar":
+      return evt.shiftKey ? "pageUp" : "pageDown";
+    default:
+      return;
+  }
+}
+
+export function runGitDrawerScrollCommand(
+  node: Pick<HTMLDivElement, "scrollTop" | "scrollHeight" | "clientHeight">,
+  command: GitDrawerScrollCommand,
+): boolean {
+  const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
+  const pageStep = Math.max(
+    DRAWER_LINE_SCROLL_PX,
+    Math.round(node.clientHeight * 0.9),
+  );
+  const current = node.scrollTop;
+  let next = current;
+  switch (command) {
+    case "lineDown":
+      next += DRAWER_LINE_SCROLL_PX;
+      break;
+    case "lineUp":
+      next -= DRAWER_LINE_SCROLL_PX;
+      break;
+    case "pageDown":
+      next += pageStep;
+      break;
+    case "pageUp":
+      next -= pageStep;
+      break;
+    case "top":
+      next = 0;
+      break;
+  }
+  const clamped = Math.max(0, Math.min(maxTop, next));
+  if (clamped === current) {
+    return false;
+  }
+  node.scrollTop = clamped;
+  return true;
 }
 
 type GitShowFile = {
@@ -2363,13 +2433,22 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (evt: KeyboardEvent) => {
-      if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
       if (
         isEditableEventTarget(evt.target) ||
         isEditableEventTarget(document.activeElement)
       ) {
         return;
       }
+      const scrollCommand = matchGitDrawerScrollCommand(evt);
+      if (scrollCommand) {
+        const node = scrollRef.current;
+        if (node && runGitDrawerScrollCommand(node, scrollCommand)) {
+          evt.preventDefault();
+          persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
+        }
+        return;
+      }
+      if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
       if (evt.key === "j") {
         evt.preventDefault();
         if (canGoOlder) {
@@ -2408,6 +2487,7 @@ export function GitCommitDrawer({
     gitLog,
     contextLines,
     isHeadSelected,
+    scrollStorageId,
   ]);
 
   return (

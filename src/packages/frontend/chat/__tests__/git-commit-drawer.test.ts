@@ -6,6 +6,8 @@ import {
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
+  matchGitDrawerScrollCommand,
+  runGitDrawerScrollCommand,
 } from "../git-commit-drawer";
 import { act, render } from "@testing-library/react";
 
@@ -181,5 +183,88 @@ describe("git commit drawer merge commit formatting", () => {
     } finally {
       (DiffBlock as any).type = originalType;
     }
+  });
+
+  it("matches git review scroll keys without modifiers", () => {
+    expect(
+      matchGitDrawerScrollCommand({
+        key: "ArrowDown",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      } as KeyboardEvent),
+    ).toBe("lineDown");
+    expect(
+      matchGitDrawerScrollCommand({
+        key: " ",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      } as KeyboardEvent),
+    ).toBe("pageDown");
+    expect(
+      matchGitDrawerScrollCommand({
+        key: " ",
+        shiftKey: true,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      } as KeyboardEvent),
+    ).toBe("pageUp");
+    expect(
+      matchGitDrawerScrollCommand({
+        key: "PageUp",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      } as KeyboardEvent),
+    ).toBe("pageUp");
+    expect(
+      matchGitDrawerScrollCommand({
+        key: "Home",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+      } as KeyboardEvent),
+    ).toBe("top");
+    expect(
+      matchGitDrawerScrollCommand({
+        key: "PageDown",
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false,
+      } as KeyboardEvent),
+    ).toBeUndefined();
+  });
+
+  it("scrolls the git review drawer by line, page, and top commands", () => {
+    const node = {
+      scrollTop: 200,
+      scrollHeight: 1600,
+      clientHeight: 400,
+    } as HTMLDivElement;
+
+    expect(runGitDrawerScrollCommand(node, "lineDown")).toBe(true);
+    expect(node.scrollTop).toBe(240);
+
+    expect(runGitDrawerScrollCommand(node, "lineUp")).toBe(true);
+    expect(node.scrollTop).toBe(200);
+
+    expect(runGitDrawerScrollCommand(node, "pageDown")).toBe(true);
+    expect(node.scrollTop).toBe(560);
+
+    expect(runGitDrawerScrollCommand(node, "pageUp")).toBe(true);
+    expect(node.scrollTop).toBe(200);
+
+    expect(runGitDrawerScrollCommand(node, "top")).toBe(true);
+    expect(node.scrollTop).toBe(0);
+
+    expect(runGitDrawerScrollCommand(node, "lineUp")).toBe(false);
+    expect(node.scrollTop).toBe(0);
   });
 });

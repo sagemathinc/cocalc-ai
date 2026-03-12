@@ -152,6 +152,46 @@ export interface SyncOpts extends SyncOpts0 {
 const logger = getLogger("sync-doc");
 logger.debug("init");
 
+export function prevSeqForMoreHistoryFromHistory(
+  history: {
+    time: PatchId;
+    isSnapshot?: boolean;
+    seqInfo?: { prevSeq?: number };
+  }[],
+): number | undefined {
+  let prevSeq: number | undefined;
+  let oldestTimeMs: number | undefined;
+  for (const p of history) {
+    if (p.isSnapshot && p.seqInfo?.prevSeq != null) {
+      const timeMs = decodePatchId(p.time).timeMs;
+      if (oldestTimeMs == null || timeMs < oldestTimeMs) {
+        oldestTimeMs = timeMs;
+        prevSeq = p.seqInfo.prevSeq;
+      }
+    }
+  }
+  if (prevSeq != null) {
+    return prevSeq;
+  }
+  return history.length > 0 ? 0 : undefined;
+}
+
+export function patchesHaveFullHistoryFromPatches(
+  patches: {
+    is_snapshot?: boolean;
+    parents?: PatchId[];
+    seq_info?: { prev_seq?: number };
+  }[],
+): boolean {
+  const first = patches[0];
+  if (first == null) return true;
+  if (first.is_snapshot) {
+    const prevSeq = first.seq_info?.prev_seq;
+    return prevSeq == null || prevSeq <= 1;
+  }
+  return (first.parents?.length ?? 0) === 0;
+}
+
 export class SyncDoc extends EventEmitter {
   static events = new EventEmitter();
   static lite = false;
@@ -863,6 +903,7 @@ export class SyncDoc extends EventEmitter {
     this.emit("close");
 
     this.stopBackendFsWatch();
+    this.client.removeListener("closed", this.close);
 
     // must be after the emits above, so clients know
     // what happened and can respond.
@@ -882,7 +923,7 @@ export class SyncDoc extends EventEmitter {
     this.patchflowSession?.close();
 
     try {
-      this.closeTables();
+      await this.closeTables();
       dbg("closeTables -- successfully saved all data to database");
     } catch (err) {
       dbg(`closeTables -- ERROR -- ${err}`);
@@ -896,9 +937,9 @@ export class SyncDoc extends EventEmitter {
   });
 
   private closeTables = async () => {
-    this.syncstring_table?.close();
-    this.patches_table?.close();
-    this.ipywidgets_state?.close();
+    await this.syncstring_table?.close();
+    await this.patches_table?.close();
+    await this.ipywidgets_state?.close();
   };
 
   private synctable = async (
@@ -1990,10 +2031,7 @@ export class SyncDoc extends EventEmitter {
   };
 
   private patchesHaveFullHistory = (patches: Patch[]): boolean => {
-    const first = patches[0];
-    if (first == null) return true;
-    if (first.is_snapshot) return false;
-    return (first.parents?.length ?? 0) === 0;
+    return patchesHaveFullHistoryFromPatches(patches);
   };
 
   hasFullHistory = (): boolean => {
@@ -2471,23 +2509,15 @@ export class SyncDoc extends EventEmitter {
     } else if (this.isDeleted) {
       this.isDeleted = false;
     }
+    if (env.file && !env.meta?.deleted) {
+      this.emit("filesystem-change", env);
+    }
   };
 
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;
     const history = this.patchflowSession.history({ includeSnapshots: true });
-    let prevSeq: number | undefined;
-    let oldestTimeMs: number | undefined;
-    for (const p of history) {
-      if (p.isSnapshot && p.seqInfo?.prevSeq != null) {
-        const timeMs = decodePatchId(p.time).timeMs;
-        if (oldestTimeMs == null || timeMs < oldestTimeMs) {
-          oldestTimeMs = timeMs;
-          prevSeq = p.seqInfo.prevSeq;
-        }
-      }
-    }
-    return prevSeq;
+    return prevSeqForMoreHistoryFromHistory(history);
   };
 
   private patchflowSnapshotCandidate = (
@@ -2851,6 +2881,7 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         history_epoch: this.history_epoch,
         doctype: this.doctype,
+        watchDebounce: this.opts.watchDebounce,
       });
     } catch (err) {
       this.dbg("syncFsWatch")(`failed: ${err?.message ?? err}`);

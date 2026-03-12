@@ -5,14 +5,10 @@
 
 import ShowError from "@cocalc/frontend/components/error";
 import { Alert, Button, Col, Flex, Modal, Row, Typography } from "antd";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
-import {
-  redux,
-  useAsyncEffect,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   CopyToClipBoard,
   HelpIcon,
@@ -75,11 +71,20 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
 
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
 
-  useAsyncEffect(async () => {
-    setAvatarImage(
-      await redux.getStore("projects").getProjectAvatarImage(project_id),
-    );
-  }, []);
+  useEffect(() => {
+    let closed = false;
+    setAvatarImage(undefined);
+    void (async () => {
+      const avatarImage = await redux
+        .getStore("projects")
+        .getProjectAvatarImage(project_id);
+      if (closed) return;
+      setAvatarImage(avatarImage);
+    })();
+    return () => {
+      closed = true;
+    };
+  }, [project_id]);
 
   function renderReadonly() {
     if (!hasReadonlyFields) return;

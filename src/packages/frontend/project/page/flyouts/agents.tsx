@@ -35,6 +35,8 @@ import {
   upsertAgentSessionRecord,
   watchAgentSessionsForProject,
 } from "@cocalc/frontend/chat/agent-session-index";
+import type { AcpAutomationRecord } from "@cocalc/conat/ai/acp/types";
+import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
   initChat,
   getChatActions,
@@ -59,6 +61,13 @@ import { saveNavigatorSelectedThreadKey } from "@cocalc/frontend/project/new/nav
 import { useAgentChatFontSize } from "@cocalc/frontend/project/page/agent-chat-font-size";
 import { AGENT_CHAT_MAX_WIDTH_PX } from "@cocalc/frontend/project/page/agent-layout-constants";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import {
+  ensureWorkspaceChatDirectory,
+  ensureWorkspaceChatPath,
+} from "@cocalc/frontend/project/workspaces/runtime";
+import { path_split, tab_to_path } from "@cocalc/util/misc";
+import { joinAbsolutePath } from "@cocalc/util/path-model";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   active: "processing",
@@ -67,12 +76,28 @@ const STATUS_COLORS: Record<AgentSessionStatus, string> = {
   archived: "purple",
   failed: "red",
 };
+
+function statusLabel(status: AgentSessionStatus): string {
+  switch (status) {
+    case "active":
+      return "active";
+    case "idle":
+      return "idle";
+    case "running":
+      return "running";
+    case "archived":
+      return "archived";
+    case "failed":
+      return "failed";
+  }
+}
 const AGENTS_INLINE_CHAT_INSTANCE_KEY = "agents-panel-inline";
 const AGENTS_PIN_CHAT_INSTANCE_KEY = "agents-panel-pin";
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
 const AGENTS_OPEN_SESSION_STORAGE_PREFIX = "agents-panel-open-session";
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
+const NEW_AGENT_BASENAME = "agent";
 
 function shortAccountId(accountId?: string): string {
   if (!accountId) return "unknown";
@@ -112,6 +137,36 @@ function normalizedTitle(record: AgentSessionRecord): string {
   const plain = html_to_text(raw).replace(/\s+/g, " ").trim();
   if (plain) return plain;
   return "Navigator session";
+}
+
+function deriveAgentRootPath(opts: {
+  activeProjectTab?: string;
+  currentPath?: string;
+}): string {
+  const activePath = tab_to_path(opts.activeProjectTab ?? "");
+  if (activePath) {
+    return path_split(activePath).head || "/";
+  }
+  return opts.currentPath || "/";
+}
+
+function isChatFileName(name: string): boolean {
+  return name.toLowerCase().endsWith(".chat");
+}
+
+function nextAgentChatFilename(names: readonly string[]): string {
+  const used = new Set(names.map((name) => name.toLowerCase()));
+  const preferred = `${NEW_AGENT_BASENAME}.chat`;
+  if (!used.has(preferred)) {
+    return preferred;
+  }
+  for (let i = 2; i < 1000; i += 1) {
+    const candidate = `${NEW_AGENT_BASENAME}-${i}.chat`;
+    if (!used.has(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("Could not find an available agent chat filename.");
 }
 
 interface SessionListItem {
@@ -184,11 +239,13 @@ interface AgentsPanelProps {
 }
 
 export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
-  const { workspaces } = useProjectContext();
+  const { active_project_tab, workspaces } = useProjectContext();
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
+  const [automations, setAutomations] = useState<AcpAutomationRecord[]>([]);
   const [missingChatPaths, setMissingChatPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -199,6 +256,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     loadWorkspaceOnly(project_id),
   );
   const [error, setError] = useState<string>("");
+  const [creatingAgent, setCreatingAgent] = useState(false);
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
   const [inlineSessionId, setInlineSessionId] = useState<string | null>(() =>
     loadOpenedSessionId(project_id, layout),
@@ -250,6 +308,33 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }, [account_id, project_id]);
 
   useEffect(() => {
+    let closed = false;
+    let unsubscribe: (() => void) | undefined;
+    void watchAutomationsForProject(
+      { project_id },
+      (records: AcpAutomationRecord[]) => {
+        if (closed) return;
+        setAutomations(records);
+      },
+    )
+      .then((cleanup) => {
+        if (closed) {
+          cleanup();
+          return;
+        }
+        unsubscribe = cleanup;
+      })
+      .catch((err) => {
+        if (closed) return;
+        setError((prev) => prev || `${err}`);
+      });
+    return () => {
+      closed = true;
+      unsubscribe?.();
+    };
+  }, [project_id]);
+
+  useEffect(() => {
     const node = panelRef.current;
     if (!node) return;
     const update = () => {
@@ -276,15 +361,16 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   const knownChatPaths = useMemo(() => {
     return Array.from(
       new Set(
-        sessions
-          .map((session) => session.chat_path)
-          .filter(
-            (path): path is string =>
-              typeof path === "string" && path.trim().length > 0,
-          ),
+        [
+          ...sessions.map((session) => session.chat_path),
+          ...automations.map((a) => a.path),
+        ].filter(
+          (path): path is string =>
+            typeof path === "string" && path.trim().length > 0,
+        ),
       ),
     );
-  }, [sessions]);
+  }, [automations, sessions]);
 
   useEffect(() => {
     const fs = actions?.fs?.();
@@ -411,6 +497,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return scopedSessions.filter((session) => session.status === "archived");
   }, [scopedSessions]);
 
+  const defaultAgentRootPath = useMemo(() => {
+    return deriveAgentRootPath({
+      activeProjectTab: active_project_tab,
+      currentPath: current_path_abs ?? "/",
+    });
+  }, [active_project_tab, current_path_abs]);
+
   useEffect(() => {
     if (!inlineSessionId) return;
     if (inlineSession) return;
@@ -421,6 +514,58 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   useEffect(() => {
     saveOpenedSessionId(project_id, layout, inlineSessionId);
   }, [inlineSessionId, layout, project_id]);
+
+  async function openOrCreateAgentChat(): Promise<void> {
+    if (!actions) return;
+    const fs = actions.fs?.();
+    if (!fs || typeof fs.readdir !== "function") {
+      setError("Project filesystem is unavailable.");
+      return;
+    }
+    setCreatingAgent(true);
+    setError("");
+    try {
+      const accountId = `${account_id ?? ""}`.trim();
+      const workspace =
+        accountId && workspaces.resolveWorkspaceForPath(defaultAgentRootPath);
+      if (workspace) {
+        const { chat_path } = await ensureWorkspaceChatPath({
+          project_id,
+          account_id: accountId,
+          workspace_id: workspace.workspace_id,
+        });
+        await ensureWorkspaceChatDirectory({ project_id, chat_path });
+        workspaces.setSelection({
+          kind: "workspace",
+          workspace_id: workspace.workspace_id,
+        });
+        await actions.open_file({ path: chat_path, foreground: true });
+        return;
+      }
+
+      const names = await fs.readdir(defaultAgentRootPath);
+      const chatNames = names.filter(isChatFileName);
+      if (chatNames.length === 1) {
+        await actions.open_file({
+          path: joinAbsolutePath(defaultAgentRootPath, chatNames[0]),
+          foreground: true,
+        });
+        return;
+      }
+
+      const filename = nextAgentChatFilename(names);
+      await actions.createFile({
+        name: filename.slice(0, -".chat".length),
+        ext: "chat",
+        current_path: defaultAgentRootPath,
+        switch_over: true,
+      });
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setCreatingAgent(false);
+    }
+  }
 
   useEffect(() => {
     const chatPath = inlineSession?.chat_path;
@@ -535,6 +680,23 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     openFloatingAgentSession(project_id, record);
   }
 
+  function openAutomation(record: AcpAutomationRecord): void {
+    saveNavigatorSelectedThreadKey(record.thread_id);
+    actions?.open_file({ path: record.path });
+  }
+
+  async function controlAutomation(
+    record: AcpAutomationRecord,
+    action: "run_now" | "pause" | "resume" | "acknowledge",
+  ): Promise<void> {
+    await webapp_client.conat_client.automationAcp({
+      project_id,
+      path: record.path,
+      thread_id: record.thread_id,
+      action,
+    });
+  }
+
   function recordMetaLine(record: AgentSessionRecord): string {
     const parts: string[] = [];
     if (scope === "all") {
@@ -581,33 +743,45 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
       },
     ];
     return (
-      <Dropdown
-        trigger={["click"]}
-        menu={{
-          items,
-          onClick: ({ key }) => {
-            switch (key) {
-              case "resume":
-                openNavigatorSession(record);
-                return;
-              case "float":
-                openFloatingSession(record);
-                return;
-              case "open-file":
-                actions?.open_file({ path: record.chat_path });
-                return;
-              case "pin":
-                void togglePin(record);
-                return;
-              case "archive":
-                void toggleArchive(record);
-                return;
-            }
-          },
-        }}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
       >
-        <Button size="small" type="text" icon={<Icon name="ellipsis" />} />
-      </Dropdown>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items,
+            onClick: ({ key }) => {
+              switch (key) {
+                case "resume":
+                  openNavigatorSession(record);
+                  return;
+                case "float":
+                  openFloatingSession(record);
+                  return;
+                case "open-file":
+                  actions?.open_file({ path: record.chat_path });
+                  return;
+                case "pin":
+                  void togglePin(record);
+                  return;
+                case "archive":
+                  void toggleArchive(record);
+                  return;
+              }
+            },
+          }}
+        >
+          <Button
+            size="small"
+            type="text"
+            icon={<Icon name="ellipsis" />}
+            aria-label="Session actions"
+            data-testid={`agent-session-menu-${record.session_id}`}
+          />
+        </Dropdown>
+      </div>
     );
   }
 
@@ -820,18 +994,27 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const metaLine = recordMetaLine(record);
     const updatedAt = record.updated_at ?? record.created_at;
     const showCornerImage = Boolean(image);
-    const statusTag =
-      record.status === "running" || record.status === "failed" ? (
-        <Tag
-          color={STATUS_COLORS[record.status] ?? "default"}
-          style={{ marginInlineEnd: 0 }}
-        >
-          {record.status}
-        </Tag>
-      ) : null;
+    const statusTag = (
+      <Tag
+        color={STATUS_COLORS[record.status] ?? "default"}
+        style={{ marginInlineEnd: 0 }}
+      >
+        {statusLabel(record.status)}
+      </Tag>
+    );
     return (
       <div key={record.session_id}>
         <div
+          role="button"
+          tabIndex={0}
+          data-testid={`agent-session-card-${record.session_id}`}
+          onClick={() => openInlineSession(record)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openInlineSession(record);
+            }
+          }}
           style={{
             width: "100%",
             border: "1px solid #e8e8e8",
@@ -841,6 +1024,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             borderLeft: color ? `4px solid ${color}` : undefined,
             position: "relative",
             overflow: "hidden",
+            cursor: "pointer",
           }}
         >
           {showCornerImage ? (
@@ -963,20 +1147,146 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               ) : null}
             </div>
           </div>
-          <Space size={[4, 0]}>
+          <Space size={[4, 0]}>{renderSessionMenu(record)}</Space>
+        </div>
+      </div>
+    );
+  }
+
+  function renderAutomation(record: AcpAutomationRecord): React.JSX.Element {
+    const title =
+      html_to_text(record.title ?? "").trim() || "Scheduled automation";
+    const status =
+      record.status ?? (record.enabled === false ? "paused" : "active");
+    const updatedAt = record.updated_at;
+    return (
+      <div key={`${record.path}::${record.thread_id}`}>
+        <div
+          style={{
+            width: "100%",
+            border: "1px solid #e8e8e8",
+            borderRadius: 8,
+            padding: isFlyout ? 8 : 10,
+            background: "#fff",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              marginBottom: 6,
+            }}
+          >
+            <Typography.Text strong title={title}>
+              {ellipsize(title, isFlyout ? 48 : 56)}
+            </Typography.Text>
+            <Tag
+              color={
+                status === "error"
+                  ? "red"
+                  : status === "paused"
+                    ? "orange"
+                    : "blue"
+              }
+            >
+              {status}
+            </Tag>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              marginBottom: 8,
+            }}
+          >
+            {record.next_run_at_ms ? (
+              <Typography.Text type="secondary">
+                Next run{" "}
+                <TimeAgo
+                  date={new Date(record.next_run_at_ms)}
+                  click_to_toggle={false}
+                />
+              </Typography.Text>
+            ) : null}
+            {record.last_run_finished_at_ms ? (
+              <Typography.Text type="secondary">
+                Last run{" "}
+                <TimeAgo
+                  date={new Date(record.last_run_finished_at_ms)}
+                  click_to_toggle={false}
+                />
+              </Typography.Text>
+            ) : null}
+            {typeof record.unacknowledged_runs === "number" &&
+            record.unacknowledged_runs > 0 ? (
+              <Typography.Text type="secondary">
+                {record.unacknowledged_runs} unacknowledged run(s)
+              </Typography.Text>
+            ) : null}
+            {record.paused_reason ? (
+              <Typography.Text type="secondary">
+                {record.paused_reason}
+              </Typography.Text>
+            ) : null}
+            {record.last_error ? (
+              <Typography.Text type="danger">
+                {record.last_error}
+              </Typography.Text>
+            ) : null}
+            {updatedAt ? (
+              <Typography.Text type="secondary">
+                Updated <TimeAgo date={updatedAt} click_to_toggle={false} />
+              </Typography.Text>
+            ) : null}
+          </div>
+          <Space size={[4, 4]} wrap>
             <Button
               size="small"
               type="primary"
-              onClick={() => openInlineSession(record)}
+              onClick={() => openAutomation(record)}
             >
               Open
             </Button>
-            {renderSessionMenu(record)}
+            <Button
+              size="small"
+              onClick={() => void controlAutomation(record, "run_now")}
+            >
+              Run now
+            </Button>
+            {status === "paused" || record.enabled === false ? (
+              <Button
+                size="small"
+                onClick={() => void controlAutomation(record, "resume")}
+              >
+                Resume
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                onClick={() => void controlAutomation(record, "pause")}
+              >
+                Pause
+              </Button>
+            )}
+            <Button
+              size="small"
+              onClick={() => void controlAutomation(record, "acknowledge")}
+            >
+              Acknowledge
+            </Button>
           </Space>
         </div>
       </div>
     );
   }
+
+  const visibleAutomations = useMemo(
+    () => automations.filter((record) => !missingChatPaths.has(record.path)),
+    [automations, missingChatPaths],
+  );
 
   if (loading) {
     return <Loading theme="medium" />;
@@ -1099,6 +1409,24 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           style={{ marginBottom: 8 }}
         />
       ) : null}
+      {visibleAutomations.length > 0 ? (
+        <div style={{ marginBottom: 16 }}>
+          <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+            Scheduled automations
+          </Typography.Text>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: isFlyout
+                ? "1fr"
+                : "repeat(auto-fit, minmax(360px, 1fr))",
+              gap: isFlyout ? 8 : 12,
+            }}
+          >
+            {visibleAutomations.map((record) => renderAutomation(record))}
+          </div>
+        </div>
+      ) : null}
       <div style={{ marginBottom: 12 }}>
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
           Recent agent sessions
@@ -1113,6 +1441,15 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           }}
         >
           <Space size={[6, 6]} wrap>
+            <Button
+              size="small"
+              type="primary"
+              loading={creatingAgent}
+              onClick={() => void openOrCreateAgentChat()}
+              data-testid="agents-new-agent-button"
+            >
+              New Agent
+            </Button>
             <Button
               size="small"
               type={scope === "mine" ? "primary" : "default"}

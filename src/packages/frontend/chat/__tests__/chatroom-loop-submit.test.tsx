@@ -96,12 +96,15 @@ jest.mock("../chatroom-layout", () => ({
 }));
 
 jest.mock("../composer", () => ({
-  ChatRoomComposer: ({ loopConfig, on_send }: any) => (
+  ChatRoomComposer: ({ loopConfig, on_send, onLoopConfigChange }: any) => (
     <div>
       <div data-testid="loop-state">
         {loopConfig?.enabled === true ? "on" : "off"}
       </div>
       <button onClick={() => on_send()}>send</button>
+      <button onClick={() => onLoopConfigChange?.(undefined)}>
+        disable loop
+      </button>
     </div>
   ),
 }));
@@ -200,5 +203,50 @@ describe("ChatPanel loop submit behavior", () => {
     await waitFor(() =>
       expect(screen.getByTestId("loop-state").textContent).toBe("off"),
     );
+  });
+
+  it("keeps loop off immediately after disabling even before stale metadata clears", async () => {
+    const actions = {
+      sendChat: jest.fn(() => Date.now()),
+      getThreadMetadata: jest.fn(() => ({
+        agent_kind: "acp",
+        loop_config: { enabled: true, max_turns: 4 },
+        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
+      })),
+      getMessagesInThread: jest.fn(() => []),
+      deleteDraft: jest.fn(),
+      getThreadLoopConfig: jest.fn(),
+      getThreadLoopState: jest.fn(),
+      setThreadLoopConfig: jest.fn(),
+      setThreadLoopState: jest.fn(),
+      frameTreeActions: undefined,
+      frameId: undefined,
+      languageModelStopGenerating: jest.fn(),
+      getCodexConfig: jest.fn(() => ({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+      })),
+    } as any;
+
+    render(
+      <ChatPanel
+        actions={actions}
+        project_id="project-1"
+        path="chat/test.chat"
+        messages={new Map()}
+        threadIndex={undefined}
+        docVersion={0}
+      />,
+    );
+
+    expect(screen.getByTestId("loop-state").textContent).toBe("on");
+
+    fireEvent.click(screen.getByRole("button", { name: "disable loop" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("loop-state").textContent).toBe("off"),
+    );
+    expect(actions.setThreadLoopConfig).toHaveBeenCalledWith("t1", null);
+    expect(actions.setThreadLoopState).toHaveBeenCalledWith("t1", null);
   });
 });

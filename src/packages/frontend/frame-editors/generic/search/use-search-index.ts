@@ -9,6 +9,7 @@ export default function useSearchIndex() {
     project_id,
     path,
   });
+  const activeIndexRef = useRef<SearchIndex | null>(null);
   const [index, setIndex] = useState<null | SearchIndex>(null);
   const [error, setError] = useState<string>("");
   const [isIndexing, setIsIndexing] = useState<boolean>(false);
@@ -19,27 +20,37 @@ export default function useSearchIndex() {
 
   useEffect(() => {
     let cancelled = false;
+    let pendingIndex: SearchIndex | null = null;
     if (
       contextRef.current.project_id != project_id ||
       contextRef.current.path != path
     ) {
       contextRef.current = { project_id, path };
-      setIndex(null);
     }
+    activeIndexRef.current?.close();
+    activeIndexRef.current = null;
+    setIndex(null);
     (async () => {
       try {
         setIsIndexing(true);
         setError("");
         const t0 = Date.now();
         const newIndex = new SearchIndex({ actions });
+        pendingIndex = newIndex;
         await newIndex.init();
-        if (cancelled) return;
+        if (cancelled) {
+          if (pendingIndex === newIndex) {
+            newIndex.close();
+          }
+          return;
+        }
+        pendingIndex = null;
+        activeIndexRef.current = newIndex;
         setFragmentKey(newIndex.fragmentKey ?? "id");
         setReduxName(newIndex.reduxName);
         setIndex(newIndex);
         setIndexTime(Date.now() - t0);
         setIsIndexing(false);
-        //index?.close();
       } catch (err) {
         if (cancelled) return;
         setError(`${err}`);
@@ -48,6 +59,16 @@ export default function useSearchIndex() {
     })();
     return () => {
       cancelled = true;
+      if (pendingIndex != null) {
+        if (activeIndexRef.current === pendingIndex) {
+          activeIndexRef.current = null;
+        }
+        pendingIndex.close();
+        pendingIndex = null;
+      } else if (activeIndexRef.current != null) {
+        activeIndexRef.current.close();
+        activeIndexRef.current = null;
+      }
     };
   }, [project_id, path, refresh]);
 
@@ -63,7 +84,7 @@ export default function useSearchIndex() {
   };
 }
 
-class SearchIndex {
+export class SearchIndex {
   private actions?;
   private state: "init" | "ready" | "failed" | "closed" = "init";
   private db?;
@@ -74,12 +95,12 @@ class SearchIndex {
     this.actions = actions;
   }
 
-  close = () => {
+  close() {
     this.state = "closed";
     delete this.actions;
     delete this.db;
     delete this.fragmentKey;
-  };
+  }
 
   search = async (query) => {
     if (this.state != "ready" || this.db == null) {

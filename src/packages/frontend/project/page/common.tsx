@@ -5,7 +5,7 @@
 
 import {
   redux,
-  useAsyncEffect,
+  useEffect,
   useMemo,
   useState,
   useTypedRedux,
@@ -32,8 +32,11 @@ export function useProject(project_id) {
     [project_id],
   );
 
-  useAsyncEffect(async () => {
-    if (!group) return;
+  useEffect(() => {
+    if (!group) {
+      setProject(null);
+      return;
+    }
     if (group === "admin") {
       const query = {};
       for (const k of keys(SCHEMA.projects.user_query?.get?.fields)) {
@@ -46,14 +49,19 @@ export function useProject(project_id) {
         { projects_admin: query },
         [],
       );
-      table.on("change", () => {
+      let closed = false;
+      const updateProject = () => {
+        if (closed) return;
         setProject(table.get(project_id));
-      });
+      };
+      table.on("change", updateProject);
+      updateProject();
+      return () => {
+        closed = true;
+        table.close();
+      };
     } else {
-      const p = project_map?.get(project_id);
-      if (p != null && project != p) {
-        setProject(p);
-      }
+      setProject(project_map?.get(project_id) ?? null);
     }
   }, [group, project_id, project_map]);
 

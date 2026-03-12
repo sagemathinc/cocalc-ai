@@ -7,6 +7,7 @@ import { ChatDocProvider, useChatDoc } from "./doc-context";
 import type { ChatState } from "./store";
 import { Loading } from "@cocalc/frontend/components";
 import { isChatActions } from "./register";
+import type { ChatInputControl } from "./input";
 
 interface Props {
   project_id: string;
@@ -16,6 +17,10 @@ interface Props {
   actions?: ChatActions;
   desc?;
   hideSidebar?: boolean;
+  onComposerReady?: (
+    control: ChatInputControl | null,
+    root: ParentNode | null,
+  ) => void;
 }
 
 export default function SideChat({
@@ -26,6 +31,7 @@ export default function SideChat({
   fontSize,
   desc,
   hideSidebar = false,
+  onComposerReady,
 }: Props) {
   const actionsViaContext = redux.getEditorActions(project_id, path);
   const candidateActions = actions0 ?? actionsViaContext;
@@ -60,6 +66,7 @@ export default function SideChat({
           fontSize={fontSize}
           desc={desc}
           hideSidebar={hideSidebar}
+          onComposerReady={onComposerReady}
         />
       </KeyboardBoundary>
     </ChatDocProvider>
@@ -80,6 +87,7 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       desc={props.desc}
       variant="compact"
       hideSidebar={props.hideSidebar}
+      onComposerReady={props.onComposerReady}
     />
   );
 }

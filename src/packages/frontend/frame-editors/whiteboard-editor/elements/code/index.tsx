@@ -14,7 +14,6 @@
 
 import { debounce } from "lodash";
 import { useEffect, useRef, useState } from "react";
-import { useAsyncEffect } from "use-async-effect";
 import useResizeObserver from "use-resize-observer";
 
 import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
@@ -53,18 +52,25 @@ export default function Code({
   const { actions, project_id, path } = useFrameContext();
   const [mode, setMode] = useState<any>(codemirrorMode("py"));
   const isMountedRef = useIsMountedRef();
-  useAsyncEffect(async () => {
-    let mode;
-    try {
-      mode = await getMode({ project_id, path });
-    } catch {
-      // this can fail, e.g., if user closes file before finishing opening it
-      return;
-    }
-    if (isMountedRef.current) {
+  useEffect(() => {
+    let closed = false;
+    void (async () => {
+      let mode;
+      try {
+        mode = await getMode({ project_id, path });
+      } catch {
+        // this can fail, e.g., if user closes file before finishing opening it
+        return;
+      }
+      if (closed || !isMountedRef.current) {
+        return;
+      }
       setMode(mode);
-    }
-  }, []);
+    })();
+    return () => {
+      closed = true;
+    };
+  }, [isMountedRef, path, project_id]);
 
   const renderInput = () => {
     if (hideInput) return;

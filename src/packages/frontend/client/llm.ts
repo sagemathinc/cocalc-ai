@@ -18,6 +18,7 @@ import {
   OTHER_SETTINGS_REPLY_ENGLISH_KEY,
 } from "@cocalc/util/i18n/const";
 import { sanitizeLocale } from "@cocalc/frontend/i18n";
+import { resolveExplicitStreamStart } from "./stream-start";
 
 interface QueryLLMProps {
   input: string;
@@ -44,11 +45,15 @@ export class LLMClient {
 
   // ATTN/TODO: startExplicitly seems to be broken
   public queryStream(opts, startExplicitly = false): ChatStream {
+    const explicit = resolveExplicitStreamStart(
+      opts?.startStreamExplicitly,
+      startExplicitly,
+    );
     const chatStream = new ChatStream();
     (async () => {
       try {
         await this.queryLanguageModel({ ...opts, chatStream });
-        if (!startExplicitly) {
+        if (!explicit) {
           chatStream.emit("start");
         }
       } catch (err) {

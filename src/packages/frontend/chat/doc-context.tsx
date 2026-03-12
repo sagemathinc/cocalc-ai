@@ -13,7 +13,6 @@ import React, {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import type { PlainChatMessage } from "./types";
@@ -38,10 +37,8 @@ export function ChatDocProvider({
   children: React.ReactNode;
 }) {
   const [version, setVersion] = useState<number>(-1);
-  const cacheRef = useRef<ChatMessageCache | null>(cache);
 
   useEffect(() => {
-    cacheRef.current = cache;
     if (!cache) {
       setVersion(-1);
       return;
@@ -56,10 +53,10 @@ export function ChatDocProvider({
   const value = useMemo<DocCtx>(() => {
     return {
       version,
-      messages: cacheRef.current?.getMessages(),
-      threadIndex: cacheRef.current?.getThreadIndex(),
+      messages: cache?.getMessages(),
+      threadIndex: cache?.getThreadIndex(),
     };
-  }, [version]);
+  }, [cache, version]);
 
   return (
     <ChatDocContext.Provider value={value}>{children}</ChatDocContext.Provider>

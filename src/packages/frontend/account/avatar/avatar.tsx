@@ -4,7 +4,7 @@
  */
 
 import { Tooltip } from "antd";
-import { CSSProperties, useState } from "react";
+import { CSSProperties, useRef, useState } from "react";
 
 import { isChatBot } from "@cocalc/frontend/account/chatbot";
 import {
@@ -76,10 +76,21 @@ const Avatar0: React.FC<Props> = (props) => {
   const [image, set_image] = useState<string | undefined>(undefined);
   const [background_color, set_background_color] =
     useState<string>(DEFAULT_COLOR);
+  const previousAccountIdRef = useRef(props.account_id);
 
   useAsyncEffect(
     async (isMounted) => {
-      if (!props.account_id) return;
+      const accountChanged = previousAccountIdRef.current !== props.account_id;
+      previousAccountIdRef.current = props.account_id;
+      if (!props.account_id) {
+        set_image(undefined);
+        set_background_color(DEFAULT_COLOR);
+        return;
+      }
+      if (accountChanged) {
+        set_image(undefined);
+        set_background_color(DEFAULT_COLOR);
+      }
       const image = await redux.getStore("users").get_image(props.account_id);
       if (isMounted()) {
         if (startswith(image, "https://api.adorable.io")) {

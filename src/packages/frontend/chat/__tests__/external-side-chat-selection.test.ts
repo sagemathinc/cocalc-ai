@@ -27,6 +27,7 @@ describe("external side chat thread persistence", () => {
     local_storage.mockReturnValue("thread-123");
 
     expect(getExternalSideChatDesc("project-1", "notes.ipynb")).toEqual({
+      "data-externalSideChat": true,
       "data-selectedThreadKey": "thread-123",
       "data-preferLatestThread": false,
     });
@@ -35,6 +36,14 @@ describe("external side chat thread persistence", () => {
       "notes.ipynb",
       "selectedThreadKey",
     );
+  });
+
+  it("marks the desc as external side chat even without a persisted thread", () => {
+    local_storage.mockReturnValue(undefined);
+
+    expect(getExternalSideChatDesc("project-1", "notes.ipynb")).toEqual({
+      "data-externalSideChat": true,
+    });
   });
 
   it("persists selected threads against the original host file path", () => {

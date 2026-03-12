@@ -170,7 +170,7 @@ export function useCodexLog({
     let sub: any;
     let stopped = false;
     async function subscribe() {
-      if (!enabled || !logSubject) return;
+      if (!enabled || !generating || !logSubject) return;
       try {
         const cn = webapp_client.conat_client.conat();
         sub = await cn.subscribe(logSubject);

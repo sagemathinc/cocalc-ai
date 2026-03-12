@@ -4,7 +4,7 @@
  */
 
 import { Button, Modal, Space, Spin, Tag, Typography } from "antd";
-import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 
 import api from "@cocalc/frontend/client/api";
 import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -34,12 +34,22 @@ export default function MembershipBadge(): ReactElement | null {
     null,
   );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
+  const previousAccountIdRef = useRef(account_id);
 
   useAsyncEffect(
     async (isMounted) => {
+      const accountChanged = previousAccountIdRef.current !== account_id;
+      previousAccountIdRef.current = account_id;
       if (!account_id) {
+        setError("");
+        setMembership(null);
+        setTiers([]);
         setLoading(false);
         return;
+      }
+      if (accountChanged) {
+        setMembership(null);
+        setTiers([]);
       }
       setLoading(true);
       setError("");

@@ -105,6 +105,7 @@ import {
   loadSessionSelection,
   persistSessionSelection,
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
+import { getBrowserTimeTravelProviders } from "./timetravel-providers";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -971,14 +972,7 @@ export function createBrowserSessionAutomation({
         }> => {
           assertExecNotCanceled(isCanceled);
           const projectsApi = (client.conat_client as any)?.hub?.projects ?? {};
-          return {
-            patchflow: true,
-            snapshots: typeof projectsApi.getSnapshotFileText === "function",
-            backups:
-              typeof projectsApi.findBackupFiles === "function" &&
-              typeof projectsApi.getBackupFileText === "function",
-            git: true,
-          };
+          return getBrowserTimeTravelProviders(projectsApi);
         },
         patchflow: {
           listVersions: async (

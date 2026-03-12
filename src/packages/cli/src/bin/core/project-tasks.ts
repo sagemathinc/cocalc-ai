@@ -49,6 +49,44 @@ function sessionCacheKey(opts: {
   });
 }
 
+export function resolveTasksSessionCacheEntry<Project extends ProjectIdentity>({
+  projectId,
+  path,
+  readOnly,
+  sessionPromises,
+}: {
+  projectId: string;
+  path: string;
+  readOnly?: boolean;
+  sessionPromises: Map<string, Promise<SessionEntry<Project>>>;
+}): {
+  key: string;
+  readOnly: boolean;
+} {
+  if (readOnly === true) {
+    const writableKey = sessionCacheKey({
+      project_id: projectId,
+      path,
+      readOnly: false,
+    });
+    if (sessionPromises.has(writableKey)) {
+      return {
+        key: writableKey,
+        readOnly: false,
+      };
+    }
+  }
+  const effectiveReadOnly = readOnly === true;
+  return {
+    key: sessionCacheKey({
+      project_id: projectId,
+      path,
+      readOnly: effectiveReadOnly,
+    }),
+    readOnly: effectiveReadOnly,
+  };
+}
+
 function normalizeProjectIdentifier(input?: string): string | undefined {
   const explicit = `${input ?? ""}`.trim();
   if (explicit) return explicit;
@@ -117,11 +155,13 @@ export function createProjectTasksOps<Ctx, Project extends ProjectIdentity>(
       projectIdentifier,
       options.cwd,
     );
-    const key = sessionCacheKey({
-      project_id: project.project_id,
+    const cacheEntry = resolveTasksSessionCacheEntry({
+      projectId: project.project_id,
       path,
       readOnly: options.readOnly,
+      sessionPromises,
     });
+    const { key } = cacheEntry;
     const existing = sessionPromises.get(key);
     if (existing) {
       return await existing;
@@ -132,7 +172,9 @@ export function createProjectTasksOps<Ctx, Project extends ProjectIdentity>(
         client,
         projectId: project.project_id,
         path,
-        readOnly: options.readOnly,
+        persistent: true,
+        fileUseInterval: 0,
+        ...(cacheEntry.readOnly ? { readOnly: true } : {}),
         openTimeoutMs: LIVE_TASKS_SESSION_OPEN_TIMEOUT_MS,
       });
       return { project, session };
@@ -167,11 +209,13 @@ export function createProjectTasksOps<Ctx, Project extends ProjectIdentity>(
       options.cwd,
     );
     const path = normalizeTasksPath(options.path);
-    const key = sessionCacheKey({
-      project_id: project.project_id,
+    const cacheEntry = resolveTasksSessionCacheEntry({
+      projectId: project.project_id,
       path,
       readOnly: options.readOnly,
+      sessionPromises,
     });
+    const { key } = cacheEntry;
     const release = await sessionLeases.acquire(key);
     try {
       const entry = await getOrCreateSessionEntry(ctx, {

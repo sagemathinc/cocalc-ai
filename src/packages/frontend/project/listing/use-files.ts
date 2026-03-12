@@ -67,6 +67,9 @@ export default function useFiles({
   }>({ path, error: null });
   const { val: counter, inc: refresh } = useCounter();
   const listingRef = useRef<any>(null);
+  const throttledUpdateRef = useRef<undefined | { cancel?: () => void }>(
+    undefined,
+  );
   const requestId = useRef(0);
 
   useAsyncEffect(
@@ -83,7 +86,10 @@ export default function useFiles({
         setFilesState({ path, files: getFiles({ cacheId, path }) });
         setErrorState({ path, error: null });
         listing = await fs.listing(path);
-        if (requestId.current !== id) return;
+        if (requestId.current !== id) {
+          listing.close?.();
+          return;
+        }
         listingRef.current = listing;
         setErrorState({ path, error: null });
       } catch (err) {
@@ -104,12 +110,16 @@ export default function useFiles({
       };
       update();
 
-      listing.on(
-        "change",
-        throttle(update, throttleUpdate, { leading: true, trailing: true }),
-      );
+      const throttledUpdate = throttle(update, throttleUpdate, {
+        leading: true,
+        trailing: true,
+      });
+      throttledUpdateRef.current = throttledUpdate;
+      listing.on("change", throttledUpdate);
     },
     () => {
+      throttledUpdateRef.current?.cancel?.();
+      delete throttledUpdateRef.current;
       listingRef.current?.close();
       delete listingRef.current;
     },

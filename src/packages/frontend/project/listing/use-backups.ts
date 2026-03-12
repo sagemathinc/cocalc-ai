@@ -96,13 +96,14 @@ export default function useBackupsListing({
         throw new Error(`backup '${backupName}' not found`);
       }
       const subpath = parts.slice(2).join("/");
-      const cacheKey = `${backup.id}:${subpath}`;
+      const cacheKey = `${project_id}:${backup.id}:${subpath}`;
       const cached = !force ? readCache(cacheKey) : null;
       if (cached) {
         setListing(sortEntries(cached));
       }
       const entriesRaw = await listBackupFiles({
         key: cacheKey,
+        project_id,
         backup_id: backup.id,
         subpath,
         force,
@@ -112,7 +113,7 @@ export default function useBackupsListing({
       if (requestId.current !== id) return;
       setListing(entries);
       setError(null);
-      prefetchSubdirs(backup.id, subpath, entries);
+      prefetchSubdirs(project_id, backup.id, subpath, entries);
     } catch (err) {
       if (requestId.current !== id) return;
       setError(err);
@@ -141,11 +142,13 @@ export default function useBackupsListing({
 
   async function listBackupFiles({
     key,
+    project_id,
     backup_id,
     subpath,
     force,
   }: {
     key: string;
+    project_id: string;
     backup_id: string;
     subpath: string;
     force: boolean;
@@ -181,6 +184,7 @@ export default function useBackupsListing({
   }
 
   function prefetchSubdirs(
+    projectId: string,
     backupId: string,
     basePath: string,
     entries: DirectoryListingEntry[],
@@ -191,10 +195,11 @@ export default function useBackupsListing({
     if (!subdirs.length) return;
     for (const entry of subdirs) {
       const subpath = basePath ? `${basePath}/${entry.name}` : entry.name;
-      const key = `${backupId}:${subpath}`;
+      const key = `${projectId}:${backupId}:${subpath}`;
       if (readCache(key) || inflight.current.has(key)) continue;
       void listBackupFiles({
         key,
+        project_id: projectId,
         backup_id: backupId,
         subpath,
         force: false,
