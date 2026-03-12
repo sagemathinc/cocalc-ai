@@ -5,7 +5,7 @@
 
 import { fromJS } from "immutable";
 import type * as immutable from "immutable";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useAsyncEffect from "use-async-effect";
 
 import { getKernelInfo } from "@cocalc/frontend/components/run-button/kernel-info";
@@ -35,6 +35,7 @@ export function useJupyterKernelsInfo(): {
   const [error, setError] = useState<string>("");
   const [kernelSpecs, setKernelSpecs] = useState<Kernels | null>();
   const { isRunning, project_id } = useProjectContext();
+  const requestId = useRef(0);
 
   function refresh() {
     setCnt((cnt) => cnt + 1);
@@ -43,11 +44,16 @@ export function useJupyterKernelsInfo(): {
   useEffect(() => refresh(), [isRunning]);
 
   useAsyncEffect(async () => {
+    const id = ++requestId.current;
     try {
+      setError("");
+      setKernelSpecs(null);
       const kernelInfo = await getKernelInfo(project_id, isRunning);
+      if (requestId.current !== id) return;
       setKernelSpecs(fromJS(kernelInfo) as Kernels);
       setError("");
     } catch (err) {
+      if (requestId.current !== id) return;
       setError(`${err}`);
     }
   }, [project_id, cnt]);
