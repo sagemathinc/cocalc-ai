@@ -922,7 +922,7 @@ export class SyncDoc extends EventEmitter {
     this.patchflowSession?.close();
 
     try {
-      this.closeTables();
+      await this.closeTables();
       dbg("closeTables -- successfully saved all data to database");
     } catch (err) {
       dbg(`closeTables -- ERROR -- ${err}`);
@@ -936,9 +936,9 @@ export class SyncDoc extends EventEmitter {
   });
 
   private closeTables = async () => {
-    this.syncstring_table?.close();
-    this.patches_table?.close();
-    this.ipywidgets_state?.close();
+    await this.syncstring_table?.close();
+    await this.patches_table?.close();
+    await this.ipywidgets_state?.close();
   };
 
   private synctable = async (

@@ -260,3 +260,48 @@ describe("backend sync-fs watch policy", () => {
     await doc.close();
   });
 });
+
+describe("syncdoc close waits for async table cleanup", () => {
+  it("does not resolve close until tables have closed", async () => {
+    const { client_id, project_id, path, init_queries } = a_txt();
+    const client = new Client(init_queries, client_id);
+    const doc = new SyncString({ project_id, path, client, fs });
+    await once(doc, "ready");
+
+    let releaseSyncstringTable!: () => void;
+    let releasePatchesTable!: () => void;
+    const syncstringTableClosed = new Promise<void>((resolve) => {
+      releaseSyncstringTable = resolve;
+    });
+    const patchesTableClosed = new Promise<void>((resolve) => {
+      releasePatchesTable = resolve;
+    });
+
+    (doc as any).syncstring_table = {
+      close: jest.fn(async () => {
+        await syncstringTableClosed;
+      }),
+    };
+    (doc as any).patches_table = {
+      close: jest.fn(async () => {
+        await patchesTableClosed;
+      }),
+    };
+
+    let resolved = false;
+    const closePromise = doc.close().then(() => {
+      resolved = true;
+    });
+
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    releaseSyncstringTable();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    releasePatchesTable();
+    await closePromise;
+    expect(resolved).toBe(true);
+  });
+});
