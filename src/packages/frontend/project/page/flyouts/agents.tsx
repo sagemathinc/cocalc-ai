@@ -70,9 +70,9 @@ import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const STATUS_COLORS: Record<AgentSessionStatus, string> = {
-  active: "processing",
+  active: "success",
   idle: "default",
-  running: "blue",
+  running: "processing",
   archived: "purple",
   failed: "red",
 };

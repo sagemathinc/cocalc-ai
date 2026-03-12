@@ -549,7 +549,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                   void openWorkspaceChat(record);
                 }}
               >
-                Open workspace chat
+                Chat
               </Button>
               <Button
                 size="small"
