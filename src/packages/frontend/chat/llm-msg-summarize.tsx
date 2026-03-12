@@ -4,9 +4,10 @@
  */
 
 import { Button, Collapse, Switch } from "antd";
+import { useEffect, useRef } from "react";
 
 import { useLanguageModelSetting } from "@cocalc/frontend/account/useLanguageModelSetting";
-import { useAsyncEffect, useState } from "@cocalc/frontend/app-framework";
+import { useState } from "@cocalc/frontend/app-framework";
 import { Paragraph, RawPrompt, Tip } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import PopconfirmKeyboard from "@cocalc/frontend/components/popconfirm-keyboard";
@@ -35,24 +36,35 @@ export function SummarizeThread({
   const [truncated, setTruncated] = useState(false);
   const [short, setShort] = useState(true);
   const [prompt, setPrompt] = useState<string>("");
+  const requestIdRef = useRef(0);
 
-  useAsyncEffect(async () => {
+  useEffect(() => {
     // we do no do all the processing if the popconfirm is not visible
-    if (!visible) return;
+    if (!visible) {
+      requestIdRef.current += 1;
+      setTokens(0);
+      setTruncated(false);
+      setPrompt("");
+      return;
+    }
 
-    const info = await actions?.summarizeThread({
-      model,
-      thread_id,
-      returnInfo: true,
-      short,
-    });
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    void (async () => {
+      const info = await actions?.summarizeThread({
+        model,
+        thread_id,
+        returnInfo: true,
+        short,
+      });
 
-    if (!info) return;
-    const { tokens, truncated, prompt } = info;
-    setTokens(tokens);
-    setTruncated(truncated);
-    setPrompt(prompt);
-  }, [visible, model, message, short]);
+      if (requestIdRef.current !== requestId || !info) return;
+      const { tokens, truncated, prompt } = info;
+      setTokens(tokens);
+      setTruncated(truncated);
+      setPrompt(prompt);
+    })();
+  }, [actions, model, short, thread_id, visible]);
 
   return (
     <PopconfirmKeyboard
