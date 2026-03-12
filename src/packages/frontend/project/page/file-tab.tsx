@@ -202,6 +202,7 @@ interface Props0 {
   flyout?: FixedTab;
   condensed?: boolean;
   showLabel?: boolean; // only relevant for the vertical activity bar. still showing alert tags!
+  onClose?: (path: string) => void;
 }
 interface PropsPath extends Props0 {
   path: string;
@@ -223,6 +224,7 @@ export function FileTab(props: Readonly<Props>) {
     flyout = null,
     condensed = false,
     showLabel = true,
+    onClose,
   } = props;
   let label = label_prop; // label modified below in some situations
   const actions = useActions({ project_id });
@@ -254,6 +256,10 @@ export function FileTab(props: Readonly<Props>) {
 
   function closeFile() {
     if (path == null || actions == null) return;
+    if (onClose != null) {
+      onClose(path);
+      return;
+    }
     actions.close_tab(path);
   }
 
