@@ -2495,6 +2495,9 @@ export class SyncDoc extends EventEmitter {
     } else if (this.isDeleted) {
       this.isDeleted = false;
     }
+    if (env.file && !env.meta?.deleted) {
+      this.emit("filesystem-change", env);
+    }
   };
 
   private patchflowPrevSeqForMoreHistory = (): number | undefined => {

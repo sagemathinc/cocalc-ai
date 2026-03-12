@@ -221,4 +221,21 @@ describe("backend sync-fs watch policy", () => {
     expect(syncFsWatch).not.toHaveBeenCalled();
     await doc.close();
   });
+
+  it("emits filesystem-change for backend file patches", async () => {
+    const { doc } = await openDoc("ordinary.txt");
+    const handler = jest.fn();
+    doc.on("filesystem-change", handler);
+    (doc as any).handlePatchflowPatch({
+      file: true,
+      meta: undefined,
+      time: legacyPatchId(Date.now()),
+    });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        file: true,
+      }),
+    );
+    await doc.close();
+  });
 });
