@@ -130,6 +130,7 @@ const { AgentDock } = require("./agent-dock");
 describe("AgentDock keyboard suppression", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    jest.useRealTimers();
     mockEraseActiveKeyHandler.mockClear();
     mockChatActions.setSelectedThread.mockClear();
     mockChatActions.scrollToIndex.mockClear();
@@ -180,6 +181,22 @@ describe("AgentDock keyboard suppression", () => {
     await waitFor(() =>
       expect(mockRefocusChatComposerInput).toHaveBeenCalled(),
     );
+  });
+
+  it("retries composer focus when the input mounts a little later", async () => {
+    jest.useFakeTimers();
+    mockRefocusChatComposerInput
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    await openDock();
+
+    await act(async () => {
+      jest.advanceTimersByTime(700);
+    });
+
+    expect(mockRefocusChatComposerInput).toHaveBeenCalledTimes(3);
   });
 
   it("stops dock clicks from bubbling to window listeners", async () => {

@@ -225,16 +225,24 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
 
   useEffect(() => {
     if (!chatActions || !session) return;
+    let done = false;
+    const timers: number[] = [];
     const focusComposer = () => {
-      refocusChatComposerInput(nodeRef.current);
+      if (done) return;
+      done = refocusChatComposerInput(nodeRef.current);
     };
-    const timer = window.setTimeout(focusComposer, 0);
+    for (const delayMs of [0, 50, 150, 300, 600]) {
+      timers.push(window.setTimeout(focusComposer, delayMs));
+    }
     let frame: number | undefined;
     if (typeof window.requestAnimationFrame === "function") {
       frame = window.requestAnimationFrame(focusComposer);
     }
     return () => {
-      window.clearTimeout(timer);
+      done = true;
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
       if (frame != null && typeof window.cancelAnimationFrame === "function") {
         window.cancelAnimationFrame(frame);
       }
