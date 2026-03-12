@@ -43,6 +43,7 @@ import { isDirViaFs } from "./is-dir";
 import { throttle } from "lodash";
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
+import { resolveExplicitStreamStart } from "./stream-start";
 
 const TOUCH_THROTTLE = 30_000;
 import { ExecStream } from "./types";
@@ -217,11 +218,15 @@ export class ProjectClient {
     },
     startExplicitly = false,
   ): ExecStream => {
+    const explicit = resolveExplicitStreamStart(
+      opts?.startStreamExplicitly,
+      startExplicitly,
+    );
     const execStream = new ExecStream();
     (async () => {
       try {
         await this.execStreamAsync({ ...opts, execStream });
-        if (!startExplicitly) {
+        if (!explicit) {
           execStream.emit("start");
         }
       } catch (err) {
