@@ -43,6 +43,7 @@ interface TaskSyncDBLike {
   set(obj: unknown): void;
   delete(where?: unknown): void;
   commit(): boolean;
+  save(): Promise<void>;
 }
 
 export interface SyncDBTasksSessionOptions {
@@ -105,7 +106,7 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = createTask(snapshot, input);
-    this.persistResult(result.snapshot, result.changedTaskIds);
+    await this.persistResult(result.snapshot, result.changedTaskIds);
     return result.task;
   }
 
@@ -113,7 +114,7 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = patchTasks(snapshot, patches);
-    this.persistResult(result.snapshot, result.changedTaskIds);
+    await this.persistResult(result.snapshot, result.changedTaskIds);
     return {
       changedTaskIds: result.changedTaskIds,
       revision: result.revision,
@@ -124,7 +125,7 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = removeTasks(snapshot, taskIds);
-    this.persistResult(result.snapshot, result.changedTaskIds);
+    await this.persistResult(result.snapshot, result.changedTaskIds);
     return {
       changedTaskIds: result.changedTaskIds,
       revision: result.revision,
@@ -135,7 +136,7 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = setTaskDone(snapshot, taskId, done);
-    this.persistResult(result.snapshot, result.changedTaskIds);
+    await this.persistResult(result.snapshot, result.changedTaskIds);
     return {
       changedTaskIds: result.changedTaskIds,
       revision: result.revision,
@@ -146,7 +147,7 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = updateTask(snapshot, taskId, changes);
-    this.persistResult(result.snapshot, result.changedTaskIds);
+    await this.persistResult(result.snapshot, result.changedTaskIds);
     return {
       changedTaskIds: result.changedTaskIds,
       revision: result.revision,
@@ -157,7 +158,7 @@ export class SyncDBTasksSession implements TasksSession {
     this.assertWritable();
     const snapshot = this.readSnapshot();
     const result = appendToDescription(snapshot, taskId, text);
-    this.persistResult(result.snapshot, result.changedTaskIds);
+    await this.persistResult(result.snapshot, result.changedTaskIds);
     return {
       changedTaskIds: result.changedTaskIds,
       revision: result.revision,
@@ -169,10 +170,10 @@ export class SyncDBTasksSession implements TasksSession {
     return createTaskSnapshot(normalizeTaskRows(this.syncdb.get()));
   }
 
-  private persistResult(
+  private async persistResult(
     snapshot: TaskListSnapshot,
     changedTaskIds: readonly string[],
-  ): void {
+  ): Promise<void> {
     for (const taskId of changedTaskIds) {
       const task = getTask(snapshot, taskId);
       if (task == null) {
@@ -182,6 +183,7 @@ export class SyncDBTasksSession implements TasksSession {
       }
     }
     this.syncdb.commit();
+    await this.syncdb.save();
   }
 
   private assertOpen(): void {
