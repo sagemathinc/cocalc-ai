@@ -17,6 +17,32 @@ import { dateValue, field } from "./access";
 import { type ChatActions } from "./actions";
 
 let lastGeneratedAcpMessageMs = 0;
+const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
+const ACP_ACK_MAX_ATTEMPTS = 5;
+const ACP_ACK_BACKOFF_MS = 2000;
+
+export function resetAcpApiStateForTests(): void {
+  lastGeneratedAcpMessageMs = 0;
+}
+
+function isRetryableAcpAckError(err: unknown): boolean {
+  const message = `${err ?? ""}`.toLowerCase();
+  return (
+    message.includes("without acknowledgement") ||
+    message.includes("timed out") ||
+    message.includes("timeout")
+  );
+}
+
+async function waitForAcpRetryDelay(attempt: number): Promise<void> {
+  const delayMs = Math.min(
+    30_000,
+    ACP_ACK_BACKOFF_MS * Math.max(1, 2 ** Math.max(0, attempt - 1)),
+  );
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
 
 function nextAcpMessageDate({
   actions,
@@ -249,40 +275,68 @@ export async function processAcpLLM({
   });
   let acknowledged = false;
   try {
-    setState("sending");
-    const stream = await webapp_client.conat_client.streamAcp({
-      project_id,
-      prompt: promptForRunWithLoop,
-      session_id: sessionKey,
-      config: buildAcpConfig({
-        path,
-        config:
-          effectiveSessionId != null
-            ? { ...config, sessionId: effectiveSessionId }
-            : config,
-        model: normalizedModel,
-      }),
-      chat: chatMetadata,
-    });
-    setState("sent");
-    for await (const response of stream) {
-      if (response?.type === "error") {
-        throw Error(response.error);
-      }
-      if (response?.type !== "status") {
-        continue;
-      }
-      acknowledged = true;
-      if (response.state === "queued") {
-        setState("queue");
-      } else if (response.state === "running") {
-        setState("running");
-      } else {
-        setState("sent");
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= ACP_ACK_MAX_ATTEMPTS; attempt += 1) {
+      acknowledged = false;
+      try {
+        setState("sending");
+        const stream = await webapp_client.conat_client.streamAcp(
+          {
+            project_id,
+            prompt: promptForRunWithLoop,
+            session_id: sessionKey,
+            config: buildAcpConfig({
+              path,
+              config:
+                effectiveSessionId != null
+                  ? { ...config, sessionId: effectiveSessionId }
+                  : config,
+              model: normalizedModel,
+            }),
+            chat: chatMetadata,
+          },
+          { timeout: ACP_ACK_TIMEOUT_MS },
+        );
+        for await (const response of stream) {
+          if (response?.type === "error") {
+            throw Error(response.error);
+          }
+          if (response?.type !== "status") {
+            continue;
+          }
+          acknowledged = true;
+          if (response.state === "queued") {
+            setState("queue");
+          } else if (response.state === "running") {
+            setState("running");
+          } else {
+            setState("sent");
+          }
+        }
+        if (!acknowledged) {
+          throw Error("ACP queue submission ended without acknowledgement");
+        }
+        lastError = undefined;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt >= ACP_ACK_MAX_ATTEMPTS || !isRetryableAcpAckError(err)) {
+          throw err;
+        }
+        try {
+          await webapp_client.conat_client.interruptAcp({
+            project_id,
+            threadId: sessionKey,
+            chat: chatMetadata,
+            note: `frontend retry after no ACP acknowledgement (attempt ${attempt})`,
+          });
+        } catch {}
+        setState("sending");
+        await waitForAcpRetryDelay(attempt);
       }
     }
-    if (!acknowledged) {
-      throw Error("ACP queue submission ended without acknowledgement");
+    if (lastError != null) {
+      throw lastError;
     }
   } catch (err) {
     console.error("ACP turn failed", err);
