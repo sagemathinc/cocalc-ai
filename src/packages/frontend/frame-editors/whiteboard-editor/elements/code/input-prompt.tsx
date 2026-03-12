@@ -3,8 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useState } from "react";
-import { useAsyncEffect } from "use-async-effect";
+import { useEffect, useState } from "react";
 
 import useIsMountedRef from "@cocalc/frontend/app-framework/is-mounted-hook";
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
@@ -17,11 +16,17 @@ export default function CodeInputPrompt({ element }) {
   const [actions, setActions] = useState<JupyterActions | undefined>(undefined);
   const isMountedRef = useIsMountedRef();
 
-  useAsyncEffect(async () => {
-    const actions = await getJupyterActions({ project_id, path });
-    if (!isMountedRef.current) return;
-    setActions(actions);
-  });
+  useEffect(() => {
+    let closed = false;
+    void (async () => {
+      const actions = await getJupyterActions({ project_id, path });
+      if (closed || !isMountedRef.current) return;
+      setActions(actions);
+    })();
+    return () => {
+      closed = true;
+    };
+  }, [isMountedRef, path, project_id]);
   return (
     <InputPrompt
       style={{ textAlign: undefined }}
