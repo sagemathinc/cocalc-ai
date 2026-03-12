@@ -31,6 +31,16 @@ export default function useListing({
   const listingsRef = useRef<undefined | ListingsClient>(undefined);
   const pathRef = useRef<string>(path);
 
+  const refreshListing = () => {
+    setListing(listingsRef.current?.get(pathRef.current));
+  };
+
+  const watchPath = async () => {
+    if (!listingsRef.current) return;
+    await listingsRef.current.watch(pathRef.current);
+    refreshListing();
+  };
+
   useAsyncEffect(async () => {
     setListing(undefined);
     if (!project_id) {
@@ -41,10 +51,11 @@ export default function useListing({
     });
     const handleChange = (path) => {
       if (path == pathRef.current) {
-        setListing(listingsRef.current?.get(pathRef.current));
+        refreshListing();
       }
     };
     listingsRef.current.on("change", handleChange);
+    await watchPath();
 
     return () => {
       listingsRef.current?.removeListener("change", handleChange);
@@ -55,7 +66,8 @@ export default function useListing({
 
   useEffect(() => {
     pathRef.current = path;
-    setListing(listingsRef.current?.get(pathRef.current));
+    refreshListing();
+    void watchPath();
   }, [path]);
 
   return listing;
