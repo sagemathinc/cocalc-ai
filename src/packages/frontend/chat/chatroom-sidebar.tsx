@@ -237,6 +237,7 @@ interface ChatRoomSidebarContentProps {
   openExportModal: (opts?: ChatExportOpenRequest) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
   confirmDeleteThread: (threadKey: string, label: string) => void;
+  openAutomationModal: (threadKey: string) => void;
 }
 
 export function ChatRoomSidebarContent({
@@ -255,6 +256,7 @@ export function ChatRoomSidebarContent({
   openExportModal,
   openForkModal,
   confirmDeleteThread,
+  openAutomationModal,
 }: ChatRoomSidebarContentProps) {
   const [hoveredThread, setHoveredThread] = React.useState<string | null>(null);
   const [openThreadMenuKey, setOpenThreadMenuKey] = React.useState<
@@ -285,6 +287,14 @@ export function ChatRoomSidebarContent({
           },
         ]
       : [];
+    const automationItems: NonNullable<MenuProps["items"]> = isAI
+      ? [
+          {
+            key: "automation",
+            label: "Automation…",
+          },
+        ]
+      : [];
     return {
       items: [
         {
@@ -299,6 +309,7 @@ export function ChatRoomSidebarContent({
           key: "archive",
           label: "Archive chat",
         },
+        ...automationItems,
         ...codexItems,
         {
           type: "divider",
@@ -359,6 +370,8 @@ export function ChatRoomSidebarContent({
             return;
           }
           antdMessage.success("Chat archived.");
+        } else if (key === "automation") {
+          openAutomationModal(threadKey);
         } else if (key === "git-browser") {
           openGitBrowser(threadKey);
         } else if (key === "delete") {

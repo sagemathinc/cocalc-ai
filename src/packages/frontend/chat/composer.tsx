@@ -75,6 +75,7 @@ export interface ChatRoomComposerProps {
   onLoopConfigChange?: (config?: AcpLoopConfig) => void;
   automationConfig?: AcpAutomationConfig;
   onAutomationSave?: (config: AcpAutomationConfig) => Promise<void> | void;
+  openAutomationModalToken?: number;
 }
 
 export { findChatComposerFocusTarget, refocusChatComposerInput };
@@ -108,6 +109,7 @@ export function ChatRoomComposer({
   onLoopConfigChange,
   automationConfig,
   onAutomationSave,
+  openAutomationModalToken,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -139,6 +141,9 @@ export function ChatRoomComposer({
   const [automationSaving, setAutomationSaving] = useState<boolean>(false);
   const [automationDraft, setAutomationDraft] = useState<AcpAutomationConfig>(
     automationConfig ?? AUTOMATION_DEFAULTS,
+  );
+  const lastAutomationModalTokenRef = useRef<number | undefined>(
+    openAutomationModalToken,
   );
 
   const stripHtml = (value: string): string =>
@@ -450,6 +455,14 @@ export function ChatRoomComposer({
     );
   }, [automationConfig, automationModalOpen, input]);
 
+  useEffect(() => {
+    if (openAutomationModalToken == null) return;
+    if (lastAutomationModalTokenRef.current === openAutomationModalToken)
+      return;
+    lastAutomationModalTokenRef.current = openAutomationModalToken;
+    setAutomationModalOpen(true);
+  }, [openAutomationModalToken]);
+
   const applyLoopConfig = useCallback(() => {
     const normalized: AcpLoopConfig = {
       enabled: loopDraft.enabled === true,
@@ -658,36 +671,45 @@ export function ChatRoomComposer({
               <div
                 style={{
                   display: "flex",
-                  alignItems: "center",
+                  flexDirection: "column",
+                  alignItems: "flex-end",
                   justifyContent: "flex-end",
-                  gap: "6px",
+                  gap: "4px",
                   marginBottom: "5px",
                 }}
               >
-                <Tooltip title="Enable autonomous loop for this Codex send">
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: "#666" }}>Loop</span>
-                    <Switch
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                >
+                  <Tooltip title="Enable autonomous loop for this Codex send">
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: "#666" }}>Loop</span>
+                      <Switch
+                        size="small"
+                        checked={loopEnabled}
+                        onChange={onLoopToggle}
+                      />
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Configure loop settings">
+                    <Button
                       size="small"
-                      checked={loopEnabled}
-                      onChange={onLoopToggle}
+                      onClick={() => setLoopModalOpen(true)}
+                      disabled={!loopEnabled}
+                      icon={<Icon name="gear" />}
                     />
-                  </span>
-                </Tooltip>
-                <Tooltip title="Configure loop settings">
-                  <Button
-                    size="small"
-                    onClick={() => setLoopModalOpen(true)}
-                    disabled={!loopEnabled}
-                    icon={<Icon name="gear" />}
-                  />
-                </Tooltip>
+                  </Tooltip>
+                </div>
                 <Tooltip title="Configure a scheduled Codex automation for this thread">
                   <Button
                     size="small"

@@ -397,6 +397,8 @@ export function ChatPanel({
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(
     null,
   );
+  const [openAutomationModalToken, setOpenAutomationModalToken] =
+    useState<number>(0);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
@@ -1223,6 +1225,27 @@ export function ChatPanel({
     [actions],
   );
 
+  const openAutomationModalForThread = useCallback(
+    (threadKey: string) => {
+      const normalized = `${threadKey ?? ""}`.trim();
+      if (!normalized) return;
+      if (normalized !== selectedThreadKey) {
+        setSelectedThreadKey(normalized);
+      }
+      if (isCombinedFeedSelected) {
+        setComposerTargetKey(normalized);
+      }
+      setAllowAutoSelectThread(false);
+      setOpenAutomationModalToken((n) => n + 1);
+    },
+    [
+      selectedThreadKey,
+      isCombinedFeedSelected,
+      setSelectedThreadKey,
+      setAllowAutoSelectThread,
+    ],
+  );
+
   const sendGitBrowserAgentPrompt = useCallback(
     async (prompt: string) => {
       const trimmed = `${prompt ?? ""}`.trim();
@@ -1472,6 +1495,7 @@ export function ChatPanel({
         onLoopConfigChange={handleLoopConfigChange}
         automationConfig={selectedThreadAutomationConfig}
         onAutomationSave={handleAutomationSave}
+        openAutomationModalToken={openAutomationModalToken}
       />
     </div>
   );
@@ -1527,6 +1551,7 @@ export function ChatPanel({
             confirmDeleteThread={
               threadActionHandlers?.confirmDeleteThread ?? (() => undefined)
             }
+            openAutomationModal={openAutomationModalForThread}
           />
         }
         chatContent={renderChatContent()}
