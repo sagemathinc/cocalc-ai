@@ -41,6 +41,7 @@ import { shouldOpenFileInNewWindow } from "../utils";
 import { Group } from "./active-group";
 import { StarredInTabs } from "./active-starred";
 import { OpenFileTabs } from "./active-tabs";
+import { reorderVisibleSubset } from "../file-tab-order";
 import { ActiveTop } from "./active-top";
 import {
   ACTIVE_FOLDER_TYPE,
@@ -412,6 +413,18 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
 
   function dndDragEnd({ active, over }) {
     if (active == null || over == null || active.id == over.id) return;
+    if (workspaces.selection.kind === "workspace") {
+      const nextOrder = reorderVisibleSubset(
+        openFiles.toJS(),
+        openFiles.filter((path) => filteredFiles.includes(path)).toJS(),
+        active.id,
+        over.id,
+      );
+      if (nextOrder != null) {
+        actions?.set_file_tab_order(nextOrder);
+      }
+      return;
+    }
     actions?.move_file_tab({
       old_index: openFiles.indexOf(active.id),
       new_index: openFiles.indexOf(over.id),

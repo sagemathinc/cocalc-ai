@@ -724,6 +724,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.save_session();
   }
 
+  set_file_tab_order(order: string[]): void {
+    if (this.open_files == null) return;
+    this.open_files.set_order(order);
+    this.save_session();
+  }
+
   // Closes a file tab
   // Also closes file references.
   // path not always defined, see #3440

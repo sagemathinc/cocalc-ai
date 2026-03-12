@@ -19,6 +19,7 @@ import {
 } from "@cocalc/frontend/components/sortable-tabs";
 import { EDITOR_PREFIX, path_to_tab } from "@cocalc/util/misc";
 import { file_tab_labels } from "../file-tab-labels";
+import { reorderVisibleSubset } from "./file-tab-order";
 import { FileTab } from "./file-tab";
 import { FILE_TAB_STRIP_ATTRIBUTE } from "./keyboard-navigation";
 import { useProjectContext } from "../context";
@@ -164,6 +165,19 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     }, 250);
 
     if (active.id == over.id) {
+      return;
+    }
+    const globalOpenFiles = openFiles?.toJS?.() ?? openFiles ?? [];
+    if (workspaces.selection.kind === "workspace") {
+      const nextOrder = reorderVisibleSubset(
+        globalOpenFiles,
+        paths,
+        keyToPath(active.id),
+        keyToPath(over.id),
+      );
+      if (nextOrder != null) {
+        actions.set_file_tab_order(nextOrder);
+      }
       return;
     }
     actions.move_file_tab({

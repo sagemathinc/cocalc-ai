@@ -202,4 +202,16 @@ export class OpenFiles {
     const new_list = temp_list.splice(opts.new_index, 0, path);
     this.setState(undefined, new_list);
   }
+
+  public set_order(order: string[]): void {
+    const open_files_order = this.store.get("open_files_order");
+    const current = open_files_order.toArray();
+    if (
+      order.length !== current.length ||
+      current.some((path) => !order.includes(path))
+    ) {
+      throw Error("invalid tab order");
+    }
+    this.setState(undefined, List(order));
+  }
 }
