@@ -38,6 +38,18 @@ interface LLMHistoryEntry {
 
 // Single cache for the shared dstream
 let streamCache: DStream<LLMHistoryEntry> | null = null;
+const streamResetListeners = new Set<() => void>();
+
+function notifyStreamReset() {
+  for (const listener of Array.from(streamResetListeners)) {
+    listener();
+  }
+}
+
+export function resetLLMHistoryForTests() {
+  streamCache = null;
+  streamResetListeners.clear();
+}
 
 // Get or create the single shared dstream
 const getDStream = reuseInFlight(async () => {
@@ -79,6 +91,7 @@ const getDStream = reuseInFlight(async () => {
 // Hook for managing LLM prompt history using dstream
 export function useLLMHistory(type: LLMHistoryType = "general") {
   const [prompts, setPrompts] = useState<string[]>([]);
+  const [streamResetToken, setStreamResetToken] = useState(0);
 
   // Use ref to store stable listener function
   const listenerRef = useRef<((newEntry: LLMHistoryEntry) => void) | null>(
@@ -92,6 +105,16 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
       .map((entry) => entry.prompt)
       .reverse();
   }
+
+  useEffect(() => {
+    const handleStreamReset = () => {
+      setStreamResetToken((n) => n + 1);
+    };
+    streamResetListeners.add(handleStreamReset);
+    return () => {
+      streamResetListeners.delete(handleStreamReset);
+    };
+  }, []);
 
   // Initialize dstream and set up listeners
   useEffect(() => {
@@ -139,7 +162,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
         listenerRef.current = null;
       }
     };
-  }, [type]);
+  }, [type, streamResetToken]);
 
   async function addPrompt(prompt: string) {
     const trimmedPrompt = prompt.trim();
@@ -177,6 +200,7 @@ export function useLLMHistory(type: LLMHistoryType = "general") {
 
       // Remove from cache so a new stream will be created
       streamCache = null;
+      notifyStreamReset();
     } catch (err) {
       console.warn(`Error clearing LLM history -- ${err}`);
       // Reload prompts on error
