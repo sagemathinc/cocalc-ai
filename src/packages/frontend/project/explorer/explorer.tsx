@@ -988,6 +988,7 @@ You can either wait for this host to become available again, or move this ${proj
                     <FileListing
                       active_file_sort={active_file_sort}
                       sort_by={(column_name: string) => {
+                        allowNextListingUpdate();
                         void setSort({
                           project_id,
                           path: effective_current_path,

@@ -878,7 +878,10 @@ export function FilesFlyout({
         refreshBackups={refreshBackups}
         currentPath={effective_current_path}
         onNavigate={navigateFlyout}
-        setActiveFileSort={setActiveFileSort}
+        setActiveFileSort={(sort) => {
+          setActiveFileSort(sort);
+          allowNextListingUpdate();
+        }}
         typeFilter={typeFilter}
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
