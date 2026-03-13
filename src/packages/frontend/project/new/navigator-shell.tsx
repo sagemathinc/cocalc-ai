@@ -2,11 +2,9 @@ import {
   Alert,
   Button,
   Dropdown,
-  Input,
   Modal,
   Select,
   Space,
-  Tag,
   Tooltip,
   Typography,
   message as antdMessage,
@@ -15,17 +13,14 @@ import type { MenuProps } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
-import { ChatIconPicker } from "@cocalc/frontend/chat/chat-icon-picker";
 import {
   upsertAgentSessionRecord,
   type AgentSessionRecord,
   type AgentSessionStatus,
 } from "@cocalc/frontend/chat/agent-session-index";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
-import { Loading } from "@cocalc/frontend/components";
-import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { Loading, ThemeEditorModal } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useKeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -1082,65 +1077,43 @@ export function NavigatorShell({
           </Dropdown>
         </Space>
       </Space>
-      <Modal
-        title="Thread Settings"
+      <ThemeEditorModal
         open={settingsOpen}
+        title="Thread Settings"
+        value={{
+          title: settingsName,
+          description: "",
+          color: settingsColor ?? null,
+          accent_color: null,
+          icon: settingsIcon ?? "",
+          image_blob: settingsImage,
+        }}
+        onChange={(patch) => {
+          if (patch.title != null) setSettingsName(patch.title);
+          if (patch.color !== undefined) {
+            setSettingsColor(patch.color ?? undefined);
+          }
+          if (patch.icon != null) {
+            setSettingsIcon(patch.icon || undefined);
+          }
+          if (patch.image_blob != null) {
+            setSettingsImage(patch.image_blob);
+          }
+        }}
         onCancel={() => setSettingsOpen(false)}
-        onOk={() => void saveThreadSettings()}
-        okText="Save"
+        onSave={saveThreadSettings}
         confirmLoading={settingsSaving}
-        destroyOnHidden
-      >
-        <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <ThreadBadge
-              icon={settingsIcon}
-              color={settingsColor}
-              image={settingsImage}
-              size={28}
-              fallbackIcon="comment"
-            />
-            <Typography.Text type="secondary">
-              Customize this navigator thread appearance.
-            </Typography.Text>
-          </div>
+        defaultIcon="comment"
+        showDescription={false}
+        showAccentColor={false}
+        previewImageUrl={settingsImage}
+        extraBeforeTheme={
+          <Typography.Text type="secondary">
+            Customize this navigator thread appearance.
+          </Typography.Text>
+        }
+        renderImageInput={() => (
           <div>
-            <div style={{ marginBottom: 4, color: "#666" }}>Title</div>
-            <Input
-              value={settingsName}
-              onChange={(e) => setSettingsName(e.target.value)}
-              placeholder="Thread title"
-            />
-          </div>
-          <div>
-            <div style={{ marginBottom: 4, color: "#666" }}>Icon</div>
-            <ChatIconPicker
-              value={settingsIcon}
-              onChange={setSettingsIcon}
-              modalTitle="Select Thread Icon"
-              placeholder="Select an icon"
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ color: "#666" }}>Color</div>
-            <ColorButton
-              title="Select Thread Color"
-              onChange={setSettingsColor}
-            />
-            {settingsColor ? (
-              <Tag
-                color={settingsColor}
-                style={{ margin: 0, color: "#111", border: "1px solid #ddd" }}
-              >
-                {settingsColor}
-              </Tag>
-            ) : null}
-            <Button size="small" onClick={() => setSettingsColor(undefined)}>
-              Clear
-            </Button>
-          </div>
-          <div>
-            <div style={{ marginBottom: 4, color: "#666" }}>Image</div>
             <ThreadImageUpload
               projectId={project_id}
               value={settingsImage}
@@ -1149,8 +1122,8 @@ export function NavigatorShell({
               uploadText="Click or drag image"
             />
           </div>
-        </div>
-      </Modal>
+        )}
+      />
       {error ? (
         <Alert
           type="error"
