@@ -131,8 +131,12 @@ const PANEL_STYLE: React.CSSProperties = {
 } as const;
 
 type DirectoryTreeDirent = {
+  name?: string;
+  isDirectory?: () => boolean;
+};
+
+type DirectoryTreeNamedDirent = {
   name: string;
-  path: string;
   isDirectory: () => boolean;
 };
 
@@ -322,13 +326,15 @@ export function DirectoryTreePanel({
         })) as unknown as DirectoryTreeDirent[];
         const dirs = entries
           .filter(
-            (entry) =>
+            (entry): entry is DirectoryTreeNamedDirent =>
+              typeof entry.name === "string" &&
+              typeof entry.isDirectory === "function" &&
               entry.isDirectory() &&
               entry.name !== "." &&
               entry.name !== ".." &&
               (show_hidden || !entry.name.startsWith(".")),
           )
-          .map((entry) => entry.path)
+          .map((entry) => misc.path_to_file(path, entry.name))
           .sort((a, b) => misc.cmp(a, b));
         setChildrenByPath((prev) => ({ ...prev, [path]: dirs }));
         loadedPathsRef.current.add(path);
