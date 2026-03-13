@@ -20,8 +20,8 @@ bm.on('change', (e) => console.log('Bookmark change:', e))
 import { sortBy, uniq } from "lodash";
 import { useEffect, useRef, useState } from "react";
 
-import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { waitForPersistAccountId } from "@cocalc/frontend/project/explorer/persist-account-id";
 import { CONAT_BOOKMARKS_KEY } from "@cocalc/util/consts/bookmarks";
 import { path_split, path_to_file } from "@cocalc/util/misc";
 import type { FlyoutActiveStarred } from "./state";
@@ -61,13 +61,7 @@ export function useStarredFilesManager(
       setIsInitialized(false);
 
       // Wait until account is authenticated
-      const store = redux.getStore("account");
-      await store.async_wait({
-        until: () => store.get_account_id() != null,
-        timeout: 0, // indefinite timeout
-      });
-
-      const account_id = store.get_account_id();
+      const account_id = await waitForPersistAccountId();
       try {
         conatBookmarks = await initializeConatBookmarks(account_id);
       } finally {
@@ -163,9 +157,7 @@ export async function migrateStarsOnMove(
   destDir: string,
 ): Promise<void> {
   try {
-    const store = redux.getStore("account");
-    const account_id = store.get_account_id();
-    if (!account_id) return;
+    const account_id = await waitForPersistAccountId();
 
     const bookmarks = await webapp_client.conat_client.dkv<string[]>({
       account_id,

@@ -7,15 +7,17 @@ import { type DKV } from "@cocalc/conat/sync/dkv";
 import { type SortField } from "@cocalc/frontend/project/listing/use-listing";
 import { dirname } from "path";
 import { redux } from "@cocalc/frontend/app-framework";
+import { waitForPersistAccountId } from "./persist-account-id";
 
 const NAME = "cocalc-explorer-config";
 
 let kv: DKV | null = null;
 async function init() {
   if (kv == null) {
+    const account_id = await waitForPersistAccountId();
     kv = await webapp_client.conat_client.dkv({
       name: NAME,
-      account_id: webapp_client.account_id,
+      account_id,
     });
   }
 }

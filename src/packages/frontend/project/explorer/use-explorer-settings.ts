@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { ActiveFileSort } from "@cocalc/frontend/project_store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { waitForPersistAccountId } from "./persist-account-id";
 
 interface ExplorerSettings {
   sortColumn?: string;
@@ -63,14 +64,10 @@ function useSettingsDKV(
     let conatDkv: SettingsDKV | null = null;
 
     (async () => {
-      const store = redux.getStore("account");
-      await store.async_wait({
-        until: () => store.get_account_id() != null,
-        timeout: 0,
-      });
       if (!isMounted) return;
 
-      const account_id = store.get_account_id();
+      const account_id = await waitForPersistAccountId();
+      if (!isMounted) return;
       try {
         conatDkv = (await webapp_client.conat_client.dkv<ExplorerSettings>({
           account_id,

@@ -6,8 +6,8 @@
 import { useCallback, useRef, useState } from "react";
 import useAsyncEffect from "use-async-effect";
 
-import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { waitForPersistAccountId } from "./persist-account-id";
 
 const DKV_NAME = "explorer-search-history";
 const MAX_HISTORY = 100;
@@ -90,18 +90,14 @@ export function useExplorerSearchHistory(project_id: string): {
 
   useAsyncEffect(
     async (isMounted) => {
-      const store = redux.getStore("account");
-      await store.async_wait({
-        until: () => store.get_account_id() != null,
-        timeout: 0,
-      });
+      const account_id = await waitForPersistAccountId();
       if (!isMounted()) {
         return;
       }
 
       try {
         const conatDkv = await webapp_client.conat_client.dkv<string[]>({
-          account_id: store.get_account_id(),
+          account_id,
           name: DKV_NAME,
         });
         if (!isMounted()) {

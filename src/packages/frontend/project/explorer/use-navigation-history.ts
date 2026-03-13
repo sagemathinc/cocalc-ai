@@ -5,8 +5,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { waitForPersistAccountId } from "./persist-account-id";
 
 const MAX_HISTORY = 100;
 const DKV_NAME = "explorer-nav-history";
@@ -84,14 +84,10 @@ export function useNavigationHistory(
     let conatDkv: NavDKV | null = null;
 
     (async () => {
-      const store = redux.getStore("account");
-      await store.async_wait({
-        until: () => store.get_account_id() != null,
-        timeout: 0,
-      });
       if (!isMounted) return;
 
-      const account_id = store.get_account_id();
+      const account_id = await waitForPersistAccountId();
+      if (!isMounted) return;
       try {
         conatDkv = (await webapp_client.conat_client.dkv<PersistedState>({
           account_id,
