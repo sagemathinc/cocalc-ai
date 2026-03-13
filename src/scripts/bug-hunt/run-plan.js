@@ -4,6 +4,10 @@
 const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  refreshLiveContextTarget,
+  writeContextFileIfChanged,
+} = require("./context-target.js");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_CONTEXT_FILE = path.join(
@@ -347,7 +351,9 @@ function main(argv = process.argv.slice(2)) {
     }
     return;
   }
-  const context = readJson(options.contextFile, "bug-hunt context");
+  const originalContext = readJson(options.contextFile, "bug-hunt context");
+  const context = refreshLiveContextTarget(originalContext);
+  writeContextFileIfChanged(options.contextFile, originalContext, context);
   if (!`${context.browser_id ?? ""}`.trim()) {
     throw new Error(
       "current context does not include a browser_id; attach first with bug-hunt:attach",

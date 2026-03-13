@@ -1,0 +1,26 @@
+{
+  "name": "seeded-tasks-smoke",
+  "steps": [
+    {
+      "name": "wait body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert tasks path",
+      "assert": "return window.location.href.includes('.tasks');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert seeded tasks tab is visible",
+      "assert": "return document.body.innerText.includes('scratch.tasks');",
+      "retries": 2,
+      "recovery": "reload"
+    }
+  ]
+}

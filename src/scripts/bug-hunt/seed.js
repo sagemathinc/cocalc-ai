@@ -6,6 +6,10 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const {
+  refreshLiveContextTarget,
+  writeContextFileIfChanged,
+} = require("./context-target.js");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_CONTEXT_FILE = path.join(
@@ -398,7 +402,9 @@ function openFixturePaths(context, projectId, openPaths) {
 
 function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
-  const context = readJson(options.contextFile, "bug-hunt context");
+  const originalContext = readJson(options.contextFile, "bug-hunt context");
+  const context = refreshLiveContextTarget(originalContext);
+  writeContextFileIfChanged(options.contextFile, originalContext, context);
   const projectId =
     `${context.project_id || context.exports?.COCALC_PROJECT_ID || ""}`.trim();
   if (!projectId) {

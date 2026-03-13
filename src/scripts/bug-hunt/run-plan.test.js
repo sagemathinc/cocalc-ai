@@ -60,6 +60,7 @@ test("listAvailablePlans returns checked-in plan names", () => {
     "/home/wstein/build/cocalc-lite2/src/.agents/bug-hunt/plans",
   );
   assert.ok(plans.some((plan) => plan.name === "seeded-files-smoke"));
+  assert.ok(plans.some((plan) => plan.name === "seeded-tasks-smoke"));
   assert.ok(plans.some((plan) => plan.name === "session-smoke"));
 });
 
