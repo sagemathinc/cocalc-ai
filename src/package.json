@@ -27,6 +27,7 @@
     "bug-hunt:capture": "node ./scripts/bug-hunt/capture.js",
     "bug-hunt:extract": "node ./scripts/bug-hunt/extract-open-bugs.js",
     "bug-hunt:preflight": "node ./scripts/bug-hunt/preflight.js",
+    "bug-hunt:seed": "node ./scripts/bug-hunt/seed.js",
     "skill:bug-hunter:diff": "node ./scripts/dev/sync-codex-skill.js cocalc-bug-hunter diff",
     "skill:bug-hunter:push": "node ./scripts/dev/sync-codex-skill.js cocalc-bug-hunter push",
     "skill:bug-hunter:pull": "node ./scripts/dev/sync-codex-skill.js cocalc-bug-hunter pull",
