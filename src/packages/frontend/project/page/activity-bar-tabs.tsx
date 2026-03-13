@@ -220,6 +220,12 @@ export function VerticalFixedTabs({
       : condensed
         ? "8px" // margin for condensed mode
         : "12px"; // margin for normal mode
+    const workspaceImage =
+      name === "workspaces" && workspaces.current?.theme.image_blob?.trim()
+        ? `/blobs/theme-image.png?uuid=${encodeURIComponent(
+            workspaces.current.theme.image_blob.trim(),
+          )}`
+        : undefined;
     const iconName: IconName | undefined =
       name === "workspaces"
         ? (workspaces.current?.theme.icon?.trim() as IconName | undefined) ||
@@ -245,6 +251,7 @@ export function VerticalFixedTabs({
           ...themedIconStyle,
         }}
         iconName={iconName}
+        imageUrl={workspaceImage}
         extraSpacing={spacing}
         flyout={name}
         condensed={condensed}
