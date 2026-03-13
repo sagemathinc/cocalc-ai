@@ -95,6 +95,8 @@ function iconFor(record?: WorkspaceRecord | null): IconName {
   return (record?.theme.icon?.trim() as IconName | undefined) || DEFAULT_ICON;
 }
 
+const WORKSPACE_MEDIA_SIZE = 64;
+
 function selectionValue(selection: WorkspaceSelection): string {
   switch (selection.kind) {
     case "all":
@@ -465,8 +467,8 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               src={imageUrl}
               alt={`${record.theme.title} workspace`}
               style={{
-                width: 32,
-                height: 32,
+                width: WORKSPACE_MEDIA_SIZE,
+                height: WORKSPACE_MEDIA_SIZE,
                 borderRadius: 8,
                 objectFit: "cover",
                 flex: "0 0 auto",
@@ -475,8 +477,8 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           ) : (
             <div
               style={{
-                width: 32,
-                height: 32,
+                width: WORKSPACE_MEDIA_SIZE,
+                height: WORKSPACE_MEDIA_SIZE,
                 borderRadius: 8,
                 display: "flex",
                 alignItems: "center",
@@ -484,6 +486,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 background: record.theme.accent_color ?? "#f5f5f5",
                 color: record.theme.color ?? undefined,
                 flex: "0 0 auto",
+                fontSize: 28,
               }}
             >
               <Icon name={iconFor(record)} />
