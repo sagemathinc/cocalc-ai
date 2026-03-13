@@ -26,6 +26,7 @@ import {
   resolveCodexAuthRuntime,
   resolveSharedCodexHome,
 } from "./codex-auth";
+import { syncSubscriptionAuthToRegistryIfChanged } from "./codex-auth-registry";
 
 const logger = getLogger("project-host:codex-project");
 const CONTAINER_TTL_MS = Number(
@@ -684,6 +685,26 @@ export async function spawnCodexInProjectContainer({
   });
   proc.on("exit", async () => {
     try {
+      if (
+        authRuntime.source === "subscription" &&
+        accountId &&
+        authRuntime.codexHome
+      ) {
+        try {
+          await syncSubscriptionAuthToRegistryIfChanged({
+            projectId,
+            accountId,
+            codexHome: authRuntime.codexHome,
+          });
+        } catch (err) {
+          logger.debug("codex project: failed syncing subscription auth", {
+            projectId,
+            accountId,
+            codexHome: authRuntime.codexHome,
+            err: `${err}`,
+          });
+        }
+      }
       await release();
     } finally {
       if (touchReason) {

@@ -21,6 +21,7 @@ type PullResult = {
 };
 
 const existenceCache = new Map<string, { has: boolean; expires: number }>();
+const syncedSubscriptionAuthSignatures = new Map<string, string>();
 const EXISTENCE_CACHE_TTL_MS = 30_000;
 const SITE_OPENAI_KEY_CACHE_TTL_MS = Math.max(
   60_000,
@@ -137,6 +138,18 @@ async function readLocalAuth(codexHome: string): Promise<string | undefined> {
   }
 }
 
+async function localAuthSignature(
+  codexHome: string,
+): Promise<string | undefined> {
+  const authPath = join(codexHome, "auth.json");
+  try {
+    const stat = await fs.stat(authPath);
+    return `${stat.size}:${Math.floor(stat.mtimeMs)}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function pushSubscriptionAuthToRegistry({
   projectId,
   accountId,
@@ -185,6 +198,38 @@ export async function pushSubscriptionAuthToRegistry({
     });
     return { ok: false };
   }
+}
+
+export async function syncSubscriptionAuthToRegistryIfChanged({
+  projectId,
+  accountId,
+  codexHome,
+  force = false,
+}: {
+  projectId: string;
+  accountId: string;
+  codexHome: string;
+  force?: boolean;
+}): Promise<{ ok: boolean; id?: string; skipped?: boolean }> {
+  const signature = await localAuthSignature(codexHome);
+  if (!signature) {
+    return { ok: false, skipped: true };
+  }
+  if (!force && syncedSubscriptionAuthSignatures.get(codexHome) === signature) {
+    return { ok: true, skipped: true };
+  }
+  const result = await pushSubscriptionAuthToRegistry({
+    projectId,
+    accountId,
+    codexHome,
+  });
+  if (result.ok) {
+    syncedSubscriptionAuthSignatures.set(codexHome, signature);
+  }
+  return {
+    ...result,
+    skipped: false,
+  };
 }
 
 export async function hasSubscriptionAuthInRegistry({
