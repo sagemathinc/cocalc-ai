@@ -10,10 +10,12 @@ import { Icon, SearchInput } from "@cocalc/frontend/components";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectContext } from "../context";
-import { TERM_MODE_CHAR } from "./file-listing";
 import { TerminalModeDisplay } from "@cocalc/frontend/project/explorer/file-listing/terminal-mode-display";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
+import { SearchHistoryDropdown } from "./search-history-dropdown";
+import { useExplorerSearchHistory } from "./use-search-history";
+import { isTerminalMode } from "@cocalc/frontend/project/explorer/file-listing/utils";
 
 const HelpStyle = {
   wordWrap: "break-word",
@@ -121,6 +123,11 @@ export const SearchBar = memo(
   }: Props) => {
     const intl = useIntl();
     const { project_id } = useProjectContext();
+    const {
+      history,
+      initialized: historyInitialized,
+      addHistoryEntry,
+    } = useExplorerSearchHistory(project_id);
     const numDisplayedFiles =
       useTypedRedux({ project_id }, "numDisplayedFiles") ?? 0;
 
@@ -130,6 +137,11 @@ export const SearchBar = memo(
     const [state, set_state] = useState<"edit" | "run">("edit");
     const [error, set_error] = useState<string | undefined>(undefined);
     const [stdout, set_stdout] = useState<string | undefined>(undefined);
+    const [historyMode, setHistoryMode] = useState(false);
+    const [historyIndex, setHistoryIndex] = useState(0);
+    const inputFocusedRef = useRef(false);
+    const previousSearchRef = useRef(file_search);
+    const skipNextClearHistoryRef = useRef(false);
 
     const _id = useRef<number>(0);
     const [cmd, set_cmd] = useState<{ input: string; id: number } | undefined>(
@@ -141,9 +153,45 @@ export const SearchBar = memo(
     }, [current_path]);
 
     useEffect(() => {
+      if (!historyMode) return;
+      if (history.length === 0) {
+        setHistoryMode(false);
+        setHistoryIndex(0);
+        return;
+      }
+      if (historyIndex >= history.length) {
+        setHistoryIndex(history.length - 1);
+      }
+    }, [history, historyIndex, historyMode]);
+
+    useEffect(() => {
+      const prev = previousSearchRef.current;
+      if (prev === file_search) {
+        return;
+      }
+      previousSearchRef.current = file_search;
+
+      if (file_search.length > 0 || !prev) {
+        return;
+      }
+
+      if (skipNextClearHistoryRef.current) {
+        skipNextClearHistoryRef.current = false;
+        return;
+      }
+
+      if (!inputFocusedRef.current) {
+        addHistoryEntry(prev);
+      }
+    }, [addHistoryEntry, file_search]);
+
+    useEffect(() => {
       if (cmd == null) return;
       const { input, id } = cmd;
       const input0 = input + '\necho $HOME "`pwd`"';
+      const compute_server_id = redux
+        .getProjectStore(project_id)
+        ?.get("compute_server_id");
       webapp_client.exec({
         project_id,
         command: input0,
@@ -152,6 +200,7 @@ export const SearchBar = memo(
         bash: true,
         path: current_path,
         err_on_exit: false,
+        compute_server_id,
         filesystem: true,
         cb(err, output) {
           if (id !== _id.current) {
@@ -212,6 +261,9 @@ export const SearchBar = memo(
     }
 
     function render_help_info() {
+      if (historyMode) {
+        return;
+      }
       const prefill = parseFindPrefill(file_search);
       if (prefill) {
         return (
@@ -222,7 +274,7 @@ export const SearchBar = memo(
           />
         );
       }
-      if (file_search[0] == TERM_MODE_CHAR) {
+      if (isTerminalMode(file_search)) {
         return (
           <TerminalModeDisplay
             style={{
@@ -308,7 +360,12 @@ export const SearchBar = memo(
       { ctrl_down, shift_down }: { ctrl_down: boolean; shift_down: boolean },
     ): void {
       const prefill = parseFindPrefill(value);
+      if (historyMode) {
+        apply_history_selection();
+        return;
+      }
       if (prefill && actions) {
+        addHistoryEntry(value);
         const nextState: any = {
           find_tab: prefill.tab,
           find_prefill: {
@@ -323,10 +380,14 @@ export const SearchBar = memo(
         actions.setFlyoutExpanded("search", true);
         return;
       }
-      if (value.startsWith(TERM_MODE_CHAR)) {
+      if (isTerminalMode(value)) {
+        if (value.slice(1).trim().length > 0) {
+          addHistoryEntry(value);
+        }
         const command = value.slice(1, value.length);
         execute_command(command);
       } else if (file_search.length > 0 && shift_down) {
+        addHistoryEntry(value);
         // only create a file, if shift is pressed as well to avoid creating
         // jupyter notebooks (default file-type) by accident.
         if (file_search[file_search.length - 1] === "/") {
@@ -338,16 +399,86 @@ export const SearchBar = memo(
       }
     }
 
+    function on_up_press(): void {
+      if (!historyMode && historyInitialized && history.length > 0) {
+        setHistoryMode(true);
+        setHistoryIndex(0);
+        return;
+      }
+      if (historyMode) {
+        setHistoryIndex((idx) => Math.max(idx - 1, 0));
+      }
+    }
+
+    function on_down_press(): void {
+      if (historyMode) {
+        setHistoryIndex((idx) =>
+          Math.min(idx + 1, Math.max(0, history.length - 1)),
+        );
+      }
+    }
+
     function on_change(search: string): void {
+      setHistoryMode(false);
+      setHistoryIndex(0);
       actions.zero_selected_file_index();
       actions.set_file_search(search);
     }
 
+    function on_escape(): boolean {
+      if (!historyMode) {
+        return false;
+      }
+      setHistoryMode(false);
+      setHistoryIndex(0);
+      return true;
+    }
+
+    function apply_history_selection(idx?: number): void {
+      const value = history[idx ?? historyIndex];
+      setHistoryMode(false);
+      setHistoryIndex(0);
+      if (value == null) {
+        return;
+      }
+      actions.zero_selected_file_index();
+      actions.set_file_search(value);
+    }
+
+    function on_focus(): void {
+      inputFocusedRef.current = true;
+    }
+
+    function on_blur(): void {
+      inputFocusedRef.current = false;
+      setHistoryMode(false);
+      setHistoryIndex(0);
+    }
+
     function on_clear(): void {
+      if (file_search) {
+        addHistoryEntry(file_search);
+        skipNextClearHistoryRef.current = true;
+      }
+      setHistoryMode(false);
+      setHistoryIndex(0);
       actions.clear_selected_file_index();
-      //set_input("");
       set_stdout("");
       set_error("");
+    }
+
+    function render_history_dropdown() {
+      if (!historyMode || history.length === 0) {
+        return;
+      }
+      return (
+        <SearchHistoryDropdown
+          history={history}
+          historyIndex={historyIndex}
+          setHistoryIndex={setHistoryIndex}
+          onSelect={apply_history_selection}
+        />
+      );
     }
 
     return (
@@ -357,16 +488,27 @@ export const SearchBar = memo(
           autoSelect
           placeholder={intl.formatMessage({
             id: "project.explorer.search-bar.placeholder",
-            defaultMessage: 'Filter files or "/" for terminal...',
+            defaultMessage: 'Filter files or "!" or "/" for Terminal...',
           })}
           value={file_search}
           on_change={on_change}
           on_submit={search_submit}
+          on_up={on_up_press}
+          on_down={on_down_press}
           on_clear={on_clear}
+          on_escape={on_escape}
+          on_blur={on_blur}
+          on_focus={on_focus}
           disabled={disabled || !!ext_selection}
+          status={
+            file_search.length > 0 && !isTerminalMode(file_search)
+              ? "warning"
+              : undefined
+          }
           focus={current_path}
         />
         {render_file_creation_error()}
+        {render_history_dropdown()}
         {render_help_info()}
         <div style={{ ...outputMinitermStyle, width: "100%", left: 0 }}>
           {render_output(error, {

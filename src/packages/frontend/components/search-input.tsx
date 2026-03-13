@@ -16,15 +16,23 @@ interface Props {
   size?;
   default_value?: string;
   value?: string;
-  on_change?: (value: string, opts: { ctrl_down: boolean }) => void;
+  on_change?: (
+    value: string,
+    opts: { ctrl_down: boolean; shift_down: boolean },
+  ) => void;
   on_clear?: () => void;
-  on_submit?: (value: string, opts: { ctrl_down: boolean }) => void;
+  on_submit?: (
+    value: string,
+    opts: { ctrl_down: boolean; shift_down: boolean },
+  ) => void;
   buttonAfter?;
   disabled?: boolean;
   clear_on_submit?: boolean;
   on_down?: () => void;
   on_up?: () => void;
-  on_escape?: (value: string) => void;
+  on_escape?: (value: string) => boolean | void;
+  on_blur?: () => void;
+  on_focus?: () => void;
   style?: CSSProperties;
   autoFocus?: boolean;
   autoSelect?: boolean;
@@ -46,6 +54,8 @@ export function SearchInput({
   on_down,
   on_up,
   on_escape,
+  on_blur,
+  on_focus,
   style,
   autoFocus,
   autoSelect,
@@ -128,12 +138,15 @@ export function SearchInput({
       case 17:
         set_ctrl_down(false);
         break;
+      case 16:
+        set_shift_down(false);
+        break;
     }
   }
 
   function escape(): void {
-    if (typeof on_escape === "function") {
-      on_escape(value);
+    if (on_escape?.(value)) {
+      return;
     }
     clear_value();
   }
@@ -158,6 +171,8 @@ export function SearchInput({
       }}
       onKeyDown={key_down}
       onKeyUp={key_up}
+      onBlur={on_blur}
+      onFocus={on_focus}
       disabled={disabled}
       enterButton={buttonAfter}
       status={status}
