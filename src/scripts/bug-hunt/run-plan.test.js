@@ -5,6 +5,7 @@ const path = require("node:path");
 const {
   buildHarnessArgs,
   createArtifactDirName,
+  listAvailablePlans,
   parseArgs,
   planNameFromPath,
   resolvePlanFile,
@@ -22,6 +23,13 @@ test("parseArgs ignores a leading pnpm separator", () => {
   ]);
   assert.equal(options.plan, "seeded-files-smoke");
   assert.deepEqual(options.seedTypes, ["files", "tasks"]);
+  assert.equal(options.json, true);
+});
+
+test("parseArgs supports listing plans without a plan name", () => {
+  const options = parseArgs(["--list-plans", "--json"]);
+  assert.equal(options.listPlans, true);
+  assert.equal(options.plan, "");
   assert.equal(options.json, true);
 });
 
@@ -45,6 +53,14 @@ test("resolvePlanFile maps plan names into the repo plan directory", () => {
       "seeded-files-smoke.json",
     ),
   );
+});
+
+test("listAvailablePlans returns checked-in plan names", () => {
+  const plans = listAvailablePlans(
+    "/home/wstein/build/cocalc-lite2/src/.agents/bug-hunt/plans",
+  );
+  assert.ok(plans.some((plan) => plan.name === "seeded-files-smoke"));
+  assert.ok(plans.some((plan) => plan.name === "session-smoke"));
 });
 
 test("planNameFromPath strips json suffix", () => {

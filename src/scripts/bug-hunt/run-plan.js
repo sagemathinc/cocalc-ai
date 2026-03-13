@@ -23,7 +23,7 @@ const DEFAULT_PLAN_DIR = path.join(ROOT, ".agents", "bug-hunt", "plans");
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    "Usage: run-plan.js --plan <name-or-path> [--context-file <path>] [--artifact-root <path>] [--report-dir <path>] [--name <label>] [--seed <csv>] [--json] [--dry-run] [--default-retries <n>] [--default-timeout <duration>] [--default-recovery <mode>] [--max-failures <n>] [--logs-on-fail <n>] [--network-on-fail <n>] [--no-screenshot-on-fail] [--no-pin-target] [--allow-raw-exec]",
+    "Usage: run-plan.js (--plan <name-or-path> | --list-plans) [--context-file <path>] [--artifact-root <path>] [--report-dir <path>] [--name <label>] [--seed <csv>] [--json] [--dry-run] [--default-retries <n>] [--default-timeout <duration>] [--default-recovery <mode>] [--max-failures <n>] [--logs-on-fail <n>] [--network-on-fail <n>] [--no-screenshot-on-fail] [--no-pin-target] [--allow-raw-exec]",
   );
   process.exit(code);
 }
@@ -35,6 +35,7 @@ function parseArgs(argv) {
   }
   const options = {
     plan: "",
+    listPlans: false,
     contextFile: DEFAULT_CONTEXT_FILE,
     artifactRoot: DEFAULT_ARTIFACT_ROOT,
     reportDir: "",
@@ -58,6 +59,8 @@ function parseArgs(argv) {
       options.plan =
         `${normalizedArgv[++i] || ""}`.trim() ||
         usageAndExit("--plan requires a value");
+    } else if (arg === "--list-plans") {
+      options.listPlans = true;
     } else if (arg === "--context-file") {
       options.contextFile = path.resolve(
         normalizedArgv[++i] || usageAndExit("--context-file requires a path"),
@@ -114,8 +117,8 @@ function parseArgs(argv) {
       usageAndExit(`Unknown argument: ${arg}`);
     }
   }
-  if (!options.plan) {
-    usageAndExit("--plan is required");
+  if (!options.listPlans && !options.plan) {
+    usageAndExit("--plan is required unless --list-plans is used");
   }
   return options;
 }
@@ -240,6 +243,21 @@ function resolvePlanFile(value) {
   return path.join(DEFAULT_PLAN_DIR, `${raw}.json`);
 }
 
+function listAvailablePlans(planDir = DEFAULT_PLAN_DIR) {
+  if (!fs.existsSync(planDir)) return [];
+  return fs
+    .readdirSync(planDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => {
+      const file = path.join(planDir, entry.name);
+      return {
+        name: planNameFromPath(entry.name),
+        path: file,
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function planNameFromPath(planFile) {
   return path.basename(planFile).replace(/\.json$/i, "");
 }
@@ -318,6 +336,17 @@ function runSeedIfRequested(context, options, artifactDir) {
 
 function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
+  if (options.listPlans) {
+    const plans = listAvailablePlans();
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({ plans }, null, 2)}\n`);
+      return;
+    }
+    for (const plan of plans) {
+      console.log(`${plan.name}  ${plan.path}`);
+    }
+    return;
+  }
   const context = readJson(options.contextFile, "bug-hunt context");
   if (!`${context.browser_id ?? ""}`.trim()) {
     throw new Error(
@@ -373,6 +402,7 @@ function main(argv = process.argv.slice(2)) {
 module.exports = {
   buildHarnessArgs,
   createArtifactDirName,
+  listAvailablePlans,
   parseArgs,
   planNameFromPath,
   resolvePlanFile,
