@@ -15,6 +15,16 @@ import { hasRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { once } from "@cocalc/util/async-utils";
 
+function initAccountTable(redux) {
+  redux.createTable("account", AccountTable);
+  redux.getTable("account")._table.on("error", (tableError) => {
+    redux.getActions("account").setState({ tableError });
+  });
+  redux.getTable("account")._table.on("clear-error", () => {
+    redux.getActions("account").setState({ tableError: undefined });
+  });
+}
+
 export function init(redux) {
   // Register account store
   // Use the database defaults for all account info until this gets set after they login
@@ -32,13 +42,7 @@ export function init(redux) {
   actions._init(store);
   init_dark_mode(store);
 
-  redux.createTable("account", AccountTable);
-  redux.getTable("account")._table.on("error", (tableError) => {
-    actions.setState({ tableError });
-  });
-  redux.getTable("account")._table.on("clear-error", () => {
-    actions.setState({ tableError: undefined });
-  });
+  initAccountTable(redux);
 
   // Password reset
   actions.setState({ reset_key: reset_password_key() });
@@ -109,4 +113,9 @@ export function init(redux) {
       webapp_client.idle_client.set_standby_timeout_m(x);
     }
   });
+}
+
+export function recreate_account_table(redux) {
+  redux.removeTable("account");
+  initAccountTable(redux);
 }
