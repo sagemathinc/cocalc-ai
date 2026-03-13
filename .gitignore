@@ -219,4 +219,6 @@ src/packages/next/lib/api-v2-manifest.ts
 src/create*.sh
 src/.agents/bug-hunt/artifacts/
 src/.agents/bug-hunt/*
+!src/.agents/bug-hunt/plans/
+!src/.agents/bug-hunt/plans/**
 wstein.tasks
