@@ -1851,7 +1851,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   // Set the selected state of all files between the most_recent_file_click and the given file
-  set_selected_file_range(file: string, checked: boolean, listing): void {
+  set_selected_file_range(
+    file: string,
+    checked: boolean,
+    listing,
+    current_path?: string,
+  ): void {
     let range;
     const store = this.get_store();
     if (store == undefined) {
@@ -1863,9 +1868,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       range = [file];
     } else {
       // get the range of files
-      const current_path = store.get("current_path_abs") ?? "/";
+      const listing_path = current_path ?? store.get("current_path_abs") ?? "/";
       const names = listing.map(({ name }) =>
-        misc.path_to_file(current_path, name),
+        misc.path_to_file(listing_path, name),
       );
       range = misc.get_array_range(names, most_recent, file);
     }
