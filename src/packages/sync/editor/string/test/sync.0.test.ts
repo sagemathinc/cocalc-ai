@@ -16,6 +16,7 @@ import { SyncString } from "../sync";
 import { a_txt } from "./data";
 import { once } from "@cocalc/util/async-utils";
 import { legacyPatchId } from "patchflow";
+import { client_db } from "@cocalc/util/schema";
 
 // This mostly tests the trivial minimal edge cases.
 describe("create a blank minimal string SyncDoc and call public methods on it", () => {
@@ -195,9 +196,13 @@ describe("backend sync-fs watch policy", () => {
   ) {
     const client = new Client({}, client_id);
     const syncFsWatch = jest.fn(async () => undefined);
+    const syncFsReconcile = jest.fn(async () => undefined);
     const fs1 = {
       ...fs,
       syncFsWatch,
+      syncFsReconcile,
+      stat: jest.fn(async () => ({ mtime: new Date(0) })),
+      readFile: jest.fn(async () => ""),
     } as any;
     const doc = new SyncString({
       project_id,
@@ -207,7 +212,7 @@ describe("backend sync-fs watch policy", () => {
       watchDebounce: opts.watchDebounce,
     });
     await once(doc, "ready");
-    return { doc, syncFsWatch };
+    return { doc, syncFsWatch, syncFsReconcile };
   }
 
   it("enables backend sync-fs watch for ordinary text files", async () => {
@@ -238,8 +243,15 @@ describe("backend sync-fs watch policy", () => {
   });
 
   it("disables backend sync-fs watch for chat documents", async () => {
-    const { doc, syncFsWatch } = await openDoc("conversation.chat");
+    const { doc, syncFsWatch, syncFsReconcile } =
+      await openDoc("conversation.chat");
     expect(syncFsWatch).not.toHaveBeenCalled();
+    expect(syncFsReconcile).toHaveBeenCalledWith(
+      "conversation.chat",
+      expect.objectContaining({
+        project_id,
+      }),
+    );
     await doc.close();
   });
 
@@ -256,6 +268,52 @@ describe("backend sync-fs watch policy", () => {
       expect.objectContaining({
         file: true,
       }),
+    );
+    await doc.close();
+  });
+});
+
+describe("syncdoc canonical identity path policy", () => {
+  const project_id = "12345678-1234-4234-8234-123456789abc";
+  const client_id = "abcdefab-cdef-4def-8def-abcdefabcdef";
+
+  function makeFs() {
+    return {
+      ...fs,
+      syncFsWatch: jest.fn(async () => undefined),
+      canonicalSyncFsPath: jest.fn(
+        async (path: string) => `/mnt/cocalc/project-test/${path}`,
+      ),
+      realpath: jest.fn(async (path: string) => `/root/${path}`),
+      stat: jest.fn(async () => ({ mtime: new Date(0) })),
+      readFile: jest.fn(async () => ""),
+    } as any;
+  }
+
+  it("uses backend watcher identity for ordinary watched files", async () => {
+    const doc = new SyncString({
+      project_id,
+      path: "ordinary.txt",
+      client: new Client({}, client_id),
+      fs: makeFs(),
+    });
+    await once(doc, "ready");
+    expect(doc.get_string_id()).toBe(
+      client_db.sha1(project_id, "/mnt/cocalc/project-test/ordinary.txt"),
+    );
+    await doc.close();
+  });
+
+  it("uses sandbox-visible identity for chat files without backend watch", async () => {
+    const doc = new SyncString({
+      project_id,
+      path: "conversation.chat",
+      client: new Client({}, client_id),
+      fs: makeFs(),
+    });
+    await once(doc, "ready");
+    expect(doc.get_string_id()).toBe(
+      client_db.sha1(project_id, "/root/conversation.chat"),
     );
     await doc.close();
   });

@@ -275,6 +275,7 @@ export class SyncFsService extends EventEmitter {
   private store: SyncFsWatchStore;
   private watchers: Map<string, WatchEntry> = new Map();
   private watcherInFlight: Map<string, Promise<WatchEntry>> = new Map();
+  private initInFlight: Map<string, Promise<void>> = new Map();
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private pathStates: Map<string, PathState> = new Map();
   private patchWriters: Map<string, AStream<any>> = new Map();
@@ -585,6 +586,21 @@ export class SyncFsService extends EventEmitter {
     }
   }
 
+  private async initPathOnce(path: string, meta?: WatchMeta): Promise<void> {
+    const existing = this.initInFlight.get(path);
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    const run = this.initPath(path, meta).finally(() => {
+      if (this.initInFlight.get(path) === run) {
+        this.initInFlight.delete(path);
+      }
+    });
+    this.initInFlight.set(path, run);
+    await run;
+  }
+
   close(): void {
     activeServices.delete(this);
     if (this.pruneTimer != null) {
@@ -592,6 +608,7 @@ export class SyncFsService extends EventEmitter {
       this.pruneTimer = undefined;
     }
     this.watcherInFlight.clear();
+    this.initInFlight.clear();
     for (const dir of [...this.watchers.keys()]) {
       this.closeWatcher(dir, "service-close");
     }
@@ -708,7 +725,7 @@ export class SyncFsService extends EventEmitter {
       let entry = this.watchers.get(dir);
 
       if (!entry?.paths.has(path) || shouldReinitialize) {
-        await this.initPath(path, normalizedMeta);
+        await this.initPathOnce(path, normalizedMeta);
       }
 
       if (!entry) {
@@ -730,6 +747,11 @@ export class SyncFsService extends EventEmitter {
       this.counters.heartbeatInactive += 1;
       this.releasePath(path, "inactive");
     }
+  }
+
+  async reconcile(path: string, meta?: WatchMeta): Promise<void> {
+    const normalizedMeta = this.normalizeMeta(path, meta);
+    await this.initPathOnce(path, normalizedMeta);
   }
 
   private onFsEvent(

@@ -102,3 +102,58 @@ describe("loading/saving syncstring to disk and setting values", () => {
     }
   });
 });
+
+describe("chat-style syncdb without backend fs watch still loads existing disk state", () => {
+  const project_id = uuid();
+  let client;
+  let fs0;
+  let s;
+  const chatDate = "2026-03-10T10:00:00.000Z";
+  const chatFileContents =
+    '{"event":"chat","sender_id":"user-1","date":"2026-03-10T10:00:00.000Z","message_id":"msg-1","thread_id":"thread-1","history":[{"author_id":"user-1","content":"hello from cloned chat","date":"2026-03-10T10:00:00.000Z"}]}\n' +
+    '{"event":"chat-thread-config","sender_id":"__thread_config__","date":"1970-01-01T00:00:00.000Z","thread_id":"thread-1","name":"Forked thread"}\n';
+
+  it("creates the client and a pre-existing chat file", async () => {
+    client = connect();
+    fs0 = client.fs({ project_id, service: server.service });
+    await fs0.writeFile("existing.chat", chatFileContents);
+  });
+
+  it("loads the chat file from disk even though backend watch is disabled", async () => {
+    s = client.sync.db({
+      project_id,
+      path: "existing.chat",
+      service: server.service,
+      primary_keys: ["date", "sender_id", "event", "message_id", "thread_id"],
+      string_cols: ["input"],
+      firstReadLockTimeout: 1,
+    });
+    await once(s, "ready");
+    expect(
+      s.get_one({ event: "chat", sender_id: "user-1", date: chatDate }),
+    ).toBeTruthy();
+    expect(
+      s
+        .get_one({ event: "chat", sender_id: "user-1", date: chatDate })
+        .get("message_id"),
+    ).toBe("msg-1");
+    expect(
+      s
+        .get_one({
+          event: "chat-thread-config",
+          sender_id: "__thread_config__",
+          date: "1970-01-01T00:00:00.000Z",
+          thread_id: "thread-1",
+        })
+        .get("name"),
+    ).toBe("Forked thread");
+  });
+
+  it("does not blank the chat file when saving it back to disk", async () => {
+    await s.save_to_disk();
+    await delay(50);
+    const disk = await fs0.readFile("existing.chat", "utf8");
+    expect(disk.length).toBeGreaterThan(0);
+    expect(disk).toContain('"message_id":"msg-1"');
+  });
+});

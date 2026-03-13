@@ -457,11 +457,36 @@ export class SyncDoc extends EventEmitter {
     return path;
   };
 
+  private resolveCanonicalDocIdentityPath = async (
+    path: string,
+  ): Promise<string> => {
+    // For doctypes that opt out of backend sync-fs watching (notably chats),
+    // keep the patchflow identity in user/sandbox-visible path space instead of
+    // switching to the host-side watcher path. That preserves copied local
+    // patchflow/timetravel history across project clones and avoids leaking
+    // internal `/mnt/cocalc/project-*` paths into local persist state.
+    if (!this.shouldUseBackendFsWatch()) {
+      const fs = this.fs as any;
+      if (typeof fs?.realpath === "function") {
+        try {
+          const canonical = await fs.realpath(path);
+          if (typeof canonical === "string" && canonical.length > 0) {
+            return canonical;
+          }
+        } catch {
+          // Keep the original path if the backend cannot canonicalize it.
+        }
+      }
+      return path;
+    }
+    return await this.resolveCanonicalSyncFsPath(path);
+  };
+
   private canonicalizeFsIdentity = reuseInFlight(async (): Promise<void> => {
     if (this.opts.string_id !== undefined) {
       return;
     }
-    const canonicalPath = await this.resolveCanonicalSyncFsPath(this.path);
+    const canonicalPath = await this.resolveCanonicalDocIdentityPath(this.path);
     if (canonicalPath === this.syncPath) {
       return;
     }
@@ -1170,6 +1195,7 @@ export class SyncDoc extends EventEmitter {
     // Prime backend sync-fs reconciliation first so the patch stream reflects
     // current on-disk content before we load it into this client session.
     await this.startBackendFsWatch();
+    await this.reconcileBackendFsState();
     await this.init_patchflow();
     await Promise.all([this.init_cursors()]);
     this.assert_not_closed(
@@ -2559,6 +2585,34 @@ export class SyncDoc extends EventEmitter {
     }
     return;
   };
+
+  private reconcileBackendFsState = reuseInFlight(async (): Promise<void> => {
+    if (
+      this.isClosed() ||
+      this.opts.noSaveToDisk ||
+      this.shouldUseBackendFsWatch()
+    ) {
+      return;
+    }
+    // Chats and other no-watch doctypes intentionally avoid a live backend
+    // filesystem watcher because disk can lag patchflow for long periods, which
+    // risks rollback patches from stale on-disk state. They still need the same
+    // init-time authority rule as sync-fs, though: patchflow wins over older
+    // disk, newer disk can reconcile in, and empty history can seed from disk
+    // exactly once. Do that here by asking the backend sync-fs service to run a
+    // one-shot reconcile without starting a persistent watcher.
+    const syncFsReconcile = (this.fs as any)?.syncFsReconcile;
+    if (typeof syncFsReconcile !== "function") return;
+    try {
+      await syncFsReconcile(this.path, {
+        project_id: this.project_id,
+        history_epoch: this.history_epoch,
+        doctype: this.doctype,
+      });
+    } catch (err) {
+      this.dbg("syncFsReconcile")(`failed: ${err?.message ?? err}`);
+    }
+  });
 
   private markPatchflowFullHistory = (): void => {
     if (!this.patchflowReady() || this.patchflowSession == null) return;

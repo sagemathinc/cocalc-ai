@@ -2,9 +2,10 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 export const CLONED_PROJECT_RESET_PATHS = [
-  ".cache/cocalc/project",
-  ".local/share/cocalc/persist",
-  ".local/share/cocalc/chats",
+  // XDG cache directories are disposable and should not be cloned as
+  // authoritative project state.
+  ".cache",
+  ".local/cache",
 ];
 
 export async function resetClonedProjectState(

@@ -17,11 +17,15 @@ async function exists(p: string): Promise<boolean> {
 }
 
 describe("resetClonedProjectState", () => {
-  it("removes copied CoCalc runtime state but keeps other project-local data", async () => {
+  it("removes copied project cache but keeps other project-local CoCalc data", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "cocalc-clone-state-"));
     for (const relativePath of CLONED_PROJECT_RESET_PATHS) {
       await mkdir(path.join(root, relativePath), { recursive: true });
     }
+    const persistDir = path.join(root, ".local/share/cocalc/persist");
+    const chatsDir = path.join(root, ".local/share/cocalc/chats");
+    await mkdir(persistDir, { recursive: true });
+    await mkdir(chatsDir, { recursive: true });
     const keepDir = path.join(root, ".local/share/cocalc/rootfs");
     await mkdir(keepDir, { recursive: true });
 
@@ -30,6 +34,8 @@ describe("resetClonedProjectState", () => {
     for (const relativePath of CLONED_PROJECT_RESET_PATHS) {
       expect(await exists(path.join(root, relativePath))).toBe(false);
     }
+    expect(await exists(persistDir)).toBe(true);
+    expect(await exists(chatsDir)).toBe(true);
     expect(await exists(keepDir)).toBe(true);
   });
 });

@@ -2308,6 +2308,30 @@ export class SandboxedFilesystem {
       watchDebounce: info?.watchDebounce,
     });
   };
+
+  syncFsReconcile = async (
+    path: string,
+    info?: {
+      project_id?: string;
+      history_epoch?: number;
+      doctype?: any;
+    },
+  ): Promise<void> => {
+    const watchPath = await this.canonicalSyncFsPath(path);
+    let syncPath = path;
+    try {
+      syncPath = await this.realpath(path);
+    } catch {
+      // If the file does not yet exist, fall back to the caller-visible path.
+    }
+    const project_id = info?.project_id ?? this.host;
+    await globalSyncFsService.reconcile(watchPath, {
+      project_id,
+      syncPath,
+      history_epoch: info?.history_epoch,
+      doctype: info?.doctype,
+    });
+  };
 }
 
 // Shared watcher instance per process.
