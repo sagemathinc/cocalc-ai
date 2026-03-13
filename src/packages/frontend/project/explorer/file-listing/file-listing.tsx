@@ -416,8 +416,10 @@ export function FileListing({
   onNavigateDirectory,
 }: Props) {
   const intl = useIntl();
-  const selected_file_index =
-    useTypedRedux({ project_id }, "selected_file_index") ?? 0;
+  const selected_file_index = useTypedRedux(
+    { project_id },
+    "selected_file_index",
+  );
   const openFilesOrder = useTypedRedux({ project_id }, "open_files_order");
   const hide_masked_files =
     useTypedRedux({ project_id }, "hide_masked_files") ?? false;
@@ -765,6 +767,7 @@ export function FileListing({
   const onRow = useCallback(
     (record: FileEntry) => {
       const isSelected =
+        selected_file_index != null &&
         selected_file_index >= 0 &&
         selected_file_index < baseDataSource.length &&
         baseDataSource[selected_file_index]?.fullPath === record.fullPath &&
@@ -1102,6 +1105,7 @@ export function FileListing({
                     <Button
                       type="text"
                       size="small"
+                      className="cc-explorer-hover-icon"
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();

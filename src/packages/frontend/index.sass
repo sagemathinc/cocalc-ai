@@ -100,6 +100,17 @@ body
   width      : 100vw
   overflow-x : hidden
 
+.cc-explorer-hover-icon
+  visibility: hidden
+  transition: none !important
+
+.ant-table-row:hover .cc-explorer-hover-icon
+  visibility: visible
+
+@media (hover: none)
+  .cc-explorer-hover-icon
+    visibility: visible
+
 dev#cocalc-webapp-container
   width      : 100vw
   height     : 100vh
