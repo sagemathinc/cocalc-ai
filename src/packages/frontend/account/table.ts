@@ -69,6 +69,11 @@ export class AccountTable extends Table {
     if (!changes) return;
     const actions = this.redux.getActions("account");
     const obj = changes.toJS();
+    if (obj.other_settings != null) {
+      const current =
+        this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
+      obj.other_settings = { ...current, ...obj.other_settings };
+    }
     actions.setState(obj);
     if (this.first_set) {
       this.first_set = false;

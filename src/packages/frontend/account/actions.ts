@@ -4,7 +4,6 @@
  */
 
 import { join } from "path";
-import immutable from "immutable";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { AccountClient } from "@cocalc/frontend/client/account";
 import api from "@cocalc/frontend/client/api";
@@ -203,11 +202,7 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   public set_other_settings(name: string, value: any): void {
-    const current =
-      this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    const other_settings = { ...current, [name]: value };
-    this.setState({ other_settings: immutable.fromJS(other_settings) as any });
-    this.set_account_table({ other_settings });
+    this.set_account_table({ other_settings: { [name]: value } });
   }
 
   set_editor_settings = (name: string, value) => {
