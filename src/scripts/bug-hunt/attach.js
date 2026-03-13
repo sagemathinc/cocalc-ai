@@ -199,11 +199,8 @@ function cleanupSpawnedSessions(devEnv, browserMode) {
   const spawned = runCliJson(devEnv, ["browser", "session", "spawned"]);
   const rows = Array.isArray(spawned) ? spawned : [];
   const destroyed = [];
-  if (browserMode !== "spawned") {
-    return { reap, destroyed, remaining: rows };
-  }
   for (const row of rows) {
-    if (!row?.running) continue;
+    if (!shouldDestroySpawnedRow(row, browserMode)) continue;
     const destroyResult = runCliJson(devEnv, [
       "browser",
       "session",
@@ -228,6 +225,13 @@ function mergeCleanupResults(left, right) {
     destroyed: [...(left?.destroyed ?? []), ...(right?.destroyed ?? [])],
     remaining: right?.remaining ?? left?.remaining ?? [],
   };
+}
+
+function shouldDestroySpawnedRow(row, browserMode) {
+  return (
+    !!row?.running &&
+    (browserMode === "spawned" || !`${row?.browser_id ?? ""}`.trim())
+  );
 }
 
 function attachToLiveSession(devEnv, options, excludedBrowserIds = []) {
@@ -296,6 +300,18 @@ function attachToSpawnedSession(devEnv, options) {
   };
 }
 
+function buildUnattachedSession(devEnv, options, warning) {
+  return {
+    browser_mode: "unattached",
+    browser_id: "",
+    active_project_id: options.projectId || devEnv.project_id || "",
+    session_url: "",
+    session_name: "",
+    target_url: options.targetUrl ?? "",
+    warning,
+  };
+}
+
 function buildContext(devEnv, options, cleanup, attached) {
   return {
     mode: options.mode,
@@ -309,6 +325,7 @@ function buildContext(devEnv, options, cleanup, attached) {
     session_name: attached.session_name ?? "",
     spawn_id: attached.spawn_id,
     target_url: attached.target_url ?? options.targetUrl ?? "",
+    warning: attached.warning ?? "",
     cli_bin: devEnv.cli_bin,
     cleanup: {
       reaped_rows: cleanup.reap?.rows?.length ?? cleanup.reap?.scanned ?? 0,
@@ -357,11 +374,19 @@ function main(argv = process.argv.slice(2)) {
     const spawnedBrowserIds = cleanup.remaining.map((row) => row.browser_id);
     attached = attachToLiveSession(devEnv, options, spawnedBrowserIds);
     if (!attached) {
-      cleanup = mergeCleanupResults(
-        cleanup,
-        cleanupSpawnedSessions(devEnv, "spawned"),
-      );
-      attached = attachToSpawnedSession(devEnv, options);
+      if (options.mode === "hub") {
+        attached = buildUnattachedSession(
+          devEnv,
+          options,
+          "no active live browser session found; skipped spawned fallback for hub auto mode",
+        );
+      } else {
+        cleanup = mergeCleanupResults(
+          cleanup,
+          cleanupSpawnedSessions(devEnv, "spawned"),
+        );
+        attached = attachToSpawnedSession(devEnv, options);
+      }
     }
   }
   const payload = buildContext(devEnv, options, cleanup, attached);
@@ -382,16 +407,21 @@ function main(argv = process.argv.slice(2)) {
   if (payload.spawn_id) {
     console.log(`spawn id:   ${payload.spawn_id}`);
   }
+  if (payload.warning) {
+    console.log(`warning:    ${payload.warning}`);
+  }
   console.log(`context:    ${options.contextFile}`);
 }
 
 module.exports = {
   buildContext,
+  buildUnattachedSession,
   cleanupSpawnedSessions,
   createCliEnv,
   mergeCleanupResults,
   parseArgs,
   selectLiveSession,
+  shouldDestroySpawnedRow,
   unwrapCliJsonPayload,
 };
 

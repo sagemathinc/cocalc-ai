@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 
 const {
   buildContext,
+  buildUnattachedSession,
   mergeCleanupResults,
   parseArgs,
   selectLiveSession,
+  shouldDestroySpawnedRow,
   unwrapCliJsonPayload,
 } = require("./attach.js");
 
@@ -85,6 +87,25 @@ test("buildContext rewrites exported browser and project ids to the attached tar
   assert.equal(payload.exports.COCALC_PROJECT_ID, "project-live");
 });
 
+test("buildUnattachedSession returns a non-blocking hub auto fallback payload", () => {
+  assert.deepEqual(
+    buildUnattachedSession(
+      { project_id: "project-hub" },
+      { projectId: "", targetUrl: "" },
+      "no live browser",
+    ),
+    {
+      browser_mode: "unattached",
+      browser_id: "",
+      active_project_id: "project-hub",
+      session_url: "",
+      session_name: "",
+      target_url: "",
+      warning: "no live browser",
+    },
+  );
+});
+
 test("unwrapCliJsonPayload returns command data from the CLI envelope", () => {
   assert.deepEqual(
     unwrapCliJsonPayload({
@@ -116,4 +137,21 @@ test("mergeCleanupResults keeps the latest remaining-state and combines destroye
     destroyed: [{ spawn_id: "old" }, { spawn_id: "new" }],
     remaining: [],
   });
+});
+
+test("shouldDestroySpawnedRow always destroys half-started rows without browser ids", () => {
+  assert.equal(
+    shouldDestroySpawnedRow(
+      { running: true, browser_id: "", spawn_id: "broken" },
+      "live",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldDestroySpawnedRow(
+      { running: true, browser_id: "browser-live", spawn_id: "healthy" },
+      "live",
+    ),
+    false,
+  );
 });
