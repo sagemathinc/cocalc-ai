@@ -230,7 +230,7 @@ export function FileTab(props: Readonly<Props>) {
   let label = label_prop; // label modified below in some situations
   const actions = useActions({ project_id });
   const intl = useIntl();
-  const { onCoCalcDocker } = useProjectContext();
+  const { onCoCalcDocker, workspaces } = useProjectContext();
   // this is @cocalc/comm/project-status/types::ProjectStatus
   const project_status = useTypedRedux({ project_id }, "status");
   // alerts only work on non-docker projects (for now) -- #7077
@@ -398,6 +398,8 @@ export function FileTab(props: Readonly<Props>) {
       : (props.iconName ?? FIXED_PROJECT_TABS[name!].icon);
 
   const image = path == null ? props.imageUrl?.trim() : undefined;
+  const workspaceAccentColor =
+    path != null ? workspaces.resolveWorkspaceForPath(path)?.theme.color : null;
 
   const tags =
     status_alerts.length > 0 ? (
@@ -525,10 +527,9 @@ export function FileTab(props: Readonly<Props>) {
             right: 0,
             bottom: -5,
             height: 2,
-            backgroundColor: getTabAccentColor(
-              `${project_id}:${path}`,
-              tabAccentMode,
-            ),
+            backgroundColor:
+              workspaceAccentColor ??
+              getTabAccentColor(`${project_id}:${path}`, tabAccentMode),
             opacity: 0.85,
           }}
         />
