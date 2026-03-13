@@ -721,8 +721,10 @@ You can either wait for this host to become available again, or move this ${proj
           ref={fileListingRef}
           className="smc-vfill"
           style={{
-            flex: "1 0 auto",
+            flex: "1 1 0",
             display: "flex",
+            flexDirection: "row",
+            alignItems: "stretch",
             minHeight: 0,
             padding: "0 5px 5px 5px",
           }}
@@ -739,6 +741,8 @@ You can either wait for this host to become available again, or move this ${proj
                 minWidth: showDirectoryTreePanel
                   ? DIRECTORY_TREE_MIN_WIDTH_PX
                   : 40,
+                minHeight: 0,
+                overflow: "hidden",
                 paddingRight: showDirectoryTreePanel ? "4px" : "0",
               }}
             >

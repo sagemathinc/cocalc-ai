@@ -125,6 +125,8 @@ function rootLabel(rootPath: string, homeDirectory?: string): string {
 }
 
 const PANEL_STYLE: React.CSSProperties = {
+  flex: "1 1 auto",
+  minHeight: 0,
   overflowY: "auto",
   overflowX: "hidden",
   paddingRight: 4,
@@ -431,9 +433,17 @@ export function DirectoryTreePanel({
   if (rootPath == null) return null;
 
   return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column" }}>
+    <div
+      style={{
+        width: "100%",
+        flex: "1 1 auto",
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       {starred.filter((path) => path.endsWith("/")).length > 0 && (
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ flex: "0 0 auto", marginBottom: 8 }}>
           {starred
             .filter((path) => path.endsWith("/"))
             .map((path) => {
