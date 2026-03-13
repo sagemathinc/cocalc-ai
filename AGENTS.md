@@ -13,6 +13,9 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Run these from the repo root unless a command says otherwise.
 - Full dev build: `pnpm -C src build:dev`
 - Full typecheck: `pnpm -C src tsc`
+- Dev/browser environment bootstrap:
+  - Lite: `cd src && pnpm dev:env:lite` to print the environment for lite development and browser automation, including the correct `COCALC_API_URL` (typically port `7001`), browser session, and PATH updates. Use `eval "$(pnpm -s dev:env:lite)"` to apply it to the current shell.
+  - Hub / full multi-user launchpad: `cd src && pnpm dev:env:hub` to print the corresponding environment for hub-backed development. Use `eval "$(pnpm -s dev:env:hub)"` to apply it to the current shell.
 - Prettier (repo-pinned): `pnpm -C src prettier --write <file>`
 - Package typecheck (fast): `cd src/packages/<pkg> && pnpm tsc --build`
 - Package build: `cd src/packages/<pkg> && pnpm build`
@@ -57,5 +60,6 @@ EOF
 
 - Architecture/docs: `docs/`
 - Translation workflow: `docs/translation.md`
+- Before using `cocalc browser`, prefer loading the relevant dev environment with `pnpm dev:env:lite` or `pnpm dev:env:hub` so the CLI targets the correct API/browser session.
 - Browser runtime debugging via `cocalc browser`: `docs/browser-debugging.md`
   - Includes both live-user-session targeting and dedicated Playwright-backed spawned sessions.
