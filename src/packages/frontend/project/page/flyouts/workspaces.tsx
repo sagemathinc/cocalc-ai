@@ -91,6 +91,12 @@ type WorkspaceActivityState =
     }
   | undefined;
 
+type WorkspaceOpenFileActivity = {
+  terminals: number;
+  notebooks: number;
+  other: number;
+};
+
 function iconFor(record?: WorkspaceRecord | null): IconName {
   return (record?.theme.icon?.trim() as IconName | undefined) || DEFAULT_ICON;
 }
@@ -266,11 +272,38 @@ function getWorkspaceActivityState(
   return undefined;
 }
 
+function getWorkspaceOpenFileActivity(
+  record: WorkspaceRecord,
+  openFilesOrder: string[],
+  openFiles: any,
+): WorkspaceOpenFileActivity {
+  let terminals = 0;
+  let notebooks = 0;
+  let other = 0;
+
+  for (const path of openFilesOrder) {
+    if (!pathMatchesRoot(path, record.root_path)) continue;
+    const hasActivity = !!openFiles?.getIn?.([path, "has_activity"]);
+    if (!hasActivity) continue;
+    if (path.endsWith(".term")) {
+      terminals += 1;
+    } else if (path.endsWith(".ipynb")) {
+      notebooks += 1;
+    } else {
+      other += 1;
+    }
+  }
+  return { terminals, notebooks, other };
+}
+
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const { actions, active_project_tab, workspaces } = useProjectContext();
   const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
   const current_path_abs =
     useTypedRedux({ project_id }, "current_path_abs") ?? "/";
+  const openFilesOrder =
+    useTypedRedux({ project_id }, "open_files_order")?.toJS?.() ?? [];
+  const openFiles = useTypedRedux({ project_id }, "open_files");
   const activePath = useMemo(
     () => tab_to_path(active_project_tab ?? ""),
     [active_project_tab],
@@ -444,6 +477,11 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       agentSessions,
       viewedActivity[record.workspace_id] ?? 0,
     );
+    const fileActivity = getWorkspaceOpenFileActivity(
+      record,
+      openFilesOrder,
+      openFiles,
+    );
     return (
       <Card
         key={record.workspace_id}
@@ -552,6 +590,33 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   <TimeAgo date={activity.updatedAt} />
                 </Typography.Text>
+              </Space>
+            ) : null}
+            {fileActivity.terminals > 0 ||
+            fileActivity.notebooks > 0 ||
+            fileActivity.other > 0 ? (
+              <Space size={8} wrap style={{ marginTop: 8 }}>
+                {fileActivity.terminals > 0 ? (
+                  <Tag color="orange">
+                    {fileActivity.terminals === 1
+                      ? "Terminal active"
+                      : `${fileActivity.terminals} terminals active`}
+                  </Tag>
+                ) : null}
+                {fileActivity.notebooks > 0 ? (
+                  <Tag color="gold">
+                    {fileActivity.notebooks === 1
+                      ? "Notebook busy"
+                      : `${fileActivity.notebooks} notebooks busy`}
+                  </Tag>
+                ) : null}
+                {fileActivity.other > 0 ? (
+                  <Tag color="blue">
+                    {fileActivity.other === 1
+                      ? "File activity"
+                      : `${fileActivity.other} active files`}
+                  </Tag>
+                ) : null}
               </Space>
             ) : null}
             <Space size={10} wrap style={{ marginTop: 8 }}>
