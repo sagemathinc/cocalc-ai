@@ -32,6 +32,7 @@ export type WorkspaceRecord = {
   last_used_at: number | null;
   last_active_path: string | null;
   chat_path: string | null;
+  notice_thread_id: string | null;
   created_at: number;
   updated_at: number;
   source: WorkspaceSource;
@@ -52,6 +53,7 @@ export type WorkspaceCreateInput = {
   image_blob?: string | null;
   pinned?: boolean;
   chat_path?: string | null;
+  notice_thread_id?: string | null;
   last_active_path?: string | null;
   source?: WorkspaceSource;
 };
@@ -61,6 +63,7 @@ export type WorkspaceUpdatePatch = Partial<{
   theme: Partial<WorkspaceTheme>;
   pinned: boolean;
   chat_path: string | null;
+  notice_thread_id: string | null;
   last_used_at: number | null;
   last_active_path: string | null;
   source: WorkspaceSource;
@@ -180,6 +183,11 @@ export function normalizeWorkspaceRecord(
     chat_path:
       typeof record.chat_path === "string" && record.chat_path.trim()
         ? record.chat_path.trim()
+        : null,
+    notice_thread_id:
+      typeof record.notice_thread_id === "string" &&
+      record.notice_thread_id.trim()
+        ? record.notice_thread_id.trim()
         : null,
     created_at:
       typeof record.created_at === "number" &&
@@ -516,6 +524,11 @@ export function createWorkspaceRecord({
         ? normalizeWorkspacePath(input.last_active_path)
         : null,
     chat_path: input.chat_path ?? null,
+    notice_thread_id:
+      typeof input.notice_thread_id === "string" &&
+      input.notice_thread_id.trim()
+        ? input.notice_thread_id.trim()
+        : null,
     created_at: now,
     updated_at: now,
     source: input.source ?? "manual",
@@ -553,6 +566,10 @@ export function updateWorkspaceRecords(
         },
         pinned: patch.pinned ?? record.pinned,
         chat_path: patch.chat_path ?? record.chat_path,
+        notice_thread_id:
+          patch.notice_thread_id === undefined
+            ? record.notice_thread_id
+            : patch.notice_thread_id,
         last_used_at:
           patch.last_used_at === undefined
             ? record.last_used_at
