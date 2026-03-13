@@ -5,6 +5,8 @@
 
 export type {
   WorkspaceCreateInput,
+  WorkspaceNotice,
+  WorkspaceNoticeLevel,
   WorkspaceRecord,
   WorkspaceSelection,
   WorkspaceSource,

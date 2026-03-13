@@ -88,6 +88,12 @@ type WorkspaceMessageCliOptions = WorkspaceBrowserCliOptions & {
   tag?: string;
 };
 
+type WorkspaceNoticeCliOptions = WorkspaceProjectCliOptions & {
+  title?: string;
+  level?: string;
+  stdin?: boolean;
+};
+
 function normalizeWorkspaceCliPath(path: string): string {
   const raw = `${path ?? ""}`.trim();
   if (!raw) {
@@ -117,6 +123,21 @@ async function readAllStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function parseWorkspaceNoticeLevel(
+  value: string | undefined,
+): "info" | "success" | "warning" | "error" {
+  const normalized = `${value ?? "info"}`.trim().toLowerCase();
+  if (
+    normalized === "info" ||
+    normalized === "success" ||
+    normalized === "warning" ||
+    normalized === "error"
+  ) {
+    return normalized;
+  }
+  throw new Error(`invalid notice level '${value}'`);
+}
+
 function workspaceSummary(record: WorkspaceRecord): Record<string, unknown> {
   return {
     workspace_id: record.workspace_id,
@@ -132,6 +153,7 @@ function workspaceSummary(record: WorkspaceRecord): Record<string, unknown> {
     last_used_at: record.last_used_at ?? null,
     last_active_path: record.last_active_path ?? null,
     chat_path: record.chat_path ?? null,
+    notice: record.notice ?? null,
     source: record.source ?? null,
   };
 }
@@ -648,6 +670,119 @@ export function registerWorkspacesCommand(
             ...sessionTargetContext(ctx, sessionInfo, project.project_id),
           };
         });
+      },
+    );
+
+  workspaces
+    .command("notify <workspace> [text...]")
+    .description("set a card-level notice on a workspace")
+    .option("--project <project>", "project id/title")
+    .option("--title <title>", "optional notice title")
+    .option(
+      "--level <level>",
+      "notice level (info|success|warning|error)",
+      "info",
+    )
+    .option("--stdin", "append stdin to the notice text")
+    .action(
+      async (
+        workspace: string,
+        textParts: string[],
+        opts: WorkspaceNoticeCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(command, "workspaces notify", async (ctx) => {
+          const stdinText = opts.stdin ? (await readAllStdin()).trim() : "";
+          const text = [textParts.join(" ").trim(), stdinText]
+            .filter((part) => part.length > 0)
+            .join("\n\n")
+            .trim();
+          if (!text) {
+            throw new Error(
+              "notice text is required (pass text arguments or use --stdin)",
+            );
+          }
+          const { project, client } = await deps.resolveProjectConatClient(
+            ctx,
+            opts.project,
+          );
+          const store = await openWorkspaceStore({
+            client,
+            project_id: project.project_id,
+            account_id: ctx.accountId,
+          });
+          try {
+            const record = requireWorkspaceRecord(
+              readStoredWorkspaceRecords(store),
+              workspace,
+            );
+            const updated = updateStoredWorkspaceRecord(
+              store,
+              record.workspace_id,
+              {
+                notice: {
+                  title: `${opts.title ?? ""}`.trim(),
+                  text,
+                  level: parseWorkspaceNoticeLevel(opts.level),
+                  updated_at: Date.now(),
+                },
+              },
+            );
+            if (!updated) {
+              throw new Error(`workspace '${workspace}' not found`);
+            }
+            await store.save();
+            return workspaceSummary(updated);
+          } finally {
+            store.close();
+          }
+        });
+      },
+    );
+
+  workspaces
+    .command("clear-notice <workspace>")
+    .description("clear a card-level notice from a workspace")
+    .option("--project <project>", "project id/title")
+    .action(
+      async (
+        workspace: string,
+        opts: WorkspaceProjectCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(
+          command,
+          "workspaces clear-notice",
+          async (ctx) => {
+            const { project, client } = await deps.resolveProjectConatClient(
+              ctx,
+              opts.project,
+            );
+            const store = await openWorkspaceStore({
+              client,
+              project_id: project.project_id,
+              account_id: ctx.accountId,
+            });
+            try {
+              const record = requireWorkspaceRecord(
+                readStoredWorkspaceRecords(store),
+                workspace,
+              );
+              const updated = updateStoredWorkspaceRecord(
+                store,
+                record.workspace_id,
+                { notice: null },
+              );
+              if (!updated) {
+                throw new Error(`workspace '${workspace}' not found`);
+              }
+              await store.save();
+              return workspaceSummary(updated);
+            } finally {
+              store.close();
+            }
+          },
+        );
       },
     );
 

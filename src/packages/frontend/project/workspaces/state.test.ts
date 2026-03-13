@@ -24,6 +24,7 @@ function record(root_path: string, workspace_id: string): WorkspaceRecord {
     last_active_path: null,
     chat_path: null,
     notice_thread_id: null,
+    notice: null,
     created_at: 1,
     updated_at: 1,
     source: "manual",

@@ -23,6 +23,15 @@ export type WorkspaceTheme = {
 
 export type WorkspaceSource = "manual" | "git-root" | "inferred";
 
+export type WorkspaceNoticeLevel = "info" | "success" | "warning" | "error";
+
+export type WorkspaceNotice = {
+  title: string;
+  text: string;
+  level: WorkspaceNoticeLevel;
+  updated_at: number;
+};
+
 export type WorkspaceRecord = {
   workspace_id: string;
   project_id: string;
@@ -33,6 +42,7 @@ export type WorkspaceRecord = {
   last_active_path: string | null;
   chat_path: string | null;
   notice_thread_id: string | null;
+  notice: WorkspaceNotice | null;
   created_at: number;
   updated_at: number;
   source: WorkspaceSource;
@@ -54,6 +64,7 @@ export type WorkspaceCreateInput = {
   pinned?: boolean;
   chat_path?: string | null;
   notice_thread_id?: string | null;
+  notice?: Partial<WorkspaceNotice> | null;
   last_active_path?: string | null;
   source?: WorkspaceSource;
 };
@@ -64,6 +75,7 @@ export type WorkspaceUpdatePatch = Partial<{
   pinned: boolean;
   chat_path: string | null;
   notice_thread_id: string | null;
+  notice: Partial<WorkspaceNotice> | null;
   last_used_at: number | null;
   last_active_path: string | null;
   source: WorkspaceSource;
@@ -188,6 +200,26 @@ export function normalizeWorkspaceRecord(
       typeof record.notice_thread_id === "string" &&
       record.notice_thread_id.trim()
         ? record.notice_thread_id.trim()
+        : null,
+    notice:
+      record.notice != null &&
+      typeof record.notice === "object" &&
+      `${record.notice.text ?? ""}`.trim()
+        ? {
+            title: `${record.notice.title ?? ""}`.trim(),
+            text: `${record.notice.text ?? ""}`.trim(),
+            level:
+              record.notice.level === "success" ||
+              record.notice.level === "warning" ||
+              record.notice.level === "error"
+                ? record.notice.level
+                : "info",
+            updated_at:
+              typeof record.notice.updated_at === "number" &&
+              Number.isFinite(record.notice.updated_at)
+                ? record.notice.updated_at
+                : Date.now(),
+          }
         : null,
     created_at:
       typeof record.created_at === "number" &&
@@ -529,6 +561,24 @@ export function createWorkspaceRecord({
       input.notice_thread_id.trim()
         ? input.notice_thread_id.trim()
         : null,
+    notice:
+      input.notice != null && `${input.notice.text ?? ""}`.trim()
+        ? {
+            title: `${input.notice.title ?? ""}`.trim(),
+            text: `${input.notice.text ?? ""}`.trim(),
+            level:
+              input.notice.level === "success" ||
+              input.notice.level === "warning" ||
+              input.notice.level === "error"
+                ? input.notice.level
+                : "info",
+            updated_at:
+              typeof input.notice.updated_at === "number" &&
+              Number.isFinite(input.notice.updated_at)
+                ? input.notice.updated_at
+                : now,
+          }
+        : null,
     created_at: now,
     updated_at: now,
     source: input.source ?? "manual",
@@ -570,6 +620,31 @@ export function updateWorkspaceRecords(
           patch.notice_thread_id === undefined
             ? record.notice_thread_id
             : patch.notice_thread_id,
+        notice:
+          patch.notice === undefined
+            ? record.notice
+            : patch.notice == null || !`${patch.notice.text ?? ""}`.trim()
+              ? null
+              : {
+                  title:
+                    patch.notice.title === undefined
+                      ? (record.notice?.title ?? "")
+                      : `${patch.notice.title ?? ""}`.trim(),
+                  text: `${patch.notice.text ?? ""}`.trim(),
+                  level:
+                    patch.notice.level === "success" ||
+                    patch.notice.level === "warning" ||
+                    patch.notice.level === "error"
+                      ? patch.notice.level
+                      : patch.notice.level === "info"
+                        ? "info"
+                        : (record.notice?.level ?? "info"),
+                  updated_at:
+                    typeof patch.notice.updated_at === "number" &&
+                    Number.isFinite(patch.notice.updated_at)
+                      ? patch.notice.updated_at
+                      : now,
+                },
         last_used_at:
           patch.last_used_at === undefined
             ? record.last_used_at

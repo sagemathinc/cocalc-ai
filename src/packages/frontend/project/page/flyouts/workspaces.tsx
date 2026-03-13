@@ -4,6 +4,7 @@
  */
 
 import {
+  Alert,
   Button,
   Card,
   Empty,
@@ -522,6 +523,25 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               >
                 {record.theme.description}
               </Typography.Paragraph>
+            ) : null}
+            {record.notice ? (
+              <div
+                style={{ marginTop: 8 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Alert
+                  type={record.notice.level}
+                  showIcon
+                  closable
+                  message={record.notice.title || "Workspace notice"}
+                  description={record.notice.text}
+                  onClose={() =>
+                    workspaces.updateWorkspace(record.workspace_id, {
+                      notice: null,
+                    })
+                  }
+                />
+              </div>
             ) : null}
             {activity ? (
               <Space size={8} wrap style={{ marginTop: 8 }}>
