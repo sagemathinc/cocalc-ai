@@ -13,7 +13,13 @@ jest.mock("@cocalc/server/projects/is-collaborator", () => ({
   default: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/conat/route-project", () => ({
+  __esModule: true,
+  materializeProjectHost: jest.fn(),
+}));
+
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 
 const PUBSUB: ("pub" | "sub")[] = ["pub", "sub"];
 
@@ -244,6 +250,10 @@ describe("test isAllowed for subjects special to accounts (similar to projects)"
 });
 
 describe("test isAllowed for collaboration -- this is the most nontrivial one", () => {
+  beforeEach(() => {
+    (materializeProjectHost as jest.Mock).mockReset();
+  });
+
   it("verifies an account can access a project it collaborates on", async () => {
     // Arrange: isCollaborator resolves to true
     (isCollaborator as jest.Mock).mockResolvedValue(true);
@@ -257,6 +267,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
     ).toBe(true);
 
     expect(isCollaborator).toHaveBeenCalled();
+    expect(materializeProjectHost).toHaveBeenCalledWith(project_id);
   });
 
   it("same account and project -- even if not collaborator still have permissions because of LRU cache!", async () => {
@@ -293,6 +304,23 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
         type: "pub",
       }),
     ).toBe(true);
+
+    expect(materializeProjectHost).toHaveBeenCalledWith(project_id3);
+  });
+
+  it("warms routing for ACP automation subjects", async () => {
+    const automationProjectId = "00000000-0000-4000-8000-000000000003";
+    (isCollaborator as jest.Mock).mockResolvedValue(true);
+
+    expect(
+      await isAllowed({
+        user: { account_id },
+        subject: `acp.project-${automationProjectId}.automation`,
+        type: "pub",
+      }),
+    ).toBe(true);
+
+    expect(materializeProjectHost).toHaveBeenCalledWith(automationProjectId);
   });
 });
 

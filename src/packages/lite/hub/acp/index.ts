@@ -102,6 +102,7 @@ import {
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
+  deleteAcpAutomationsForProject,
   deleteAcpAutomationByThread,
   getAcpAutomationById,
   getAcpAutomationByThread,
@@ -4262,6 +4263,138 @@ async function getAutomationStore(
   });
   automationStores.set(project_id, promise);
   return await promise;
+}
+
+function resetAutomationStoreCache(project_id: string): void {
+  automationStores.delete(project_id);
+}
+
+function normalizeAcpAutomationRecord(
+  record?: AcpAutomationRecord,
+): AcpAutomationRow | undefined {
+  if (!record) return undefined;
+  const automation_id = `${record.automation_id ?? ""}`.trim();
+  const project_id = `${record.project_id ?? ""}`.trim();
+  const path = `${record.path ?? ""}`.trim();
+  const thread_id = `${record.thread_id ?? ""}`.trim();
+  const account_id = `${record.account_id ?? ""}`.trim();
+  if (!automation_id || !project_id || !path || !thread_id || !account_id) {
+    return undefined;
+  }
+  const config = normalizeAcpAutomationConfig({
+    enabled: record.enabled,
+    automation_id,
+    title: record.title,
+    prompt: record.prompt,
+    schedule_type: record.schedule_type,
+    local_time: record.local_time,
+    timezone: record.timezone,
+    pause_after_unacknowledged_runs:
+      record.pause_after_unacknowledged_runs ?? undefined,
+  });
+  if (!config) {
+    return undefined;
+  }
+  const parseMs = (value?: number | string): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.floor(value);
+    }
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+  };
+  const enabled = record.enabled !== false && config.enabled !== false;
+  const normalizedStatus =
+    record.status === "running"
+      ? enabled
+        ? "active"
+        : "paused"
+      : record.status === "active" ||
+          record.status === "paused" ||
+          record.status === "error"
+        ? record.status
+        : enabled
+          ? "active"
+          : "paused";
+  const next_run_at =
+    enabled && config.local_time && config.timezone
+      ? parseMs(record.next_run_at_ms) ??
+        computeNextAutomationRunAt({
+          local_time: config.local_time,
+          timezone: config.timezone,
+        })
+      : null;
+  return {
+    automation_id,
+    project_id,
+    path,
+    thread_id,
+    account_id,
+    enabled,
+    title: config.title ?? null,
+    prompt: config.prompt ?? null,
+    schedule_type: "daily",
+    local_time: config.local_time ?? null,
+    timezone: config.timezone ?? null,
+    pause_after_unacknowledged_runs:
+      config.pause_after_unacknowledged_runs ?? AUTOMATION_DEFAULT_UNACK_LIMIT,
+    status: normalizedStatus,
+    next_run_at,
+    last_run_started_at: parseMs(record.last_run_started_at_ms) ?? null,
+    last_run_finished_at: parseMs(record.last_run_finished_at_ms) ?? null,
+    last_acknowledged_at: parseMs(record.last_acknowledged_at_ms) ?? null,
+    unacknowledged_runs: clampLoopNumber(
+      record.unacknowledged_runs,
+      0,
+      0,
+      365,
+    ),
+    paused_reason: `${record.paused_reason ?? ""}`.trim() || null,
+    last_error: `${record.last_error ?? ""}`.trim() || null,
+    last_job_op_id: `${record.last_job_op_id ?? ""}`.trim() || null,
+    last_message_id: `${record.last_message_id ?? ""}`.trim() || null,
+    created_at:
+      parseMs(record.created_at) ?? parseMs(record.updated_at) ?? Date.now(),
+    updated_at: parseMs(record.updated_at) ?? Date.now(),
+  };
+}
+
+export async function rehydrateAcpAutomationsForProject(
+  project_id: string,
+): Promise<number> {
+  const normalizedProjectId = `${project_id ?? ""}`.trim();
+  if (!normalizedProjectId) {
+    return 0;
+  }
+  const store = await getAutomationStore(normalizedProjectId);
+  const records = Object.values(store.getAll());
+  let restored = 0;
+  for (const record of records) {
+    const row = normalizeAcpAutomationRecord(record);
+    if (!row || row.project_id !== normalizedProjectId) {
+      continue;
+    }
+    upsertAcpAutomation(row);
+    restored += 1;
+  }
+  if (restored > 0) {
+    logger.debug("rehydrated ACP automations for project", {
+      project_id: normalizedProjectId,
+      restored,
+    });
+  }
+  return restored;
+}
+
+export function clearLocalAcpAutomationsForProject(project_id: string): void {
+  const normalizedProjectId = `${project_id ?? ""}`.trim();
+  if (!normalizedProjectId) {
+    return;
+  }
+  deleteAcpAutomationsForProject(normalizedProjectId);
+  resetAutomationStoreCache(normalizedProjectId);
 }
 
 async function publishAutomationRecordToProjectIndex(

@@ -261,6 +261,16 @@ export function listAcpAutomationsForProject(
     .filter(Boolean);
 }
 
+export function deleteAcpAutomationsForProject(project_id: string): void {
+  ensureInit();
+  getDatabase()
+    .prepare(
+      `DELETE FROM ${TABLE}
+       WHERE project_id = ?`,
+    )
+    .run(project_id);
+}
+
 export function listAllAcpAutomations(): AcpAutomationRow[] {
   ensureInit();
   const db = getDatabase();
@@ -319,14 +329,26 @@ export function toAutomationRecord(
     project_id: row.project_id,
     path: row.path,
     thread_id: row.thread_id,
+    account_id: row.account_id,
     title: row.title ?? undefined,
+    prompt: row.prompt ?? undefined,
+    schedule_type: row.schedule_type ?? undefined,
+    local_time: row.local_time ?? undefined,
+    timezone: row.timezone ?? undefined,
+    pause_after_unacknowledged_runs:
+      row.pause_after_unacknowledged_runs ?? undefined,
     status: row.status,
     enabled: row.enabled,
     next_run_at_ms: row.next_run_at ?? undefined,
+    last_run_started_at_ms: row.last_run_started_at ?? undefined,
     last_run_finished_at_ms: row.last_run_finished_at ?? undefined,
+    last_acknowledged_at_ms: row.last_acknowledged_at ?? undefined,
     unacknowledged_runs: row.unacknowledged_runs ?? undefined,
     paused_reason: row.paused_reason ?? undefined,
     last_error: row.last_error ?? undefined,
+    last_job_op_id: row.last_job_op_id ?? undefined,
+    last_message_id: row.last_message_id ?? undefined,
+    created_at: new Date(row.created_at).toISOString(),
     updated_at: new Date(row.updated_at).toISOString(),
   };
 }

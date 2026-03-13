@@ -51,6 +51,7 @@ import {
 import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
 import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
+import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -352,6 +353,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     });
 
     await ensureVolume(project_id);
+    try {
+      await rehydrateAcpAutomationsForProject(project_id);
+    } catch (err) {
+      logger.warn("createProject: failed to rehydrate ACP automations", {
+        project_id,
+        err: `${err}`,
+      });
+    }
 
     if (opts.start) {
       // Immediately mark as starting so the master reflects that state while we pull/podman up.
@@ -405,6 +414,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       opts: { authorized_keys, run_quota, image },
       state: "starting",
     });
+    try {
+      await rehydrateAcpAutomationsForProject(project_id);
+    } catch (err) {
+      logger.warn("start: failed to rehydrate ACP automations", {
+        project_id,
+        err: `${err}`,
+      });
+    }
     try {
       await applyPendingCopies({ project_id });
       const status = await runnerApi.start({

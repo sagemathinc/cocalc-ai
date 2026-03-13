@@ -37,6 +37,7 @@ import {
   getOrCreateProjectLocalSecretToken,
   getProject,
   getProjectPorts,
+  listProjects,
 } from "./sqlite/projects";
 import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
 import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
@@ -48,6 +49,7 @@ import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
 import {
+  rehydrateAcpAutomationsForProject,
   configureAcpDetachedWorkerRunning,
   init as initAcp,
 } from "@cocalc/lite/hub/acp";
@@ -335,6 +337,16 @@ export async function main(
   const persistServer = createPersistServer({ client: conatClient });
   configureAcpDetachedWorkerRunning(ensureProjectHostAcpWorkerRunning);
   await initAcp(conatClient, { manageDetachedWorker: false });
+  for (const row of listProjects()) {
+    const project_id = `${row.project_id ?? ""}`.trim();
+    if (!project_id) continue;
+    void rehydrateAcpAutomationsForProject(project_id).catch((err) => {
+      logger.warn("failed to rehydrate project ACP automations on startup", {
+        project_id,
+        err: `${err}`,
+      });
+    });
+  }
 
   logger.info("Proxy HTTP/WS traffic to running project containers.");
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
