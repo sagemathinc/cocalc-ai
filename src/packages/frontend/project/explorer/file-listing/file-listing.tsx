@@ -852,6 +852,10 @@ export function FileListing({
       cursor: "pointer",
       userSelect: "none",
     };
+    const centeredHeaderStyle: React.CSSProperties = {
+      ...thStyle,
+      textAlign: "center",
+    };
     const sortLabelStyle = (columnKey: string): React.CSSProperties =>
       sortColumn === columnKey
         ? { color: COLORS.ANTD_LINK_BLUE }
@@ -860,7 +864,13 @@ export function FileListing({
     return (
       <tr>
         {!student_project_functionality.disableActions && (
-          <th style={{ ...thStyle, width: COL_W.CHECKBOX }}>
+          <th
+            style={{
+              ...centeredHeaderStyle,
+              width: COL_W.CHECKBOX,
+              cursor: "default",
+            }}
+          >
             <Checkbox
               checked={allChecked}
               indeterminate={someChecked}
@@ -868,7 +878,7 @@ export function FileListing({
             />
           </th>
         )}
-        <th style={{ ...thStyle, width: COL_W.TYPE }}>
+        <th style={{ ...centeredHeaderStyle, width: COL_W.TYPE }}>
           <Dropdown
             menu={{
               items: [
@@ -908,10 +918,10 @@ export function FileListing({
             </span>
           </Dropdown>
         </th>
-        <th style={{ ...thStyle, width: COL_W.STAR }}>
+        <th style={{ ...centeredHeaderStyle, width: COL_W.STAR }}>
           <Icon name="star" />
         </th>
-        <th style={{ ...thStyle, width: COL_W.PUBLIC }} />
+        <th style={{ ...centeredHeaderStyle, width: COL_W.PUBLIC }} />
         <th style={sortableThStyle} onClick={() => sort_by("name")}>
           <span style={sortLabelStyle("name")}>
             {intl.formatMessage(labels.name)}
@@ -1021,7 +1031,13 @@ export function FileListing({
       return (
         <>
           {!student_project_functionality.disableActions && (
-            <td style={{ ...cellStyle, width: COL_W.CHECKBOX }}>
+            <td
+              style={{
+                ...cellStyle,
+                width: COL_W.CHECKBOX,
+                textAlign: "center",
+              }}
+            >
               <Checkbox
                 checked={checked_files.has(record.fullPath)}
                 disabled={record.name === ".."}
@@ -1088,7 +1104,7 @@ export function FileListing({
                 style={{ ...cellStyle, width: COL_W.SIZE, textAlign: "right" }}
               >
                 {record.isDir ? (
-                  <span style={{ color: COLORS.GRAY_M }}>
+                  <span style={{ color: COLORS.TAB, whiteSpace: "nowrap" }}>
                     {record.size != null
                       ? `${record.size} ${misc.plural(record.size, "item")}`
                       : ""}
@@ -1106,17 +1122,18 @@ export function FileListing({
                       });
                     }}
                     style={{
-                      color: COLORS.GRAY_M,
+                      color: COLORS.TAB,
                       whiteSpace: "nowrap",
-                      padding: 0,
+                      padding: "0 4px",
                       height: "auto",
                     }}
                   >
-                    {misc.human_readable_size(record.size)}
                     <Icon
                       name="cloud-download"
-                      style={{ color: COLORS.GRAY_M, marginLeft: 6 }}
+                      className="cc-explorer-hover-icon"
+                      style={{ color: COLORS.TAB, marginRight: 4 }}
                     />
+                    {misc.human_readable_size(record.size)}
                   </Button>
                 )}
               </td>
@@ -1141,7 +1158,7 @@ export function FileListing({
                           setContextMenu({ items, x: e.clientX, y: e.clientY });
                         }
                       }}
-                      style={{ color: COLORS.TAB }}
+                      style={{ color: COLORS.TAB, padding: 0 }}
                     >
                       <Icon name="ellipsis" rotate="90" />
                     </Button>
