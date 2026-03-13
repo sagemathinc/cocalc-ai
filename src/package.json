@@ -24,6 +24,7 @@
     "dev:env:lite": "node ./scripts/dev/dev-env.js lite --with-browser --start",
     "dev:env:hub": "node ./scripts/dev/dev-env.js hub --with-browser --no-start",
     "bug-hunt:attach": "node ./scripts/bug-hunt/attach.js",
+    "bug-hunt:capture": "node ./scripts/bug-hunt/capture.js",
     "bug-hunt:extract": "node ./scripts/bug-hunt/extract-open-bugs.js",
     "bug-hunt:preflight": "node ./scripts/bug-hunt/preflight.js",
     "skill:bug-hunter:diff": "node ./scripts/dev/sync-codex-skill.js cocalc-bug-hunter diff",
