@@ -532,6 +532,7 @@ Table({
             dark_mode_contrast: DARK_MODE_DEFAULTS.contrast,
             dark_mode_sepia: DARK_MODE_DEFAULTS.sepia,
             news_read_until: 0,
+            auto_update_file_listing: false,
             hide_project_popovers: false,
             hide_file_popovers: false,
             hide_button_tooltips: false,

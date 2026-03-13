@@ -32,7 +32,7 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import path from "path";
 import {
-  AutoUpdateToggle,
+  AutoUpdateButton,
   RefreshButton,
 } from "@cocalc/frontend/project/explorer/refresh-button";
 
@@ -315,9 +315,9 @@ export function ActionBar({
     const refreshButton = hasPendingUpdate ? (
       <RefreshButton onClick={onRefreshListing} />
     ) : null;
-    const autoUpdateToggle =
-      autoUpdateListing != null && onToggleAutoUpdate != null ? (
-        <AutoUpdateToggle
+    const autoUpdateButton =
+      autoUpdateListing && onToggleAutoUpdate != null ? (
+        <AutoUpdateButton
           checked={autoUpdateListing}
           onChange={onToggleAutoUpdate}
         />
@@ -340,7 +340,7 @@ export function ActionBar({
             />
           </div>
           {refreshButton && <> &middot; {refreshButton}</>}
-          {autoUpdateToggle && <> &middot; {autoUpdateToggle}</>}
+          {autoUpdateButton && <> &middot; {autoUpdateButton}</>}
         </div>
       );
     } else {
@@ -360,7 +360,7 @@ export function ActionBar({
             )}
           </span>
           {refreshButton && <> &middot; {refreshButton}</>}
-          {autoUpdateToggle && <> &middot; {autoUpdateToggle}</>}
+          {autoUpdateButton && <> &middot; {autoUpdateButton}</>}
           <Gap />
         </div>
       );

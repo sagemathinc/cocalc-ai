@@ -47,25 +47,53 @@ function AutoUpdateSwitch({ checked, onChange }: AutoUpdateToggleProps) {
   );
 }
 
-export function AutoUpdateToggle({ checked, onChange }: AutoUpdateToggleProps) {
+function autoUpdatePopoverContent({
+  checked,
+  onChange,
+}: AutoUpdateToggleProps) {
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "1px 8px",
-        borderRadius: 999,
-        background: checked ? COLORS.BLUE_LLLL : COLORS.GRAY_LLL,
-        color: COLORS.GRAY_D,
-        whiteSpace: "nowrap",
-      }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
+    <div style={{ maxWidth: 260 }}>
+      <div style={{ marginBottom: 8 }}>
+        Automatically apply filesystem changes to this listing.
+      </div>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          margin: 0,
+        }}
+      >
+        <span>Automatic updates</span>
+        <AutoUpdateSwitch checked={checked} onChange={onChange} />
+      </label>
+    </div>
+  );
+}
+
+export function AutoUpdateButton({ checked, onChange }: AutoUpdateToggleProps) {
+  return (
+    <Popover
+      trigger="click"
+      title="Auto updates"
+      content={autoUpdatePopoverContent({ checked, onChange })}
     >
-      <span>Auto updates</span>
-      <AutoUpdateSwitch checked={checked} onChange={onChange} />
-    </span>
+      <Button
+        type="text"
+        size="small"
+        style={{
+          background: COLORS.GRAY_LLL,
+          color: COLORS.GRAY_D,
+          borderRadius: 4,
+          whiteSpace: "nowrap",
+          marginLeft: 6,
+        }}
+        icon={<Icon name="sync-alt" />}
+      >
+        Auto updates
+      </Button>
+    </Popover>
   );
 }
 
@@ -101,32 +129,13 @@ export function RefreshButton({ onClick }: Props) {
       <Popover
         trigger="click"
         title={intl.formatMessage(labels.refresh)}
-        content={
-          <div style={{ maxWidth: 260 }}>
-            <div style={{ marginBottom: 8 }}>
-              Apply pending filesystem changes to this listing.
-            </div>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                margin: 0,
-              }}
-            >
-              <span>Automatic updates</span>
-              <AutoUpdateSwitch
-                checked={autoUpdateListing}
-                onChange={(checked) =>
-                  redux
-                    .getActions("account")
-                    ?.set_other_settings("auto_update_file_listing", checked)
-                }
-              />
-            </label>
-          </div>
-        }
+        content={autoUpdatePopoverContent({
+          checked: autoUpdateListing,
+          onChange: (checked) =>
+            redux
+              .getActions("account")
+              ?.set_other_settings("auto_update_file_listing", checked),
+        })}
       >
         <Button
           type="text"
