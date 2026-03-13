@@ -4,6 +4,7 @@
  */
 
 import { Button, Popover, Switch } from "antd";
+import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -20,6 +21,32 @@ interface AutoUpdateToggleProps {
   onChange: (checked: boolean) => void;
 }
 
+function AutoUpdateSwitch({ checked, onChange }: AutoUpdateToggleProps) {
+  const [value, setValue] = useState(checked);
+
+  useEffect(() => {
+    setValue(checked);
+  }, [checked]);
+
+  return (
+    <span
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <Switch
+        size="small"
+        checked={value}
+        onClick={(_checked, e) => e.stopPropagation()}
+        onChange={(next, e) => {
+          e.stopPropagation();
+          setValue(next);
+          onChange(next);
+        }}
+      />
+    </span>
+  );
+}
+
 export function AutoUpdateToggle({ checked, onChange }: AutoUpdateToggleProps) {
   return (
     <span
@@ -33,9 +60,11 @@ export function AutoUpdateToggle({ checked, onChange }: AutoUpdateToggleProps) {
         color: COLORS.GRAY_D,
         whiteSpace: "nowrap",
       }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
     >
       <span>Auto updates</span>
-      <Switch size="small" checked={checked} onChange={onChange} />
+      <AutoUpdateSwitch checked={checked} onChange={onChange} />
     </span>
   );
 }
@@ -87,8 +116,7 @@ export function RefreshButton({ onClick }: Props) {
               }}
             >
               <span>Automatic updates</span>
-              <Switch
-                size="small"
+              <AutoUpdateSwitch
                 checked={autoUpdateListing}
                 onChange={(checked) =>
                   redux
