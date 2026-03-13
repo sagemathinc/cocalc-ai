@@ -19,6 +19,7 @@ import { useIntl } from "react-intl";
 import {
   ActivityDisplay,
   ErrorDisplay,
+  HelpIcon,
   Loading,
 } from "@cocalc/frontend/components";
 import { CustomSoftwareReset } from "@cocalc/frontend/custom-software/reset-bar";
@@ -749,18 +750,22 @@ You can either wait for this host to become available again, or move this ${proj
               <div
                 style={{
                   flex: "0 0 auto",
-                  padding: showDirectoryTreePanel ? "0 0 8px 0" : "0",
+                  padding: showDirectoryTreePanel ? "4px 2px 8px 2px" : "0",
                   display: "flex",
-                  justifyContent: "center",
+                  alignItems: "center",
+                  justifyContent: showDirectoryTreePanel
+                    ? "flex-start"
+                    : "center",
+                  gap: "6px",
                 }}
               >
                 <Button
-                  size="small"
                   onClick={() =>
                     actions?.setState({
                       show_directory_tree: !show_directory_tree,
                     })
                   }
+                  style={{ minWidth: 32, height: 30, paddingInline: 8 }}
                   title={
                     showDirectoryTreePanel
                       ? "Hide directory tree"
@@ -776,6 +781,28 @@ You can either wait for this host to become available again, or move this ${proj
                     }}
                   />
                 </Button>
+                {showDirectoryTreePanel && (
+                  <span style={{ whiteSpace: "nowrap" }}>
+                    Directory Tree{" "}
+                    <HelpIcon title="Directory Tree" maxWidth="300px">
+                      <ul style={{ paddingLeft: "18px", margin: 0 }}>
+                        <li>Quickly navigate to any directory.</li>
+                        <li>
+                          Star directories for quick access. They appear at the
+                          top.
+                        </li>
+                        <li>Drag the border to resize the panel width.</li>
+                        <li>
+                          Drag and drop files onto directories to move them.
+                        </li>
+                        <li>
+                          Hold <b>Shift</b> while dropping to copy instead of
+                          move.
+                        </li>
+                      </ul>
+                    </HelpIcon>
+                  </span>
+                )}
               </div>
               {showDirectoryTreePanel && (
                 <DirectoryTreePanel
