@@ -33,6 +33,7 @@ function parseArgs(argv) {
     iteration: "",
     repo: ROOT,
     ledgerRoot: DEFAULT_LEDGER_ROOT,
+    rawPaths: [],
     paths: [],
     stageAll: false,
     allowEmpty: false,
@@ -66,12 +67,9 @@ function parseArgs(argv) {
         normalizedArgv[++i] || usageAndExit("--ledger-root requires a path"),
       );
     } else if (arg === "--path") {
-      options.paths.push(
-        path.relative(
-          options.repo,
-          path.resolve(
-            normalizedArgv[++i] || usageAndExit("--path requires a value"),
-          ),
+      options.rawPaths.push(
+        path.resolve(
+          normalizedArgv[++i] || usageAndExit("--path requires a value"),
         ),
       );
     } else if (arg === "--stage-all") {
@@ -88,6 +86,9 @@ function parseArgs(argv) {
   }
   if (!options.taskId) usageAndExit("--task-id is required");
   if (!options.subject) usageAndExit("--subject is required");
+  options.paths = options.rawPaths.map((file) =>
+    path.relative(options.repo, file),
+  );
   return options;
 }
 
