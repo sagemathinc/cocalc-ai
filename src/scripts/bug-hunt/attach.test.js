@@ -17,6 +17,12 @@ test("parseArgs applies attach defaults", () => {
   assert.equal(options.headed, false);
 });
 
+test("parseArgs ignores a pnpm forwarded -- separator", () => {
+  const options = parseArgs(["--", "--mode", "lite", "--json"]);
+  assert.equal(options.mode, "lite");
+  assert.equal(options.json, true);
+});
+
 test("selectLiveSession prefers the saved browser id before project fallback", () => {
   const selected = selectLiveSession(
     [

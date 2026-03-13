@@ -22,6 +22,10 @@ function usageAndExit(message, code = 1) {
 }
 
 function parseArgs(argv) {
+  const normalizedArgv = [...argv];
+  while (normalizedArgv[0] === "--") {
+    normalizedArgv.shift();
+  }
   const options = {
     mode: "",
     browser: "auto",
@@ -36,29 +40,29 @@ function parseArgs(argv) {
     readyTimeout: "20s",
     timeout: "45s",
   };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
+  for (let i = 0; i < normalizedArgv.length; i += 1) {
+    const arg = normalizedArgv[i];
     if (arg === "--mode") {
-      options.mode = `${argv[++i] || ""}`.trim().toLowerCase();
+      options.mode = `${normalizedArgv[++i] || ""}`.trim().toLowerCase();
     } else if (arg === "--browser") {
-      options.browser = `${argv[++i] || ""}`.trim().toLowerCase();
+      options.browser = `${normalizedArgv[++i] || ""}`.trim().toLowerCase();
     } else if (arg === "--project-id") {
-      options.projectId = `${argv[++i] || ""}`.trim();
+      options.projectId = `${normalizedArgv[++i] || ""}`.trim();
     } else if (arg === "--target-url") {
-      options.targetUrl = `${argv[++i] || ""}`.trim();
+      options.targetUrl = `${normalizedArgv[++i] || ""}`.trim();
     } else if (arg === "--session-name") {
-      options.sessionName = `${argv[++i] || ""}`.trim();
+      options.sessionName = `${normalizedArgv[++i] || ""}`.trim();
     } else if (arg === "--context-file") {
       options.contextFile = path.resolve(
-        argv[++i] || usageAndExit("--context-file requires a path"),
+        normalizedArgv[++i] || usageAndExit("--context-file requires a path"),
       );
     } else if (arg === "--ready-timeout") {
       options.readyTimeout =
-        `${argv[++i] || ""}`.trim() ||
+        `${normalizedArgv[++i] || ""}`.trim() ||
         usageAndExit("--ready-timeout requires a value");
     } else if (arg === "--timeout") {
       options.timeout =
-        `${argv[++i] || ""}`.trim() ||
+        `${normalizedArgv[++i] || ""}`.trim() ||
         usageAndExit("--timeout requires a value");
     } else if (arg === "--json") {
       options.json = true;
