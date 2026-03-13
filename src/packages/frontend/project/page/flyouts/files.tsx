@@ -77,18 +77,17 @@ import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { useFlyoutNavigation } from "./use-flyout-navigation";
 import { sortedTypeFilterOptions } from "@cocalc/frontend/project/explorer/file-listing/utils";
+import {
+  fileListingFingerprint,
+  useDeferredListing,
+} from "@cocalc/frontend/project/explorer/use-deferred-listing";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
   "detail" | "shiftKey" | "ctrlKey" | "metaKey" | "stopPropagation"
 >;
 
-const EMPTY_LISTING: [DirectoryListing, FileMap, null, boolean] = [
-  [],
-  {},
-  null,
-  true,
-];
+const EMPTY_DIRECTORY_FILES: DirectoryListing = [];
 
 export interface ActiveFileSort {
   column_name: string;
@@ -153,6 +152,7 @@ export function FilesFlyout({
   const [activeFileSort, setActiveFileSort] = useFlyoutSettings(project_id);
 
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
+  const otherSettings = useTypedRedux("account", "other_settings");
   const show_masked = useTypedRedux({ project_id }, "show_masked");
   const hidden = useTypedRedux({ project_id }, "show_hidden");
   const typeFilter = useTypedRedux({ project_id }, "type_filter") ?? null;
@@ -251,6 +251,7 @@ export function FilesFlyout({
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
   const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
+  const autoUpdateListing = !!otherSettings?.get("auto_update_file_listing");
   const typeFilterOptions = useMemo(() => {
     const extensions = new Set<string>();
     for (const file of effectiveListing ?? []) {
@@ -276,17 +277,9 @@ export function FilesFlyout({
     return () => clearTimeout(timer);
   }, [effectiveError, moveLro, effective_current_path, effectiveRefresh]);
 
-  // active file: current editor is the file in the listing
-  // empty: either no files, or just the ".." for the parent dir
-  const [directoryFiles, fileMap, activeFile, isEmpty] = useMemo((): [
-    DirectoryListing,
-    FileMap,
-    DirectoryListingEntry | null,
-    boolean,
-  ] => {
+  const liveDirectoryFiles = useMemo((): DirectoryListing | undefined => {
     const files = effectiveListing;
-    if (files == null) return EMPTY_LISTING;
-    let activeFile: DirectoryListingEntry | null = null;
+    if (files == null) return undefined;
     computeFileMasks(files);
     const searchWords = file_search.trim().toLowerCase();
 
@@ -352,8 +345,6 @@ export function FilesFlyout({
       processedFiles.reverse(); // inplace op
     }
 
-    const isEmpty = processedFiles.length === 0;
-
     // the ".." dir does not change the isEmpty state
     // hide ".." if there is a search -- https://github.com/sagemathinc/cocalc/issues/6877
     if (file_search === "" && effective_current_path !== "/") {
@@ -366,9 +357,7 @@ export function FilesFlyout({
     }
 
     // map each filename to it's entry in the directory listing
-    const fileMap = fromPairs(processedFiles.map((file) => [file.name, file]));
-
-    return [processedFiles, fileMap, activeFile, isEmpty];
+    return processedFiles;
   }, [
     effectiveListing,
     activeFileSort,
@@ -379,6 +368,28 @@ export function FilesFlyout({
     effective_current_path,
     strippedPublicPaths,
   ]);
+  const {
+    displayListing: deferredDirectoryFiles,
+    hasPending: hasPendingListingUpdate,
+    flush: flushListingUpdate,
+    allowNextUpdate: allowNextListingUpdate,
+  } = useDeferredListing({
+    liveListing: liveDirectoryFiles,
+    currentPath: effective_current_path,
+    alwaysPassThrough: autoUpdateListing,
+    fingerprint: fileListingFingerprint,
+  });
+  const directoryFiles =
+    deferredDirectoryFiles ?? liveDirectoryFiles ?? EMPTY_DIRECTORY_FILES;
+  const fileMap = useMemo<FileMap>(
+    () => fromPairs(directoryFiles.map((file) => [file.name, file])),
+    [directoryFiles],
+  );
+  const activeFile: DirectoryListingEntry | null = null;
+  const isEmpty = useMemo(
+    () => directoryFiles.filter((file) => file.name !== "..").length === 0,
+    [directoryFiles],
+  );
 
   const isOpen = (file) =>
     openFiles.has(path_to_file(effective_current_path, file.name));
@@ -392,6 +403,25 @@ export function FilesFlyout({
   );
 
   const prev_current_path = usePrevious(effective_current_path);
+  const prevCheckedSize = useRef(checked_files?.size ?? 0);
+
+  useEffect(() => {
+    if (prevCheckedSize.current > 0 && (checked_files?.size ?? 0) === 0) {
+      allowNextListingUpdate();
+    }
+    prevCheckedSize.current = checked_files?.size ?? 0;
+  }, [checked_files?.size, allowNextListingUpdate]);
+
+  useEffect(() => {
+    allowNextListingUpdate();
+  }, [
+    activeFileSort,
+    file_search,
+    hidden,
+    show_masked,
+    typeFilter,
+    allowNextListingUpdate,
+  ]);
 
   useEffect(() => {
     // reset prev selection if path changes
@@ -852,6 +882,9 @@ export function FilesFlyout({
         typeFilter={typeFilter}
         setTypeFilter={setTypeFilter}
         typeFilterOptions={typeFilterOptions}
+        hasPendingUpdate={hasPendingListingUpdate}
+        onRefreshListing={flushListingUpdate}
+        onTerminalCommand={allowNextListingUpdate}
       />
       {disableUploads ? (
         renderListing()
@@ -859,6 +892,9 @@ export function FilesFlyout({
         <FileUploadWrapper
           project_id={project_id}
           dest_path={effective_current_path}
+          event_handlers={{
+            complete: () => allowNextListingUpdate(),
+          }}
           style={{
             flex: "1 0 auto",
             display: "flex",

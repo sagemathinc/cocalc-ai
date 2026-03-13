@@ -125,6 +125,9 @@ interface Props {
   typeFilter: string | null;
   setTypeFilter: (filter: string | null) => void;
   typeFilterOptions: string[];
+  hasPendingUpdate?: boolean;
+  onRefreshListing?: () => void;
+  onTerminalCommand?: () => void;
 }
 
 export function FilesHeader({
@@ -155,6 +158,9 @@ export function FilesHeader({
   typeFilter,
   setTypeFilter,
   typeFilterOptions,
+  hasPendingUpdate,
+  onRefreshListing,
+  onTerminalCommand,
 }: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
 
@@ -257,6 +263,7 @@ export function FilesHeader({
 
     setTermError(undefined);
     setTermStdout(undefined);
+    onTerminalCommand?.();
 
     const id = ++termIdRef.current;
     const input0 = input + '\necho $HOME "`pwd`"';
@@ -853,6 +860,20 @@ export function FilesHeader({
           borderBottom: FIX_BORDER,
         }}
       >
+        {hasPendingUpdate && (
+          <Alert
+            type="warning"
+            banner
+            showIcon={false}
+            style={{ padding: FLYOUT_PADDING, margin: 0, cursor: "pointer" }}
+            onClick={onRefreshListing}
+            message={
+              <>
+                <Icon name="sync-alt" /> {intl.formatMessage(labels.refresh)}
+              </>
+            }
+          />
+        )}
         {isTerminalMode(file_search) && (
           <TerminalModeDisplay style={{ padding: FLYOUT_PADDING, margin: 0 }} />
         )}
