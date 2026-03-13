@@ -34,6 +34,7 @@ import {
 import track from "@cocalc/frontend/user-tracking";
 import {
   capitalize,
+  filename_extension,
   human_readable_size,
   path_split,
   path_to_file,
@@ -75,6 +76,7 @@ import {
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { useFlyoutNavigation } from "./use-flyout-navigation";
+import { sortedTypeFilterOptions } from "@cocalc/frontend/project/explorer/file-listing/utils";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -91,6 +93,13 @@ const EMPTY_LISTING: [DirectoryListing, FileMap, null, boolean] = [
 export interface ActiveFileSort {
   column_name: string;
   is_descending: boolean;
+}
+
+function typeFilterValue(file: DirectoryListingEntry): string {
+  if (file.isDir) {
+    return "folder";
+  }
+  return filename_extension(file.name)?.toLowerCase() || "(none)";
 }
 
 export function FilesFlyout({
@@ -146,6 +155,7 @@ export function FilesFlyout({
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
   const show_masked = useTypedRedux({ project_id }, "show_masked");
   const hidden = useTypedRedux({ project_id }, "show_hidden");
+  const typeFilter = useTypedRedux({ project_id }, "type_filter") ?? null;
   const checked_files = useTypedRedux({ project_id }, "checked_files");
   const openFiles = new Set<string>(
     useTypedRedux({ project_id }, "open_files_order")?.toJS() ?? [],
@@ -163,6 +173,9 @@ export function FilesFlyout({
   const activePath = useMemo(() => {
     return tab_to_path(activeTab);
   }, [activeTab]);
+  const setTypeFilter = (val: string | null) => {
+    actions?.setState({ type_filter: val ?? undefined } as any);
+  };
 
   // selecting files switches over to "select" mode or back to "open"
   useEffect(() => {
@@ -238,6 +251,15 @@ export function FilesFlyout({
     (hostUnavailable && isHostRoutingUnavailableError(effectiveError)) ||
     shouldSuppressTransientRoutingError({ error: effectiveError, moveLro });
   const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
+  const typeFilterOptions = useMemo(() => {
+    const extensions = new Set<string>();
+    for (const file of effectiveListing ?? []) {
+      if (!show_masked && file.mask === true) continue;
+      if (!hidden && file.name.startsWith(".")) continue;
+      extensions.add(typeFilterValue(file));
+    }
+    return sortedTypeFilterOptions(extensions);
+  }, [effectiveListing, hidden, show_masked]);
   const transientRoutingRetryRef = useRef<string>("");
   useEffect(() => {
     if (!effectiveError) return;
@@ -282,6 +304,9 @@ export function FilesFlyout({
       )
       .filter(
         (file: DirectoryListingEntry) => hidden || !file.name.startsWith("."),
+      )
+      .filter((file: DirectoryListingEntry) =>
+        typeFilter == null ? true : typeFilterValue(file) === typeFilter,
       );
 
     processedFiles.sort((a, b) => {
@@ -350,6 +375,7 @@ export function FilesFlyout({
     hidden,
     file_search,
     show_masked,
+    typeFilter,
     effective_current_path,
     strippedPublicPaths,
   ]);
@@ -823,6 +849,9 @@ export function FilesFlyout({
         currentPath={effective_current_path}
         onNavigate={navigateFlyout}
         setActiveFileSort={setActiveFileSort}
+        typeFilter={typeFilter}
+        setTypeFilter={setTypeFilter}
+        typeFilterOptions={typeFilterOptions}
       />
       {disableUploads ? (
         renderListing()

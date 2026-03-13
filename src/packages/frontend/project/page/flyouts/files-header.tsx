@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, InputRef, Radio, Space, Tooltip } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  InputRef,
+  Radio,
+  Select,
+  Space,
+  Tooltip,
+} from "antd";
 import immutable from "immutable";
 import { useIntl } from "react-intl";
 import { VirtuosoHandle } from "react-virtuoso";
@@ -30,6 +39,7 @@ import {
   DirectoryListing,
   DirectoryListingEntry,
 } from "@cocalc/frontend/project/explorer/types";
+import { TypeFilterLabel } from "@cocalc/frontend/project/explorer/file-listing/utils";
 import track from "@cocalc/frontend/user-tracking";
 import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import { separate_file_extension, strictMod } from "@cocalc/util/misc";
@@ -86,6 +96,9 @@ interface Props {
   currentPath: string;
   onNavigate: (path: string) => void;
   setActiveFileSort: (sort: ActiveFileSort) => void;
+  typeFilter: string | null;
+  setTypeFilter: (filter: string | null) => void;
+  typeFilterOptions: string[];
 }
 
 export function FilesHeader({
@@ -113,6 +126,9 @@ export function FilesHeader({
   currentPath,
   onNavigate,
   setActiveFileSort,
+  typeFilter,
+  setTypeFilter,
+  typeFilterOptions,
 }: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
 
@@ -291,6 +307,33 @@ export function FilesHeader({
   }
 
   function createFileIfNotExists() {
+    if (typeFilter != null && file_search === "" && isEmpty) {
+      const style: CSS = {
+        padding: FLYOUT_PADDING,
+        margin: 0,
+      };
+      return (
+        <Alert
+          type="info"
+          banner
+          showIcon={false}
+          style={style}
+          description={
+            <>
+              <Button
+                size="small"
+                type="text"
+                style={{ float: "right", color: COLORS.GRAY_M }}
+                onClick={() => setTypeFilter(null)}
+                icon={<Icon name="close-circle-filled" />}
+              />
+              No files or folders match the current type filter.
+            </>
+          }
+        />
+      );
+    }
+
     if (file_search === "" || !isEmpty) return;
 
     if (isReadonlyVirtualPath) {
@@ -393,18 +436,60 @@ export function FilesHeader({
               display: "flex",
               flexDirection: "row",
               justifyContent: "space-between",
+              gap: FLYOUT_PADDING,
             }}
           >
-            <Radio.Group size="small">
-              {renderSortButton(
-                "starred",
-                <Icon name="star-filled" style={{ fontSize: "10pt" }} />,
-              )}
-              {renderSortButton("name", "Name")}
-              {renderSortButton("size", "Size")}
-              {renderSortButton("time", "Time")}
-              {renderSortButton("type", "Type")}
-            </Radio.Group>
+            <Space size="small">
+              <Radio.Group size="small">
+                {renderSortButton(
+                  "starred",
+                  <Icon name="star-filled" style={{ fontSize: "10pt" }} />,
+                )}
+                {renderSortButton("name", "Name")}
+                {renderSortButton("size", "Size")}
+                {renderSortButton("time", "Time")}
+                {renderSortButton("type", "Type")}
+              </Radio.Group>
+              <Select
+                size="small"
+                allowClear
+                placeholder="Type"
+                value={typeFilter ?? undefined}
+                onChange={(value) =>
+                  setTypeFilter(
+                    value == null || value === "__clear__" ? null : value,
+                  )
+                }
+                style={{ minWidth: 88 }}
+                popupMatchSelectWidth={false}
+                options={[
+                  ...(typeFilter != null
+                    ? [
+                        {
+                          label: (
+                            <span
+                              style={{
+                                color: COLORS.GRAY,
+                                display: "block",
+                                borderBottom: `1px solid ${COLORS.GRAY_L0}`,
+                                paddingBottom: 4,
+                                marginBottom: 2,
+                              }}
+                            >
+                              <Icon name="times-circle" /> Clear filter
+                            </span>
+                          ),
+                          value: "__clear__",
+                        },
+                      ]
+                    : []),
+                  ...typeFilterOptions.map((ext) => ({
+                    label: <TypeFilterLabel ext={ext} />,
+                    value: ext,
+                  })),
+                ]}
+              />
+            </Space>
             <Space.Compact orientation="horizontal" size={"small"}>
               <Tooltip
                 title={intl.formatMessage(labels.upload_tooltip)}
