@@ -855,6 +855,8 @@ export function FilesFlyout({
         getFile={getFile}
         publicFiles={publicFiles}
         refreshBackups={refreshBackups}
+        currentPath={effective_current_path}
+        onNavigate={navigateFlyout}
       />
       {modal}
     </div>

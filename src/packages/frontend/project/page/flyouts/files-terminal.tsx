@@ -22,8 +22,11 @@ import { DEFAULT_TERM_ENV } from "@cocalc/frontend/frame-editors/code-editor/con
 import { Terminal } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal";
 import { ConnectedTerminalInterface } from "@cocalc/frontend/frame-editors/terminal-editor/connected-terminal-interface";
 import { background_color } from "@cocalc/frontend/frame-editors/terminal-editor/themes";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { escapeBashChangeDirPath } from "@cocalc/util/jupyter-api/chdir-commands";
 import { sha1 } from "@cocalc/util/misc";
+import { BACKUPS } from "@cocalc/util/consts/backups";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { FLYOUT_PADDING } from "./consts";
 
 interface TerminalFlyoutProps {
@@ -37,6 +40,28 @@ interface TerminalFlyoutProps {
   setTerminalTitle: (title: string) => void;
   syncPath: number;
   sync: boolean;
+  browsingPath: string;
+  onNavigate: (path: string) => void;
+}
+
+function toFlyoutPathFromTerminalCwd(
+  payload: string,
+  homePath: string,
+): string {
+  if (!payload.startsWith("/")) return payload;
+
+  const specialRoots = [BACKUPS, SNAPSHOTS];
+  for (const root of specialRoots) {
+    const absoluteRoot = `${homePath}/${root}`;
+    if (payload === absoluteRoot) {
+      return root;
+    }
+    if (payload.startsWith(`${absoluteRoot}/`)) {
+      return payload.slice(homePath.length + 1);
+    }
+  }
+
+  return payload;
 }
 
 // This is modeled after frame-editors/terminal-editor/terminal.tsx
@@ -51,11 +76,11 @@ export function TerminalFlyout({
   setTerminalTitle,
   syncPath,
   sync,
+  browsingPath,
+  onNavigate,
 }: TerminalFlyoutProps) {
   const actions = useActions({ project_id });
-  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
-  const currentPathRef = useRef<string>(effective_current_path);
+  const currentPathRef = useRef<string>(browsingPath);
   const account_id = useTypedRedux("account", "account_id");
   const terminal = useTypedRedux("account", "terminal");
   const terminalRef = useRef<Terminal | undefined>(undefined);
@@ -67,14 +92,20 @@ export function TerminalFlyout({
   const [terminalExists, setTerminalExists] = useState<boolean>(false);
   const [error, setError] = useState("");
   const syncRef = useRef<boolean>(sync);
+  const onNavigateRef = useRef(onNavigate);
+  const homePath = getProjectHomeDirectory(project_id);
 
   useEffect(() => {
-    currentPathRef.current = effective_current_path;
-  }, [effective_current_path]);
+    currentPathRef.current = browsingPath;
+  }, [browsingPath]);
 
   useEffect(() => {
     syncRef.current = sync;
   }, [sync]);
+
+  useEffect(() => {
+    onNavigateRef.current = onNavigate;
+  }, [onNavigate]);
 
   // Design decision:
   // One terminal per project, one for each user, and persistent across flyout open/close.
@@ -129,8 +160,9 @@ export function TerminalFlyout({
         if (!syncRef.current) return;
         // ignored, default location
         if (payload === "/tmp") return;
-        if (currentPathRef.current != payload) {
-          actions?.set_current_path(payload);
+        const nextPath = toFlyoutPathFromTerminalCwd(payload, homePath);
+        if (currentPathRef.current != nextPath) {
+          onNavigateRef.current(nextPath);
         }
       },
       _tree_is_single_leaf() {
@@ -239,14 +271,14 @@ export function TerminalFlyout({
     // this "line reset" is from the terminal guide,
     // see frame-editors/terminal-editor/actions::run_command
     const clean = "\x05\x15"; // move cursor to end of line, then clear line
-    const nextPath = effective_current_path;
+    const nextPath = browsingPath;
     // start with a space to avoid recording in history
     const cmd = nextPath.startsWith("/")
       ? ` cd "${escapeBashChangeDirPath(nextPath)}"`
       : ` cd "$HOME/${escapeBashChangeDirPath(nextPath)}"`;
     // this will end up in a write buffer, hence it should be ok to do right at the beginning
     terminalRef.current.conn_write(`${clean}${cmd}\n`);
-  }, [effective_current_path, syncPath, sync, terminalExists]);
+  }, [browsingPath, syncPath, sync, terminalExists]);
 
   const set_font_size = debounce(
     () => {

@@ -16,7 +16,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ConnectionStatus } from "@cocalc/frontend/app/store";
 import { Icon } from "@cocalc/frontend/components";
@@ -65,6 +64,8 @@ interface FilesBottomProps {
   getFile: (path: string) => DirectoryListingEntry | undefined;
   publicFiles: Set<string>;
   refreshBackups?: () => void;
+  currentPath: string;
+  onNavigate: (path: string) => void;
 }
 
 export function FilesBottom({
@@ -82,10 +83,11 @@ export function FilesBottom({
   directoryFiles,
   publicFiles,
   refreshBackups,
+  currentPath,
+  onNavigate,
 }: FilesBottomProps) {
   const [mode, setMode] = modeState;
-  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
+  const effective_current_path = currentPath;
   const actions = useActions({ project_id });
   const [activeKeys, setActiveKeys] = useState<PanelKey[]>([]);
   const [resize, setResize] = useState<number>(0);
@@ -184,6 +186,8 @@ export function FilesBottom({
         setTerminalTitle={setTerminalTitle}
         syncPath={syncPath}
         sync={sync}
+        browsingPath={effective_current_path}
+        onNavigate={onNavigate}
       />
     );
   }
