@@ -172,6 +172,7 @@ export interface Filesystem {
   readlink: (path: string) => Promise<string>;
   realpath: (path: string) => Promise<string>;
   canonicalSyncFsPath?: (path: string) => Promise<string>;
+  canonicalSyncIdentityPath?: (path: string) => Promise<string>;
   syncFsReconcile?: (
     path: string,
     info?: {
@@ -517,6 +518,20 @@ export async function fsServer({
       const filesystem = await fs(this.subject);
       if (typeof filesystem.canonicalSyncFsPath === "function") {
         return await filesystem.canonicalSyncFsPath(path);
+      }
+      if (typeof filesystem.realpath === "function") {
+        try {
+          return await filesystem.realpath(path);
+        } catch {
+          return path;
+        }
+      }
+      return path;
+    },
+    async canonicalSyncIdentityPath(path: string) {
+      const filesystem = await fs(this.subject);
+      if (typeof filesystem.canonicalSyncIdentityPath === "function") {
+        return await filesystem.canonicalSyncIdentityPath(path);
       }
       if (typeof filesystem.realpath === "function") {
         try {

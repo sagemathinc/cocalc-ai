@@ -284,13 +284,16 @@ describe("syncdoc canonical identity path policy", () => {
       canonicalSyncFsPath: jest.fn(
         async (path: string) => `/mnt/cocalc/project-test/${path}`,
       ),
+      canonicalSyncIdentityPath: jest.fn(
+        async (path: string) => `/root/${path}`,
+      ),
       realpath: jest.fn(async (path: string) => `/root/${path}`),
       stat: jest.fn(async () => ({ mtime: new Date(0) })),
       readFile: jest.fn(async () => ""),
     } as any;
   }
 
-  it("uses backend watcher identity for ordinary watched files", async () => {
+  it("uses sandbox-visible identity even when backend watch uses a host path", async () => {
     const doc = new SyncString({
       project_id,
       path: "ordinary.txt",
@@ -299,7 +302,7 @@ describe("syncdoc canonical identity path policy", () => {
     });
     await once(doc, "ready");
     expect(doc.get_string_id()).toBe(
-      client_db.sha1(project_id, "/mnt/cocalc/project-test/ordinary.txt"),
+      client_db.sha1(project_id, "/root/ordinary.txt"),
     );
     await doc.close();
   });
