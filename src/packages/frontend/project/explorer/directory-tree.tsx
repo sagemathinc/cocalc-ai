@@ -14,8 +14,8 @@ import React, {
 } from "react";
 
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
+import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { useStarredFilesManager } from "@cocalc/frontend/project/page/flyouts/store";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import * as misc from "@cocalc/util/misc";
@@ -129,6 +129,12 @@ const PANEL_STYLE: React.CSSProperties = {
   overflowX: "hidden",
   paddingRight: 4,
 } as const;
+
+type DirectoryTreeDirent = {
+  name: string;
+  path: string;
+  isDirectory: () => boolean;
+};
 
 function DirectoryTreeNodeTitle({
   project_id,
@@ -291,6 +297,7 @@ export function DirectoryTreePanel({
   on_open_directory: (path: string) => void;
 }) {
   const rootPath = getRootPath(current_path, homeDirectory);
+  const fs = useFs({ project_id });
   const [childrenByPath, setChildrenByPath] = useState<
     Record<string, string[]>
   >({});
@@ -305,24 +312,23 @@ export function DirectoryTreePanel({
   const loadPath = useCallback(
     async (path: string, force = false) => {
       if (rootPath == null) return;
+      if (fs == null) return;
       if (!force && loadedPathsRef.current.has(path)) return;
       if (loadingPathsRef.current.has(path)) return;
       loadingPathsRef.current.add(path);
       try {
-        const listing = await webapp_client.project_client.directory_listing({
-          project_id,
-          path,
-          hidden: true,
-        });
-        const dirs = (listing?.files ?? [])
+        const entries = (await fs.readdir(path, {
+          withFileTypes: true,
+        })) as unknown as DirectoryTreeDirent[];
+        const dirs = entries
           .filter(
             (entry) =>
-              entry.isDir &&
+              entry.isDirectory() &&
               entry.name !== "." &&
               entry.name !== ".." &&
               (show_hidden || !entry.name.startsWith(".")),
           )
-          .map((entry) => misc.path_to_file(path, entry.name))
+          .map((entry) => entry.path)
           .sort((a, b) => misc.cmp(a, b));
         setChildrenByPath((prev) => ({ ...prev, [path]: dirs }));
         loadedPathsRef.current.add(path);
@@ -333,7 +339,7 @@ export function DirectoryTreePanel({
         loadingPathsRef.current.delete(path);
       }
     },
-    [project_id, rootPath, show_hidden],
+    [fs, rootPath, show_hidden],
   );
 
   useEffect(() => {
