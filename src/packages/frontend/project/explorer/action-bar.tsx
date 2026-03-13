@@ -31,7 +31,10 @@ import {
 } from "@cocalc/frontend/project/listing/use-backups";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import path from "path";
-import { RefreshButton } from "@cocalc/frontend/project/explorer/refresh-button";
+import {
+  AutoUpdateToggle,
+  RefreshButton,
+} from "@cocalc/frontend/project/explorer/refresh-button";
 
 const ROW_INFO_STYLE = {
   color: COLORS.TAB,
@@ -53,6 +56,8 @@ interface Props {
   refreshBackups?: () => void;
   hasPendingUpdate?: boolean;
   onRefreshListing?: () => void;
+  autoUpdateListing?: boolean;
+  onToggleAutoUpdate?: (checked: boolean) => void;
 }
 
 export function ActionBar({
@@ -69,6 +74,8 @@ export function ActionBar({
   refreshBackups,
   hasPendingUpdate,
   onRefreshListing,
+  autoUpdateListing,
+  onToggleAutoUpdate,
 }: Props) {
   const intl = useIntl();
   const currentParts = current_path.split("/").filter(Boolean);
@@ -308,6 +315,13 @@ export function ActionBar({
     const refreshButton = hasPendingUpdate ? (
       <RefreshButton onClick={onRefreshListing} />
     ) : null;
+    const autoUpdateToggle =
+      autoUpdateListing != null && onToggleAutoUpdate != null ? (
+        <AutoUpdateToggle
+          checked={autoUpdateListing}
+          onChange={onToggleAutoUpdate}
+        />
+      ) : null;
 
     if (checked === 0) {
       return (
@@ -326,6 +340,7 @@ export function ActionBar({
             />
           </div>
           {refreshButton && <> &middot; {refreshButton}</>}
+          {autoUpdateToggle && <> &middot; {autoUpdateToggle}</>}
         </div>
       );
     } else {
@@ -345,6 +360,7 @@ export function ActionBar({
             )}
           </span>
           {refreshButton && <> &middot; {refreshButton}</>}
+          {autoUpdateToggle && <> &middot; {autoUpdateToggle}</>}
           <Gap />
         </div>
       );

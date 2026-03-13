@@ -348,6 +348,11 @@ export function Explorer() {
     },
     [project_id],
   );
+  const handleAutoUpdateListingChange = useCallback((checked: boolean) => {
+    redux
+      .getActions("account")
+      ?.set_other_settings("auto_update_file_listing", checked);
+  }, []);
 
   useEffect(() => {
     actions?.setState({ numDisplayedFiles: visibleListing?.length ?? 0 });
@@ -888,6 +893,8 @@ You can either wait for this host to become available again, or move this ${proj
                       refreshBackups={refreshBackups}
                       hasPendingUpdate={hasPendingListingUpdate}
                       onRefreshListing={flushListingUpdates}
+                      autoUpdateListing={autoUpdateListing}
+                      onToggleAutoUpdate={handleAutoUpdateListingChange}
                     />
                   )}
                 </div>

@@ -15,6 +15,31 @@ interface Props {
   onClick?: () => void;
 }
 
+interface AutoUpdateToggleProps {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}
+
+export function AutoUpdateToggle({ checked, onChange }: AutoUpdateToggleProps) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "1px 8px",
+        borderRadius: 999,
+        background: checked ? COLORS.BLUE_LLLL : COLORS.GRAY_LLL,
+        color: COLORS.GRAY_D,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span>Auto updates</span>
+      <Switch size="small" checked={checked} onChange={onChange} />
+    </span>
+  );
+}
+
 export function RefreshButton({ onClick }: Props) {
   const intl = useIntl();
   const autoUpdateListing = !!useTypedRedux("account", "other_settings")?.get(
