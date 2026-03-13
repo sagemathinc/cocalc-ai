@@ -124,6 +124,20 @@ export function getSort(location: Location): {
   return sort ?? FALLBACK_SORT;
 }
 
+export async function getSortAsync(location: Location): Promise<{
+  column_name: SortField;
+  is_descending: boolean;
+}> {
+  if (kv == null) {
+    try {
+      await init();
+    } catch {
+      return FALLBACK_SORT;
+    }
+  }
+  return getSort(location);
+}
+
 export function setSort({
   column_name,
   ...location

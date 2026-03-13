@@ -31,6 +31,7 @@ import {
 } from "@cocalc/frontend/project/listing/use-backups";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import path from "path";
+import { RefreshButton } from "@cocalc/frontend/project/explorer/refresh-button";
 
 const ROW_INFO_STYLE = {
   color: COLORS.TAB,
@@ -50,6 +51,8 @@ interface Props {
   show_custom_software_reset?: boolean;
   project_is_running?: boolean;
   refreshBackups?: () => void;
+  hasPendingUpdate?: boolean;
+  onRefreshListing?: () => void;
 }
 
 export function ActionBar({
@@ -64,6 +67,8 @@ export function ActionBar({
   show_custom_software_reset,
   project_is_running,
   refreshBackups,
+  hasPendingUpdate,
+  onRefreshListing,
 }: Props) {
   const intl = useIntl();
   const currentParts = current_path.split("/").filter(Boolean);
@@ -300,6 +305,9 @@ export function ActionBar({
     const checked = checked_files.size;
     const total = listing.length;
     const style = ROW_INFO_STYLE;
+    const refreshButton = hasPendingUpdate ? (
+      <RefreshButton onClick={onRefreshListing} />
+    ) : null;
 
     if (checked === 0) {
       return (
@@ -317,6 +325,7 @@ export function ActionBar({
               }
             />
           </div>
+          {refreshButton && <> &middot; {refreshButton}</>}
         </div>
       );
     } else {
@@ -335,6 +344,7 @@ export function ActionBar({
               },
             )}
           </span>
+          {refreshButton && <> &middot; {refreshButton}</>}
           <Gap />
         </div>
       );

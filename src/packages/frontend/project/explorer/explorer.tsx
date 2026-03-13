@@ -92,6 +92,7 @@ import {
   setDirectoryTreeWidth,
 } from "./directory-tree";
 import { FileDndProvider } from "./dnd/file-dnd-provider";
+import { getSortAsync, setSort } from "./config";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -353,6 +354,30 @@ export function Explorer() {
   useEffect(() => {
     actions?.setState({ numDisplayedFiles: visibleListing?.length ?? 0 });
   }, [actions, visibleListing?.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const nextSort = await getSortAsync({
+        project_id,
+        path: effective_current_path,
+      });
+      if (cancelled) return;
+      const currentSort = redux
+        .getProjectStore(project_id)
+        ?.get("active_file_sort")
+        ?.toJS?.() ?? { column_name: "time", is_descending: false };
+      if (
+        currentSort.column_name !== nextSort.column_name ||
+        currentSort.is_descending !== nextSort.is_descending
+      ) {
+        actions?.setState({ active_file_sort: nextSort });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [actions, effective_current_path, project_id]);
 
   // ensure that listing entries have isPublic set:
   const strippedPublicPaths = useStrippedPublicPaths(project_id);
@@ -864,6 +889,8 @@ You can either wait for this host to become available again, or move this ${proj
                       show_custom_software_reset={show_custom_software_reset}
                       project_is_running={project_is_running}
                       refreshBackups={refreshBackups}
+                      hasPendingUpdate={hasPendingListingUpdate}
+                      onRefreshListing={flushListingUpdates}
                     />
                   )}
                 </div>
@@ -944,13 +971,6 @@ You can either wait for this host to become available again, or move this ${proj
 
             {!listingError && (
               <>
-                {hasPendingListingUpdate && (
-                  <div style={{ padding: "0 0 8px 0", textAlign: "right" }}>
-                    <Button size="small" onClick={flushListingUpdates}>
-                      <Icon name="refresh" /> Refresh Listing
-                    </Button>
-                  </div>
-                )}
                 <FileUploadWrapper
                   project_id={project_id}
                   dest_path={effective_current_path}
@@ -971,15 +991,10 @@ You can either wait for this host to become available again, or move this ${proj
                     <FileListing
                       active_file_sort={active_file_sort}
                       sort_by={(column_name: string) => {
-                        const is_descending =
-                          active_file_sort.column_name === column_name
-                            ? !active_file_sort.is_descending
-                            : false;
-                        actions.setState({
-                          active_file_sort: {
-                            column_name,
-                            is_descending,
-                          },
+                        void setSort({
+                          project_id,
+                          path: effective_current_path,
+                          column_name,
                         });
                       }}
                       listing={visibleListing}

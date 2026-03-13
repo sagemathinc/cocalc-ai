@@ -110,8 +110,6 @@ function useSettingsDKV(
 }
 
 export function useExplorerSettings(project_id: string): void {
-  const active_file_sort =
-    useTypedRedux({ project_id }, "active_file_sort") ?? DEFAULT_FLYOUT_SORT;
   const show_directory_tree =
     useTypedRedux({ project_id }, "show_directory_tree") ?? false;
 
@@ -120,14 +118,6 @@ export function useExplorerSettings(project_id: string): void {
     (saved) => {
       const actions = redux.getProjectActions(project_id);
       actions?.setState({
-        ...(saved?.sortColumn
-          ? {
-              active_file_sort: {
-                column_name: saved.sortColumn,
-                is_descending: saved.sortDescending ?? false,
-              },
-            }
-          : {}),
         ...(saved?.showDirectoryTree != null
           ? { show_directory_tree: saved.showDirectoryTree }
           : {}),
@@ -135,38 +125,22 @@ export function useExplorerSettings(project_id: string): void {
     },
   );
 
-  useEffect(markDirtyBeforeInit, [
-    active_file_sort,
-    markDirtyBeforeInit,
-    show_directory_tree,
-  ]);
+  useEffect(markDirtyBeforeInit, [markDirtyBeforeInit, show_directory_tree]);
 
   useEffect(() => {
     if (!initializedRef.current || !dkvRef.current) return;
     try {
       const current = dkvRef.current.get(project_id) ?? {};
-      if (
-        current.sortColumn !== active_file_sort.column_name ||
-        current.sortDescending !== active_file_sort.is_descending ||
-        current.showDirectoryTree !== show_directory_tree
-      ) {
+      if (current.showDirectoryTree !== show_directory_tree) {
         dkvRef.current.set(project_id, {
           ...current,
-          sortColumn: active_file_sort.column_name,
-          sortDescending: active_file_sort.is_descending,
           showDirectoryTree: show_directory_tree,
         });
       }
     } catch {
       // ignore DKV failures
     }
-  }, [
-    active_file_sort,
-    dkvRef,
-    initializedRef,
-    project_id,
-    show_directory_tree,
-  ]);
+  }, [dkvRef, initializedRef, project_id, show_directory_tree]);
 }
 
 export function useFlyoutSettings(
