@@ -46,6 +46,7 @@ import {
 } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
 
+import DirectoryPeek from "./directory-peek";
 import NoFiles from "./no-files";
 import { TERM_MODE_CHAR, VIEWABLE_FILE_EXT } from "./utils";
 
@@ -107,11 +108,23 @@ interface FileEntry extends DirectoryListingEntry {
   isStarred: boolean;
 }
 
+interface PeekEntry {
+  _isPeek: true;
+  _peekForName: string;
+  name: string;
+}
+
+type VirtualEntry = FileEntry | PeekEntry;
+
+function isPeekEntry(entry: VirtualEntry): entry is PeekEntry {
+  return "_isPeek" in entry;
+}
+
 interface DndRowContextType {
   currentPath: string;
   projectId: string;
   disableActions: boolean;
-  getRecord: (index: number) => FileEntry | undefined;
+  getEntry: (index: number) => VirtualEntry | undefined;
   getDragPaths: (record: FileEntry) => string[];
   onRow: (record: FileEntry) => {
     onClick: (e: React.MouseEvent) => void;
@@ -174,14 +187,26 @@ function renderTimestamp(mtime?: number): React.ReactNode {
   }
 }
 
-function renderFileIcon(record: FileEntry) {
+function renderFileIcon(record: FileEntry, isExpanded?: boolean) {
   const color = record.mask ? COLORS.GRAY_M : COLORS.FILE_ICON;
   if (record.isDir) {
     return (
-      <Icon
-        name="folder-open"
-        style={{ fontSize: "14pt", color, verticalAlign: "sub" }}
-      />
+      <span style={{ color, verticalAlign: "sub", whiteSpace: "nowrap" }}>
+        <Icon
+          name={isExpanded ? "folder-open" : "folder"}
+          style={{ fontSize: "14pt", verticalAlign: "sub" }}
+        />
+        {record.name !== ".." && (
+          <Icon
+            name={isExpanded ? "caret-down" : "caret-right"}
+            style={{
+              marginLeft: "3px",
+              fontSize: "14pt",
+              verticalAlign: "sub",
+            }}
+          />
+        )}
+      </span>
     );
   }
 
@@ -241,10 +266,11 @@ function VirtualTableRow(props: React.HTMLAttributes<HTMLTableRowElement>) {
     return <tr {...props} />;
   }
 
-  const record = ctx.getRecord(index);
-  if (record == null) {
+  const entry = ctx.getEntry(index);
+  if (entry == null || isPeekEntry(entry)) {
     return <tr {...props} />;
   }
+  const record = entry;
 
   if (ctx.disableActions) {
     const rowProps = ctx.onRow(record);
@@ -410,7 +436,23 @@ export function FileListing({
   const sortColumn = active_file_sort?.column_name;
   const sortDescending = active_file_sort?.is_descending;
 
-  const dataSource = useMemo<FileEntry[]>(() => {
+  const [expandedDirs, setExpandedDirs] = useState<string[]>([]);
+
+  useEffect(() => {
+    setExpandedDirs([]);
+  }, [current_path]);
+
+  const toggleExpandDir = useCallback((name: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setExpandedDirs((prev) =>
+      prev.includes(name)
+        ? prev.filter((dir) => dir !== name)
+        : [...prev, name],
+    );
+  }, []);
+
+  const baseDataSource = useMemo<FileEntry[]>(() => {
     return listing
       .filter((entry) => (hide_masked_files ? !entry.mask : true))
       .map((entry) => {
@@ -432,28 +474,57 @@ export function FileListing({
     starredSet,
   ]);
 
+  const virtualData = useMemo<VirtualEntry[]>(() => {
+    const result: VirtualEntry[] = [];
+    for (const entry of baseDataSource) {
+      result.push(entry);
+      if (
+        entry.isDir &&
+        entry.name !== ".." &&
+        expandedDirs.includes(entry.name)
+      ) {
+        result.push({
+          _isPeek: true,
+          _peekForName: entry.name,
+          name: `__peek__${entry.name}`,
+        });
+      }
+    }
+    return result;
+  }, [baseDataSource, expandedDirs]);
+
   const selectedRowKeys = useMemo(() => {
     const keys: string[] = [];
-    for (const record of dataSource) {
+    for (const record of baseDataSource) {
       if (checked_files.has(record.fullPath)) {
         keys.push(record.fullPath);
       }
     }
     return keys;
-  }, [checked_files, dataSource]);
+  }, [checked_files, baseDataSource]);
 
   useEffect(() => {
     if (selected_file_index == null || selected_file_index < 0) {
       return;
     }
-    if (selected_file_index >= dataSource.length) {
+    if (selected_file_index >= baseDataSource.length) {
+      return;
+    }
+    const selectedPath = baseDataSource[selected_file_index]?.fullPath;
+    if (selectedPath == null) {
+      return;
+    }
+    const virtualIndex = virtualData.findIndex(
+      (entry) => !isPeekEntry(entry) && entry.fullPath === selectedPath,
+    );
+    if (virtualIndex < 0) {
       return;
     }
     virtuosoRef.current?.scrollToIndex({
-      index: selected_file_index,
+      index: virtualIndex,
       align: "center",
     });
-  }, [selected_file_index, dataSource]);
+  }, [selected_file_index, baseDataSource, virtualData]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -577,7 +648,7 @@ export function FileListing({
         actions.set_selected_file_range(
           record.fullPath,
           true,
-          dataSource,
+          baseDataSource,
           current_path,
         );
         actions.set_most_recent_file_click(record.fullPath);
@@ -622,7 +693,7 @@ export function FileListing({
       actions,
       checked_files,
       current_path,
-      dataSource,
+      baseDataSource,
       onNavigateDirectory,
       onOpenSpecial,
     ],
@@ -634,7 +705,7 @@ export function FileListing({
         actions.set_selected_file_range(
           record.fullPath,
           checked,
-          dataSource,
+          baseDataSource,
           current_path,
         );
       } else {
@@ -642,7 +713,7 @@ export function FileListing({
       }
       actions.set_most_recent_file_click(record.fullPath);
     },
-    [actions, current_path, dataSource],
+    [actions, current_path, baseDataSource],
   );
 
   const handleSelectAll = useCallback(
@@ -650,16 +721,16 @@ export function FileListing({
       actions.set_all_files_unchecked();
       if (e.target.checked) {
         actions.set_file_list_checked(
-          dataSource
+          baseDataSource
             .filter((record) => record.name !== "..")
             .map((record) => record.fullPath),
         );
       }
     },
-    [actions, dataSource],
+    [actions, baseDataSource],
   );
 
-  const selectableCount = dataSource.filter(
+  const selectableCount = baseDataSource.filter(
     (record) => record.name !== "..",
   ).length;
   const allChecked =
@@ -670,8 +741,8 @@ export function FileListing({
     (record: FileEntry) => {
       const isSelected =
         selected_file_index >= 0 &&
-        selected_file_index < dataSource.length &&
-        dataSource[selected_file_index]?.fullPath === record.fullPath &&
+        selected_file_index < baseDataSource.length &&
+        baseDataSource[selected_file_index]?.fullPath === record.fullPath &&
         file_search[0] !== TERM_MODE_CHAR;
       const isChecked = checked_files.has(record.fullPath);
 
@@ -702,7 +773,7 @@ export function FileListing({
     },
     [
       selected_file_index,
-      dataSource,
+      baseDataSource,
       file_search,
       checked_files,
       handleRowClick,
@@ -715,7 +786,7 @@ export function FileListing({
       currentPath: current_path,
       projectId: project_id,
       disableActions: !!student_project_functionality.disableActions,
-      getRecord: (index: number) => dataSource[index],
+      getEntry: (index: number) => virtualData[index],
       getDragPaths: (record: FileEntry) => {
         if (checked_files.has(record.fullPath)) {
           return checked_files.toArray();
@@ -731,7 +802,7 @@ export function FileListing({
       current_path,
       project_id,
       student_project_functionality.disableActions,
-      dataSource,
+      virtualData,
       checked_files,
       onRow,
     ],
@@ -814,8 +885,44 @@ export function FileListing({
     isNarrow,
   ]);
 
+  const numCols = useMemo(() => {
+    let n = 4; // public + type + star + name
+    if (!student_project_functionality.disableActions) {
+      n += 1;
+    }
+    n += 1; // date
+    if (!isNarrow) {
+      n += 2; // size + actions
+    }
+    return n;
+  }, [student_project_functionality.disableActions, isNarrow]);
+
   const itemContent = useCallback(
-    (_index: number, record: FileEntry) => {
+    (_index: number, entry: VirtualEntry) => {
+      if (isPeekEntry(entry)) {
+        return (
+          <td
+            colSpan={numCols}
+            style={{ padding: 0, background: "white" }}
+          >
+            <DirectoryPeek
+              project_id={project_id}
+              dirPath={misc.path_to_file(current_path, entry._peekForName)}
+              onClose={() =>
+                setExpandedDirs((prev) =>
+                  prev.filter((dir) => dir !== entry._peekForName),
+                )
+              }
+              onNavigateDirectory={onNavigateDirectory}
+              onOpenFile={(path) =>
+                actions.open_file({ path, foreground: true, explicit: true })
+              }
+            />
+          </td>
+        );
+      }
+
+      const record = entry;
       const cellStyle: React.CSSProperties = {
         padding: "6px 8px",
         background: "transparent",
@@ -847,7 +954,19 @@ export function FileListing({
             ) : null}
           </td>
           <td style={{ ...cellStyle, width: COL_W.TYPE, textAlign: "center" }}>
-            {renderFileIcon(record)}
+            <span
+              style={{
+                cursor:
+                  record.isDir && record.name !== ".." ? "pointer" : undefined,
+              }}
+              onClick={
+                record.isDir && record.name !== ".."
+                  ? (e) => toggleExpandDir(record.name, e)
+                  : undefined
+              }
+            >
+              {renderFileIcon(record, expandedDirs.includes(record.name))}
+            </span>
           </td>
           <td style={{ ...cellStyle, width: COL_W.STAR, textAlign: "center" }}>
             <Icon
@@ -941,15 +1060,21 @@ export function FileListing({
     [
       student_project_functionality.disableActions,
       checked_files,
+      current_path,
       handleCheckboxChange,
       handleToggleStar,
       isNarrow,
       actions,
       buildContextMenu,
+      expandedDirs,
+      numCols,
+      onNavigateDirectory,
+      project_id,
+      toggleExpandDir,
     ],
   );
 
-  if (dataSource == null) {
+  if (baseDataSource == null) {
     return <Spin delay={500} />;
   }
 
@@ -957,7 +1082,7 @@ export function FileListing({
   const isBackupsVirtualPath = isBackupsPath(current_path);
   const isReadonlyVirtualPath = isSnapshotsVirtualPath || isBackupsVirtualPath;
 
-  if (dataSource.length === 0 && file_search[0] !== TERM_MODE_CHAR) {
+  if (baseDataSource.length === 0 && file_search[0] !== TERM_MODE_CHAR) {
     return (
       <>
         {isSnapshotsVirtualPath ? (
@@ -1092,8 +1217,12 @@ export function FileListing({
           <TableVirtuoso
             ref={virtuosoRef}
             style={{ flex: 1, minHeight: 0 }}
-            data={dataSource}
-            computeItemKey={(_index, record) => record.fullPath}
+            data={virtualData}
+            computeItemKey={(_index, entry) =>
+              isPeekEntry(entry)
+                ? `__peek__${entry._peekForName}`
+                : entry.fullPath
+            }
             overscan={200}
             components={TABLE_COMPONENTS}
             fixedHeaderContent={fixedHeaderContent}
