@@ -337,6 +337,20 @@ async function getRunnerConfig(
 }
 
 export function wireProjectsApi(runnerApi: RunnerApi) {
+  async function rehydrateAcpAutomations(
+    project_id: string,
+    context: string,
+  ): Promise<void> {
+    try {
+      await rehydrateAcpAutomationsForProject(project_id);
+    } catch (err) {
+      logger.warn(`${context}: failed to rehydrate ACP automations`, {
+        project_id,
+        err: `${err}`,
+      });
+    }
+  }
+
   async function createProject(
     opts: CreateProjectOptions = {},
   ): Promise<string> {
@@ -353,14 +367,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     });
 
     await ensureVolume(project_id);
-    try {
-      await rehydrateAcpAutomationsForProject(project_id);
-    } catch (err) {
-      logger.warn("createProject: failed to rehydrate ACP automations", {
-        project_id,
-        err: `${err}`,
-      });
-    }
+    await rehydrateAcpAutomations(project_id, "createProject: pre-start");
 
     if (opts.start) {
       // Immediately mark as starting so the master reflects that state while we pull/podman up.
@@ -381,6 +388,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
       });
+      await rehydrateAcpAutomations(project_id, "createProject: post-start");
     }
 
     return project_id;
@@ -414,14 +422,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       opts: { authorized_keys, run_quota, image },
       state: "starting",
     });
-    try {
-      await rehydrateAcpAutomationsForProject(project_id);
-    } catch (err) {
-      logger.warn("start: failed to rehydrate ACP automations", {
-        project_id,
-        err: `${err}`,
-      });
-    }
+    await rehydrateAcpAutomations(project_id, "start: pre-start");
     try {
       await applyPendingCopies({ project_id });
       const status = await runnerApi.start({
@@ -441,6 +442,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         http_port: (status as any)?.http_port,
         ssh_port: (status as any)?.ssh_port,
       });
+      await rehydrateAcpAutomations(project_id, "start: post-start");
       await refreshAuthorizedKeys(project_id, authorized_keys);
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.
