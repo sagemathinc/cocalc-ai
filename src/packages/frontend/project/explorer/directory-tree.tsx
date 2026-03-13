@@ -13,6 +13,7 @@ import React, {
   useState,
 } from "react";
 
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { useStarredFilesManager } from "@cocalc/frontend/project/page/flyouts/store";
@@ -27,6 +28,7 @@ import { useFileDrag, useFolderDrop } from "./dnd/file-dnd-provider";
 export const DIRECTORY_TREE_DEFAULT_WIDTH_PX = 280;
 export const DIRECTORY_TREE_MIN_WIDTH_PX = 180;
 export const DIRECTORY_TREE_MAX_WIDTH_PX = 520;
+const MAX_TREE_EXPANDED = 20;
 
 function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && !isNaN(value) && value > 0;
@@ -62,7 +64,10 @@ function saveDirectoryTreeExpandedKeys(
   project_id: string,
   keys: string[],
 ): void {
-  LS.set(directoryTreeExpandedKeysKey(project_id), keys);
+  LS.set(
+    directoryTreeExpandedKeysKey(project_id),
+    keys.slice(0, MAX_TREE_EXPANDED),
+  );
 }
 
 function getRootPath(
@@ -142,13 +147,12 @@ type DirectoryTreeNamedDirent = {
   isDirectory: () => boolean;
 };
 
-function DirectoryTreeNodeTitle({
+const DirectoryTreeNodeTitle = React.memo(function DirectoryTreeNodeTitle({
   project_id,
   path,
   label,
   isRoot,
   isStarred,
-  isSelected,
   onToggleStar,
 }: {
   project_id: string;
@@ -156,9 +160,15 @@ function DirectoryTreeNodeTitle({
   label: string;
   isRoot: boolean;
   isStarred: boolean;
-  isSelected: boolean;
   onToggleStar: (path: string, starred: boolean) => void;
 }) {
+  const explorerBrowsingPathAbs = useTypedRedux(
+    { project_id },
+    "explorer_browsing_path_abs",
+  );
+  const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
+  const effectiveCurrentPath = explorerBrowsingPathAbs ?? currentPathAbs ?? "/";
+  const isSelected = effectiveCurrentPath === path;
   const enableDnD = !isRoot;
   const { dragRef, dragListeners, dragAttributes, isDragging } = useFileDrag(
     `explorer-dir-tree-${project_id}-${path}`,
@@ -231,7 +241,9 @@ function DirectoryTreeNodeTitle({
       </span>
     </span>
   );
-}
+});
+
+DirectoryTreeNodeTitle.displayName = "DirectoryTreeNodeTitle";
 
 export function DirectoryTreeDragbar({
   onWidthChange,
@@ -314,6 +326,12 @@ export function DirectoryTreePanel({
   const loadingPathsRef = useRef<Set<string>>(new Set());
   const loadedPathsRef = useRef<Set<string>>(new Set());
   const { starred, setStarredPath } = useStarredFilesManager(project_id);
+  const handleToggleStar = useCallback(
+    (path: string, starredValue: boolean) => {
+      setStarredPath(path, starredValue);
+    },
+    [setStarredPath],
+  );
 
   const loadPath = useCallback(
     async (path: string, force = false) => {
@@ -374,6 +392,7 @@ export function DirectoryTreePanel({
   const treeData = useMemo<TreeDataNode[]>(() => {
     if (rootPath == null) return [];
     const starredSet = new Set(starred);
+    const loadedPaths = loadedPathsRef.current;
 
     const build = (path: string): TreeDataNode => {
       const children = (childrenByPath[path] ?? []).map(build);
@@ -390,23 +409,21 @@ export function DirectoryTreePanel({
             }
             isRoot={path === rootPath}
             isStarred={starredSet.has(`${path}/`)}
-            isSelected={current_path === path}
-            onToggleStar={setStarredPath}
+            onToggleStar={handleToggleStar}
           />
         ),
         children,
-        isLeaf: false,
+        isLeaf: loadedPaths.has(path) && children.length === 0,
       };
     };
 
     return [build(rootPath)];
   }, [
     childrenByPath,
-    current_path,
     homeDirectory,
+    handleToggleStar,
     project_id,
     rootPath,
-    setStarredPath,
     starred,
   ]);
 
