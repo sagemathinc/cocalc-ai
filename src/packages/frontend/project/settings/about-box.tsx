@@ -4,7 +4,7 @@
  */
 
 import ShowError from "@cocalc/frontend/components/error";
-import { Alert, Button, Col, Flex, Modal, Row, Typography } from "antd";
+import { Alert, Button, Col, Flex, Row, Typography } from "antd";
 import React, { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -17,16 +17,19 @@ import {
   Paragraph,
   SettingBox,
   TextInput,
+  ThemeEditorModal,
   TimeAgo,
 } from "@cocalc/frontend/components";
-import { avatar_fontcolor } from "@cocalc/frontend/account/avatar/font-color";
-import { ColorPicker } from "@cocalc/frontend/colorpicker";
 import { COLORS } from "@cocalc/util/theme";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import ProjectImage from "./image";
 import { useBookmarkedProjects } from "@cocalc/frontend/projects/use-bookmarked-projects";
+import {
+  themeDraftFromTheme,
+  type ThemeEditorDraft,
+} from "@cocalc/frontend/theme/types";
 
 interface Props {
   project_title: string;
@@ -66,8 +69,16 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const [color, setColor] = useState<string | undefined>(
     project_map?.getIn([project_id, "color"]) as string | undefined,
   );
-  const [showColorModal, setShowColorModal] = useState<boolean>(false);
-  const [nextColor, setNextColor] = useState<string | undefined>(color);
+  const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);
+  const [appearanceSaving, setAppearanceSaving] = useState<boolean>(false);
+  const [appearanceDraft, setAppearanceDraft] =
+    useState<ThemeEditorDraft | null>(null);
+  const [appearancePreviewImage, setAppearancePreviewImage] = useState<
+    string | undefined
+  >(undefined);
+  const [appearanceImageData, setAppearanceImageData] = useState<
+    { full: string; tiny: string } | null | undefined
+  >(undefined);
 
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
 
@@ -100,6 +111,50 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
     );
   }
 
+  function openAppearanceModal() {
+    setAppearanceDraft(
+      themeDraftFromTheme(
+        {
+          title: project_title,
+          description,
+          color,
+          image_blob: avatarImage ?? null,
+        },
+        project_title,
+      ),
+    );
+    setAppearancePreviewImage(avatarImage);
+    setAppearanceImageData(undefined);
+    setAppearanceOpen(true);
+  }
+
+  async function saveAppearance() {
+    if (appearanceDraft == null) return;
+    try {
+      setAppearanceSaving(true);
+      await actions.set_project_title(project_id, appearanceDraft.title);
+      await actions.set_project_description(
+        project_id,
+        appearanceDraft.description,
+      );
+      const nextColor = appearanceDraft.color ?? "";
+      await actions.setProjectColor(project_id, nextColor);
+      if (appearanceImageData === null) {
+        await actions.setProjectImage(project_id, { full: "", tiny: "" });
+        setAvatarImage(undefined);
+      } else if (appearanceImageData != null) {
+        await actions.setProjectImage(project_id, appearanceImageData);
+        setAvatarImage(appearanceImageData.full);
+      }
+      setColor(appearanceDraft.color ?? undefined);
+      setAppearanceOpen(false);
+    } catch (err) {
+      setError(`Error saving ${projectLabelLower} appearance: ${err}`);
+    } finally {
+      setAppearanceSaving(false);
+    }
+  }
+
   function renderBody() {
     return (
       <>
@@ -107,48 +162,52 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
         {renderReadonly()}
         <LabeledRow
           label={intl.formatMessage({
-            id: "project.settings.about-box.title.label",
-            defaultMessage: "Title",
-            description: "Title of the given project",
+            id: "project.settings.about-box.appearance.label",
+            defaultMessage: "Appearance",
+            description: "Appearance settings for the given project",
           })}
           vertical={isFlyout}
         >
-          <TextInput
-            style={{ width: "100%" }}
-            text={project_title}
-            disabled={hasReadonlyFields}
-            on_change={async (title) => {
-              try {
-                await actions.set_project_title(project_id, title);
-              } catch (err) {
-                setError(`${err}`);
-              }
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              width: "100%",
             }}
-          />
-        </LabeledRow>
-        <LabeledRow
-          label={intl.formatMessage({
-            id: "project.settings.about-box.description.label",
-            defaultMessage: "Description (markdown)",
-            description:
-              "Optional description of that project, which could be markdown formatted text",
-          })}
-          vertical={isFlyout}
-        >
-          <TextInput
-            style={{ width: "100%" }}
-            type="textarea"
-            rows={2}
-            text={description}
-            disabled={hasReadonlyFields}
-            on_change={async (desc) => {
-              try {
-                await actions.set_project_description(project_id, desc);
-              } catch (err) {
-                setError(`${err}`);
-              }
-            }}
-          />
+          >
+            {avatarImage ? (
+              <img
+                data-testid="project-appearance-image"
+                src={avatarImage}
+                alt={`${projectLabel} appearance`}
+                style={{
+                  width: 36,
+                  height: 36,
+                  objectFit: "cover",
+                  borderRadius: 8,
+                  flex: "0 0 auto",
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: color ?? COLORS.GRAY_L,
+                  flex: "0 0 auto",
+                }}
+              />
+            )}
+            <Button
+              style={{ width: "100%" }}
+              disabled={hasReadonlyFields}
+              onClick={openAppearanceModal}
+            >
+              Edit appearance
+            </Button>
+          </div>
         </LabeledRow>
         <LabeledRow
           label={intl.formatMessage({
@@ -236,137 +295,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
             </HelpIcon>
           </div>
         </LabeledRow>
-        <LabeledRow
-          label={intl.formatMessage({
-            id: "project.settings.about-box.image.label",
-            defaultMessage: "Image (optional)",
-            description: "Optional picture (avatar) related to that project",
-          })}
-          vertical={isFlyout}
-        >
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-          >
-            <ProjectImage
-              avatarImage={avatarImage}
-              onChange={async (data) => {
-                try {
-                  await actions.setProjectImage(project_id, data);
-                  setAvatarImage(data.full);
-                } catch (err) {
-                  setError(`Error saving ${projectLabelLower} image: ${err}`);
-                }
-              }}
-            />
-            {avatarImage && (
-              <Button
-                danger
-                onClick={async () => {
-                  try {
-                    await actions.setProjectImage(project_id, {
-                      full: "",
-                      tiny: "",
-                    });
-                    setAvatarImage(undefined);
-                  } catch (err) {
-                    setError(
-                      `Error deleting ${projectLabelLower} image: ${err}`,
-                    );
-                  }
-                }}
-              >
-                Delete Image
-              </Button>
-            )}
-          </div>
-        </LabeledRow>
-        <LabeledRow
-          label={intl.formatMessage({
-            id: "project.settings.about-box.color.label",
-            defaultMessage: "Color (optional)",
-            description:
-              "Optional color for visual identification of the project",
-          })}
-          vertical={isFlyout}
-        >
-          <div style={{ display: "flex", gap: "8px" }}>
-            <Button
-              size="small"
-              style={{
-                flex: 2,
-                backgroundColor: color || "transparent",
-                color: color ? avatar_fontcolor(color) : undefined,
-                border: color ? "none" : undefined,
-              }}
-              onClick={() => {
-                setNextColor(color);
-                setShowColorModal(true);
-              }}
-            >
-              {intl.formatMessage(
-                {
-                  id: "project.settings.about-box.color.button",
-                  defaultMessage:
-                    "{haveColor, select, true {Change Color} other {Select Color}}",
-                  description: "Button label for changing the color",
-                },
-                { haveColor: !!color },
-              )}
-            </Button>
-            {color && (
-              <Button
-                size="small"
-                style={{ flex: 1 }}
-                onClick={async () => {
-                  try {
-                    await actions.setProjectColor(project_id, "");
-                    setColor(undefined);
-                  } catch (err) {
-                    setError(
-                      `Error removing ${projectLabelLower} color: ${err}`,
-                    );
-                  }
-                }}
-              >
-                {intl.formatMessage(labels.remove)}
-              </Button>
-            )}
-          </div>
-          <Modal
-            title={intl.formatMessage(
-              {
-                id: "project.settings.about-box.color.modal.title",
-                defaultMessage: "Select {projectLabel} Color",
-                description:
-                  "Title of modal dialog for selecting project color",
-              },
-              { projectLabel },
-            )}
-            open={showColorModal}
-            okText={intl.formatMessage(labels.select)}
-            onOk={async () => {
-              try {
-                await actions.setProjectColor(project_id, nextColor ?? "");
-                setColor(nextColor);
-                setShowColorModal(false);
-              } catch (err) {
-                setError(`Error saving ${projectLabelLower} color: ${err}`);
-              }
-            }}
-            onCancel={() => {
-              setShowColorModal(false);
-              setNextColor(color);
-            }}
-          >
-            <ColorPicker
-              color={nextColor}
-              justifyContent="flex-start"
-              onChange={(value) => {
-                setNextColor(value);
-              }}
-            />
-          </Modal>
-        </LabeledRow>
         {created && (
           <LabeledRow
             label={intl.formatMessage(labels.created)}
@@ -402,6 +330,54 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
             </Paragraph>
           )}
         </LabeledRow>
+        <ThemeEditorModal
+          open={appearanceOpen}
+          title={`Edit ${projectLabel} Appearance`}
+          value={appearanceDraft}
+          onChange={(patch) =>
+            setAppearanceDraft((prev) =>
+              prev == null ? prev : { ...prev, ...patch },
+            )
+          }
+          onCancel={() => setAppearanceOpen(false)}
+          onSave={saveAppearance}
+          confirmLoading={appearanceSaving}
+          error={error}
+          projectId={project_id}
+          defaultIcon="folder-open"
+          showIcon={false}
+          showAccentColor={false}
+          previewImageUrl={appearancePreviewImage}
+          renderImageInput={() => (
+            <div>
+              <ProjectImage
+                avatarImage={appearancePreviewImage}
+                onChange={(data) => {
+                  setAppearanceImageData(data);
+                  setAppearancePreviewImage(data.full);
+                  setAppearanceDraft((prev) =>
+                    prev == null ? prev : { ...prev, image_blob: data.full },
+                  );
+                }}
+              />
+              {appearancePreviewImage ? (
+                <Button
+                  danger
+                  style={{ marginTop: 10 }}
+                  onClick={() => {
+                    setAppearanceImageData(null);
+                    setAppearancePreviewImage(undefined);
+                    setAppearanceDraft((prev) =>
+                      prev == null ? prev : { ...prev, image_blob: "" },
+                    );
+                  }}
+                >
+                  Delete Image
+                </Button>
+              ) : null}
+            </div>
+          )}
+        />
       </>
     );
   }

@@ -53,6 +53,7 @@ jest.mock("@cocalc/frontend/components", () => {
     Paragraph: Div,
     SettingBox: Div,
     TextInput: Div,
+    ThemeEditorModal: Div,
     TimeAgo: Div,
   };
 });
@@ -140,7 +141,9 @@ describe("AboutBox", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("avatar-image").textContent).toBe("second.png");
+      expect(
+        screen.getByTestId("project-appearance-image").getAttribute("src"),
+      ).toBe("second.png");
     });
 
     await act(async () => {
@@ -149,7 +152,9 @@ describe("AboutBox", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId("avatar-image").textContent).toBe("second.png");
+      expect(
+        screen.getByTestId("project-appearance-image").getAttribute("src"),
+      ).toBe("second.png");
     });
   });
 });
