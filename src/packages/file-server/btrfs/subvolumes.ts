@@ -5,7 +5,7 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { join } from "path";
 import { btrfs } from "./util";
-import { chmod, rename, rm } from "node:fs/promises";
+import { chmod, rm } from "node:fs/promises";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { RUSTIC } from "./subvolume-rustic";
 import { SYNC_STATE } from "./sync";
@@ -50,13 +50,9 @@ export class Subvolumes {
         "subvolume",
         "snapshot",
         join(this.filesystem.opts.mount, source),
-        join(this.filesystem.opts.mount, source, dest),
+        join(this.filesystem.opts.mount, dest),
       ],
     });
-    await rename(
-      join(this.filesystem.opts.mount, source, dest),
-      join(this.filesystem.opts.mount, dest),
-    );
     // ensure qgroup exists for the clone (snapshot does not create it)
     const clonedPath = join(this.filesystem.opts.mount, dest);
     const id = await this.get(dest).then((sv) => sv.getSubvolumeId());
