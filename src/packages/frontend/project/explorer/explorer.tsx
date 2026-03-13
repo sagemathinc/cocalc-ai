@@ -83,6 +83,14 @@ import {
 } from "./use-deferred-listing";
 import { useExplorerSettings } from "./use-explorer-settings";
 import { useNavigationHistory } from "./use-navigation-history";
+import {
+  DirectoryTreeDragbar,
+  DIRECTORY_TREE_MIN_WIDTH_PX,
+  DirectoryTreePanel,
+  getDirectoryTreeWidth,
+  setDirectoryTreeWidth,
+} from "./directory-tree";
+import { FileDndProvider } from "./dnd/file-dnd-provider";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -167,12 +175,17 @@ export function Explorer() {
     { project_id },
     "show_custom_software_reset",
   );
+  const show_directory_tree =
+    useTypedRedux({ project_id }, "show_directory_tree") ?? false;
   const disableExplorerKeyhandler = useTypedRedux(
     { project_id },
     "disableExplorerKeyhandler",
   );
 
   const [shiftIsDown, setShiftIsDown] = useState<boolean>(false);
+  const [directoryTreeWidth, setDirectoryTreeWidthState] = useState<number>(
+    () => getDirectoryTreeWidth(project_id),
+  );
 
   const project_map = useTypedRedux("projects", "project_map");
 
@@ -316,6 +329,24 @@ export function Explorer() {
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
+  const showDirectoryTreePanel =
+    !IS_MOBILE &&
+    show_directory_tree &&
+    !inBackupsPath &&
+    !inSnapshotsPath &&
+    effective_current_path.startsWith("/");
+
+  useEffect(() => {
+    setDirectoryTreeWidthState(getDirectoryTreeWidth(project_id));
+  }, [project_id]);
+
+  const handleDirectoryTreeWidthChange = useCallback(
+    (width: number) => {
+      setDirectoryTreeWidthState(width);
+      setDirectoryTreeWidth(project_id, width);
+    },
+    [project_id],
+  );
 
   useEffect(() => {
     actions?.setState({ numDisplayedFiles: visibleListing?.length ?? 0 });
@@ -572,288 +603,333 @@ You can either wait for this host to become available again, or move this ${proj
 
   // be careful with adding height:'100%'. it could cause flex to miscalculate. see #3904
   return (
-    <div
-      className={"smc-vfill"}
-      onClick={() => {
-        clickedOnExplorer();
-      }}
-    >
+    <FileDndProvider project_id={project_id}>
       <div
-        style={{
-          flex: "0 0 auto",
-          display: "flex",
-          flexDirection: "column",
-          padding: "2px 2px 0 2px",
+        className={"smc-vfill"}
+        onClick={() => {
+          clickedOnExplorer();
         }}
       >
-        {!suppressProjectError && error && (
-          <ErrorDisplay
-            error={error}
-            style={ERROR_STYLE}
-            onClose={() => actions.setState({ error: "" })}
-          />
-        )}
-        <ActivityDisplay
-          trunc={80}
-          activity={_.values(activity)}
-          on_clear={() => actions.clear_all_activity()}
-          style={{ top: "100px" }}
-        />
-        <BackupOps project_id={project_id} />
-        <RestoreOps project_id={project_id} />
-        <MoveOps project_id={project_id} />
-        <CopyOps project_id={project_id} />
         <div
           style={{
+            flex: "0 0 auto",
             display: "flex",
-            flexFlow: IS_MOBILE ? undefined : "row wrap",
-            justifyContent: "space-between",
-            alignItems: "stretch",
-            marginBottom: "15px",
+            flexDirection: "column",
+            padding: "2px 2px 0 2px",
           }}
         >
+          {!suppressProjectError && error && (
+            <ErrorDisplay
+              error={error}
+              style={ERROR_STYLE}
+              onClose={() => actions.setState({ error: "" })}
+            />
+          )}
+          <ActivityDisplay
+            trunc={80}
+            activity={_.values(activity)}
+            on_clear={() => actions.clear_all_activity()}
+            style={{ top: "100px" }}
+          />
+          <BackupOps project_id={project_id} />
+          <RestoreOps project_id={project_id} />
+          <MoveOps project_id={project_id} />
+          <CopyOps project_id={project_id} />
           <div
             style={{
-              flex: "3 1 auto",
               display: "flex",
-              flexDirection: "column",
+              flexFlow: IS_MOBILE ? undefined : "row wrap",
+              justifyContent: "space-between",
+              alignItems: "stretch",
+              marginBottom: "15px",
             }}
           >
-            <div style={{ display: "flex", flex: "1 1 auto" }}>
-              <div
-                ref={currentDirectoryRef}
-                className="cc-project-files-path-nav"
-              >
-                <PathNavigator
-                  project_id={project_id}
-                  showSourceSelector
-                  currentPath={effective_current_path}
-                  historyPath={effective_history_path}
-                  onNavigate={navigateExplorer}
-                  canGoBack={navHistory.canGoBack}
-                  canGoForward={navHistory.canGoForward}
-                  onGoBack={navHistory.goBack}
-                  onGoForward={navHistory.goForward}
-                  backHistory={navHistory.backHistory}
-                  forwardHistory={navHistory.forwardHistory}
-                />
+            <div
+              style={{
+                flex: "3 1 auto",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <div style={{ display: "flex", flex: "1 1 auto" }}>
+                <div
+                  ref={currentDirectoryRef}
+                  className="cc-project-files-path-nav"
+                >
+                  <PathNavigator
+                    project_id={project_id}
+                    showSourceSelector
+                    currentPath={effective_current_path}
+                    historyPath={effective_history_path}
+                    onNavigate={navigateExplorer}
+                    canGoBack={navHistory.canGoBack}
+                    canGoForward={navHistory.canGoForward}
+                    onGoBack={navHistory.goBack}
+                    onGoForward={navHistory.goForward}
+                    backHistory={navHistory.backHistory}
+                    forwardHistory={navHistory.forwardHistory}
+                  />
+                </div>
               </div>
             </div>
-          </div>
-          {!IS_MOBILE && (
+            {!IS_MOBILE && (
+              <div
+                style={{
+                  flex: "0 1 auto",
+                  margin: "0 10px",
+                }}
+                className="cc-project-files-create-dropdown"
+              >
+                <div ref={newFileRef}>
+                  <NewButton
+                    project_id={project_id}
+                    file_search={file_search ?? ""}
+                    current_path={effective_current_path}
+                    actions={actions}
+                    create_file={create_file}
+                    create_folder={create_folder}
+                    configuration={configuration}
+                    disabled={!!ext_selection}
+                  />
+                </div>
+              </div>
+            )}
+            {!IS_MOBILE && (
+              <div style={{ flex: "1 1 auto" }} ref={searchAndTerminalBar}>
+                <SearchBar
+                  actions={actions}
+                  current_path={effective_current_path}
+                  file_search={file_search ?? ""}
+                  file_creation_error={file_creation_error}
+                  create_file={create_file}
+                  create_folder={create_folder}
+                />
+              </div>
+            )}
             <div
               style={{
                 flex: "0 1 auto",
-                margin: "0 10px",
               }}
-              className="cc-project-files-create-dropdown"
             >
-              <div ref={newFileRef}>
-                <NewButton
-                  project_id={project_id}
-                  file_search={file_search ?? ""}
-                  current_path={effective_current_path}
-                  actions={actions}
-                  create_file={create_file}
-                  create_folder={create_folder}
-                  configuration={configuration}
-                  disabled={!!ext_selection}
-                />
-              </div>
+              <UsersViewing project_id={project_id} />
             </div>
-          )}
-          {!IS_MOBILE && (
-            <div style={{ flex: "1 1 auto" }} ref={searchAndTerminalBar}>
-              <SearchBar
-                actions={actions}
-                current_path={effective_current_path}
-                file_search={file_search ?? ""}
-                file_creation_error={file_creation_error}
-                create_file={create_file}
-                create_folder={create_folder}
-              />
-            </div>
-          )}
-          <div
-            style={{
-              flex: "0 1 auto",
-            }}
-          >
-            <UsersViewing project_id={project_id} />
           </div>
-        </div>
 
-        {ext_selection != null && <AskNewFilename project_id={project_id} />}
-        <div style={FLEX_ROW_STYLE}>
-          <div
-            style={{
-              display: "flex",
-              flex: "1 0 auto",
-              marginRight: "5px",
-              minWidth: "20em",
-            }}
-          >
-            {!lite && (
-              <DiskUsage
-                style={{ marginRight: "5px" }}
+          {ext_selection != null && <AskNewFilename project_id={project_id} />}
+          <div style={FLEX_ROW_STYLE}>
+            <div
+              style={{
+                display: "flex",
+                flex: "1 0 auto",
+                marginRight: "5px",
+                minWidth: "20em",
+              }}
+            >
+              {!lite && (
+                <DiskUsage
+                  style={{ marginRight: "5px" }}
+                  project_id={project_id}
+                />
+              )}
+              {visibleListing != null && (
+                <ActionBar
+                  listing={visibleListing}
+                  project_id={project_id}
+                  checked_files={checked_files}
+                  current_path={effective_current_path}
+                  project_map={project_map}
+                  images={images}
+                  actions={actions}
+                  available_features={available_features}
+                  show_custom_software_reset={show_custom_software_reset}
+                  project_is_running={project_is_running}
+                  refreshBackups={refreshBackups}
+                />
+              )}
+            </div>
+            <div
+              ref={miscButtonsRef}
+              style={{
+                flex: "1 0 auto",
+                marginBottom: "15px",
+                textAlign: "right",
+              }}
+            >
+              <MiscSideButtons />
+            </div>
+          </div>
+
+          {project_is_running &&
+            show_custom_software_reset &&
+            checked_files.size == 0 &&
+            images != null && (
+              <CustomSoftwareReset
                 project_id={project_id}
-              />
-            )}
-            {visibleListing != null && (
-              <ActionBar
-                listing={visibleListing}
-                project_id={project_id}
-                checked_files={checked_files}
-                current_path={effective_current_path}
-                project_map={project_map}
                 images={images}
+                project_map={project_map}
                 actions={actions}
                 available_features={available_features}
-                show_custom_software_reset={show_custom_software_reset}
-                project_is_running={project_is_running}
-                refreshBackups={refreshBackups}
               />
             )}
+
+          {checked_files.size > 0 && file_action != undefined ? (
+            <Row>
+              <Col sm={12}>
+                <ActionBox
+                  file_action={file_action}
+                  checked_files={checked_files}
+                  current_path={effective_current_path}
+                  project_id={project_id}
+                  actions={actions}
+                />
+              </Col>
+            </Row>
+          ) : undefined}
+        </div>
+
+        {listingError && !suppressRoutingError && (
+          <div style={{ margin: "30px auto", textAlign: "center" }}>
+            <ShowError error={listingError} style={{ textAlign: "left" }} />
+            <br />
+            <Space.Compact>
+              <Button size="large" style={{ margin: "auto" }} onClick={refresh}>
+                <Icon name="refresh" /> Refresh
+              </Button>
+              {listingError.code == "ENOENT" && (
+                <Button
+                  size="large"
+                  style={{ margin: "auto" }}
+                  onClick={async () => {
+                    const fs = actions?.fs();
+                    try {
+                      await fs.mkdir(effective_current_path, {
+                        recursive: true,
+                      });
+                      refresh();
+                    } catch (err) {
+                      actions?.setState({ error: err });
+                    }
+                  }}
+                >
+                  <Icon name="folder-open" /> Create Directory
+                </Button>
+              )}
+            </Space.Compact>
           </div>
+        )}
+
+        {!listingError && (
           <div
-            ref={miscButtonsRef}
-            style={{
-              flex: "1 0 auto",
-              marginBottom: "15px",
-              textAlign: "right",
-            }}
-          >
-            <MiscSideButtons />
-          </div>
-        </div>
-
-        {project_is_running &&
-          show_custom_software_reset &&
-          checked_files.size == 0 &&
-          images != null && (
-            <CustomSoftwareReset
-              project_id={project_id}
-              images={images}
-              project_map={project_map}
-              actions={actions}
-              available_features={available_features}
-            />
-          )}
-
-        {checked_files.size > 0 && file_action != undefined ? (
-          <Row>
-            <Col sm={12}>
-              <ActionBox
-                file_action={file_action}
-                checked_files={checked_files}
-                current_path={effective_current_path}
-                project_id={project_id}
-                actions={actions}
-              />
-            </Col>
-          </Row>
-        ) : undefined}
-      </div>
-
-      {listingError && !suppressRoutingError && (
-        <div style={{ margin: "30px auto", textAlign: "center" }}>
-          <ShowError error={listingError} style={{ textAlign: "left" }} />
-          <br />
-          <Space.Compact>
-            <Button size="large" style={{ margin: "auto" }} onClick={refresh}>
-              <Icon name="refresh" /> Refresh
-            </Button>
-            {listingError.code == "ENOENT" && (
-              <Button
-                size="large"
-                style={{ margin: "auto" }}
-                onClick={async () => {
-                  const fs = actions?.fs();
-                  try {
-                    await fs.mkdir(effective_current_path, { recursive: true });
-                    refresh();
-                  } catch (err) {
-                    actions?.setState({ error: err });
-                  }
-                }}
-              >
-                <Icon name="folder-open" /> Create Directory
-              </Button>
-            )}
-          </Space.Compact>
-        </div>
-      )}
-
-      {!listingError && (
-        <div
-          ref={fileListingRef}
-          className="smc-vfill"
-          style={{
-            flex: "1 0 auto",
-            display: "flex",
-            flexDirection: "column",
-            padding: "0 5px 5px 5px",
-          }}
-        >
-          {hasPendingListingUpdate && (
-            <div style={{ padding: "0 0 8px 0", textAlign: "right" }}>
-              <Button size="small" onClick={flushListingUpdates}>
-                <Icon name="refresh" /> Refresh Listing
-              </Button>
-            </div>
-          )}
-          <FileUploadWrapper
-            project_id={project_id}
-            dest_path={effective_current_path}
-            config={{ clickable: ".upload-button" }}
+            ref={fileListingRef}
+            className="smc-vfill"
             style={{
               flex: "1 0 auto",
               display: "flex",
               flexDirection: "column",
+              padding: "0 5px 5px 5px",
             }}
-            className="smc-vfill"
           >
-            {visibleListing == null ? (
-              <div style={{ textAlign: "center" }}>
-                <Loading delay={1000} theme="medium" />
+            {hasPendingListingUpdate && (
+              <div style={{ padding: "0 0 8px 0", textAlign: "right" }}>
+                <Button size="small" onClick={flushListingUpdates}>
+                  <Icon name="refresh" /> Refresh Listing
+                </Button>
               </div>
-            ) : (
-              <FileListing
-                active_file_sort={active_file_sort}
-                sort_by={(column_name: string) => {
-                  const is_descending =
-                    active_file_sort.column_name === column_name
-                      ? !active_file_sort.is_descending
-                      : false;
-                  actions.setState({
-                    active_file_sort: {
-                      column_name,
-                      is_descending,
-                    },
-                  });
-                }}
-                listing={visibleListing}
-                file_search={file_search}
-                checked_files={checked_files}
-                current_path={effective_current_path}
-                actions={actions}
-                project_id={project_id}
-                shiftIsDown={shiftIsDown}
-                publicFiles={publicFiles}
-                onNavigateDirectory={navigateExplorer}
-              />
             )}
-          </FileUploadWrapper>
-        </div>
-      )}
-      <ExplorerTour
-        project_id={project_id}
-        newFileRef={newFileRef}
-        searchAndTerminalBar={searchAndTerminalBar}
-        fileListingRef={fileListingRef}
-        currentDirectoryRef={currentDirectoryRef}
-        miscButtonsRef={miscButtonsRef}
-      />
-    </div>
+            <div
+              className="smc-vfill"
+              style={{
+                flex: "1 0 auto",
+                display: "flex",
+                minHeight: 0,
+              }}
+            >
+              {showDirectoryTreePanel && (
+                <>
+                  <div
+                    style={{
+                      flex: `0 0 ${directoryTreeWidth}px`,
+                      width: directoryTreeWidth,
+                      minWidth: DIRECTORY_TREE_MIN_WIDTH_PX,
+                      display: "flex",
+                      flexDirection: "column",
+                      paddingRight: "4px",
+                    }}
+                  >
+                    <DirectoryTreePanel
+                      project_id={project_id}
+                      current_path={effective_current_path}
+                      show_hidden={showHidden ?? false}
+                      homeDirectory={homePath}
+                      on_open_directory={navigateExplorer}
+                    />
+                  </div>
+                  <DirectoryTreeDragbar
+                    currentWidth={directoryTreeWidth}
+                    onWidthChange={handleDirectoryTreeWidthChange}
+                    onReset={() =>
+                      handleDirectoryTreeWidthChange(
+                        getDirectoryTreeWidth(project_id),
+                      )
+                    }
+                  />
+                </>
+              )}
+              <FileUploadWrapper
+                project_id={project_id}
+                dest_path={effective_current_path}
+                config={{ clickable: ".upload-button" }}
+                style={{
+                  flex: "1 1 auto",
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+                className="smc-vfill"
+              >
+                {visibleListing == null ? (
+                  <div style={{ textAlign: "center" }}>
+                    <Loading delay={1000} theme="medium" />
+                  </div>
+                ) : (
+                  <FileListing
+                    active_file_sort={active_file_sort}
+                    sort_by={(column_name: string) => {
+                      const is_descending =
+                        active_file_sort.column_name === column_name
+                          ? !active_file_sort.is_descending
+                          : false;
+                      actions.setState({
+                        active_file_sort: {
+                          column_name,
+                          is_descending,
+                        },
+                      });
+                    }}
+                    listing={visibleListing}
+                    file_search={file_search}
+                    checked_files={checked_files}
+                    current_path={effective_current_path}
+                    actions={actions}
+                    project_id={project_id}
+                    shiftIsDown={shiftIsDown}
+                    publicFiles={publicFiles}
+                    onNavigateDirectory={navigateExplorer}
+                  />
+                )}
+              </FileUploadWrapper>
+            </div>
+          </div>
+        )}
+        <ExplorerTour
+          project_id={project_id}
+          newFileRef={newFileRef}
+          searchAndTerminalBar={searchAndTerminalBar}
+          fileListingRef={fileListingRef}
+          currentDirectoryRef={currentDirectoryRef}
+          miscButtonsRef={miscButtonsRef}
+        />
+      </div>
+    </FileDndProvider>
   );
 }

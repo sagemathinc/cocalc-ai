@@ -23,7 +23,6 @@ import NoFiles from "./no-files";
 import { TERM_MODE_CHAR } from "./utils";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
-import { FileDndProvider } from "@cocalc/frontend/project/explorer/dnd/file-dnd-provider";
 
 interface Props {
   actions: ProjectActions;
@@ -169,7 +168,7 @@ export function FileListing({
   }
 
   return (
-    <FileDndProvider project_id={project_id}>
+    <>
       <div
         className="smc-vfill"
         style={{
@@ -240,6 +239,6 @@ export function FileListing({
         )}
       </div>
       {modal}
-    </FileDndProvider>
+    </>
   );
 }

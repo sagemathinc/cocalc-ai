@@ -40,8 +40,15 @@ const OPEN_MSG = defineMessage({
 export function MiscSideButtons() {
   const { actions, project_id } = useProjectContext();
   const show_hidden = useTypedRedux({ project_id }, "show_hidden");
+  const show_directory_tree =
+    useTypedRedux({ project_id }, "show_directory_tree") ?? false;
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? "/";
+  const explorer_browsing_path_abs = useTypedRedux(
+    { project_id },
+    "explorer_browsing_path_abs",
+  );
+  const effective_current_path =
+    explorer_browsing_path_abs ?? current_path_abs ?? "/";
   const available_features = useTypedRedux(
     { project_id },
     "available_features",
@@ -55,6 +62,13 @@ export function MiscSideButtons() {
     e.preventDefault();
     return actions?.setState({
       show_hidden: !show_hidden,
+    });
+  };
+
+  const handle_directory_tree_toggle = (e: MouseEvent): void => {
+    e.preventDefault();
+    return actions?.setState({
+      show_directory_tree: !show_directory_tree,
     });
   };
 
@@ -121,6 +135,21 @@ export function MiscSideButtons() {
           placement={"bottom"}
         >
           <Icon name={icon} />
+        </Tip>
+      </Button>
+    );
+  }
+
+  function render_directory_tree_toggle(): JSX.Element {
+    return (
+      <Button bsSize="small" onClick={handle_directory_tree_toggle}>
+        <Tip
+          title={
+            show_directory_tree ? "Hide directory tree" : "Show directory tree"
+          }
+          placement={"bottom"}
+        >
+          <Icon name="sitemap" />
         </Tip>
       </Button>
     );
@@ -236,6 +265,7 @@ export function MiscSideButtons() {
       <Space.Compact>{render_upload_button()}</Space.Compact>
       <div className="pull-right">
         <Space.Compact>
+          {render_directory_tree_toggle()}
           {render_hidden_toggle()}
           {!lite && render_recovery()}
           {!lite && <CloneProject project_id={project_id} />}
