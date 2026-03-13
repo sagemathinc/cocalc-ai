@@ -4,8 +4,10 @@ const assert = require("node:assert/strict");
 const {
   buildContext,
   buildUnattachedSession,
+  extractSpawnSessionMarker,
   mergeCleanupResults,
   parseArgs,
+  resolveSpawnedLiveSession,
   selectLiveSession,
   shouldDestroySpawnedRow,
   unwrapCliJsonPayload,
@@ -48,6 +50,45 @@ test("selectLiveSession ignores locally spawned browser ids when excluded", () =
     ["spawned-local"],
   );
   assert.equal(selected.browser_id, "real-live");
+});
+
+test("extractSpawnSessionMarker reads the spawn marker from a target url", () => {
+  assert.equal(
+    extractSpawnSessionMarker({
+      target_url:
+        "http://localhost:7002/projects/project-a/files?_cocalc_browser_spawn=pw-test-123-xyz",
+    }),
+    "pw-test-123-xyz",
+  );
+});
+
+test("resolveSpawnedLiveSession matches the real browser session by spawn marker", () => {
+  const selected = resolveSpawnedLiveSession(
+    [
+      {
+        browser_id: "existing-live",
+        active_project_id: "project-a",
+        session_name: "Existing",
+        url: "http://localhost:7002/projects/project-a/project-home",
+      },
+      {
+        browser_id: "actual-live",
+        active_project_id: "project-a",
+        session_name: "CoCalc Agent Session (pw-test)",
+        url: "http://localhost:7002/projects/project-a/files/home/wstein/scratch/scratch.tasks?_cocalc_browser_spawn=pw-test-123-xyz",
+      },
+    ],
+    {
+      browser_id: "daemon-row-browser",
+      spawn_id: "pw-test",
+      session_name: "CoCalc Agent Session (pw-test)",
+      target_url:
+        "http://localhost:7002/projects/project-a/files?_cocalc_browser_spawn=pw-test-123-xyz",
+    },
+    "project-a",
+    ["existing-live"],
+  );
+  assert.equal(selected.browser_id, "actual-live");
 });
 
 test("buildContext rewrites exported browser and project ids to the attached target", () => {

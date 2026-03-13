@@ -188,6 +188,83 @@ function selectLiveSession(
   return activeSessions[0];
 }
 
+function listActiveSessions(devEnv, projectId) {
+  const args = ["browser", "session", "list", "--active-only"];
+  if (projectId) {
+    args.push("--project-id", projectId);
+  }
+  return runCliJson(devEnv, args);
+}
+
+function extractSpawnSessionMarker(spawned) {
+  for (const rawValue of [spawned?.target_url, spawned?.session_url]) {
+    const value = `${rawValue ?? ""}`.trim();
+    if (!value) continue;
+    try {
+      const marker = new URL(value).searchParams.get("_cocalc_browser_spawn");
+      if (marker) return marker;
+    } catch {}
+    const match = value.match(/[?&]_cocalc_browser_spawn=([^&#]+)/);
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+  return "";
+}
+
+function pickMostRecentSession(sessions) {
+  const rows = Array.isArray(sessions) ? sessions.filter(Boolean) : [];
+  return rows
+    .slice()
+    .sort((left, right) =>
+      `${right?.updated_at ?? right?.created_at ?? ""}`.localeCompare(
+        `${left?.updated_at ?? left?.created_at ?? ""}`,
+      ),
+    )[0];
+}
+
+function resolveSpawnedLiveSession(
+  sessions,
+  spawned,
+  projectId,
+  previousBrowserIds = [],
+) {
+  const rows = Array.isArray(sessions) ? sessions.filter(Boolean) : [];
+  if (!rows.length) return undefined;
+  const previous = new Set(previousBrowserIds.filter(Boolean));
+  const freshRows = rows.filter(
+    (session) => !previous.has(`${session?.browser_id ?? ""}`.trim()),
+  );
+  const preferredRows = freshRows.length ? freshRows : rows;
+  const spawnMarker = extractSpawnSessionMarker(spawned);
+  if (spawnMarker) {
+    const byMarker = preferredRows.find((session) =>
+      `${session?.url ?? ""}`.includes(spawnMarker),
+    );
+    if (byMarker) return byMarker;
+  }
+  const sessionName = `${spawned?.session_name ?? ""}`.trim();
+  if (sessionName) {
+    const byName = preferredRows.find(
+      (session) => `${session?.session_name ?? ""}`.trim() === sessionName,
+    );
+    if (byName) return byName;
+  }
+  if (projectId) {
+    const matchingProject = pickMostRecentSession(
+      preferredRows.filter(
+        (session) => session.active_project_id === projectId,
+      ),
+    );
+    if (matchingProject) return matchingProject;
+  }
+  return pickMostRecentSession(preferredRows);
+}
+
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function cleanupSpawnedSessions(devEnv, browserMode) {
   const reap = runCliJson(devEnv, [
     "browser",
@@ -235,12 +312,8 @@ function shouldDestroySpawnedRow(row, browserMode) {
 }
 
 function attachToLiveSession(devEnv, options, excludedBrowserIds = []) {
-  const listArgs = ["browser", "session", "list", "--active-only"];
   const projectId = options.projectId || devEnv.project_id || "";
-  if (projectId) {
-    listArgs.push("--project-id", projectId);
-  }
-  const sessions = runCliJson(devEnv, listArgs);
+  const sessions = listActiveSessions(devEnv, projectId);
   const selected = selectLiveSession(
     sessions,
     `${devEnv.browser_id ?? ""}`.trim(),
@@ -261,6 +334,8 @@ function attachToLiveSession(devEnv, options, excludedBrowserIds = []) {
 }
 
 function attachToSpawnedSession(devEnv, options) {
+  const projectId = options.projectId || devEnv.project_id || "";
+  const existingSessions = listActiveSessions(devEnv, projectId);
   const args = [
     "browser",
     "session",
@@ -272,7 +347,6 @@ function attachToSpawnedSession(devEnv, options) {
     "--timeout",
     options.timeout,
   ];
-  const projectId = options.projectId || devEnv.project_id || "";
   if (projectId) {
     args.push("--project-id", projectId);
   }
@@ -289,13 +363,46 @@ function attachToSpawnedSession(devEnv, options) {
     args.push("--use");
   }
   const spawned = runCliJson(devEnv, args);
+  let resolved = resolveSpawnedLiveSession(
+    listActiveSessions(devEnv, projectId),
+    spawned,
+    projectId,
+    existingSessions.map((session) => `${session?.browser_id ?? ""}`.trim()),
+  );
+  for (let attempt = 0; !resolved && attempt < 20; attempt += 1) {
+    sleepMs(500);
+    resolved = resolveSpawnedLiveSession(
+      listActiveSessions(devEnv, projectId),
+      spawned,
+      projectId,
+      existingSessions.map((session) => `${session?.browser_id ?? ""}`.trim()),
+    );
+  }
+  if (!resolved) {
+    throw new Error(
+      `spawned browser session '${spawned.spawn_id ?? spawned.browser_id ?? "unknown"}' did not surface an active live browser session`,
+    );
+  }
+  if (options.use && resolved.browser_id !== spawned.browser_id) {
+    runCliJson(devEnv, ["browser", "session", "use", `${resolved.browser_id}`]);
+  }
   return {
     browser_mode: "spawned",
-    browser_id: spawned.browser_id,
+    browser_id: resolved.browser_id,
     spawn_id: spawned.spawn_id,
-    session_url: spawned.session_url ?? spawned.url ?? spawned.target_url ?? "",
-    active_project_id: spawned.project_id ?? projectId,
-    session_name: spawned.session_name ?? options.sessionName ?? "",
+    session_url:
+      resolved.url ??
+      spawned.session_url ??
+      spawned.url ??
+      spawned.target_url ??
+      "",
+    active_project_id:
+      resolved.active_project_id ?? spawned.project_id ?? projectId,
+    session_name:
+      resolved.session_name ??
+      spawned.session_name ??
+      options.sessionName ??
+      "",
     target_url: spawned.target_url ?? options.targetUrl ?? "",
   };
 }
@@ -418,8 +525,10 @@ module.exports = {
   buildUnattachedSession,
   cleanupSpawnedSessions,
   createCliEnv,
+  extractSpawnSessionMarker,
   mergeCleanupResults,
   parseArgs,
+  resolveSpawnedLiveSession,
   selectLiveSession,
   shouldDestroySpawnedRow,
   unwrapCliJsonPayload,
