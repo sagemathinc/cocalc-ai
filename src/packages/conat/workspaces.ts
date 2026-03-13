@@ -6,6 +6,7 @@
 import type { Client as CoreConatClient } from "./core/client";
 import type { DKV, DKVOptions } from "./sync/dkv";
 import { uuid } from "@cocalc/util/misc";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 export const WORKSPACES_STORE_VERSION = 1;
 export const WORKSPACES_STORE_VERSION_KEY = "version";
@@ -104,6 +105,36 @@ export function workspaceStoreName(account_id: string): string {
 
 export function sanitizeWorkspaceAccountId(accountId: string): string {
   return `${accountId ?? ""}`.replace(/[^a-zA-Z0-9_.-]/g, "-");
+}
+
+export const DEFAULT_WORKSPACE_CHAT_BASE = ".local/share/cocalc";
+
+export function defaultWorkspaceChatRelativePath(opts: {
+  account_id: string;
+  workspace_id: string;
+  baseDir?: string;
+}): string {
+  const baseDir = `${opts.baseDir ?? DEFAULT_WORKSPACE_CHAT_BASE}`.trim();
+  if (!baseDir) {
+    throw new Error("workspace chat baseDir must be non-empty");
+  }
+  return `${baseDir}/workspaces/${sanitizeWorkspaceAccountId(opts.account_id)}/${opts.workspace_id}.chat`;
+}
+
+export function defaultWorkspaceChatPath(opts: {
+  account_id: string;
+  workspace_id: string;
+  homeDirectory: string;
+  baseDir?: string;
+}): string {
+  return normalizeAbsolutePath(
+    defaultWorkspaceChatRelativePath({
+      account_id: opts.account_id,
+      workspace_id: opts.workspace_id,
+      baseDir: opts.baseDir,
+    }),
+    opts.homeDirectory,
+  );
 }
 
 export async function openWorkspaceStore({

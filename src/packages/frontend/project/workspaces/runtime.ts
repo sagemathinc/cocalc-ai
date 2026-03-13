@@ -4,10 +4,10 @@
  */
 
 import {
+  defaultWorkspaceChatPath as defaultStoredWorkspaceChatPath,
   openWorkspaceStore,
   readWorkspaceRecordsFromStore,
   resolveWorkspaceForPath,
-  sanitizeWorkspaceAccountId,
   updateWorkspaceRecords,
   writeWorkspaceRecordsToStore,
   type WorkspaceRecord,
@@ -24,26 +24,20 @@ function isMacLikeClient(): boolean {
   return platform.includes("mac");
 }
 
-function workspaceChatRelativePath(
-  account_id: string,
-  workspace_id: string,
-): string {
-  const base =
-    lite && isMacLikeClient()
-      ? "Library/Application Support/cocalc"
-      : ".local/share/cocalc";
-  return `${base}/workspaces/${sanitizeWorkspaceAccountId(account_id)}/${workspace_id}.chat`;
-}
-
 export function defaultWorkspaceChatPath(opts: {
   project_id: string;
   account_id: string;
   workspace_id: string;
 }): string {
-  return normalizeAbsolutePath(
-    workspaceChatRelativePath(opts.account_id, opts.workspace_id),
-    getProjectHomeDirectory(opts.project_id),
-  );
+  return defaultStoredWorkspaceChatPath({
+    homeDirectory: getProjectHomeDirectory(opts.project_id),
+    account_id: opts.account_id,
+    workspace_id: opts.workspace_id,
+    baseDir:
+      lite && isMacLikeClient()
+        ? "Library/Application Support/cocalc"
+        : ".local/share/cocalc",
+  });
 }
 
 export async function readStoredWorkspaceRecords(opts: {
