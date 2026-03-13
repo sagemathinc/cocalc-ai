@@ -20,15 +20,13 @@ export function getPersistAccountId(): string | undefined {
   return signedInId ?? clientId ?? storeId;
 }
 
-function idsAgree(): boolean {
-  const { storeId, clientId, signedInId } = getIds();
-  const effective = signedInId ?? clientId ?? storeId;
+function clientIdsAgree(): boolean {
+  const { clientId, signedInId } = getIds();
+  const effective = signedInId ?? clientId;
   if (!effective) {
-    return false;
+    return true;
   }
-  return [storeId, clientId, signedInId].every(
-    (id) => id == null || id === effective,
-  );
+  return [clientId, signedInId].every((id) => id == null || id === effective);
 }
 
 export async function waitForPersistAccountId(): Promise<string> {
@@ -38,10 +36,10 @@ export async function waitForPersistAccountId(): Promise<string> {
     timeout: 0,
   });
   try {
-    await until(idsAgree, { start: 50, max: 500, timeout: 5000 });
+    await until(clientIdsAgree, { start: 20, max: 100, timeout: 750 });
   } catch {
-    // Fall back to the current effective account id if store/client state
-    // takes too long to settle after authentication.
+    // Fall back to the current effective browser/conat account id if sign-in
+    // state takes too long to settle.
   }
   const account_id = getPersistAccountId();
   if (!account_id) {

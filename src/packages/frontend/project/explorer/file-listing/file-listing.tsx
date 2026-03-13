@@ -30,8 +30,8 @@ import { file_options } from "@cocalc/frontend/editor-tmp";
 import { labels } from "@cocalc/frontend/i18n";
 import { should_open_in_foreground } from "@cocalc/frontend/lib/should-open-in-foreground";
 import { open_new_tab } from "@cocalc/frontend/misc";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import { buildFileActionItems } from "@cocalc/frontend/project/file-context-menu";
-import { useStarredFilesManager } from "@cocalc/frontend/project/page/flyouts/store";
 import { FILE_ITEM_OPENED_STYLE } from "@cocalc/frontend/project/page/flyouts/file-list-item";
 import { fileItemStyle } from "@cocalc/frontend/project/page/flyouts/utils";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
@@ -426,7 +426,8 @@ export function FileListing({
   const type_filter = useTypedRedux({ project_id }, "type_filter") ?? null;
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
-  const { starred, setStarredPath } = useStarredFilesManager(project_id);
+  const { manageStarredFiles } = useProjectContext();
+  const { starred, setStarredPath } = manageStarredFiles;
   const starredSet = useMemo(() => new Set(starred), [starred]);
   const { onOpenSpecial, modal } = useSpecialPathPreview({
     project_id,

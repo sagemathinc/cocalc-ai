@@ -15,8 +15,8 @@ import React, {
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
-import { useStarredFilesManager } from "@cocalc/frontend/project/page/flyouts/store";
 import { COLORS } from "@cocalc/util/theme";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import * as misc from "@cocalc/util/misc";
@@ -325,7 +325,8 @@ export function DirectoryTreePanel({
   const [error, setError] = useState<string>("");
   const loadingPathsRef = useRef<Set<string>>(new Set());
   const loadedPathsRef = useRef<Set<string>>(new Set());
-  const { starred, setStarredPath } = useStarredFilesManager(project_id);
+  const { manageStarredFiles } = useProjectContext();
+  const { starred, setStarredPath } = manageStarredFiles;
   const handleToggleStar = useCallback(
     (path: string, starredValue: boolean) => {
       setStarredPath(path, starredValue);
