@@ -58,12 +58,12 @@ import {
 
 const COL_W = {
   CHECKBOX: 40,
-  TYPE: 54,
+  TYPE: 60,
   PUBLIC: 40,
-  STAR: 44,
+  STAR: 55,
   DATE: 170,
-  SIZE: 120,
-  ACTIONS: 44,
+  SIZE: 130,
+  ACTIONS: 40,
 } as const;
 
 const NARROW_WIDTH_PX = 780;
@@ -859,7 +859,6 @@ export function FileListing({
             />
           </th>
         )}
-        <th style={{ ...thStyle, width: COL_W.PUBLIC }} />
         <th style={{ ...thStyle, width: COL_W.TYPE }}>
           <Dropdown
             menu={{
@@ -903,6 +902,7 @@ export function FileListing({
         <th style={{ ...thStyle, width: COL_W.STAR }}>
           <Icon name="star" />
         </th>
+        <th style={{ ...thStyle, width: COL_W.PUBLIC }} />
         <th style={thStyle} onClick={() => sort_by("name")}>
           {intl.formatMessage(labels.name)}
           <SortIndicator
@@ -1014,18 +1014,19 @@ export function FileListing({
             </td>
           )}
           <td
-            style={{ ...cellStyle, width: COL_W.PUBLIC, textAlign: "center" }}
+            style={{
+              ...cellStyle,
+              width: COL_W.TYPE,
+              cursor:
+                record.isDir && record.name !== ".." ? "pointer" : undefined,
+            }}
+            className={
+              record.isDir && expandedDirs.includes(record.name)
+                ? "cc-explorer-cell-expanded"
+                : undefined
+            }
           >
-            {record.isPublic ? (
-              <Icon name="share-square" style={{ color: COLORS.TAB }} />
-            ) : null}
-          </td>
-          <td style={{ ...cellStyle, width: COL_W.TYPE, textAlign: "center" }}>
             <span
-              style={{
-                cursor:
-                  record.isDir && record.name !== ".." ? "pointer" : undefined,
-              }}
               onClick={
                 record.isDir && record.name !== ".."
                   ? (e) => toggleExpandDir(record.name, e)
@@ -1050,6 +1051,13 @@ export function FileListing({
                 color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
               }}
             />
+          </td>
+          <td
+            style={{ ...cellStyle, width: COL_W.PUBLIC, textAlign: "center" }}
+          >
+            {record.isPublic ? (
+              <Icon name="share-square" style={{ color: COLORS.TAB }} />
+            ) : null}
           </td>
           <td style={cellStyle}>{renderFileName(record)}</td>
           <td style={{ ...cellStyle, width: COL_W.DATE }}>
@@ -1284,7 +1292,7 @@ export function FileListing({
         >
           <TableVirtuoso
             ref={virtuosoRef}
-            style={{ flex: 1, minHeight: 0 }}
+            style={{ flex: 1, minHeight: 0, scrollbarGutter: "stable" }}
             data={virtualData}
             computeItemKey={(_index, entry) =>
               isPeekEntry(entry)
