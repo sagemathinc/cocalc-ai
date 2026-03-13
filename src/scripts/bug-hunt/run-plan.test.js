@@ -33,6 +33,25 @@ test("parseArgs supports listing plans without a plan name", () => {
   assert.equal(options.json, true);
 });
 
+test("parseArgs accepts optional ledger note flags", () => {
+  const options = parseArgs([
+    "--plan",
+    "session-smoke",
+    "--task-id",
+    "task-1",
+    "--area",
+    "chat",
+    "--result",
+    "bug_fixed",
+    "--validation",
+    "jest",
+  ]);
+  assert.equal(options.note.taskId, "task-1");
+  assert.equal(options.note.area, "chat");
+  assert.equal(options.note.result, "bug_fixed");
+  assert.deepEqual(options.note.validation, ["jest"]);
+});
+
 test("resolveSeedTypes expands all and rejects duplicates", () => {
   assert.deepEqual(resolveSeedTypes("all"), [
     "chat",

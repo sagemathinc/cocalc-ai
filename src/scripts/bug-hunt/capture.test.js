@@ -25,3 +25,20 @@ test("createArtifactDirName includes mode, browser mode, and optional label", ()
   );
   assert.match(value, /^2026-03-13T04-05-06-000Z-hub-unattached-hub-smoke$/);
 });
+
+test("parseArgs accepts optional ledger note flags", () => {
+  const options = parseArgs([
+    "--task-id",
+    "task-1",
+    "--area",
+    "chat",
+    "--result",
+    "bug_fixed",
+    "--evidence",
+    "reproduced",
+  ]);
+  assert.equal(options.note.taskId, "task-1");
+  assert.equal(options.note.area, "chat");
+  assert.equal(options.note.result, "bug_fixed");
+  assert.deepEqual(options.note.evidence, ["reproduced"]);
+});

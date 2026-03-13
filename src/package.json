@@ -25,6 +25,7 @@
     "dev:env:hub": "node ./scripts/dev/dev-env.js hub --with-browser --no-start",
     "bug-hunt:attach": "node ./scripts/bug-hunt/attach.js",
     "bug-hunt:capture": "node ./scripts/bug-hunt/capture.js",
+    "bug-hunt:commit": "node ./scripts/bug-hunt/commit.js",
     "bug-hunt:extract": "node ./scripts/bug-hunt/extract-open-bugs.js",
     "bug-hunt:note": "node ./scripts/bug-hunt/note.js",
     "bug-hunt:preflight": "node ./scripts/bug-hunt/preflight.js",

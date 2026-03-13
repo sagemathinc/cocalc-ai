@@ -8,6 +8,11 @@ const {
   refreshLiveContextTarget,
   writeContextFileIfChanged,
 } = require("./context-target.js");
+const {
+  createDefaultNoteOptions,
+  createLedgerNote,
+  parseNoteArg,
+} = require("./note-integration.js");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_CONTEXT_FILE = path.join(
@@ -27,7 +32,7 @@ const DEFAULT_PLAN_DIR = path.join(ROOT, ".agents", "bug-hunt", "plans");
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    "Usage: run-plan.js (--plan <name-or-path> | --list-plans) [--context-file <path>] [--artifact-root <path>] [--report-dir <path>] [--name <label>] [--seed <csv>] [--json] [--dry-run] [--default-retries <n>] [--default-timeout <duration>] [--default-recovery <mode>] [--max-failures <n>] [--logs-on-fail <n>] [--network-on-fail <n>] [--no-screenshot-on-fail] [--no-pin-target] [--allow-raw-exec]",
+    "Usage: run-plan.js (--plan <name-or-path> | --list-plans) [--context-file <path>] [--artifact-root <path>] [--report-dir <path>] [--name <label>] [--seed <csv>] [--json] [--dry-run] [--default-retries <n>] [--default-timeout <duration>] [--default-recovery <mode>] [--max-failures <n>] [--logs-on-fail <n>] [--network-on-fail <n>] [--no-screenshot-on-fail] [--no-pin-target] [--allow-raw-exec] [--task-id <id> --area <area> --result <result> ...]",
   );
   process.exit(code);
 }
@@ -56,6 +61,7 @@ function parseArgs(argv) {
     screenshotOnFail: true,
     pinTarget: true,
     allowRawExec: false,
+    note: createDefaultNoteOptions(),
   };
   for (let i = 0; i < normalizedArgv.length; i += 1) {
     const arg = normalizedArgv[i];
@@ -118,7 +124,17 @@ function parseArgs(argv) {
     } else if (arg === "--help" || arg === "-h") {
       usageAndExit(undefined, 0);
     } else {
-      usageAndExit(`Unknown argument: ${arg}`);
+      const nextIndex = parseNoteArg(
+        normalizedArgv,
+        i,
+        options.note,
+        usageAndExit,
+      );
+      if (nextIndex !== i) {
+        i = nextIndex;
+      } else {
+        usageAndExit(`Unknown argument: ${arg}`);
+      }
     }
   }
   if (!options.listPlans && !options.plan) {
@@ -391,6 +407,27 @@ function main(argv = process.argv.slice(2)) {
     ...(seedResult ? { seed_result: seedResult } : {}),
     harness_result: harnessResult,
   };
+  const ledgerNote = createLedgerNote(options.note, context, {
+    title: options.name || planName,
+    artifacts: [artifactDir],
+    evidence: [
+      `plan: ${planName}`,
+      `harness ok: ${summary.ok}`,
+      ...(options.seedTypes.length > 0
+        ? [`seed: ${options.seedTypes.join(", ")}`]
+        : []),
+    ],
+    validation: [`cocalc browser harness run --plan ${planName}`],
+  });
+  if (ledgerNote) {
+    summary.ledger_note = {
+      iteration: ledgerNote.iteration,
+      task_id: ledgerNote.task_id,
+      result: ledgerNote.result,
+      ledger_json: ledgerNote.ledger_json,
+      ledger_markdown: ledgerNote.ledger_markdown,
+    };
+  }
   writeJson(path.join(artifactDir, "run-plan-summary.json"), summary);
 
   if (options.json) {

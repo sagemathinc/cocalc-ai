@@ -107,6 +107,13 @@ function listLedgerEntries(ledgerRoot = DEFAULT_LEDGER_ROOT) {
   });
 }
 
+function stripInternalFields(entry) {
+  const normalized = { ...entry };
+  delete normalized._file;
+  delete normalized._parse_error;
+  return normalized;
+}
+
 function nextIteration(ledgerRoot = DEFAULT_LEDGER_ROOT) {
   let max = 0;
   for (const entry of listLedgerEntries(ledgerRoot)) {
@@ -251,11 +258,46 @@ function formatMarkdownSummary(entry) {
 }
 
 function writeLedgerEntry(ledgerRoot, entry) {
-  const paths = buildLedgerPaths(ledgerRoot, entry);
+  const normalized = stripInternalFields(entry);
+  const paths = buildLedgerPaths(ledgerRoot, normalized);
   fs.mkdirSync(paths.dir, { recursive: true });
-  fs.writeFileSync(paths.json, `${JSON.stringify(entry, null, 2)}\n`);
-  fs.writeFileSync(paths.markdown, `${formatMarkdownSummary(entry)}\n`);
+  fs.writeFileSync(paths.json, `${JSON.stringify(normalized, null, 2)}\n`);
+  fs.writeFileSync(paths.markdown, `${formatMarkdownSummary(normalized)}\n`);
   return paths;
+}
+
+function findLedgerEntry(ledgerRoot, options = {}) {
+  const taskId = `${options.taskId ?? ""}`.trim();
+  const requestedIteration = coerceIteration(options.iteration);
+  return (
+    listLedgerEntries(ledgerRoot).find((entry) => {
+      if (entry._parse_error) return false;
+      if (requestedIteration !== undefined) {
+        return Number(entry.iteration) === requestedIteration;
+      }
+      return !!taskId && entry.task_id === taskId;
+    }) || undefined
+  );
+}
+
+function updateLedgerCommit(ledgerRoot, options = {}) {
+  const commitSha = `${options.commitSha ?? ""}`.trim();
+  if (!commitSha) {
+    throw new Error("commitSha is required");
+  }
+  const entry = findLedgerEntry(ledgerRoot, options);
+  if (!entry) {
+    throw new Error("matching ledger entry not found");
+  }
+  const updated = {
+    ...stripInternalFields(entry),
+    commit_sha: commitSha,
+  };
+  const paths = writeLedgerEntry(ledgerRoot, updated);
+  return {
+    entry: updated,
+    paths,
+  };
 }
 
 module.exports = {
@@ -266,6 +308,7 @@ module.exports = {
   buildLedgerPaths,
   coerceIteration,
   ensureArray,
+  findLedgerEntry,
   formatMarkdownSummary,
   formatTaskNote,
   listLedgerEntries,
@@ -274,6 +317,8 @@ module.exports = {
   readJson,
   readJsonIfExists,
   sanitizeSegment,
+  stripInternalFields,
   summarizeContext,
+  updateLedgerCommit,
   writeLedgerEntry,
 };

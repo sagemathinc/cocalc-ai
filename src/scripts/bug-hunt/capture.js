@@ -4,6 +4,11 @@
 const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  createDefaultNoteOptions,
+  createLedgerNote,
+  parseNoteArg,
+} = require("./note-integration.js");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const DEFAULT_CONTEXT_FILE = path.join(
@@ -22,7 +27,7 @@ const DEFAULT_ARTIFACT_ROOT = path.join(
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    "Usage: capture.js [--context-file <path>] [--out-dir <path>] [--name <label>] [--logs-lines <n>] [--json] [--no-screenshot] [--no-logs]",
+    "Usage: capture.js [--context-file <path>] [--out-dir <path>] [--name <label>] [--logs-lines <n>] [--json] [--no-screenshot] [--no-logs] [--task-id <id> --area <area> --result <result> ...]",
   );
   process.exit(code);
 }
@@ -40,6 +45,7 @@ function parseArgs(argv) {
     json: false,
     screenshot: true,
     logs: true,
+    note: createDefaultNoteOptions(),
   };
   for (let i = 0; i < normalizedArgv.length; i += 1) {
     const arg = normalizedArgv[i];
@@ -67,7 +73,17 @@ function parseArgs(argv) {
     } else if (arg === "--help" || arg === "-h") {
       usageAndExit(undefined, 0);
     } else {
-      usageAndExit(`Unknown argument: ${arg}`);
+      const nextIndex = parseNoteArg(
+        normalizedArgv,
+        i,
+        options.note,
+        usageAndExit,
+      );
+      if (nextIndex !== i) {
+        i = nextIndex;
+      } else {
+        usageAndExit(`Unknown argument: ${arg}`);
+      }
     }
   }
   return options;
@@ -284,6 +300,28 @@ function main(argv = process.argv.slice(2)) {
     };
   }
 
+  const failedSteps = Object.entries(summary.steps)
+    .filter(([, step]) => !step.ok)
+    .map(([name]) => name);
+  const ledgerNote = createLedgerNote(options.note, context, {
+    title: options.name || "capture",
+    artifacts: [artifactDir],
+    evidence: [
+      `capture ok steps: ${Object.values(summary.steps).filter((step) => step.ok).length}`,
+      `capture failed steps: ${failedSteps.length}`,
+      ...failedSteps.map((name) => `failed step: ${name}`),
+    ],
+  });
+  if (ledgerNote) {
+    summary.ledger_note = {
+      iteration: ledgerNote.iteration,
+      task_id: ledgerNote.task_id,
+      result: ledgerNote.result,
+      ledger_json: ledgerNote.ledger_json,
+      ledger_markdown: ledgerNote.ledger_markdown,
+    };
+  }
+
   const summaryFile = path.join(artifactDir, "capture-summary.json");
   writeJson(summaryFile, summary);
   if (options.json) {
@@ -299,7 +337,9 @@ function main(argv = process.argv.slice(2)) {
 
 module.exports = {
   createArtifactDirName,
+  createCliEnv,
   parseArgs,
+  runCliJson,
   sanitizeSegment,
 };
 

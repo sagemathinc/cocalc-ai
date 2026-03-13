@@ -67,7 +67,7 @@ function parseArgs(argv) {
   return options;
 }
 
-function runGit(repo, args) {
+function runGit(repo, args, options = {}) {
   const result = cp.spawnSync("git", ["-C", repo, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -77,17 +77,17 @@ function runGit(repo, args) {
       `git ${args.join(" ")} failed: ${`${result.stderr ?? ""}`.trim() || `${result.stdout ?? ""}`.trim()}`,
     );
   }
-  return `${result.stdout ?? ""}`.trim();
+  const stdout = `${result.stdout ?? ""}`;
+  return options.trim === false ? stdout : stdout.trim();
 }
 
 function loadPreflight(repo) {
   const gitTopLevel = runGit(repo, ["rev-parse", "--show-toplevel"]);
-  const statusText = runGit(repo, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--untracked-files=all",
-  ]);
+  const statusText = runGit(
+    repo,
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    { trim: false },
+  );
   const entries = normalizeEntryPaths(
     parseGitStatusPorcelainZ(statusText),
     repo,
