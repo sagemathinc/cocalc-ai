@@ -5,7 +5,11 @@
 
 import { dirname } from "path";
 
-import { FilterOutlined } from "@ant-design/icons";
+import {
+  CaretDownFilled,
+  CaretUpFilled,
+  FilterOutlined,
+} from "@ant-design/icons";
 import { Alert, Button, Checkbox, Dropdown, Menu, Spin } from "antd";
 import type { MenuProps } from "antd";
 import * as immutable from "immutable";
@@ -152,12 +156,8 @@ function SortIndicator({
   sortDescending?: boolean;
 }) {
   if (sortColumn !== columnKey) return null;
-  return (
-    <Icon
-      name={sortDescending ? "caret-down" : "caret-up"}
-      style={{ color: COLORS.ANTD_LINK_BLUE, marginLeft: 4 }}
-    />
-  );
+  const Caret = sortDescending ? CaretDownFilled : CaretUpFilled;
+  return <Caret style={{ color: COLORS.ANTD_LINK_BLUE, marginLeft: 4 }} />;
 }
 
 function useContainerWidth(el: HTMLDivElement | null): number {
@@ -847,6 +847,15 @@ export function FileListing({
       fontWeight: 600,
       zIndex: 1,
     };
+    const sortableThStyle: React.CSSProperties = {
+      ...thStyle,
+      cursor: "pointer",
+      userSelect: "none",
+    };
+    const sortLabelStyle = (columnKey: string): React.CSSProperties =>
+      sortColumn === columnKey
+        ? { color: COLORS.ANTD_LINK_BLUE }
+        : { color: COLORS.GRAY_D };
 
     return (
       <tr>
@@ -903,37 +912,47 @@ export function FileListing({
           <Icon name="star" />
         </th>
         <th style={{ ...thStyle, width: COL_W.PUBLIC }} />
-        <th style={thStyle} onClick={() => sort_by("name")}>
-          {intl.formatMessage(labels.name)}
-          <SortIndicator
-            columnKey="name"
-            sortColumn={sortColumn}
-            sortDescending={sortDescending}
-          />
+        <th style={sortableThStyle} onClick={() => sort_by("name")}>
+          <span style={sortLabelStyle("name")}>
+            {intl.formatMessage(labels.name)}
+            <SortIndicator
+              columnKey="name"
+              sortColumn={sortColumn}
+              sortDescending={sortDescending}
+            />
+          </span>
         </th>
         <th
-          style={{ ...thStyle, width: COL_W.DATE }}
+          style={{ ...sortableThStyle, width: COL_W.DATE }}
           onClick={() => sort_by("time")}
         >
-          Date Modified
-          <SortIndicator
-            columnKey="time"
-            sortColumn={sortColumn}
-            sortDescending={sortDescending}
-          />
+          <span style={sortLabelStyle("time")}>
+            Date Modified
+            <SortIndicator
+              columnKey="time"
+              sortColumn={sortColumn}
+              sortDescending={sortDescending}
+            />
+          </span>
         </th>
         {!isNarrow && (
           <>
             <th
-              style={{ ...thStyle, width: COL_W.SIZE, textAlign: "right" }}
+              style={{
+                ...sortableThStyle,
+                width: COL_W.SIZE,
+                textAlign: "right",
+              }}
               onClick={() => sort_by("size")}
             >
-              Size
-              <SortIndicator
-                columnKey="size"
-                sortColumn={sortColumn}
-                sortDescending={sortDescending}
-              />
+              <span style={sortLabelStyle("size")}>
+                Size
+                <SortIndicator
+                  columnKey="size"
+                  sortColumn={sortColumn}
+                  sortDescending={sortDescending}
+                />
+              </span>
             </th>
             <th style={{ ...thStyle, width: COL_W.ACTIONS }} />
           </>

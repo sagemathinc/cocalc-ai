@@ -93,6 +93,7 @@ import {
 } from "./directory-tree";
 import { FileDndProvider } from "./dnd/file-dnd-provider";
 import { getSortAsync, setSort } from "./config";
+import { DEFAULT_ACTIVE_FILE_SORT, normalizeActiveFileSort } from "./sort";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -114,10 +115,8 @@ function sortDesc(active_file_sort?): {
   sortField: SortField;
   sortDirection: "desc" | "asc";
 } {
-  const { column_name, is_descending } = active_file_sort ?? {
-    column_name: "name",
-    is_descending: false,
-  };
+  const { column_name, is_descending } =
+    normalizeActiveFileSort(active_file_sort);
   if (column_name == "time") {
     return {
       sortField: "mtime",
@@ -125,7 +124,7 @@ function sortDesc(active_file_sort?): {
     };
   }
   return {
-    sortField: column_name,
+    sortField: column_name as SortField,
     sortDirection: is_descending ? "desc" : "asc",
   };
 }
@@ -192,7 +191,9 @@ export function Explorer() {
   const project_map = useTypedRedux("projects", "project_map");
 
   const images = useTypedRedux("compute_images", "images");
-  const mask = useTypedRedux("account", "other_settings")?.get("mask_files");
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const mask = otherSettings?.get("mask_files");
+  const autoUpdateListing = !!otherSettings?.get("auto_update_file_listing");
   const host_id = project_map?.getIn([project_id, "host_id"]) as
     | string
     | undefined;
@@ -207,13 +208,10 @@ export function Explorer() {
   const assignedHostLabel = hostLabel(hostInfo, host_id);
 
   useExplorerSettings(project_id);
-  const active_file_sort = useTypedRedux(
-    { project_id },
-    "active_file_sort",
-  ) ?? {
-    column_name: "time",
-    is_descending: false,
-  };
+  const active_file_sort = normalizeActiveFileSort(
+    useTypedRedux({ project_id }, "active_file_sort") ??
+      DEFAULT_ACTIVE_FILE_SORT,
+  );
 
   const fs = useFs({ project_id });
   const inBackupsPath = isBackupsPath(effective_current_path);
@@ -327,7 +325,7 @@ export function Explorer() {
   } = useDeferredListing({
     liveListing: listing ?? undefined,
     currentPath: effective_current_path,
-    alwaysPassThrough: false,
+    alwaysPassThrough: autoUpdateListing,
     fingerprint: fileListingFingerprint,
   });
   const visibleListing = displayListing ?? listing;
@@ -363,10 +361,9 @@ export function Explorer() {
         path: effective_current_path,
       });
       if (cancelled) return;
-      const currentSort = redux
-        .getProjectStore(project_id)
-        ?.get("active_file_sort")
-        ?.toJS?.() ?? { column_name: "time", is_descending: false };
+      const currentSort = normalizeActiveFileSort(
+        redux.getProjectStore(project_id)?.get("active_file_sort"),
+      );
       if (
         currentSort.column_name !== nextSort.column_name ||
         currentSort.is_descending !== nextSort.is_descending

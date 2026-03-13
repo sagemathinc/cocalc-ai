@@ -3,10 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button } from "antd";
+import { Button, Popover, Switch } from "antd";
 import { useIntl } from "react-intl";
 
-import { Icon, Tip } from "@cocalc/frontend/components";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -16,11 +17,17 @@ interface Props {
 
 export function RefreshButton({ onClick }: Props) {
   const intl = useIntl();
+  const autoUpdateListing = !!useTypedRedux("account", "other_settings")?.get(
+    "auto_update_file_listing",
+  );
 
   return (
-    <Tip
-      title={intl.formatMessage(labels.refresh)}
-      tip="Apply pending filesystem changes. Enable automatic updates in Preferences -> Other -> File Explorer."
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+      }}
     >
       <Button
         type="text"
@@ -37,6 +44,47 @@ export function RefreshButton({ onClick }: Props) {
       >
         {intl.formatMessage(labels.refresh)}
       </Button>
-    </Tip>
+      <Popover
+        trigger="click"
+        title={intl.formatMessage(labels.refresh)}
+        content={
+          <div style={{ maxWidth: 260 }}>
+            <div style={{ marginBottom: 8 }}>
+              Apply pending filesystem changes to this listing.
+            </div>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                margin: 0,
+              }}
+            >
+              <span>Automatic updates</span>
+              <Switch
+                size="small"
+                checked={autoUpdateListing}
+                onChange={(checked) =>
+                  redux
+                    .getActions("account")
+                    ?.set_other_settings("auto_update_file_listing", checked)
+                }
+              />
+            </label>
+          </div>
+        }
+      >
+        <Button
+          type="text"
+          size="small"
+          style={{
+            paddingInline: 6,
+            color: COLORS.GRAY_D,
+          }}
+          icon={<Icon name="question-circle" />}
+        />
+      </Popover>
+    </span>
   );
 }

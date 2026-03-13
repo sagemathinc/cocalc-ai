@@ -11,7 +11,7 @@ import { ProjectActions } from "@cocalc/frontend/project_store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useProjectContext } from "../context";
 import { TerminalModeDisplay } from "@cocalc/frontend/project/explorer/file-listing/terminal-mode-display";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
 import { SearchHistoryDropdown } from "./search-history-dropdown";
 import { useExplorerSearchHistory } from "./use-search-history";
@@ -189,9 +189,6 @@ export const SearchBar = memo(
       if (cmd == null) return;
       const { input, id } = cmd;
       const input0 = input + '\necho $HOME "`pwd`"';
-      const compute_server_id = redux
-        .getProjectStore(project_id)
-        ?.get("compute_server_id");
       webapp_client.exec({
         project_id,
         command: input0,
@@ -200,7 +197,6 @@ export const SearchBar = memo(
         bash: true,
         path: current_path,
         err_on_exit: false,
-        compute_server_id,
         filesystem: true,
         cb(err, output) {
           if (id !== _id.current) {

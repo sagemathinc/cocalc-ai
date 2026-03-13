@@ -20,7 +20,6 @@ import { Button as BootstrapButton } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
   React,
-  redux,
   useAsyncEffect,
   useEffect,
   useIsMountedRef,
@@ -267,9 +266,6 @@ export function FilesHeader({
 
     const id = ++termIdRef.current;
     const input0 = input + '\necho $HOME "`pwd`"';
-    const compute_server_id = redux
-      .getProjectStore(project_id)
-      ?.get("compute_server_id");
 
     webapp_client.exec({
       project_id,
@@ -279,7 +275,6 @@ export function FilesHeader({
       bash: true,
       path: effective_current_path,
       err_on_exit: false,
-      compute_server_id,
       filesystem: true,
       cb(err, output) {
         if (id !== termIdRef.current || !isMountedRef.current) return;
