@@ -5,7 +5,8 @@
 
 import { dirname } from "path";
 
-import { Alert, Button, Checkbox, Menu, Spin } from "antd";
+import { FilterOutlined } from "@ant-design/icons";
+import { Alert, Button, Checkbox, Dropdown, Menu, Spin } from "antd";
 import type { MenuProps } from "antd";
 import * as immutable from "immutable";
 import React, {
@@ -48,7 +49,12 @@ import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-spe
 
 import DirectoryPeek from "./directory-peek";
 import NoFiles from "./no-files";
-import { TERM_MODE_CHAR, VIEWABLE_FILE_EXT } from "./utils";
+import {
+  TERM_MODE_CHAR,
+  TypeFilterLabel,
+  VIEWABLE_FILE_EXT,
+  sortedTypeFilterOptions,
+} from "./utils";
 
 const COL_W = {
   CHECKBOX: 40,
@@ -167,6 +173,13 @@ function useContainerWidth(el: HTMLDivElement | null): number {
   }, [el]);
 
   return width;
+}
+
+function typeFilterValue(record: DirectoryListingEntry): string {
+  if (record.isDir) {
+    return "folder";
+  }
+  return misc.filename_extension(record.name)?.toLowerCase() || "(none)";
 }
 
 function renderTimestamp(mtime?: number): React.ReactNode {
@@ -408,6 +421,7 @@ export function FileListing({
   const openFilesOrder = useTypedRedux({ project_id }, "open_files_order");
   const hide_masked_files =
     useTypedRedux({ project_id }, "hide_masked_files") ?? false;
+  const type_filter = useTypedRedux({ project_id }, "type_filter") ?? null;
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
   const { starred, setStarredPath } = useStarredFilesManager(project_id);
@@ -435,6 +449,13 @@ export function FileListing({
   const isNarrow = containerWidth < NARROW_WIDTH_PX;
   const sortColumn = active_file_sort?.column_name;
   const sortDescending = active_file_sort?.is_descending;
+  const typeFilterOptions = useMemo(() => {
+    const extensions = new Set<string>();
+    for (const entry of listing) {
+      extensions.add(typeFilterValue(entry));
+    }
+    return sortedTypeFilterOptions(extensions);
+  }, [listing]);
 
   const [expandedDirs, setExpandedDirs] = useState<string[]>([]);
 
@@ -455,6 +476,9 @@ export function FileListing({
   const baseDataSource = useMemo<FileEntry[]>(() => {
     return listing
       .filter((entry) => (hide_masked_files ? !entry.mask : true))
+      .filter((entry) =>
+        type_filter == null ? true : typeFilterValue(entry) === type_filter,
+      )
       .map((entry) => {
         const fullPath = misc.path_to_file(current_path, entry.name);
         return {
@@ -468,6 +492,7 @@ export function FileListing({
   }, [
     listing,
     hide_masked_files,
+    type_filter,
     current_path,
     openFiles,
     publicFiles,
@@ -832,7 +857,46 @@ export function FileListing({
           </th>
         )}
         <th style={{ ...thStyle, width: COL_W.PUBLIC }} />
-        <th style={{ ...thStyle, width: COL_W.TYPE }} />
+        <th style={{ ...thStyle, width: COL_W.TYPE }}>
+          <Dropdown
+            menu={{
+              items: [
+                ...(type_filter != null
+                  ? [
+                      {
+                        key: "__clear__",
+                        label: "Clear filter",
+                      },
+                      { key: "__divider__", type: "divider" as const },
+                    ]
+                  : []),
+                ...typeFilterOptions.map((ext) => ({
+                  key: ext,
+                  label: <TypeFilterLabel ext={ext} />,
+                })),
+              ],
+              selectable: true,
+              selectedKeys: type_filter != null ? [type_filter] : [],
+              onClick: ({ key }) => {
+                actions.setState({
+                  type_filter:
+                    key === "__clear__" || key === type_filter
+                      ? undefined
+                      : key,
+                } as any);
+              },
+            }}
+            trigger={["click"]}
+          >
+            <span>
+              <FilterOutlined
+                style={{
+                  color: type_filter != null ? COLORS.ANTD_ORANGE : undefined,
+                }}
+              />
+            </span>
+          </Dropdown>
+        </th>
         <th style={{ ...thStyle, width: COL_W.STAR }}>
           <Icon name="star" />
         </th>
@@ -883,6 +947,9 @@ export function FileListing({
     sortColumn,
     sortDescending,
     isNarrow,
+    type_filter,
+    typeFilterOptions,
+    actions,
   ]);
 
   const numCols = useMemo(() => {
@@ -901,10 +968,7 @@ export function FileListing({
     (_index: number, entry: VirtualEntry) => {
       if (isPeekEntry(entry)) {
         return (
-          <td
-            colSpan={numCols}
-            style={{ padding: 0, background: "white" }}
-          >
+          <td colSpan={numCols} style={{ padding: 0, background: "white" }}>
             <DirectoryPeek
               project_id={project_id}
               dirPath={misc.path_to_file(current_path, entry._peekForName)}
