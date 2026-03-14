@@ -1,7 +1,5 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { AboutBox } from "./about-box";
-
-const getProjectAvatarImage = jest.fn();
 const useTypedRedux = jest.fn();
 
 jest.mock("antd", () => {
@@ -33,11 +31,6 @@ jest.mock("react-intl", () => ({
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  redux: {
-    getStore: () => ({
-      getProjectAvatarImage: (...args: any[]) => getProjectAvatarImage(...args),
-    }),
-  },
   useTypedRedux: (...args: any[]) => useTypedRedux(...args),
 }));
 
@@ -70,27 +63,12 @@ jest.mock("@cocalc/frontend/projects/project-title", () => ({
   ProjectTitle: () => null,
 }));
 
-jest.mock("./image", () => ({
-  __esModule: true,
-  default: ({ avatarImage }: any) => (
-    <div data-testid="avatar-image">{avatarImage ?? ""}</div>
-  ),
-}));
-
 jest.mock("@cocalc/frontend/projects/use-bookmarked-projects", () => ({
   useBookmarkedProjects: () => ({
     isProjectBookmarked: () => false,
     setProjectBookmarked: jest.fn(),
   }),
 }));
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
 
 describe("AboutBox", () => {
   const actions = {
@@ -104,18 +82,20 @@ describe("AboutBox", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     useTypedRedux.mockReturnValue({
-      getIn: () => undefined,
+      getIn: (path: string[]) => {
+        if (path[path.length - 1] === "avatar_image_tiny") {
+          return "blob-1";
+        }
+        if (path[path.length - 1] === "color") {
+          return "#112233";
+        }
+        return undefined;
+      },
     });
   });
 
-  it("reloads and ignores stale avatar results when the project changes", async () => {
-    const first = deferred<string | undefined>();
-    const second = deferred<string | undefined>();
-    getProjectAvatarImage
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-
-    const { rerender } = render(
+  it("renders the current blob-backed project image preview", () => {
+    render(
       <AboutBox
         project_id="project-1"
         project_title="Project 1"
@@ -125,36 +105,8 @@ describe("AboutBox", () => {
       />,
     );
 
-    rerender(
-      <AboutBox
-        project_id="project-2"
-        project_title="Project 2"
-        description=""
-        actions={actions}
-        mode="flyout"
-      />,
-    );
-
-    await act(async () => {
-      second.resolve("second.png");
-      await second.promise;
-    });
-
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("project-appearance-image").getAttribute("src"),
-      ).toBe("second.png");
-    });
-
-    await act(async () => {
-      first.resolve("first.png");
-      await first.promise;
-    });
-
-    await waitFor(() => {
-      expect(
-        screen.getByTestId("project-appearance-image").getAttribute("src"),
-      ).toBe("second.png");
-    });
+    expect(
+      screen.getByTestId("project-appearance-image").getAttribute("src"),
+    ).toContain("uuid=blob-1");
   });
 });

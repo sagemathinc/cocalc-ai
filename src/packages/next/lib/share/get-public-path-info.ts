@@ -11,6 +11,7 @@ import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getAccountId from "lib/account/get-account";
 import { isStarred as getIsStarred } from "@cocalc/server/public-paths/star";
 import getProxiedPublicPathInfo from "lib/share/proxy/get-proxied-public-path-info";
+import { blobImageUrl } from "./blob-image-url";
 
 export default async function getPublicPathInfo({
   id,
@@ -104,9 +105,9 @@ export default async function getPublicPathInfo({
         }
       }
     } else {
-      const { title, avatar_image_full } = await getProjectInfo(
+      const { title, avatar_image_tiny } = await getProjectInfo(
         rows[0].project_id,
-        ["title", "avatar_image_full"],
+        ["title", "avatar_image_tiny"],
         "medium",
       );
       details = {
@@ -116,7 +117,7 @@ export default async function getPublicPathInfo({
           rows[0].unlisted,
         ),
         projectTitle: title,
-        projectAvatarImage: avatar_image_full,
+        projectAvatarImage: blobImageUrl(avatar_image_tiny),
       };
     }
     return {

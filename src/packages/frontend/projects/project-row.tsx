@@ -11,9 +11,7 @@ import { Col, Row, Well } from "@cocalc/frontend/antd-bootstrap";
 import {
   CSS,
   React,
-  redux,
   useActions,
-  useIsMountedRef,
   useRedux,
   useState,
   useTypedRedux,
@@ -23,7 +21,6 @@ import {
   Gap,
   Icon,
   Markdown,
-  Paragraph,
   ProjectState,
   TimeAgo,
 } from "@cocalc/frontend/components";
@@ -35,8 +32,8 @@ import track from "@cocalc/frontend/user-tracking";
 import { DEFAULT_COMPUTE_IMAGE } from "@cocalc/util/db-schema";
 import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
-import { Avatar, Button, Tooltip } from "antd";
-import { CSSProperties, useEffect } from "react";
+import { Button, Tooltip } from "antd";
+import { ProjectAvatarImage } from "./project-avatar";
 import { ProjectUsers } from "./project-users";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { blendBackgroundColor } from "./util";
@@ -308,48 +305,3 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
     </Well>
   );
 };
-
-interface ProjectAvatarImageProps {
-  project_id: string;
-  size?: number;
-  onClick?: Function;
-  style?: CSSProperties;
-  askToAddAvatar?: boolean;
-}
-
-export function ProjectAvatarImage(props: ProjectAvatarImageProps) {
-  const { project_id, size, onClick, style, askToAddAvatar = false } = props;
-  const isMounted = useIsMountedRef();
-  const [avatarImage, setAvatarImage] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    (async () => {
-      const img = await redux
-        .getStore("projects")
-        .getProjectAvatarImage(project_id);
-      if (!isMounted.current) return;
-      setAvatarImage(img);
-    })();
-  }, []);
-
-  function renderAdd(): React.JSX.Element {
-    if (!askToAddAvatar || onClick == null) return <></>;
-    return (
-      <Paragraph type="secondary" style={style} onClick={(e) => onClick(e)}>
-        (Click to add avatar image)
-      </Paragraph>
-    );
-  }
-
-  return avatarImage ? (
-    <div style={style} onClick={(e) => onClick?.(e)}>
-      <Avatar
-        shape="square"
-        size={size ?? 160}
-        icon={<img src={avatarImage} />}
-      />
-    </div>
-  ) : (
-    renderAdd()
-  );
-}

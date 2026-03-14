@@ -8,15 +8,11 @@ Render a single project entry, which goes in the list of projects
 */
 
 import { Avatar } from "antd";
-import { CSSProperties, useEffect } from "react";
+import { CSSProperties } from "react";
 
-import {
-  React,
-  redux,
-  useIsMountedRef,
-  useState,
-} from "@cocalc/frontend/app-framework";
+import { React, useRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
+import { projectImageUrl } from "./image";
 
 interface ProjectAvatarImageProps {
   project_id: string;
@@ -28,18 +24,9 @@ interface ProjectAvatarImageProps {
 
 export function ProjectAvatarImage(props: ProjectAvatarImageProps) {
   const { project_id, size, onClick, style, askToAddAvatar = false } = props;
-  const isMounted = useIsMountedRef();
-  const [avatarImage, setAvatarImage] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    (async () => {
-      const img = await redux
-        .getStore("projects")
-        .getProjectAvatarImage(project_id);
-      if (!isMounted.current) return;
-      setAvatarImage(img);
-    })();
-  }, []);
+  const avatarImage = projectImageUrl(
+    useRedux(["projects", "project_map", project_id, "avatar_image_tiny"]),
+  );
 
   function renderAdd(): React.JSX.Element {
     if (!askToAddAvatar || onClick == null) return <></>;

@@ -311,28 +311,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
-  // creates and stores image as a blob in the database.
-  // stores sha1 of that blog in projects map and also returns
-  // the sha1.
-  public async setProjectImage(
-    project_id: string,
-    {
-      full,
-      tiny,
-    }: {
-      full: string; // full size image
-      tiny: string; // tiny image
-    },
-  ) {
-    if (tiny.length > 10000) {
-      // quick sanity check
-      throw Error("bug -- tiny image is way too large");
-    }
-    await this.projects_query_set({ project_id, avatar_image_full: full });
-    await this.projects_table_set({ project_id, avatar_image_tiny: tiny });
+  public async setProjectImage(project_id: string, image_blob: string | null) {
+    await this.projects_table_set({
+      project_id,
+      avatar_image_tiny: image_blob?.trim() || "",
+    });
     await this.redux.getProjectActions(project_id).async_log({
       event: "set",
-      image: tiny,
+      image: image_blob?.trim() || "",
     });
   }
 

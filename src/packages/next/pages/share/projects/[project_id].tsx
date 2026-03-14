@@ -31,7 +31,7 @@ export async function getServerSideProps(context) {
       "name",
       "title",
       "description",
-      "avatar_image_full",
+      "avatar_image_tiny",
     ]);
     if (project.name) {
       // This project probably has a nice vanity name. Possibly redirect to that instead.

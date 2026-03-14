@@ -45,7 +45,7 @@ export async function getServerSideProps(context) {
           "name",
           "title",
           "description",
-          "avatar_image_full",
+          "avatar_image_tiny",
         ])),
       };
     }

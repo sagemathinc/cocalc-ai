@@ -33,6 +33,7 @@ import {
 } from "./projects-table-columns";
 import { useBookmarkedProjects } from "./use-bookmarked-projects";
 import { normalizeProjectStateForDisplay } from "./host-operational";
+import { projectImageUrl } from "./image";
 
 interface Props {
   visible_projects: string[];
@@ -121,7 +122,7 @@ export function ProjectsTable({
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
-        avatar: project.get("avatar_image_tiny"),
+        avatar: projectImageUrl(project.get("avatar_image_tiny")),
         title: project.get("title") ?? "Untitled",
         description: project.get("description") ?? "",
         host: (() => {

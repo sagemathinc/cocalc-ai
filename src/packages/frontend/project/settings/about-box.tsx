@@ -5,10 +5,10 @@
 
 import ShowError from "@cocalc/frontend/components/error";
 import { Alert, Button, Col, Flex, Row, Typography } from "antd";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useIntl } from "react-intl";
 
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   CopyToClipBoard,
   HelpIcon,
@@ -22,9 +22,9 @@ import {
 } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import { labels } from "@cocalc/frontend/i18n";
+import { projectImageUrl } from "@cocalc/frontend/projects/image";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
-import ProjectImage from "./image";
 import { useBookmarkedProjects } from "@cocalc/frontend/projects/use-bookmarked-projects";
 import {
   themeDraftFromTheme,
@@ -65,7 +65,11 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   ]) as any;
   const hasReadonlyFields = ["student", "shared"].includes(courseProjectType);
   const [error, setError] = useState<string>("");
-  const [avatarImage, setAvatarImage] = useState<string | undefined>(undefined);
+  const avatarImageBlob = project_map?.getIn([
+    project_id,
+    "avatar_image_tiny",
+  ]) as string | undefined;
+  const avatarImage = projectImageUrl(avatarImageBlob);
   const [color, setColor] = useState<string | undefined>(
     project_map?.getIn([project_id, "color"]) as string | undefined,
   );
@@ -73,29 +77,8 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const [appearanceSaving, setAppearanceSaving] = useState<boolean>(false);
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
-  const [appearancePreviewImage, setAppearancePreviewImage] = useState<
-    string | undefined
-  >(undefined);
-  const [appearanceImageData, setAppearanceImageData] = useState<
-    { full: string; tiny: string } | null | undefined
-  >(undefined);
 
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
-
-  useEffect(() => {
-    let closed = false;
-    setAvatarImage(undefined);
-    void (async () => {
-      const avatarImage = await redux
-        .getStore("projects")
-        .getProjectAvatarImage(project_id);
-      if (closed) return;
-      setAvatarImage(avatarImage);
-    })();
-    return () => {
-      closed = true;
-    };
-  }, [project_id]);
 
   function renderReadonly() {
     if (!hasReadonlyFields) return;
@@ -118,13 +101,11 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
           title: project_title,
           description,
           color,
-          image_blob: avatarImage ?? null,
+          image_blob: avatarImageBlob ?? null,
         },
         project_title,
       ),
     );
-    setAppearancePreviewImage(avatarImage);
-    setAppearanceImageData(undefined);
     setAppearanceOpen(true);
   }
 
@@ -139,13 +120,7 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
       );
       const nextColor = appearanceDraft.color ?? "";
       await actions.setProjectColor(project_id, nextColor);
-      if (appearanceImageData === null) {
-        await actions.setProjectImage(project_id, { full: "", tiny: "" });
-        setAvatarImage(undefined);
-      } else if (appearanceImageData != null) {
-        await actions.setProjectImage(project_id, appearanceImageData);
-        setAvatarImage(appearanceImageData.full);
-      }
+      await actions.setProjectImage(project_id, appearanceDraft.image_blob);
       setColor(appearanceDraft.color ?? undefined);
       setAppearanceOpen(false);
     } catch (err) {
@@ -347,36 +322,7 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
           defaultIcon="folder-open"
           showIcon={false}
           showAccentColor={false}
-          previewImageUrl={appearancePreviewImage}
-          renderImageInput={() => (
-            <div>
-              <ProjectImage
-                avatarImage={appearancePreviewImage}
-                onChange={(data) => {
-                  setAppearanceImageData(data);
-                  setAppearancePreviewImage(data.full);
-                  setAppearanceDraft((prev) =>
-                    prev == null ? prev : { ...prev, image_blob: data.full },
-                  );
-                }}
-              />
-              {appearancePreviewImage ? (
-                <Button
-                  danger
-                  style={{ marginTop: 10 }}
-                  onClick={() => {
-                    setAppearanceImageData(null);
-                    setAppearancePreviewImage(undefined);
-                    setAppearanceDraft((prev) =>
-                      prev == null ? prev : { ...prev, image_blob: "" },
-                    );
-                  }}
-                >
-                  Delete Image
-                </Button>
-              ) : null}
-            </div>
-          )}
+          previewImageUrl={projectImageUrl(appearanceDraft?.image_blob)}
         />
       </>
     );

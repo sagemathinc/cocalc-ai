@@ -15,7 +15,6 @@ interface ProjectInfo {
   description: string;
   name: string;
   avatar_image_tiny: string;
-  avatar_image_full: string;
 }
 
 export default async function getProjectInfo(
