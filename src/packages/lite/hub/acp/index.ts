@@ -2010,7 +2010,24 @@ export class ChatStreamWriter {
   private resolveChatFilePath(): string | undefined {
     const chatPath = `${this.metadata.path ?? ""}`.trim();
     if (!chatPath) return;
-    if (path.isAbsolute(chatPath)) return path.resolve(chatPath);
+    if (path.isAbsolute(chatPath)) {
+      const absolute = path.resolve(chatPath);
+      const workspaceRoot = this.workspaceRoot;
+      const hostRoot = this.hostWorkspaceRoot;
+      if (
+        workspaceRoot &&
+        hostRoot &&
+        path.isAbsolute(workspaceRoot) &&
+        path.isAbsolute(hostRoot) &&
+        workspaceRoot !== hostRoot
+      ) {
+        const rel = path.relative(workspaceRoot, absolute);
+        if (!rel.startsWith("..")) {
+          return path.resolve(hostRoot, rel);
+        }
+      }
+      return absolute;
+    }
     const root = this.hostWorkspaceRoot ?? this.workspaceRoot;
     if (!root || !path.isAbsolute(root)) return;
     return path.resolve(root, chatPath);
@@ -4320,11 +4337,11 @@ function normalizeAcpAutomationRecord(
           : "paused";
   const next_run_at =
     enabled && config.local_time && config.timezone
-      ? parseMs(record.next_run_at_ms) ??
+      ? (parseMs(record.next_run_at_ms) ??
         computeNextAutomationRunAt({
           local_time: config.local_time,
           timezone: config.timezone,
-        })
+        }))
       : null;
   return {
     automation_id,
@@ -4345,12 +4362,7 @@ function normalizeAcpAutomationRecord(
     last_run_started_at: parseMs(record.last_run_started_at_ms) ?? null,
     last_run_finished_at: parseMs(record.last_run_finished_at_ms) ?? null,
     last_acknowledged_at: parseMs(record.last_acknowledged_at_ms) ?? null,
-    unacknowledged_runs: clampLoopNumber(
-      record.unacknowledged_runs,
-      0,
-      0,
-      365,
-    ),
+    unacknowledged_runs: clampLoopNumber(record.unacknowledged_runs, 0, 0, 365),
     paused_reason: `${record.paused_reason ?? ""}`.trim() || null,
     last_error: `${record.last_error ?? ""}`.trim() || null,
     last_job_op_id: `${record.last_job_op_id ?? ""}`.trim() || null,

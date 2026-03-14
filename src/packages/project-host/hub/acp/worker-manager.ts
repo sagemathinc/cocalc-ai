@@ -4,6 +4,7 @@ import {
   closeSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -18,6 +19,39 @@ const ACP_WORKER_SUPERVISOR_MS = 2000;
 
 let supervisorStarted = false;
 let workerEntryPoint: string | undefined;
+
+type WorkerLaunch = {
+  command: string;
+  args: string[];
+  nodeLike: boolean;
+  resolvedCommand: string;
+  resolvedEntryPoint?: string;
+};
+
+type WorkerProcessInfo = {
+  pid: number;
+  env: Record<string, string>;
+  cmdline: string[];
+};
+
+export function classifyProjectHostAcpWorkers({
+  workers,
+  launch,
+}: {
+  workers: WorkerProcessInfo[];
+  launch: WorkerLaunch;
+}): { keepPid?: number; stalePids: number[] } {
+  const matching = workers
+    .filter((worker) => isExpectedWorkerProcess(worker, launch))
+    .sort((left, right) => right.pid - left.pid);
+  const keepPid = matching[0]?.pid;
+  return {
+    keepPid,
+    stalePids: workers
+      .filter((worker) => worker.pid !== keepPid)
+      .map((worker) => worker.pid),
+  };
+}
 
 export function configureProjectHostAcpWorkerLauncher({
   entryPoint,
@@ -72,8 +106,139 @@ export function resolveProjectHostAcpWorkerLaunch({
   return { command, args: [] };
 }
 
+function workerLaunchSignature(): WorkerLaunch {
+  const { command, args } = resolveProjectHostAcpWorkerLaunch();
+  const base = path.basename(command).toLowerCase();
+  const nodeLike = base === "node" || base.startsWith("node");
+  return {
+    command,
+    args,
+    nodeLike,
+    resolvedCommand: path.resolve(command),
+    resolvedEntryPoint:
+      nodeLike && args[0] != null ? path.resolve(args[0]) : undefined,
+  };
+}
+
+function readProcEnviron(pid: number): Record<string, string> {
+  const env: Record<string, string> = {};
+  const raw = readFileSync(`/proc/${pid}/environ`, "utf8");
+  for (const entry of raw.split("\0")) {
+    if (!entry) continue;
+    const idx = entry.indexOf("=");
+    if (idx === -1) continue;
+    env[entry.slice(0, idx)] = entry.slice(idx + 1);
+  }
+  return env;
+}
+
+function readProcCmdline(pid: number): string[] {
+  return readFileSync(`/proc/${pid}/cmdline`, "utf8")
+    .split("\0")
+    .filter((value) => value.length > 0);
+}
+
+function listProjectHostAcpWorkers(): WorkerProcessInfo[] {
+  const hostId = `${process.env.PROJECT_HOST_ID ?? ""}`.trim();
+  return readdirSync("/proc")
+    .map((name) => Number(name))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+    .flatMap((pid) => {
+      try {
+        const env = readProcEnviron(pid);
+        if (`${env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() !== "1") {
+          return [];
+        }
+        const workerHostId = `${env.PROJECT_HOST_ID ?? ""}`.trim();
+        if (hostId && workerHostId && workerHostId !== hostId) {
+          return [];
+        }
+        return [
+          {
+            pid,
+            env,
+            cmdline: readProcCmdline(pid),
+          },
+        ];
+      } catch {
+        // ignore processes we cannot inspect or that exit during scanning
+        return [];
+      }
+    });
+}
+
+function isExpectedWorkerProcess(
+  worker: WorkerProcessInfo,
+  launch: WorkerLaunch,
+): boolean {
+  if (worker.cmdline.length === 0) return false;
+  if (path.resolve(worker.cmdline[0]) !== launch.resolvedCommand) {
+    return false;
+  }
+  if (!launch.nodeLike) {
+    return true;
+  }
+  if (!launch.resolvedEntryPoint) {
+    return false;
+  }
+  const entryPoint = worker.cmdline[1];
+  if (!entryPoint) {
+    return false;
+  }
+  return path.resolve(entryPoint) === launch.resolvedEntryPoint;
+}
+
+async function terminateWorkerPid(pid: number): Promise<void> {
+  if (!isPidAlive(pid)) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // ignore exit races
+  }
+}
+
+async function reconcileProjectHostAcpWorkers(): Promise<number | undefined> {
+  const launch = workerLaunchSignature();
+  const workers = listProjectHostAcpWorkers();
+  if (!workers.length) {
+    clearWorkerPidFile();
+    return;
+  }
+  const { keepPid, stalePids } = classifyProjectHostAcpWorkers({
+    workers,
+    launch,
+  });
+  for (const worker of workers) {
+    if (!stalePids.includes(worker.pid)) continue;
+    logger.warn("terminating stale project-host ACP worker", {
+      pid: worker.pid,
+      cmdline: worker.cmdline,
+    });
+    await terminateWorkerPid(worker.pid);
+  }
+  if (keepPid && isPidAlive(keepPid)) {
+    writeFileSync(ACP_WORKER_PID_FILE, `${keepPid}\n`);
+    return keepPid;
+  }
+  clearWorkerPidFile();
+  return;
+}
+
 export async function ensureProjectHostAcpWorkerRunning(): Promise<boolean> {
-  const existingPid = readWorkerPid();
+  const existingPid =
+    (await reconcileProjectHostAcpWorkers()) ?? readWorkerPid();
   if (isPidAlive(existingPid)) {
     return true;
   }

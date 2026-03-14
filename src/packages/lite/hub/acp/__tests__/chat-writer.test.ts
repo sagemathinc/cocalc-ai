@@ -1001,6 +1001,30 @@ describe("ChatStreamWriter", () => {
     }
   });
 
+  it("maps absolute chat paths through the host workspace root", async () => {
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        path: "/root/notes/chat.chat",
+        message_id: "msg-host-chat-path",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: makeFakeSyncDB().syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    writer.workspaceRoot = "/root";
+    writer.hostWorkspaceRoot = "/mnt/cocalc/project-test";
+
+    expect((writer as any).resolveChatFilePath()).toBe(
+      "/mnt/cocalc/project-test/notes/chat.chat",
+    );
+    writer.dispose?.(true);
+  });
+
   it("resolves chat row by message_id when sender/date changed", async () => {
     const rowDate = new Date("2026-02-21T10:11:12.000Z").toISOString();
     const rows: any[] = [
