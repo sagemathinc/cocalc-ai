@@ -28,6 +28,8 @@ export interface AcpJobRow {
   state: AcpJobState;
   send_mode?: "immediate" | null;
   priority: number;
+  worker_id?: string | null;
+  worker_bundle_version?: string | null;
   request_json: string;
   error?: string | null;
   created_at: number;
@@ -51,6 +53,8 @@ function init(): void {
       state TEXT NOT NULL,
       send_mode TEXT,
       priority INTEGER NOT NULL DEFAULT 0,
+      worker_id TEXT,
+      worker_bundle_version TEXT,
       request_json TEXT NOT NULL,
       error TEXT,
       created_at INTEGER NOT NULL,
@@ -66,6 +70,17 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_state_updated_idx ON ${TABLE}(state, updated_at)`,
   );
+  const columns = db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{
+    name: string;
+  }>;
+  const hasColumn = (name: string): boolean =>
+    columns.some((x) => x?.name === name);
+  if (!hasColumn("worker_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN worker_id TEXT`);
+  }
+  if (!hasColumn("worker_bundle_version")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN worker_bundle_version TEXT`);
+  }
 }
 
 let initialized = false;
@@ -133,8 +148,8 @@ export function enqueueAcpJob(request: AcpRequest): AcpJobRow {
   const request_json = JSON.stringify(normalizeRequest(request));
   db.prepare(
     `INSERT INTO ${TABLE}
-      (op_id, project_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, request_json, error, created_at, updated_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, NULL, ?, ?, NULL, NULL)
+      (op_id, project_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, worker_id, worker_bundle_version, request_json, error, created_at, updated_at, started_at, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, ?, NULL, ?, ?, NULL, NULL)
       ON CONFLICT(project_id, path, user_message_id) DO UPDATE SET
         send_mode = COALESCE(excluded.send_mode, ${TABLE}.send_mode),
         priority = MAX(${TABLE}.priority, excluded.priority),
@@ -194,7 +209,22 @@ export function listQueuedAcpJobs(): AcpJobRow[] {
 
 export function listRunningAcpJobs(): AcpJobRow[] {
   ensureInit();
+  return listRunningAcpJobsByWorker();
+}
+
+export function listRunningAcpJobsByWorker(worker_id?: string): AcpJobRow[] {
+  ensureInit();
   const db = getDatabase();
+  if (`${worker_id ?? ""}`.trim()) {
+    return db
+      .prepare(
+        `SELECT * FROM ${TABLE}
+         WHERE state = 'running'
+           AND worker_id = ?
+         ORDER BY started_at ASC, created_at ASC`,
+      )
+      .all(worker_id) as AcpJobRow[];
+  }
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
@@ -202,6 +232,20 @@ export function listRunningAcpJobs(): AcpJobRow[] {
        ORDER BY started_at ASC, created_at ASC`,
     )
     .all() as AcpJobRow[];
+}
+
+export function countRunningAcpJobsForWorker(worker_id: string): number {
+  ensureInit();
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM ${TABLE}
+       WHERE state = 'running'
+         AND worker_id = ?`,
+    )
+    .get(worker_id) as { count?: number } | undefined;
+  return Number(row?.count ?? 0) || 0;
 }
 
 export function listQueuedAcpJobsForThread({
@@ -231,52 +275,113 @@ export function claimNextQueuedAcpJobForThread({
   project_id,
   path,
   thread_id,
+  worker_id,
+  worker_bundle_version,
 }: {
   project_id: string;
   path: string;
   thread_id: string;
+  worker_id?: string;
+  worker_bundle_version?: string;
 }): AcpJobRow | undefined {
   ensureInit();
   const db = getDatabase();
-  const next = db
-    .prepare(
-      `SELECT * FROM ${TABLE}
-       WHERE project_id = ?
-         AND path = ?
-         AND thread_id = ?
-         AND state = 'queued'
-       ORDER BY ${THREAD_QUEUE_ORDER}
-       LIMIT 1`,
-    )
-    .get(project_id, path, thread_id) as AcpJobRow | undefined;
-  if (!next) return;
-  const now = Date.now();
-  db.prepare(
-    `UPDATE ${TABLE}
-      SET state = 'running',
-          started_at = ?,
-          updated_at = ?,
-          error = NULL
-      WHERE op_id = ?
-        AND state = 'queued'`,
-  ).run(now, now, next.op_id);
-  return db
-    .prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`)
-    .get(next.op_id) as AcpJobRow | undefined;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const running = db
+      .prepare(
+        `SELECT op_id FROM ${TABLE}
+         WHERE project_id = ?
+           AND path = ?
+           AND thread_id = ?
+           AND state = 'running'
+         LIMIT 1`,
+      )
+      .get(project_id, path, thread_id) as { op_id?: string } | undefined;
+    if (running?.op_id) {
+      db.exec("COMMIT");
+      return undefined;
+    }
+    const next = db
+      .prepare(
+        `SELECT * FROM ${TABLE}
+         WHERE project_id = ?
+           AND path = ?
+           AND thread_id = ?
+           AND state = 'queued'
+         ORDER BY ${THREAD_QUEUE_ORDER}
+         LIMIT 1`,
+      )
+      .get(project_id, path, thread_id) as AcpJobRow | undefined;
+    if (!next) {
+      db.exec("COMMIT");
+      return undefined;
+    }
+    const now = Date.now();
+    const result = db
+      .prepare(
+        `UPDATE ${TABLE}
+          SET state = 'running',
+              started_at = ?,
+              updated_at = ?,
+              error = NULL,
+              worker_id = ?,
+              worker_bundle_version = ?
+          WHERE op_id = ?
+            AND state = 'queued'`,
+      )
+      .run(
+        now,
+        now,
+        worker_id?.trim() || null,
+        worker_bundle_version?.trim() || null,
+        next.op_id,
+      );
+    if (result.changes === 0) {
+      db.exec("COMMIT");
+      return undefined;
+    }
+    const claimed = db
+      .prepare(`SELECT * FROM ${TABLE} WHERE op_id = ?`)
+      .get(next.op_id) as AcpJobRow | undefined;
+    db.exec("COMMIT");
+    return claimed;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 export function setAcpJobState({
   op_id,
   state,
   error,
+  worker_id,
 }: {
   op_id: string;
   state: Exclude<AcpJobState, "queued" | "running">;
   error?: string;
+  worker_id?: string;
 }): void {
   ensureInit();
   const db = getDatabase();
   const now = Date.now();
+  if (`${worker_id ?? ""}`.trim()) {
+    db.prepare(
+      `UPDATE ${TABLE}
+        SET state = ?,
+            error = COALESCE(?, error),
+            updated_at = ?,
+            finished_at = ?
+        WHERE op_id = ?
+          AND (
+            state != 'running'
+            OR worker_id IS NULL
+            OR worker_id = ?
+          )`,
+    ).run(state, error ?? null, now, now, op_id, worker_id);
+    return;
+  }
   db.prepare(
     `UPDATE ${TABLE}
       SET state = ?,

@@ -476,8 +476,11 @@ export function networkArgument() {
       explicit,
     });
   }
+  // Default to slirp4netns because it has been more reliable than pasta for
+  // outbound DNS from our rootless Codex containers. Hosts can still override
+  // this explicitly if they want pasta.
   const defaultNetworkRaw = `${
-    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "pasta"
+    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "slirp4netns"
   }`
     .trim()
     .toLowerCase();

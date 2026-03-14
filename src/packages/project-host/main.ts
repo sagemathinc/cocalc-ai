@@ -527,10 +527,14 @@ export async function main(
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
   if (`${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1") {
-    runAcpWorkerMain().catch((err) => {
-      console.error("project-host ACP worker failed:", err);
-      process.exitCode = 1;
-    });
+    runAcpWorkerMain()
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error("project-host ACP worker failed:", err);
+        process.exit(1);
+      });
   } else {
     try {
       if (handleDaemonCli(process.argv.slice(2))) {

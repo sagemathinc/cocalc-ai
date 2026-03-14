@@ -91,6 +91,7 @@ import {
 import {
   cancelQueuedAcpJob,
   claimNextQueuedAcpJobForThread,
+  countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
   listQueuedAcpJobs,
@@ -122,6 +123,14 @@ import {
   markAcpInterruptError,
   markAcpInterruptHandled,
 } from "../sqlite/acp-interrupts";
+import {
+  getAcpWorker,
+  heartbeatAcpWorker,
+  listLiveAcpWorkers,
+  stopAcpWorker,
+  upsertAcpWorker,
+} from "../sqlite/acp-workers";
+import type { AcpWorkerState } from "../sqlite/acp-workers";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import type { DKV } from "@cocalc/conat/sync/dkv";
@@ -150,7 +159,12 @@ const ACP_AUTOMATION_POLL_MS = 30_000;
 const AUTOMATION_DEFAULT_UNACK_LIMIT = 7;
 
 const logger = getLogger("lite:hub:acp");
-const ACP_INSTANCE_ID = randomUUID();
+// Use a stable externally assigned instance id when a detached worker process
+// is managed by project-host. That lets leases, queued jobs, and worker state
+// all refer to the same durable worker identity across restarts of the main
+// process.
+const ACP_INSTANCE_ID =
+  `${process.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() || randomUUID();
 
 let blobStore: AKV | null = null;
 const agents = new Map<string, AcpAgent>();
@@ -212,12 +226,78 @@ const ACP_INTERRUPT_MAX_AGE_MS = envNumber(
   "COCALC_ACP_INTERRUPT_MAX_AGE_MS",
   30_000,
 );
+const ACP_WORKER_HEARTBEAT_MS = envNumber(
+  "COCALC_ACP_WORKER_HEARTBEAT_MS",
+  2_000,
+);
+const ACP_WORKER_STALE_MS = envNumber("COCALC_ACP_WORKER_STALE_MS", 15_000);
+const ACP_ORPHAN_RECOVERY_POLL_MS = envNumber(
+  "COCALC_ACP_ORPHAN_RECOVERY_POLL_MS",
+  5_000,
+);
+const WORKER_INTERRUPTED_NOTICE =
+  "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
+
+type DetachedWorkerContext = {
+  worker_id: string;
+  host_id: string;
+  bundle_version: string;
+  bundle_path: string;
+  state: AcpWorkerState;
+};
+
+let currentDetachedWorkerContext: DetachedWorkerContext | null = null;
 
 function liteUseDetachedAcpWorker(): boolean {
   const value = `${process.env.COCALC_LITE_ACP_DETACHED_WORKER ?? ""}`
     .trim()
     .toLowerCase();
   return !["0", "false", "no", "off"].includes(value);
+}
+
+function projectHostWorkerContextFromEnv(): DetachedWorkerContext | null {
+  if (`${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() !== "1") {
+    return null;
+  }
+  const host_id =
+    `${process.env.PROJECT_HOST_ID ?? process.env.COCALC_PROJECT_HOST_ID ?? ""}`.trim();
+  const bundle_version =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION ?? process.env.COCALC_PROJECT_HOST_VERSION ?? ""}`.trim();
+  const bundle_path =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH ?? ""}`.trim();
+  const requestedState =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_STATE ?? ""}`.trim() ===
+    "draining"
+      ? "draining"
+      : "active";
+  if (!host_id || !bundle_version || !bundle_path) {
+    logger.warn("project-host ACP worker environment is incomplete", {
+      host_id,
+      bundle_version,
+      bundle_path,
+    });
+    return null;
+  }
+  return {
+    worker_id: ACP_INSTANCE_ID,
+    host_id,
+    bundle_version,
+    bundle_path,
+    state: requestedState,
+  };
+}
+
+function detachedWorkerCanClaimQueuedJobs(): boolean {
+  return currentDetachedWorkerContext?.state !== "draining";
+}
+
+function liveWorkerOwnerIds(host_id: string): Set<string> {
+  return new Set(
+    listLiveAcpWorkers({
+      host_id,
+      stale_after_ms: ACP_WORKER_STALE_MS,
+    }).map((row) => row.worker_id),
+  );
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -2749,20 +2829,39 @@ function appendRestartNotice(historyValue: any): MessageHistory[] {
 
 export async function recoverOrphanedAcpTurns(
   client: ConatClient,
+  opts: {
+    liveOwnerIds?: Set<string>;
+    interruptedNotice?: string;
+    recoveryReason?: string;
+  } = {},
 ): Promise<number> {
   let running;
   try {
-    running = listRunningAcpTurnLeases({
-      exclude_owner_instance_id: ACP_INSTANCE_ID,
-    });
+    running = listRunningAcpTurnLeases();
   } catch (err) {
     logger.warn("failed to list running acp turn leases", err);
     return 0;
   }
+  const liveOwnerIds = opts.liveOwnerIds;
+  if (liveOwnerIds?.size) {
+    running = running.filter((row) => !liveOwnerIds.has(row.owner_instance_id));
+  } else {
+    running = running.filter(
+      (row) => row.owner_instance_id !== ACP_INSTANCE_ID,
+    );
+  }
   if (!running.length) return 0;
+  const interruptedNotice =
+    opts.interruptedNotice ?? RESTART_INTERRUPTED_NOTICE;
+  const recoveryReason = opts.recoveryReason ?? "server restart recovery";
+  const interruptedReasonId =
+    interruptedNotice === RESTART_INTERRUPTED_NOTICE
+      ? "server_restart"
+      : "worker_stopped";
   logger.warn("recovering orphaned acp turns", {
     instance: ACP_INSTANCE_ID,
     count: running.length,
+    reason: recoveryReason,
   });
   let recovered = 0;
   for (const turn of running) {
@@ -2802,6 +2901,33 @@ export async function recoverOrphanedAcpTurns(
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
+          const patchedHistory =
+            interruptedNotice === RESTART_INTERRUPTED_NOTICE
+              ? history
+              : (() => {
+                  const currentHistory = historyToArray(
+                    syncdbField(current, "history"),
+                  );
+                  if (currentHistory.length === 0) {
+                    return [];
+                  }
+                  const first = currentHistory[0] as MessageHistory;
+                  const content =
+                    typeof first?.content === "string"
+                      ? first.content
+                      : `${(first as any)?.content ?? ""}`;
+                  if (/conversation interrupted/i.test(content)) {
+                    return currentHistory;
+                  }
+                  const sep = content.trim().length > 0 ? "\n\n" : "";
+                  return [
+                    {
+                      ...first,
+                      content: `${content}${sep}${interruptedNotice}`,
+                    },
+                    ...currentHistory.slice(1),
+                  ];
+                })();
           const rowDate =
             normalizeIsoDateString(syncdbField(current, "date")) ??
             normalizeIsoDateString(turn.message_date) ??
@@ -2814,8 +2940,8 @@ export async function recoverOrphanedAcpTurns(
             sender_id: rowSender,
             generating: false,
             acp_interrupted: true,
-            acp_interrupted_reason: "server_restart",
-            acp_interrupted_text: RESTART_INTERRUPTED_NOTICE,
+            acp_interrupted_reason: interruptedReasonId,
+            acp_interrupted_text: interruptedNotice,
           };
           if (turn.message_id) {
             update.message_id = turn.message_id;
@@ -2826,8 +2952,8 @@ export async function recoverOrphanedAcpTurns(
           if ((turn as any).parent_message_id) {
             update.parent_message_id = (turn as any).parent_message_id;
           }
-          if (history.length > 0) {
-            update.history = history;
+          if (patchedHistory.length > 0) {
+            update.history = patchedHistory;
           }
           syncdb.set(update);
           const threadId =
@@ -2896,6 +3022,14 @@ export async function recoverOrphanedAcpTurns(
       });
     }
     try {
+      if (turn.message_id) {
+        setAcpJobState({
+          op_id: turn.message_id,
+          state: "interrupted",
+          error: recoveryReason,
+          worker_id: turn.owner_instance_id,
+        });
+      }
       finalizeAcpTurnLease({
         key: {
           project_id: turn.project_id,
@@ -2903,7 +3037,7 @@ export async function recoverOrphanedAcpTurns(
           message_date: turn.message_date,
         },
         state: "aborted",
-        reason: "server restart recovery",
+        reason: recoveryReason,
         owner_instance_id: ACP_INSTANCE_ID,
       });
       recovered += 1;
@@ -2959,36 +3093,139 @@ export async function runDetachedAcpQueueWorker(
       ? ACP_WORKER_IDLE_EXIT_MS
       : options.idleExitMs;
   const restartReason = options.restartReason ?? "worker restart";
-  logger.warn("starting ACP queue worker", {
-    instance: ACP_INSTANCE_ID,
-    pid: process.pid,
-    poll_ms: ACP_WORKER_POLL_MS,
-    idle_exit_ms: idleExitMs,
-  });
-  await recoverOrphanedAcpTurns(client);
-  markRunningAcpJobsInterrupted(restartReason);
-  let idleSince = 0;
-  while (true) {
-    kickAllQueuedAcpJobs();
-    const hasWork =
-      listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
-    if (hasWork) {
-      idleSince = 0;
-    } else if (!idleSince) {
-      idleSince = Date.now();
-    } else if (
-      idleExitMs != null &&
-      idleExitMs >= 0 &&
-      Date.now() - idleSince >= idleExitMs
-    ) {
-      logger.warn("stopping ACP queue worker after idle timeout", {
-        instance: ACP_INSTANCE_ID,
-        pid: process.pid,
-        idle_ms: Date.now() - idleSince,
-      });
-      return;
+  const workerContext = projectHostWorkerContextFromEnv();
+  currentDetachedWorkerContext = workerContext ? { ...workerContext } : null;
+  let workerStopReason: string | undefined;
+  let workerHeartbeatTimer: NodeJS.Timeout | undefined;
+  const syncDetachedWorkerState = (): {
+    state: AcpWorkerState;
+    runningJobs: number;
+  } | null => {
+    if (!workerContext || !currentDetachedWorkerContext) {
+      return null;
     }
-    await sleep(ACP_WORKER_POLL_MS);
+    const persisted = getAcpWorker(workerContext.worker_id);
+    const nextState =
+      persisted?.state === "draining" || persisted?.state === "stopped"
+        ? "draining"
+        : currentDetachedWorkerContext.state;
+    currentDetachedWorkerContext.state = nextState;
+    const runningJobs = countRunningAcpJobsForWorker(workerContext.worker_id);
+    heartbeatAcpWorker({
+      worker_id: workerContext.worker_id,
+      pid: process.pid,
+      state: nextState,
+      last_seen_running_jobs: runningJobs,
+    });
+    if (nextState === "draining" && runningJobs === 0) {
+      workerStopReason ??=
+        persisted?.state === "stopped" ? "stopped" : "drained";
+    }
+    return { state: nextState, runningJobs };
+  };
+  try {
+    if (workerContext) {
+      const now = Date.now();
+      upsertAcpWorker({
+        worker_id: workerContext.worker_id,
+        host_id: workerContext.host_id,
+        bundle_version: workerContext.bundle_version,
+        bundle_path: workerContext.bundle_path,
+        pid: process.pid,
+        state: workerContext.state,
+        started_at: now,
+        last_heartbeat_at: now,
+        last_seen_running_jobs: 0,
+        exit_requested_at: workerContext.state === "draining" ? now : null,
+        stopped_at: null,
+        stop_reason: null,
+      });
+      syncDetachedWorkerState();
+      workerHeartbeatTimer = setInterval(() => {
+        try {
+          syncDetachedWorkerState();
+        } catch (err) {
+          logger.warn("ACP worker heartbeat failed", {
+            instance: ACP_INSTANCE_ID,
+            err,
+          });
+        }
+      }, ACP_WORKER_HEARTBEAT_MS);
+      workerHeartbeatTimer.unref?.();
+    }
+    logger.warn("starting ACP queue worker", {
+      instance: ACP_INSTANCE_ID,
+      pid: process.pid,
+      poll_ms: ACP_WORKER_POLL_MS,
+      idle_exit_ms: idleExitMs,
+    });
+    if (workerContext) {
+      await recoverOrphanedAcpTurns(client, {
+        liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
+        interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+        recoveryReason: "ACP worker stopped unexpectedly",
+      });
+    } else {
+      await recoverOrphanedAcpTurns(client);
+      markRunningAcpJobsInterrupted(restartReason);
+    }
+    let idleSince = 0;
+    let lastRecoveryAt = Date.now();
+    while (true) {
+      const workerStatus = syncDetachedWorkerState();
+      if (Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS) {
+        lastRecoveryAt = Date.now();
+        if (workerContext) {
+          await recoverOrphanedAcpTurns(client, {
+            liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
+            interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+            recoveryReason: "ACP worker stopped unexpectedly",
+          });
+        }
+      }
+      if (!workerContext || workerStatus?.state === "active") {
+        kickAllQueuedAcpJobs();
+      }
+      const hasWork =
+        listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
+      if (hasWork) {
+        idleSince = 0;
+      } else if (!idleSince) {
+        idleSince = Date.now();
+      }
+      if (workerStopReason) {
+        logger.warn("stopping ACP queue worker after drain", {
+          instance: ACP_INSTANCE_ID,
+          pid: process.pid,
+          reason: workerStopReason,
+        });
+        return;
+      } else if (
+        idleExitMs != null &&
+        idleExitMs >= 0 &&
+        Date.now() - idleSince >= idleExitMs
+      ) {
+        logger.warn("stopping ACP queue worker after idle timeout", {
+          instance: ACP_INSTANCE_ID,
+          pid: process.pid,
+          idle_ms: Date.now() - idleSince,
+        });
+        workerStopReason = "idle_timeout";
+        return;
+      }
+      await sleep(ACP_WORKER_POLL_MS);
+    }
+  } finally {
+    if (workerHeartbeatTimer != null) {
+      clearInterval(workerHeartbeatTimer);
+    }
+    if (workerContext) {
+      stopAcpWorker({
+        worker_id: workerContext.worker_id,
+        reason: workerStopReason ?? "shutdown",
+      });
+      currentDetachedWorkerContext = null;
+    }
   }
 }
 
@@ -4577,6 +4814,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: "error",
       error: "queued acp job missing required thread identity",
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
     return;
   }
@@ -4585,6 +4823,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: "error",
       error: "conat client must be initialized",
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
     return;
   }
@@ -4626,6 +4865,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     setAcpJobState({
       op_id: job.op_id,
       state: result.terminalState,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
   } catch (err) {
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
@@ -4648,6 +4888,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: "error",
       error: message,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
   }
 }
@@ -4662,10 +4903,15 @@ async function pumpQueuedAcpJobsForThread({
   thread_id: string;
 }): Promise<void> {
   while (true) {
+    if (!detachedWorkerCanClaimQueuedJobs()) {
+      return;
+    }
     const job = claimNextQueuedAcpJobForThread({
       project_id,
       path,
       thread_id,
+      worker_id: currentDetachedWorkerContext?.worker_id,
+      worker_bundle_version: currentDetachedWorkerContext?.bundle_version,
     });
     if (!job) {
       return;
@@ -4683,6 +4929,9 @@ function kickQueuedAcpJobsForThread({
   path: string;
   thread_id: string;
 }): void {
+  if (!detachedWorkerCanClaimQueuedJobs()) {
+    return;
+  }
   const key = acpJobThreadKey({ project_id, path, thread_id });
   if (pumpingAcpJobThreads.has(key)) {
     return;
@@ -4716,6 +4965,9 @@ function kickQueuedAcpJobsForThread({
 }
 
 function kickAllQueuedAcpJobs(): void {
+  if (!detachedWorkerCanClaimQueuedJobs()) {
+    return;
+  }
   const seen = new Set<string>();
   for (const job of listQueuedAcpJobs()) {
     const key = acpJobThreadKey(job);

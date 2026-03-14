@@ -7,10 +7,12 @@ import {
 } from "../../sqlite/database";
 import {
   claimNextQueuedAcpJobForThread,
+  countRunningAcpJobsForWorker,
   enqueueAcpJob,
   listQueuedAcpJobs,
   listQueuedAcpJobsForThread,
   reprioritizeAcpJobImmediate,
+  setAcpJobState,
 } from "../../sqlite/acp-jobs";
 
 async function delay(ms = 2): Promise<void> {
@@ -128,5 +130,59 @@ describe("acp job queue ordering", () => {
       thread_id: older.thread_id,
     });
     expect(first?.op_id).toBe(newer.op_id);
+  });
+
+  it("does not claim a second queued job while the thread already has a running owner", async () => {
+    const first = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-1",
+        assistantMessageId: "assistant-1",
+        assistantDate: "2026-03-08T00:00:01.000Z",
+      }),
+    );
+    await delay();
+    const second = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-2",
+        assistantMessageId: "assistant-2",
+        assistantDate: "2026-03-08T00:00:02.000Z",
+      }),
+    );
+
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: first.project_id,
+      path: first.path,
+      thread_id: first.thread_id,
+      worker_id: "worker-a",
+      worker_bundle_version: "bundle-a",
+    });
+    expect(running?.op_id).toBe(first.op_id);
+    expect(running?.worker_id).toBe("worker-a");
+    expect(countRunningAcpJobsForWorker("worker-a")).toBe(1);
+
+    const blocked = claimNextQueuedAcpJobForThread({
+      project_id: second.project_id,
+      path: second.path,
+      thread_id: second.thread_id,
+      worker_id: "worker-b",
+      worker_bundle_version: "bundle-b",
+    });
+    expect(blocked).toBeUndefined();
+
+    setAcpJobState({
+      op_id: first.op_id,
+      state: "completed",
+      worker_id: "worker-a",
+    });
+
+    const afterFinish = claimNextQueuedAcpJobForThread({
+      project_id: second.project_id,
+      path: second.path,
+      thread_id: second.thread_id,
+      worker_id: "worker-b",
+      worker_bundle_version: "bundle-b",
+    });
+    expect(afterFinish?.op_id).toBe(second.op_id);
+    expect(afterFinish?.worker_id).toBe("worker-b");
   });
 });

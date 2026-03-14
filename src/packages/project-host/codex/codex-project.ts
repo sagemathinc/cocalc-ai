@@ -29,8 +29,13 @@ import {
 import { syncSubscriptionAuthToRegistryIfChanged } from "./codex-auth-registry";
 
 const logger = getLogger("project-host:codex-project");
-const CONTAINER_TTL_MS = Number(
-  process.env.COCALC_CODEX_PROJECT_TTL_MS ?? 60_000,
+// Reusing long-lived Codex rootfs containers has proven flaky on some hosts:
+// fresh containers work, then later turns can hang with broken networking.
+// Keep the lease mechanism so a running turn keeps its container, but default
+// to recreating the container as soon as the turn exits.
+const CONTAINER_TTL_MS = Math.max(
+  0,
+  Number(process.env.COCALC_CODEX_PROJECT_TTL_MS ?? 0),
 );
 const CONTAINER_SETUP_TIMEOUT_MS = Math.max(
   10_000,
