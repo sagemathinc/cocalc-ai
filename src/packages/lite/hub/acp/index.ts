@@ -8,10 +8,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
+  CodexAppServerAgent,
   CodexExecAgent,
   EchoAgent,
   type AcpAgent,
   type AcpEvaluateRequest,
+  forkCodexAppServerSession,
   forkSession,
   getSessionsRoot,
 } from "@cocalc/ai/acp";
@@ -317,6 +319,14 @@ function formatQueuedDelay(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const remain = seconds % 60;
   return remain > 0 ? `${minutes}m ${remain}s` : `${minutes}m`;
+}
+
+function getConfiguredCodexBackend(): "exec" | "app-server" {
+  return `${process.env.COCALC_ACP_CODEX_BACKEND ?? "exec"}`
+    .trim()
+    .toLowerCase() === "app-server"
+    ? "app-server"
+    : "exec";
 }
 
 type AcpMockRule = {
@@ -3388,12 +3398,21 @@ async function ensureAgent(
     return mock;
   }
   try {
-    logger.debug("ensureAgent: creating codex exec agent");
-    const created = await CodexExecAgent.create({
-      binaryPath: process.env.COCALC_CODEX_BIN,
-      cwd: bindings.workspaceRoot ?? process.cwd(),
+    const codexBackend = getConfiguredCodexBackend();
+    logger.debug("ensureAgent: creating codex agent", {
+      codexBackend,
     });
-    logger.info("codex-exec agent ready", { key });
+    const created =
+      codexBackend === "app-server"
+        ? await CodexAppServerAgent.create({
+            binaryPath: process.env.COCALC_CODEX_BIN,
+            cwd: bindings.workspaceRoot ?? process.cwd(),
+          })
+        : await CodexExecAgent.create({
+            binaryPath: process.env.COCALC_CODEX_BIN,
+            cwd: bindings.workspaceRoot ?? process.cwd(),
+          });
+    logger.info("codex agent ready", { key, codexBackend });
     agents.set(key, created);
     return created;
   } catch (err) {
@@ -5530,18 +5549,40 @@ async function handleInterruptRequest(
 async function handleForkSessionRequest(
   request: AcpForkSessionRequest,
 ): Promise<{ sessionId: string }> {
-  if (!isValidUUID(request.sessionId)) {
-    throw Error("sessionId must be a valid uuid");
+  const sessionId = `${request.sessionId ?? ""}`.trim();
+  if (!sessionId) {
+    throw Error("sessionId must be a non-empty string");
+  }
+  if (getConfiguredCodexBackend() === "app-server") {
+    try {
+      return await forkCodexAppServerSession({
+        projectId: request.project_id,
+        accountId: request.account_id,
+        sessionId,
+        binaryPath: process.env.COCALC_CODEX_BIN,
+      });
+    } catch (err) {
+      if (!isValidUUID(sessionId)) {
+        throw err;
+      }
+      logger.info("app-server session fork failed; falling back to exec fork", {
+        sessionId,
+        err: `${err}`,
+      });
+    }
   }
   const sessionsRoot = getSessionsRoot();
   if (!sessionsRoot) {
     throw Error("codex sessions directory not configured");
   }
+  if (!isValidUUID(sessionId)) {
+    throw Error("sessionId must be a valid uuid for exec-session fork");
+  }
   const newSessionId = request.newSessionId ?? randomUUID();
   if (!isValidUUID(newSessionId)) {
     throw Error("newSessionId must be a valid uuid");
   }
-  await forkSession(request.sessionId, newSessionId, sessionsRoot);
+  await forkSession(sessionId, newSessionId, sessionsRoot);
   return { sessionId: newSessionId };
 }
 

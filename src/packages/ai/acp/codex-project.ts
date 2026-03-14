@@ -23,6 +23,19 @@ export type CodexProjectSpawner = {
     authSource?: string;
     containerPathMap?: CodexProjectContainerPathMap;
   }>;
+  spawnCodexAppServer?: (opts: {
+    projectId: string;
+    accountId?: string;
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+  }) => Promise<{
+    proc: ChildProcess;
+    cmd: string;
+    args: string[];
+    cwd?: string;
+    authSource?: string;
+    containerPathMap?: CodexProjectContainerPathMap;
+  }>;
 };
 
 let codexProjectSpawner: CodexProjectSpawner | null = null;

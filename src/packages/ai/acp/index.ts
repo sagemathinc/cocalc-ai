@@ -21,6 +21,10 @@ export type {
 export { EchoAgent, echoAgent } from "./echo";
 export { CodexExecAgent } from "./codex-exec";
 export {
+  CodexAppServerAgent,
+  forkCodexAppServerSession,
+} from "./codex-app-server";
+export {
   findSessionFile,
   forkSession,
   getSessionsRoot,

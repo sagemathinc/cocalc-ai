@@ -729,6 +729,58 @@ export async function spawnCodexInProjectContainer({
   };
 }
 
+async function spawnCodexAppServerInProjectRuntime({
+  projectId,
+  cwd,
+  env: extraEnv,
+  touchReason = "codex",
+}: {
+  projectId: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  touchReason?: string | false;
+}): Promise<{
+  proc: ReturnType<typeof spawn>;
+  cmd: string;
+  args: string[];
+  cwd?: string;
+}> {
+  const execArgs: string[] = [
+    "exec",
+    "-i",
+    "--workdir",
+    cwd && cwd.startsWith("/") ? cwd : "/root",
+    "-e",
+    "HOME=/root",
+  ];
+  const execEnv = toStringEnv(extraEnv);
+  for (const key in execEnv) {
+    execArgs.push("-e", `${key}=${execEnv[key]}`);
+  }
+  execArgs.push(
+    `project-${projectId}`,
+    "/opt/cocalc/bin2/codex",
+    "app-server",
+    "--listen",
+    "stdio://",
+  );
+  logger.debug("codex app-server: podman exec", redactPodmanArgs(execArgs));
+  const proc = spawn("podman", execArgs, {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  proc.on("exit", async () => {
+    if (touchReason) {
+      void touchProjectLastEdited(projectId, touchReason);
+    }
+  });
+  return {
+    proc,
+    cmd: "podman",
+    args: execArgs,
+    cwd,
+  };
+}
+
 export function initCodexProjectRunner(): void {
   setCodexProjectSpawner({
     async spawnCodexExec({
@@ -767,6 +819,21 @@ export function initCodexProjectRunner(): void {
           rootHostPath: spawned.home,
           scratchHostPath: spawned.scratch,
         },
+      };
+    },
+    async spawnCodexAppServer({ projectId, cwd, env: extraEnv }) {
+      const spawned = await spawnCodexAppServerInProjectRuntime({
+        projectId,
+        cwd,
+        env: extraEnv,
+        touchReason: "codex",
+      });
+      return {
+        proc: spawned.proc,
+        cmd: spawned.cmd,
+        args: spawned.args,
+        cwd: spawned.cwd,
+        authSource: "project-runtime",
       };
     },
   });

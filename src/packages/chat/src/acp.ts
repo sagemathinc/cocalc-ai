@@ -10,7 +10,7 @@ import type {
 // Configuration stored on the chat thread root for Codex/ACP turns.
 // This is persisted as `acp_config` on the root message.
 export interface CodexThreadConfig {
-  sessionId?: string; // Codex session/thread id (UUID string)
+  sessionId?: string; // Codex session/thread id
   model?: string;
   reasoning?: CodexReasoningLevel["id"];
   workingDirectory?: string;
