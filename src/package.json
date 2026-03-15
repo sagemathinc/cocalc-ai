@@ -24,6 +24,7 @@
     "dev:env:lite": "node ./scripts/dev/dev-env.js lite --with-browser --start",
     "dev:env:hub": "node ./scripts/dev/dev-env.js hub --with-browser --no-start",
     "bug-hunt:attach": "node ./scripts/bug-hunt/attach.js",
+    "bug-hunt:batch-plan": "node ./scripts/bug-hunt/batch-plan.js",
     "bug-hunt:capture": "node ./scripts/bug-hunt/capture.js",
     "bug-hunt:commit": "node ./scripts/bug-hunt/commit.js",
     "bug-hunt:diff-since-snapshot": "node ./scripts/bug-hunt/diff-since-snapshot.js",
