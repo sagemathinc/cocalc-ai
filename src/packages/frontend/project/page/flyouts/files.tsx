@@ -810,7 +810,10 @@ export function FilesFlyout({
     }
 
     return (
-      <FileDndProvider project_id={project_id}>
+      <FileDndProvider
+        project_id={project_id}
+        onUserFilesystemChange={allowNextListingUpdate}
+      >
         <StatefulVirtuoso
           ref={virtuosoRef}
           cacheId={`${project_id}::flyout::files::${effective_current_path}`}

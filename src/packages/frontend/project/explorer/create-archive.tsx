@@ -19,7 +19,13 @@ const ARCHIVE_SUFFIXES = ["tar", ...OUCH_FORMATS].sort(
   (a, b) => b.length - a.length,
 );
 
-export default function CreateArchive({ clear }) {
+export default function CreateArchive({
+  clear,
+  onUserFilesystemChange,
+}: {
+  clear: () => void;
+  onUserFilesystemChange?: () => void;
+}) {
   const [format, setFormat] = useState<string>("");
   const intl = useIntl();
   const inputRef = useRef<any>(null);
@@ -52,6 +58,7 @@ export default function CreateArchive({ clear }) {
       setLoading(true);
       const files = checked_files.toArray();
       const path = store.get("current_path_abs") ?? "/";
+      onUserFilesystemChange?.();
       await createArchive({ path, files, target, format, actions });
       clear();
     } catch (err) {

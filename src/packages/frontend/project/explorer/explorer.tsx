@@ -632,7 +632,10 @@ You can either wait for this host to become available again, or move this ${proj
 
   // be careful with adding height:'100%'. it could cause flex to miscalculate. see #3904
   return (
-    <FileDndProvider project_id={project_id}>
+    <FileDndProvider
+      project_id={project_id}
+      onUserFilesystemChange={allowNextListingUpdate}
+    >
       <div
         className={"smc-vfill"}
         onClick={() => {
@@ -732,6 +735,7 @@ You can either wait for this host to become available again, or move this ${proj
                   file_creation_error={file_creation_error}
                   create_file={create_file}
                   create_folder={create_folder}
+                  onTerminalCommand={allowNextListingUpdate}
                 />
               </div>
             )}
@@ -932,6 +936,7 @@ You can either wait for this host to become available again, or move this ${proj
                       current_path={effective_current_path}
                       project_id={project_id}
                       actions={actions}
+                      onUserFilesystemChange={allowNextListingUpdate}
                     />
                   </Col>
                 </Row>
@@ -979,6 +984,9 @@ You can either wait for this host to become available again, or move this ${proj
                   project_id={project_id}
                   dest_path={effective_current_path}
                   config={{ clickable: ".upload-button" }}
+                  event_handlers={{
+                    complete: () => allowNextListingUpdate(),
+                  }}
                   style={{
                     flex: "1 1 auto",
                     minWidth: 0,

@@ -161,9 +161,11 @@ function FileDragOverlay({
 
 export function FileDndProvider({
   project_id,
+  onUserFilesystemChange,
   children,
 }: {
   project_id: string;
+  onUserFilesystemChange?: () => void;
   children: React.ReactNode;
 }) {
   const actions = useActions({ project_id });
@@ -375,6 +377,7 @@ export function FileDndProvider({
               dest: dropData.path,
             });
           }
+          onUserFilesystemChange?.();
           actions.set_all_files_unchecked();
           preDragCheckedRef.current = null;
         } catch (err) {
@@ -399,6 +402,7 @@ export function FileDndProvider({
             src: { project_id, path: dragData.paths },
             dest: { project_id: targetProjectId, path: destPath },
           });
+          onUserFilesystemChange?.();
           actions.set_all_files_unchecked();
           preDragCheckedRef.current = null;
           return;
@@ -412,7 +416,7 @@ export function FileDndProvider({
 
       restoreSelection();
     },
-    [actions, project_id, restoreSelection, shiftKey],
+    [actions, onUserFilesystemChange, project_id, restoreSelection, shiftKey],
   );
 
   return (

@@ -57,6 +57,7 @@ interface Props {
   current_path: string;
   project_id: string;
   actions: ProjectActions;
+  onUserFilesystemChange?: () => void;
 }
 
 export function ActionBox({
@@ -65,6 +66,7 @@ export function ActionBox({
   current_path,
   project_id,
   actions,
+  onUserFilesystemChange,
 }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -123,6 +125,7 @@ export function ActionBox({
     for (const path of paths) {
       actions.close_tab(path);
     }
+    onUserFilesystemChange?.();
     actions.deleteFiles({ paths });
     clear();
   }
@@ -200,6 +203,7 @@ export function ActionBox({
   }
 
   function move_click(): void {
+    onUserFilesystemChange?.();
     actions.moveFiles({
       src: checked_files.toArray(),
       dest: move_destination,
@@ -322,6 +326,7 @@ export function ActionBox({
       destination_project_id != undefined &&
       project_id !== destination_project_id
     ) {
+      onUserFilesystemChange?.();
       actions.copyPathBetweenProjects({
         src: { project_id, path: paths },
         dest: {
@@ -331,6 +336,7 @@ export function ActionBox({
         options: { force: overwrite, recursive: true },
       });
     } else {
+      onUserFilesystemChange?.();
       actions.copyPaths({
         src: paths,
         dest: destination_directory,
@@ -493,7 +499,12 @@ export function ActionBox({
   function render_action_box(action: FileAction) {
     switch (action) {
       case "compress":
-        return <CreateArchive clear={clear} />;
+        return (
+          <CreateArchive
+            clear={clear}
+            onUserFilesystemChange={onUserFilesystemChange}
+          />
+        );
       case "copy":
         return render_copy();
       case "delete":
@@ -501,9 +512,20 @@ export function ActionBox({
       case "download":
         return <Download clear={clear} />;
       case "rename":
-        return <RenameFile clear={clear} />;
+        return (
+          <RenameFile
+            clear={clear}
+            onUserFilesystemChange={onUserFilesystemChange}
+          />
+        );
       case "duplicate":
-        return <RenameFile clear={clear} duplicate />;
+        return (
+          <RenameFile
+            clear={clear}
+            duplicate
+            onUserFilesystemChange={onUserFilesystemChange}
+          />
+        );
       case "move":
         return render_move();
       case "share":

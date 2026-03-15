@@ -142,6 +142,7 @@ export const NavTab: React.FC<Props> = React.memo((props: Props) => {
       onClick={onClick}
       style={outer_style}
       className={TOP_BAR_ELEMENT_CLASS}
+      {...(is_project && name != null ? { "data-node-key": name } : {})}
     >
       {renderInner()}
     </div>

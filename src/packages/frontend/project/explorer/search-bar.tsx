@@ -103,6 +103,7 @@ interface Props {
   actions: ProjectActions;
   create_file: (a, b) => void;
   create_folder: (a) => void;
+  onTerminalCommand?: () => void;
   file_creation_error?: string;
   disabled?: boolean;
   ext_selection?: string;
@@ -117,6 +118,7 @@ export const SearchBar = memo(
     actions,
     create_file,
     create_folder,
+    onTerminalCommand,
     file_creation_error,
     disabled = false,
     ext_selection,
@@ -251,6 +253,7 @@ export const SearchBar = memo(
       if (!input) {
         return;
       }
+      onTerminalCommand?.();
       set_state("run");
       _id.current = _id.current + 1;
       set_cmd({ input, id: _id.current });
