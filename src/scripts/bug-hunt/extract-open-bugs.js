@@ -10,6 +10,7 @@ const DEFAULT_TASKS_FILE =
 const DEFAULT_LIMIT = 25;
 const DEFAULT_STALE_DAYS = 14;
 const BUG_TAGS = new Set(["bug", "blocker"]);
+const SEVERITY_LEVELS = ["low", "medium", "high", "blocker"];
 const AREA_TAGS = [
   "chat",
   "codex",
@@ -34,7 +35,7 @@ const AREA_TAGS = [
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    "Usage: extract-open-bugs.js [--tasks <path>] [--fresh] [--area <csv>] [--limit <n>] [--exclude-stale-days <n>] [--json] [--include-non-bugs]",
+    "Usage: extract-open-bugs.js [--tasks <path>] [--fresh] [--area <csv>] [--environment <lite|hub|either>] [--min-severity <low|medium|high|blocker>] [--group-by-area] [--per-area <n>] [--limit <n>] [--exclude-stale-days <n>] [--json] [--include-non-bugs]",
   );
   process.exit(code);
 }
@@ -48,6 +49,10 @@ function parseArgs(argv) {
     includeNonBugs: false,
     excludeStaleDays: DEFAULT_STALE_DAYS,
     areas: [],
+    environments: [],
+    minSeverity: "",
+    groupByArea: false,
+    perArea: 0,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -77,6 +82,25 @@ function parseArgs(argv) {
         .split(",")
         .map((value) => value.trim().toLowerCase())
         .filter(Boolean);
+    } else if (arg === "--environment") {
+      options.environments = `${argv[++i] || ""}`
+        .split(",")
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+    } else if (arg === "--min-severity") {
+      options.minSeverity =
+        `${argv[++i] || ""}`.trim().toLowerCase() ||
+        usageAndExit("--min-severity requires a value");
+      if (!SEVERITY_LEVELS.includes(options.minSeverity)) {
+        usageAndExit("--min-severity must be low, medium, high, or blocker");
+      }
+    } else if (arg === "--group-by-area") {
+      options.groupByArea = true;
+    } else if (arg === "--per-area") {
+      options.perArea = Number(argv[++i] || "");
+      if (!Number.isFinite(options.perArea) || options.perArea < 0) {
+        usageAndExit("--per-area must be a non-negative number");
+      }
     } else if (arg === "--help" || arg === "-h") {
       usageAndExit(undefined, 0);
     } else {
@@ -187,6 +211,28 @@ function inferReproQuality(desc) {
   return score;
 }
 
+function inferSeverity(tags, desc) {
+  const tagSet = new Set(tags);
+  const lower = `${desc ?? ""}`.toLowerCase();
+  if (tagSet.has("blocker")) return "blocker";
+  if (
+    tagSet.has("high") ||
+    tagSet.has("critical") ||
+    /data loss|cannot start|can't start|fails to start|hard blocker|unusable|crash/.test(
+      lower,
+    )
+  ) {
+    return "high";
+  }
+  if (
+    tagSet.has("medium") ||
+    /wrong|broken|fails|regression|duplicate|unexpected/.test(lower)
+  ) {
+    return "medium";
+  }
+  return "low";
+}
+
 function inferStatusHint(task, options = {}) {
   const now = options.now ?? Date.now();
   const staleThresholdMs =
@@ -223,9 +269,16 @@ function inferStatusHint(task, options = {}) {
   return "unknown";
 }
 
+function severityScore(severity) {
+  if (severity === "blocker") return 140;
+  if (severity === "high") return 80;
+  if (severity === "medium") return 30;
+  return 0;
+}
+
 function computeScore(candidate) {
   let score = 0;
-  if (candidate.tags.includes("blocker")) score += 100;
+  score += severityScore(candidate.severity);
   if (candidate.tags.includes("bug")) score += 50;
   if (candidate.tags.includes("today")) score += 20;
   if (candidate.status_hint === "fresh") score += 20;
@@ -247,6 +300,7 @@ function toCandidate(task, options = {}) {
     area: inferArea(tags, desc),
     environment: inferEnvironment(tags, desc),
     tags,
+    severity: inferSeverity(tags, desc),
     status_hint,
     repro_quality: inferReproQuality(desc),
     last_edited: Number(task?.last_edited) || undefined,
@@ -269,6 +323,9 @@ function filterCandidates(tasks, options = {}) {
   const areaFilter = new Set(
     (options.areas ?? []).map((value) => value.trim()),
   );
+  const environmentFilter = new Set(
+    (options.environments ?? []).map((value) => value.trim()),
+  );
   const candidates = [];
   for (const task of tasks) {
     if (!isOpenTask(task)) continue;
@@ -283,6 +340,19 @@ function filterCandidates(tasks, options = {}) {
       }
     }
     if (areaFilter.size > 0 && !areaFilter.has(candidate.area)) continue;
+    if (
+      environmentFilter.size > 0 &&
+      !environmentFilter.has(candidate.environment)
+    ) {
+      continue;
+    }
+    if (
+      options.minSeverity &&
+      SEVERITY_LEVELS.indexOf(candidate.severity) <
+        SEVERITY_LEVELS.indexOf(options.minSeverity)
+    ) {
+      continue;
+    }
     candidates.push(candidate);
   }
   candidates.sort((left, right) => {
@@ -292,12 +362,41 @@ function filterCandidates(tasks, options = {}) {
     if (leftEdited !== rightEdited) return rightEdited - leftEdited;
     return left.task_id.localeCompare(right.task_id);
   });
+  if (options.perArea > 0) {
+    const counts = new Map();
+    return candidates
+      .filter((candidate) => {
+        const count = counts.get(candidate.area) || 0;
+        if (count >= options.perArea) return false;
+        counts.set(candidate.area, count + 1);
+        return true;
+      })
+      .slice(0, options.limit ?? DEFAULT_LIMIT);
+  }
   return candidates.slice(0, options.limit ?? DEFAULT_LIMIT);
+}
+
+function groupCandidatesByArea(candidates) {
+  const groups = new Map();
+  for (const candidate of candidates) {
+    const current = groups.get(candidate.area) || [];
+    current.push(candidate);
+    groups.set(candidate.area, current);
+  }
+  return Array.from(groups.entries())
+    .map(([area, items]) => ({ area, candidates: items }))
+    .sort((left, right) => {
+      const leftScore = left.candidates[0]?.score ?? 0;
+      const rightScore = right.candidates[0]?.score ?? 0;
+      if (leftScore !== rightScore) return rightScore - leftScore;
+      return left.area.localeCompare(right.area);
+    });
 }
 
 function formatCandidate(candidate) {
   return [
     `${candidate.score}`.padStart(3, " "),
+    `[${candidate.severity}]`,
     `[${candidate.status_hint}]`,
     `[${candidate.environment}]`,
     `[${candidate.area}]`,
@@ -310,6 +409,9 @@ function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   const tasks = readTasksFile(options.tasksFile);
   const candidates = filterCandidates(tasks, options);
+  const areaGroups = options.groupByArea
+    ? groupCandidatesByArea(candidates)
+    : [];
   if (options.json) {
     process.stdout.write(
       `${JSON.stringify(
@@ -317,6 +419,7 @@ function main(argv = process.argv.slice(2)) {
           tasksFile: options.tasksFile,
           count: candidates.length,
           candidates,
+          ...(options.groupByArea ? { area_groups: areaGroups } : {}),
         },
         null,
         2,
@@ -325,6 +428,15 @@ function main(argv = process.argv.slice(2)) {
     return;
   }
   console.log(`# open bug candidates from ${options.tasksFile}`);
+  if (options.groupByArea) {
+    for (const group of areaGroups) {
+      console.log(`## ${group.area}`);
+      for (const candidate of group.candidates) {
+        console.log(formatCandidate(candidate));
+      }
+    }
+    return;
+  }
   for (const candidate of candidates) {
     console.log(formatCandidate(candidate));
   }
@@ -338,12 +450,14 @@ module.exports = {
   inferArea,
   inferEnvironment,
   inferReproQuality,
+  inferSeverity,
   inferStatusHint,
   isBugCandidate,
   isOpenTask,
   parseArgs,
   readTasksFile,
   toCandidate,
+  groupCandidatesByArea,
 };
 
 if (require.main === module) {
