@@ -58,6 +58,9 @@ test("filterCandidates keeps fresh blockers ahead of stale reports", () => {
 });
 
 test("inferSeverity distinguishes blocker, high, and medium bugs", () => {
+  assert.equal(inferSeverity(["0"], "minor typo"), "blocker");
+  assert.equal(inferSeverity(["1"], "minor typo"), "high");
+  assert.equal(inferSeverity(["2"], "minor typo"), "medium");
   assert.equal(inferSeverity(["blocker"], "minor typo"), "blocker");
   assert.equal(inferSeverity([], "project cannot start after refresh"), "high");
   assert.equal(

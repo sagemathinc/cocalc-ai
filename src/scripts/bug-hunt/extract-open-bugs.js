@@ -214,6 +214,9 @@ function inferReproQuality(desc) {
 function inferSeverity(tags, desc) {
   const tagSet = new Set(tags);
   const lower = `${desc ?? ""}`.toLowerCase();
+  if (tagSet.has("0")) return "blocker";
+  if (tagSet.has("1")) return "high";
+  if (tagSet.has("2")) return "medium";
   if (tagSet.has("blocker")) return "blocker";
   if (
     tagSet.has("high") ||
