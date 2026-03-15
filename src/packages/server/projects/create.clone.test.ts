@@ -130,7 +130,7 @@ describe("projects.createProject clone routing", () => {
       description: "desc",
       account_id: ACCOUNT_ID,
       src_project_id: SOURCE_PROJECT_ID,
-      rootfs_image: "ubuntu:25.10",
+      rootfs_image: "buildpack-deps:noble-scm",
       start: false,
     });
 

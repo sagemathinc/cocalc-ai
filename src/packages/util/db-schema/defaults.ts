@@ -18,17 +18,17 @@ export type NewFilenameTypes =
 export const NEW_FILENAMES = "new_filenames";
 export const DEFAULT_NEW_FILENAMES: NewFilenameTypes = "iso";
 
-// This is used on cocalc.com, and the storage server has images named "default", "ubuntu2004" and "ubuntu2204"
+// DEPRECATED: This is used on cocalc.com, and the storage server has images named "default", "ubuntu2004" and "ubuntu2204"
 // For on-prem, you have to configure the "software environment" configuration, which includes a default image name.
 export const DEFAULT_COMPUTE_IMAGE = "ubuntu2404";
 
-// this is the fallback value to use for the compute image, in case it isn't set
+// DEPRECATED: this is the fallback value to use for the compute image, in case it isn't set
 // in particular, for projects and public_path shares!
 // historical note: we used "default" to refer to ubuntu 18.04, but once
 // we switch over to 20.04, we will keep older projects on 18.04 (explicit upgrade)
 export const FALLBACK_COMPUTE_IMAGE = "default";
 
-export const DEFAULT_PROJECT_IMAGE = "ubuntu:25.10";
+export const DEFAULT_PROJECT_IMAGE = "buildpack-deps:noble-scm";
 
 // Directory that contains overlay modifications to the root filesystem image.
 // Obviously do NOT change this willy nilly for an existing install, since
