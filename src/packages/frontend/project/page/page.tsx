@@ -26,7 +26,7 @@ import {
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import StudentPayUpgrade from "@cocalc/frontend/purchases/student-pay";
 import track from "@cocalc/frontend/user-tracking";
-import { EDITOR_PREFIX, path_to_tab } from "@cocalc/util/misc";
+import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   ProjectContext,
@@ -65,6 +65,7 @@ import {
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
+import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
 import {
@@ -143,6 +144,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     { project_id },
     "active_project_tab",
   );
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const [homePageButtonWidth, setHomePageButtonWidth] =
     React.useState<number>(80);
   const [checkingHost, setCheckingHost] = useState<boolean>(false);
@@ -156,6 +158,59 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const narrowerPX = useMemo(() => {
     return hideActionButtons ? homePageButtonWidth : 0;
   }, [hideActionButtons, homePageButtonWidth]);
+
+  const initialWorkspaceRender = useMemo(() => {
+    const orderedPaths: string[] =
+      open_files_order?.toJS?.() ?? open_files_order ?? [];
+    const { workspaces } = projectCtx;
+    if (workspaces.selection.kind !== "workspace") {
+      return {
+        pending: false,
+        renderPaths: orderedPaths,
+        displayActiveTab: active_project_tab,
+      };
+    }
+    const current = workspaces.current;
+    if (!current) {
+      return {
+        pending: false,
+        renderPaths: orderedPaths,
+        displayActiveTab: active_project_tab,
+      };
+    }
+    const visiblePaths = workspaces.filterPaths(orderedPaths);
+    const fallbackPath =
+      current.last_active_path != null &&
+      visiblePaths.includes(current.last_active_path)
+        ? current.last_active_path
+        : visiblePaths[0];
+    const activePath = tab_to_path(active_project_tab ?? "");
+    const activePathIsVisible =
+      !!activePath && visiblePaths.includes(activePath);
+    const filesInWorkspace =
+      active_project_tab === "files" &&
+      !!current_path_abs &&
+      pathMatchesRoot(current_path_abs, current.root_path);
+    const pending =
+      (active_project_tab?.startsWith(EDITOR_PREFIX)
+        ? !activePathIsVisible
+        : active_project_tab !== "files" || !filesInWorkspace) &&
+      (fallbackPath != null || workspaces.loading);
+    return {
+      pending,
+      renderPaths:
+        pending && fallbackPath != null ? [fallbackPath] : orderedPaths,
+      displayActiveTab:
+        pending && fallbackPath != null
+          ? path_to_tab(fallbackPath)
+          : active_project_tab,
+    };
+  }, [
+    active_project_tab,
+    current_path_abs,
+    open_files_order,
+    projectCtx.workspaces,
+  ]);
 
   useEffect(() => {
     const name = getFlyoutExpanded(project_id);
@@ -240,7 +295,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   function renderEditorContent() {
     const v: React.JSX.Element[] = [];
 
-    open_files_order.map((path) => {
+    initialWorkspaceRender.renderPaths.map((path) => {
       if (!path) {
         return;
       }
@@ -258,14 +313,15 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             project_id,
             path,
             actions: redux.getEditorActions(project_id, syncPath) as any,
-            isFocused: active_project_tab === tab_name,
-            isVisible: active_project_tab === tab_name,
+            isFocused: initialWorkspaceRender.displayActiveTab === tab_name,
+            isVisible: initialWorkspaceRender.displayActiveTab === tab_name,
             redux,
           }}
         >
           <Content
             is_visible={
-              active_top_tab == project_id && active_project_tab === tab_name
+              active_top_tab == project_id &&
+              initialWorkspaceRender.displayActiveTab === tab_name
             }
             tab_name={tab_name}
           />
@@ -286,12 +342,16 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       // and they are visible.
       return;
     }
-    if (active_project_tab.slice(0, 7) !== EDITOR_PREFIX) {
+    if (
+      !initialWorkspaceRender.pending &&
+      initialWorkspaceRender.displayActiveTab &&
+      initialWorkspaceRender.displayActiveTab.slice(0, 7) !== EDITOR_PREFIX
+    ) {
       return (
         <Content
-          key={active_project_tab}
+          key={initialWorkspaceRender.displayActiveTab}
           is_visible={true}
-          tab_name={active_project_tab}
+          tab_name={initialWorkspaceRender.displayActiveTab}
         />
       );
     }

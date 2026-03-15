@@ -98,21 +98,21 @@ export function useProjectWorkspaces(
     loadSessionSelection(project_id),
   );
   const [cachedWorkspaceRecord, setCachedWorkspaceRecord] =
-    useState<WorkspaceRecord | null>(() => loadSessionWorkspaceRecord(project_id));
+    useState<WorkspaceRecord | null>(() =>
+      loadSessionWorkspaceRecord(project_id),
+    );
   const storeRef = useRef<Awaited<
     ReturnType<typeof openWorkspaceStore>
   > | null>(null);
   const recordsRef = useRef(records);
+  recordsRef.current = records;
 
   useEffect(() => {
-    recordsRef.current = records;
-  }, [records]);
-
-  useEffect(() => {
+    if (loading) return;
     const nextSelection = readSelectionForProject(project_id, records);
     if (sameSelection(selection, nextSelection)) return;
     setSelectionState(nextSelection);
-  }, [project_id, records, selection]);
+  }, [loading, project_id, records, selection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -163,8 +163,9 @@ export function useProjectWorkspaces(
       return;
     }
     const actual =
-      records.find((record) => record.workspace_id === selection.workspace_id) ??
-      null;
+      records.find(
+        (record) => record.workspace_id === selection.workspace_id,
+      ) ?? null;
     if (actual != null) {
       if (
         cachedWorkspaceRecord?.workspace_id !== actual.workspace_id ||
