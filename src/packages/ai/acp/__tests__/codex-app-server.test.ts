@@ -1,4 +1,8 @@
 import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 const getCodexSiteKeyGovernorMock: jest.Mock<any, []> = jest.fn(() => null);
 
@@ -626,6 +630,173 @@ describe("CodexAppServerAgent", () => {
         cached_input_tokens: 3,
         output_tokens: 5,
         total_tokens: 20,
+      },
+      totalTimeS: expect.any(Number),
+      path: "root/demo.chat",
+    });
+  });
+
+  it("falls back to persisted rollout usage when live usage is missing", async () => {
+    const checkAllowed = jest.fn(async () => ({ allowed: true }));
+    const reportUsage = jest.fn(async () => {});
+    getCodexSiteKeyGovernorMock.mockReturnValue({
+      pollIntervalMs: 60_000,
+      checkAllowed,
+      reportUsage,
+    });
+
+    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
+    const codexHome = path.join(rootHostPath, ".codex");
+    mkdirSync(path.join(codexHome, "sessions", "2026", "03", "15"), {
+      recursive: true,
+    });
+    const rolloutPath = path.join(
+      codexHome,
+      "sessions",
+      "2026",
+      "03",
+      "15",
+      "rollout-test.jsonl",
+    );
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-rollout-1",
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 9642,
+                cached_input_tokens: 9472,
+                output_tokens: 21,
+                reasoning_output_tokens: 0,
+                total_tokens: 9663,
+              },
+              last_token_usage: {
+                input_tokens: 9642,
+                cached_input_tokens: 9472,
+                output_tokens: 21,
+                reasoning_output_tokens: 0,
+                total_tokens: 9663,
+              },
+              model_context_window: 258400,
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-rollout-1",
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+    const db = new DatabaseSync(path.join(codexHome, "state_5.sqlite"));
+    db.exec(
+      "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)",
+    );
+    db.prepare("INSERT INTO threads(id, rollout_path) VALUES(?, ?)").run(
+      "thr-rollout-1",
+      "/root/.codex/sessions/2026/03/15/rollout-test.jsonl",
+    );
+    db.close();
+
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "account/login/start":
+          fake.sendResponse(message.id, { type: "apiKey" });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-rollout-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-rollout-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-rollout-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/agentMessage/delta", {
+              threadId: "thr-rollout-1",
+              turnId: "turn-rollout-1",
+              itemId: "msg-rollout-1",
+              delta: "Hello",
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-rollout-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/root",
+        authSource: "site-api-key",
+        containerPathMap: {
+          rootHostPath,
+        },
+        appServerLogin: {
+          type: "apiKey",
+          apiKey: "site-key",
+        },
+      }),
+    });
+
+    try {
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "say hello",
+        stream: async () => {},
+        chat: {
+          path: "root/demo.chat",
+          project_id: "00000000-0000-4000-8000-000000000000",
+        } as any,
+        config: {
+          workingDirectory: "/root",
+          model: "gpt-5.4",
+        } as any,
+      });
+    } finally {
+      rmSync(rootHostPath, { recursive: true, force: true });
+    }
+
+    expect(reportUsage).toHaveBeenCalledWith({
+      accountId: "00000000-0000-4000-8000-000000000001",
+      projectId: "00000000-0000-4000-8000-000000000000",
+      model: "gpt-5.4",
+      usage: {
+        input_tokens: 9642,
+        cached_input_tokens: 9472,
+        output_tokens: 21,
+        total_tokens: 19135,
       },
       totalTimeS: expect.any(Number),
       path: "root/demo.chat",

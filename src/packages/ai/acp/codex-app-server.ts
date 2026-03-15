@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline";
+import { DatabaseSync } from "node:sqlite";
 import { Readable } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
@@ -367,6 +369,142 @@ function formatAppServerError(errors: string[]): string {
   if (normalized.length === 0) return "Codex app-server request failed.";
   if (normalized.length === 1) return normalized[0];
   return normalized.join("\n\n");
+}
+
+function mapContainerPathToHost(
+  targetPath: string,
+  containerPathMap?: CodexProjectContainerPathMap,
+): string {
+  if (!containerPathMap || !path.isAbsolute(targetPath)) {
+    return targetPath;
+  }
+  if (targetPath === "/root" || targetPath.startsWith("/root/")) {
+    const suffix = targetPath.slice("/root".length).replace(/^\/+/, "");
+    if (!containerPathMap.rootHostPath) return targetPath;
+    return suffix
+      ? path.join(containerPathMap.rootHostPath, suffix)
+      : containerPathMap.rootHostPath;
+  }
+  if (targetPath === "/scratch" || targetPath.startsWith("/scratch/")) {
+    const suffix = targetPath.slice("/scratch".length).replace(/^\/+/, "");
+    if (!containerPathMap.scratchHostPath) return targetPath;
+    return suffix
+      ? path.join(containerPathMap.scratchHostPath, suffix)
+      : containerPathMap.scratchHostPath;
+  }
+  return targetPath;
+}
+
+function getCodexHomeHostPath(
+  spawned: SpawnedCodexAppServer,
+  cwd: string,
+): string | undefined {
+  if (spawned.containerPathMap?.rootHostPath) {
+    return path.join(spawned.containerPathMap.rootHostPath, ".codex");
+  }
+  const localHome = `${process.env.HOME ?? ""}`.trim();
+  if (localHome) {
+    return path.join(localHome, ".codex");
+  }
+  if (path.isAbsolute(cwd)) {
+    return path.join(cwd, ".codex");
+  }
+  return undefined;
+}
+
+function toUsageFromTokenCount(info: any): AcpStreamUsage | undefined {
+  const usage = info?.last_token_usage ?? info?.lastTokenUsage;
+  if (!usage || typeof usage !== "object") {
+    return undefined;
+  }
+  return {
+    input_tokens: usage.input_tokens ?? usage.inputTokens ?? 0,
+    cached_input_tokens:
+      usage.cached_input_tokens ?? usage.cachedInputTokens ?? 0,
+    output_tokens: usage.output_tokens ?? usage.outputTokens ?? 0,
+    reasoning_output_tokens:
+      usage.reasoning_output_tokens ?? usage.reasoningOutputTokens ?? 0,
+    total_tokens: usage.total_tokens ?? usage.totalTokens ?? 0,
+    model_context_window:
+      info?.model_context_window ?? info?.modelContextWindow ?? undefined,
+  };
+}
+
+async function readPersistedTurnUsage(opts: {
+  spawned: SpawnedCodexAppServer;
+  cwd: string;
+  threadId: string;
+  turnId: string;
+}): Promise<AcpStreamUsage | undefined> {
+  const codexHome = getCodexHomeHostPath(opts.spawned, opts.cwd);
+  if (!codexHome) return undefined;
+  const stateDbPath = path.join(codexHome, "state_5.sqlite");
+  if (!existsSync(stateDbPath)) return undefined;
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(stateDbPath, { readOnly: true });
+    const row = db
+      .prepare("SELECT rollout_path FROM threads WHERE id = ?")
+      .get(opts.threadId) as { rollout_path?: string } | undefined;
+    const rolloutPath = `${row?.rollout_path ?? ""}`.trim();
+    if (!rolloutPath) return undefined;
+    const hostRolloutPath = mapContainerPathToHost(
+      rolloutPath,
+      opts.spawned.containerPathMap,
+    );
+    if (!existsSync(hostRolloutPath)) return undefined;
+    const lines = readFileSync(hostRolloutPath, "utf8").split(/\r?\n/);
+    let foundCompletion = false;
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      let entry: any;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const payload = entry?.payload;
+      if (
+        entry?.type !== "event_msg" ||
+        !payload ||
+        typeof payload !== "object"
+      ) {
+        continue;
+      }
+      if (
+        payload.type === "task_complete" &&
+        `${payload.turn_id ?? ""}` === opts.turnId
+      ) {
+        foundCompletion = true;
+        continue;
+      }
+      if (!foundCompletion) continue;
+      if (payload.type === "token_count") {
+        return toUsageFromTokenCount(payload.info);
+      }
+      if (
+        payload.type === "task_started" &&
+        `${payload.turn_id ?? ""}` === opts.turnId
+      ) {
+        break;
+      }
+    }
+  } catch (err) {
+    logger.debug("codex app-server: persisted usage fallback failed", {
+      threadId: opts.threadId,
+      turnId: opts.turnId,
+      codexHome,
+      err: `${err}`,
+    });
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+  return undefined;
 }
 
 function toReasoningEffort(
@@ -1007,6 +1145,14 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       if (maxTurnTimer) {
         clearTimeout(maxTurnTimer);
+      }
+      if (!latestUsage) {
+        latestUsage = await readPersistedTurnUsage({
+          spawned,
+          cwd,
+          threadId: actualThreadId,
+          turnId,
+        });
       }
 
       if (
