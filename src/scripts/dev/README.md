@@ -131,3 +131,32 @@ SMOKE_CLOUD_PROVIDERS=gcp pnpm --dir src smoke:cloud-host
 SMOKE_CLOUD_PROVIDERS=gcp SMOKE_CLOUD_SCENARIO=apps-static pnpm --dir src smoke:cloud-host
 SMOKE_CLOUD_PROVIDERS=all SMOKE_CLOUD_CONTINUE_ON_FAILURE=1 pnpm --dir src smoke:cloud-host
 ```
+
+## Launchpad Codex smoke
+
+```bash
+pnpm --dir src smoke:codex-launchpad -- --project <project-id>
+```
+
+This runs a focused smoke against the real routed `project codex exec` path:
+
+1. Resolves the effective Codex auth/payment source for the project.
+2. Stops the project first by default, so the Codex turn must autostart it.
+3. Runs one Codex turn and verifies a real upstream thread id is returned.
+4. Runs a second turn with `--session-id <thread-id>` and verifies context resume.
+5. For site-key auth, waits for a new `codex-site-key` metering row in
+   `openai_chatgpt_log`.
+
+Notes:
+
+- The script refreshes `dev:env:hub` automatically before each `cocalc` call.
+- It expects a local hub daemon with Postgres available via
+  `scripts/dev/hub-daemon.sh status`.
+- By default it verifies site-key metering automatically when the resolved
+  payment source is `site-api-key`.
+
+Example:
+
+```bash
+pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
+```
