@@ -18,6 +18,75 @@ processes, ports, and logs. The current helper-container model is too far from
 the real project environment and makes development workflows awkward or
 misleading.
 
+## Blockers
+
+These are the highest-priority unresolved issues that must be explicitly
+tracked during the migration.
+
+### 1. Stored Context Space / Resume Memory
+
+- App-server is not sqlite-only today.
+- Upstream still persists full rollout JSONL files under
+  `~/.codex/sessions/YYYY/MM/DD/rollout-...jsonl`, while sqlite stores
+  metadata/state/indexes.
+- Therefore the old `codex exec` failure mode where a long history can make
+  future turns expensive to resume is not architecturally eliminated just by
+  switching to app-server.
+- CoCalc must keep its own context-maintenance strategy:
+  - explicit reset
+  - explicit fork
+  - explicit/manual compaction
+  - optional automatic trimming/compaction policy if we continue to need it
+- Before release, measure this with a synthetic long-thread benchmark:
+  - startup RSS for resume
+  - on-disk growth of `.codex/sessions`
+  - effect of compaction/trimming
+
+### 2. API-Key Usage Accounting
+
+- The app-server path streams token-usage data, so the raw information appears
+  to be available.
+- However, the current app-server integration does not yet appear to feed that
+  usage into CoCalc's site-key metering/governor path the same way the older
+  `codex exec` integration did.
+- This must be wired before treating site-provided API-key auth as production
+  ready.
+
+### 3. Trusted Codex Binary Path
+
+- Launchpad must execute app-server through the exact trusted Codex binary we
+  install into the runtime image, not through `PATH` or any user-controlled
+  fallback.
+- The current approach of using `/opt/cocalc/bin2/codex` in the project
+  runtime is the right security model, assuming:
+  - `/opt/cocalc/bin2` is read-only to project users
+  - security-drift monitoring would catch this no longer being true
+- Keep documenting this as a critical security assumption.
+- The current host-side override is useful for debugging, but it should remain
+  clearly dangerous/admin-only. Renaming it to include `DANGEROUS` would be
+  reasonable.
+
+### 4. Managed API-Key Auth Leakage in Collaborative Projects
+
+- This is the most important current security blocker.
+- Upstream external ChatGPT token login uses ephemeral in-process auth storage,
+  so it does not persist those tokens to project-local disk.
+- Upstream API-key login is different: it persists according to
+  `cli_auth_credentials_store_mode`.
+- In a project container, that means managed API keys can be written into the
+  project's `CODEX_HOME` unless we force ephemeral storage or otherwise avoid
+  that code path.
+- For collaborative Launchpad, this is not safe enough for:
+  - site-provided API keys
+  - account-managed API keys
+  - project-managed API keys that should not be exposed to collaborators
+- Required follow-up:
+  - force ephemeral credential storage for app-server when auth is injected by
+    CoCalc
+  - add regression tests proving managed API-key auth is not persisted into the
+    project filesystem
+  - document the remaining trust model clearly
+
 ## Product Decision
 
 Keep this split:
