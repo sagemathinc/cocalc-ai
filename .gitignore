@@ -220,6 +220,7 @@ src/create*.sh
 src/.agents/bug-hunt/artifacts/
 src/.agents/bug-hunt/batches/
 src/.agents/bug-hunt/ledger/
+src/.agents/bug-hunt/queues/
 src/.agents/bug-hunt/runs/
 src/.agents/bug-hunt/*
 !src/.agents/bug-hunt/plans/
