@@ -16,7 +16,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
   },
 }));
 
-jest.mock("@cocalc/frontend/account", () => ({
+jest.mock("@cocalc/frontend/account/table-bootstrap", () => ({
   recreate_account_table: (...args) => recreate_account_table(...args),
 }));
 

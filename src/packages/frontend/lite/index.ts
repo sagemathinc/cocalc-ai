@@ -1,6 +1,6 @@
 import { type CustomizeState } from "@cocalc/frontend/customize";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
-import { recreate_account_table } from "@cocalc/frontend/account";
+import { recreate_account_table } from "@cocalc/frontend/account/table-bootstrap";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   FALLBACK_PROJECT_UUID,

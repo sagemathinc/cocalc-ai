@@ -8,22 +8,12 @@ import { SCHEMA } from "@cocalc/util/schema";
 import { webapp_client } from "../webapp-client";
 import { AccountActions } from "./actions";
 import { AccountStore } from "./store";
-import { AccountTable } from "./table";
 import { init_dark_mode } from "./dark-mode";
 import { reset_password_key } from "../client/password-reset";
 import { hasRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { once } from "@cocalc/util/async-utils";
-
-function initAccountTable(redux) {
-  redux.createTable("account", AccountTable);
-  redux.getTable("account")._table.on("error", (tableError) => {
-    redux.getActions("account").setState({ tableError });
-  });
-  redux.getTable("account")._table.on("clear-error", () => {
-    redux.getActions("account").setState({ tableError: undefined });
-  });
-}
+import { initAccountTable } from "./table-bootstrap";
 
 export function init(redux) {
   // Register account store
@@ -113,9 +103,4 @@ export function init(redux) {
       webapp_client.idle_client.set_standby_timeout_m(x);
     }
   });
-}
-
-export function recreate_account_table(redux) {
-  redux.removeTable("account");
-  initAccountTable(redux);
 }
