@@ -476,9 +476,10 @@ export function networkArgument() {
       explicit,
     });
   }
-  // Default back to pasta. The earlier slirp4netns change was a workaround
-  // while debugging Codex-in-container failures, but those turned out to be
-  // CA/auth/runtime issues rather than a general pasta regression.
+  // Default to pasta, which is Podman's normal rootless network mode and the
+  // most supported/fastest default for our project containers. slirp4netns is
+  // still a valid override and can be useful while debugging network issues,
+  // but it is typically slower and should not be the default.
   const defaultNetworkRaw = `${
     process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "pasta"
   }`

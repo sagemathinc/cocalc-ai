@@ -79,6 +79,10 @@ type OptionalBindMount = {
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
 const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
+// Security-critical: app-server must be exec'd via the exact trusted Codex
+// binary we installed into the project runtime image. Do not resolve this via
+// PATH or any user-controlled fallback, since that could let a project replace
+// the binary and capture site- or account-managed credentials.
 const PROJECT_RUNTIME_CODEX_PATH =
   process.env.COCALC_PROJECT_RUNTIME_CODEX_PATH ?? "/opt/cocalc/bin2/codex";
 

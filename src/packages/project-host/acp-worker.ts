@@ -10,11 +10,13 @@ import {
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
+import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import { init as initProjectRunnerFilesystem } from "@cocalc/project-runner/run/filesystem";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
+import { wireProjectsApi } from "./hub/projects";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
@@ -134,6 +136,15 @@ export async function main(): Promise<void> {
     getLogger,
   });
   const client = createConatClient();
+  const runnerId =
+    `${process.env.PROJECT_HOST_ID ?? ""}`.trim() || getLocalHostId();
+  wireProjectsApi(
+    projectRunnerClient({
+      client,
+      subject: `project-runner.${runnerId}`,
+      waitForInterest: false,
+    }),
+  );
   initProjectRunnerFilesystem({ client });
   const masterClient = connectMasterClient();
   registerPidFile(pidFile, async () => {
