@@ -11,7 +11,7 @@ const DEFAULT_RUN_ROOT = path.join(ROOT, ".agents", "bug-hunt", "runs");
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
   console.error(
-    "Usage: run-batch.js --plan <file> [--batch-id <id>] [--max-tasks <n>] [--run-root <path>] [--dry-run] [--json]",
+    "Usage: run-batch.js --plan <file> [--batch-id <id>] [--max-tasks <n>] [--run-root <path>] [--failure-policy <stop|continue>] [--max-errors <n>] [--dry-run] [--json]",
   );
   process.exit(code);
 }
@@ -26,6 +26,8 @@ function parseArgs(argv) {
     batchId: "",
     maxTasks: 0,
     runRoot: DEFAULT_RUN_ROOT,
+    failurePolicy: "stop",
+    maxErrors: 1,
     dryRun: false,
     json: false,
   };
@@ -48,6 +50,15 @@ function parseArgs(argv) {
       options.runRoot = path.resolve(
         normalizedArgv[++i] || usageAndExit("--run-root requires a path"),
       );
+    } else if (arg === "--failure-policy") {
+      options.failurePolicy =
+        `${normalizedArgv[++i] || ""}`.trim().toLowerCase() ||
+        usageAndExit("--failure-policy requires a value");
+    } else if (arg === "--max-errors") {
+      options.maxErrors = Number(normalizedArgv[++i] || "");
+      if (!Number.isInteger(options.maxErrors) || options.maxErrors <= 0) {
+        usageAndExit("--max-errors must be a positive integer");
+      }
     } else if (arg === "--dry-run") {
       options.dryRun = true;
     } else if (arg === "--json") {
@@ -59,6 +70,9 @@ function parseArgs(argv) {
     }
   }
   if (!options.plan) usageAndExit("--plan is required");
+  if (!["stop", "continue"].includes(options.failurePolicy)) {
+    usageAndExit("--failure-policy must be stop or continue");
+  }
   return options;
 }
 
@@ -76,6 +90,11 @@ function createRunDir(now = Date.now()) {
     DEFAULT_RUN_ROOT,
     new Date(now).toISOString().replace(/[:.]/g, "-"),
   );
+}
+
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function runNodeScript(script, args) {
@@ -128,23 +147,81 @@ function buildIterationCommand(batch, task, contextFile, batchDir, dryRun) {
   return args;
 }
 
-function executeBatchPlan(options, now = Date.now()) {
-  const plan = readJson(options.plan, "batch plan");
+function countFailures(batchResult) {
+  let failures = 0;
+  if (batchResult.attach && batchResult.attach.ok === false) {
+    failures += 1;
+  }
+  failures += batchResult.iterations.filter(
+    (iteration) => iteration.ok === false,
+  ).length;
+  return failures;
+}
+
+function shouldStopAfterFailure(result, options, reason) {
+  if (options.failurePolicy === "stop") {
+    result.stopped_early = true;
+    result.stop_reason = reason;
+    return true;
+  }
+  if (result.failure_count >= options.maxErrors) {
+    result.stopped_early = true;
+    result.stop_reason = `${reason} (max errors reached)`;
+    return true;
+  }
+  return false;
+}
+
+function summarizeRun(result) {
+  return {
+    started_at: result.started_at,
+    finished_at: result.finished_at,
+    run_dir: result.run_dir,
+    run_id: path.basename(result.run_dir),
+    plan_file: result.plan_file,
+    dry_run: result.dry_run,
+    failure_policy: result.failure_policy,
+    max_errors: result.max_errors,
+    failure_count: result.failure_count,
+    stopped_early: result.stopped_early,
+    stop_reason: result.stop_reason,
+    total_batches: result.batches.length,
+    completed_batches: result.batches.filter((batch) => batch.completed).length,
+    batch_ids: result.batches.map((batch) => batch.batch_id),
+  };
+}
+
+function executeBatchPlan(options, now = Date.now(), deps = {}) {
+  const runScript = deps.runNodeScript || runNodeScript;
+  const normalizedOptions = {
+    failurePolicy: "stop",
+    maxErrors: 1,
+    ...options,
+  };
+  const plan = readJson(normalizedOptions.plan, "batch plan");
   const selectedBatches = plan.batches.filter(
-    (batch) => !options.batchId || batch.batch_id === options.batchId,
+    (batch) =>
+      !normalizedOptions.batchId ||
+      batch.batch_id === normalizedOptions.batchId,
   );
   if (selectedBatches.length === 0) {
     throw new Error("no matching batches found");
   }
   const runDir =
-    options.runRoot === DEFAULT_RUN_ROOT
+    normalizedOptions.runRoot === DEFAULT_RUN_ROOT
       ? createRunDir(now)
-      : path.resolve(options.runRoot);
+      : path.resolve(normalizedOptions.runRoot);
   fs.mkdirSync(runDir, { recursive: true });
   const result = {
+    started_at: new Date(now).toISOString(),
     run_dir: runDir,
-    plan_file: path.resolve(options.plan),
-    dry_run: options.dryRun,
+    plan_file: path.resolve(normalizedOptions.plan),
+    dry_run: normalizedOptions.dryRun,
+    failure_policy: normalizedOptions.failurePolicy,
+    max_errors: normalizedOptions.maxErrors,
+    failure_count: 0,
+    stopped_early: false,
+    stop_reason: "",
     batches: [],
   };
   for (const batch of selectedBatches) {
@@ -160,37 +237,68 @@ function executeBatchPlan(options, now = Date.now()) {
         plan: "session-smoke",
         seed: "",
       },
+      completed: false,
+      failure_count: 0,
+      stopped_early: false,
+      stop_reason: "",
       iterations: [],
     };
     const contextFile = path.join(batchDir, "context.json");
-    if (options.dryRun) {
+    try {
+      if (normalizedOptions.dryRun) {
+        batchResult.attach = {
+          ok: true,
+          dry_run: true,
+          command: [
+            process.execPath,
+            path.join(ROOT, "scripts", "bug-hunt", "attach.js"),
+            "--mode",
+            batch.preferred_mode,
+            "--context-file",
+            contextFile,
+            "--json",
+          ],
+        };
+      } else {
+        batchResult.attach = {
+          ok: true,
+          result: runScript(
+            path.join(ROOT, "scripts", "bug-hunt", "attach.js"),
+            [
+              "--mode",
+              batch.preferred_mode,
+              "--context-file",
+              contextFile,
+              "--json",
+            ],
+          ),
+        };
+      }
+    } catch (err) {
       batchResult.attach = {
-        dry_run: true,
-        command: [
-          process.execPath,
-          path.join(ROOT, "scripts", "bug-hunt", "attach.js"),
-          "--mode",
-          batch.preferred_mode,
-          "--context-file",
-          contextFile,
-          "--json",
-        ],
+        ok: false,
+        error: err instanceof Error ? err.message : `${err}`,
       };
-    } else {
-      batchResult.attach = runNodeScript(
-        path.join(ROOT, "scripts", "bug-hunt", "attach.js"),
-        [
-          "--mode",
-          batch.preferred_mode,
-          "--context-file",
-          contextFile,
-          "--json",
-        ],
-      );
+      result.failure_count += 1;
+      batchResult.failure_count = countFailures(batchResult);
+      if (
+        shouldStopAfterFailure(
+          result,
+          options,
+          `attach failed for ${batch.batch_id}`,
+        )
+      ) {
+        batchResult.stopped_early = true;
+        batchResult.stop_reason = result.stop_reason;
+      }
+      writeJson(path.join(batchDir, "batch-result.json"), batchResult);
+      result.batches.push(batchResult);
+      if (result.stopped_early) break;
+      continue;
     }
     const tasks =
-      options.maxTasks > 0
-        ? batch.tasks.slice(0, options.maxTasks)
+      normalizedOptions.maxTasks > 0
+        ? batch.tasks.slice(0, normalizedOptions.maxTasks)
         : batch.tasks;
     for (const task of tasks) {
       const commandArgs = buildIterationCommand(
@@ -198,7 +306,7 @@ function executeBatchPlan(options, now = Date.now()) {
         task,
         contextFile,
         batchDir,
-        options.dryRun,
+        normalizedOptions.dryRun,
       );
       const iteration = {
         task_id: task.task_id,
@@ -210,24 +318,47 @@ function executeBatchPlan(options, now = Date.now()) {
           ...commandArgs,
         ],
       };
-      if (!options.dryRun) {
-        iteration.result = runNodeScript(
-          path.join(ROOT, "scripts", "bug-hunt", "run-plan.js"),
-          commandArgs,
-        );
+      if (normalizedOptions.dryRun) {
+        iteration.ok = true;
+      } else {
+        try {
+          iteration.result = runScript(
+            path.join(ROOT, "scripts", "bug-hunt", "run-plan.js"),
+            commandArgs,
+          );
+          iteration.ok = true;
+        } catch (err) {
+          iteration.ok = false;
+          iteration.error = err instanceof Error ? err.message : `${err}`;
+          result.failure_count += 1;
+          batchResult.iterations.push(iteration);
+          batchResult.failure_count = countFailures(batchResult);
+          if (
+            shouldStopAfterFailure(
+              result,
+              normalizedOptions,
+              `iteration failed for ${task.task_id}`,
+            )
+          ) {
+            batchResult.stopped_early = true;
+            batchResult.stop_reason = result.stop_reason;
+            break;
+          }
+          continue;
+        }
       }
       batchResult.iterations.push(iteration);
     }
-    fs.writeFileSync(
-      path.join(batchDir, "batch-result.json"),
-      `${JSON.stringify(batchResult, null, 2)}\n`,
-    );
+    batchResult.failure_count = countFailures(batchResult);
+    batchResult.completed = !batchResult.stopped_early;
+    writeJson(path.join(batchDir, "batch-result.json"), batchResult);
     result.batches.push(batchResult);
+    if (result.stopped_early) break;
   }
-  fs.writeFileSync(
-    path.join(runDir, "run-summary.json"),
-    `${JSON.stringify(result, null, 2)}\n`,
-  );
+  result.finished_at = new Date().toISOString();
+  result.run_ledger = path.join(runDir, "run-ledger.json");
+  writeJson(path.join(runDir, "run-summary.json"), result);
+  writeJson(result.run_ledger, summarizeRun(result));
   return result;
 }
 
@@ -239,10 +370,15 @@ function main(argv = process.argv.slice(2), now = Date.now()) {
     return payload;
   }
   console.log(`bug-hunt run-batch: ${payload.run_dir}`);
+  console.log(`failure policy:     ${payload.failure_policy}`);
+  console.log(`failures:           ${payload.failure_count}`);
   for (const batch of payload.batches) {
     console.log(
       `- ${batch.batch_id} ${batch.environment}/${batch.area} ${batch.iterations.length} iteration(s)`,
     );
+  }
+  if (payload.stopped_early) {
+    console.log(`stopped early:      ${payload.stop_reason}`);
   }
   return payload;
 }
@@ -253,6 +389,7 @@ module.exports = {
   executeBatchPlan,
   main,
   parseArgs,
+  summarizeRun,
 };
 
 if (require.main === module) {
