@@ -79,6 +79,7 @@ type OptionalBindMount = {
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
 const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
+const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
 // Security-critical: app-server must be exec'd via the exact trusted Codex
 // binary we installed into the project runtime image. Do not resolve this via
 // PATH or any user-controlled fallback, since that could let a project replace
@@ -104,6 +105,20 @@ function parseLeaseKey(key: string): { projectId: string; contextId: string } {
     return { projectId: key, contextId: "shared-home" };
   }
   return { projectId: key.slice(0, i), contextId: key.slice(i + 1) };
+}
+
+function shouldForceEphemeralAppServerAuthStorage(
+  authRuntime: CodexAuthRuntime,
+): boolean {
+  switch (authRuntime.source) {
+    case "subscription":
+    case "project-api-key":
+    case "account-api-key":
+    case "site-api-key":
+      return true;
+    case "shared-home":
+      return false;
+  }
 }
 
 function redactPodmanArgs(args: string[]): string {
@@ -1014,9 +1029,17 @@ async function spawnCodexAppServerInProjectRuntime({
   for (const key in execEnv) {
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
+  const codexArgs: string[] = [];
+  if (shouldForceEphemeralAppServerAuthStorage(authRuntime)) {
+    // Host-managed auth must stay in-process only. Otherwise app-server's
+    // apiKey login path can write credentials into the collaborative
+    // project-local CODEX_HOME.
+    codexArgs.push("--config", EPHEMERAL_AUTH_STORE_CONFIG);
+  }
   execArgs.push(
     name,
     PROJECT_RUNTIME_CODEX_PATH,
+    ...codexArgs,
     "app-server",
     "--listen",
     "stdio://",
