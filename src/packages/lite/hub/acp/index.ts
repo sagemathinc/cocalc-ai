@@ -322,9 +322,17 @@ function formatQueuedDelay(ms: number): string {
 }
 
 function getConfiguredCodexBackend(): "exec" | "app-server" {
-  return `${process.env.COCALC_ACP_CODEX_BACKEND ?? "exec"}`
+  const explicit = `${process.env.COCALC_ACP_CODEX_BACKEND ?? ""}`
     .trim()
-    .toLowerCase() === "app-server"
+    .toLowerCase();
+  if (explicit === "app-server") {
+    return "app-server";
+  }
+  if (explicit === "exec") {
+    return "exec";
+  }
+  return process.env.PROJECT_HOST_ID ||
+    process.env.COCALC_PROJECT_HOST_ACP_WORKER
     ? "app-server"
     : "exec";
 }

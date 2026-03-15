@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { argsJoin } from "@cocalc/util/args";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { setCodexProjectSpawner } from "@cocalc/ai/acp";
@@ -168,6 +169,7 @@ async function podman(
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
+        env: podmanEnv(),
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -205,6 +207,7 @@ async function podmanOutput(
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
+        env: podmanEnv(),
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -687,6 +690,7 @@ export async function spawnCodexInProjectContainer({
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const proc = spawn("podman", execArgs, {
     stdio: ["pipe", "pipe", "pipe"],
+    env: podmanEnv(),
   });
   proc.on("exit", async () => {
     try {
@@ -767,6 +771,7 @@ async function spawnCodexAppServerInProjectRuntime({
   logger.debug("codex app-server: podman exec", redactPodmanArgs(execArgs));
   const proc = spawn("podman", execArgs, {
     stdio: ["pipe", "pipe", "pipe"],
+    env: podmanEnv(),
   });
   proc.on("exit", async () => {
     if (touchReason) {
