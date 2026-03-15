@@ -1320,6 +1320,7 @@ export class ChatStreamWriter {
   private interruptedMessage?: string;
   private interruptNotified = false;
   private disposeTimer?: NodeJS.Timeout;
+  private disposePromise?: Promise<void>;
   private saveChain: Promise<void> = Promise.resolve();
   private sessionKey?: string;
   private logStore?: AKV<AcpStreamMessage[]>;
@@ -2371,7 +2372,7 @@ export class ChatStreamWriter {
       // ignore
     }
     void this.persistLog();
-    (async () => {
+    this.disposePromise = (async () => {
       try {
         await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
@@ -2389,6 +2390,17 @@ export class ChatStreamWriter {
         logger.warn("failed to close chat syncdb", err);
       }
     })();
+  }
+
+  async waitUntilDisposed(): Promise<void> {
+    while (this.disposeTimer != null && !this.closed) {
+      await sleep(25);
+    }
+    try {
+      await this.disposePromise;
+    } catch {
+      // Disposal failures are logged at the source.
+    }
   }
 
   addLocalEvent(event: AcpStreamEvent): void {
@@ -3950,6 +3962,7 @@ async function executeAcpRequest({
     // TODO: we might not want to immediately close, since there is
     // overhead in creating the syncdoc each time.
     chatWriter?.dispose();
+    await chatWriter?.waitUntilDisposed();
     await cleanup();
   }
   return { terminalState };

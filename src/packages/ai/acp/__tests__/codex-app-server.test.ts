@@ -256,6 +256,77 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
+  it("treats an intentional interrupt as a normal completion", async () => {
+    let interrupted = false;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-interrupt-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-interrupt-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-interrupt-1", status: "inProgress" },
+            });
+          });
+          break;
+        case "turn/interrupt":
+          interrupted = true;
+          fake.sendResponse(message.id, {});
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    const pending = agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "interrupt me",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+          if (payload.type === "status" && payload.state === "running") {
+            setImmediate(() => {
+              void agent.interrupt("thr-interrupt-1");
+            });
+          }
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(interrupted).toBe(true);
+    expect(
+      streamPayloads.find((payload) => payload.type === "error"),
+    ).toBeUndefined();
+  });
+
   it("forks an upstream app-server thread and returns the new thread id", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {

@@ -846,7 +846,12 @@ export class CodexAppServerAgent implements AcpAgent {
       });
     } catch (err) {
       if (runningEntry?.interrupted) {
-        throw err;
+        logger.info("codex app-server evaluate interrupted", {
+          threadId: currentThreadId,
+          turnId,
+          err: `${err}`,
+        });
+        return;
       }
       const stderrTail = client.getStderrTail();
       const error = [

@@ -249,6 +249,46 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("waits for dispose-triggered syncdb saves before reporting completion", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    let releaseSave: (() => void) | undefined;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    let saves = 0;
+    syncdb.save = async () => {
+      saves += 1;
+      await saveGate;
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    writer.dispose(true);
+    let disposed = false;
+    const pending = writer.waitUntilDisposed().then(() => {
+      disposed = true;
+    });
+
+    await delay(0);
+    expect(disposed).toBe(false);
+    expect(saves).toBeGreaterThan(0);
+
+    releaseSave?.();
+    await pending;
+    expect(disposed).toBe(true);
+  });
+
   it("stamps activity log refs from thread_id and message_id", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({
