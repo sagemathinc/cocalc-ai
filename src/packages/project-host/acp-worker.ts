@@ -137,7 +137,7 @@ export async function main(): Promise<void> {
   });
   const client = createConatClient();
   const runnerId =
-    `${process.env.PROJECT_HOST_ID ?? ""}`.trim() || getLocalHostId();
+    `${process.env.PROJECT_RUNNER_NAME ?? ""}`.trim() || "project-host";
   wireProjectsApi(
     projectRunnerClient({
       client,
