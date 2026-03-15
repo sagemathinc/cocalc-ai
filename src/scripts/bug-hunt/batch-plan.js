@@ -77,6 +77,26 @@ function preferredMode(environment) {
   return "lite";
 }
 
+function recommendRunner(area) {
+  if (area === "chat" || area === "codex") {
+    return { kind: "run-plan", plan: "seeded-chat-smoke", seed: "chat" };
+  }
+  if (area === "jupyter") {
+    return {
+      kind: "run-plan",
+      plan: "seeded-jupyter-smoke",
+      seed: "jupyter",
+    };
+  }
+  if (area === "tasks") {
+    return { kind: "run-plan", plan: "seeded-tasks-smoke", seed: "tasks" };
+  }
+  if (area === "files" || area === "explorer") {
+    return { kind: "run-plan", plan: "seeded-files-smoke", seed: "files" };
+  }
+  return { kind: "run-plan", plan: "session-smoke", seed: "" };
+}
+
 function createBatchId(area, environment, index) {
   return [
     "batch",
@@ -124,6 +144,7 @@ function buildBatches(candidates, options = {}) {
         area: group.area,
         environment: group.environment,
         preferred_mode: preferredMode(group.environment),
+        default_runner: recommendRunner(group.area),
         attach_command: `pnpm -C src bug-hunt:attach -- --mode ${preferredMode(group.environment)}`,
         artifact_prefix: batchId,
         tasks: items.map((candidate, taskIndex) => ({
@@ -211,6 +232,7 @@ module.exports = {
   createDefaultOutPath,
   main,
   parseArgs,
+  recommendRunner,
   sanitizeSegment,
 };
 

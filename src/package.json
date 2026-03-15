@@ -31,6 +31,7 @@
     "bug-hunt:extract": "node ./scripts/bug-hunt/extract-open-bugs.js",
     "bug-hunt:note": "node ./scripts/bug-hunt/note.js",
     "bug-hunt:preflight": "node ./scripts/bug-hunt/preflight.js",
+    "bug-hunt:run-batch": "node ./scripts/bug-hunt/run-batch.js",
     "bug-hunt:recover-iteration": "node ./scripts/bug-hunt/recover-iteration.js",
     "bug-hunt:run-plan": "node ./scripts/bug-hunt/run-plan.js",
     "bug-hunt:seed": "node ./scripts/bug-hunt/seed.js",

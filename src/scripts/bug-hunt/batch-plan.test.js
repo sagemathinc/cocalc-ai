@@ -9,6 +9,7 @@ const {
   buildBatches,
   createBatchId,
   parseArgs,
+  recommendRunner,
 } = require("./batch-plan.js");
 
 test("parseArgs keeps extractor flags and batch settings", () => {
@@ -33,6 +34,24 @@ test("createBatchId is stable and filesystem safe", () => {
     createBatchId("frontend/chat", "hub", 2),
     "batch-frontend-chat-hub-02",
   );
+});
+
+test("recommendRunner picks seeded plans for core editor areas", () => {
+  assert.deepEqual(recommendRunner("chat"), {
+    kind: "run-plan",
+    plan: "seeded-chat-smoke",
+    seed: "chat",
+  });
+  assert.deepEqual(recommendRunner("jupyter"), {
+    kind: "run-plan",
+    plan: "seeded-jupyter-smoke",
+    seed: "jupyter",
+  });
+  assert.deepEqual(recommendRunner("general"), {
+    kind: "run-plan",
+    plan: "session-smoke",
+    seed: "",
+  });
 });
 
 test("buildBatches groups by area and environment and chunks by size", () => {
@@ -85,6 +104,7 @@ test("buildBatches groups by area and environment and chunks by size", () => {
   );
   assert.equal(batches[1].batch_id, "batch-chat-hub-02");
   assert.equal(batches[2].preferred_mode, "lite");
+  assert.equal(batches[0].default_runner.plan, "seeded-chat-smoke");
 });
 
 test("main writes a batch plan file", () => {
