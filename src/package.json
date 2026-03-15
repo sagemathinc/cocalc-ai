@@ -32,6 +32,7 @@
     "bug-hunt:note": "node ./scripts/bug-hunt/note.js",
     "bug-hunt:preflight": "node ./scripts/bug-hunt/preflight.js",
     "bug-hunt:run-batch": "node ./scripts/bug-hunt/run-batch.js",
+    "bug-hunt:queue-from-tasks": "node ./scripts/bug-hunt/queue-from-tasks.js",
     "bug-hunt:run-queue": "node ./scripts/bug-hunt/run-queue.js",
     "bug-hunt:recover-iteration": "node ./scripts/bug-hunt/recover-iteration.js",
     "bug-hunt:run-plan": "node ./scripts/bug-hunt/run-plan.js",
