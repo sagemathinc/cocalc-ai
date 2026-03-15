@@ -202,6 +202,53 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("waits for the terminal syncdb save before resolving summary handling", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    let holdSave = false;
+    let releaseSave: (() => void) | undefined;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    syncdb.save = async () => {
+      if (holdSave) {
+        await saveGate;
+      }
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    holdSave = true;
+    let resolved = false;
+    const pending = writer
+      .handle({
+        type: "summary",
+        finalResponse: "done",
+        seq: 0,
+      } as AcpStreamMessage)
+      .then(() => {
+        resolved = true;
+      });
+
+    await delay(0);
+    expect(resolved).toBe(false);
+
+    releaseSave?.();
+    await pending;
+    expect(resolved).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
   it("stamps activity log refs from thread_id and message_id", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({

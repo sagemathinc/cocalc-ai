@@ -1320,6 +1320,7 @@ export class ChatStreamWriter {
   private interruptedMessage?: string;
   private interruptNotified = false;
   private disposeTimer?: NodeJS.Timeout;
+  private saveChain: Promise<void> = Promise.resolve();
   private sessionKey?: string;
   private logStore?: AKV<AcpStreamMessage[]>;
   private logStoreName: string;
@@ -1850,6 +1851,7 @@ export class ChatStreamWriter {
       await this.ensureTerminalChatCommitApplied(
         message.type === "error" ? "error" : "summary",
       );
+      await this.waitForScheduledSyncdbSaves();
     }
   }
 
@@ -2131,6 +2133,61 @@ export class ChatStreamWriter {
     return path.resolve(root, chatPath);
   }
 
+  private scheduleSyncdbSave({
+    reason,
+    generating,
+    fullContent,
+  }: {
+    reason: "throttled" | "terminal-verify" | "dispose";
+    generating: boolean;
+    fullContent: boolean;
+  }): Promise<void> {
+    const saveTask = this.saveChain
+      .catch(() => {})
+      .then(async () => {
+        if (this.syncdb == null) return;
+        const saveStarted = performance.now();
+        try {
+          await this.syncdb.save();
+          const saveDurationMs = performance.now() - saveStarted;
+          if (saveDurationMs >= ACP_SYNCDB_SAVE_SLOW_MS) {
+            logger.warn("chat syncdb save slow", {
+              chatKey: this.chatKey,
+              path: this.metadata.path,
+              reason,
+              generating,
+              fullContent,
+              events: this.events.length,
+              durationMs: roundMs(saveDurationMs),
+            });
+          }
+        } catch (err) {
+          logger.warn("chat syncdb save failed", {
+            chatKey: this.chatKey,
+            reason,
+            generating,
+            fullContent,
+            durationMs: roundMs(performance.now() - saveStarted),
+            err,
+          });
+        }
+      });
+    this.saveChain = saveTask;
+    return saveTask;
+  }
+
+  private async waitForScheduledSyncdbSaves(): Promise<void> {
+    try {
+      // Detached ACP workers can drain immediately after a turn finishes. If we
+      // return before queued save() calls settle, the final generating=false
+      // assistant row can be lost even though the thread-state row reached
+      // "complete" in memory.
+      await this.saveChain;
+    } catch {
+      // Individual save failures are already logged in scheduleSyncdbSave.
+    }
+  }
+
   private commitNow(
     generating: boolean,
     reason: "throttled" | "terminal-verify" | "dispose" = "throttled",
@@ -2186,33 +2243,11 @@ export class ChatStreamWriter {
         durationMs: roundMs(syncDurationMs),
       });
     }
-    (async () => {
-      const saveStarted = performance.now();
-      try {
-        await this.syncdb!.save();
-        const saveDurationMs = performance.now() - saveStarted;
-        if (saveDurationMs >= ACP_SYNCDB_SAVE_SLOW_MS) {
-          logger.warn("chat syncdb save slow", {
-            chatKey: this.chatKey,
-            path: this.metadata.path,
-            reason,
-            generating,
-            fullContent,
-            events: this.events.length,
-            durationMs: roundMs(saveDurationMs),
-          });
-        }
-      } catch (err) {
-        logger.warn("chat syncdb save failed", {
-          chatKey: this.chatKey,
-          reason,
-          generating,
-          fullContent,
-          durationMs: roundMs(performance.now() - saveStarted),
-          err,
-        });
-      }
-    })();
+    void this.scheduleSyncdbSave({
+      reason,
+      generating,
+      fullContent,
+    });
     return true;
   }
 
@@ -2338,6 +2373,7 @@ export class ChatStreamWriter {
     void this.persistLog();
     (async () => {
       try {
+        await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
         await this.syncdb!.save();
       } catch (err) {
