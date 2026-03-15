@@ -13,6 +13,7 @@ import {
   getCodexProjectSpawner,
   type CodexAppServerLoginHint,
   type CodexProjectContainerPathMap,
+  type CodexAppServerRequestHandler,
 } from "./codex-project";
 
 const logger = getLogger("ai:acp:codex-app-server");
@@ -65,6 +66,7 @@ type SpawnedCodexAppServer = {
   authSource?: string;
   containerPathMap?: CodexProjectContainerPathMap;
   appServerLogin?: CodexAppServerLoginHint;
+  handleAppServerRequest?: CodexAppServerRequestHandler;
 };
 
 type RpcResponse = {
@@ -76,6 +78,10 @@ type RpcResponse = {
 type RpcNotification = {
   method: string;
   params?: any;
+};
+
+type RpcServerRequest = RpcNotification & {
+  id: string | number;
 };
 
 type SessionStoreEntry = {
@@ -114,7 +120,10 @@ class AppServerClient {
   private exited = false;
   private exitDetail = "unknown";
 
-  constructor(private readonly proc: ReturnType<typeof spawn>) {
+  constructor(
+    private readonly proc: ReturnType<typeof spawn>,
+    private readonly requestHandler?: CodexAppServerRequestHandler,
+  ) {
     const rl = createInterface({
       input: proc.stdout as Readable,
       crlfDelay: Infinity,
@@ -122,9 +131,16 @@ class AppServerClient {
     rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
-        const message = JSON.parse(line) as RpcResponse | RpcNotification;
+        const message = JSON.parse(line) as
+          | RpcResponse
+          | RpcNotification
+          | RpcServerRequest;
         if ("method" in message && typeof message.method === "string") {
-          this.handleNotification(message);
+          if ("id" in message) {
+            this.handleServerRequest(message as RpcServerRequest);
+          } else {
+            this.handleNotification(message);
+          }
         } else {
           this.handleResponse(message as RpcResponse);
         }
@@ -256,6 +272,37 @@ class AppServerClient {
       throw new Error(`codex app-server already exited: ${this.exitDetail}`);
     }
     this.proc.stdin?.write(`${JSON.stringify(message)}\n`);
+  }
+
+  private handleServerRequest(message: RpcServerRequest): void {
+    void this.resolveServerRequest(message);
+  }
+
+  private async resolveServerRequest(message: RpcServerRequest): Promise<void> {
+    try {
+      if (!this.requestHandler) {
+        throw new Error(`unsupported app-server request: ${message.method}`);
+      }
+      const result = await this.requestHandler({
+        id: message.id,
+        method: message.method,
+        params: message.params,
+      });
+      if (this.exited) return;
+      this.send({
+        id: message.id,
+        result: result ?? {},
+      });
+    } catch (err) {
+      if (this.exited) return;
+      this.send({
+        id: message.id,
+        error: {
+          code: -32000,
+          message: (err as Error)?.message ?? `${err}`,
+        },
+      });
+    }
   }
 
   private handleResponse(message: RpcResponse): void {
@@ -460,7 +507,10 @@ export async function forkCodexAppServerSession(opts: {
           },
           opts.env,
         );
-  const client = new AppServerClient(spawned.proc);
+  const client = new AppServerClient(
+    spawned.proc,
+    spawned.handleAppServerRequest,
+  );
   try {
     await client.initialize();
     await loginAppServerIfNeeded(client, spawned.appServerLogin);
@@ -507,7 +557,10 @@ export class CodexAppServerAgent implements AcpAgent {
       cwd,
       env: runtimeEnv,
     });
-    const client = new AppServerClient(spawned.proc);
+    const client = new AppServerClient(
+      spawned.proc,
+      spawned.handleAppServerRequest,
+    );
     const errors: string[] = [];
     let finalResponse = "";
     let latestUsage: AcpStreamUsage | undefined;

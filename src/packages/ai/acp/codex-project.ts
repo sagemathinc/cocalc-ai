@@ -26,6 +26,16 @@ export type CodexAppServerLoginHint =
       chatgptPlanType?: string;
     };
 
+export type CodexAppServerRequest = {
+  id: string | number;
+  method: string;
+  params?: any;
+};
+
+export type CodexAppServerRequestHandler = (
+  request: CodexAppServerRequest,
+) => Promise<any>;
+
 export type CodexProjectSpawner = {
   spawnCodexExec: (opts: CodexProjectSpawnOptions) => Promise<{
     proc: ChildProcess;
@@ -48,6 +58,7 @@ export type CodexProjectSpawner = {
     authSource?: string;
     containerPathMap?: CodexProjectContainerPathMap;
     appServerLogin?: CodexAppServerLoginHint;
+    handleAppServerRequest?: CodexAppServerRequestHandler;
   }>;
 };
 

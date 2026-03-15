@@ -49,6 +49,10 @@ class FakeCodexAppServerProc extends EventEmitter {
   sendNotification(method: string, params: any): void {
     this.stdout.write(`${JSON.stringify({ method, params })}\n`);
   }
+
+  sendRequest(id: number, method: string, params: any): void {
+    this.stdout.write(`${JSON.stringify({ id, method, params })}\n`);
+  }
 }
 
 describe("CodexAppServerAgent", () => {
@@ -269,6 +273,123 @@ describe("CodexAppServerAgent", () => {
         apiKey: "secret-key",
       },
     ]);
+  });
+
+  it("answers server auth-refresh requests during a turn", async () => {
+    const refreshResponses: any[] = [];
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "account/login/start":
+          fake.sendResponse(message.id, { type: "chatgptAuthTokens" });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-refresh-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-refresh-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-refresh-1", status: "inProgress" },
+            });
+            fake.sendRequest(91, "account/chatgptAuthTokens/refresh", {
+              reason: "unauthorized",
+              previousAccountId: "workspace-123",
+            });
+          });
+          break;
+        default:
+          if (message.id === 91 && !message.method) {
+            refreshResponses.push(message);
+            setImmediate(() => {
+              fake.sendNotification("item/agentMessage/delta", {
+                threadId: "thr-refresh-1",
+                turnId: "turn-refresh-1",
+                itemId: "msg-refresh-1",
+                delta: "Refreshed",
+              });
+              fake.sendNotification("turn/completed", {
+                turn: { id: "turn-refresh-1", status: "completed" },
+              });
+            });
+            return;
+          }
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+        appServerLogin: {
+          type: "chatgptAuthTokens",
+          accessToken: "initial-token",
+          chatgptAccountId: "workspace-123",
+          chatgptPlanType: "pro",
+        },
+        handleAppServerRequest: async ({ method, params }) => {
+          expect(method).toBe("account/chatgptAuthTokens/refresh");
+          expect(params).toEqual({
+            reason: "unauthorized",
+            previousAccountId: "workspace-123",
+          });
+          return {
+            accessToken: "refreshed-token",
+            chatgptAccountId: "workspace-123",
+            chatgptPlanType: "pro",
+          };
+        },
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    const streamPayloads: any[] = [];
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async (payload) => {
+        if (payload) {
+          streamPayloads.push(payload);
+        }
+      },
+      config: {
+        workingDirectory: "/tmp/project",
+      } as any,
+    });
+
+    expect(refreshResponses).toEqual([
+      {
+        id: 91,
+        result: {
+          accessToken: "refreshed-token",
+          chatgptAccountId: "workspace-123",
+          chatgptPlanType: "pro",
+        },
+      },
+    ]);
+    expect(streamPayloads).toEqual(
+      expect.arrayContaining([
+        {
+          type: "summary",
+          finalResponse: "Refreshed",
+          usage: undefined,
+          threadId: "thr-refresh-1",
+        },
+      ]),
+    );
   });
 
   it("treats an intentional interrupt as a normal completion", async () => {

@@ -37,6 +37,8 @@ export {
   type CodexProjectSpawner,
   type CodexProjectSpawnOptions,
   type CodexAppServerLoginHint,
+  type CodexAppServerRequest,
+  type CodexAppServerRequestHandler,
 } from "./codex-project";
 export {
   getCodexSiteKeyGovernor,

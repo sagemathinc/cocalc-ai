@@ -6,10 +6,13 @@ import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { argsJoin } from "@cocalc/util/args";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
-import {
-  setCodexProjectSpawner,
-  type CodexAppServerLoginHint,
+import type {
+  CodexAppServerLoginHint,
+  CodexAppServerRequest,
+  CodexAppServerRequestHandler,
 } from "@cocalc/ai/acp";
+import { setCodexProjectSpawner } from "@cocalc/ai/acp";
+import { hubApi } from "@cocalc/lite/hub/api";
 import { which } from "@cocalc/backend/which";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import {
@@ -48,6 +51,14 @@ const CONTAINER_SETUP_TIMEOUT_MS = Math.max(
 const PODMAN_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_PODMAN_TIMEOUT_MS ?? 45_000),
+);
+const PROJECT_START_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_PROJECT_START_TIMEOUT_MS ?? 90_000),
+);
+const PROJECT_START_POLL_MS = Math.max(
+  100,
+  Number(process.env.COCALC_CODEX_PROJECT_START_POLL_MS ?? 500),
 );
 
 type ContainerInfo = {
@@ -231,6 +242,75 @@ async function resolveAppServerLoginHint(
   }
 }
 
+async function resolveLatestAppServerLoginHint({
+  projectId,
+  accountId,
+}: {
+  projectId: string;
+  accountId?: string;
+}): Promise<CodexAppServerLoginHint | undefined> {
+  const authRuntime = await resolveCodexAuthRuntime({
+    projectId,
+    accountId,
+  });
+  return await resolveAppServerLoginHint(authRuntime);
+}
+
+function createAppServerRequestHandler({
+  projectId,
+  accountId,
+  authRuntime,
+}: {
+  projectId: string;
+  accountId?: string;
+  authRuntime: CodexAuthRuntime;
+}): CodexAppServerRequestHandler {
+  return async (request: CodexAppServerRequest) => {
+    switch (request.method) {
+      case "account/chatgptAuthTokens/refresh": {
+        const refreshed = await resolveLatestAppServerLoginHint({
+          projectId,
+          accountId,
+        });
+        if (refreshed?.type !== "chatgptAuthTokens") {
+          throw new Error(
+            `chatgptAuthTokens refresh is not available for auth source ${authRuntime.source}`,
+          );
+        }
+        const previousAccountId =
+          typeof request.params?.previousAccountId === "string"
+            ? request.params.previousAccountId.trim()
+            : "";
+        if (
+          previousAccountId &&
+          refreshed.chatgptAccountId !== previousAccountId
+        ) {
+          logger.warn(
+            "codex project runtime: refreshed chatgpt account mismatch",
+            {
+              projectId,
+              accountId,
+              previousAccountId,
+              refreshedAccountId: refreshed.chatgptAccountId,
+            },
+          );
+        }
+        return {
+          accessToken: refreshed.accessToken,
+          chatgptAccountId: refreshed.chatgptAccountId,
+          chatgptPlanType: refreshed.chatgptPlanType ?? null,
+        };
+      }
+      default:
+        throw new Error(`unsupported app-server request: ${request.method}`);
+    }
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -353,6 +433,37 @@ async function containerIsRunning(name: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function ensureProjectContainerRunning(projectId: string): Promise<void> {
+  const name = projectContainerName(projectId);
+  if (await containerIsRunning(name)) return;
+
+  const row = getProject(projectId);
+  if (!row) {
+    throw new Error(`project ${projectId} is not hosted on this project-host`);
+  }
+
+  const state = `${row.state ?? ""}`.trim().toLowerCase();
+  if (state !== "starting" && state !== "running") {
+    if (!hubApi.projects.start) {
+      throw new Error("project start API is not available");
+    }
+    logger.info("codex project runtime: starting project container", {
+      projectId,
+      state,
+    });
+    await hubApi.projects.start({ project_id: projectId });
+  }
+
+  const deadline = Date.now() + PROJECT_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await containerIsRunning(name)) return;
+    await delay(PROJECT_START_POLL_MS);
+  }
+  throw new Error(
+    `project container ${name} did not start within ${PROJECT_START_TIMEOUT_MS}ms`,
+  );
 }
 
 async function resolveCodexBinary(): Promise<{
@@ -850,6 +961,7 @@ type SpawnCodexAppServerInProjectRuntimeResult = {
   home: string;
   scratch?: string;
   appServerLogin?: CodexAppServerLoginHint;
+  handleAppServerRequest?: CodexAppServerRequestHandler;
 };
 
 async function spawnCodexAppServerInProjectRuntime({
@@ -867,11 +979,14 @@ async function spawnCodexAppServerInProjectRuntime({
   });
   logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
   const appServerLogin = await resolveAppServerLoginHint(authRuntime);
+  const handleAppServerRequest = createAppServerRequestHandler({
+    projectId,
+    accountId,
+    authRuntime,
+  });
+  await ensureProjectContainerRunning(projectId);
   const { home, scratch } = await localPath({ project_id: projectId });
   const name = projectContainerName(projectId);
-  if (!(await containerIsRunning(name))) {
-    throw new Error(`project container ${name} is not running`);
-  }
 
   const execArgs: string[] = [
     "exec",
@@ -952,6 +1067,7 @@ async function spawnCodexAppServerInProjectRuntime({
     home,
     scratch,
     appServerLogin,
+    handleAppServerRequest,
   };
 }
 
@@ -1014,6 +1130,7 @@ export function initCodexProjectRunner(): void {
           scratchHostPath: spawned.scratch,
         },
         appServerLogin: spawned.appServerLogin,
+        handleAppServerRequest: spawned.handleAppServerRequest,
       };
     },
   });

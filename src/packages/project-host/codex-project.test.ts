@@ -84,8 +84,18 @@ jest.mock("./last-edited", () => ({
   touchProjectLastEdited: jest.fn(),
 }));
 
+jest.mock("@cocalc/lite/hub/api", () => ({
+  hubApi: {
+    projects: {
+      start: jest.fn(),
+    },
+  },
+}));
+
 const filesystem = jest.requireMock("@cocalc/project-runner/run/filesystem");
 const auth = jest.requireMock("./codex/codex-auth");
+const projects = jest.requireMock("./sqlite/projects");
+const { hubApi } = jest.requireMock("@cocalc/lite/hub/api");
 
 class FakeProc extends EventEmitter {
   stdout = new PassThrough();
@@ -112,6 +122,12 @@ describe("initCodexProjectRunner", () => {
     delete process.env.COCALC_BIN_PATH;
     delete process.env.COCALC_CLI_BIN;
     setCodexProjectSpawner(null);
+    projects.getProject.mockReturnValue({
+      state: "running",
+      run_quota: {},
+    });
+    hubApi.projects.start.mockReset();
+    hubApi.projects.start.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -251,8 +267,63 @@ describe("initCodexProjectRunner", () => {
       chatgptAccountId: "workspace-123",
       chatgptPlanType: "pro",
     });
+    await expect(
+      spawned.handleAppServerRequest?.({
+        id: 17,
+        method: "account/chatgptAuthTokens/refresh",
+        params: {
+          reason: "unauthorized",
+          previousAccountId: "workspace-123",
+        },
+      }),
+    ).resolves.toEqual({
+      accessToken,
+      chatgptAccountId: "workspace-123",
+      chatgptPlanType: "pro",
+    });
     expect(spawnMock.mock.calls[0][1]).not.toContain(
       "OPENAI_API_KEY=secret-key",
     );
+  });
+
+  it("starts the project container before launching app-server when needed", async () => {
+    spawnMock.mockReturnValue(new FakeProc());
+    let inspectCalls = 0;
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        inspectCalls += 1;
+        cb(null, inspectCalls === 1 ? "false\n" : "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    projects.getProject.mockReturnValue({
+      state: "opened",
+      run_quota: {},
+    });
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const home = path.join(tmp, "home");
+    await fs.mkdir(home, { recursive: true });
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "acct-key-1234",
+      env: { OPENAI_API_KEY: "secret-key" },
+    });
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawner = getCodexProjectSpawner();
+
+    await spawner!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/root",
+    });
+
+    expect(hubApi.projects.start).toHaveBeenCalledWith({
+      project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+    });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 });
