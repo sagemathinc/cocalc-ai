@@ -57,10 +57,15 @@ describe("CodexAppServerAgent", () => {
   });
 
   it("streams app-server events and returns the upstream thread id", async () => {
+    const loginRequests: any[] = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
         case "initialize":
           fake.sendResponse(message.id, { ok: true });
+          break;
+        case "account/login/start":
+          loginRequests.push(message.params);
+          fake.sendResponse(message.id, { type: "apiKey" });
           break;
         case "thread/start":
           fake.sendResponse(message.id, {
@@ -176,6 +181,10 @@ describe("CodexAppServerAgent", () => {
         cmd: "fake-codex",
         args: ["app-server"],
         cwd: "/tmp/project",
+        appServerLogin: {
+          type: "apiKey",
+          apiKey: "secret-key",
+        },
       }),
     });
 
@@ -254,6 +263,12 @@ describe("CodexAppServerAgent", () => {
         },
       ]),
     );
+    expect(loginRequests).toEqual([
+      {
+        type: "apiKey",
+        apiKey: "secret-key",
+      },
+    ]);
   });
 
   it("treats an intentional interrupt as a normal completion", async () => {

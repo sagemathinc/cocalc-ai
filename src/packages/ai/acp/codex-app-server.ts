@@ -11,6 +11,7 @@ import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import type { AcpAgent, AcpEvaluateRequest, AcpStreamUsage } from "./types";
 import {
   getCodexProjectSpawner,
+  type CodexAppServerLoginHint,
   type CodexProjectContainerPathMap,
 } from "./codex-project";
 
@@ -63,6 +64,7 @@ type SpawnedCodexAppServer = {
   cwd?: string;
   authSource?: string;
   containerPathMap?: CodexProjectContainerPathMap;
+  appServerLogin?: CodexAppServerLoginHint;
 };
 
 type RpcResponse = {
@@ -411,6 +413,29 @@ async function spawnStandaloneAppServer(
   };
 }
 
+async function loginAppServerIfNeeded(
+  client: AppServerClient,
+  login?: CodexAppServerLoginHint,
+): Promise<void> {
+  if (!login) return;
+  switch (login.type) {
+    case "apiKey":
+      await client.request("account/login/start", {
+        type: "apiKey",
+        apiKey: login.apiKey,
+      });
+      return;
+    case "chatgptAuthTokens":
+      await client.request("account/login/start", {
+        type: "chatgptAuthTokens",
+        accessToken: login.accessToken,
+        chatgptAccountId: login.chatgptAccountId,
+        chatgptPlanType: login.chatgptPlanType ?? null,
+      });
+      return;
+  }
+}
+
 export async function forkCodexAppServerSession(opts: {
   projectId: string;
   accountId?: string;
@@ -438,6 +463,7 @@ export async function forkCodexAppServerSession(opts: {
   const client = new AppServerClient(spawned.proc);
   try {
     await client.initialize();
+    await loginAppServerIfNeeded(client, spawned.appServerLogin);
     const result = await client.request("thread/fork", {
       threadId: opts.sessionId,
     });
@@ -538,6 +564,7 @@ export class CodexAppServerAgent implements AcpAgent {
       this.running.set(currentThreadId, runningEntry);
 
       await client.initialize();
+      await loginAppServerIfNeeded(client, spawned.appServerLogin);
       await stream({ type: "status", state: "queued" });
 
       let threadResult: any;

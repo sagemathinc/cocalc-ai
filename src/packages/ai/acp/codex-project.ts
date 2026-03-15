@@ -14,6 +14,18 @@ export type CodexProjectContainerPathMap = {
   scratchHostPath?: string;
 };
 
+export type CodexAppServerLoginHint =
+  | {
+      type: "apiKey";
+      apiKey: string;
+    }
+  | {
+      type: "chatgptAuthTokens";
+      accessToken: string;
+      chatgptAccountId: string;
+      chatgptPlanType?: string;
+    };
+
 export type CodexProjectSpawner = {
   spawnCodexExec: (opts: CodexProjectSpawnOptions) => Promise<{
     proc: ChildProcess;
@@ -35,6 +47,7 @@ export type CodexProjectSpawner = {
     cwd?: string;
     authSource?: string;
     containerPathMap?: CodexProjectContainerPathMap;
+    appServerLogin?: CodexAppServerLoginHint;
   }>;
 };
 
