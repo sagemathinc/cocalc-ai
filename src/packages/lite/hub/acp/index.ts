@@ -141,6 +141,7 @@ import {
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
+import { getConfiguredCodexBackend } from "./codex-backend";
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
@@ -319,22 +320,6 @@ function formatQueuedDelay(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const remain = seconds % 60;
   return remain > 0 ? `${minutes}m ${remain}s` : `${minutes}m`;
-}
-
-function getConfiguredCodexBackend(): "exec" | "app-server" {
-  const explicit = `${process.env.COCALC_ACP_CODEX_BACKEND ?? ""}`
-    .trim()
-    .toLowerCase();
-  if (explicit === "app-server") {
-    return "app-server";
-  }
-  if (explicit === "exec") {
-    return "exec";
-  }
-  return process.env.PROJECT_HOST_ID ||
-    process.env.COCALC_PROJECT_HOST_ACP_WORKER
-    ? "app-server"
-    : "exec";
 }
 
 type AcpMockRule = {
@@ -3473,9 +3458,9 @@ async function ensureAgent(
     return created;
   } catch (err) {
     // Fail loudly: use an echo agent that emits an explicit error to the user.
-    logger.error("failed to start codex-exec agent; using echo agent", err);
+    logger.error("failed to start codex agent; using echo agent", err);
     const echo = new EchoAgent(
-      `ERROR: codex-exec failed to start (${(err as Error)?.message ?? "unknown error"})`,
+      `ERROR: codex failed to start (${(err as Error)?.message ?? "unknown error"})`,
     );
     agents.set(key, echo);
     return echo;
