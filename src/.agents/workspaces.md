@@ -1,32 +1,90 @@
 # Workspaces In CoCalc
 
-### Bugs/Issues/TODO's
+## Current Status
 
-- [ ] bug: it is not possible to drag-to-order tabs within a workspace
-  - right now they just snap back
-  - this is subtle because the tabs also exist all together without workspaces, so we have to make some design choices to even define this properly
-- [ ] bug: the last open tab for each workspace must be remembered, so when you go back to that workspace, you see it again.  We don't even have this stored anywhere, of course.
-- [ ] bug: if I close a tab, cocalc switches to the next tab and focuses it, even if that is in a completely different workspace.  Instead it should stick to the current workspace.
-- [ ] feature: It would be EXTREMELY nice for the pinned workspaces to be sortable (i.e., drag-n-drop to reorder them), rather than ordering them by a mystery value.   In general, drag and drop is ideal for all of this.  We have some nice existing sortable list react components in the frontend already.  We can hopefully figure out where to store the sort order info (not localStorage - it should be in the dkv data; one option would be a position parameter that is part of the data, and we ensure positions are unique on sort end, another would be just an extra key in the dkv with the sorted list). 
-- [ ] We wrote the cocalc-cli inspection functionality BEFORE workspaces, so it should definitely get extended to provide more precise information about workspace state. 
+Workspaces are now a real feature, not just a prototype.
+
+Implemented:
+
+- account-scoped workspace records stored in project-scoped Conat DKV
+- per-browser-tab workspace selection via `sessionStorage`
+- flyout and full page workspace management
+- `All tabs`, per-workspace, and `Unscoped` views
+- longest-prefix path membership
+- explicit follow-through when opening files or navigating directories outside the current workspace
+- remembering the last open tab per workspace
+- closing tabs within the current workspace
+- drag-to-order tabs within a selected workspace
+- manual workspace ordering with sections:
+  - `Pinned`
+  - `Today`
+  - `Last 7 days`
+  - `Older`
+- shared theme editor modal, now reused for:
+  - workspaces
+  - projects
+  - thread/chat settings
+- canonical chat per workspace, including binding an existing chat
+- backend and CLI workspace APIs:
+  - `cocalc workspaces ...`
+  - `api.workspaces ...`
+- durable workspace notice thread in the canonical chat
+- card-level workspace notices
+- workspace card status for canonical chat:
+  - `Codex running`
+  - `Codex done`
+  - `Codex error`
+- stronger theme cues:
+  - larger card media
+  - image/icon in the activity bar
+  - workspace colors on file tabs
+  - mirrored tab activity on workspace cards
+
+### Remaining Bugs / TODO
+
+- [ ] At certain widths the cards change height based on activity/timeago. Card height should be fixed.
+- [ ] Refresh still causes too much initial tab churn with many tabs across many workspaces. The UI should apply the selected workspace lens immediately and avoid visibly opening irrelevant tabs before hiding them.
+  - The current implementation is much better than before because selected workspace state is restored early, but the underlying tab hydration is still global and noisy.
+  - This should be solved as a UI/rendering optimization, not by making tab state workspace-local.
+- [x] Surface activity from file tabs and Codex onto workspace cards.
+  - Implemented:
+    - canonical chat status on cards
+    - mirrored tab activity on cards
+  - Still worth improving:
+    - richer workspace-level summaries
+    - stronger notion of "all Codex work is done and ready for review"
+- [ ] In Codex chat, make the default root for a new thread be the workspace root of the `.chat` file itself, not the current directory of the chat file.
+  - [ ] Special-case the generated canonical workspace chat tab title so it does not just show a random filename.
+  - [ ] Handle the generated canonical workspace chat file specially when deciding the default workspace root for Codex threads.
+- [x] Extend `cocalc-cli` / backend APIs for workspaces.
+  - Implemented:
+    - `cocalc workspaces ...`
+    - `api.workspaces ...`
+    - backend message and notice support
+  - Still worth improving:
+    - richer inspection/debug output for live workspace UI state
+- [ ] Theming: workspace-specific dark mode could be useful, independent of global Dark Reader / account appearance.
+- [x] bug: it is not possible to drag-to-order tabs within a workspace
+  - fixed by reordering the visible subset and projecting that back to the global tab order
+- [x] bug: if I close a tab, cocalc switches to the next tab and focuses it, even if that is in a completely different workspace. Instead it should stick to the current workspace.
+- [x] bug: the last open tab for each workspace must be remembered, so when you go back to that workspace, you see it again.
+- [x] feature: pinned and non-pinned workspaces are now manually sortable, with sectioned presentation instead of mystery ordering.
 - [x] Move the Delete button to be inside of "Edit" -- it's a very rare action.
 - [x] Replace the "Show tabs" button by just clicking basically anywhere on the workspace card to select the entire card (except the drag handle).
-- [ ] File tabs have a way of surfacing activity, e.g. when a codex turn is running, a terminal is changing, a notebook is running, this gets pinged.  Some of this info should be surfaced clearly in the workspace cards.   Also, it would be extremely helpful to surface that no codex turn is running in any agent in a workspace... i.e., all codex turns are done.  This is extremely critical information for making best use of parallel codex sessions. 
-- [ ] In codex chat (in our chatrooms) make the **default** workspace root for a new thread be the workspace root of the .chat file itself, NOT the current directory of the chat file.  The user can change the default any time -- this is just a more sensible default.
-  [ ] the workspace chat filename is random -- that's planned -- but the tab in the UI should be displayed in some special way in this case since right now opening the chat just shows that random filename. <img src="/blobs/paste-1oydcvxfrq0j.png?uuid=7963d4ea-ff3b-41ad-8f62-bc834200bc6d"   width="419.947px"  height="258.061px"  style="object-fit:cover"/>
-  - Also, of course, we need to handle this file in some special way in terms of where the workspace root is for any codex thread.
-- [ ] Theming: it would be nice to have a **dark mode** option; I think antd has some options for that.  We also have a dark mode switch in account prefs that uses Dark Reader.    But workspace dark mode would be nice since it is specific to a workspace, not the whole UI or all workspaces. 
 - [x] show "Loading" when the workspaces are loading, instead of making it look like I don't have any.
-- [x] There are some overall project-wide apps that could be workspace aware:
-  - Project log -- only show paths in a workspace
-  - Processes -- only show processes in a workspace (e.g., they are associated often to terminals and notebooks which belong to workspaces).
-  - Find -- pretty obvious
-  - New -- obvious
-  - Files -- already done
-  - Agents -- restrict to agents whose chat is in the workspace
-  - Tabs -- already works
-- [x] open a file not in the workspace (e.g., project log, click link, etc.) and the URL changes to that file, but the file isn't shown.  It is opened; it's just that we need to switch to "Unscoped" or the right workspace.
-- [x] select a workspace and try to use the file browser.  You cannot navigate to any other directory; you're stuck in the root of the workspace.
+- [~] There are some overall project-wide apps that should be workspace aware:
+  - [x] Project log -- only show paths in a workspace
+  - [x] Find -- `Workspace root` added
+  - [~] New -- no special case added; current-directory behavior is probably sufficient for now
+  - [x] Files -- done
+  - [x] Agents -- restricted to agents whose chat is in the workspace
+  - [x] Tabs -- done
+- [ ] Instead of making the Processes page workspace-aware, surface process activity directly on workspace cards.
+  - A workspace card should summarize processes associated to files/terminals/notebooks in that workspace.
+  - The most useful first cut is CPU/memory at a glance for each workspace.
+  - This is likely more useful than filtering the full Processes page.
+- [x] open a file not in the workspace (e.g., project log, click link, etc.) and the URL changes to that file, but the file isn't shown. It is opened; it's just that we need to switch to "Unscoped" or the right workspace.
+- [x] select a workspace and try to use the file browser. You cannot navigate to any other directory; you're stuck in the root of the workspace.
 
 ## Purpose
 
@@ -259,13 +317,15 @@ Requirements:
 - not stored as plain files in the project by default
 - available without requiring a browser tab to stay open
 - cheap to read when building UI/sidebar state
+- selected workspace should be per-browser-tab state, not shared project state
 
 A Conat key/value store is a reasonable first target.
 
-Likely key shape:
+Implemented key shape:
 
-- namespace for workspace records by account and project
-- separate key for current selected workspace per `(account_id, project_id)`
+- workspace records and ordering live in project-scoped Conat DKV, namespaced by account
+- current selected workspace lives in browser `sessionStorage`
+- a cached selected workspace record is also kept in `sessionStorage` to stabilize initial load
 
 ## Path Validity Rules
 
@@ -301,7 +361,7 @@ Good default title sources:
 Selecting a workspace should:
 
 - filter tabs
-- set current workspace for the project/account
+- set current workspace for the current browser tab
 - update the sidebar/top icon
 - not change permissions
 - not rewrite open files
@@ -314,15 +374,13 @@ Do not trap users inside a workspace filter.
 
 ## Theme UI Convergence
 
-Longer-term, a single theme editor should configure:
+A shared theme editor now configures:
 
 - project theme
 - workspace theme
-- agent theme
+- thread/chat theme
 
-This should use the same underlying fields and the same editing experience.
-
-First version may implement only the workspace editor, but it should use the shared theme schema from day one.
+The remaining theming work is about stronger use of theme cues and any workspace-specific appearance ideas such as dark mode.
 
 Potential shared UI fields:
 
@@ -356,7 +414,7 @@ Potential later ideas:
 
 This should not be in the first slice.
 
-## Implementation Phases
+## Implementation Phases / Status
 
 ## Phase 1: Data model and tab filtering
 
@@ -369,7 +427,7 @@ Deliverables:
 - workspace sidebar flyout
 - basic full page
 
-This phase alone should already be highly useful.
+Status: done.
 
 ## Phase 2: Theme polish
 
@@ -380,6 +438,8 @@ Deliverables:
 - stronger visual cues in sidebar and filtered tab mode
 - better create/edit UI
 
+Status: mostly done.
+
 ## Phase 3: Agent routing
 
 Deliverables:
@@ -388,7 +448,7 @@ Deliverables:
 - file-triggered agent actions route to workspace chat when applicable
 - workspace `root_path` becomes the default working directory for agent actions
 
-This is where workspaces become deeply useful for Codex and other agents.
+Status: largely done, but Codex-thread default root behavior still needs polish.
 
 ## Phase 4: Suggestions and ergonomics
 
@@ -398,12 +458,24 @@ Deliverables:
 - recent workspace heuristics
 - better open-file / recent-file behavior inside a workspace
 
+Status: partially done.
+
+Current highest-value remaining work:
+
+- reduce refresh/tab churn on initial load
+- default Codex thread root to the workspace root when starting from a workspace chat
+- display generated canonical workspace chats with a meaningful tab label
+- fix card height bouncing
+- surface process / CPU / memory summaries directly on workspace cards
+
 ## Phase 5: Launchpad integration
 
 Deliverables:
 
 - workspace visibility on Launchpad
 - cross-project recent/pinned workspace surfacing
+
+Status: intentionally deferred; probably not important.
 
 ## Implementation Notes
 
