@@ -15,6 +15,7 @@ import {
   type CodexProjectContainerPathMap,
   type CodexAppServerRequestHandler,
 } from "./codex-project";
+import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
 
 const logger = getLogger("ai:acp:codex-app-server");
 const REQUEST_TIMEOUT_MS = Math.max(
@@ -570,6 +571,17 @@ export class CodexAppServerAgent implements AcpAgent {
     const terminalOutputs = new Map<string, string>();
     const startedTerminalIds = new Set<string>();
     const emittedFileWrites = new Set<string>();
+    const siteKeyGovernor = getCodexSiteKeyGovernor();
+    const siteKeyEnforced =
+      spawned.authSource === "site-api-key" &&
+      !!siteKeyGovernor &&
+      !!request.account_id &&
+      !!(request.chat?.project_id ?? request.project_id);
+    let quotaPollTimer: NodeJS.Timeout | undefined;
+    let maxTurnTimer: NodeJS.Timeout | undefined;
+    let quotaCheckInFlight = false;
+    let quotaStopReason: string | undefined;
+    const attemptStartedAt = Date.now();
 
     const stop = async () => {
       if (spawned.proc.exitCode == null && !spawned.proc.killed) {
@@ -589,6 +601,54 @@ export class CodexAppServerAgent implements AcpAgent {
         this.running.set(nextThreadId, runningEntry);
       }
       currentThreadId = nextThreadId;
+    };
+
+    const stopForQuota = (message: string) => {
+      if (quotaStopReason) return;
+      quotaStopReason = message;
+      errors.push(message);
+      if (runningEntry) {
+        void runningEntry.stop().catch((err) => {
+          logger.debug("codex app-server: quota stop failed", {
+            threadId: currentThreadId,
+            turnId,
+            err: `${err}`,
+          });
+        });
+      }
+    };
+
+    const checkQuota = async (phase: "start" | "poll") => {
+      if (
+        !siteKeyEnforced ||
+        !siteKeyGovernor ||
+        !request.account_id ||
+        !(request.chat?.project_id ?? request.project_id)
+      ) {
+        return;
+      }
+      const projectId = request.chat?.project_id ?? request.project_id;
+      try {
+        const verdict = await siteKeyGovernor.checkAllowed({
+          accountId: request.account_id,
+          projectId,
+          model: config?.model ?? this.opts.model,
+          phase,
+        });
+        if (!verdict.allowed) {
+          stopForQuota(
+            verdict.reason ??
+              "Stopped: you reached your CoCalc LLM usage limit for site-provided OpenAI access.",
+          );
+        }
+      } catch (err) {
+        logger.warn("codex app-server: site-key quota check failed", {
+          phase,
+          accountId: request.account_id,
+          projectId,
+          err: `${err}`,
+        });
+      }
     };
 
     try {
@@ -618,6 +678,10 @@ export class CodexAppServerAgent implements AcpAgent {
 
       await client.initialize();
       await loginAppServerIfNeeded(client, spawned.appServerLogin);
+      await checkQuota("start");
+      if (quotaStopReason) {
+        throw new Error(formatAppServerError(errors));
+      }
       await stream({ type: "status", state: "queued" });
 
       let threadResult: any;
@@ -681,6 +745,31 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       if (runningEntry) {
         runningEntry.turnId = turnId;
+      }
+      if (siteKeyEnforced && siteKeyGovernor) {
+        const pollMs = Math.max(
+          30_000,
+          siteKeyGovernor.pollIntervalMs ?? 120_000,
+        );
+        quotaPollTimer = setInterval(() => {
+          if (quotaCheckInFlight || quotaStopReason) return;
+          quotaCheckInFlight = true;
+          void checkQuota("poll").finally(() => {
+            quotaCheckInFlight = false;
+          });
+        }, pollMs);
+        quotaPollTimer.unref?.();
+
+        const configuredMaxTurnMs = siteKeyGovernor.maxTurnMs;
+        if (configuredMaxTurnMs != null && configuredMaxTurnMs > 0) {
+          const maxTurnMs = Math.max(60_000, configuredMaxTurnMs);
+          maxTurnTimer = setTimeout(() => {
+            stopForQuota(
+              "Stopped: this Codex turn exceeded the maximum runtime for site-provided OpenAI access.",
+            );
+          }, maxTurnMs);
+          maxTurnTimer.unref?.();
+        }
       }
 
       const ensureTerminalStarted = async (
@@ -913,9 +1002,53 @@ export class CodexAppServerAgent implements AcpAgent {
       })();
 
       await pendingNotificationLoop;
+      if (quotaPollTimer) {
+        clearInterval(quotaPollTimer);
+      }
+      if (maxTurnTimer) {
+        clearTimeout(maxTurnTimer);
+      }
 
-      if (errors.length > 0 && !runningEntry?.interrupted) {
+      if (
+        errors.length > 0 &&
+        (!runningEntry?.interrupted || !!quotaStopReason)
+      ) {
         throw new Error(formatAppServerError(errors));
+      }
+
+      if (
+        siteKeyEnforced &&
+        siteKeyGovernor &&
+        request.account_id &&
+        (request.chat?.project_id ?? request.project_id) &&
+        latestUsage &&
+        !runningEntry?.interrupted
+      ) {
+        try {
+          await siteKeyGovernor.reportUsage({
+            accountId: request.account_id,
+            projectId: request.chat?.project_id ?? request.project_id,
+            model: config?.model ?? this.opts.model,
+            usage: {
+              input_tokens: latestUsage.input_tokens ?? 0,
+              cached_input_tokens: latestUsage.cached_input_tokens,
+              output_tokens: latestUsage.output_tokens ?? 0,
+              total_tokens:
+                (latestUsage.input_tokens ?? 0) +
+                (latestUsage.cached_input_tokens ?? 0) +
+                (latestUsage.output_tokens ?? 0),
+            },
+            totalTimeS: Math.max(0, (Date.now() - attemptStartedAt) / 1000),
+            path: request.chat?.path,
+          });
+        } catch (err) {
+          logger.warn("codex app-server: failed to report site-key usage", {
+            accountId: request.account_id,
+            projectId: request.chat?.project_id ?? request.project_id,
+            model: config?.model ?? this.opts.model,
+            err: `${err}`,
+          });
+        }
       }
 
       await stream({
@@ -925,7 +1058,13 @@ export class CodexAppServerAgent implements AcpAgent {
         threadId: actualThreadId,
       });
     } catch (err) {
-      if (runningEntry?.interrupted) {
+      if (quotaPollTimer) {
+        clearInterval(quotaPollTimer);
+      }
+      if (maxTurnTimer) {
+        clearTimeout(maxTurnTimer);
+      }
+      if (runningEntry?.interrupted && !quotaStopReason) {
         logger.info("codex app-server evaluate interrupted", {
           threadId: currentThreadId,
           turnId,

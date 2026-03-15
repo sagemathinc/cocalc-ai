@@ -1,5 +1,12 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+const getCodexSiteKeyGovernorMock: jest.Mock<any, []> = jest.fn(() => null);
+
+jest.mock("../codex-site-key-governor", () => ({
+  getCodexSiteKeyGovernor: () => getCodexSiteKeyGovernorMock(),
+  setCodexSiteKeyGovernor: jest.fn(),
+}));
+
 import {
   CodexAppServerAgent,
   forkCodexAppServerSession,
@@ -58,6 +65,8 @@ class FakeCodexAppServerProc extends EventEmitter {
 describe("CodexAppServerAgent", () => {
   afterEach(async () => {
     setCodexProjectSpawner(null);
+    getCodexSiteKeyGovernorMock.mockReset();
+    getCodexSiteKeyGovernorMock.mockReturnValue(null);
   });
 
   it("streams app-server events and returns the upstream thread id", async () => {
@@ -500,5 +509,126 @@ describe("CodexAppServerAgent", () => {
         sessionId: "thr-shared-1",
       }),
     ).resolves.toEqual({ sessionId: "thr-forked-2" });
+  });
+
+  it("reports site-key usage for app-server turns", async () => {
+    const checkAllowed = jest.fn(async () => ({ allowed: true }));
+    const reportUsage = jest.fn(async () => {});
+    getCodexSiteKeyGovernorMock.mockReturnValue({
+      pollIntervalMs: 60_000,
+      checkAllowed,
+      reportUsage,
+    });
+
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "account/login/start":
+          fake.sendResponse(message.id, { type: "apiKey" });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-site-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-site-1" } });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-site-1", status: "inProgress" },
+            });
+            fake.sendNotification("thread/tokenUsage/updated", {
+              threadId: "thr-site-1",
+              turnId: "turn-site-1",
+              tokenUsage: {
+                last: {
+                  inputTokens: 12,
+                  cachedInputTokens: 3,
+                  outputTokens: 5,
+                  reasoningOutputTokens: 1,
+                  totalTokens: 20,
+                },
+                total: {
+                  inputTokens: 12,
+                  cachedInputTokens: 3,
+                  outputTokens: 5,
+                  reasoningOutputTokens: 1,
+                  totalTokens: 20,
+                },
+                modelContextWindow: 4096,
+              },
+            });
+            fake.sendNotification("item/agentMessage/delta", {
+              threadId: "thr-site-1",
+              turnId: "turn-site-1",
+              itemId: "msg-site-1",
+              delta: "Metered",
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-site-1", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+        authSource: "site-api-key",
+        appServerLogin: {
+          type: "apiKey",
+          apiKey: "site-key",
+        },
+      }),
+    });
+
+    const agent = new CodexAppServerAgent();
+    await agent.evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "say hello",
+      stream: async () => {},
+      chat: {
+        path: "root/demo.chat",
+        project_id: "00000000-0000-4000-8000-000000000000",
+      } as any,
+      config: {
+        workingDirectory: "/tmp/project",
+        model: "gpt-5.4",
+      } as any,
+    });
+
+    expect(checkAllowed).toHaveBeenCalledWith({
+      accountId: "00000000-0000-4000-8000-000000000001",
+      projectId: "00000000-0000-4000-8000-000000000000",
+      model: "gpt-5.4",
+      phase: "start",
+    });
+    expect(reportUsage).toHaveBeenCalledWith({
+      accountId: "00000000-0000-4000-8000-000000000001",
+      projectId: "00000000-0000-4000-8000-000000000000",
+      model: "gpt-5.4",
+      usage: {
+        input_tokens: 12,
+        cached_input_tokens: 3,
+        output_tokens: 5,
+        total_tokens: 20,
+      },
+      totalTimeS: expect.any(Number),
+      path: "root/demo.chat",
+    });
   });
 });
