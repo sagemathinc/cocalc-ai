@@ -946,6 +946,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           new_page_path_abs: fileDir,
           flyout_new_path_abs: fileDir,
         });
+        if (
+          redux
+            .getStore("account")
+            ?.getIn(["other_settings", "follow_current_path"])
+        ) {
+          this.setState({
+            explorer_browsing_path_abs: fileDir,
+            explorer_history_path_abs: fileDir,
+            flyout_browsing_path_abs: fileDir,
+            flyout_history_path_abs: fileDir,
+          });
+        }
 
         const info = store.get("open_files").getIn([path, "component"]) as any;
         if (info == null) {
