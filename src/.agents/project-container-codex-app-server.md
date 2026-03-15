@@ -4,6 +4,10 @@ Goal: make `codex app-server` the shared execution primitive for both Lite and
 Launchpad, while keeping CoCalc chat threads as the product UX/source of truth
 and ACP workers as the durable supervisors.
 
+Related follow-up plan:
+
+- [Rootfs Bootstrap Plan](/home/wstein/build/cocalc-lite4/src/.agents/rootfs-bootstrap.md)
+
 This means:
 
 - Lite uses app-server directly on the local workspace/runtime.
