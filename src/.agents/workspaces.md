@@ -23,7 +23,7 @@ Implemented:
 - shared theme editor modal, now reused for:
   - workspaces
   - projects
-  - thread/chat settings
+- thread/chat settings are only partially unified so far
 - canonical chat per workspace, including binding an existing chat
 - backend and CLI workspace APIs:
   - `cocalc workspaces ...`
@@ -42,20 +42,13 @@ Implemented:
 
 ### Remaining Bugs / TODO
 
-- [ ] At certain widths the cards change height based on activity/timeago. Card height should be fixed.
-- [ ] Refresh still causes too much initial tab churn with many tabs across many workspaces. The UI should apply the selected workspace lens immediately and avoid visibly opening irrelevant tabs before hiding them.
-  - The current implementation is much better than before because selected workspace state is restored early, but the underlying tab hydration is still global and noisy.
-  - This should be solved as a UI/rendering optimization, not by making tab state workspace-local.
 - [x] Surface activity from file tabs and Codex onto workspace cards.
   - Implemented:
     - canonical chat status on cards
     - mirrored tab activity on cards
+    - workspace process summaries on cards
   - Still worth improving:
-    - richer workspace-level summaries
     - stronger notion of "all Codex work is done and ready for review"
-- [ ] In Codex chat, make the default root for a new thread be the workspace root of the `.chat` file itself, not the current directory of the chat file.
-  - [ ] Special-case the generated canonical workspace chat tab title so it does not just show a random filename.
-  - [ ] Handle the generated canonical workspace chat file specially when deciding the default workspace root for Codex threads.
 - [x] Extend `cocalc-cli` / backend APIs for workspaces.
   - Implemented:
     - `cocalc workspaces ...`
@@ -63,7 +56,20 @@ Implemented:
     - backend message and notice support
   - Still worth improving:
     - richer inspection/debug output for live workspace UI state
-- [ ] Theming: workspace-specific dark mode could be useful, independent of global Dark Reader / account appearance.
+    - reliable Codex/browser-session access to live workspace state from Lite, including fixing current `system.listBrowserSessions` permission/408 failures
+    - end-to-end smoke tests showing the CLI/API/browser pieces work together for Codex
+- [ ] Theming: add an optional stronger workspace theme mode so it is harder to get confused about where you are.
+  - Ideas worth exploring:
+    - stronger page/frame borders
+    - activity bar or chrome accents
+    - per-workspace terminal/editor theme overrides
+    - chatroom-level theme overrides that follow the workspace
+- [ ] Thread/chat appearance is only partially unified with workspaces/projects.
+  - The shared theme modal is reused in code, but the live UI still differs.
+  - Missing parity includes:
+    - accent color
+    - the same clean separation between appearance and non-appearance settings
+    - the same overall appearance-editing flow as projects/workspaces
 - [x] bug: it is not possible to drag-to-order tabs within a workspace
   - fixed by reordering the visible subset and projecting that back to the global tab order
 - [x] bug: if I close a tab, cocalc switches to the next tab and focuses it, even if that is in a completely different workspace. Instead it should stick to the current workspace.
@@ -82,7 +88,10 @@ Implemented:
 - [ ] Instead of making the Processes page workspace-aware, surface process activity directly on workspace cards.
   - A workspace card should summarize processes associated to files/terminals/notebooks in that workspace.
   - The most useful first cut is CPU/memory at a glance for each workspace.
-  - This is likely more useful than filtering the full Processes page.
+  - First cut is done on the cards now.
+  - Still worth improving:
+    - make the summaries easier to read at a glance
+    - decide whether any deeper process drilldown belongs on cards or elsewhere
 - [x] open a file not in the workspace (e.g., project log, click link, etc.) and the URL changes to that file, but the file isn't shown. It is opened; it's just that we need to switch to "Unscoped" or the right workspace.
 - [x] select a workspace and try to use the file browser. You cannot navigate to any other directory; you're stuck in the root of the workspace.
 

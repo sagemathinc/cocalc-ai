@@ -35,6 +35,7 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
+import { openFloatingAgentSession } from "@cocalc/frontend/project/page/agent-dock-state";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
@@ -770,6 +771,42 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
   }
 
+  async function floatWorkspaceChat(record: WorkspaceRecord): Promise<void> {
+    setError("");
+    try {
+      const { chat_path } = await ensureWorkspaceChatPath({
+        project_id,
+        account_id,
+        workspace_id: record.workspace_id,
+      });
+      if (record.chat_path !== chat_path) {
+        workspaces.updateWorkspace(record.workspace_id, { chat_path });
+      }
+      const latestSession =
+        agentSessions
+          .filter((session) => session.chat_path === chat_path)
+          .sort((a, b) => dateMs(b.updated_at) - dateMs(a.updated_at))[0] ??
+        null;
+      if (!latestSession) {
+        setError(
+          "No agent thread exists in this workspace chat yet. Open Chat first or start a Codex turn there.",
+        );
+        return;
+      }
+      const nextSelection = {
+        kind: "workspace",
+        workspace_id: record.workspace_id,
+      } satisfies WorkspaceSelection;
+      select(nextSelection);
+      openFloatingAgentSession(project_id, latestSession, {
+        workspaceId: record.workspace_id,
+        workspaceOnly: true,
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
+  }
+
   function renderRecord(record: WorkspaceRecord): React.JSX.Element {
     const selected =
       workspaces.selection.kind === "workspace" &&
@@ -1057,6 +1094,17 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               >
                 Chat
               </Button>
+              <Tooltip title="Float the latest agent thread in this workspace chat">
+                <Button
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void floatWorkspaceChat(record);
+                  }}
+                >
+                  Float
+                </Button>
+              </Tooltip>
               <Button
                 size="small"
                 onClick={(e) => {

@@ -1,4 +1,12 @@
-import { Alert, Button, Select, Space, Tooltip } from "antd";
+import {
+  Alert,
+  Button,
+  Select,
+  Space,
+  Switch,
+  Tooltip,
+  Typography,
+} from "antd";
 import {
   useCallback,
   useEffect,
@@ -36,6 +44,7 @@ import {
   takeQueuedNavigatorPromptIntents,
   type NavigatorSubmitPromptDetail,
 } from "@cocalc/frontend/project/new/navigator-intents";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import getAnchorTagComponent from "@cocalc/frontend/project/page/anchor-tag-component";
 import getUrlTransform from "@cocalc/frontend/project/page/url-transform";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
@@ -67,10 +76,13 @@ function ellipsizeLabel(value: string, max = DOCK_SESSION_LABEL_MAX): string {
 }
 
 export function AgentDock({ project_id, is_active }: AgentDockProps) {
+  const { workspaces } = useProjectContext();
   const projectActions = useActions({ project_id }) as ProjectActions;
   const accountFontSize = useTypedRedux("account", "font_size") ?? 13;
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
   const [session, setSession] = useState<AgentSessionRecord | null>(null);
+  const [workspaceScopeId, setWorkspaceScopeId] = useState<string | null>(null);
+  const [workspaceOnly, setWorkspaceOnly] = useState(false);
   const [chatActions, setChatActions] = useState<ChatActions | null>(null);
   const [error, setError] = useState<string>("");
   const [intentRetryTick, setIntentRetryTick] = useState(0);
@@ -101,6 +113,8 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
   useEffect(() => {
     if (is_active) return;
     setSession(null);
+    setWorkspaceScopeId(null);
+    setWorkspaceOnly(false);
     setChatActions(null);
     setError("");
   }, [is_active]);
@@ -142,12 +156,16 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
       const detail = (evt as CustomEvent<AgentDockOpenDetail>).detail;
       if (!detail || detail.projectId !== project_id) return;
       setSession(detail.session);
+      setWorkspaceScopeId(detail.workspaceId ?? null);
+      setWorkspaceOnly(detail.workspaceOnly === true);
       setError("");
     };
     const onClose = (evt: Event) => {
       const detail = (evt as CustomEvent<AgentDockCloseDetail>).detail;
       if (!detail || detail.projectId !== project_id) return;
       setSession(null);
+      setWorkspaceScopeId(null);
+      setWorkspaceOnly(false);
       setError("");
     };
     window.addEventListener(AGENT_DOCK_OPEN_EVENT, onOpen as EventListener);
@@ -428,12 +446,38 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
     };
   }, [project_id, session?.chat_path]);
 
+  const scopedWorkspaceId = useMemo(() => {
+    if (workspaceScopeId) return workspaceScopeId;
+    if (!session?.chat_path) return null;
+    return (
+      workspaces.resolveWorkspaceForPath(session.chat_path)?.workspace_id ??
+      null
+    );
+  }, [session?.chat_path, workspaceScopeId, workspaces]);
+
+  const scopedWorkspace = useMemo(() => {
+    if (!scopedWorkspaceId) return null;
+    return (
+      workspaces.records.find(
+        (record) => record.workspace_id === scopedWorkspaceId,
+      ) ?? null
+    );
+  }, [scopedWorkspaceId, workspaces.records]);
+
   const sessionOptions = useMemo(() => {
-    return sessions.map((record) => ({
+    const visibleSessions =
+      workspaceOnly && scopedWorkspaceId
+        ? sessions.filter(
+            (record) =>
+              workspaces.resolveWorkspaceForPath(record.chat_path)
+                ?.workspace_id === scopedWorkspaceId,
+          )
+        : sessions;
+    return visibleSessions.map((record) => ({
       value: record.session_id,
       label: `${ellipsizeLabel(record.title || "Agent session")} (project root)`,
     }));
-  }, [sessions]);
+  }, [scopedWorkspaceId, sessions, workspaceOnly, workspaces]);
 
   const keyboardBoundaryProps = useKeyboardBoundary<HTMLDivElement>({
     boundary: "dock",
@@ -573,6 +617,40 @@ export function AgentDock({ project_id, is_active }: AgentDockProps) {
                 </Button>
               </Space>
             </div>
+            {scopedWorkspace ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <Typography.Text
+                  type="secondary"
+                  style={{
+                    minWidth: 0,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    fontSize: 12,
+                  }}
+                >
+                  Workspace: {scopedWorkspace.theme.title}
+                </Typography.Text>
+                <Space size={6} align="center" style={{ flexShrink: 0 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Only this workspace
+                  </Typography.Text>
+                  <Switch
+                    size="small"
+                    checked={workspaceOnly}
+                    onChange={setWorkspaceOnly}
+                  />
+                </Space>
+              </div>
+            ) : null}
           </div>
           {error ? (
             <Alert

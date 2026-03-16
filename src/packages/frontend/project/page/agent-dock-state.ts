@@ -6,6 +6,8 @@ export const AGENT_DOCK_CLOSE_EVENT = "cocalc:agent-dock:close";
 export interface AgentDockOpenDetail {
   projectId: string;
   session: AgentSessionRecord;
+  workspaceId?: string | null;
+  workspaceOnly?: boolean;
 }
 
 export interface AgentDockCloseDetail {
@@ -15,11 +17,20 @@ export interface AgentDockCloseDetail {
 export function openFloatingAgentSession(
   projectId: string,
   session: AgentSessionRecord,
+  opts?: {
+    workspaceId?: string | null;
+    workspaceOnly?: boolean;
+  },
 ): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent<AgentDockOpenDetail>(AGENT_DOCK_OPEN_EVENT, {
-      detail: { projectId, session },
+      detail: {
+        projectId,
+        session,
+        workspaceId: opts?.workspaceId ?? null,
+        workspaceOnly: opts?.workspaceOnly,
+      },
     }),
   );
 }

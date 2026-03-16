@@ -10,6 +10,7 @@ import {
   Empty,
   Popconfirm,
   Space,
+  Switch,
   Tag,
   Tooltip,
   Typography,
@@ -679,7 +680,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   }
 
   function openFloatingSession(record: AgentSessionRecord): void {
-    openFloatingAgentSession(project_id, record);
+    const workspaceId =
+      workspaces.resolveWorkspaceForPath(record.chat_path)?.workspace_id ??
+      null;
+    openFloatingAgentSession(project_id, record, {
+      workspaceId,
+      workspaceOnly: workspaceId != null,
+    });
   }
 
   function openAutomation(record: AcpAutomationRecord): void {
@@ -1488,12 +1495,16 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 : `Show archived${archivedSessions.length ? ` (${archivedSessions.length})` : ""}`}
             </Button>
             {workspaces.current ? (
-              <Tag.CheckableTag
-                checked={workspaceOnly}
-                onChange={setWorkspaceOnly}
-              >
-                Only current workspace
-              </Tag.CheckableTag>
+              <Space size={6} align="center">
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Only current workspace
+                </Typography.Text>
+                <Switch
+                  size="small"
+                  checked={workspaceOnly}
+                  onChange={setWorkspaceOnly}
+                />
+              </Space>
             ) : null}
           </Space>
         </div>
