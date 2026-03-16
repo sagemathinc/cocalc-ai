@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -8,6 +8,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 // fetch to let the first batch land, so mid-turn openings still see early
 // events. If the throttle changes, update this constant too.
 const LOG_PERSIST_THROTTLE_MS = 1000;
+const LIVE_LOG_FLUSH_MS = 100;
 const RECENT_LOG_CACHE_SIZE = 5;
 
 const recentLogCache = new LRUCache<string, any[]>({
@@ -73,6 +74,8 @@ export function useCodexLog({
     if (!cacheKey) return [];
     return recentLogCache.get(cacheKey) ?? [];
   });
+  const liveBufferRef = useRef<any[]>([]);
+  const liveFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const mergeLogs = useMemo(() => {
     return (a: any[] | null, b: any[]): any[] => {
@@ -115,12 +118,22 @@ export function useCodexLog({
       const cached = recentLogCache.get(cacheKey);
       setFetchedLog(cached ?? null);
       setLiveLog(cached ?? []);
+      liveBufferRef.current = [];
+      if (liveFlushTimerRef.current != null) {
+        clearTimeout(liveFlushTimerRef.current);
+        liveFlushTimerRef.current = null;
+      }
       // Cached data may be partial (e.g., captured mid-turn before AKV persist).
       // Force at least one AKV fetch for each key to backfill missing early events.
       setAkvLoaded(false);
     } else {
       setFetchedLog(null);
       setLiveLog([]);
+      liveBufferRef.current = [];
+      if (liveFlushTimerRef.current != null) {
+        clearTimeout(liveFlushTimerRef.current);
+        liveFlushTimerRef.current = null;
+      }
       setAkvLoaded(false);
     }
   }, [cacheKey, logSubject]);
@@ -169,6 +182,33 @@ export function useCodexLog({
   useEffect(() => {
     let sub: any;
     let stopped = false;
+    const flushBufferedLiveLog = () => {
+      if (liveFlushTimerRef.current != null) {
+        clearTimeout(liveFlushTimerRef.current);
+        liveFlushTimerRef.current = null;
+      }
+      const pending = liveBufferRef.current;
+      if (!pending.length) return;
+      liveBufferRef.current = [];
+      setLiveLog((prev) => {
+        let next = prev ?? [];
+        for (const evt of pending) {
+          next = appendStreamMessage(next, evt);
+        }
+        return next;
+      });
+    };
+    const scheduleBufferedFlush = (immediate: boolean = false) => {
+      if (immediate) {
+        flushBufferedLiveLog();
+        return;
+      }
+      if (liveFlushTimerRef.current != null) return;
+      liveFlushTimerRef.current = setTimeout(
+        flushBufferedLiveLog,
+        LIVE_LOG_FLUSH_MS,
+      );
+    };
     async function subscribe() {
       if (!enabled || !generating || !logSubject) return;
       try {
@@ -181,7 +221,10 @@ export function useCodexLog({
           if (!evt) continue;
           const withTime =
             getEventTime(evt) == null ? { ...evt, time: Date.now() } : evt;
-          setLiveLog((prev) => appendStreamMessage(prev ?? [], withTime));
+          liveBufferRef.current.push(withTime);
+          scheduleBufferedFlush(
+            withTime.type === "summary" || withTime.type === "error",
+          );
         }
       } catch (err) {
         console.warn("live log subscribe failed", err);
@@ -190,6 +233,11 @@ export function useCodexLog({
     void subscribe();
     return () => {
       stopped = true;
+      if (liveFlushTimerRef.current != null) {
+        clearTimeout(liveFlushTimerRef.current);
+        liveFlushTimerRef.current = null;
+      }
+      liveBufferRef.current = [];
       try {
         sub?.close?.();
       } catch {

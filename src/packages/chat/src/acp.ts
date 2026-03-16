@@ -164,6 +164,37 @@ export function getLatestEventLineText(
   return undefined;
 }
 
+export function getAgentMessageTexts(events: AcpStreamMessage[]): string[] {
+  const messages: string[] = [];
+  for (const evt of events ?? []) {
+    if (evt?.type !== "event" || evt.event?.type !== "message") continue;
+    const text = evt.event.text;
+    if (typeof text !== "string" || text.trim().length === 0) continue;
+    if (messages[messages.length - 1] === text) continue;
+    messages.push(text);
+  }
+  return messages;
+}
+
+// During a running turn the main chat row should be rendered from the live ACP
+// log, not from patchflow-backed chat-row edits. Show all agent message blocks
+// seen so far, then append the evolving summary when present.
+export function getLiveResponseMarkdown(
+  events: AcpStreamMessage[],
+): string | undefined {
+  const blocks = getAgentMessageTexts(events);
+  const summary = getLatestSummaryText(events);
+  if (typeof summary === "string" && summary.trim().length > 0) {
+    if (blocks[blocks.length - 1] !== summary) {
+      blocks.push(summary);
+    }
+  }
+  if (blocks.length > 0) {
+    return blocks.join("\n\n");
+  }
+  return getLatestEventLineText(events);
+}
+
 export function getBestResponseText(
   events: AcpStreamMessage[],
 ): string | undefined {
