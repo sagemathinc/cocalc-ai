@@ -278,11 +278,6 @@ export function useProjectContextProvider({
       ) {
         return;
       }
-      const fallbackPath = getFallbackPath();
-      if (fallbackPath) {
-        openFallbackPath(fallbackPath);
-        return;
-      }
       if (current_path_abs && !selectionChanged) {
         if (workspaces.loading) return;
         workspaces.setSelection(

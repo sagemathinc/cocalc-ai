@@ -18,7 +18,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
@@ -138,8 +138,8 @@ function iconFor(record?: WorkspaceRecord | null): IconName {
 
 const WORKSPACE_MEDIA_SIZE = 64;
 const PROCESS_PANEL_BG = COLORS.GRAY_LLL;
-const WORKSPACE_CARD_CONTENT_MIN_HEIGHT = 210;
-const WORKSPACE_CARD_STATUS_MIN_HEIGHT = 108;
+const WORKSPACE_CARD_STATUS_MIN_HEIGHT_FLYOUT = 40;
+const WORKSPACE_CARD_STATUS_MIN_HEIGHT_PAGE = 56;
 
 function sparklinePoints(
   values: number[],
@@ -174,6 +174,7 @@ function WorkspaceProcessSparkline({
   memColor,
   cpuLabel,
   memLabel,
+  showChart = true,
 }: {
   cpuValues: number[];
   memValues: number[];
@@ -181,11 +182,25 @@ function WorkspaceProcessSparkline({
   memColor: string;
   cpuLabel: string;
   memLabel: string;
+  showChart?: boolean;
 }): React.JSX.Element | null {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const update = () => setContainerWidth(node.clientWidth);
+    update();
+    const observer = new ResizeObserver(() => update());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   const cpuPoints = sparklinePoints(cpuValues, 96, 20);
   const memPoints = sparklinePoints(memValues, 96, 20);
+  const renderChart = showChart && containerWidth >= 260;
   return (
     <div
+      ref={containerRef}
       style={{
         display: "flex",
         alignItems: "center",
@@ -225,7 +240,7 @@ function WorkspaceProcessSparkline({
           {memLabel}
         </span>
       </div>
-      {cpuPoints || memPoints ? (
+      {renderChart && (cpuPoints || memPoints) ? (
         <svg
           width="96"
           height="20"
@@ -616,11 +631,13 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       if (record.chat_path !== chat_path) {
         workspaces.updateWorkspace(record.workspace_id, { chat_path });
       }
-      workspaces.setSelection({
+      const nextSelection = {
         kind: "workspace",
         workspace_id: record.workspace_id,
-      });
+      } satisfies WorkspaceSelection;
+      select(nextSelection);
       await actions.open_file({ path: chat_path, foreground: true });
+      select(nextSelection);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -705,7 +722,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               minWidth: 0,
               display: "flex",
               flexDirection: "column",
-              minHeight: WORKSPACE_CARD_CONTENT_MIN_HEIGHT,
             }}
           >
             <div
@@ -736,7 +752,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             <div
               style={{
                 marginTop: 6,
-                minHeight: WORKSPACE_CARD_STATUS_MIN_HEIGHT,
+                minHeight: isFlyout
+                  ? WORKSPACE_CARD_STATUS_MIN_HEIGHT_FLYOUT
+                  : WORKSPACE_CARD_STATUS_MIN_HEIGHT_PAGE,
               }}
             >
               {record.theme.description ? (
@@ -803,11 +821,12 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                     memColor={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
                     cpuLabel={`CPU ${Math.round(processSummary.cpuPct)}%`}
                     memLabel={`RAM ${formatMemoryMiB(processSummary.memRss)}`}
+                    showChart
                   />
                 </div>
               ) : null}
             </div>
-            <Space size={10} wrap style={{ marginTop: "auto", paddingTop: 8 }}>
+            <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
                 size="small"
                 onClick={(e) => {
