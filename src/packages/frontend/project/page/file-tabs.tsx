@@ -19,6 +19,7 @@ import {
 } from "@cocalc/frontend/components/sortable-tabs";
 import { EDITOR_PREFIX, path_to_tab } from "@cocalc/util/misc";
 import { file_tab_labels } from "../file-tab-labels";
+import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import { reorderVisibleSubset } from "./file-tab-order";
 import { FileTab } from "./file-tab";
 import { FILE_TAB_STRIP_ATTRIBUTE } from "./keyboard-navigation";
@@ -122,7 +123,15 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     actions.close_tab(path);
   }
 
-  const labels = file_tab_labels(paths);
+  const labels = file_tab_labels(
+    paths,
+    paths.map((path) =>
+      generatedWorkspaceChatLabel(
+        path,
+        workspaces.resolveWorkspaceForPath(path),
+      ),
+    ),
+  );
   const items: TabsProps["items"] = [];
 
   for (let index = 0; index < labels.length; index++) {

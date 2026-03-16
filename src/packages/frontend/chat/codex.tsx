@@ -21,6 +21,10 @@ import { lite } from "@cocalc/frontend/lite";
 import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  defaultWorkingDirectoryForChat,
+  useWorkspaceChatWorkingDirectory,
+} from "@cocalc/frontend/project/workspaces/chat-defaults";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
   DEFAULT_CODEX_MODELS,
@@ -122,6 +126,7 @@ export function CodexConfigButton({
   refreshPaymentSource,
 }: CodexConfigButtonProps): React.ReactElement {
   const defaultSessionMode = getDefaultCodexSessionMode();
+  const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [liteCodexStatus, setLiteCodexStatus] = useState<
@@ -155,7 +160,7 @@ export function CodexConfigButton({
       modelValue: baseModel,
     });
     const defaults: CodexThreadConfig = {
-      workingDirectory: defaultWorkingDir(chatPath),
+      workingDirectory: defaultWorkingDir(chatPath, workspaceWorkingDirectory),
       sessionId: "",
       model: baseModel,
       reasoning: baseReasoning,
@@ -190,6 +195,7 @@ export function CodexConfigButton({
     open,
     threadConfig,
     defaultSessionMode,
+    workspaceWorkingDirectory,
   ]);
 
   const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
@@ -601,9 +607,9 @@ function normalizeSessionMode(
   return undefined;
 }
 
-function defaultWorkingDir(chatPath: string): string {
-  if (!chatPath) return ".";
-  const i = chatPath.lastIndexOf("/");
-  if (i <= 0) return ".";
-  return chatPath.slice(0, i);
+function defaultWorkingDir(
+  chatPath: string,
+  workspaceWorkingDirectory?: string,
+): string {
+  return defaultWorkingDirectoryForChat(chatPath, workspaceWorkingDirectory);
 }

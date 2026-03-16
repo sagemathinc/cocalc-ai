@@ -9,13 +9,18 @@ Utility function for determining the labels to put on file tabs.
 
 import { path_split } from "@cocalc/util/misc";
 
-export function file_tab_labels(paths: string[]): string[] {
+export function file_tab_labels(
+  paths: string[],
+  preferredLabels?: Array<string | undefined>,
+): string[] {
   const labels: string[] = [];
   const counts: { [filename: string]: number } = {};
-  for (const path of paths) {
+  for (let i = 0; i < paths.length; i += 1) {
+    const path = paths[i];
     const { tail } = path_split(path);
-    counts[tail] = counts[tail] === undefined ? 1 : counts[tail] + 1;
-    labels.push(tail);
+    const label = preferredLabels?.[i] ?? tail;
+    counts[label] = counts[label] === undefined ? 1 : counts[label] + 1;
+    labels.push(label);
   }
   for (let i = 0; i < labels.length; i++) {
     const label = labels[i];

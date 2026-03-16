@@ -81,6 +81,10 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import {
+  defaultWorkingDirectoryForChat,
+  useWorkspaceChatWorkingDirectory,
+} from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import {
@@ -407,6 +411,7 @@ export function ChatPanel({
   );
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
+  const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
     const title = asTrimmedString(
       getDescValue(desc, "data-newThreadTitleDefault"),
@@ -431,10 +436,10 @@ export function ChatPanel({
         ...baseNewThreadSetup.codexConfig,
         workingDirectory:
           navigatorWorkingDirectory ??
-          baseNewThreadSetup.codexConfig.workingDirectory,
+          defaultWorkingDirectoryForChat(path, workspaceWorkingDirectory),
       },
     };
-  }, [desc]);
+  }, [desc, path, workspaceWorkingDirectory]);
   const [newThreadSetup, setNewThreadSetup] = useState<NewThreadSetup>(
     defaultNewThreadSetup,
   );

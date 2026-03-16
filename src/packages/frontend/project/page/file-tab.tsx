@@ -30,6 +30,7 @@ import track from "@cocalc/frontend/user-tracking";
 import { filename_extension, path_split, path_to_tab } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
+import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import {
   AgentsFlyout,
   CollabsFlyout,
@@ -248,6 +249,8 @@ export function FileTab(props: Readonly<Props>) {
     other_settings.get(ACTIVITY_BAR_KEY),
   );
   const tabAccentMode = other_settings.get("file_tab_accent_mode") ?? "bright";
+  const workspaceRecord =
+    path != null ? workspaces.resolveWorkspaceForPath(path) : null;
 
   // True if there is activity (e.g., active output) in this tab
   const has_activity = useRedux(
@@ -386,7 +389,9 @@ export function FileTab(props: Readonly<Props>) {
         label = intl.formatMessage(label);
       }
     } else if (path != null) {
-      label = path_split(path).tail;
+      label =
+        generatedWorkspaceChatLabel(path, workspaceRecord) ??
+        path_split(path).tail;
     }
   }
 
@@ -398,8 +403,7 @@ export function FileTab(props: Readonly<Props>) {
       : (props.iconName ?? FIXED_PROJECT_TABS[name!].icon);
 
   const image = path == null ? props.imageUrl?.trim() : undefined;
-  const workspaceAccentColor =
-    path != null ? workspaces.resolveWorkspaceForPath(path)?.theme.color : null;
+  const workspaceAccentColor = workspaceRecord?.theme.color ?? null;
 
   const tags =
     status_alerts.length > 0 ? (
