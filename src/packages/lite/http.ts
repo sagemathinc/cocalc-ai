@@ -19,6 +19,7 @@ import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { join } from "node:path";
 import initBlobUpload from "./hub/blobs/upload";
 import initBlobDownload from "./hub/blobs/download";
+import initUpload from "./hub/upload";
 import { account_id } from "@cocalc/backend/data";
 import {
   FALLBACK_PROJECT_UUID,
@@ -164,6 +165,7 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
 
   initBlobUpload(app, conatClient);
   initBlobDownload(app, conatClient);
+  initUpload(app);
 
   app.get("*", (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
