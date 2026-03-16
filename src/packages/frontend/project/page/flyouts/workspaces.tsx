@@ -138,6 +138,8 @@ function iconFor(record?: WorkspaceRecord | null): IconName {
 
 const WORKSPACE_MEDIA_SIZE = 64;
 const PROCESS_PANEL_BG = COLORS.GRAY_LLL;
+const WORKSPACE_CARD_CONTENT_MIN_HEIGHT = 210;
+const WORKSPACE_CARD_STATUS_MIN_HEIGHT = 108;
 
 function sparklinePoints(
   values: number[],
@@ -697,7 +699,15 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               <Icon name={iconFor(record)} />
             </div>
           )}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: WORKSPACE_CARD_CONTENT_MIN_HEIGHT,
+            }}
+          >
             <div
               style={{
                 display: "flex",
@@ -723,74 +733,81 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 {record.root_path}
               </Typography.Text>
             </div>
-            {record.theme.description ? (
-              <Typography.Paragraph
-                type="secondary"
-                style={{ margin: "6px 0 0 0" }}
-                ellipsis={{ rows: isFlyout ? 2 : 3 }}
-              >
-                {record.theme.description}
-              </Typography.Paragraph>
-            ) : null}
-            {record.notice ? (
-              <div
-                style={{ marginTop: 8 }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Alert
-                  type={record.notice.level}
-                  showIcon
-                  closable
-                  message={record.notice.title || "Workspace notice"}
-                  description={record.notice.text}
-                  onClose={() =>
-                    workspaces.updateWorkspace(record.workspace_id, {
-                      notice: null,
-                    })
-                  }
-                />
-              </div>
-            ) : null}
-            {activity ? (
-              <Space size={8} wrap style={{ marginTop: 8 }}>
-                <Tag color={activity.color}>{activity.label}</Tag>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  <TimeAgo date={activity.updatedAt} />
+            <div
+              style={{
+                marginTop: 6,
+                minHeight: WORKSPACE_CARD_STATUS_MIN_HEIGHT,
+              }}
+            >
+              {record.theme.description ? (
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{ margin: 0 }}
+                  ellipsis={{ rows: isFlyout ? 2 : 3 }}
+                >
+                  {record.theme.description}
+                </Typography.Paragraph>
+              ) : null}
+              {record.notice ? (
+                <div
+                  style={{ marginTop: record.theme.description ? 8 : 0 }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Alert
+                    type={record.notice.level}
+                    showIcon
+                    closable
+                    message={record.notice.title || "Workspace notice"}
+                    description={record.notice.text}
+                    onClose={() =>
+                      workspaces.updateWorkspace(record.workspace_id, {
+                        notice: null,
+                      })
+                    }
+                  />
+                </div>
+              ) : null}
+              {activity ? (
+                <Space size={8} wrap style={{ marginTop: 8 }}>
+                  <Tag color={activity.color}>{activity.label}</Tag>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    <TimeAgo date={activity.updatedAt} />
+                  </Typography.Text>
+                </Space>
+              ) : null}
+              {fileActivityLabel ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{
+                    display: "block",
+                    marginTop: 8,
+                    fontSize: 12,
+                  }}
+                >
+                  {fileActivityLabel}
                 </Typography.Text>
-              </Space>
-            ) : null}
-            {fileActivityLabel ? (
-              <Typography.Text
-                type="secondary"
-                style={{
-                  display: "block",
-                  marginTop: 8,
-                  fontSize: 12,
-                }}
-              >
-                {fileActivityLabel}
-              </Typography.Text>
-            ) : null}
-            {hasProcessSummary ? (
-              <div
-                style={{
-                  marginTop: 6,
-                  padding: "4px 6px",
-                  borderRadius: 8,
-                  background: PROCESS_PANEL_BG,
-                }}
-              >
-                <WorkspaceProcessSparkline
-                  cpuValues={processSummary.cpuTrend}
-                  memValues={processSummary.memTrend}
-                  cpuColor={record.theme.color ?? COLORS.BLUE_D}
-                  memColor={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
-                  cpuLabel={`CPU ${Math.round(processSummary.cpuPct)}%`}
-                  memLabel={`RAM ${formatMemoryMiB(processSummary.memRss)}`}
-                />
-              </div>
-            ) : null}
-            <Space size={10} wrap style={{ marginTop: 8 }}>
+              ) : null}
+              {hasProcessSummary ? (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: "4px 6px",
+                    borderRadius: 8,
+                    background: PROCESS_PANEL_BG,
+                  }}
+                >
+                  <WorkspaceProcessSparkline
+                    cpuValues={processSummary.cpuTrend}
+                    memValues={processSummary.memTrend}
+                    cpuColor={record.theme.color ?? COLORS.BLUE_D}
+                    memColor={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
+                    cpuLabel={`CPU ${Math.round(processSummary.cpuPct)}%`}
+                    memLabel={`RAM ${formatMemoryMiB(processSummary.memRss)}`}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <Space size={10} wrap style={{ marginTop: "auto", paddingTop: 8 }}>
               <Button
                 size="small"
                 onClick={(e) => {
@@ -822,7 +839,14 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 {record.pinned ? "Unpin" : "Pin"}
               </Button>
             </Space>
-            <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>
+            <div
+              style={{
+                marginTop: 8,
+                minHeight: 18,
+                fontSize: 12,
+                color: "#888",
+              }}
+            >
               {record.last_used_at ? (
                 <>
                   Used <TimeAgo date={record.last_used_at} />
