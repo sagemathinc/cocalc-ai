@@ -107,6 +107,7 @@ jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
 
 jest.mock("@cocalc/frontend/components", () => ({
   Loading: () => <div>Loading...</div>,
+  ThemeEditorModal: () => null,
 }));
 
 jest.mock("@cocalc/frontend/components/color-picker", () => ({

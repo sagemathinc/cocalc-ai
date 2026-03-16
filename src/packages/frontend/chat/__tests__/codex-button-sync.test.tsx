@@ -37,11 +37,14 @@ jest.mock("antd", () => {
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
+  const { TypedMap, createTypedMap } = require("@cocalc/util/redux/TypedMap");
   return {
     React,
     useEffect: React.useEffect,
     useMemo: React.useMemo,
     useState: React.useState,
+    TypedMap,
+    createTypedMap,
   };
 });
 

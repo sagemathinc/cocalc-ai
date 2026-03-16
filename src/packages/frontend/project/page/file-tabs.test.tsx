@@ -49,6 +49,7 @@ jest.mock("@cocalc/frontend/components/sortable-tabs", () => ({
 
 const workspaces = {
   filterPaths: (paths: string[]) => [...paths],
+  resolveWorkspaceForPath: () => undefined,
   selection: { kind: "all" as const },
 };
 
@@ -74,6 +75,7 @@ describe("FileTabs keyboard navigation", () => {
     mockActions.show.mockReset();
     dragEnd = undefined;
     workspaces.filterPaths = (paths: string[]) => [...paths];
+    workspaces.resolveWorkspaceForPath = () => undefined;
     workspaces.selection = { kind: "all" };
   });
 
