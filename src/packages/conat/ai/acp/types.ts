@@ -266,4 +266,10 @@ export type AcpStreamPayload =
       error: string;
     };
 
-export type AcpStreamMessage = AcpStreamPayload & { seq: number };
+export type AcpStreamMessage = AcpStreamPayload & {
+  seq: number;
+  // Wall-clock time when the event was recorded by CoCalc. Persisted so log
+  // rows can keep stable timestamps after reload instead of only during the
+  // live subscription window.
+  time?: number;
+};

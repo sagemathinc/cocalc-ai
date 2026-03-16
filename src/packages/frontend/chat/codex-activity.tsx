@@ -12,6 +12,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { TimeAgo } from "@cocalc/frontend/components";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -381,10 +382,8 @@ function ActivityRow({
   switch (entry.kind) {
     case "reasoning":
       return (
-        <Space>
-          {/*<Tag color="purple" style={{ marginBottom: 4 }}>
-            Reasoning
-          </Tag>*/}
+        <div>
+          <ActivityTimestamp time={entry.time} />
           {entry.text ? (
             <StaticMarkdown
               value={entry.text}
@@ -397,16 +396,19 @@ function ActivityRow({
               …
             </Text>
           )}
-        </Space>
+        </div>
       );
     case "agent":
       return (
         <div>
-          <TimestampTooltip timestamp={timestamp}>
-            <Tag color="cyan" style={{ marginBottom: 4 }}>
-              Agent
-            </Tag>
-          </TimestampTooltip>
+          <Space size={6} align="center" wrap style={{ marginBottom: 4 }}>
+            <TimestampTooltip timestamp={timestamp}>
+              <Tag color="cyan" style={{ margin: 0 }}>
+                Agent
+              </Tag>
+            </TimestampTooltip>
+            <ActivityTimestamp time={entry.time} />
+          </Space>
           {entry.text ? (
             <StaticMarkdown
               value={entry.text}
@@ -424,19 +426,19 @@ function ActivityRow({
     case "diff":
       return (
         <div>
-          {/* <Tag color="geekblue" style={{ marginBottom: 4 }}>
-            Diff
-          </Tag>*/}
-          <TimestampTooltip timestamp={timestamp}>
-            <span>
-              <PathLink
-                path={entry.path}
-                projectId={projectId}
-                basePath={basePath}
-                bold
-              />
-            </span>
-          </TimestampTooltip>
+          <Space size={6} align="center" wrap style={{ marginBottom: 4 }}>
+            <TimestampTooltip timestamp={timestamp}>
+              <span>
+                <PathLink
+                  path={entry.path}
+                  projectId={projectId}
+                  basePath={basePath}
+                  bold
+                />
+              </span>
+            </TimestampTooltip>
+            <ActivityTimestamp time={entry.time} />
+          </Space>
           <DiffPreview
             diff={entry.diff}
             fontSize={fontSize}
@@ -460,10 +462,14 @@ function ActivityRow({
       return (
         <Space size={6} align="center">
           <TimestampTooltip timestamp={timestamp}>
-            <Tag color={entry.level === "error" ? "red" : "default"}>
+            <Tag
+              color={entry.level === "error" ? "red" : "default"}
+              style={{ margin: 0 }}
+            >
               {entry.label}
             </Tag>
           </TimestampTooltip>
+          <ActivityTimestamp time={entry.time} />
           {entry.detail ? (
             <Text
               type={entry.level === "error" ? "danger" : "secondary"}
@@ -1082,6 +1088,7 @@ export function TerminalRow({
             </Text>
           </TimestampTooltip>
         ) : null}
+        <ActivityTimestamp time={entry.time} />
         {entry.truncated ? (
           <Tag color="red" style={{ margin: 0 }}>
             Output truncated
@@ -1165,6 +1172,7 @@ function FileRow({
             {actionLabel}
           </Text>
         </TimestampTooltip>
+        <ActivityTimestamp time={entry.time} />
         {pathNode}
         {sizeLabel ? (
           <Text
@@ -1283,6 +1291,17 @@ function getMessageTimestamp(message: any): number | undefined {
 function formatEntryTimestamp(time?: number): string | undefined {
   if (typeof time !== "number" || !Number.isFinite(time)) return undefined;
   return new Date(time).toLocaleString();
+}
+
+function ActivityTimestamp({ time }: { time?: number }) {
+  if (typeof time !== "number" || !Number.isFinite(time)) return null;
+  return (
+    <TimestampTooltip timestamp={formatEntryTimestamp(time)}>
+      <Text style={{ fontSize: "9pt", color: COLORS.GRAY_M }}>
+        <TimeAgo date={new Date(time)} />
+      </Text>
+    </TimestampTooltip>
+  );
 }
 
 function TimestampTooltip({

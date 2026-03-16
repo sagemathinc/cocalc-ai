@@ -475,6 +475,40 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("persists durable timestamps on published log events", async () => {
+    const publish = jest.fn().mockResolvedValue(undefined);
+    const logSet = jest.fn().mockResolvedValue(undefined);
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: { publish } as any,
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: logSet,
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "hi" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+
+    (writer as any).persistLogProgress.flush();
+    await flush(writer);
+
+    const published = publish.mock.calls[0]?.[1];
+    expect(typeof published?.time).toBe("number");
+
+    const persistedEvents = logSet.mock.calls[0]?.[1];
+    expect(Array.isArray(persistedEvents)).toBe(true);
+    expect(typeof persistedEvents?.[0]?.time).toBe("number");
+
+    (writer as any).dispose?.(true);
+  });
+
   it("preserves existing thread config fields when persisting loop state", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({

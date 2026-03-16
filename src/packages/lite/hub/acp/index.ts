@@ -1825,6 +1825,7 @@ export class ChatStreamWriter {
     const message: AcpStreamMessage = {
       ...(payload as AcpStreamMessage),
       seq: this.seq++,
+      time: (payload as any).time ?? Date.now(),
     };
     this.processPayload(message, { persist: true });
     const isLastMessage =
@@ -2397,6 +2398,7 @@ export class ChatStreamWriter {
         type: "event",
         event,
         seq: this.seq++,
+        time: Date.now(),
       };
       this.processPayload(message, { persist: true });
       this.commit(true);
