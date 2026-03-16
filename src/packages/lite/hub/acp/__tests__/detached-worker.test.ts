@@ -105,4 +105,36 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(after?.state).toBe("running");
     expect(after?.error ?? null).toBeNull();
   });
+
+  it("requeues stale running jobs that never created a lease", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-a",
+      worker_bundle_version: "bundle-a",
+    });
+    expect(running?.state).toBe("running");
+
+    getDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
+      )
+      .run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      restartReason: "worker restart",
+    });
+
+    const after = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(after?.state).toBe("queued");
+    expect(after?.worker_id ?? null).toBeNull();
+    expect(after?.error).toBe("ACP worker stopped before turn startup");
+  });
 });
