@@ -49,9 +49,17 @@ export interface FrontendBuildCheckStatus {
 let started = false;
 let lastStatus: FrontendBuildCheckStatus | undefined;
 let activeClient: DebugClient | undefined;
+let dismissedMismatchSignature: string | undefined;
 
 function shortRevision(rev: string): string {
   return rev.length > 12 ? rev.slice(0, 12) : rev;
+}
+
+export function createMismatchSignature(
+  build: FrontendSourceFingerprintInfo,
+  source: FrontendSourceFingerprintInfo,
+): string {
+  return `${build.fingerprint}::${source.fingerprint}`;
 }
 
 function getBuiltFrontendFingerprint(): FrontendSourceFingerprintInfo {
@@ -136,16 +144,19 @@ function setBannerVisible(visible: boolean): HTMLDivElement | undefined {
   return banner ?? undefined;
 }
 
-function renderBanner(status: FrontendBuildCheckStatus): void {
+export function renderBanner(status: FrontendBuildCheckStatus): void {
   const banner = setBannerVisible(status.mismatch);
   if (banner == null || !status.mismatch || status.source == null) {
+    return;
+  }
+  const signature = createMismatchSignature(status.build, status.source);
+  if (dismissedMismatchSignature === signature) {
+    hideBanner();
     return;
   }
   const build = status.build;
   const source = status.source;
   const lines = [
-    "Stale Frontend Build Detected",
-    "",
     status.summary,
     "",
     `Built bundle: ${shortRevision(build.git_revision)}  ${build.latest_mtime_iso ?? "N/A"}  ${build.latest_path ?? "N/A"}`,
@@ -154,11 +165,63 @@ function renderBanner(status: FrontendBuildCheckStatus): void {
     "If you just rebuilt or restarted services, reload this tab.",
     "If you changed code without rebuilding or restarting the affected service, do that first and then reload.",
   ];
-  banner.textContent = lines.join("\n");
+  banner.replaceChildren();
+
+  const header = document.createElement("div");
+  Object.assign(header.style, {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    marginBottom: "8px",
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const title = document.createElement("div");
+  title.textContent = "Stale Frontend Build Detected";
+  Object.assign(title.style, {
+    fontWeight: "700",
+    fontSize: "13px",
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.textContent = "Dismiss";
+  dismiss.setAttribute("aria-label", "Dismiss stale frontend build warning");
+  Object.assign(dismiss.style, {
+    border: `1px solid ${COLORS.ANTD_RED_WARN}`,
+    background: "white",
+    color: COLORS.GRAY_DD,
+    borderRadius: "6px",
+    padding: "4px 8px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: "12px",
+  } satisfies Partial<CSSStyleDeclaration>);
+  dismiss.onclick = () => {
+    dismissedMismatchSignature = signature;
+    hideBanner();
+  };
+
+  const body = document.createElement("pre");
+  body.textContent = lines.join("\n");
+  Object.assign(body.style, {
+    margin: "0",
+    whiteSpace: "pre-wrap",
+    fontFamily: "inherit",
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  header.append(title, dismiss);
+  banner.append(header, body);
 }
 
-function hideBanner(): void {
+export function hideBanner(): void {
   setBannerVisible(false);
+}
+
+export function resetDebugBuildCheckBannerState(): void {
+  dismissedMismatchSignature = undefined;
+  const banner = document.getElementById(BANNER_ID);
+  banner?.remove();
 }
 
 function updateDebugNamespace(): void {
@@ -227,6 +290,7 @@ export async function checkFrontendBuildFingerprint(
   if (lastStatus.mismatch) {
     renderBanner(lastStatus);
   } else {
+    dismissedMismatchSignature = undefined;
     hideBanner();
   }
   updateDebugNamespace();
