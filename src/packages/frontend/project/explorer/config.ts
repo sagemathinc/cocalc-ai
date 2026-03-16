@@ -7,19 +7,46 @@ import { type DKV } from "@cocalc/conat/sync/dkv";
 import { type SortField } from "@cocalc/frontend/project/listing/use-listing";
 import { dirname } from "path";
 import { redux } from "@cocalc/frontend/app-framework";
-import { waitForPersistAccountId } from "./persist-account-id";
+import {
+  getPersistAccountId,
+  waitForPersistAccountId,
+} from "./persist-account-id";
 
 const NAME = "cocalc-explorer-config";
 
 let kv: DKV | null = null;
-async function init() {
-  if (kv == null) {
-    const account_id = await waitForPersistAccountId();
-    kv = await webapp_client.conat_client.dkv({
-      name: NAME,
-      account_id,
-    });
+let kvAccountId: string | null = null;
+
+function closeKv() {
+  kv?.close?.();
+  kv = null;
+  kvAccountId = null;
+}
+
+function invalidateIfAccountChanged() {
+  const account_id = getPersistAccountId();
+  if (
+    kv != null &&
+    kvAccountId != null &&
+    account_id &&
+    kvAccountId !== account_id
+  ) {
+    closeKv();
   }
+}
+
+async function init() {
+  invalidateIfAccountChanged();
+  const account_id = await waitForPersistAccountId();
+  if (kv != null && kvAccountId === account_id) {
+    return;
+  }
+  closeKv();
+  kv = await webapp_client.conat_client.dkv({
+    name: NAME,
+    account_id,
+  });
+  kvAccountId = account_id;
 }
 
 interface Location {
@@ -33,6 +60,7 @@ function key({ project_id, path = "/" }: Location) {
 
 // if field is given, goes up the path searching for something with field set
 export function get(location: Location, field?: string) {
+  invalidateIfAccountChanged();
   if (kv == null) {
     init();
     return undefined;
@@ -60,13 +88,11 @@ export async function set(
     config: any;
   },
 ) {
-  if (kv == null) {
-    try {
-      await init();
-    } catch (err) {
-      console.log("WARNING: issue initializing explorer config", err);
-      return;
-    }
+  try {
+    await init();
+  } catch (err) {
+    console.log("WARNING: issue initializing explorer config", err);
+    return;
   }
   if (kv == null) {
     // this should never happen
@@ -104,6 +130,7 @@ const FALLBACK_SEARCH = {
 } as const;
 
 export function getSearch(location) {
+  invalidateIfAccountChanged();
   if (kv == null) {
     init();
     return FALLBACK_SEARCH;
@@ -118,6 +145,7 @@ export function getSort(location: Location): {
   column_name: SortField;
   is_descending: boolean;
 } {
+  invalidateIfAccountChanged();
   if (kv == null) {
     init();
     return FALLBACK_SORT;
@@ -130,12 +158,10 @@ export async function getSortAsync(location: Location): Promise<{
   column_name: SortField;
   is_descending: boolean;
 }> {
-  if (kv == null) {
-    try {
-      await init();
-    } catch {
-      return FALLBACK_SORT;
-    }
+  try {
+    await init();
+  } catch {
+    return FALLBACK_SORT;
   }
   return getSort(location);
 }
