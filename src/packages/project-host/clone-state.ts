@@ -6,6 +6,9 @@ export const CLONED_PROJECT_RESET_PATHS = [
   // authoritative project state.
   ".cache",
   ".local/cache",
+  // Preserve Codex thread/history state, but do not silently clone persisted
+  // auth into a new project.
+  ".codex/auth.json",
 ];
 
 export async function resetClonedProjectState(

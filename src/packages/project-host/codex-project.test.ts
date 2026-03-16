@@ -291,6 +291,94 @@ describe("initCodexProjectRunner", () => {
     );
   });
 
+  it("re-reads the latest host auth.json on app-server token refresh", async () => {
+    spawnMock.mockReturnValue(new FakeProc());
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "codex-project-test-"));
+    const home = path.join(tmp, "home");
+    await fs.mkdir(home, { recursive: true });
+    const codexHome = path.join(tmp, "subscription-home");
+    await fs.mkdir(codexHome, { recursive: true });
+    const initialAccessToken = jwt({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "workspace-123",
+        chatgpt_plan_type: "pro",
+      },
+      token_version: "initial",
+    });
+    const refreshedAccessToken = jwt({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "workspace-123",
+        chatgpt_plan_type: "pro",
+      },
+      token_version: "refreshed",
+    });
+    const authPath = path.join(codexHome, "auth.json");
+    await fs.writeFile(
+      authPath,
+      JSON.stringify({
+        tokens: {
+          access_token: initialAccessToken,
+          account_id: "workspace-123",
+        },
+      }),
+    );
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-1234",
+      codexHome,
+      env: {},
+    });
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawner = getCodexProjectSpawner();
+    const spawned = await spawner!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      cwd: "/root",
+    });
+
+    expect(spawned.appServerLogin).toEqual({
+      type: "chatgptAuthTokens",
+      accessToken: initialAccessToken,
+      chatgptAccountId: "workspace-123",
+      chatgptPlanType: "pro",
+    });
+
+    await fs.writeFile(
+      authPath,
+      JSON.stringify({
+        tokens: {
+          access_token: refreshedAccessToken,
+          account_id: "workspace-123",
+        },
+      }),
+    );
+
+    await expect(
+      spawned.handleAppServerRequest?.({
+        id: 18,
+        method: "account/chatgptAuthTokens/refresh",
+        params: {
+          reason: "unauthorized",
+          previousAccountId: "workspace-123",
+        },
+      }),
+    ).resolves.toEqual({
+      accessToken: refreshedAccessToken,
+      chatgptAccountId: "workspace-123",
+      chatgptPlanType: "pro",
+    });
+  });
+
   it("starts the project container before launching app-server when needed", async () => {
     spawnMock.mockReturnValue(new FakeProc());
     let inspectCalls = 0;

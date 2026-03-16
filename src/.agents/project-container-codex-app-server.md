@@ -87,6 +87,32 @@ tracked during the migration.
     project filesystem
   - document the remaining trust model clearly
 
+### 5. Turn Liveness / Timing Visibility in the UI
+
+- The current UI does show `Running since`, but it still does not make backend
+  liveness clear enough during long or quiet turns.
+- Users need to know not only that a turn started, but also whether the backend
+  is still producing recent activity.
+- The most important missing signal is:
+  - `Last activity`
+- This should be surfaced in a lightweight way that does not clutter the main
+  chat UI.
+- Desired product shape:
+  - keep `Running since`
+  - add `Last activity`
+  - make exact timestamps easy to inspect via hover, tooltip, or an expandable
+    timing/details affordance
+  - show a stale-turn warning when there has been no backend activity for a
+    meaningful amount of time
+- The underlying lifecycle timestamps we should make available are:
+  - backend accepted / running
+  - first backend activity
+  - first assistant output
+  - last activity
+  - terminal time
+- This should make it easy for users to answer the practical question:
+  - is the turn really running, or has it been idle/hung for a long time?
+
 ## Product Decision
 
 Keep this split:
