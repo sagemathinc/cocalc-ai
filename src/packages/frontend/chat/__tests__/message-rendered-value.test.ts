@@ -52,7 +52,6 @@ describe("resolveRenderedMessageValue", () => {
     expect(
       shouldSuppressAcpPlaceholderBody({
         value: ACP_THINKING_PLACEHOLDER,
-        generating: true,
         showCodexActivity: true,
       }),
     ).toBe(true);
@@ -60,7 +59,6 @@ describe("resolveRenderedMessageValue", () => {
     expect(
       shouldSuppressAcpPlaceholderBody({
         value: ACP_THINKING_PLACEHOLDER,
-        generating: true,
         showCodexActivity: false,
       }),
     ).toBe(false);

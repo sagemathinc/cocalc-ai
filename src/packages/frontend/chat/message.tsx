@@ -361,16 +361,12 @@ export function resolveRenderedMessageValue({
 
 export function shouldSuppressAcpPlaceholderBody({
   value,
-  generating,
   showCodexActivity,
 }: {
   value: string;
-  generating: boolean;
   showCodexActivity: boolean;
 }): boolean {
-  return (
-    showCodexActivity && generating && value.trim() === ACP_THINKING_PLACEHOLDER
-  );
+  return showCodexActivity && value.trim() === ACP_THINKING_PLACEHOLDER;
 }
 
 export function resolveEffectiveGenerating({
@@ -1355,7 +1351,6 @@ export default function Message({
     const value = renderedMessageMarkdown;
     const suppressPlaceholderBody = shouldSuppressAcpPlaceholderBody({
       value,
-      generating: effectiveGenerating,
       showCodexActivity,
     });
     const inlineCodeLinks = field<InlineCodeLink[]>(
