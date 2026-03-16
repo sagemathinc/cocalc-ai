@@ -116,54 +116,50 @@ describe("a throttled list of objects", () => {
 });
 
 describe("adaptive terminal output throttle", () => {
-  it("pauses when buffered output crosses the high-water mark and resumes after a flush", async () => {
-    const events: string[] = [];
+  it("drops from base fps to a slower sustained rate after a large flush", async () => {
     const throttle = createAdaptiveTerminalOutputThrottle({
-      messagesPerSecond: 10,
-      highWaterBytes: 5,
-      lowWaterBytes: 2,
-      publish: (data) => {
-        events.push(`data:${data}`);
-      },
-      pause: () => {
-        events.push("pause");
-      },
-      resume: () => {
-        events.push("resume");
-      },
+      messagesPerSecond: 24,
+      mediumMessagesPerSecond: 8,
+      slowMessagesPerSecond: 4,
+      mediumBytes: 5,
+      slowBytes: 10,
+      coolBytes: 2,
+      publish: () => {},
     });
-
-    throttle.write("abc");
-    expect(events).toEqual([]);
-    expect(throttle.isPaused()).toBe(false);
-
-    throttle.write("def");
-    expect(events).toEqual(["pause"]);
-    expect(throttle.isPaused()).toBe(true);
-
-    await delay(120);
-    expect(events).toEqual(["pause", "data:abcdef", "resume"]);
-    expect(throttle.isPaused()).toBe(false);
+    throttle.write("abcdefghijk");
+    await delay(60);
+    expect(throttle.messagesPerSecond()).toBe(4);
   });
 
-  it("resumes on close if it paused the pty", () => {
-    const events: string[] = [];
+  it("returns to the base fps after output cools down", async () => {
+    const originalSetTimeout = global.setTimeout;
+    const delays: number[] = [];
+    global.setTimeout = ((handler, timeout?: number, ...args: any[]) => {
+      delays.push(timeout ?? 0);
+      return originalSetTimeout(handler as any, timeout, ...args);
+    }) as typeof setTimeout;
     const throttle = createAdaptiveTerminalOutputThrottle({
-      messagesPerSecond: 10,
-      highWaterBytes: 5,
-      lowWaterBytes: 2,
+      messagesPerSecond: 24,
+      mediumMessagesPerSecond: 8,
+      slowMessagesPerSecond: 4,
+      mediumBytes: 5,
+      slowBytes: 10,
+      coolBytes: 2,
       publish: () => {},
-      pause: () => {
-        events.push("pause");
-      },
-      resume: () => {
-        events.push("resume");
-      },
     });
+    try {
+      throttle.write("abcdefghijk");
+      await delay(60);
+      expect(throttle.messagesPerSecond()).toBe(4);
 
-    throttle.write("abcdef");
-    expect(events).toEqual(["pause"]);
-    throttle.close();
-    expect(events).toEqual(["pause", "resume"]);
+      throttle.write("x");
+      await delay(260);
+      expect(throttle.messagesPerSecond()).toBe(24);
+
+      throttle.write("y");
+      expect(throttle.messagesPerSecond()).toBe(24);
+    } finally {
+      global.setTimeout = originalSetTimeout;
+    }
   });
 });

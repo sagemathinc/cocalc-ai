@@ -14,12 +14,12 @@ const DEFAULT_MESSAGES_PER_SECOND = 24;
 export class ThrottleString extends EventEmitter {
   private buf: string = "";
   private last = Date.now();
-  private interval: number;
+  private messagesPerSecond: number;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(messagesPerSecond: number = DEFAULT_MESSAGES_PER_SECOND) {
     super();
-    this.interval = 1000 / messagesPerSecond;
+    this.messagesPerSecond = Math.max(1, messagesPerSecond);
   }
 
   close = () => {
@@ -34,7 +34,7 @@ export class ThrottleString extends EventEmitter {
   write = (data: string) => {
     this.buf += data;
     const now = Date.now();
-    const timeUntilEmit = this.interval - (now - this.last);
+    const timeUntilEmit = this.getInterval() - (now - this.last);
     if (timeUntilEmit > 0) {
       if (this.timer == null) {
         this.timer = setTimeout(() => {
@@ -61,6 +61,14 @@ export class ThrottleString extends EventEmitter {
   };
 
   bufferedLength = () => this.buf.length;
+
+  setMessagesPerSecond = (messagesPerSecond: number) => {
+    this.messagesPerSecond = Math.max(1, messagesPerSecond);
+  };
+
+  getMessagesPerSecond = () => this.messagesPerSecond;
+
+  private getInterval = () => 1000 / this.messagesPerSecond;
 }
 
 // Throttle a list of objects, where push them into an array to add more to our buffer.
@@ -121,63 +129,66 @@ export class Throttle<T> extends EventEmitter {
 
 export function createAdaptiveTerminalOutputThrottle({
   messagesPerSecond = DEFAULT_MESSAGES_PER_SECOND,
-  highWaterBytes,
-  lowWaterBytes,
+  mediumMessagesPerSecond = Math.min(messagesPerSecond, 8),
+  slowMessagesPerSecond = Math.min(messagesPerSecond, 4),
+  mediumBytes,
+  slowBytes,
+  coolBytes,
   publish,
-  pause,
-  resume,
 }: {
   messagesPerSecond?: number;
-  highWaterBytes: number;
-  lowWaterBytes: number;
+  mediumMessagesPerSecond?: number;
+  slowMessagesPerSecond?: number;
+  mediumBytes: number;
+  slowBytes: number;
+  coolBytes: number;
   publish: (data: string) => void;
-  pause?: () => void;
-  resume?: () => void;
 }) {
-  if (lowWaterBytes > highWaterBytes) {
-    throw new Error("lowWaterBytes must be <= highWaterBytes");
+  if (!(coolBytes <= mediumBytes && mediumBytes <= slowBytes)) {
+    throw new Error("expected coolBytes <= mediumBytes <= slowBytes");
   }
   const throttle = new ThrottleString(messagesPerSecond);
-  let paused = false;
+  const baseMessagesPerSecond = Math.max(1, messagesPerSecond);
+  const mediumMessagesPerSecondClamped = Math.max(
+    1,
+    Math.min(baseMessagesPerSecond, mediumMessagesPerSecond),
+  );
+  const slowMessagesPerSecondClamped = Math.max(
+    1,
+    Math.min(mediumMessagesPerSecondClamped, slowMessagesPerSecond),
+  );
 
-  const maybePause = () => {
-    if (paused || throttle.bufferedLength() < highWaterBytes) {
+  const adaptRate = (emittedBytes: number) => {
+    if (emittedBytes >= slowBytes) {
+      throttle.setMessagesPerSecond(slowMessagesPerSecondClamped);
       return;
     }
-    pause?.();
-    paused = true;
-  };
-
-  const maybeResume = () => {
-    if (!paused || throttle.bufferedLength() > lowWaterBytes) {
+    if (emittedBytes >= mediumBytes) {
+      throttle.setMessagesPerSecond(mediumMessagesPerSecondClamped);
       return;
     }
-    resume?.();
-    paused = false;
+    if (emittedBytes <= coolBytes) {
+      throttle.setMessagesPerSecond(baseMessagesPerSecond);
+    }
   };
 
   throttle.on("data", (data: string) => {
     publish(data);
-    maybeResume();
+    adaptRate(data.length);
   });
 
   return {
     write(data: string) {
       throttle.write(data);
-      maybePause();
     },
     close() {
       throttle.close();
-      if (paused) {
-        resume?.();
-        paused = false;
-      }
     },
     bufferedLength() {
       return throttle.bufferedLength();
     },
-    isPaused() {
-      return paused;
+    messagesPerSecond() {
+      return throttle.getMessagesPerSecond();
     },
   };
 }

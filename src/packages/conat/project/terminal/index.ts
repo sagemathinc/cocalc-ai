@@ -27,12 +27,24 @@ const MAX_HISTORY_LENGTH = parseInt(
   process.env.COCALC_TERMINAL_MAX_HISTORY_LENGTH ?? "1000000",
 );
 
-const OUTPUT_HIGH_WATER_BYTES = parseInt(
-  process.env.COCALC_TERMINAL_OUTPUT_HIGH_WATER_BYTES ?? "262144",
+const ADAPTIVE_MEDIUM_MSGS_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_MEDIUM_MSGS_PER_SECOND ?? "8",
 );
 
-const OUTPUT_LOW_WATER_BYTES = parseInt(
-  process.env.COCALC_TERMINAL_OUTPUT_LOW_WATER_BYTES ?? "65536",
+const ADAPTIVE_SLOW_MSGS_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_SLOW_MSGS_PER_SECOND ?? "4",
+);
+
+const ADAPTIVE_MEDIUM_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_MEDIUM_BYTES ?? "32768",
+);
+
+const ADAPTIVE_SLOW_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_SLOW_BYTES ?? "131072",
+);
+
+const ADAPTIVE_COOL_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_COOL_BYTES ?? "8192",
 );
 
 const DEFAULT_SIZE_WAIT = 2000;
@@ -510,21 +522,12 @@ export function terminalServer({
 
           outputThrottle = createAdaptiveTerminalOutputThrottle({
             messagesPerSecond: MAX_MSGS_PER_SECOND,
-            highWaterBytes: OUTPUT_HIGH_WATER_BYTES,
-            lowWaterBytes: OUTPUT_LOW_WATER_BYTES,
+            mediumMessagesPerSecond: ADAPTIVE_MEDIUM_MSGS_PER_SECOND,
+            slowMessagesPerSecond: ADAPTIVE_SLOW_MSGS_PER_SECOND,
+            mediumBytes: ADAPTIVE_MEDIUM_BYTES,
+            slowBytes: ADAPTIVE_SLOW_BYTES,
+            coolBytes: ADAPTIVE_COOL_BYTES,
             publish: sendToClient,
-            pause:
-              typeof pty?.pause === "function"
-                ? () => {
-                    pty.pause();
-                  }
-                : undefined,
-            resume:
-              typeof pty?.resume === "function"
-                ? () => {
-                    pty.resume();
-                  }
-                : undefined,
           });
           pty.on("data", outputThrottle.write);
 

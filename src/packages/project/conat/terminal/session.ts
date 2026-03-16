@@ -63,12 +63,24 @@ const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_TERMINAL_MAX_MSGS_PER_SECOND ?? "20",
 );
 
-const OUTPUT_HIGH_WATER_BYTES = parseInt(
-  process.env.COCALC_TERMINAL_OUTPUT_HIGH_WATER_BYTES ?? "262144",
+const ADAPTIVE_MEDIUM_MSGS_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_MEDIUM_MSGS_PER_SECOND ?? "8",
 );
 
-const OUTPUT_LOW_WATER_BYTES = parseInt(
-  process.env.COCALC_TERMINAL_OUTPUT_LOW_WATER_BYTES ?? "65536",
+const ADAPTIVE_SLOW_MSGS_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_SLOW_MSGS_PER_SECOND ?? "4",
+);
+
+const ADAPTIVE_MEDIUM_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_MEDIUM_BYTES ?? "32768",
+);
+
+const ADAPTIVE_SLOW_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_SLOW_BYTES ?? "131072",
+);
+
+const ADAPTIVE_COOL_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_ADAPTIVE_COOL_BYTES ?? "8192",
 );
 
 type State = "running" | "off" | "closed";
@@ -277,16 +289,13 @@ export class Session {
     // due to being *slightly* off.
     const throttle = createAdaptiveTerminalOutputThrottle({
       messagesPerSecond: MAX_MSGS_PER_SECOND - 3,
-      highWaterBytes: OUTPUT_HIGH_WATER_BYTES,
-      lowWaterBytes: OUTPUT_LOW_WATER_BYTES,
+      mediumMessagesPerSecond: ADAPTIVE_MEDIUM_MSGS_PER_SECOND,
+      slowMessagesPerSecond: ADAPTIVE_SLOW_MSGS_PER_SECOND,
+      mediumBytes: ADAPTIVE_MEDIUM_BYTES,
+      slowBytes: ADAPTIVE_SLOW_BYTES,
+      coolBytes: ADAPTIVE_COOL_BYTES,
       publish: (data: string) => {
         this.stream?.publish(data);
-      },
-      pause: () => {
-        this.pty?.pause();
-      },
-      resume: () => {
-        this.pty?.resume();
       },
     });
     const outputListener = this.pty.onData(throttle.write);
