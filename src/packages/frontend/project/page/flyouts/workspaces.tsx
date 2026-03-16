@@ -19,6 +19,7 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   type AgentSessionRecord,
@@ -36,12 +37,20 @@ import {
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
+import useProjectInfoHistory from "@cocalc/frontend/project/info/use-project-info-history";
+import {
+  summarizeWorkspaceProcesses,
+  type WorkspaceProcessSummary,
+} from "@cocalc/frontend/project/workspaces/process-summary";
 import {
   ensureWorkspaceChatDirectory,
   ensureWorkspaceChatPath,
 } from "@cocalc/frontend/project/workspaces/runtime";
 import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   WorkspaceCreateInput,
   WorkspaceRecord,
@@ -102,6 +111,83 @@ function iconFor(record?: WorkspaceRecord | null): IconName {
 }
 
 const WORKSPACE_MEDIA_SIZE = 64;
+const PROCESS_PANEL_BG = COLORS.GRAY_LLL;
+
+function sparklinePoints(
+  values: number[],
+  width = 120,
+  height = 28,
+): string | null {
+  if (values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const dx = width / (values.length - 1);
+  const y = (value: number) => {
+    if (max === min) return height / 2;
+    return height - ((value - min) / (max - min)) * (height - 4) - 2;
+  };
+  return values
+    .map((value, i) => `${(i * dx).toFixed(2)},${y(value).toFixed(2)}`)
+    .join(" ");
+}
+
+function formatMemoryMiB(memRss: number): string {
+  if (!Number.isFinite(memRss) || memRss <= 0) return "0 MiB";
+  if (memRss >= 1024) {
+    return `${(memRss / 1024).toFixed(memRss >= 10 * 1024 ? 0 : 1)} GiB`;
+  }
+  return `${Math.round(memRss)} MiB`;
+}
+
+function WorkspaceProcessTrend({
+  label,
+  values,
+  color,
+  unit,
+}: {
+  label: string;
+  values: number[];
+  color: string;
+  unit: string;
+}): React.JSX.Element | null {
+  const points = sparklinePoints(values);
+  if (!points) return null;
+  const latest = values[values.length - 1] ?? 0;
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          fontSize: 11,
+          color: COLORS.GRAY_D,
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <span>{label}</span>
+        <span>
+          {unit === "%"
+            ? `${Math.round(latest)}%`
+            : formatMemoryMiB(Number(latest))}
+        </span>
+      </div>
+      <svg
+        width="100%"
+        height="28"
+        viewBox="0 0 120 28"
+        preserveAspectRatio="none"
+      >
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          points={points}
+          strokeLinecap="round"
+        />
+      </svg>
+    </div>
+  );
+}
 
 function selectionValue(selection: WorkspaceSelection): string {
   switch (selection.kind) {
@@ -282,7 +368,7 @@ function getWorkspaceOpenFileActivity(
   let other = 0;
 
   for (const path of openFilesOrder) {
-    if (!pathMatchesRoot(path, record.root_path)) continue;
+    if (!pathMatchesWorkspace(record, path)) continue;
     const hasActivity = !!openFiles?.getIn?.([path, "has_activity"]);
     if (!hasActivity) continue;
     if (path.endsWith(".term")) {
@@ -307,6 +393,12 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const activePath = useMemo(
     () => tab_to_path(active_project_tab ?? ""),
     [active_project_tab],
+  );
+  const { info } = useProjectInfo({ project_id });
+  const { history } = useProjectInfoHistory({ project_id, minutes: 30 });
+  const homeDirectory = useMemo(
+    () => getProjectHomeDirectory(project_id),
+    [project_id],
   );
   const [editing, setEditing] = useState<EditorDraft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -485,6 +577,11 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       openFilesOrder,
       openFiles,
     );
+    const processSummary: WorkspaceProcessSummary | null =
+      processSummaryByWorkspaceId.get(record.workspace_id) ?? null;
+    const hasProcessSummary =
+      processSummary != null &&
+      (processSummary.processCount > 0 || processSummary.cpuTrend.length >= 2);
     return (
       <Card
         key={record.workspace_id}
@@ -622,6 +719,66 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 ) : null}
               </Space>
             ) : null}
+            {hasProcessSummary ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: 8,
+                  borderRadius: 8,
+                  background: PROCESS_PANEL_BG,
+                }}
+              >
+                <Space size={8} wrap style={{ marginBottom: 6 }}>
+                  <Tag color="geekblue">
+                    {processSummary.processCount === 1
+                      ? "1 process"
+                      : `${processSummary.processCount} processes`}
+                  </Tag>
+                  <Tag color="blue">
+                    CPU {Math.round(processSummary.cpuPct)}%
+                  </Tag>
+                  <Tag color="green">
+                    RAM {formatMemoryMiB(processSummary.memRss)}
+                  </Tag>
+                  {processSummary.terminals > 0 ? (
+                    <Tag color="orange">
+                      {processSummary.terminals === 1
+                        ? "1 terminal"
+                        : `${processSummary.terminals} terminals`}
+                    </Tag>
+                  ) : null}
+                  {processSummary.notebooks > 0 ? (
+                    <Tag color="gold">
+                      {processSummary.notebooks === 1
+                        ? "1 notebook"
+                        : `${processSummary.notebooks} notebooks`}
+                    </Tag>
+                  ) : null}
+                </Space>
+                {processSummary.cpuTrend.length >= 2 ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    <WorkspaceProcessTrend
+                      label="CPU"
+                      values={processSummary.cpuTrend}
+                      unit="%"
+                      color={record.theme.color ?? COLORS.BLUE_D}
+                    />
+                    <WorkspaceProcessTrend
+                      label="RAM"
+                      values={processSummary.memTrend}
+                      unit="MiB"
+                      color={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
                 size="small"
@@ -700,6 +857,21 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     }
     return grouped;
   }, [now, workspaces.records]);
+  const processSummaryByWorkspaceId = useMemo(
+    () =>
+      new Map(
+        workspaces.records.map((record) => [
+          record.workspace_id,
+          summarizeWorkspaceProcesses({
+            record,
+            info,
+            history,
+            homeDirectory,
+          }),
+        ]),
+      ),
+    [history, homeDirectory, info, workspaces.records],
+  );
   const canUseActiveChat =
     editing != null &&
     activeChatPath != null &&
