@@ -294,6 +294,8 @@ function WorkspaceProcessSparkline({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
+        width: "100%",
+        minWidth: 0,
       }}
     >
       <div
