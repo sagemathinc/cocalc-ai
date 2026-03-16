@@ -359,6 +359,10 @@ export function Explorer() {
   }, [actions, visibleListing?.length]);
 
   useEffect(() => {
+    allowNextListingUpdate();
+  }, [file_search, allowNextListingUpdate]);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
       const nextSort = await getSortAsync({

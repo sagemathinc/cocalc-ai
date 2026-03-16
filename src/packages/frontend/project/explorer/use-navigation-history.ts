@@ -140,7 +140,7 @@ export function useNavigationHistory(
       dkvRef.current = null;
       setInitialized(false);
     };
-  }, [currentPath, dkvKey, project_id, storageKey]);
+  }, [dkvKey, project_id, storageKey]);
 
   useEffect(() => {
     if (!initialized) return;
