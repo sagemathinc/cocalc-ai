@@ -1,0 +1,449 @@
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+
+import {
+  buildThreadConfigRecord,
+  type ChatThreadConfigRecord,
+  type ChatThreadLoopConfig,
+} from "@cocalc/chat";
+import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
+import { automationAcp } from "@cocalc/conat/ai/acp/client";
+import type {
+  AcpAutomationConfig,
+  AcpAutomationRequest,
+  AcpAutomationResponse,
+} from "@cocalc/conat/ai/acp/types";
+import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+
+type ProjectIdentity = {
+  project_id: string;
+  title: string;
+  host_id: string | null;
+};
+
+type ThreadConfigPatch = Partial<
+  Pick<
+    ChatThreadConfigRecord,
+    | "name"
+    | "agent_kind"
+    | "agent_model"
+    | "agent_mode"
+    | "acp_config"
+    | "archived"
+  >
+> & {
+  loop_config?: ChatThreadConfigRecord["loop_config"] | null;
+  loop_state?: ChatThreadConfigRecord["loop_state"] | null;
+  automation_config?: ChatThreadConfigRecord["automation_config"] | null;
+  automation_state?: ChatThreadConfigRecord["automation_state"] | null;
+};
+
+type ProjectChatAutomationAction = AcpAutomationRequest["action"] | "status";
+
+type ProjectChatOpsDeps<Ctx, Project extends ProjectIdentity> = {
+  resolveProjectConatClient: (
+    ctx: Ctx,
+    projectIdentifier?: string,
+    cwd?: string,
+  ) => Promise<{
+    project: Project;
+    client: any;
+  }>;
+};
+
+function normalizeThreadConfigRecord(
+  value: unknown,
+): Partial<ChatThreadConfigRecord> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Partial<ChatThreadConfigRecord>;
+}
+
+function getThreadConfigRecord(
+  syncdb: any,
+  threadId: string,
+): ChatThreadConfigRecord | undefined {
+  const cleanThreadId = `${threadId ?? ""}`.trim();
+  if (!cleanThreadId) return undefined;
+  const row = syncdb.get_one?.({
+    event: "chat-thread-config",
+    thread_id: cleanThreadId,
+  });
+  return row ? (row as ChatThreadConfigRecord) : undefined;
+}
+
+function listThreadConfigRecords(syncdb: any): ChatThreadConfigRecord[] {
+  const rows = syncdb.get?.({ event: "chat-thread-config" });
+  return Array.isArray(rows)
+    ? rows.filter((row) => row?.event === "chat-thread-config")
+    : [];
+}
+
+function summarizeThread(
+  row: ChatThreadConfigRecord,
+  syncdb: any,
+): Record<string, unknown> {
+  const thread_id = `${row.thread_id ?? ""}`.trim();
+  const messages = Array.isArray(
+    syncdb.get?.({
+      event: "chat",
+      thread_id,
+    }),
+  )
+    ? syncdb.get({
+        event: "chat",
+        thread_id,
+      })
+    : [];
+  return {
+    thread_id,
+    name: row.name ?? null,
+    agent_kind: row.agent_kind ?? null,
+    agent_model: row.agent_model ?? null,
+    agent_mode: row.agent_mode ?? null,
+    acp_config: row.acp_config ?? null,
+    loop_config: row.loop_config ?? null,
+    loop_state: row.loop_state ?? null,
+    automation_config: row.automation_config ?? null,
+    automation_state: row.automation_state ?? null,
+    archived: !!row.archived,
+    updated_at: row.updated_at ?? null,
+    updated_by: row.updated_by ?? null,
+    chat_rows: messages.length,
+  };
+}
+
+export function mergeThreadConfigRecord(opts: {
+  existing?: ChatThreadConfigRecord;
+  threadId: string;
+  accountId: string;
+  patch: ThreadConfigPatch;
+}): ChatThreadConfigRecord {
+  const { existing, threadId, accountId, patch } = opts;
+  const base = normalizeThreadConfigRecord(existing);
+  return buildThreadConfigRecord({
+    ...(base as any),
+    thread_id: threadId,
+    updated_by: accountId,
+    updated_at: new Date().toISOString(),
+    ...patch,
+  });
+}
+
+async function withProjectChatSyncDb<Ctx, Project extends ProjectIdentity, T>({
+  deps,
+  ctx,
+  projectIdentifier,
+  chatPath,
+  ensureParentDir,
+  cwd,
+  fn,
+}: {
+  deps: ProjectChatOpsDeps<Ctx, Project>;
+  ctx: Ctx;
+  projectIdentifier?: string;
+  chatPath: string;
+  ensureParentDir?: boolean;
+  cwd?: string;
+  fn: (args: { project: Project; client: any; syncdb: any }) => Promise<T>;
+}): Promise<T> {
+  const path = `${chatPath ?? ""}`.trim();
+  if (!path) {
+    throw new Error("--path is required");
+  }
+  const { project, client } = await deps.resolveProjectConatClient(
+    ctx,
+    projectIdentifier,
+    cwd,
+  );
+  if (ensureParentDir) {
+    await client.fs({ project_id: project.project_id }).mkdir(dirname(path), {
+      recursive: true,
+    });
+  }
+  const syncdb = await acquireChatSyncDB({
+    client,
+    project_id: project.project_id,
+    path,
+    persistent: true,
+  });
+  try {
+    return await fn({ project, client, syncdb });
+  } finally {
+    await releaseChatSyncDB(project.project_id, path);
+  }
+}
+
+export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
+  deps: ProjectChatOpsDeps<Ctx, Project>,
+) {
+  async function projectChatThreadCreateData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    name,
+    agentKind,
+    agentModel,
+    agentMode,
+    acpConfig,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId?: string;
+    name?: string;
+    agentKind?: "acp" | "llm" | "none";
+    agentModel?: string;
+    agentMode?: "interactive" | "single_turn";
+    acpConfig?: CodexSessionConfig;
+    cwd?: string;
+  }): Promise<Record<string, unknown>> {
+    return await withProjectChatSyncDb({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      ensureParentDir: true,
+      cwd,
+      fn: async ({ project, syncdb }) => {
+        const nextThreadId = `${threadId ?? ""}`.trim() || randomUUID();
+        if (getThreadConfigRecord(syncdb, nextThreadId)) {
+          throw new Error(`thread '${nextThreadId}' already exists`);
+        }
+        const record = buildThreadConfigRecord({
+          thread_id: nextThreadId,
+          updated_by: (ctx as any).accountId,
+          updated_at: new Date().toISOString(),
+          ...(name?.trim() ? { name: name.trim() } : undefined),
+          ...(agentKind ? { agent_kind: agentKind } : undefined),
+          ...(agentMode ? { agent_mode: agentMode } : undefined),
+          ...(agentModel?.trim()
+            ? { agent_model: agentModel.trim() }
+            : undefined),
+          ...(acpConfig ? { acp_config: acpConfig } : undefined),
+        });
+        syncdb.set(record);
+        syncdb.commit();
+        await syncdb.save();
+        return {
+          project_id: project.project_id,
+          path,
+          created: true,
+          thread: summarizeThread(record, syncdb),
+        };
+      },
+    });
+  }
+
+  async function projectChatThreadStatusData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId?: string;
+    cwd?: string;
+  }): Promise<Record<string, unknown>> {
+    return await withProjectChatSyncDb({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, syncdb }) => {
+        const cleanThreadId = `${threadId ?? ""}`.trim();
+        if (cleanThreadId) {
+          const row = getThreadConfigRecord(syncdb, cleanThreadId);
+          if (!row) {
+            throw new Error(`thread '${cleanThreadId}' not found`);
+          }
+          return {
+            project_id: project.project_id,
+            path,
+            thread: summarizeThread(row, syncdb),
+          };
+        }
+        return {
+          project_id: project.project_id,
+          path,
+          threads: listThreadConfigRecords(syncdb).map((row) =>
+            summarizeThread(row, syncdb),
+          ),
+        };
+      },
+    });
+  }
+
+  async function projectChatLoopSetData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    config,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    config: ChatThreadLoopConfig;
+    cwd?: string;
+  }): Promise<Record<string, unknown>> {
+    return await withProjectChatSyncDb({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, syncdb }) => {
+        const existing = getThreadConfigRecord(syncdb, threadId);
+        if (!existing) {
+          throw new Error(`thread '${threadId}' not found`);
+        }
+        const next = mergeThreadConfigRecord({
+          existing,
+          threadId,
+          accountId: (ctx as any).accountId,
+          patch: {
+            loop_config: config,
+            loop_state: null,
+          },
+        });
+        syncdb.set(next);
+        syncdb.commit();
+        await syncdb.save();
+        return {
+          project_id: project.project_id,
+          path,
+          thread: summarizeThread(next, syncdb),
+        };
+      },
+    });
+  }
+
+  async function projectChatLoopClearData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    cwd?: string;
+  }): Promise<Record<string, unknown>> {
+    return await withProjectChatSyncDb({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, syncdb }) => {
+        const existing = getThreadConfigRecord(syncdb, threadId);
+        if (!existing) {
+          throw new Error(`thread '${threadId}' not found`);
+        }
+        const next = mergeThreadConfigRecord({
+          existing,
+          threadId,
+          accountId: (ctx as any).accountId,
+          patch: {
+            loop_config: null,
+            loop_state: null,
+          },
+        });
+        syncdb.set(next);
+        syncdb.commit();
+        await syncdb.save();
+        return {
+          project_id: project.project_id,
+          path,
+          thread: summarizeThread(next, syncdb),
+        };
+      },
+    });
+  }
+
+  async function projectChatAutomationData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    action,
+    config,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    action: ProjectChatAutomationAction;
+    config?: AcpAutomationConfig | null;
+    cwd?: string;
+  }): Promise<Record<string, unknown>> {
+    return await withProjectChatSyncDb({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, client, syncdb }) => {
+        if (action === "status") {
+          const row = getThreadConfigRecord(syncdb, threadId);
+          if (!row) {
+            throw new Error(`thread '${threadId}' not found`);
+          }
+          return {
+            project_id: project.project_id,
+            path,
+            thread_id: threadId,
+            config: row.automation_config ?? null,
+            state: row.automation_state ?? null,
+          };
+        }
+        const row = getThreadConfigRecord(syncdb, threadId);
+        if (!row) {
+          throw new Error(`thread '${threadId}' not found`);
+        }
+        const response = (await automationAcp(
+          {
+            project_id: project.project_id,
+            account_id: (ctx as any).accountId,
+            path,
+            thread_id: threadId,
+            action,
+            ...(config ? { config } : undefined),
+          } as AcpAutomationRequest,
+          client,
+        )) as AcpAutomationResponse;
+        const refreshed = getThreadConfigRecord(syncdb, threadId);
+        return {
+          project_id: project.project_id,
+          path,
+          thread_id: threadId,
+          ok: !!response.ok,
+          config: response.config ?? refreshed?.automation_config ?? null,
+          state: response.state ?? refreshed?.automation_state ?? null,
+          record: response.record ?? null,
+        };
+      },
+    });
+  }
+
+  return {
+    projectChatThreadCreateData,
+    projectChatThreadStatusData,
+    projectChatLoopSetData,
+    projectChatLoopClearData,
+    projectChatAutomationData,
+  };
+}
