@@ -91,6 +91,11 @@ export async function ensureAcpWorkerRunning({
     COCALC_LITE_SQLITE_FILENAME: path.join(data, "hub.db"),
     COCALC_LITE_ACP_WORKER_CONAT_PASSWORD: conatPassword,
     COCALC_LITE_ACP_WORKER_PID_FILE: ACP_WORKER_PID_FILE,
+    // The worker's stdout/stderr are already redirected to acp-worker.log.
+    // Force debug logging to stay on console so the useful ACP worker logs land
+    // in that file instead of being redirected again into the shared dev log.
+    DEBUG_CONSOLE: "yes",
+    DEBUG_FILE: "",
   };
   const child = spawn(process.execPath, [script], {
     detached: true,

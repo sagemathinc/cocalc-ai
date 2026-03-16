@@ -1,6 +1,9 @@
 #!/usr/bin/env ts-node
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { recoverDetachedWorkerStartupState } from "../index";
+import {
+  recoverDetachedWorkerStartupState,
+  shouldStopDetachedWorkerForIdle,
+} from "../index";
 import {
   closeDatabase,
   getDatabase,
@@ -136,5 +139,38 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(after?.state).toBe("queued");
     expect(after?.worker_id ?? null).toBeNull();
     expect(after?.error).toBe("ACP worker stopped before turn startup");
+  });
+});
+
+describe("shouldStopDetachedWorkerForIdle", () => {
+  it("does not idle-stop while work is present", () => {
+    expect(
+      shouldStopDetachedWorkerForIdle({
+        hasWork: true,
+        idleSince: 0,
+        idleExitMs: 5000,
+        now: Date.now(),
+      }),
+    ).toBe(false);
+  });
+
+  it("idle-stops only after the worker has actually been idle long enough", () => {
+    const now = 50_000;
+    expect(
+      shouldStopDetachedWorkerForIdle({
+        hasWork: false,
+        idleSince: now - 4_999,
+        idleExitMs: 5_000,
+        now,
+      }),
+    ).toBe(false);
+    expect(
+      shouldStopDetachedWorkerForIdle({
+        hasWork: false,
+        idleSince: now - 5_000,
+        idleExitMs: 5_000,
+        now,
+      }),
+    ).toBe(true);
   });
 });

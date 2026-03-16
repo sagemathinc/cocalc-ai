@@ -3234,6 +3234,23 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
   return recovered;
 }
 
+export function shouldStopDetachedWorkerForIdle({
+  hasWork,
+  idleSince,
+  idleExitMs,
+  now = Date.now(),
+}: {
+  hasWork: boolean;
+  idleSince: number;
+  idleExitMs?: number | null;
+  now?: number;
+}): boolean {
+  if (hasWork) return false;
+  if (!idleSince) return false;
+  if (idleExitMs == null || idleExitMs < 0) return false;
+  return now - idleSince >= idleExitMs;
+}
+
 export async function recoverDetachedWorkerStartupState(
   client: ConatClient,
   opts: {
@@ -3418,9 +3435,11 @@ export async function runDetachedAcpQueueWorker(
         });
         return;
       } else if (
-        idleExitMs != null &&
-        idleExitMs >= 0 &&
-        Date.now() - idleSince >= idleExitMs
+        shouldStopDetachedWorkerForIdle({
+          hasWork,
+          idleSince,
+          idleExitMs,
+        })
       ) {
         logger.warn("stopping ACP queue worker after idle timeout", {
           instance: ACP_INSTANCE_ID,
