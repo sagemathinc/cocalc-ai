@@ -6,7 +6,6 @@ import {
   type ChatThreadConfigRecord,
   type ChatThreadLoopConfig,
 } from "@cocalc/chat";
-import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
 import { automationAcp } from "@cocalc/conat/ai/acp/client";
 import type {
   AcpAutomationConfig,
@@ -61,41 +60,33 @@ function normalizeThreadConfigRecord(
 }
 
 function getThreadConfigRecord(
-  syncdb: any,
+  rows: any[],
   threadId: string,
 ): ChatThreadConfigRecord | undefined {
   const cleanThreadId = `${threadId ?? ""}`.trim();
   if (!cleanThreadId) return undefined;
-  const row = syncdb.get_one?.({
-    event: "chat-thread-config",
-    thread_id: cleanThreadId,
-  });
+  const row = rows.find(
+    (value) =>
+      value?.event === "chat-thread-config" &&
+      `${value?.thread_id ?? ""}`.trim() === cleanThreadId,
+  );
   return row ? (row as ChatThreadConfigRecord) : undefined;
 }
 
-function listThreadConfigRecords(syncdb: any): ChatThreadConfigRecord[] {
-  const rows = syncdb.get?.({ event: "chat-thread-config" });
-  return Array.isArray(rows)
-    ? rows.filter((row) => row?.event === "chat-thread-config")
-    : [];
+function listThreadConfigRecords(rows: any[]): ChatThreadConfigRecord[] {
+  return rows.filter((row) => row?.event === "chat-thread-config");
 }
 
 function summarizeThread(
   row: ChatThreadConfigRecord,
-  syncdb: any,
+  rows: any[],
 ): Record<string, unknown> {
   const thread_id = `${row.thread_id ?? ""}`.trim();
-  const messages = Array.isArray(
-    syncdb.get?.({
-      event: "chat",
-      thread_id,
-    }),
-  )
-    ? syncdb.get({
-        event: "chat",
-        thread_id,
-      })
-    : [];
+  const messages = rows.filter(
+    (value) =>
+      value?.event === "chat" &&
+      `${value?.thread_id ?? ""}`.trim() === thread_id,
+  );
   return {
     thread_id,
     name: row.name ?? null,
@@ -112,6 +103,69 @@ function summarizeThread(
     updated_by: row.updated_by ?? null,
     chat_rows: messages.length,
   };
+}
+
+function replaceThreadConfigRecord(
+  rows: any[],
+  record: ChatThreadConfigRecord,
+): any[] {
+  const cleanThreadId = `${record.thread_id ?? ""}`.trim();
+  const next = rows.filter(
+    (row) =>
+      !(
+        row?.event === "chat-thread-config" &&
+        `${row?.thread_id ?? ""}`.trim() === cleanThreadId
+      ),
+  );
+  next.push(record);
+  return next;
+}
+
+function isMissingFileError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return message.includes("enoent") || message.includes("no such file");
+}
+
+async function readChatRows({
+  client,
+  project_id,
+  path,
+}: {
+  client: any;
+  project_id: string;
+  path: string;
+}): Promise<any[]> {
+  let raw = "";
+  try {
+    raw = String(await client.fs({ project_id }).readFile(path, "utf8"));
+  } catch (err) {
+    if (isMissingFileError(err)) {
+      return [];
+    }
+    throw err;
+  }
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function writeChatRows({
+  client,
+  project_id,
+  path,
+  rows,
+}: {
+  client: any;
+  project_id: string;
+  path: string;
+  rows: any[];
+}): Promise<void> {
+  const content =
+    rows.map((row) => JSON.stringify(row)).join("\n") +
+    (rows.length ? "\n" : "");
+  await client.fs({ project_id }).writeFile(path, content);
 }
 
 export function mergeThreadConfigRecord(opts: {
@@ -131,7 +185,7 @@ export function mergeThreadConfigRecord(opts: {
   });
 }
 
-async function withProjectChatSyncDb<Ctx, Project extends ProjectIdentity, T>({
+async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
   deps,
   ctx,
   projectIdentifier,
@@ -146,7 +200,7 @@ async function withProjectChatSyncDb<Ctx, Project extends ProjectIdentity, T>({
   chatPath: string;
   ensureParentDir?: boolean;
   cwd?: string;
-  fn: (args: { project: Project; client: any; syncdb: any }) => Promise<T>;
+  fn: (args: { project: Project; client: any; rows: any[] }) => Promise<T>;
 }): Promise<T> {
   const path = `${chatPath ?? ""}`.trim();
   if (!path) {
@@ -162,17 +216,12 @@ async function withProjectChatSyncDb<Ctx, Project extends ProjectIdentity, T>({
       recursive: true,
     });
   }
-  const syncdb = await acquireChatSyncDB({
+  const rows = await readChatRows({
     client,
     project_id: project.project_id,
     path,
-    persistent: true,
   });
-  try {
-    return await fn({ project, client, syncdb });
-  } finally {
-    await releaseChatSyncDB(project.project_id, path);
-  }
+  return await fn({ project, client, rows });
 }
 
 export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
@@ -201,16 +250,16 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     acpConfig?: CodexSessionConfig;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withProjectChatSyncDb({
+    return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
       chatPath: path,
       ensureParentDir: true,
       cwd,
-      fn: async ({ project, syncdb }) => {
+      fn: async ({ project, client, rows }) => {
         const nextThreadId = `${threadId ?? ""}`.trim() || randomUUID();
-        if (getThreadConfigRecord(syncdb, nextThreadId)) {
+        if (getThreadConfigRecord(rows, nextThreadId)) {
           throw new Error(`thread '${nextThreadId}' already exists`);
         }
         const record = buildThreadConfigRecord({
@@ -225,14 +274,18 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             : undefined),
           ...(acpConfig ? { acp_config: acpConfig } : undefined),
         });
-        syncdb.set(record);
-        syncdb.commit();
-        await syncdb.save();
+        const nextRows = replaceThreadConfigRecord(rows, record);
+        await writeChatRows({
+          client,
+          project_id: project.project_id,
+          path,
+          rows: nextRows,
+        });
         return {
           project_id: project.project_id,
           path,
           created: true,
-          thread: summarizeThread(record, syncdb),
+          thread: summarizeThread(record, nextRows),
         };
       },
     });
@@ -251,30 +304,30 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     threadId?: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withProjectChatSyncDb({
+    return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
       chatPath: path,
       cwd,
-      fn: async ({ project, syncdb }) => {
+      fn: async ({ project, rows }) => {
         const cleanThreadId = `${threadId ?? ""}`.trim();
         if (cleanThreadId) {
-          const row = getThreadConfigRecord(syncdb, cleanThreadId);
+          const row = getThreadConfigRecord(rows, cleanThreadId);
           if (!row) {
             throw new Error(`thread '${cleanThreadId}' not found`);
           }
           return {
             project_id: project.project_id,
             path,
-            thread: summarizeThread(row, syncdb),
+            thread: summarizeThread(row, rows),
           };
         }
         return {
           project_id: project.project_id,
           path,
-          threads: listThreadConfigRecords(syncdb).map((row) =>
-            summarizeThread(row, syncdb),
+          threads: listThreadConfigRecords(rows).map((row) =>
+            summarizeThread(row, rows),
           ),
         };
       },
@@ -296,14 +349,14 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     config: ChatThreadLoopConfig;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withProjectChatSyncDb({
+    return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
       chatPath: path,
       cwd,
-      fn: async ({ project, syncdb }) => {
-        const existing = getThreadConfigRecord(syncdb, threadId);
+      fn: async ({ project, client, rows }) => {
+        const existing = getThreadConfigRecord(rows, threadId);
         if (!existing) {
           throw new Error(`thread '${threadId}' not found`);
         }
@@ -316,13 +369,17 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             loop_state: null,
           },
         });
-        syncdb.set(next);
-        syncdb.commit();
-        await syncdb.save();
+        const nextRows = replaceThreadConfigRecord(rows, next);
+        await writeChatRows({
+          client,
+          project_id: project.project_id,
+          path,
+          rows: nextRows,
+        });
         return {
           project_id: project.project_id,
           path,
-          thread: summarizeThread(next, syncdb),
+          thread: summarizeThread(next, nextRows),
         };
       },
     });
@@ -341,14 +398,14 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     threadId: string;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withProjectChatSyncDb({
+    return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
       chatPath: path,
       cwd,
-      fn: async ({ project, syncdb }) => {
-        const existing = getThreadConfigRecord(syncdb, threadId);
+      fn: async ({ project, client, rows }) => {
+        const existing = getThreadConfigRecord(rows, threadId);
         if (!existing) {
           throw new Error(`thread '${threadId}' not found`);
         }
@@ -361,13 +418,17 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             loop_state: null,
           },
         });
-        syncdb.set(next);
-        syncdb.commit();
-        await syncdb.save();
+        const nextRows = replaceThreadConfigRecord(rows, next);
+        await writeChatRows({
+          client,
+          project_id: project.project_id,
+          path,
+          rows: nextRows,
+        });
         return {
           project_id: project.project_id,
           path,
-          thread: summarizeThread(next, syncdb),
+          thread: summarizeThread(next, nextRows),
         };
       },
     });
@@ -390,27 +451,14 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     config?: AcpAutomationConfig | null;
     cwd?: string;
   }): Promise<Record<string, unknown>> {
-    return await withProjectChatSyncDb({
+    return await withProjectChatFile({
       deps,
       ctx,
       projectIdentifier,
       chatPath: path,
       cwd,
-      fn: async ({ project, client, syncdb }) => {
-        if (action === "status") {
-          const row = getThreadConfigRecord(syncdb, threadId);
-          if (!row) {
-            throw new Error(`thread '${threadId}' not found`);
-          }
-          return {
-            project_id: project.project_id,
-            path,
-            thread_id: threadId,
-            config: row.automation_config ?? null,
-            state: row.automation_state ?? null,
-          };
-        }
-        const row = getThreadConfigRecord(syncdb, threadId);
+      fn: async ({ project, client, rows }) => {
+        const row = getThreadConfigRecord(rows, threadId);
         if (!row) {
           throw new Error(`thread '${threadId}' not found`);
         }
@@ -425,14 +473,19 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
           } as AcpAutomationRequest,
           client,
         )) as AcpAutomationResponse;
-        const refreshed = getThreadConfigRecord(syncdb, threadId);
         return {
           project_id: project.project_id,
           path,
           thread_id: threadId,
           ok: !!response.ok,
-          config: response.config ?? refreshed?.automation_config ?? null,
-          state: response.state ?? refreshed?.automation_state ?? null,
+          config:
+            response.config ??
+            (action === "status" ? row.automation_config : null) ??
+            null,
+          state:
+            response.state ??
+            (action === "status" ? row.automation_state : null) ??
+            null,
           record: response.record ?? null,
         };
       },
