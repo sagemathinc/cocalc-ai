@@ -38,6 +38,12 @@ import RenameFile from "./rename-file";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 
+export function isTrashListingPath(path?: string): boolean {
+  if (path == null) return false;
+  const normalized = path.replace(/^\/+/, "");
+  return normalized === ".trash" || normalized.startsWith(".trash/");
+}
+
 export const PRE_STYLE = {
   marginBottom: "15px",
   maxHeight: "80px",
@@ -131,7 +137,7 @@ export function ActionBox({
   }
 
   function render_delete_warning() {
-    if (current_path === ".trash") {
+    if (isTrashListingPath(current_path)) {
       return (
         <Col sm={5}>
           <Alert bsStyle="danger">
@@ -191,7 +197,7 @@ export function ActionBox({
               <AntdButton
                 danger
                 onClick={delete_click}
-                disabled={current_path === ".trash"}
+                disabled={isTrashListingPath(current_path)}
               >
                 <Icon name="trash" /> Delete {size} {misc.plural(size, "Item")}
               </AntdButton>
