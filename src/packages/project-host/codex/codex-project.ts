@@ -83,9 +83,14 @@ const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
 // Security-critical: app-server must be exec'd via the exact trusted Codex
 // binary we installed into the project runtime image. Do not resolve this via
 // PATH or any user-controlled fallback, since that could let a project replace
-// the binary and capture site- or account-managed credentials.
-const PROJECT_RUNTIME_CODEX_PATH =
-  process.env.COCALC_PROJECT_RUNTIME_CODEX_PATH ?? "/opt/cocalc/bin2/codex";
+// the binary and capture site- or account-managed credentials. The override is
+// intentionally named DANGEROUS because it is only for host-admin debugging.
+function getProjectRuntimeCodexPath(): string {
+  return (
+    process.env.COCALC_DANGEROUS_PROJECT_RUNTIME_CODEX_PATH_OVERRIDE ??
+    "/opt/cocalc/bin2/codex"
+  );
+}
 
 function projectContainerName(projectId: string): string {
   return `project-${projectId}`;
@@ -1038,7 +1043,7 @@ async function spawnCodexAppServerInProjectRuntime({
   }
   execArgs.push(
     name,
-    PROJECT_RUNTIME_CODEX_PATH,
+    getProjectRuntimeCodexPath(),
     ...codexArgs,
     "app-server",
     "--listen",
