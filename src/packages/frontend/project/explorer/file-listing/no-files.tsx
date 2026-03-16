@@ -5,8 +5,6 @@
 
 import { Alert, Button, Space } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
-import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import NewFilePage from "@cocalc/frontend/project/new/new-file-page";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 
 interface Props {
@@ -15,30 +13,14 @@ interface Props {
   project_id: string;
 }
 
-function shouldShowCreatePage({
-  current_path,
-  file_search,
-  homePath,
-  type_filter,
-}: {
-  current_path: string;
-  file_search: string;
-  homePath: string;
-  type_filter?: string | null;
-}): boolean {
-  if (type_filter) return false;
-  if (file_search.trim()) return true;
-  if (!current_path.startsWith("/")) return true;
-  if (homePath === "/") return true;
-  return current_path === homePath || current_path.startsWith(`${homePath}/`);
-}
-
 export default function NoFiles({
   file_search = "",
   current_path,
   project_id,
 }: Props) {
-  let actions: Pick<ProjectActions, "setState" | "set_file_search"> | undefined;
+  let actions:
+    | Pick<ProjectActions, "setState" | "set_file_search" | "set_active_tab">
+    | undefined;
   let type_filter: string | null = null;
   try {
     actions = redux.getProjectActions(project_id);
@@ -46,11 +28,16 @@ export default function NoFiles({
   } catch {
     // Allow isolated rendering in tests that use a placeholder project id.
   }
-  const homePath = getProjectHomeDirectory(project_id);
+
+  function openNewPage() {
+    actions?.setState({ new_page_path_abs: current_path } as any);
+    actions?.set_active_tab("new");
+  }
+
   if (type_filter) {
     return (
       <Alert
-        type="info"
+        type="warning"
         showIcon
         style={{ margin: "8px 16px 0 16px" }}
         message="No files or folders match the current filter."
@@ -71,42 +58,47 @@ export default function NoFiles({
                 Contains "{file_search}"
               </Button>
             )}
+            <Button size="small" type="primary" onClick={openNewPage}>
+              +New
+            </Button>
           </Space>
         }
       />
     );
   }
-  if (
-    !shouldShowCreatePage({
-      current_path,
-      file_search,
-      homePath,
-      type_filter,
-    })
-  ) {
+  if (file_search.trim()) {
     return (
       <Alert
-        type="info"
+        type="warning"
         showIcon
         style={{ margin: "8px 16px 0 16px" }}
-        message="No files or folders to display."
+        message="No files or folders match the current filter."
+        description={
+          <Space wrap style={{ marginTop: 8 }}>
+            <Button size="small" onClick={() => actions?.set_file_search("")}>
+              Clear filter
+            </Button>
+            <Button size="small" type="primary" onClick={openNewPage}>
+              +New
+            </Button>
+          </Space>
+        }
       />
     );
   }
   return (
-    <div
-      style={{
-        wordWrap: "break-word",
-        overflowY: "auto",
-        padding: "8px 16px 0 16px",
-      }}
-      className="smc-vfill"
-    >
-      <NewFilePage
-        project_id={project_id}
-        initialFilename={file_search}
-        autoFocusFilename={false}
-      />
-    </div>
+    <Alert
+      type="warning"
+      showIcon
+      style={{ margin: "8px 16px 0 16px" }}
+      message="No files or folders to display."
+      description={
+        <Space wrap style={{ marginTop: 8 }}>
+          <Button size="small" type="primary" onClick={openNewPage}>
+            +New
+          </Button>
+        </Space>
+      }
+    />
   );
 }
