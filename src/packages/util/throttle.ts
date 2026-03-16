@@ -192,3 +192,81 @@ export function createAdaptiveTerminalOutputThrottle({
     },
   };
 }
+
+export function createTerminalFlowControl({
+  sampleMs,
+  pauseMs,
+  minBytes,
+  maxBytesPerSecond,
+  maxEventsPerSecond,
+  pause,
+  resume,
+}: {
+  sampleMs: number;
+  pauseMs: number;
+  minBytes: number;
+  maxBytesPerSecond: number;
+  maxEventsPerSecond: number;
+  pause: () => void;
+  resume: () => void;
+}) {
+  let windowStart = Date.now();
+  let bytes = 0;
+  let events = 0;
+  let paused = false;
+  let timer: NodeJS.Timeout | null = null;
+
+  const resetWindow = () => {
+    windowStart = Date.now();
+    bytes = 0;
+    events = 0;
+  };
+
+  const releasePause = () => {
+    timer = null;
+    paused = false;
+    resume();
+    resetWindow();
+  };
+
+  const maybePause = () => {
+    if (paused) {
+      return;
+    }
+    const elapsed = Date.now() - windowStart;
+    if (elapsed < sampleMs) {
+      return;
+    }
+    const byteRate = (bytes * 1000) / elapsed;
+    const eventRate = (events * 1000) / elapsed;
+    const shouldPause =
+      bytes >= minBytes &&
+      (byteRate >= maxBytesPerSecond || eventRate >= maxEventsPerSecond);
+    resetWindow();
+    if (!shouldPause) {
+      return;
+    }
+    paused = true;
+    pause();
+    timer = setTimeout(releasePause, pauseMs);
+  };
+
+  return {
+    onData(data: { length: number } | string) {
+      bytes += data.length;
+      events += 1;
+      maybePause();
+    },
+    close() {
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      paused = false;
+      resetWindow();
+    },
+    paused() {
+      return paused;
+    },
+  };
+}

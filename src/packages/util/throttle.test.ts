@@ -1,5 +1,6 @@
 import {
   createAdaptiveTerminalOutputThrottle,
+  createTerminalFlowControl,
   ThrottleString,
   Throttle,
 } from "./throttle";
@@ -161,5 +162,47 @@ describe("adaptive terminal output throttle", () => {
     } finally {
       global.setTimeout = originalSetTimeout;
     }
+  });
+});
+
+describe("terminal flow control", () => {
+  it("pauses and resumes when sustained output crosses the rate thresholds", async () => {
+    const events: string[] = [];
+    const flow = createTerminalFlowControl({
+      sampleMs: 20,
+      pauseMs: 30,
+      minBytes: 10,
+      maxBytesPerSecond: 100,
+      maxEventsPerSecond: 100,
+      pause: () => events.push("pause"),
+      resume: () => events.push("resume"),
+    });
+    for (let i = 0; i < 10; i++) {
+      flow.onData("1234567890");
+    }
+    await delay(25);
+    flow.onData("1234567890");
+    await delay(70);
+    expect(events).toEqual(["pause", "resume"]);
+    expect(flow.paused()).toBe(false);
+  });
+
+  it("does not pause for small interactive bursts", async () => {
+    const events: string[] = [];
+    const flow = createTerminalFlowControl({
+      sampleMs: 20,
+      pauseMs: 30,
+      minBytes: 1000,
+      maxBytesPerSecond: 100,
+      maxEventsPerSecond: 100,
+      pause: () => events.push("pause"),
+      resume: () => events.push("resume"),
+    });
+    flow.onData("hello");
+    await delay(30);
+    flow.onData("world");
+    await delay(50);
+    expect(events).toEqual([]);
+    expect(flow.paused()).toBe(false);
   });
 });

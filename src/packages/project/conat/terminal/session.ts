@@ -12,7 +12,10 @@ import {
 } from "@cocalc/conat/service/terminal";
 import { project_id } from "@cocalc/project/data";
 import { throttle } from "lodash";
-import { createAdaptiveTerminalOutputThrottle } from "@cocalc/util/throttle";
+import {
+  createAdaptiveTerminalOutputThrottle,
+  createTerminalFlowControl,
+} from "@cocalc/util/throttle";
 import { join } from "path";
 import type { CreateTerminalOptions } from "@cocalc/conat/project/api/editor";
 import { delay } from "awaiting";
@@ -81,6 +84,26 @@ const ADAPTIVE_SLOW_BYTES = parseInt(
 
 const ADAPTIVE_COOL_BYTES = parseInt(
   process.env.COCALC_TERMINAL_ADAPTIVE_COOL_BYTES ?? "8192",
+);
+
+const FLOW_CONTROL_SAMPLE_MS = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_SAMPLE_MS ?? "50",
+);
+
+const FLOW_CONTROL_PAUSE_MS = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_PAUSE_MS ?? "100",
+);
+
+const FLOW_CONTROL_MIN_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_MIN_BYTES ?? "32768",
+);
+
+const FLOW_CONTROL_MAX_BYTES_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_MAX_BYTES_PER_SECOND ?? "262144",
+);
+
+const FLOW_CONTROL_MAX_EVENTS_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_MAX_EVENTS_PER_SECOND ?? "5000",
 );
 
 type State = "running" | "off" | "closed";
@@ -298,10 +321,23 @@ export class Session {
         this.stream?.publish(data);
       },
     });
-    const outputListener = this.pty.onData(throttle.write);
+    const flowControl = createTerminalFlowControl({
+      sampleMs: FLOW_CONTROL_SAMPLE_MS,
+      pauseMs: FLOW_CONTROL_PAUSE_MS,
+      minBytes: FLOW_CONTROL_MIN_BYTES,
+      maxBytesPerSecond: FLOW_CONTROL_MAX_BYTES_PER_SECOND,
+      maxEventsPerSecond: FLOW_CONTROL_MAX_EVENTS_PER_SECOND,
+      pause: () => this.pty?.pause(),
+      resume: () => this.pty?.resume(),
+    });
+    const outputListener = this.pty.onData((data) => {
+      flowControl.onData(data);
+      throttle.write(data);
+    });
 
     this.pty.onExit(() => {
       outputListener.dispose();
+      flowControl.close();
       throttle.close();
       this.stream?.publish(EXIT_MESSAGE);
       this.state = "off";

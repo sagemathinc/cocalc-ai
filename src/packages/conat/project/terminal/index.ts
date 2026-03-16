@@ -8,7 +8,10 @@ import {
   type ServerSocket,
 } from "@cocalc/conat/socket";
 import { getLogger } from "@cocalc/conat/client";
-import { createAdaptiveTerminalOutputThrottle } from "@cocalc/util/throttle";
+import {
+  createAdaptiveTerminalOutputThrottle,
+  createTerminalFlowControl,
+} from "@cocalc/util/throttle";
 import { delay } from "awaiting";
 import {
   createPtyWritable,
@@ -45,6 +48,26 @@ const ADAPTIVE_SLOW_BYTES = parseInt(
 
 const ADAPTIVE_COOL_BYTES = parseInt(
   process.env.COCALC_TERMINAL_ADAPTIVE_COOL_BYTES ?? "8192",
+);
+
+const FLOW_CONTROL_SAMPLE_MS = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_SAMPLE_MS ?? "50",
+);
+
+const FLOW_CONTROL_PAUSE_MS = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_PAUSE_MS ?? "100",
+);
+
+const FLOW_CONTROL_MIN_BYTES = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_MIN_BYTES ?? "32768",
+);
+
+const FLOW_CONTROL_MAX_BYTES_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_MAX_BYTES_PER_SECOND ?? "262144",
+);
+
+const FLOW_CONTROL_MAX_EVENTS_PER_SECOND = parseInt(
+  process.env.COCALC_TERMINAL_FLOW_CONTROL_MAX_EVENTS_PER_SECOND ?? "5000",
 );
 
 const DEFAULT_SIZE_WAIT = 2000;
@@ -308,6 +331,8 @@ export function terminalServer({
     let outputThrottle: ReturnType<
       typeof createAdaptiveTerminalOutputThrottle
     > | null = null;
+    let flowControl: ReturnType<typeof createTerminalFlowControl> | null = null;
+    let onTerminalData: ((data: string) => void) | null = null;
     const buffer: PendingMessage[] = [];
     const setPty = (p) => {
       pty = p;
@@ -399,10 +424,15 @@ export function terminalServer({
     const removeListeners = () => {
       if (pty == null) return;
       if (outputThrottle != null) {
-        pty.removeListener("data", outputThrottle.write);
+        if (onTerminalData != null) {
+          pty.removeListener("data", onTerminalData);
+          onTerminalData = null;
+        }
         outputThrottle.close();
         outputThrottle = null;
       }
+      flowControl?.close();
+      flowControl = null;
       pty.removeListener("get-size", getClientSize);
       pty.removeListener("broadcast", broadcast);
       pty.emit("broadcast", "leave");
@@ -529,7 +559,20 @@ export function terminalServer({
             coolBytes: ADAPTIVE_COOL_BYTES,
             publish: sendToClient,
           });
-          pty.on("data", outputThrottle.write);
+          flowControl = createTerminalFlowControl({
+            sampleMs: FLOW_CONTROL_SAMPLE_MS,
+            pauseMs: FLOW_CONTROL_PAUSE_MS,
+            minBytes: FLOW_CONTROL_MIN_BYTES,
+            maxBytesPerSecond: FLOW_CONTROL_MAX_BYTES_PER_SECOND,
+            maxEventsPerSecond: FLOW_CONTROL_MAX_EVENTS_PER_SECOND,
+            pause: () => pty?.pause(),
+            resume: () => pty?.resume(),
+          });
+          onTerminalData = (data) => {
+            flowControl?.onData(data);
+            outputThrottle?.write(data);
+          };
+          pty.on("data", onTerminalData);
 
           pty.once("exit", async () => {
             removeListeners();
