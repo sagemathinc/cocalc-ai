@@ -10,8 +10,10 @@ import {
   createMismatchSignature,
   describeFrontendFingerprintMismatch,
   hideBanner,
+  initDebugBuildCheck,
   renderBanner,
   resetDebugBuildCheckBannerState,
+  resetDebugBuildCheckStateForTests,
 } from "./debug-build-check";
 
 function makeInfo(
@@ -28,6 +30,36 @@ function makeInfo(
     scanned_file_count: 1,
     checked_at: "2026-03-11T12:00:00.000Z",
     ...overrides,
+  };
+}
+
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function makeDebugClient(getSource: jest.Mock) {
+  const listeners = new Map<string, Set<() => void>>();
+  return {
+    conat_client: {
+      hub: {
+        system: {
+          getFrontendSourceFingerprint: getSource,
+        },
+      },
+    },
+    on(event: string, listener: () => void) {
+      const handlers = listeners.get(event) ?? new Set();
+      handlers.add(listener);
+      listeners.set(event, handlers);
+    },
+    off(event: string, listener: () => void) {
+      listeners.get(event)?.delete(listener);
+    },
+    emit(event: string) {
+      for (const listener of listeners.get(event) ?? []) {
+        listener();
+      }
+    },
   };
 }
 
@@ -71,7 +103,7 @@ describe("describeFrontendFingerprintMismatch", () => {
 
 describe("stale-build banner controls", () => {
   beforeEach(() => {
-    resetDebugBuildCheckBannerState();
+    resetDebugBuildCheckStateForTests();
   });
 
   it("uses a stable mismatch signature", () => {
@@ -110,5 +142,40 @@ describe("stale-build banner controls", () => {
     expect(dismiss).toBeTruthy();
     dismiss?.click();
     expect(banner?.style.display).toBe("none");
+  });
+});
+
+describe("debug-build startup checks", () => {
+  beforeEach(() => {
+    resetDebugBuildCheckStateForTests();
+    (global as any).DEBUG = true;
+    (window as any).cc = {};
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+  });
+
+  it("rechecks immediately when the client connects after the first attempt", async () => {
+    const getSource = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("socket is disconnected"))
+      .mockResolvedValueOnce(
+        makeInfo({
+          fingerprint: "abc:20:src/packages/frontend/chat/message.tsx",
+          latest_mtime_ms: 20,
+          latest_mtime_iso: "2026-03-15T12:01:00.000Z",
+          latest_path: "src/packages/frontend/chat/message.tsx",
+        }),
+      );
+    const client = makeDebugClient(getSource);
+
+    initDebugBuildCheck(client as any);
+    await flushAsync();
+    expect(getSource).toHaveBeenCalledTimes(1);
+
+    client.emit("connected");
+    await flushAsync();
+    expect(getSource).toHaveBeenCalledTimes(2);
   });
 });
