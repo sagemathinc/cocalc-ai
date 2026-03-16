@@ -160,3 +160,36 @@ Example:
 ```bash
 pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
 ```
+
+## Codex long-thread benchmark
+
+```bash
+pnpm --dir src bench:codex-thread -- --thread-id <codex-thread-id>
+```
+
+This runs a real `codex app-server` turn against an existing upstream thread and
+prints JSON metrics for:
+
+1. thread resume wall time
+2. time to first backend activity
+3. time to first visible model output
+4. total turn wall time
+5. peak RSS of the app-server process
+6. `.codex/sessions` and root sqlite growth during the turn
+
+Useful options:
+
+- `--codex-home <path>` to benchmark a specific Lite/Launchpad `CODEX_HOME`
+- `--cwd <path>` to control the runtime working directory
+- `--prompt <text>` to use a custom follow-up prompt
+- `--sample-ms <ms>` to adjust RSS polling frequency
+
+Example against the local Lite daemon home:
+
+```bash
+HOME=/home/wstein/scratch/cocalc-lite4-lite-daemon \
+CODEX_HOME=/home/wstein/scratch/cocalc-lite4-lite-daemon/.codex \
+pnpm --dir src bench:codex-thread -- \
+  --thread-id e9732ad2-c7a2-4dcc-bd60-96276ee41df5 \
+  --cwd /home/wstein/scratch/cocalc-lite4-lite-daemon
+```

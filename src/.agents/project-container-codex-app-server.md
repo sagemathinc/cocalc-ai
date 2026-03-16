@@ -25,6 +25,10 @@ tracked during the migration.
 
 ### 1. Stored Context Space / Resume Memory
 
+Status:
+
+- still open
+
 - App-server is not sqlite-only today.
 - Upstream still persists full rollout JSONL files under
   `~/.codex/sessions/YYYY/MM/DD/rollout-...jsonl`, while sqlite stores
@@ -41,8 +45,21 @@ tracked during the migration.
   - startup RSS for resume
   - on-disk growth of `.codex/sessions`
   - effect of compaction/trimming
+- Current real-data point (`2026-03-15`, local Lite/app-server, thread
+  `e9732ad2-c7a2-4dcc-bd60-96276ee41df5`, `tokens_used ~= 3.58B`):
+  - `thread/resume`: about `5.5s`
+  - first visible output after `turn/start`: about `18.0s`
+  - total turn time: about `18.7s`
+  - peak app-server RSS: about `239 MiB`
+  - `.codex/sessions` growth for one short follow-up turn: about `24.6 KiB`
+- This is encouraging, but not sufficient to delete CoCalc-side trimming and
+  compaction policy yet.
 
 ### 2. API-Key Usage Accounting
+
+Status:
+
+- resolved in the app-server path
 
 - The app-server path streams token-usage data, so the raw information appears
   to be available.
@@ -53,6 +70,11 @@ tracked during the migration.
   ready.
 
 ### 3. Trusted Codex Binary Path
+
+Status:
+
+- mostly resolved
+- remaining work is naming/polish for the dangerous host override
 
 - Launchpad must execute app-server through the exact trusted Codex binary we
   install into the runtime image, not through `PATH` or any user-controlled
@@ -67,6 +89,10 @@ tracked during the migration.
   reasonable.
 
 ### 4. Managed API-Key Auth Leakage in Collaborative Projects
+
+Status:
+
+- resolved for the current project-container app-server path
 
 - This is the most important current security blocker.
 - Upstream external ChatGPT token login uses ephemeral in-process auth storage,
@@ -88,6 +114,11 @@ tracked during the migration.
   - document the remaining trust model clearly
 
 ### 5. Turn Liveness / Timing Visibility in the UI
+
+Status:
+
+- mostly resolved
+- remaining work is optional deeper timing/details affordances, not core liveness
 
 - The current UI does show `Running since`, but it still does not make backend
   liveness clear enough during long or quiet turns.
