@@ -15,19 +15,38 @@ export class ThrottleString extends EventEmitter {
   private buf: string = "";
   private last = Date.now();
   private interval: number;
+  private timer: NodeJS.Timeout | null = null;
 
   constructor(messagesPerSecond: number = DEFAULT_MESSAGES_PER_SECOND) {
     super();
     this.interval = 1000 / messagesPerSecond;
   }
 
+  close = () => {
+    if (this.timer != null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.removeAllListeners();
+    this.buf = "";
+  };
+
   write = (data: string) => {
     this.buf += data;
     const now = Date.now();
     const timeUntilEmit = this.interval - (now - this.last);
     if (timeUntilEmit > 0) {
-      setTimeout(() => this.write(""), timeUntilEmit);
+      if (this.timer == null) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.write("");
+        }, timeUntilEmit);
+      }
     } else {
+      if (this.timer != null) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
       this.flush();
     }
   };
@@ -46,6 +65,7 @@ export class Throttle<T> extends EventEmitter {
   private buf: T[] = [];
   private last = Date.now();
   private interval: number;
+  private timer: NodeJS.Timeout | null = null;
 
   constructor(messagesPerSecond: number = DEFAULT_MESSAGES_PER_SECOND) {
     super();
@@ -54,6 +74,10 @@ export class Throttle<T> extends EventEmitter {
 
   // if you want data to be sent be sure to flush before closing
   close = () => {
+    if (this.timer != null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
     this.removeAllListeners();
     this.buf.length = 0;
   };
@@ -67,8 +91,17 @@ export class Throttle<T> extends EventEmitter {
     const now = Date.now();
     const timeUntilEmit = this.interval - (now - this.last);
     if (timeUntilEmit > 0) {
-      setTimeout(() => this.update(), timeUntilEmit);
+      if (this.timer == null) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.update();
+        }, timeUntilEmit);
+      }
     } else {
+      if (this.timer != null) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
       this.flush();
     }
   };
