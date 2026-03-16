@@ -392,6 +392,51 @@ export function setAcpJobState({
   ).run(state, error ?? null, now, now, op_id);
 }
 
+export function requeueRunningAcpJob({
+  op_id,
+  error,
+  worker_id,
+}: {
+  op_id: string;
+  error?: string;
+  worker_id?: string;
+}): void {
+  ensureInit();
+  const db = getDatabase();
+  const now = Date.now();
+  if (`${worker_id ?? ""}`.trim()) {
+    db.prepare(
+      `UPDATE ${TABLE}
+        SET state = 'queued',
+            error = COALESCE(?, error),
+            updated_at = ?,
+            started_at = NULL,
+            finished_at = NULL,
+            worker_id = NULL,
+            worker_bundle_version = NULL
+        WHERE op_id = ?
+          AND state = 'running'
+          AND (
+            worker_id IS NULL
+            OR worker_id = ?
+          )`,
+    ).run(error ?? null, now, op_id, worker_id);
+    return;
+  }
+  db.prepare(
+    `UPDATE ${TABLE}
+      SET state = 'queued',
+          error = COALESCE(?, error),
+          updated_at = ?,
+          started_at = NULL,
+          finished_at = NULL,
+          worker_id = NULL,
+          worker_bundle_version = NULL
+      WHERE op_id = ?
+        AND state = 'running'`,
+  ).run(error ?? null, now, op_id);
+}
+
 export function reprioritizeAcpJobImmediate({
   project_id,
   path,

@@ -100,6 +100,7 @@ import {
   listQueuedAcpJobsForThread,
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
+  requeueRunningAcpJob,
   reprioritizeAcpJobImmediate,
   setAcpJobState,
   type AcpJobRow,
@@ -237,6 +238,15 @@ const ACP_WORKER_STALE_MS = envNumber("COCALC_ACP_WORKER_STALE_MS", 15_000);
 const ACP_ORPHAN_RECOVERY_POLL_MS = envNumber(
   "COCALC_ACP_ORPHAN_RECOVERY_POLL_MS",
   5_000,
+);
+// Detached workers establish acp_jobs state slightly before ChatStreamWriter
+// creates the matching acp_turns lease. If a worker dies in that narrow
+// pre-lease window, the job is left stuck as `running` forever. Only reclaim
+// lease-less jobs after a grace window so we do not steal a turn that another
+// worker is still legitimately bootstrapping.
+const ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS = envNumber(
+  "COCALC_ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS",
+  15_000,
 );
 const WORKER_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
@@ -3153,6 +3163,77 @@ export async function recoverOrphanedAcpTurns(
   return recovered;
 }
 
+function acpTurnLeaseKey({
+  project_id,
+  path,
+  message_date,
+}: {
+  project_id: string;
+  path: string;
+  message_date: string;
+}): string {
+  return `${project_id}\u0000${path}\u0000${message_date}`;
+}
+
+export async function recoverOrphanedRunningAcpJobsWithoutLease(
+  opts: {
+    recoveryReason?: string;
+    graceMs?: number;
+  } = {},
+): Promise<number> {
+  const recoveryReason =
+    opts.recoveryReason ?? "ACP worker stopped before turn startup";
+  const graceMs = opts.graceMs ?? ACP_JOB_WITHOUT_LEASE_RECOVERY_GRACE_MS;
+  const now = Date.now();
+  const runningLeaseKeys = new Set(
+    listRunningAcpTurnLeases().map((row) =>
+      acpTurnLeaseKey({
+        project_id: row.project_id,
+        path: row.path,
+        message_date: row.message_date,
+      }),
+    ),
+  );
+  let recovered = 0;
+  for (const job of listRunningAcpJobs()) {
+    const messageDate = `${job.assistant_message_date ?? ""}`.trim();
+    if (!messageDate) continue;
+    if (
+      runningLeaseKeys.has(
+        acpTurnLeaseKey({
+          project_id: job.project_id,
+          path: job.path,
+          message_date: messageDate,
+        }),
+      )
+    ) {
+      continue;
+    }
+    const startedAt = Number(job.started_at ?? 0);
+    if (
+      Number.isFinite(startedAt) &&
+      startedAt > 0 &&
+      now - startedAt < graceMs
+    ) {
+      continue;
+    }
+    requeueRunningAcpJob({
+      op_id: job.op_id,
+      error: recoveryReason,
+      worker_id: job.worker_id ?? undefined,
+    });
+    recovered += 1;
+  }
+  if (recovered > 0) {
+    logger.warn("requeued orphaned ACP jobs without leases", {
+      instance: ACP_INSTANCE_ID,
+      recovered,
+      grace_ms: graceMs,
+    });
+  }
+  return recovered;
+}
+
 export async function recoverDetachedWorkerStartupState(
   client: ConatClient,
   opts: {
@@ -3162,27 +3243,34 @@ export async function recoverDetachedWorkerStartupState(
 ): Promise<void> {
   const workerContext = opts.workerContext ?? null;
   const restartReason = opts.restartReason ?? "worker restart";
+  const recoveryReason =
+    workerContext != null
+      ? "ACP worker stopped unexpectedly"
+      : "ACP worker stopped before turn startup";
   if (workerContext) {
     await recoverOrphanedAcpTurns(client, {
       liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
       interruptedNotice: WORKER_INTERRUPTED_NOTICE,
-      recoveryReason: "ACP worker stopped unexpectedly",
+      recoveryReason,
     });
-    return;
+  } else {
+    // Local Lite detached workers do not have a host-managed worker registry.
+    // On startup, rely on lease-based orphan recovery only. Blindly
+    // interrupting every running job here turns benign worker start races into
+    // visible failures: a replacement worker can start while another worker is
+    // still claiming or beginning a turn, and marking all running jobs
+    // interrupted will kill that in-flight turn even though it is not actually
+    // orphaned.
+    //
+    // We still accept a restartReason option so callers/tests can report the
+    // intended recovery reason consistently elsewhere, but we intentionally do
+    // not apply it as a blanket job-state rewrite here.
+    void restartReason;
+    await recoverOrphanedAcpTurns(client);
   }
-
-  // Local Lite detached workers do not have a host-managed worker registry.
-  // On startup, rely on lease-based orphan recovery only. Blindly interrupting
-  // every running job here turns benign worker start races into visible
-  // failures: a replacement worker can start while another worker is still
-  // claiming or beginning a turn, and marking all running jobs interrupted
-  // will kill that in-flight turn even though it is not actually orphaned.
-  //
-  // We still accept a restartReason option so callers/tests can report the
-  // intended recovery reason consistently elsewhere, but we intentionally do
-  // not apply it as a blanket job-state rewrite here.
-  void restartReason;
-  await recoverOrphanedAcpTurns(client);
+  await recoverOrphanedRunningAcpJobsWithoutLease({
+    recoveryReason,
+  });
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
@@ -3305,6 +3393,12 @@ export async function runDetachedAcpQueueWorker(
             recoveryReason: "ACP worker stopped unexpectedly",
           });
         }
+        await recoverOrphanedRunningAcpJobsWithoutLease({
+          recoveryReason:
+            workerContext != null
+              ? "ACP worker stopped unexpectedly"
+              : "ACP worker stopped before turn startup",
+        });
       }
       if (!workerContext || workerStatus?.state === "active") {
         kickAllQueuedAcpJobs();
