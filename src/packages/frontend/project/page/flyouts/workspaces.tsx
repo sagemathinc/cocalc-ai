@@ -4,7 +4,6 @@
  */
 
 import {
-  Alert,
   Button,
   Card,
   Empty,
@@ -138,8 +137,15 @@ function iconFor(record?: WorkspaceRecord | null): IconName {
 
 const WORKSPACE_MEDIA_SIZE = 64;
 const PROCESS_PANEL_BG = COLORS.GRAY_LLL;
-const WORKSPACE_CARD_STATUS_MIN_HEIGHT_FLYOUT = 40;
-const WORKSPACE_CARD_STATUS_MIN_HEIGHT_PAGE = 56;
+const WORKSPACE_CARD_SUMMARY_ROW_HEIGHT = 24;
+
+type WorkspaceSummaryRow = {
+  label: string;
+  color: string;
+  timestamp?: string | number | null;
+  tooltip?: React.ReactNode;
+  dismissNotice?: boolean;
+};
 
 function sparklinePoints(
   values: number[],
@@ -165,6 +171,87 @@ function formatMemoryMiB(memRss: number): string {
     return `${(memRss / 1024).toFixed(memRss >= 10 * 1024 ? 0 : 1)} GiB`;
   }
   return `${Math.round(memRss)} MiB`;
+}
+
+function formatCompactMemoryMiB(memRss: number): string {
+  if (!Number.isFinite(memRss) || memRss <= 0) return "0MiB";
+  if (memRss >= 1024) {
+    return `${(memRss / 1024).toFixed(memRss >= 10 * 1024 ? 0 : 1)}GiB`;
+  }
+  return `${Math.round(memRss)}MiB`;
+}
+
+function workspaceNoticeColor(
+  level: NonNullable<WorkspaceRecord["notice"]>["level"],
+): string {
+  switch (level) {
+    case "success":
+      return COLORS.ANTD_GREEN_D;
+    case "warning":
+      return COLORS.ORANGE_WARN;
+    case "error":
+      return COLORS.ANTD_RED_WARN;
+    default:
+      return COLORS.BLUE_D;
+  }
+}
+
+function buildWorkspaceSummaryRow(opts: {
+  record: WorkspaceRecord;
+  activity: WorkspaceActivityState;
+  fileActivityLabel: string | null;
+}): WorkspaceSummaryRow {
+  const { record, activity, fileActivityLabel } = opts;
+  if (record.notice != null) {
+    const label = [record.notice.title, record.notice.text]
+      .filter((part) => `${part ?? ""}`.trim())
+      .join(" - ");
+    return {
+      label: label || "Workspace notice",
+      color: workspaceNoticeColor(record.notice.level),
+      timestamp: record.notice.updated_at,
+      tooltip: (
+        <div style={{ maxWidth: 320 }}>
+          {record.notice.title ? <div>{record.notice.title}</div> : null}
+          {record.notice.text ? (
+            <div style={{ marginTop: record.notice.title ? 4 : 0 }}>
+              {record.notice.text}
+            </div>
+          ) : null}
+        </div>
+      ),
+      dismissNotice: true,
+    };
+  }
+  if (activity != null) {
+    return {
+      label: activity.label,
+      color:
+        activity.kind === "running"
+          ? COLORS.BLUE_D
+          : activity.kind === "failed"
+            ? COLORS.ANTD_RED_WARN
+            : COLORS.ANTD_GREEN_D,
+      timestamp: activity.updatedAt,
+      tooltip: activity.label,
+    };
+  }
+  if (fileActivityLabel != null) {
+    return {
+      label: fileActivityLabel,
+      color: COLORS.GRAY_D,
+      timestamp: record.last_used_at,
+      tooltip: fileActivityLabel,
+    };
+  }
+  return {
+    label: "Idle",
+    color: COLORS.GRAY_D,
+    timestamp: record.last_used_at,
+    tooltip: record.last_used_at
+      ? "No live Codex or file activity"
+      : "Workspace has not been used yet",
+  };
 }
 
 function WorkspaceProcessSparkline({
@@ -195,9 +282,10 @@ function WorkspaceProcessSparkline({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-  const cpuPoints = sparklinePoints(cpuValues, 96, 20);
-  const memPoints = sparklinePoints(memValues, 96, 20);
-  const renderChart = showChart && containerWidth >= 260;
+  const chartWidth = Math.max(52, Math.min(88, containerWidth - 104));
+  const cpuPoints = sparklinePoints(cpuValues, chartWidth, 18);
+  const memPoints = sparklinePoints(memValues, chartWidth, 18);
+  const renderChart = showChart && containerWidth >= 156;
   return (
     <div
       ref={containerRef}
@@ -211,10 +299,10 @@ function WorkspaceProcessSparkline({
       <div
         style={{
           display: "flex",
-          gap: 10,
+          gap: 8,
           fontSize: 11,
           color: COLORS.GRAY_D,
-          flexWrap: "wrap",
+          whiteSpace: "nowrap",
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -242,9 +330,9 @@ function WorkspaceProcessSparkline({
       </div>
       {renderChart && (cpuPoints || memPoints) ? (
         <svg
-          width="96"
-          height="20"
-          viewBox="0 0 96 20"
+          width={chartWidth}
+          height="18"
+          viewBox={`0 0 ${chartWidth} 18`}
           preserveAspectRatio="none"
           style={{ flex: "0 0 auto" }}
         >
@@ -364,6 +452,41 @@ function moveItem<T>(
   const [item] = next.splice(oldIndex, 1);
   next.splice(newIndex, 0, item);
   return next;
+}
+
+function processTooltipContent(
+  summary: WorkspaceProcessSummary,
+): React.JSX.Element {
+  const details: string[] = [];
+  if (summary.processCount > 0) {
+    details.push(
+      summary.processCount === 1
+        ? "1 process"
+        : `${summary.processCount} processes`,
+    );
+  }
+  if (summary.terminals > 0) {
+    details.push(
+      summary.terminals === 1 ? "1 terminal" : `${summary.terminals} terminals`,
+    );
+  }
+  if (summary.notebooks > 0) {
+    details.push(
+      summary.notebooks === 1 ? "1 notebook" : `${summary.notebooks} notebooks`,
+    );
+  }
+  if (summary.other > 0) {
+    details.push(summary.other === 1 ? "1 other" : `${summary.other} other`);
+  }
+  return (
+    <div style={{ maxWidth: 320 }}>
+      <div>{`CPU ${Math.round(summary.cpuPct)}%`}</div>
+      <div>{`RAM ${formatMemoryMiB(summary.memRss)}`}</div>
+      {details.length > 0 ? (
+        <div style={{ marginTop: 4 }}>{details.join(" · ")}</div>
+      ) : null}
+    </div>
+  );
 }
 
 function loadViewedActivity(project_id: string): Record<string, number> {
@@ -665,9 +788,24 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
     const fileActivityLabel = workspaceOpenFileActivityLabel(fileActivity);
     const processSummary: WorkspaceProcessSummary | null =
       processSummaryByWorkspaceId.get(record.workspace_id) ?? null;
-    const hasProcessSummary =
-      processSummary != null &&
-      (processSummary.processCount > 0 || processSummary.cpuTrend.length >= 2);
+    const summaryRow = buildWorkspaceSummaryRow({
+      record,
+      activity,
+      fileActivityLabel,
+    });
+    const compactProcessSummary =
+      processSummary ??
+      ({
+        processCount: 0,
+        terminals: 0,
+        notebooks: 0,
+        other: 0,
+        cpuPct: 0,
+        memRss: 0,
+        cpuTrend: [],
+        memTrend: [],
+        timestamps: [],
+      } satisfies WorkspaceProcessSummary);
     return (
       <Card
         key={record.workspace_id}
@@ -728,18 +866,51 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "flex-start",
+                alignItems: "center",
                 gap: 8,
               }}
             >
-              <Space size={6} wrap>
-                <Typography.Text strong>{record.theme.title}</Typography.Text>
-                {record.pinned ? <Tag color="gold">Pinned</Tag> : null}
-                {selected ? <Tag color="green">Selected</Tag> : null}
-              </Space>
+              <div
+                style={{
+                  minWidth: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                {record.pinned ? (
+                  <Icon
+                    name="star"
+                    style={{ color: COLORS.STAR, flex: "0 0 auto" }}
+                  />
+                ) : null}
+                {selected ? (
+                  <span
+                    title="Selected workspace"
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 999,
+                      background: COLORS.ANTD_GREEN_D,
+                      flex: "0 0 auto",
+                    }}
+                  />
+                ) : null}
+                <Typography.Text
+                  strong
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {record.theme.title}
+                </Typography.Text>
+              </div>
               <div
                 onClick={(e) => e.stopPropagation()}
-                style={{ color: "#888", flex: "0 0 auto" }}
+                style={{ color: COLORS.GRAY, flex: "0 0 auto" }}
               >
                 <DragHandle id={record.workspace_id} />
               </div>
@@ -749,82 +920,126 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 {record.root_path}
               </Typography.Text>
             </div>
-            <div
-              style={{
-                marginTop: 6,
-                minHeight: isFlyout
-                  ? WORKSPACE_CARD_STATUS_MIN_HEIGHT_FLYOUT
-                  : WORKSPACE_CARD_STATUS_MIN_HEIGHT_PAGE,
-              }}
-            >
-              {record.theme.description ? (
+            {record.theme.description ? (
+              <Tooltip title={record.theme.description}>
                 <Typography.Paragraph
                   type="secondary"
-                  style={{ margin: 0 }}
+                  style={{ margin: "6px 0 0 0" }}
                   ellipsis={{ rows: isFlyout ? 2 : 3 }}
                 >
                   {record.theme.description}
                 </Typography.Paragraph>
-              ) : null}
-              {record.notice ? (
+              </Tooltip>
+            ) : null}
+            <div style={{ marginTop: 6 }}>
+              <div
+                style={{
+                  minHeight: WORKSPACE_CARD_SUMMARY_ROW_HEIGHT,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <Tooltip title={summaryRow.tooltip ?? summaryRow.label}>
+                  <div
+                    style={{
+                      minWidth: 0,
+                      flex: 1,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: summaryRow.color,
+                      background:
+                        record.notice != null
+                          ? `${summaryRow.color}14`
+                          : undefined,
+                      borderRadius: 999,
+                      padding: record.notice != null ? "2px 8px" : 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        background: summaryRow.color,
+                        flex: "0 0 auto",
+                      }}
+                    />
+                    <span
+                      style={{
+                        minWidth: 0,
+                        overflow: "hidden",
+                        whiteSpace: "nowrap",
+                        textOverflow: "ellipsis",
+                        fontSize: 12,
+                      }}
+                    >
+                      {summaryRow.label}
+                    </span>
+                  </div>
+                </Tooltip>
                 <div
-                  style={{ marginTop: record.theme.description ? 8 : 0 }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                    flex: "0 0 auto",
+                    color: COLORS.GRAY,
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <Alert
-                    type={record.notice.level}
-                    showIcon
-                    closable
-                    message={record.notice.title || "Workspace notice"}
-                    description={record.notice.text}
-                    onClose={() =>
-                      workspaces.updateWorkspace(record.workspace_id, {
-                        notice: null,
-                      })
-                    }
-                  />
+                  {summaryRow.timestamp ? (
+                    <TimeAgo date={summaryRow.timestamp} />
+                  ) : (
+                    <span>Never</span>
+                  )}
+                  {summaryRow.dismissNotice ? (
+                    <Button
+                      type="text"
+                      size="small"
+                      style={{
+                        paddingInline: 4,
+                        color: COLORS.GRAY,
+                        height: 20,
+                      }}
+                      icon={<Icon name="times" />}
+                      onClick={() =>
+                        workspaces.updateWorkspace(record.workspace_id, {
+                          notice: null,
+                        })
+                      }
+                    />
+                  ) : null}
                 </div>
-              ) : null}
-              {activity ? (
-                <Space size={8} wrap style={{ marginTop: 8 }}>
-                  <Tag color={activity.color}>{activity.label}</Tag>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    <TimeAgo date={activity.updatedAt} />
-                  </Typography.Text>
-                </Space>
-              ) : null}
-              {fileActivityLabel ? (
-                <Typography.Text
-                  type="secondary"
-                  style={{
-                    display: "block",
-                    marginTop: 8,
-                    fontSize: 12,
-                  }}
-                >
-                  {fileActivityLabel}
-                </Typography.Text>
-              ) : null}
-              {hasProcessSummary ? (
+              </div>
+              <Tooltip title={processTooltipContent(compactProcessSummary)}>
                 <div
                   style={{
-                    marginTop: 6,
-                    padding: "4px 6px",
+                    marginTop: 4,
+                    padding: "3px 6px",
                     borderRadius: 8,
                     background: PROCESS_PANEL_BG,
+                    minHeight: WORKSPACE_CARD_SUMMARY_ROW_HEIGHT,
+                    display: "flex",
+                    alignItems: "center",
                   }}
                 >
                   <WorkspaceProcessSparkline
-                    cpuValues={processSummary.cpuTrend}
-                    memValues={processSummary.memTrend}
+                    cpuValues={compactProcessSummary.cpuTrend}
+                    memValues={compactProcessSummary.memTrend}
                     cpuColor={record.theme.color ?? COLORS.BLUE_D}
                     memColor={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
-                    cpuLabel={`CPU ${Math.round(processSummary.cpuPct)}%`}
-                    memLabel={`RAM ${formatMemoryMiB(processSummary.memRss)}`}
+                    cpuLabel={`${Math.round(compactProcessSummary.cpuPct)}%`}
+                    memLabel={formatCompactMemoryMiB(
+                      compactProcessSummary.memRss,
+                    )}
                     showChart
                   />
                 </div>
-              ) : null}
+              </Tooltip>
             </div>
             <Space size={10} wrap style={{ marginTop: 8 }}>
               <Button
@@ -858,22 +1073,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 {record.pinned ? "Unpin" : "Pin"}
               </Button>
             </Space>
-            <div
-              style={{
-                marginTop: 8,
-                minHeight: 18,
-                fontSize: 12,
-                color: "#888",
-              }}
-            >
-              {record.last_used_at ? (
-                <>
-                  Used <TimeAgo date={record.last_used_at} />
-                </>
-              ) : (
-                "Never used"
-              )}
-            </div>
           </div>
         </div>
       </Card>
