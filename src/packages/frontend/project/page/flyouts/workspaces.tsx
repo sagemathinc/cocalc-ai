@@ -294,6 +294,8 @@ function WorkspaceProcessSparkline({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
+        width: "100%",
+        minWidth: 0,
       }}
     >
       <div
@@ -878,12 +880,6 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                   gap: 6,
                 }}
               >
-                {record.pinned ? (
-                  <Icon
-                    name="star"
-                    style={{ color: COLORS.STAR, flex: "0 0 auto" }}
-                  />
-                ) : null}
                 {selected ? (
                   <span
                     title="Selected workspace"
