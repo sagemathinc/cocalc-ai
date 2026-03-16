@@ -14,6 +14,28 @@ export type CodexProjectContainerPathMap = {
   scratchHostPath?: string;
 };
 
+export type CodexAppServerLoginHint =
+  | {
+      type: "apiKey";
+      apiKey: string;
+    }
+  | {
+      type: "chatgptAuthTokens";
+      accessToken: string;
+      chatgptAccountId: string;
+      chatgptPlanType?: string;
+    };
+
+export type CodexAppServerRequest = {
+  id: string | number;
+  method: string;
+  params?: any;
+};
+
+export type CodexAppServerRequestHandler = (
+  request: CodexAppServerRequest,
+) => Promise<any>;
+
 export type CodexProjectSpawner = {
   spawnCodexExec: (opts: CodexProjectSpawnOptions) => Promise<{
     proc: ChildProcess;
@@ -22,6 +44,21 @@ export type CodexProjectSpawner = {
     cwd?: string;
     authSource?: string;
     containerPathMap?: CodexProjectContainerPathMap;
+  }>;
+  spawnCodexAppServer?: (opts: {
+    projectId: string;
+    accountId?: string;
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+  }) => Promise<{
+    proc: ChildProcess;
+    cmd: string;
+    args: string[];
+    cwd?: string;
+    authSource?: string;
+    containerPathMap?: CodexProjectContainerPathMap;
+    appServerLogin?: CodexAppServerLoginHint;
+    handleAppServerRequest?: CodexAppServerRequestHandler;
   }>;
 };
 

@@ -14,9 +14,9 @@ import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import { delay } from "awaiting";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
-import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "../conat/route-client";
+import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import {
   computePlacementPermission,
   getUserHostTier,
@@ -220,7 +220,9 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
     // create filesystem for new project as a clone.
     // Route clone to the host that owns the source project.
-    const client = filesystemClient({ project_id: src_project_id });
+    const client = await getProjectFileServerClient({
+      project_id: src_project_id,
+    });
     await client.clone({ project_id, src_project_id });
   }
 

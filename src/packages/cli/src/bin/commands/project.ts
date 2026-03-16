@@ -13,6 +13,7 @@ import { registerProjectLifecycleCommands } from "./project/lifecycle";
 import { registerProjectOpsCommands } from "./project/ops";
 import { registerProjectBasicCommands } from "./project/basic";
 import { registerProjectAppCommands } from "./project/app";
+import { registerProjectChatCommands } from "./project/chat";
 
 export type ProjectCommandDeps = {
   withContext: any;
@@ -65,6 +66,12 @@ export type ProjectCommandDeps = {
   projectCodexDeviceAuthStatusData: any;
   projectCodexDeviceAuthCancelData: any;
   projectCodexAuthUploadFileData: any;
+  resolveProjectConatClient: any;
+  projectChatThreadCreateData: any;
+  projectChatThreadStatusData: any;
+  projectChatLoopSetData: any;
+  projectChatLoopClearData: any;
+  projectChatAutomationData: any;
   normalizeUserSearchName: any;
   resolveAccountByIdentifier: any;
   serializeInviteRow: any;
@@ -113,6 +120,7 @@ export function registerProjectCommand(
   registerProjectOpsCommands(project, deps);
   registerProjectSyncCommands(project, deps);
   registerProjectCodexCommands(project, deps);
+  registerProjectChatCommands(project, deps);
   registerProjectCollabCommands(project, deps);
   registerProjectFileCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);

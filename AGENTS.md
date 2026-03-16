@@ -23,6 +23,13 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - Tests: run focused package/tests first; avoid full test suite unless needed
 - Dependency consistency check: `pnpm -C src version-check`
 
+## Live Hub Env
+
+- Before running live Lite/Launchpad control-plane commands such as `cocalc host ...`, `cocalc project ...`, or browser-driven validation against the local dev hub, refresh the hub env first:
+  - `cd src && eval "$(pnpm -s dev:env:hub)"`
+- Do this again after restarting the hub, switching between local hub instances, or resuming a stale shell. Otherwise `cocalc` can silently use outdated credentials and fail with misleading auth/control-plane errors.
+- When a task depends on upgrading hosts or validating live project-host behavior, assume this step is required unless the current shell definitely just ran it.
+
 ## Hard Rules (CoCalc-Specific)
 
 - Use `@cocalc/*` absolute imports for cross-package imports.

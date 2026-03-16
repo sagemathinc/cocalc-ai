@@ -75,6 +75,7 @@ import {
 } from "./core/project-resolve";
 import { createProjectFileOps } from "./core/project-file";
 import { createProjectCodexOps } from "./core/project-codex";
+import { createProjectChatOps } from "./core/project-chat";
 import { createProjectSyncOps as createProjectSyncOps } from "./core/project-sync";
 import { createProjectTasksOps } from "./core/project-tasks";
 import {
@@ -1585,6 +1586,16 @@ const {
 });
 
 const {
+  projectChatThreadCreateData,
+  projectChatThreadStatusData,
+  projectChatLoopSetData,
+  projectChatLoopClearData,
+  projectChatAutomationData,
+} = createProjectChatOps<CommandContext, ProjectRow>({
+  resolveProjectConatClient,
+});
+
+const {
   expandUserPath,
   normalizeSyncKeyBasePath,
   syncKeyPublicPath,
@@ -2087,6 +2098,12 @@ const projectCommandDeps = {
   projectCodexDeviceAuthStatusData,
   projectCodexDeviceAuthCancelData,
   projectCodexAuthUploadFileData,
+  resolveProjectConatClient,
+  projectChatThreadCreateData,
+  projectChatThreadStatusData,
+  projectChatLoopSetData,
+  projectChatLoopClearData,
+  projectChatAutomationData,
   normalizeUserSearchName,
   resolveAccountByIdentifier,
   serializeInviteRow,

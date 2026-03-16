@@ -23,6 +23,10 @@ interface StreamOptions {
   timeout?: number;
 }
 
+function isNonEmptySessionId(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export async function* streamAcp(
   request: AcpRequest,
   options: StreamOptions = {},
@@ -106,11 +110,14 @@ export async function forkAcpSession(
   if (!isValidUUID(request.account_id)) {
     throw Error("account_id must be a valid uuid");
   }
-  if (!isValidUUID(request.sessionId)) {
-    throw Error("sessionId must be a valid uuid");
+  if (!isNonEmptySessionId(request.sessionId)) {
+    throw Error("sessionId must be a non-empty string");
   }
-  if (request.newSessionId && !isValidUUID(request.newSessionId)) {
-    throw Error("newSessionId must be a valid uuid");
+  if (
+    request.newSessionId != null &&
+    !isNonEmptySessionId(request.newSessionId)
+  ) {
+    throw Error("newSessionId must be a non-empty string");
   }
   const subject = acpForkSubject({ project_id: request.project_id });
   const cn = client ?? (await conat());
@@ -120,7 +127,7 @@ export async function forkAcpSession(
     throw Error(error);
   }
   const sessionId = resp?.data?.sessionId;
-  if (!sessionId || !isValidUUID(sessionId)) {
+  if (!isNonEmptySessionId(sessionId)) {
     throw Error("invalid sessionId returned from fork");
   }
   return { sessionId };

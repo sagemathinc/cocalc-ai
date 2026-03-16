@@ -1,6 +1,12 @@
 # Codex Automations
 
-Status: proposed.
+Status: Phase 1 done. Daily thread-attached automations are implemented.
+
+Next high-priority work:
+
+- finish Launchpad move/delete/clone lifecycle and scheduler rehydration
+- keep clone/fork handling as best-effort until project cloning itself is fixed
+- then add richer recurrence, starting with weekdays-only schedules
 
 Goal: add durable scheduled Codex automations to chat threads, while keeping
 the thread itself as the delivery surface and the Agents panel as the control
@@ -516,6 +522,8 @@ flowchart TD
 ## Recommended Implementation Phases
 
 ### Phase 1: Daily Schedule MVP
+
+Status: done.
 
 Deliver:
 

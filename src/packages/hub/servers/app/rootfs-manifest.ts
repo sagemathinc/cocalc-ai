@@ -8,7 +8,7 @@ const ROOTFS_MANIFEST = {
     {
       id: "minimal",
       label: "Minimal Ubuntu",
-      image: "ubuntu:25.10",
+      image: "buildpack-deps:noble-scm",
       description: "Minimal Ubuntu base image for lightweight workspaces.",
       priority: 100,
       tags: ["minimal", "cpu"],

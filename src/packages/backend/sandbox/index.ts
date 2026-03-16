@@ -817,6 +817,35 @@ export class SandboxedFilesystem {
     return rel.startsWith("/") ? rel : join(this.path, rel);
   };
 
+  private toSyncIdentityPath = ({
+    pathInSandbox,
+    sandboxBasePath,
+    absoluteHomeAlias,
+    absoluteScratchAlias,
+  }: {
+    pathInSandbox: string;
+    sandboxBasePath: string;
+    absoluteHomeAlias: boolean;
+    absoluteScratchAlias: boolean;
+  }): string => {
+    const rel = this.toSandboxRelativePath(pathInSandbox, sandboxBasePath);
+    if (absoluteHomeAlias) {
+      if (rel === "") {
+        return HOME_ROOT;
+      }
+      return rel.startsWith("/") ? `${HOME_ROOT}${rel}` : `${HOME_ROOT}/${rel}`;
+    }
+    if (absoluteScratchAlias) {
+      if (rel === "" || rel === "/") {
+        return "/scratch";
+      }
+      return rel.startsWith("/")
+        ? `/scratch/${rel.slice(1)}`
+        : `/scratch/${rel}`;
+    }
+    return rel;
+  };
+
   canonicalSyncFsPath = async (path: string): Promise<string> => {
     const { pathInSandbox, sandboxBasePath, absoluteScratchAlias } =
       await this.resolvePathInSandbox(path);
@@ -853,6 +882,56 @@ export class SandboxedFilesystem {
         return this.toAbsoluteSyncFsPath({
           pathInSandbox,
           sandboxBasePath,
+          absoluteScratchAlias,
+        });
+      }
+      suffix.unshift(basename(candidate));
+      candidate = parent;
+    }
+  };
+
+  canonicalSyncIdentityPath = async (path: string): Promise<string> => {
+    const {
+      pathInSandbox,
+      sandboxBasePath,
+      absoluteHomeAlias,
+      absoluteScratchAlias,
+    } = await this.resolvePathInSandbox(path);
+    const compareBase = this.unsafeMode
+      ? undefined
+      : await this.resolveSandboxBasePathForComparison(sandboxBasePath);
+    const suffix: string[] = [];
+    let candidate = pathInSandbox;
+    while (true) {
+      try {
+        const resolved = await realpath(candidate);
+        if (
+          compareBase != null &&
+          !this.isInsideSandbox(resolved, compareBase)
+        ) {
+          throw Error(
+            `realpath of '${path}' resolves to a path outside of sandbox`,
+          );
+        }
+        const canonicalInSandbox =
+          suffix.length === 0 ? resolved : join(resolved, ...suffix);
+        return this.toSyncIdentityPath({
+          pathInSandbox: canonicalInSandbox,
+          sandboxBasePath,
+          absoluteHomeAlias,
+          absoluteScratchAlias,
+        });
+      } catch (err: any) {
+        if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") {
+          throw err;
+        }
+      }
+      const parent = dirname(candidate);
+      if (parent === candidate) {
+        return this.toSyncIdentityPath({
+          pathInSandbox,
+          sandboxBasePath,
+          absoluteHomeAlias,
           absoluteScratchAlias,
         });
       }
@@ -2298,14 +2377,34 @@ export class SandboxedFilesystem {
       watchDebounce?: number;
     },
   ): Promise<void> => {
-    const syncPath = await this.canonicalSyncFsPath(path);
+    const watchPath = await this.canonicalSyncFsPath(path);
+    const syncPath = await this.canonicalSyncIdentityPath(path);
     const project_id = info?.project_id ?? this.host;
-    await globalSyncFsService.heartbeat(syncPath, active, {
+    await globalSyncFsService.heartbeat(watchPath, active, {
       project_id,
       syncPath,
       history_epoch: info?.history_epoch,
       doctype: info?.doctype,
       watchDebounce: info?.watchDebounce,
+    });
+  };
+
+  syncFsReconcile = async (
+    path: string,
+    info?: {
+      project_id?: string;
+      history_epoch?: number;
+      doctype?: any;
+    },
+  ): Promise<void> => {
+    const watchPath = await this.canonicalSyncFsPath(path);
+    const syncPath = await this.canonicalSyncIdentityPath(path);
+    const project_id = info?.project_id ?? this.host;
+    await globalSyncFsService.reconcile(watchPath, {
+      project_id,
+      syncPath,
+      history_epoch: info?.history_epoch,
+      doctype: info?.doctype,
     });
   };
 }

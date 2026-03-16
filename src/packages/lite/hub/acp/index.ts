@@ -8,10 +8,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
+  CodexAppServerAgent,
   CodexExecAgent,
   EchoAgent,
   type AcpAgent,
   type AcpEvaluateRequest,
+  forkCodexAppServerSession,
   forkSession,
   getSessionsRoot,
 } from "@cocalc/ai/acp";
@@ -91,6 +93,7 @@ import {
 import {
   cancelQueuedAcpJob,
   claimNextQueuedAcpJobForThread,
+  countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
   listQueuedAcpJobs,
@@ -102,6 +105,7 @@ import {
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
+  deleteAcpAutomationsForProject,
   deleteAcpAutomationByThread,
   getAcpAutomationById,
   getAcpAutomationByThread,
@@ -121,6 +125,14 @@ import {
   markAcpInterruptError,
   markAcpInterruptHandled,
 } from "../sqlite/acp-interrupts";
+import {
+  getAcpWorker,
+  heartbeatAcpWorker,
+  listLiveAcpWorkers,
+  stopAcpWorker,
+  upsertAcpWorker,
+} from "../sqlite/acp-workers";
+import type { AcpWorkerState } from "../sqlite/acp-workers";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 import type { DKV } from "@cocalc/conat/sync/dkv";
@@ -129,6 +141,7 @@ import {
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
+import { getConfiguredCodexBackend } from "./codex-backend";
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
@@ -149,7 +162,12 @@ const ACP_AUTOMATION_POLL_MS = 30_000;
 const AUTOMATION_DEFAULT_UNACK_LIMIT = 7;
 
 const logger = getLogger("lite:hub:acp");
-const ACP_INSTANCE_ID = randomUUID();
+// Use a stable externally assigned instance id when a detached worker process
+// is managed by project-host. That lets leases, queued jobs, and worker state
+// all refer to the same durable worker identity across restarts of the main
+// process.
+const ACP_INSTANCE_ID =
+  `${process.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() || randomUUID();
 
 let blobStore: AKV | null = null;
 const agents = new Map<string, AcpAgent>();
@@ -211,12 +229,78 @@ const ACP_INTERRUPT_MAX_AGE_MS = envNumber(
   "COCALC_ACP_INTERRUPT_MAX_AGE_MS",
   30_000,
 );
+const ACP_WORKER_HEARTBEAT_MS = envNumber(
+  "COCALC_ACP_WORKER_HEARTBEAT_MS",
+  2_000,
+);
+const ACP_WORKER_STALE_MS = envNumber("COCALC_ACP_WORKER_STALE_MS", 15_000);
+const ACP_ORPHAN_RECOVERY_POLL_MS = envNumber(
+  "COCALC_ACP_ORPHAN_RECOVERY_POLL_MS",
+  5_000,
+);
+const WORKER_INTERRUPTED_NOTICE =
+  "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
+
+type DetachedWorkerContext = {
+  worker_id: string;
+  host_id: string;
+  bundle_version: string;
+  bundle_path: string;
+  state: AcpWorkerState;
+};
+
+let currentDetachedWorkerContext: DetachedWorkerContext | null = null;
 
 function liteUseDetachedAcpWorker(): boolean {
   const value = `${process.env.COCALC_LITE_ACP_DETACHED_WORKER ?? ""}`
     .trim()
     .toLowerCase();
   return !["0", "false", "no", "off"].includes(value);
+}
+
+function projectHostWorkerContextFromEnv(): DetachedWorkerContext | null {
+  if (`${process.env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() !== "1") {
+    return null;
+  }
+  const host_id =
+    `${process.env.PROJECT_HOST_ID ?? process.env.COCALC_PROJECT_HOST_ID ?? ""}`.trim();
+  const bundle_version =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION ?? process.env.COCALC_PROJECT_HOST_VERSION ?? ""}`.trim();
+  const bundle_path =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH ?? ""}`.trim();
+  const requestedState =
+    `${process.env.COCALC_PROJECT_HOST_ACP_WORKER_STATE ?? ""}`.trim() ===
+    "draining"
+      ? "draining"
+      : "active";
+  if (!host_id || !bundle_version || !bundle_path) {
+    logger.warn("project-host ACP worker environment is incomplete", {
+      host_id,
+      bundle_version,
+      bundle_path,
+    });
+    return null;
+  }
+  return {
+    worker_id: ACP_INSTANCE_ID,
+    host_id,
+    bundle_version,
+    bundle_path,
+    state: requestedState,
+  };
+}
+
+function detachedWorkerCanClaimQueuedJobs(): boolean {
+  return currentDetachedWorkerContext?.state !== "draining";
+}
+
+function liveWorkerOwnerIds(host_id: string): Set<string> {
+  return new Set(
+    listLiveAcpWorkers({
+      host_id,
+      stale_after_ms: ACP_WORKER_STALE_MS,
+    }).map((row) => row.worker_id),
+  );
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -1219,8 +1303,11 @@ export class ChatStreamWriter {
   private finishedBy?: "summary" | "error" | "interrupt";
   private approverAccountId: string;
   private interruptedMessage?: string;
+  private contentBeforeInterrupt?: string;
   private interruptNotified = false;
   private disposeTimer?: NodeJS.Timeout;
+  private disposePromise?: Promise<void>;
+  private saveChain: Promise<void> = Promise.resolve();
   private sessionKey?: string;
   private logStore?: AKV<AcpStreamMessage[]>;
   private logStoreName: string;
@@ -1739,6 +1826,7 @@ export class ChatStreamWriter {
     const message: AcpStreamMessage = {
       ...(payload as AcpStreamMessage),
       seq: this.seq++,
+      time: (payload as any).time ?? Date.now(),
     };
     this.processPayload(message, { persist: true });
     const isLastMessage =
@@ -1751,6 +1839,7 @@ export class ChatStreamWriter {
       await this.ensureTerminalChatCommitApplied(
         message.type === "error" ? "error" : "summary",
       );
+      await this.waitForScheduledSyncdbSaves();
     }
   }
 
@@ -1800,11 +1889,44 @@ export class ChatStreamWriter {
     }
     if (payload.type === "summary") {
       if (this.interruptNotified) {
-        if (
-          (!this.content || this.content.trim().length === 0) &&
-          this.interruptedMessage
-        ) {
-          this.content = this.interruptedMessage;
+        const latestSummary = getLatestSummaryText(this.events);
+        const hasSummary =
+          typeof latestSummary === "string" && latestSummary.trim().length > 0;
+        const summaryText =
+          (hasSummary ? latestSummary : undefined) ??
+          (typeof payload.finalResponse === "string" &&
+          payload.finalResponse.trim().length > 0
+            ? payload.finalResponse
+            : undefined);
+        const latestMessage = getLatestMessageText(this.events);
+        const latestNonInterruptMessage =
+          typeof latestMessage === "string" &&
+          latestMessage.trim().length > 0 &&
+          latestMessage !== this.interruptedMessage
+            ? latestMessage
+            : undefined;
+        const preservedContent =
+          typeof this.contentBeforeInterrupt === "string" &&
+          this.contentBeforeInterrupt.trim().length > 0
+            ? this.contentBeforeInterrupt
+            : undefined;
+        const currentNonInterruptContent =
+          typeof this.content === "string" &&
+          this.content.trim().length > 0 &&
+          this.content !== this.interruptedMessage
+            ? this.content
+            : undefined;
+        const candidate =
+          summaryText ??
+          latestNonInterruptMessage ??
+          currentNonInterruptContent ??
+          preservedContent ??
+          this.interruptedMessage;
+        if (candidate) {
+          this.content = stripLoopContractForDisplay(
+            candidate,
+            this.metadata.loop_config?.enabled === true,
+          );
         }
         this.finishedBy = "interrupt";
       } else {
@@ -2009,10 +2131,82 @@ export class ChatStreamWriter {
   private resolveChatFilePath(): string | undefined {
     const chatPath = `${this.metadata.path ?? ""}`.trim();
     if (!chatPath) return;
-    if (path.isAbsolute(chatPath)) return path.resolve(chatPath);
+    if (path.isAbsolute(chatPath)) {
+      const absolute = path.resolve(chatPath);
+      const workspaceRoot = this.workspaceRoot;
+      const hostRoot = this.hostWorkspaceRoot;
+      if (
+        workspaceRoot &&
+        hostRoot &&
+        path.isAbsolute(workspaceRoot) &&
+        path.isAbsolute(hostRoot) &&
+        workspaceRoot !== hostRoot
+      ) {
+        const rel = path.relative(workspaceRoot, absolute);
+        if (!rel.startsWith("..")) {
+          return path.resolve(hostRoot, rel);
+        }
+      }
+      return absolute;
+    }
     const root = this.hostWorkspaceRoot ?? this.workspaceRoot;
     if (!root || !path.isAbsolute(root)) return;
     return path.resolve(root, chatPath);
+  }
+
+  private scheduleSyncdbSave({
+    reason,
+    generating,
+    fullContent,
+  }: {
+    reason: "throttled" | "terminal-verify" | "dispose";
+    generating: boolean;
+    fullContent: boolean;
+  }): Promise<void> {
+    const saveTask = this.saveChain
+      .catch(() => {})
+      .then(async () => {
+        if (this.syncdb == null) return;
+        const saveStarted = performance.now();
+        try {
+          await this.syncdb.save();
+          const saveDurationMs = performance.now() - saveStarted;
+          if (saveDurationMs >= ACP_SYNCDB_SAVE_SLOW_MS) {
+            logger.warn("chat syncdb save slow", {
+              chatKey: this.chatKey,
+              path: this.metadata.path,
+              reason,
+              generating,
+              fullContent,
+              events: this.events.length,
+              durationMs: roundMs(saveDurationMs),
+            });
+          }
+        } catch (err) {
+          logger.warn("chat syncdb save failed", {
+            chatKey: this.chatKey,
+            reason,
+            generating,
+            fullContent,
+            durationMs: roundMs(performance.now() - saveStarted),
+            err,
+          });
+        }
+      });
+    this.saveChain = saveTask;
+    return saveTask;
+  }
+
+  private async waitForScheduledSyncdbSaves(): Promise<void> {
+    try {
+      // Detached ACP workers can drain immediately after a turn finishes. If we
+      // return before queued save() calls settle, the final generating=false
+      // assistant row can be lost even though the thread-state row reached
+      // "complete" in memory.
+      await this.saveChain;
+    } catch {
+      // Individual save failures are already logged in scheduleSyncdbSave.
+    }
   }
 
   private commitNow(
@@ -2070,33 +2264,11 @@ export class ChatStreamWriter {
         durationMs: roundMs(syncDurationMs),
       });
     }
-    (async () => {
-      const saveStarted = performance.now();
-      try {
-        await this.syncdb!.save();
-        const saveDurationMs = performance.now() - saveStarted;
-        if (saveDurationMs >= ACP_SYNCDB_SAVE_SLOW_MS) {
-          logger.warn("chat syncdb save slow", {
-            chatKey: this.chatKey,
-            path: this.metadata.path,
-            reason,
-            generating,
-            fullContent,
-            events: this.events.length,
-            durationMs: roundMs(saveDurationMs),
-          });
-        }
-      } catch (err) {
-        logger.warn("chat syncdb save failed", {
-          chatKey: this.chatKey,
-          reason,
-          generating,
-          fullContent,
-          durationMs: roundMs(performance.now() - saveStarted),
-          err,
-        });
-      }
-    })();
+    void this.scheduleSyncdbSave({
+      reason,
+      generating,
+      fullContent,
+    });
     return true;
   }
 
@@ -2220,8 +2392,9 @@ export class ChatStreamWriter {
       // ignore
     }
     void this.persistLog();
-    (async () => {
+    this.disposePromise = (async () => {
       try {
+        await this.waitForScheduledSyncdbSaves();
         await this.syncdbPromise;
         await this.syncdb!.save();
       } catch (err) {
@@ -2239,6 +2412,17 @@ export class ChatStreamWriter {
     })();
   }
 
+  async waitUntilDisposed(): Promise<void> {
+    while (this.disposeTimer != null && !this.closed) {
+      await sleep(25);
+    }
+    try {
+      await this.disposePromise;
+    } catch {
+      // Disposal failures are logged at the source.
+    }
+  }
+
   addLocalEvent(event: AcpStreamEvent): void {
     if (this.closed) return;
     void (async () => {
@@ -2248,6 +2432,7 @@ export class ChatStreamWriter {
         type: "event",
         event,
         seq: this.seq++,
+        time: Date.now(),
       };
       this.processPayload(message, { persist: true });
       this.commit(true);
@@ -2331,8 +2516,17 @@ export class ChatStreamWriter {
   notifyInterrupted(text: string): void {
     if (this.interruptNotified) return;
     this.interruptNotified = true;
+    if (
+      this.contentBeforeInterrupt == null &&
+      typeof this.content === "string" &&
+      this.content.trim().length > 0
+    ) {
+      this.contentBeforeInterrupt = this.content;
+    }
     this.interruptedMessage = text;
-    this.content = text;
+    if (!this.content || this.content.trim().length === 0) {
+      this.content = text;
+    }
     this.finishedBy = "interrupt";
     this.setThreadState("interrupted");
     this.addLocalEvent({
@@ -2551,6 +2745,7 @@ export class ChatStreamWriter {
     this.lastErrorText = null;
     this.interruptNotified = false;
     this.interruptedMessage = undefined;
+    this.contentBeforeInterrupt = undefined;
     this.setThreadState("running");
   }
 
@@ -2731,20 +2926,39 @@ function appendRestartNotice(historyValue: any): MessageHistory[] {
 
 export async function recoverOrphanedAcpTurns(
   client: ConatClient,
+  opts: {
+    liveOwnerIds?: Set<string>;
+    interruptedNotice?: string;
+    recoveryReason?: string;
+  } = {},
 ): Promise<number> {
   let running;
   try {
-    running = listRunningAcpTurnLeases({
-      exclude_owner_instance_id: ACP_INSTANCE_ID,
-    });
+    running = listRunningAcpTurnLeases();
   } catch (err) {
     logger.warn("failed to list running acp turn leases", err);
     return 0;
   }
+  const liveOwnerIds = opts.liveOwnerIds;
+  if (liveOwnerIds?.size) {
+    running = running.filter((row) => !liveOwnerIds.has(row.owner_instance_id));
+  } else {
+    running = running.filter(
+      (row) => row.owner_instance_id !== ACP_INSTANCE_ID,
+    );
+  }
   if (!running.length) return 0;
+  const interruptedNotice =
+    opts.interruptedNotice ?? RESTART_INTERRUPTED_NOTICE;
+  const recoveryReason = opts.recoveryReason ?? "server restart recovery";
+  const interruptedReasonId =
+    interruptedNotice === RESTART_INTERRUPTED_NOTICE
+      ? "server_restart"
+      : "worker_stopped";
   logger.warn("recovering orphaned acp turns", {
     instance: ACP_INSTANCE_ID,
     count: running.length,
+    reason: recoveryReason,
   });
   let recovered = 0;
   for (const turn of running) {
@@ -2784,6 +2998,33 @@ export async function recoverOrphanedAcpTurns(
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
+          const patchedHistory =
+            interruptedNotice === RESTART_INTERRUPTED_NOTICE
+              ? history
+              : (() => {
+                  const currentHistory = historyToArray(
+                    syncdbField(current, "history"),
+                  );
+                  if (currentHistory.length === 0) {
+                    return [];
+                  }
+                  const first = currentHistory[0] as MessageHistory;
+                  const content =
+                    typeof first?.content === "string"
+                      ? first.content
+                      : `${(first as any)?.content ?? ""}`;
+                  if (/conversation interrupted/i.test(content)) {
+                    return currentHistory;
+                  }
+                  const sep = content.trim().length > 0 ? "\n\n" : "";
+                  return [
+                    {
+                      ...first,
+                      content: `${content}${sep}${interruptedNotice}`,
+                    },
+                    ...currentHistory.slice(1),
+                  ];
+                })();
           const rowDate =
             normalizeIsoDateString(syncdbField(current, "date")) ??
             normalizeIsoDateString(turn.message_date) ??
@@ -2796,8 +3037,8 @@ export async function recoverOrphanedAcpTurns(
             sender_id: rowSender,
             generating: false,
             acp_interrupted: true,
-            acp_interrupted_reason: "server_restart",
-            acp_interrupted_text: RESTART_INTERRUPTED_NOTICE,
+            acp_interrupted_reason: interruptedReasonId,
+            acp_interrupted_text: interruptedNotice,
           };
           if (turn.message_id) {
             update.message_id = turn.message_id;
@@ -2808,8 +3049,8 @@ export async function recoverOrphanedAcpTurns(
           if ((turn as any).parent_message_id) {
             update.parent_message_id = (turn as any).parent_message_id;
           }
-          if (history.length > 0) {
-            update.history = history;
+          if (patchedHistory.length > 0) {
+            update.history = patchedHistory;
           }
           syncdb.set(update);
           const threadId =
@@ -2878,6 +3119,14 @@ export async function recoverOrphanedAcpTurns(
       });
     }
     try {
+      if (turn.message_id) {
+        setAcpJobState({
+          op_id: turn.message_id,
+          state: "interrupted",
+          error: recoveryReason,
+          worker_id: turn.owner_instance_id,
+        });
+      }
       finalizeAcpTurnLease({
         key: {
           project_id: turn.project_id,
@@ -2885,7 +3134,7 @@ export async function recoverOrphanedAcpTurns(
           message_date: turn.message_date,
         },
         state: "aborted",
-        reason: "server restart recovery",
+        reason: recoveryReason,
         owner_instance_id: ACP_INSTANCE_ID,
       });
       recovered += 1;
@@ -2941,36 +3190,139 @@ export async function runDetachedAcpQueueWorker(
       ? ACP_WORKER_IDLE_EXIT_MS
       : options.idleExitMs;
   const restartReason = options.restartReason ?? "worker restart";
-  logger.warn("starting ACP queue worker", {
-    instance: ACP_INSTANCE_ID,
-    pid: process.pid,
-    poll_ms: ACP_WORKER_POLL_MS,
-    idle_exit_ms: idleExitMs,
-  });
-  await recoverOrphanedAcpTurns(client);
-  markRunningAcpJobsInterrupted(restartReason);
-  let idleSince = 0;
-  while (true) {
-    kickAllQueuedAcpJobs();
-    const hasWork =
-      listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
-    if (hasWork) {
-      idleSince = 0;
-    } else if (!idleSince) {
-      idleSince = Date.now();
-    } else if (
-      idleExitMs != null &&
-      idleExitMs >= 0 &&
-      Date.now() - idleSince >= idleExitMs
-    ) {
-      logger.warn("stopping ACP queue worker after idle timeout", {
-        instance: ACP_INSTANCE_ID,
-        pid: process.pid,
-        idle_ms: Date.now() - idleSince,
-      });
-      return;
+  const workerContext = projectHostWorkerContextFromEnv();
+  currentDetachedWorkerContext = workerContext ? { ...workerContext } : null;
+  let workerStopReason: string | undefined;
+  let workerHeartbeatTimer: NodeJS.Timeout | undefined;
+  const syncDetachedWorkerState = (): {
+    state: AcpWorkerState;
+    runningJobs: number;
+  } | null => {
+    if (!workerContext || !currentDetachedWorkerContext) {
+      return null;
     }
-    await sleep(ACP_WORKER_POLL_MS);
+    const persisted = getAcpWorker(workerContext.worker_id);
+    const nextState =
+      persisted?.state === "draining" || persisted?.state === "stopped"
+        ? "draining"
+        : currentDetachedWorkerContext.state;
+    currentDetachedWorkerContext.state = nextState;
+    const runningJobs = countRunningAcpJobsForWorker(workerContext.worker_id);
+    heartbeatAcpWorker({
+      worker_id: workerContext.worker_id,
+      pid: process.pid,
+      state: nextState,
+      last_seen_running_jobs: runningJobs,
+    });
+    if (nextState === "draining" && runningJobs === 0) {
+      workerStopReason ??=
+        persisted?.state === "stopped" ? "stopped" : "drained";
+    }
+    return { state: nextState, runningJobs };
+  };
+  try {
+    if (workerContext) {
+      const now = Date.now();
+      upsertAcpWorker({
+        worker_id: workerContext.worker_id,
+        host_id: workerContext.host_id,
+        bundle_version: workerContext.bundle_version,
+        bundle_path: workerContext.bundle_path,
+        pid: process.pid,
+        state: workerContext.state,
+        started_at: now,
+        last_heartbeat_at: now,
+        last_seen_running_jobs: 0,
+        exit_requested_at: workerContext.state === "draining" ? now : null,
+        stopped_at: null,
+        stop_reason: null,
+      });
+      syncDetachedWorkerState();
+      workerHeartbeatTimer = setInterval(() => {
+        try {
+          syncDetachedWorkerState();
+        } catch (err) {
+          logger.warn("ACP worker heartbeat failed", {
+            instance: ACP_INSTANCE_ID,
+            err,
+          });
+        }
+      }, ACP_WORKER_HEARTBEAT_MS);
+      workerHeartbeatTimer.unref?.();
+    }
+    logger.warn("starting ACP queue worker", {
+      instance: ACP_INSTANCE_ID,
+      pid: process.pid,
+      poll_ms: ACP_WORKER_POLL_MS,
+      idle_exit_ms: idleExitMs,
+    });
+    if (workerContext) {
+      await recoverOrphanedAcpTurns(client, {
+        liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
+        interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+        recoveryReason: "ACP worker stopped unexpectedly",
+      });
+    } else {
+      await recoverOrphanedAcpTurns(client);
+      markRunningAcpJobsInterrupted(restartReason);
+    }
+    let idleSince = 0;
+    let lastRecoveryAt = Date.now();
+    while (true) {
+      const workerStatus = syncDetachedWorkerState();
+      if (Date.now() - lastRecoveryAt >= ACP_ORPHAN_RECOVERY_POLL_MS) {
+        lastRecoveryAt = Date.now();
+        if (workerContext) {
+          await recoverOrphanedAcpTurns(client, {
+            liveOwnerIds: liveWorkerOwnerIds(workerContext.host_id),
+            interruptedNotice: WORKER_INTERRUPTED_NOTICE,
+            recoveryReason: "ACP worker stopped unexpectedly",
+          });
+        }
+      }
+      if (!workerContext || workerStatus?.state === "active") {
+        kickAllQueuedAcpJobs();
+      }
+      const hasWork =
+        listQueuedAcpJobs().length > 0 || listRunningAcpJobs().length > 0;
+      if (hasWork) {
+        idleSince = 0;
+      } else if (!idleSince) {
+        idleSince = Date.now();
+      }
+      if (workerStopReason) {
+        logger.warn("stopping ACP queue worker after drain", {
+          instance: ACP_INSTANCE_ID,
+          pid: process.pid,
+          reason: workerStopReason,
+        });
+        return;
+      } else if (
+        idleExitMs != null &&
+        idleExitMs >= 0 &&
+        Date.now() - idleSince >= idleExitMs
+      ) {
+        logger.warn("stopping ACP queue worker after idle timeout", {
+          instance: ACP_INSTANCE_ID,
+          pid: process.pid,
+          idle_ms: Date.now() - idleSince,
+        });
+        workerStopReason = "idle_timeout";
+        return;
+      }
+      await sleep(ACP_WORKER_POLL_MS);
+    }
+  } finally {
+    if (workerHeartbeatTimer != null) {
+      clearInterval(workerHeartbeatTimer);
+    }
+    if (workerContext) {
+      stopAcpWorker({
+        worker_id: workerContext.worker_id,
+        reason: workerStopReason ?? "shutdown",
+      });
+      currentDetachedWorkerContext = null;
+    }
   }
 }
 
@@ -3133,19 +3485,28 @@ async function ensureAgent(
     return mock;
   }
   try {
-    logger.debug("ensureAgent: creating codex exec agent");
-    const created = await CodexExecAgent.create({
-      binaryPath: process.env.COCALC_CODEX_BIN,
-      cwd: bindings.workspaceRoot ?? process.cwd(),
+    const codexBackend = getConfiguredCodexBackend();
+    logger.debug("ensureAgent: creating codex agent", {
+      codexBackend,
     });
-    logger.info("codex-exec agent ready", { key });
+    const created =
+      codexBackend === "app-server"
+        ? await CodexAppServerAgent.create({
+            binaryPath: process.env.COCALC_CODEX_BIN,
+            cwd: bindings.workspaceRoot ?? process.cwd(),
+          })
+        : await CodexExecAgent.create({
+            binaryPath: process.env.COCALC_CODEX_BIN,
+            cwd: bindings.workspaceRoot ?? process.cwd(),
+          });
+    logger.info("codex agent ready", { key, codexBackend });
     agents.set(key, created);
     return created;
   } catch (err) {
     // Fail loudly: use an echo agent that emits an explicit error to the user.
-    logger.error("failed to start codex-exec agent; using echo agent", err);
+    logger.error("failed to start codex agent; using echo agent", err);
     const echo = new EchoAgent(
-      `ERROR: codex-exec failed to start (${(err as Error)?.message ?? "unknown error"})`,
+      `ERROR: codex failed to start (${(err as Error)?.message ?? "unknown error"})`,
     );
     agents.set(key, echo);
     return echo;
@@ -3632,6 +3993,7 @@ async function executeAcpRequest({
     // TODO: we might not want to immediately close, since there is
     // overhead in creating the syncdoc each time.
     chatWriter?.dispose();
+    await chatWriter?.waitUntilDisposed();
     await cleanup();
   }
   return { terminalState };
@@ -4264,6 +4626,133 @@ async function getAutomationStore(
   return await promise;
 }
 
+function resetAutomationStoreCache(project_id: string): void {
+  automationStores.delete(project_id);
+}
+
+function normalizeAcpAutomationRecord(
+  record?: AcpAutomationRecord,
+): AcpAutomationRow | undefined {
+  if (!record) return undefined;
+  const automation_id = `${record.automation_id ?? ""}`.trim();
+  const project_id = `${record.project_id ?? ""}`.trim();
+  const path = `${record.path ?? ""}`.trim();
+  const thread_id = `${record.thread_id ?? ""}`.trim();
+  const account_id = `${record.account_id ?? ""}`.trim();
+  if (!automation_id || !project_id || !path || !thread_id || !account_id) {
+    return undefined;
+  }
+  const config = normalizeAcpAutomationConfig({
+    enabled: record.enabled,
+    automation_id,
+    title: record.title,
+    prompt: record.prompt,
+    schedule_type: record.schedule_type,
+    local_time: record.local_time,
+    timezone: record.timezone,
+    pause_after_unacknowledged_runs:
+      record.pause_after_unacknowledged_runs ?? undefined,
+  });
+  if (!config) {
+    return undefined;
+  }
+  const parseMs = (value?: number | string): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.floor(value);
+    }
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+  };
+  const enabled = record.enabled !== false && config.enabled !== false;
+  const normalizedStatus =
+    record.status === "running"
+      ? enabled
+        ? "active"
+        : "paused"
+      : record.status === "active" ||
+          record.status === "paused" ||
+          record.status === "error"
+        ? record.status
+        : enabled
+          ? "active"
+          : "paused";
+  const next_run_at =
+    enabled && config.local_time && config.timezone
+      ? (parseMs(record.next_run_at_ms) ??
+        computeNextAutomationRunAt({
+          local_time: config.local_time,
+          timezone: config.timezone,
+        }))
+      : null;
+  return {
+    automation_id,
+    project_id,
+    path,
+    thread_id,
+    account_id,
+    enabled,
+    title: config.title ?? null,
+    prompt: config.prompt ?? null,
+    schedule_type: "daily",
+    local_time: config.local_time ?? null,
+    timezone: config.timezone ?? null,
+    pause_after_unacknowledged_runs:
+      config.pause_after_unacknowledged_runs ?? AUTOMATION_DEFAULT_UNACK_LIMIT,
+    status: normalizedStatus,
+    next_run_at,
+    last_run_started_at: parseMs(record.last_run_started_at_ms) ?? null,
+    last_run_finished_at: parseMs(record.last_run_finished_at_ms) ?? null,
+    last_acknowledged_at: parseMs(record.last_acknowledged_at_ms) ?? null,
+    unacknowledged_runs: clampLoopNumber(record.unacknowledged_runs, 0, 0, 365),
+    paused_reason: `${record.paused_reason ?? ""}`.trim() || null,
+    last_error: `${record.last_error ?? ""}`.trim() || null,
+    last_job_op_id: `${record.last_job_op_id ?? ""}`.trim() || null,
+    last_message_id: `${record.last_message_id ?? ""}`.trim() || null,
+    created_at:
+      parseMs(record.created_at) ?? parseMs(record.updated_at) ?? Date.now(),
+    updated_at: parseMs(record.updated_at) ?? Date.now(),
+  };
+}
+
+export async function rehydrateAcpAutomationsForProject(
+  project_id: string,
+): Promise<number> {
+  const normalizedProjectId = `${project_id ?? ""}`.trim();
+  if (!normalizedProjectId) {
+    return 0;
+  }
+  const store = await getAutomationStore(normalizedProjectId);
+  const records = Object.values(store.getAll());
+  let restored = 0;
+  for (const record of records) {
+    const row = normalizeAcpAutomationRecord(record);
+    if (!row || row.project_id !== normalizedProjectId) {
+      continue;
+    }
+    upsertAcpAutomation(row);
+    restored += 1;
+  }
+  if (restored > 0) {
+    logger.debug("rehydrated ACP automations for project", {
+      project_id: normalizedProjectId,
+      restored,
+    });
+  }
+  return restored;
+}
+
+export function clearLocalAcpAutomationsForProject(project_id: string): void {
+  const normalizedProjectId = `${project_id ?? ""}`.trim();
+  if (!normalizedProjectId) {
+    return;
+  }
+  deleteAcpAutomationsForProject(normalizedProjectId);
+  resetAutomationStoreCache(normalizedProjectId);
+}
+
 async function publishAutomationRecordToProjectIndex(
   row?: AcpAutomationRow,
 ): Promise<void> {
@@ -4432,6 +4921,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: "error",
       error: "queued acp job missing required thread identity",
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
     return;
   }
@@ -4440,6 +4930,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: "error",
       error: "conat client must be initialized",
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
     return;
   }
@@ -4481,6 +4972,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     setAcpJobState({
       op_id: job.op_id,
       state: result.terminalState,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
   } catch (err) {
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
@@ -4503,6 +4995,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: "error",
       error: message,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
   }
 }
@@ -4517,10 +5010,15 @@ async function pumpQueuedAcpJobsForThread({
   thread_id: string;
 }): Promise<void> {
   while (true) {
+    if (!detachedWorkerCanClaimQueuedJobs()) {
+      return;
+    }
     const job = claimNextQueuedAcpJobForThread({
       project_id,
       path,
       thread_id,
+      worker_id: currentDetachedWorkerContext?.worker_id,
+      worker_bundle_version: currentDetachedWorkerContext?.bundle_version,
     });
     if (!job) {
       return;
@@ -4538,6 +5036,9 @@ function kickQueuedAcpJobsForThread({
   path: string;
   thread_id: string;
 }): void {
+  if (!detachedWorkerCanClaimQueuedJobs()) {
+    return;
+  }
   const key = acpJobThreadKey({ project_id, path, thread_id });
   if (pumpingAcpJobThreads.has(key)) {
     return;
@@ -4571,6 +5072,9 @@ function kickQueuedAcpJobsForThread({
 }
 
 function kickAllQueuedAcpJobs(): void {
+  if (!detachedWorkerCanClaimQueuedJobs()) {
+    return;
+  }
   const seen = new Set<string>();
   for (const job of listQueuedAcpJobs()) {
     const key = acpJobThreadKey(job);
@@ -5133,18 +5637,40 @@ async function handleInterruptRequest(
 async function handleForkSessionRequest(
   request: AcpForkSessionRequest,
 ): Promise<{ sessionId: string }> {
-  if (!isValidUUID(request.sessionId)) {
-    throw Error("sessionId must be a valid uuid");
+  const sessionId = `${request.sessionId ?? ""}`.trim();
+  if (!sessionId) {
+    throw Error("sessionId must be a non-empty string");
+  }
+  if (getConfiguredCodexBackend() === "app-server") {
+    try {
+      return await forkCodexAppServerSession({
+        projectId: request.project_id,
+        accountId: request.account_id,
+        sessionId,
+        binaryPath: process.env.COCALC_CODEX_BIN,
+      });
+    } catch (err) {
+      if (!isValidUUID(sessionId)) {
+        throw err;
+      }
+      logger.info("app-server session fork failed; falling back to exec fork", {
+        sessionId,
+        err: `${err}`,
+      });
+    }
   }
   const sessionsRoot = getSessionsRoot();
   if (!sessionsRoot) {
     throw Error("codex sessions directory not configured");
   }
+  if (!isValidUUID(sessionId)) {
+    throw Error("sessionId must be a valid uuid for exec-session fork");
+  }
   const newSessionId = request.newSessionId ?? randomUUID();
   if (!isValidUUID(newSessionId)) {
     throw Error("newSessionId must be a valid uuid");
   }
-  await forkSession(request.sessionId, newSessionId, sessionsRoot);
+  await forkSession(sessionId, newSessionId, sessionsRoot);
   return { sessionId: newSessionId };
 }
 

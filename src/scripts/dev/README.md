@@ -131,3 +131,65 @@ SMOKE_CLOUD_PROVIDERS=gcp pnpm --dir src smoke:cloud-host
 SMOKE_CLOUD_PROVIDERS=gcp SMOKE_CLOUD_SCENARIO=apps-static pnpm --dir src smoke:cloud-host
 SMOKE_CLOUD_PROVIDERS=all SMOKE_CLOUD_CONTINUE_ON_FAILURE=1 pnpm --dir src smoke:cloud-host
 ```
+
+## Launchpad Codex smoke
+
+```bash
+pnpm --dir src smoke:codex-launchpad -- --project <project-id>
+```
+
+This runs a focused smoke against the real routed `project codex exec` path:
+
+1. Resolves the effective Codex auth/payment source for the project.
+2. Stops the project first by default, so the Codex turn must autostart it.
+3. Runs one Codex turn and verifies a real upstream thread id is returned.
+4. Runs a second turn with `--session-id <thread-id>` and verifies context resume.
+5. For site-key auth, waits for a new `codex-site-key` metering row in
+   `openai_chatgpt_log`.
+
+Notes:
+
+- The script refreshes `dev:env:hub` automatically before each `cocalc` call.
+- It expects a local hub daemon with Postgres available via
+  `scripts/dev/hub-daemon.sh status`.
+- By default it verifies site-key metering automatically when the resolved
+  payment source is `site-api-key`.
+
+Example:
+
+```bash
+pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
+```
+
+## Codex long-thread benchmark
+
+```bash
+pnpm --dir src bench:codex-thread -- --thread-id <codex-thread-id>
+```
+
+This runs a real `codex app-server` turn against an existing upstream thread and
+prints JSON metrics for:
+
+1. thread resume wall time
+2. time to first backend activity
+3. time to first visible model output
+4. total turn wall time
+5. peak RSS of the app-server process
+6. `.codex/sessions` and root sqlite growth during the turn
+
+Useful options:
+
+- `--codex-home <path>` to benchmark a specific Lite/Launchpad `CODEX_HOME`
+- `--cwd <path>` to control the runtime working directory
+- `--prompt <text>` to use a custom follow-up prompt
+- `--sample-ms <ms>` to adjust RSS polling frequency
+
+Example against the local Lite daemon home:
+
+```bash
+HOME=/home/wstein/scratch/cocalc-lite4-lite-daemon \
+CODEX_HOME=/home/wstein/scratch/cocalc-lite4-lite-daemon/.codex \
+pnpm --dir src bench:codex-thread -- \
+  --thread-id e9732ad2-c7a2-4dcc-bd60-96276ee41df5 \
+  --cwd /home/wstein/scratch/cocalc-lite4-lite-daemon
+```

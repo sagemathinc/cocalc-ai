@@ -80,14 +80,25 @@ export interface AcpAutomationRecord {
   project_id: string;
   path: string;
   thread_id: string;
+  account_id?: string;
   title?: string;
+  prompt?: string;
+  schedule_type?: "daily";
+  local_time?: string;
+  timezone?: string;
+  pause_after_unacknowledged_runs?: number;
   status?: "active" | "running" | "paused" | "error";
   enabled?: boolean;
   next_run_at_ms?: number;
+  last_run_started_at_ms?: number;
   last_run_finished_at_ms?: number;
+  last_acknowledged_at_ms?: number;
   unacknowledged_runs?: number;
   paused_reason?: string;
   last_error?: string;
+  last_job_op_id?: string;
+  last_message_id?: string;
+  created_at?: string;
   updated_at?: string;
 }
 
@@ -255,4 +266,10 @@ export type AcpStreamPayload =
       error: string;
     };
 
-export type AcpStreamMessage = AcpStreamPayload & { seq: number };
+export type AcpStreamMessage = AcpStreamPayload & {
+  seq: number;
+  // Wall-clock time when the event was recorded by CoCalc. Persisted so log
+  // rows can keep stable timestamps after reload instead of only during the
+  // live subscription window.
+  time?: number;
+};

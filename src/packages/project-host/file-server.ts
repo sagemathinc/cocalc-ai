@@ -84,6 +84,7 @@ import { publishLroEvent } from "@cocalc/conat/lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
+import { resetClonedProjectState } from "./clone-state";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -764,6 +765,7 @@ async function clone({
     throw Error("file server not initialized");
   }
   await fs.subvolumes.clone(volName(src_project_id), volName(project_id));
+  await resetClonedProjectState(projectMountpoint(project_id));
   queueProjectProvisioned(project_id, true);
 }
 

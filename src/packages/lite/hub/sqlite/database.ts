@@ -44,6 +44,8 @@ export function initDatabase(options: DatabaseOptions = {}): SqliteDatabase {
   }
   db = new DatabaseSync(filename) as unknown as SqliteDatabase;
   db.exec("PRAGMA journal_mode=WAL");
+  db.exec("PRAGMA synchronous=NORMAL");
+  db.exec("PRAGMA busy_timeout=5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS data (
       table_name TEXT NOT NULL,

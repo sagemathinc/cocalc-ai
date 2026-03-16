@@ -3,9 +3,16 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import { argsJoin } from "@cocalc/util/args";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
+import type {
+  CodexAppServerLoginHint,
+  CodexAppServerRequest,
+  CodexAppServerRequestHandler,
+} from "@cocalc/ai/acp";
 import { setCodexProjectSpawner } from "@cocalc/ai/acp";
+import { hubApi } from "@cocalc/lite/hub/api";
 import { which } from "@cocalc/backend/which";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import {
@@ -26,10 +33,16 @@ import {
   resolveCodexAuthRuntime,
   resolveSharedCodexHome,
 } from "./codex-auth";
+import { syncSubscriptionAuthToRegistryIfChanged } from "./codex-auth-registry";
 
 const logger = getLogger("project-host:codex-project");
-const CONTAINER_TTL_MS = Number(
-  process.env.COCALC_CODEX_PROJECT_TTL_MS ?? 60_000,
+// Reusing long-lived Codex rootfs containers has proven flaky on some hosts:
+// fresh containers work, then later turns can hang with broken networking.
+// Keep the lease mechanism so a running turn keeps its container, but default
+// to recreating the container as soon as the turn exits.
+const CONTAINER_TTL_MS = Math.max(
+  0,
+  Number(process.env.COCALC_CODEX_PROJECT_TTL_MS ?? 0),
 );
 const CONTAINER_SETUP_TIMEOUT_MS = Math.max(
   10_000,
@@ -38,6 +51,14 @@ const CONTAINER_SETUP_TIMEOUT_MS = Math.max(
 const PODMAN_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_PODMAN_TIMEOUT_MS ?? 45_000),
+);
+const PROJECT_START_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_PROJECT_START_TIMEOUT_MS ?? 90_000),
+);
+const PROJECT_START_POLL_MS = Math.max(
+  100,
+  Number(process.env.COCALC_CODEX_PROJECT_START_POLL_MS ?? 500),
 );
 
 type ContainerInfo = {
@@ -58,6 +79,22 @@ type OptionalBindMount = {
 const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
 const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
 const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
+const EPHEMERAL_AUTH_STORE_CONFIG = 'cli_auth_credentials_store="ephemeral"';
+// Security-critical: app-server must be exec'd via the exact trusted Codex
+// binary we installed into the project runtime image. Do not resolve this via
+// PATH or any user-controlled fallback, since that could let a project replace
+// the binary and capture site- or account-managed credentials. The override is
+// intentionally named DANGEROUS because it is only for host-admin debugging.
+function getProjectRuntimeCodexPath(): string {
+  return (
+    process.env.COCALC_DANGEROUS_PROJECT_RUNTIME_CODEX_PATH_OVERRIDE ??
+    "/opt/cocalc/bin2/codex"
+  );
+}
+
+function projectContainerName(projectId: string): string {
+  return `project-${projectId}`;
+}
 
 function codexContainerName(projectId: string, contextId: string): string {
   return `codex-${projectId}-${contextId.slice(0, 12)}`;
@@ -73,6 +110,20 @@ function parseLeaseKey(key: string): { projectId: string; contextId: string } {
     return { projectId: key, contextId: "shared-home" };
   }
   return { projectId: key.slice(0, i), contextId: key.slice(i + 1) };
+}
+
+function shouldForceEphemeralAppServerAuthStorage(
+  authRuntime: CodexAuthRuntime,
+): boolean {
+  switch (authRuntime.source) {
+    case "subscription":
+    case "project-api-key":
+    case "account-api-key":
+    case "site-api-key":
+      return true;
+    case "shared-home":
+      return false;
+  }
 }
 
 function redactPodmanArgs(args: string[]): string {
@@ -125,6 +176,165 @@ function truncateForLog(value: string | undefined, max = 500): string {
   return `${text.slice(0, max)}...`;
 }
 
+function decodeJwtClaims(token: string): Record<string, unknown> | undefined {
+  const parts = token.split(".");
+  if (parts.length < 2 || !parts[1]) return undefined;
+  const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const pad = normalized + "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+  try {
+    const payload = Buffer.from(pad, "base64").toString("utf8");
+    const parsed = JSON.parse(payload);
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractChatgptClaims(claims: Record<string, unknown> | undefined): {
+  chatgptAccountId?: string;
+  chatgptPlanType?: string;
+} {
+  if (!claims) return {};
+  const auth = claims["https://api.openai.com/auth"];
+  if (!auth || typeof auth !== "object") return {};
+  const chatgptAccountId =
+    typeof (auth as any).chatgpt_account_id === "string"
+      ? `${(auth as any).chatgpt_account_id}`.trim()
+      : undefined;
+  const chatgptPlanType =
+    typeof (auth as any).chatgpt_plan_type === "string"
+      ? `${(auth as any).chatgpt_plan_type}`.trim()
+      : undefined;
+  return {
+    chatgptAccountId: chatgptAccountId || undefined,
+    chatgptPlanType: chatgptPlanType || undefined,
+  };
+}
+
+async function resolveAppServerLoginHint(
+  authRuntime: CodexAuthRuntime,
+): Promise<CodexAppServerLoginHint | undefined> {
+  const apiKey = authRuntime.env.OPENAI_API_KEY?.trim();
+  if (
+    apiKey &&
+    (authRuntime.source === "project-api-key" ||
+      authRuntime.source === "account-api-key" ||
+      authRuntime.source === "site-api-key")
+  ) {
+    return {
+      type: "apiKey",
+      apiKey,
+    };
+  }
+  const codexHome =
+    authRuntime.codexHome ??
+    (authRuntime.source === "shared-home"
+      ? resolveSharedCodexHome()
+      : undefined);
+  if (!codexHome) return undefined;
+  try {
+    const raw = await fs.readFile(join(codexHome, "auth.json"), "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw);
+    const tokens = parsed?.tokens;
+    const accessToken =
+      typeof tokens?.access_token === "string"
+        ? tokens.access_token.trim()
+        : "";
+    if (!accessToken) return undefined;
+    const accessClaims = extractChatgptClaims(decodeJwtClaims(accessToken));
+    const idToken =
+      typeof tokens?.id_token === "string" ? tokens.id_token : undefined;
+    const idClaims = extractChatgptClaims(
+      idToken ? decodeJwtClaims(idToken) : undefined,
+    );
+    const chatgptAccountId =
+      (typeof tokens?.account_id === "string"
+        ? tokens.account_id.trim()
+        : "") ||
+      accessClaims.chatgptAccountId ||
+      idClaims.chatgptAccountId;
+    if (!chatgptAccountId) return undefined;
+    return {
+      type: "chatgptAuthTokens",
+      accessToken,
+      chatgptAccountId,
+      chatgptPlanType: accessClaims.chatgptPlanType ?? idClaims.chatgptPlanType,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveLatestAppServerLoginHint({
+  projectId,
+  accountId,
+}: {
+  projectId: string;
+  accountId?: string;
+}): Promise<CodexAppServerLoginHint | undefined> {
+  const authRuntime = await resolveCodexAuthRuntime({
+    projectId,
+    accountId,
+  });
+  return await resolveAppServerLoginHint(authRuntime);
+}
+
+function createAppServerRequestHandler({
+  projectId,
+  accountId,
+  authRuntime,
+}: {
+  projectId: string;
+  accountId?: string;
+  authRuntime: CodexAuthRuntime;
+}): CodexAppServerRequestHandler {
+  return async (request: CodexAppServerRequest) => {
+    switch (request.method) {
+      case "account/chatgptAuthTokens/refresh": {
+        const refreshed = await resolveLatestAppServerLoginHint({
+          projectId,
+          accountId,
+        });
+        if (refreshed?.type !== "chatgptAuthTokens") {
+          throw new Error(
+            `chatgptAuthTokens refresh is not available for auth source ${authRuntime.source}`,
+          );
+        }
+        const previousAccountId =
+          typeof request.params?.previousAccountId === "string"
+            ? request.params.previousAccountId.trim()
+            : "";
+        if (
+          previousAccountId &&
+          refreshed.chatgptAccountId !== previousAccountId
+        ) {
+          logger.warn(
+            "codex project runtime: refreshed chatgpt account mismatch",
+            {
+              projectId,
+              accountId,
+              previousAccountId,
+              refreshedAccountId: refreshed.chatgptAccountId,
+            },
+          );
+        }
+        return {
+          accessToken: refreshed.accessToken,
+          chatgptAccountId: refreshed.chatgptAccountId,
+          chatgptPlanType: refreshed.chatgptPlanType ?? null,
+        };
+      }
+      default:
+        throw new Error(`unsupported app-server request: ${request.method}`);
+    }
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -162,6 +372,7 @@ async function podman(
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
+        env: podmanEnv(),
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -199,6 +410,7 @@ async function podmanOutput(
       {
         timeout: timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
+        env: podmanEnv(),
       },
       (err, stdout, stderr) => {
         if (!err) {
@@ -245,6 +457,37 @@ async function containerIsRunning(name: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function ensureProjectContainerRunning(projectId: string): Promise<void> {
+  const name = projectContainerName(projectId);
+  if (await containerIsRunning(name)) return;
+
+  const row = getProject(projectId);
+  if (!row) {
+    throw new Error(`project ${projectId} is not hosted on this project-host`);
+  }
+
+  const state = `${row.state ?? ""}`.trim().toLowerCase();
+  if (state !== "starting" && state !== "running") {
+    if (!hubApi.projects.start) {
+      throw new Error("project start API is not available");
+    }
+    logger.info("codex project runtime: starting project container", {
+      projectId,
+      state,
+    });
+    await hubApi.projects.start({ project_id: projectId });
+  }
+
+  const deadline = Date.now() + PROJECT_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await containerIsRunning(name)) return;
+    await delay(PROJECT_START_POLL_MS);
+  }
+  throw new Error(
+    `project container ${name} did not start within ${PROJECT_START_TIMEOUT_MS}ms`,
+  );
 }
 
 async function resolveCodexBinary(): Promise<{
@@ -681,9 +924,30 @@ export async function spawnCodexInProjectContainer({
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const proc = spawn("podman", execArgs, {
     stdio: ["pipe", "pipe", "pipe"],
+    env: podmanEnv(),
   });
   proc.on("exit", async () => {
     try {
+      if (
+        authRuntime.source === "subscription" &&
+        accountId &&
+        authRuntime.codexHome
+      ) {
+        try {
+          await syncSubscriptionAuthToRegistryIfChanged({
+            projectId,
+            accountId,
+            codexHome: authRuntime.codexHome,
+          });
+        } catch (err) {
+          logger.debug("codex project: failed syncing subscription auth", {
+            projectId,
+            accountId,
+            codexHome: authRuntime.codexHome,
+            err: `${err}`,
+          });
+        }
+      }
       await release();
     } finally {
       if (touchReason) {
@@ -700,6 +964,142 @@ export async function spawnCodexInProjectContainer({
     containerName: info.name,
     home: info.home,
     scratch: info.scratch,
+  };
+}
+
+type SpawnCodexAppServerInProjectRuntimeOptions = {
+  projectId: string;
+  accountId?: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  forceRefreshSiteKey?: boolean;
+  touchReason?: string | false;
+};
+
+type SpawnCodexAppServerInProjectRuntimeResult = {
+  proc: ReturnType<typeof spawn>;
+  cmd: string;
+  args: string[];
+  cwd?: string;
+  authRuntime: CodexAuthRuntime;
+  home: string;
+  scratch?: string;
+  appServerLogin?: CodexAppServerLoginHint;
+  handleAppServerRequest?: CodexAppServerRequestHandler;
+};
+
+async function spawnCodexAppServerInProjectRuntime({
+  projectId,
+  accountId,
+  cwd,
+  env: extraEnv,
+  forceRefreshSiteKey = false,
+  touchReason = "codex",
+}: SpawnCodexAppServerInProjectRuntimeOptions): Promise<SpawnCodexAppServerInProjectRuntimeResult> {
+  const authRuntime = await resolveCodexAuthRuntime({
+    projectId,
+    accountId,
+    forceRefreshSiteKey,
+  });
+  logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
+  const appServerLogin = await resolveAppServerLoginHint(authRuntime);
+  const handleAppServerRequest = createAppServerRequestHandler({
+    projectId,
+    accountId,
+    authRuntime,
+  });
+  await ensureProjectContainerRunning(projectId);
+  const { home, scratch } = await localPath({ project_id: projectId });
+  const name = projectContainerName(projectId);
+
+  const execArgs: string[] = [
+    "exec",
+    "-i",
+    "--workdir",
+    cwd && cwd.startsWith("/") ? cwd : "/root",
+    "-e",
+    "HOME=/root",
+  ];
+  const execEnv = toStringEnv(extraEnv);
+  if (
+    appServerLogin?.type === "apiKey" &&
+    execEnv.OPENAI_API_KEY &&
+    execEnv.OPENAI_API_KEY === authRuntime.env.OPENAI_API_KEY
+  ) {
+    delete execEnv.OPENAI_API_KEY;
+  }
+  if (!execEnv.OPENAI_API_KEY?.trim()) {
+    delete execEnv.OPENAI_API_KEY;
+  }
+  for (const key in execEnv) {
+    execArgs.push("-e", `${key}=${execEnv[key]}`);
+  }
+  const codexArgs: string[] = [];
+  if (shouldForceEphemeralAppServerAuthStorage(authRuntime)) {
+    // Host-managed auth must stay in-process only. Otherwise app-server's
+    // apiKey login path can write credentials into the collaborative
+    // project-local CODEX_HOME.
+    codexArgs.push("--config", EPHEMERAL_AUTH_STORE_CONFIG);
+  }
+  execArgs.push(
+    name,
+    getProjectRuntimeCodexPath(),
+    ...codexArgs,
+    "app-server",
+    "--listen",
+    "stdio://",
+  );
+  logger.debug("codex project runtime: podman exec", {
+    projectId,
+    auth: redactCodexAuthRuntime(authRuntime),
+    loginType: appServerLogin?.type,
+    cmd: redactPodmanArgs(execArgs),
+  });
+  const proc = spawn("podman", execArgs, {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: podmanEnv(),
+  });
+  proc.on("exit", async () => {
+    try {
+      if (
+        authRuntime.source === "subscription" &&
+        accountId &&
+        authRuntime.codexHome
+      ) {
+        try {
+          await syncSubscriptionAuthToRegistryIfChanged({
+            projectId,
+            accountId,
+            codexHome: authRuntime.codexHome,
+          });
+        } catch (err) {
+          logger.debug(
+            "codex project runtime: failed syncing subscription auth",
+            {
+              projectId,
+              accountId,
+              codexHome: authRuntime.codexHome,
+              err: `${err}`,
+            },
+          );
+        }
+      }
+    } finally {
+      if (touchReason) {
+        void touchProjectLastEdited(projectId, touchReason);
+      }
+    }
+  });
+  return {
+    proc,
+    cmd: "podman",
+    args: execArgs,
+    cwd,
+    authRuntime,
+    home,
+    scratch,
+    appServerLogin,
+    handleAppServerRequest,
   };
 }
 
@@ -741,6 +1141,28 @@ export function initCodexProjectRunner(): void {
           rootHostPath: spawned.home,
           scratchHostPath: spawned.scratch,
         },
+      };
+    },
+    async spawnCodexAppServer({ projectId, accountId, cwd, env: extraEnv }) {
+      const spawned = await spawnCodexAppServerInProjectRuntime({
+        projectId,
+        accountId,
+        cwd,
+        env: extraEnv,
+        touchReason: "codex",
+      });
+      return {
+        proc: spawned.proc,
+        cmd: spawned.cmd,
+        args: spawned.args,
+        cwd: spawned.cwd,
+        authSource: spawned.authRuntime.source,
+        containerPathMap: {
+          rootHostPath: spawned.home,
+          scratchHostPath: spawned.scratch,
+        },
+        appServerLogin: spawned.appServerLogin,
+        handleAppServerRequest: spawned.handleAppServerRequest,
       };
     },
   });

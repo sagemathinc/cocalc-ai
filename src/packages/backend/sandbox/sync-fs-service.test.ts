@@ -601,6 +601,33 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 
+  it("serializes concurrent one-shot reconciles for the same path", async () => {
+    const path = join(dir, "reconcile-once.txt");
+    writeFileSync(path, "fresh");
+
+    const svc = new SyncFsService();
+    const initPath = jest.spyOn(svc as any, "initPath").mockImplementation(
+      async () =>
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 50);
+        }),
+    );
+
+    await Promise.all([
+      svc.reconcile(path, {
+        project_id: "p7c",
+        syncPath: "reconcile-once.txt",
+      }),
+      svc.reconcile(path, {
+        project_id: "p7c",
+        syncPath: "reconcile-once.txt",
+      }),
+    ]);
+
+    expect(initPath).toHaveBeenCalledTimes(1);
+    svc.close();
+  }, 10_000);
+
   it("reinitializes a watched path when syncPath switches to a new canonical identity", async () => {
     const path = join(dir, "identity-switch.txt");
     writeFileSync(path, "tracked");

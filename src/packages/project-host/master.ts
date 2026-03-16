@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
 import { createHostControlService } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
+import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { account_id } from "@cocalc/backend/data";
 import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
@@ -651,6 +652,7 @@ export async function startMasterRegistration({
       },
       async deleteProjectData({ project_id }) {
         await deleteVolume(project_id);
+        clearLocalAcpAutomationsForProject(project_id);
         deleteProjectLocal(project_id);
       },
       upgradeSoftware,

@@ -95,6 +95,7 @@ const BORDER = "2px solid #ccc";
 const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
 const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
 const HEAD_REF = "HEAD";
+export const ACP_THINKING_PLACEHOLDER = ":robot: Thinking...";
 
 export function resolveThreadMetadataLookup({
   messageThreadId,
@@ -358,6 +359,43 @@ export function resolveRenderedMessageValue({
   return rowValue;
 }
 
+export function shouldSuppressAcpPlaceholderBody({
+  value,
+  showCodexActivity,
+}: {
+  value: string;
+  showCodexActivity: boolean;
+}): boolean {
+  return showCodexActivity && value.trim() === ACP_THINKING_PLACEHOLDER;
+}
+
+export function resolveEffectiveGenerating({
+  isCodexThread,
+  generating,
+  acpInterrupted,
+}: {
+  isCodexThread: boolean;
+  generating?: boolean;
+  acpInterrupted: boolean;
+}): boolean {
+  if (!isCodexThread) return generating === true;
+  if (acpInterrupted) return false;
+  return generating === true;
+}
+
+function getLatestCodexActivityAtMs(
+  events: any[] | null | undefined,
+): number | undefined {
+  if (!Array.isArray(events)) return undefined;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const time = (events[i] as any)?.time;
+    if (typeof time === "number" && Number.isFinite(time)) {
+      return time;
+    }
+  }
+  return undefined;
+}
+
 export default function Message({
   index,
   actions,
@@ -492,13 +530,17 @@ export default function Message({
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread =
     typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
+  const acpInterrupted = useMemo(
+    () => field<boolean>(message, "acp_interrupted") === true,
+    [message],
+  );
   const effectiveGenerating = useMemo(() => {
-    if (!isCodexThread) return generating === true;
-    // Assistant rows: rely on persisted chat-row generating flag only.
-    // This avoids stale thread-state "running" entries keeping completed turns
-    // visually live after reconnect/refresh.
-    return generating === true;
-  }, [generating, isCodexThread]);
+    return resolveEffectiveGenerating({
+      isCodexThread,
+      generating,
+      acpInterrupted,
+    });
+  }, [acpInterrupted, generating, isCodexThread]);
   const showDeleteButton = showEditButton && !effectiveGenerating;
 
   useEffect(() => {
@@ -589,16 +631,8 @@ export default function Message({
 
   const latestThreadInterrupted = useMemo(() => {
     if (!latestThreadMessage) return false;
-    return (
-      field<boolean>(latestThreadMessage, "acp_interrupted") === true &&
-      field<boolean>(latestThreadMessage, "generating") !== true
-    );
+    return field<boolean>(latestThreadMessage, "acp_interrupted") === true;
   }, [latestThreadMessage]);
-
-  const acpInterrupted = useMemo(
-    () => field<boolean>(message, "acp_interrupted") === true,
-    [message],
-  );
 
   useEffect(() => {
     if (!actions?.store) return;
@@ -702,6 +736,10 @@ export default function Message({
     }
     return getBestResponseText(codexBodyLog.events as any);
   }, [codexBodyLog.events, effectiveGenerating]);
+  const lastCodexActivityAtMs = useMemo(
+    () => getLatestCodexActivityAtMs(codexBodyLog.events),
+    [codexBodyLog.events],
+  );
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -1311,6 +1349,10 @@ export default function Message({
 
   function renderMessageBody({ message_class }) {
     const value = renderedMessageMarkdown;
+    const suppressPlaceholderBody = shouldSuppressAcpPlaceholderBody({
+      value,
+      showCodexActivity,
+    });
     const inlineCodeLinks = field<InlineCodeLink[]>(
       message,
       "inline_code_links",
@@ -1332,6 +1374,7 @@ export default function Message({
           show={showCodexActivity}
           generating={effectiveGenerating}
           durationLabel={durationLabel}
+          lastActivityAtMs={lastCodexActivityAtMs}
           fontSize={font_size}
           project_id={project_id}
           path={path}
@@ -1362,18 +1405,20 @@ export default function Message({
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
-        <div onClickCapture={openCommitFromMessage}>
-          <StaticMarkdown
-            style={MARKDOWN_STYLE}
-            value={value}
-            className={message_class}
-            highlightQuery={searchHighlight}
-            inlineCodeLinks={
-              Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-            }
-            inlineCodeProjectRoot={activityBasePath}
-          />
-        </div>
+        {!suppressPlaceholderBody && value.trim().length > 0 ? (
+          <div onClickCapture={openCommitFromMessage}>
+            <StaticMarkdown
+              style={MARKDOWN_STYLE}
+              value={value}
+              className={message_class}
+              highlightQuery={searchHighlight}
+              inlineCodeLinks={
+                Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+              }
+              inlineCodeProjectRoot={activityBasePath}
+            />
+          </div>
+        ) : null}
       </>
     );
   }

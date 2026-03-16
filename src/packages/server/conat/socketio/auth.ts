@@ -20,6 +20,7 @@ import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-to
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import getPool from "@cocalc/database/pool";
 import { verifyProjectHostToken } from "@cocalc/server/project-host/bootstrap-token";
+import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -213,6 +214,16 @@ const isAllowedCache = new LRU<string, boolean>({
   ttl: 1000 * 60, // 1 minute
 });
 
+async function warmProjectRoute(project_id: string): Promise<void> {
+  if (!project_id) return;
+  try {
+    await materializeProjectHost(project_id);
+  } catch {
+    // Best effort only. Permission checks must not fail just because
+    // route materialization is temporarily unavailable.
+  }
+}
+
 export async function isAllowed({
   user,
   subject,
@@ -253,6 +264,7 @@ export async function isAllowed({
         project_id === agentUser.auth_project_id &&
         (await isCollaborator({ account_id: userId, project_id }))
       ) {
+        await warmProjectRoute(project_id);
         return true;
       }
     }
@@ -356,7 +368,11 @@ async function isAccountAllowed({
     }
     return false;
   }
-  return await isCollaborator({ account_id, project_id });
+  const allowed = await isCollaborator({ account_id, project_id });
+  if (allowed) {
+    await warmProjectRoute(project_id);
+  }
+  return allowed;
 }
 
 async function isHostOwnerOrCollaborator({

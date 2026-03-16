@@ -1,6 +1,11 @@
 /** @jest-environment jsdom */
 
-import { resolveRenderedMessageValue } from "../message";
+import {
+  ACP_THINKING_PLACEHOLDER,
+  resolveEffectiveGenerating,
+  resolveRenderedMessageValue,
+  shouldSuppressAcpPlaceholderBody,
+} from "../message";
 
 describe("resolveRenderedMessageValue", () => {
   it("prefers row content when not generating and row has text", () => {
@@ -41,5 +46,39 @@ describe("resolveRenderedMessageValue", () => {
         generating: true,
       }),
     ).toBe("row text");
+  });
+
+  it("suppresses the ACP placeholder body while Codex is still starting", () => {
+    expect(
+      shouldSuppressAcpPlaceholderBody({
+        value: ACP_THINKING_PLACEHOLDER,
+        showCodexActivity: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldSuppressAcpPlaceholderBody({
+        value: ACP_THINKING_PLACEHOLDER,
+        showCodexActivity: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("treats interrupted Codex rows as no longer generating", () => {
+    expect(
+      resolveEffectiveGenerating({
+        isCodexThread: true,
+        generating: true,
+        acpInterrupted: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      resolveEffectiveGenerating({
+        isCodexThread: true,
+        generating: true,
+        acpInterrupted: false,
+      }),
+    ).toBe(true);
   });
 });

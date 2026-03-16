@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { connect } from "@cocalc/conat/core/client";
@@ -22,6 +22,10 @@ function registerPidFile(
   writeFileSync(pidFile, `${process.pid}\n`);
   const cleanup = () => {
     try {
+      const current = readFileSync(pidFile, "utf8").trim();
+      if (current !== `${process.pid}`) {
+        return;
+      }
       rmSync(pidFile, { force: true });
     } catch {
       // ignore

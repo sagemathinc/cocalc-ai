@@ -144,6 +144,9 @@ describeIfLinux("sync-fs watch identity canonicalization", () => {
     expect(await (fs as any).canonicalSyncFsPath("link/tracked.txt")).toBe(
       join(home, "real", "tracked.txt"),
     );
+    expect(
+      await (fs as any).canonicalSyncIdentityPath("link/tracked.txt"),
+    ).toBe("real/tracked.txt");
   });
 
   it("keeps a stable canonical identity for missing files under symlinked parents", async () => {
@@ -153,6 +156,9 @@ describeIfLinux("sync-fs watch identity canonicalization", () => {
     expect(await (fs as any).canonicalSyncFsPath("link-dir/new.txt")).toBe(
       join(home, "real-dir", "new.txt"),
     );
+    expect(
+      await (fs as any).canonicalSyncIdentityPath("link-dir/new.txt"),
+    ).toBe("real-dir/new.txt");
   });
 });
 

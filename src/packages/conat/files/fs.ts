@@ -172,6 +172,15 @@ export interface Filesystem {
   readlink: (path: string) => Promise<string>;
   realpath: (path: string) => Promise<string>;
   canonicalSyncFsPath?: (path: string) => Promise<string>;
+  canonicalSyncIdentityPath?: (path: string) => Promise<string>;
+  syncFsReconcile?: (
+    path: string,
+    info?: {
+      project_id?: string;
+      doctype?: any;
+      history_epoch?: number;
+    },
+  ) => Promise<void>;
   rename: (oldPath: string, newPath: string) => Promise<void>;
   rm: (path: string | string[], options?) => Promise<void>;
   rmdir: (path: string, options?) => Promise<void>;
@@ -206,9 +215,9 @@ export interface Filesystem {
     active?: boolean,
     info?: {
       project_id?: string;
-      relativePath?: string;
-      string_id?: string;
       doctype?: any;
+      history_epoch?: number;
+      watchDebounce?: number;
     },
   ) => Promise<void>;
   // todo: typing
@@ -519,8 +528,28 @@ export async function fsServer({
       }
       return path;
     },
+    async canonicalSyncIdentityPath(path: string) {
+      const filesystem = await fs(this.subject);
+      if (typeof filesystem.canonicalSyncIdentityPath === "function") {
+        return await filesystem.canonicalSyncIdentityPath(path);
+      }
+      if (typeof filesystem.realpath === "function") {
+        try {
+          return await filesystem.realpath(path);
+        } catch {
+          return path;
+        }
+      }
+      return path;
+    },
     async syncFsWatch(path: string, active: boolean = true, info?: any) {
       return await (await fs(this.subject)).syncFsWatch(path, active, info);
+    },
+    async syncFsReconcile(path: string, info?: any) {
+      const filesystem = await fs(this.subject);
+      if (typeof filesystem.syncFsReconcile === "function") {
+        return await filesystem.syncFsReconcile(path, info);
+      }
     },
     async rename(oldPath: string, newPath: string) {
       await (await fs(this.subject)).rename(oldPath, newPath);

@@ -52,6 +52,8 @@
     "hub:daemon:restart": "bash ./scripts/dev/hub-daemon.sh restart",
     "hub:daemon:status": "bash ./scripts/dev/hub-daemon.sh status",
     "hub:daemon:logs": "bash ./scripts/dev/hub-daemon.sh logs",
+    "bench:codex-thread": "node ./scripts/dev/codex-thread-benchmark.mjs",
+    "smoke:codex-launchpad": "node ./scripts/dev/codex-launchpad-smoke.mjs",
     "smoke:self-host": "bash ./scripts/dev/self-host-smoke.sh",
     "smoke:cloud-host": "bash ./scripts/dev/cloud-host-smoke.sh",
     "static:watch": "cd packages/static && pnpm watch",

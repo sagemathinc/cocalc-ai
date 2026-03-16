@@ -476,15 +476,21 @@ export function networkArgument() {
       explicit,
     });
   }
+  // Default to pasta, which is Podman's normal rootless network mode and the
+  // most supported/fastest default for our project containers. slirp4netns is
+  // still a valid override and can be useful while debugging network issues,
+  // but it is typically slower and should not be the default.
   const defaultNetworkRaw = `${
     process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "pasta"
   }`
     .trim()
     .toLowerCase();
   const defaultNetwork =
-    defaultNetworkRaw === "pasta" || defaultNetworkRaw === "none"
+    defaultNetworkRaw === "slirp4netns" ||
+    defaultNetworkRaw === "pasta" ||
+    defaultNetworkRaw === "none"
       ? defaultNetworkRaw
-      : "slirp4netns";
+      : "pasta";
   if (defaultNetwork === "none") {
     return "--network=none";
   }

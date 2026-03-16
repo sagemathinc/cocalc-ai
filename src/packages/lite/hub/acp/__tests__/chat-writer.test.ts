@@ -202,6 +202,93 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("waits for the terminal syncdb save before resolving summary handling", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    let holdSave = false;
+    let releaseSave: (() => void) | undefined;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    syncdb.save = async () => {
+      if (holdSave) {
+        await saveGate;
+      }
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    holdSave = true;
+    let resolved = false;
+    const pending = writer
+      .handle({
+        type: "summary",
+        finalResponse: "done",
+        seq: 0,
+      } as AcpStreamMessage)
+      .then(() => {
+        resolved = true;
+      });
+
+    await delay(0);
+    expect(resolved).toBe(false);
+
+    releaseSave?.();
+    await pending;
+    expect(resolved).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
+  it("waits for dispose-triggered syncdb saves before reporting completion", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      get: (key: string) => (key === "generating" ? true : undefined),
+    });
+    let releaseSave: (() => void) | undefined;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    let saves = 0;
+    syncdb.save = async () => {
+      saves += 1;
+      await saveGate;
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    writer.dispose(true);
+    let disposed = false;
+    const pending = writer.waitUntilDisposed().then(() => {
+      disposed = true;
+    });
+
+    await delay(0);
+    expect(disposed).toBe(false);
+    expect(saves).toBeGreaterThan(0);
+
+    releaseSave?.();
+    await pending;
+    expect(disposed).toBe(true);
+  });
+
   it("stamps activity log refs from thread_id and message_id", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({
@@ -385,6 +472,40 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
     expect(publish).toHaveBeenCalled();
     expect(logSet).toHaveBeenCalled();
+    (writer as any).dispose?.(true);
+  });
+
+  it("persists durable timestamps on published log events", async () => {
+    const publish = jest.fn().mockResolvedValue(undefined);
+    const logSet = jest.fn().mockResolvedValue(undefined);
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: { publish } as any,
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: logSet,
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "hi" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+
+    (writer as any).persistLogProgress.flush();
+    await flush(writer);
+
+    const published = publish.mock.calls[0]?.[1];
+    expect(typeof published?.time).toBe("number");
+
+    const persistedEvents = logSet.mock.calls[0]?.[1];
+    expect(Array.isArray(persistedEvents)).toBe(true);
+    expect(typeof persistedEvents?.[0]?.time).toBe("number");
+
     (writer as any).dispose?.(true);
   });
 
@@ -724,7 +845,7 @@ describe("ChatStreamWriter", () => {
     );
   });
 
-  it("uses interrupted text when summary arrives", async () => {
+  it("uses interrupted text when no final summary text exists", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -752,7 +873,7 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("keeps interrupted text when late payloads arrive", async () => {
+  it("keeps the final summary text when interrupt lands during completion", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -778,9 +899,8 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect((writer as any).content).toContain("Please fix X");
-    expect((writer as any).content).not.toContain("late streamed text");
-    expect((writer as any).content).not.toContain("late final response");
+    expect((writer as any).content).not.toContain("Please fix X");
+    expect((writer as any).content).toContain("late final response");
     const final = sets[sets.length - 1];
     expect(final.generating).toBe(false);
     expect((final as any).acp_interrupted).toBe(true);
@@ -999,6 +1119,30 @@ describe("ChatStreamWriter", () => {
     } finally {
       await fs.rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("maps absolute chat paths through the host workspace root", async () => {
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        path: "/root/notes/chat.chat",
+        message_id: "msg-host-chat-path",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: makeFakeSyncDB().syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    writer.workspaceRoot = "/root";
+    writer.hostWorkspaceRoot = "/mnt/cocalc/project-test";
+
+    expect((writer as any).resolveChatFilePath()).toBe(
+      "/mnt/cocalc/project-test/notes/chat.chat",
+    );
+    writer.dispose?.(true);
   });
 
   it("resolves chat row by message_id when sender/date changed", async () => {

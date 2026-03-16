@@ -11,8 +11,18 @@ import readline from "node:readline";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("ai:acp:codex-session-store");
-const DEFAULT_TRUNCATE_BYTES = 100 * 1024 * 1024;
 const DEFAULT_KEEP_COMPACTIONS = 2;
+// Codex rollout JSONL is not "one line per turn". A single turn can emit many
+// lines (token counts, reasoning deltas, tool calls/outputs, messages, etc.),
+// while a single `compacted` line can summarize many older turns. That means
+// line count is a poor trigger for trimming. In practice, the bad failure mode
+// is accumulated old compaction checkpoints making resume slow and memory
+// hungry, even when the raw file is still well below 100 MiB. Keep the byte
+// threshold modest and also require more compaction checkpoints than we plan to
+// retain, so we only trim when there is actual stale summarized history to
+// discard.
+const DEFAULT_TRUNCATE_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MIN_COMPACTIONS_TO_TRUNCATE = DEFAULT_KEEP_COMPACTIONS + 1;
 
 type SessionMetaLine = {
   type: "session_meta";
@@ -163,21 +173,29 @@ export async function rewriteSessionMeta(
 // in the jsonl history and then we can remove this.
 export async function truncateSessionHistory(
   filePath: string,
-  opts?: { maxBytes?: number; keepCompactions?: number },
+  opts?: {
+    maxBytes?: number;
+    keepCompactions?: number;
+    minCompactionsToTruncate?: number;
+  },
 ): Promise<boolean> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_TRUNCATE_BYTES;
   const keepCompactions = opts?.keepCompactions ?? DEFAULT_KEEP_COMPACTIONS;
+  const minCompactionsToTruncate =
+    opts?.minCompactionsToTruncate ?? DEFAULT_MIN_COMPACTIONS_TO_TRUNCATE;
   if (keepCompactions <= 0) return false;
   const stats = await fs.stat(filePath);
   if (stats.size < maxBytes) return false;
 
   const compactionLines: number[] = [];
   let totalLines = 0;
+  let totalCompactions = 0;
   const input = createReadStream(filePath, { encoding: "utf8" });
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
   try {
     for await (const line of rl) {
       if (line.includes('"type":"compacted"')) {
+        totalCompactions += 1;
         compactionLines.push(totalLines);
         if (compactionLines.length > keepCompactions) {
           compactionLines.shift();
@@ -190,6 +208,7 @@ export async function truncateSessionHistory(
     input.destroy();
   }
 
+  if (totalCompactions < minCompactionsToTruncate) return false;
   if (compactionLines.length === 0) return false;
   const startIndex = compactionLines[0];
   if (startIndex <= 1) return false;
@@ -242,6 +261,7 @@ export async function truncateSessionHistory(
     filePath,
     startIndex,
     totalLines,
+    totalCompactions,
     size: stats.size,
   });
   return true;

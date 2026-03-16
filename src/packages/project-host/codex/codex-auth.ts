@@ -9,6 +9,7 @@ import {
   getSiteOpenAiApiKeyFromHub,
   hasSubscriptionAuthInRegistry,
   pullSubscriptionAuthFromRegistry,
+  syncSubscriptionAuthToRegistryIfChanged,
   touchSubscriptionAuthInRegistry,
 } from "./codex-auth-registry";
 import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
@@ -263,6 +264,14 @@ export async function resolveCodexAuthRuntime({
       try {
         await ensureCodexCredentialsStoreFile(codexHome);
         await touchSubscriptionCacheUsage(codexHome);
+        // Normal Codex turns can refresh subscription auth locally on a host.
+        // Push the current cache back to the central registry so fresh hosts
+        // do not start from a stale auth.json with an already-used token.
+        void syncSubscriptionAuthToRegistryIfChanged({
+          projectId,
+          accountId,
+          codexHome,
+        });
       } catch (err) {
         logger.warn("failed to ensure codex file credential store setting", {
           projectId,
