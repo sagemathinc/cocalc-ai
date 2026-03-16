@@ -120,6 +120,8 @@ export type BrowserExecApi = {
       chat_path: string;
       assigned: boolean;
       opened: boolean;
+      notice_thread_id: string;
+      created_thread: boolean;
       tag?: string;
       timestamp: string;
     }>;

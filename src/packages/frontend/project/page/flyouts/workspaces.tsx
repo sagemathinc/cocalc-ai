@@ -4,6 +4,7 @@
  */
 
 import {
+  Alert,
   Button,
   Card,
   Empty,
@@ -90,9 +91,17 @@ type WorkspaceActivityState =
     }
   | undefined;
 
+type WorkspaceOpenFileActivity = {
+  terminals: number;
+  notebooks: number;
+  other: number;
+};
+
 function iconFor(record?: WorkspaceRecord | null): IconName {
   return (record?.theme.icon?.trim() as IconName | undefined) || DEFAULT_ICON;
 }
+
+const WORKSPACE_MEDIA_SIZE = 64;
 
 function selectionValue(selection: WorkspaceSelection): string {
   switch (selection.kind) {
@@ -263,11 +272,38 @@ function getWorkspaceActivityState(
   return undefined;
 }
 
+function getWorkspaceOpenFileActivity(
+  record: WorkspaceRecord,
+  openFilesOrder: string[],
+  openFiles: any,
+): WorkspaceOpenFileActivity {
+  let terminals = 0;
+  let notebooks = 0;
+  let other = 0;
+
+  for (const path of openFilesOrder) {
+    if (!pathMatchesRoot(path, record.root_path)) continue;
+    const hasActivity = !!openFiles?.getIn?.([path, "has_activity"]);
+    if (!hasActivity) continue;
+    if (path.endsWith(".term")) {
+      terminals += 1;
+    } else if (path.endsWith(".ipynb")) {
+      notebooks += 1;
+    } else {
+      other += 1;
+    }
+  }
+  return { terminals, notebooks, other };
+}
+
 export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
   const { actions, active_project_tab, workspaces } = useProjectContext();
   const account_id = `${useTypedRedux("account", "account_id") ?? ""}`.trim();
   const current_path_abs =
     useTypedRedux({ project_id }, "current_path_abs") ?? "/";
+  const openFilesOrder =
+    useTypedRedux({ project_id }, "open_files_order")?.toJS?.() ?? [];
+  const openFiles = useTypedRedux({ project_id }, "open_files");
   const activePath = useMemo(
     () => tab_to_path(active_project_tab ?? ""),
     [active_project_tab],
@@ -441,6 +477,11 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       agentSessions,
       viewedActivity[record.workspace_id] ?? 0,
     );
+    const fileActivity = getWorkspaceOpenFileActivity(
+      record,
+      openFilesOrder,
+      openFiles,
+    );
     return (
       <Card
         key={record.workspace_id}
@@ -464,8 +505,8 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
               src={imageUrl}
               alt={`${record.theme.title} workspace`}
               style={{
-                width: 32,
-                height: 32,
+                width: WORKSPACE_MEDIA_SIZE,
+                height: WORKSPACE_MEDIA_SIZE,
                 borderRadius: 8,
                 objectFit: "cover",
                 flex: "0 0 auto",
@@ -474,8 +515,8 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
           ) : (
             <div
               style={{
-                width: 32,
-                height: 32,
+                width: WORKSPACE_MEDIA_SIZE,
+                height: WORKSPACE_MEDIA_SIZE,
                 borderRadius: 8,
                 display: "flex",
                 alignItems: "center",
@@ -483,6 +524,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 background: record.theme.accent_color ?? "#f5f5f5",
                 color: record.theme.color ?? undefined,
                 flex: "0 0 auto",
+                fontSize: 28,
               }}
             >
               <Icon name={iconFor(record)} />
@@ -523,12 +565,58 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 {record.theme.description}
               </Typography.Paragraph>
             ) : null}
+            {record.notice ? (
+              <div
+                style={{ marginTop: 8 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Alert
+                  type={record.notice.level}
+                  showIcon
+                  closable
+                  message={record.notice.title || "Workspace notice"}
+                  description={record.notice.text}
+                  onClose={() =>
+                    workspaces.updateWorkspace(record.workspace_id, {
+                      notice: null,
+                    })
+                  }
+                />
+              </div>
+            ) : null}
             {activity ? (
               <Space size={8} wrap style={{ marginTop: 8 }}>
                 <Tag color={activity.color}>{activity.label}</Tag>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   <TimeAgo date={activity.updatedAt} />
                 </Typography.Text>
+              </Space>
+            ) : null}
+            {fileActivity.terminals > 0 ||
+            fileActivity.notebooks > 0 ||
+            fileActivity.other > 0 ? (
+              <Space size={8} wrap style={{ marginTop: 8 }}>
+                {fileActivity.terminals > 0 ? (
+                  <Tag color="orange">
+                    {fileActivity.terminals === 1
+                      ? "Terminal active"
+                      : `${fileActivity.terminals} terminals active`}
+                  </Tag>
+                ) : null}
+                {fileActivity.notebooks > 0 ? (
+                  <Tag color="gold">
+                    {fileActivity.notebooks === 1
+                      ? "Notebook busy"
+                      : `${fileActivity.notebooks} notebooks busy`}
+                  </Tag>
+                ) : null}
+                {fileActivity.other > 0 ? (
+                  <Tag color="blue">
+                    {fileActivity.other === 1
+                      ? "File activity"
+                      : `${fileActivity.other} active files`}
+                  </Tag>
+                ) : null}
               </Space>
             ) : null}
             <Space size={10} wrap style={{ marginTop: 8 }}>

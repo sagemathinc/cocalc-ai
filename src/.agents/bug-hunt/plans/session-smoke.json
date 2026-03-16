@@ -1,0 +1,24 @@
+{
+  "name": "session-smoke",
+  "steps": [
+    {
+      "name": "wait body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert route",
+      "assert": "return /\\/project-home|\\/files/.test(window.location.pathname);",
+      "retries": 1,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert non-empty title",
+      "assert": "return document.title && document.title.length > 0;"
+    }
+  ]
+}

@@ -91,6 +91,7 @@ import {
   coerceWorkspaceSelection,
   openWorkspaceStore,
   readStoredWorkspaceRecords,
+  updateStoredWorkspaceRecord,
   type WorkspaceRecord,
   type WorkspaceSelection,
 } from "@cocalc/conat/workspaces";
@@ -188,7 +189,8 @@ export function createBrowserSessionAutomation({
     };
 
     const accountId = (): string => {
-      const value = `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
+      const value =
+        `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();
       if (!value) {
         throw Error("account id unavailable");
       }
@@ -288,14 +290,95 @@ export function createBrowserSessionAutomation({
       chat_path: string;
       assigned: boolean;
     }> => {
-      const { ensureWorkspaceChatPath } = await import(
-        "@cocalc/frontend/project/workspaces/runtime"
-      );
+      const { ensureWorkspaceChatPath } =
+        await import("@cocalc/frontend/project/workspaces/runtime");
       return await ensureWorkspaceChatPath({
         project_id,
         account_id: accountId(),
         workspace_id,
       });
+    };
+
+    const threadExists = (
+      chatActions: import("@cocalc/frontend/chat/actions").ChatActions,
+      thread_id: string,
+    ): boolean => {
+      const cleanThreadId = `${thread_id ?? ""}`.trim();
+      if (!cleanThreadId) return false;
+      const messages = chatActions.getMessagesInThread(cleanThreadId);
+      if (Array.isArray(messages) && messages.length > 0) {
+        return true;
+      }
+      const metadata = chatActions.getThreadMetadata(cleanThreadId, {
+        threadId: cleanThreadId,
+      });
+      return Object.values(metadata).some((value) => value != null);
+    };
+
+    const persistWorkspaceNoticeThreadId = async (
+      workspace_id: string,
+      notice_thread_id: string,
+    ): Promise<WorkspaceRecord | null> => {
+      const store = await openWorkspaceStore({
+        client: client.conat_client,
+        project_id,
+        account_id: accountId(),
+      });
+      try {
+        const updated = updateStoredWorkspaceRecord(store, workspace_id, {
+          notice_thread_id,
+        });
+        await store.save();
+        return updated;
+      } finally {
+        store.close();
+      }
+    };
+
+    const ensureWorkspaceNoticeThread = async ({
+      workspace,
+      chat_path,
+    }: {
+      workspace: WorkspaceRecord;
+      chat_path: string;
+    }): Promise<{
+      workspace: WorkspaceRecord;
+      notice_thread_id: string;
+      created: boolean;
+    }> => {
+      const { chatActions, cleanup } =
+        await resolveChatActionsForPath(chat_path);
+      try {
+        const existingThreadId = `${workspace.notice_thread_id ?? ""}`.trim();
+        if (existingThreadId && threadExists(chatActions, existingThreadId)) {
+          return {
+            workspace,
+            notice_thread_id: existingThreadId,
+            created: false,
+          };
+        }
+        const notice_thread_id = chatActions.createEmptyThread({
+          name: "Workspace notices",
+          preserveSelectedThread: true,
+        });
+        if (!notice_thread_id) {
+          throw Error("failed to create workspace notice thread");
+        }
+        const updated = (await persistWorkspaceNoticeThreadId(
+          workspace.workspace_id,
+          notice_thread_id,
+        )) ?? {
+          ...workspace,
+          notice_thread_id,
+        };
+        return {
+          workspace: updated,
+          notice_thread_id,
+          created: true,
+        };
+      } finally {
+        cleanup?.();
+      }
     };
 
     const runBash = async (
@@ -584,9 +667,8 @@ export function createBrowserSessionAutomation({
           const { chat_path, assigned } = await ensureWorkspaceChatTarget(
             workspace.workspace_id,
           );
-          const { ensureWorkspaceChatDirectory } = await import(
-            "@cocalc/frontend/project/workspaces/runtime"
-          );
+          const { ensureWorkspaceChatDirectory } =
+            await import("@cocalc/frontend/project/workspaces/runtime");
           await ensureWorkspaceChatDirectory({ project_id, chat_path });
           const selection = {
             kind: "workspace" as const,
@@ -636,6 +718,8 @@ export function createBrowserSessionAutomation({
           chat_path: string;
           assigned: boolean;
           opened: boolean;
+          notice_thread_id: string;
+          created_thread: boolean;
           tag?: string;
           timestamp: string;
         }> => {
@@ -648,9 +732,8 @@ export function createBrowserSessionAutomation({
           const { chat_path, assigned } = await ensureWorkspaceChatTarget(
             workspace.workspace_id,
           );
-          const { ensureWorkspaceChatDirectory } = await import(
-            "@cocalc/frontend/project/workspaces/runtime"
-          );
+          const { ensureWorkspaceChatDirectory } =
+            await import("@cocalc/frontend/project/workspaces/runtime");
           await ensureWorkspaceChatDirectory({ project_id, chat_path });
           const selection = {
             kind: "workspace" as const,
@@ -667,6 +750,14 @@ export function createBrowserSessionAutomation({
             });
           }
           assertExecNotCanceled(isCanceled);
+          const {
+            workspace: workspaceWithNoticeThread,
+            notice_thread_id,
+            created,
+          } = await ensureWorkspaceNoticeThread({
+            workspace,
+            chat_path,
+          });
           let cleanup: (() => void) | undefined;
           const { chatActions, cleanup: release } =
             await resolveChatActionsForPath(chat_path);
@@ -674,17 +765,22 @@ export function createBrowserSessionAutomation({
           try {
             const timestamp = chatActions.sendChat({
               input: cleanText,
-              tag: typeof tag === "string" && tag.trim() ? tag.trim() : undefined,
+              reply_thread_id: notice_thread_id,
+              preserveSelectedThread: !open,
+              tag:
+                typeof tag === "string" && tag.trim() ? tag.trim() : undefined,
             });
             if (!timestamp) {
               throw Error("failed to send workspace message");
             }
             return {
               ok: true,
-              workspace_id: workspace.workspace_id,
+              workspace_id: workspaceWithNoticeThread.workspace_id,
               chat_path,
               assigned,
               opened: open,
+              notice_thread_id,
+              created_thread: created,
               ...(typeof tag === "string" && tag.trim()
                 ? { tag: tag.trim() }
                 : {}),

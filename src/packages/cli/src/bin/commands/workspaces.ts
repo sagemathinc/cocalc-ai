@@ -21,6 +21,7 @@ import {
   loadProfileSelection,
   sessionTargetContext,
 } from "./browser/targeting";
+import { createWorkspaceChatOps } from "../core/workspace-chat";
 
 type ProjectIdentity = {
   project_id: string;
@@ -83,9 +84,15 @@ type WorkspaceBrowserCliOptions = WorkspaceSelectCliOptions;
 type WorkspaceMessageCliOptions = WorkspaceBrowserCliOptions & {
   stdin?: boolean;
   open?: boolean;
-  background?: boolean;
   foreground?: boolean;
+  background?: boolean;
   tag?: string;
+};
+
+type WorkspaceNoticeCliOptions = WorkspaceProjectCliOptions & {
+  title?: string;
+  level?: string;
+  stdin?: boolean;
 };
 
 function normalizeWorkspaceCliPath(path: string): string {
@@ -117,6 +124,21 @@ async function readAllStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function parseWorkspaceNoticeLevel(
+  value: string | undefined,
+): "info" | "success" | "warning" | "error" {
+  const normalized = `${value ?? "info"}`.trim().toLowerCase();
+  if (
+    normalized === "info" ||
+    normalized === "success" ||
+    normalized === "warning" ||
+    normalized === "error"
+  ) {
+    return normalized;
+  }
+  throw new Error(`invalid notice level '${value}'`);
+}
+
 function workspaceSummary(record: WorkspaceRecord): Record<string, unknown> {
   return {
     workspace_id: record.workspace_id,
@@ -132,6 +154,7 @@ function workspaceSummary(record: WorkspaceRecord): Record<string, unknown> {
     last_used_at: record.last_used_at ?? null,
     last_active_path: record.last_active_path ?? null,
     chat_path: record.chat_path ?? null,
+    notice: record.notice ?? null,
     source: record.source ?? null,
   };
 }
@@ -164,6 +187,9 @@ export function registerWorkspacesCommand(
   program: Command,
   deps: WorkspacesCommandDeps,
 ): Command {
+  const { appendWorkspaceMessageData } = createWorkspaceChatOps({
+    resolveProjectConatClient: deps.resolveProjectConatClient,
+  });
   const workspaces = program
     .command("workspaces")
     .description(
@@ -550,7 +576,7 @@ export function registerWorkspacesCommand(
   workspaces
     .command("message <workspace> [text...]")
     .description(
-      "send a message to a workspace's canonical chat in a target browser session",
+      "append a durable message to a workspace's canonical chat, optionally opening that chat in a browser",
     )
     .option("--project <project>", "project id/title")
     .option("--browser <id>", "browser id or unique prefix")
@@ -564,7 +590,10 @@ export function registerWorkspacesCommand(
     .option("--policy-file <path>", "browser exec policy file")
     .option("--allow-raw-exec", "allow raw browser exec")
     .option("--stdin", "append stdin to the message text")
-    .option("--no-open", "send without opening/focusing the workspace chat")
+    .option(
+      "--open",
+      "after writing the durable message, open/focus the canonical workspace chat in a target browser session",
+    )
     .option(
       "--background",
       "when opening, keep the workspace chat in the background",
@@ -588,6 +617,106 @@ export function registerWorkspacesCommand(
               "message text is required (pass text arguments or use --stdin)",
             );
           }
+          const durable = await appendWorkspaceMessageData({
+            ctx,
+            projectIdentifier: opts.project,
+            workspaceIdentifier: workspace,
+            text,
+            tag: opts.tag?.trim() || undefined,
+          });
+
+          const data: Record<string, unknown> = {
+            project_id: durable.project.project_id,
+            workspace: workspaceSummary(durable.workspace),
+            result: {
+              ok: true,
+              workspace_id: durable.workspace.workspace_id,
+              chat_path: durable.chat_path,
+              notice_thread_id: durable.notice_thread_id,
+              assigned: durable.assigned,
+              created_thread: durable.created_thread,
+              message_id: durable.message_id,
+              timestamp: durable.timestamp,
+            },
+          };
+
+          if (opts.open === true) {
+            const profileSelection = loadProfileSelection(deps, command);
+            const sessionInfo = await chooseBrowserSession({
+              ctx,
+              browserHint: browserHintFromOption(opts.browser) ?? "",
+              fallbackBrowserId: profileSelection.browser_id,
+              requireDiscovery: !!opts.requireDiscovery,
+              sessionProjectId:
+                `${opts.sessionProjectId ?? ""}`.trim() ||
+                durable.project.project_id,
+              activeOnly: !!opts.activeOnly,
+            });
+            const browserClient = createBrowserSessionClient({
+              client: ctx.remote.client,
+              account_id: ctx.accountId,
+              browser_id: sessionInfo.browser_id,
+            });
+            const { posture, policy } = await resolveBrowserPolicyAndPosture({
+              posture: opts.posture,
+              policyFile: opts.policyFile,
+              allowRawExec: opts.allowRawExec,
+              apiBaseUrl: ctx.apiBaseUrl,
+            });
+            const response = await browserClient.exec({
+              project_id: durable.project.project_id,
+              code: `return await api.workspaces.openChat(${JSON.stringify({
+                workspace_id: durable.workspace.workspace_id,
+                foreground: !opts.background,
+              })});`,
+              posture,
+              policy,
+            });
+            Object.assign(data, {
+              browser_id: sessionInfo.browser_id,
+              open_result: response?.result ?? null,
+              ...sessionTargetContext(
+                ctx,
+                sessionInfo,
+                durable.project.project_id,
+              ),
+            });
+          }
+
+          return data;
+        });
+      },
+    );
+
+  workspaces
+    .command("notify <workspace> [text...]")
+    .description("set a card-level notice on a workspace")
+    .option("--project <project>", "project id/title")
+    .option("--title <title>", "optional notice title")
+    .option(
+      "--level <level>",
+      "notice level (info|success|warning|error)",
+      "info",
+    )
+    .option("--stdin", "append stdin to the notice text")
+    .action(
+      async (
+        workspace: string,
+        textParts: string[],
+        opts: WorkspaceNoticeCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(command, "workspaces notify", async (ctx) => {
+          const stdinText = opts.stdin ? (await readAllStdin()).trim() : "";
+          const text = [textParts.join(" ").trim(), stdinText]
+            .filter((part) => part.length > 0)
+            .join("\n\n")
+            .trim();
+          if (!text) {
+            throw new Error(
+              "notice text is required (pass text arguments or use --stdin)",
+            );
+          }
           const { project, client } = await deps.resolveProjectConatClient(
             ctx,
             opts.project,
@@ -597,57 +726,78 @@ export function registerWorkspacesCommand(
             project_id: project.project_id,
             account_id: ctx.accountId,
           });
-          let record: WorkspaceRecord;
           try {
-            record = requireWorkspaceRecord(
+            const record = requireWorkspaceRecord(
               readStoredWorkspaceRecords(store),
               workspace,
             );
+            const updated = updateStoredWorkspaceRecord(
+              store,
+              record.workspace_id,
+              {
+                notice: {
+                  title: `${opts.title ?? ""}`.trim(),
+                  text,
+                  level: parseWorkspaceNoticeLevel(opts.level),
+                  updated_at: Date.now(),
+                },
+              },
+            );
+            if (!updated) {
+              throw new Error(`workspace '${workspace}' not found`);
+            }
+            await store.save();
+            return workspaceSummary(updated);
           } finally {
             store.close();
           }
-
-          const profileSelection = loadProfileSelection(deps, command);
-          const sessionInfo = await chooseBrowserSession({
-            ctx,
-            browserHint: browserHintFromOption(opts.browser) ?? "",
-            fallbackBrowserId: profileSelection.browser_id,
-            requireDiscovery: !!opts.requireDiscovery,
-            sessionProjectId:
-              `${opts.sessionProjectId ?? ""}`.trim() || project.project_id,
-            activeOnly: !!opts.activeOnly,
-          });
-          const browserClient = createBrowserSessionClient({
-            client: ctx.remote.client,
-            account_id: ctx.accountId,
-            browser_id: sessionInfo.browser_id,
-          });
-          const { posture, policy } = await resolveBrowserPolicyAndPosture({
-            posture: opts.posture,
-            policyFile: opts.policyFile,
-            allowRawExec: opts.allowRawExec,
-            apiBaseUrl: ctx.apiBaseUrl,
-          });
-          const response = await browserClient.exec({
-            project_id: project.project_id,
-            code: `return await api.workspaces.message(${JSON.stringify({
-              workspace_id: record.workspace_id,
-              text,
-              open: opts.open !== false,
-              foreground: !opts.background,
-              tag: opts.tag?.trim() || undefined,
-            })});`,
-            posture,
-            policy,
-          });
-          return {
-            project_id: project.project_id,
-            browser_id: sessionInfo.browser_id,
-            workspace: workspaceSummary(record),
-            result: response?.result ?? null,
-            ...sessionTargetContext(ctx, sessionInfo, project.project_id),
-          };
         });
+      },
+    );
+
+  workspaces
+    .command("clear-notice <workspace>")
+    .description("clear a card-level notice from a workspace")
+    .option("--project <project>", "project id/title")
+    .action(
+      async (
+        workspace: string,
+        opts: WorkspaceProjectCliOptions,
+        command: Command,
+      ) => {
+        await deps.withContext(
+          command,
+          "workspaces clear-notice",
+          async (ctx) => {
+            const { project, client } = await deps.resolveProjectConatClient(
+              ctx,
+              opts.project,
+            );
+            const store = await openWorkspaceStore({
+              client,
+              project_id: project.project_id,
+              account_id: ctx.accountId,
+            });
+            try {
+              const record = requireWorkspaceRecord(
+                readStoredWorkspaceRecords(store),
+                workspace,
+              );
+              const updated = updateStoredWorkspaceRecord(
+                store,
+                record.workspace_id,
+                { notice: null },
+              );
+              if (!updated) {
+                throw new Error(`workspace '${workspace}' not found`);
+              }
+              await store.save();
+              return workspaceSummary(updated);
+            } finally {
+              store.close();
+            }
+          },
+        );
       },
     );
 

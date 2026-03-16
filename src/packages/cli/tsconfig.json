@@ -5,42 +5,32 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@cocalc/app-tasks": [
-        "../apps/tasks/src"
-      ],
-      "@cocalc/app-tasks/*": [
-        "../apps/tasks/src/*"
-      ],
-      "@cocalc/conat": [
-        "../conat"
-      ],
-      "@cocalc/conat/*": [
-        "../conat/*"
-      ],
-      "@cocalc/export": [
-        "../export"
-      ],
-      "@cocalc/export/*": [
-        "../export/*"
-      ],
-      "@cocalc/util": [
-        "../util"
-      ],
-      "@cocalc/util/*": [
-        "../util/*"
-      ]
+      "@cocalc/app-tasks": ["../apps/tasks/src"],
+      "@cocalc/app-tasks/*": ["../apps/tasks/src/*"],
+      "@cocalc/chat": ["../chat"],
+      "@cocalc/chat/*": ["../chat/*"],
+      "@cocalc/chat/server": ["../chat/src/server"],
+      "@cocalc/comm": ["../comm"],
+      "@cocalc/comm/*": ["../comm/*"],
+      "@cocalc/conat": ["../conat"],
+      "@cocalc/conat/*": ["../conat/*"],
+      "@cocalc/export": ["../export"],
+      "@cocalc/export/*": ["../export/*"],
+      "@cocalc/util": ["../util"],
+      "@cocalc/util/*": ["../util/*"]
     }
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "dist",
-    "node_modules"
-  ],
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"],
   "references": [
     {
       "path": "../apps/tasks"
+    },
+    {
+      "path": "../chat"
+    },
+    {
+      "path": "../comm"
     },
     {
       "path": "../conat"
