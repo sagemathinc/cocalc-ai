@@ -27,7 +27,8 @@ tracked during the migration.
 
 Status:
 
-- still open
+- mostly resolved technically
+- still open as a policy/tuning issue
 
 - App-server is not sqlite-only today.
 - Upstream still persists full rollout JSONL files under
@@ -52,8 +53,26 @@ Status:
   - total turn time: about `18.7s`
   - peak app-server RSS: about `239 MiB`
   - `.codex/sessions` growth for one short follow-up turn: about `24.6 KiB`
-- This is encouraging, but not sufficient to delete CoCalc-side trimming and
-  compaction policy yet.
+- Follow-up compacted benchmark on the same thread (`2026-03-16`, using
+  CoCalc's existing `truncateSessionHistory(...)` logic on a copied
+  `CODEX_HOME`):
+  - rollout file shrank from about `89.98 MiB` / `20,144` lines to about
+    `7.27 MiB` / `1,319` lines
+  - `thread/resume`: about `3.4s` -> about `84ms`
+  - first visible output after `turn/start`: about `10.8s` -> about `6.5s`
+  - total turn time: about `12.2s` -> about `7.2s`
+  - peak app-server RSS: about `244.5 MiB` -> about `123 MiB`
+- Conclusion:
+  - we do not currently need to prioritize keeping app-server warm between
+    turns just to offset resume overhead
+  - CoCalc-side compaction is effective enough, and remains the right safety
+    mechanism
+- Remaining issue:
+  - this exact rollout would not have been auto-trimmed by the current default
+    policy because it was below the `100 MiB` threshold, despite still costing
+    about `3.4s` to resume
+  - before release, tune the automatic trimming policy so compaction happens
+    earlier than that
 
 ### 2. API-Key Usage Accounting
 
