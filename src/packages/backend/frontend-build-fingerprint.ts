@@ -5,7 +5,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 export interface FrontendSourceFingerprint {
   available: boolean;
@@ -101,7 +101,7 @@ function getGitRevisionSync(repoRoot?: string): string {
 }
 
 function defaultSourceRoots(repoRoot: string): string[] {
-  return [repoRoot];
+  return [join(repoRoot, "src", "packages")];
 }
 
 function listGitFilesSync(repoRoot: string): string[] | undefined {
@@ -149,6 +149,12 @@ function updateStateFromPath(
     state.latestMtimeMs = mtimeMs;
     state.latestPath = rel;
   }
+}
+
+function isInsideSourceRoots(full: string, sourceRoots: string[]): boolean {
+  return sourceRoots.some(
+    (root) => full === root || full.startsWith(`${root}${sep}`),
+  );
 }
 
 function scanTree(root: string, repoRoot: string, state: ScanState): void {
@@ -215,6 +221,10 @@ export function getFrontendSourceFingerprintSync(
     sourceRoots.length === 1 ? listGitFilesSync(repoRoot) : undefined;
   if (gitFiles != null) {
     for (const rel of gitFiles) {
+      const full = join(repoRoot, rel);
+      if (!isInsideSourceRoots(full, sourceRoots)) {
+        continue;
+      }
       updateStateFromPath(repoRoot, rel, state);
     }
   } else {
