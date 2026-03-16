@@ -30,8 +30,13 @@ export default function NoFiles({
   }
 
   function openNewPage() {
-    actions?.setState({ new_page_path_abs: current_path } as any);
     actions?.set_active_tab("new");
+    actions?.setState({
+      new_page_path_abs: current_path,
+      ...(file_search.trim()
+        ? { default_filename: file_search.trim() }
+        : undefined),
+    } as any);
   }
 
   if (type_filter) {

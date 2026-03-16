@@ -77,4 +77,29 @@ describe("NoFiles", () => {
     expect(setState).toHaveBeenCalledWith({ new_page_path_abs: "/tmp" });
     expect(setActiveTab).toHaveBeenCalledWith("new");
   });
+
+  it("prefills the new page filename from the current filter", () => {
+    const setState = jest.fn();
+    const setActiveTab = jest.fn();
+    getProjectActionsMock.mockReturnValue({
+      setState,
+      set_active_tab: setActiveTab,
+      set_file_search: jest.fn(),
+    });
+
+    render(
+      <NoFiles
+        project_id="project-1"
+        current_path="/tmp"
+        file_search="a.txt"
+      />,
+    );
+    fireEvent.click(screen.getByText("+New"));
+
+    expect(setActiveTab).toHaveBeenCalledWith("new");
+    expect(setState).toHaveBeenCalledWith({
+      new_page_path_abs: "/tmp",
+      default_filename: "a.txt",
+    });
+  });
 });
