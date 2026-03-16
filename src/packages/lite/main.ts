@@ -205,6 +205,19 @@ export async function main(opts?: {
   logger.debug("start changefeed server");
   initChangefeeds({ client: conatClient });
 
+  // Start the local project filesystem before ACP. In same-process Lite mode,
+  // ACP startup recovery may open chat SyncDBs, and those depend on the local
+  // file service being available. If ACP runs first, startup can deadlock
+  // waiting on fs.project-* subscribers that have not been registered yet.
+  logger.debug("start fs service");
+  const path = process.cwd();
+  localPathFileserver({
+    client: conatClient,
+    path,
+    project_id,
+    unsafeMode: true,
+  });
+
   logger.debug("start llm conat server");
   await initLLM();
 
@@ -214,21 +227,11 @@ export async function main(opts?: {
   logger.debug("start watchdog");
   initWatchdog();
 
-  const path = process.cwd();
-
   logger.debug("start hub api");
   await initHubApi({
     client: conatClient,
     sshUi: opts?.sshUi,
     reflectUi: opts?.reflectUi,
-  });
-
-  logger.debug("start fs service");
-  localPathFileserver({
-    client: conatClient,
-    path,
-    project_id,
-    unsafeMode: true,
   });
 
   process.once("exit", () => {
