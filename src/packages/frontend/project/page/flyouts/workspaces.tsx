@@ -106,6 +106,32 @@ type WorkspaceOpenFileActivity = {
   other: number;
 };
 
+function workspaceOpenFileActivityLabel(
+  activity: WorkspaceOpenFileActivity,
+): string | null {
+  const parts: string[] = [];
+  if (activity.terminals > 0) {
+    parts.push(
+      activity.terminals === 1
+        ? "1 terminal active"
+        : `${activity.terminals} terminals active`,
+    );
+  }
+  if (activity.notebooks > 0) {
+    parts.push(
+      activity.notebooks === 1
+        ? "1 notebook busy"
+        : `${activity.notebooks} notebooks busy`,
+    );
+  }
+  if (activity.other > 0) {
+    parts.push(
+      activity.other === 1 ? "1 active file" : `${activity.other} active files`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function iconFor(record?: WorkspaceRecord | null): IconName {
   return (record?.theme.icon?.trim() as IconName | undefined) || DEFAULT_ICON;
 }
@@ -139,52 +165,92 @@ function formatMemoryMiB(memRss: number): string {
   return `${Math.round(memRss)} MiB`;
 }
 
-function WorkspaceProcessTrend({
-  label,
-  values,
-  color,
-  unit,
+function WorkspaceProcessSparkline({
+  cpuValues,
+  memValues,
+  cpuColor,
+  memColor,
+  cpuLabel,
+  memLabel,
 }: {
-  label: string;
-  values: number[];
-  color: string;
-  unit: string;
+  cpuValues: number[];
+  memValues: number[];
+  cpuColor: string;
+  memColor: string;
+  cpuLabel: string;
+  memLabel: string;
 }): React.JSX.Element | null {
-  const points = sparklinePoints(values);
-  if (!points) return null;
-  const latest = values[values.length - 1] ?? 0;
+  const cpuPoints = sparklinePoints(cpuValues, 96, 20);
+  const memPoints = sparklinePoints(memValues, 96, 20);
   return (
-    <div style={{ minWidth: 0 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+      }}
+    >
       <div
         style={{
+          display: "flex",
+          gap: 10,
           fontSize: 11,
           color: COLORS.GRAY_D,
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 8,
+          flexWrap: "wrap",
         }}
       >
-        <span>{label}</span>
-        <span>
-          {unit === "%"
-            ? `${Math.round(latest)}%`
-            : formatMemoryMiB(Number(latest))}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span
+            style={{
+              width: 8,
+              height: 2,
+              background: cpuColor,
+              borderRadius: 999,
+            }}
+          />
+          {cpuLabel}
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span
+            style={{
+              width: 8,
+              height: 2,
+              background: memColor,
+              borderRadius: 999,
+            }}
+          />
+          {memLabel}
         </span>
       </div>
-      <svg
-        width="100%"
-        height="28"
-        viewBox="0 0 120 28"
-        preserveAspectRatio="none"
-      >
-        <polyline
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          points={points}
-          strokeLinecap="round"
-        />
-      </svg>
+      {cpuPoints || memPoints ? (
+        <svg
+          width="96"
+          height="20"
+          viewBox="0 0 96 20"
+          preserveAspectRatio="none"
+          style={{ flex: "0 0 auto" }}
+        >
+          {memPoints ? (
+            <polyline
+              fill="none"
+              stroke={memColor}
+              strokeWidth="1.5"
+              points={memPoints}
+              strokeLinecap="round"
+            />
+          ) : null}
+          {cpuPoints ? (
+            <polyline
+              fill="none"
+              stroke={cpuColor}
+              strokeWidth="1.5"
+              points={cpuPoints}
+              strokeLinecap="round"
+            />
+          ) : null}
+        </svg>
+      ) : null}
     </div>
   );
 }
@@ -577,6 +643,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
       openFilesOrder,
       openFiles,
     );
+    const fileActivityLabel = workspaceOpenFileActivityLabel(fileActivity);
     const processSummary: WorkspaceProcessSummary | null =
       processSummaryByWorkspaceId.get(record.workspace_id) ?? null;
     const hasProcessSummary =
@@ -692,91 +759,35 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 </Typography.Text>
               </Space>
             ) : null}
-            {fileActivity.terminals > 0 ||
-            fileActivity.notebooks > 0 ||
-            fileActivity.other > 0 ? (
-              <Space size={8} wrap style={{ marginTop: 8 }}>
-                {fileActivity.terminals > 0 ? (
-                  <Tag color="orange">
-                    {fileActivity.terminals === 1
-                      ? "Terminal active"
-                      : `${fileActivity.terminals} terminals active`}
-                  </Tag>
-                ) : null}
-                {fileActivity.notebooks > 0 ? (
-                  <Tag color="gold">
-                    {fileActivity.notebooks === 1
-                      ? "Notebook busy"
-                      : `${fileActivity.notebooks} notebooks busy`}
-                  </Tag>
-                ) : null}
-                {fileActivity.other > 0 ? (
-                  <Tag color="blue">
-                    {fileActivity.other === 1
-                      ? "File activity"
-                      : `${fileActivity.other} active files`}
-                  </Tag>
-                ) : null}
-              </Space>
+            {fileActivityLabel ? (
+              <Typography.Text
+                type="secondary"
+                style={{
+                  display: "block",
+                  marginTop: 8,
+                  fontSize: 12,
+                }}
+              >
+                {fileActivityLabel}
+              </Typography.Text>
             ) : null}
             {hasProcessSummary ? (
               <div
                 style={{
-                  marginTop: 8,
-                  padding: 8,
+                  marginTop: 6,
+                  padding: "4px 6px",
                   borderRadius: 8,
                   background: PROCESS_PANEL_BG,
                 }}
               >
-                <Space size={8} wrap style={{ marginBottom: 6 }}>
-                  <Tag color="geekblue">
-                    {processSummary.processCount === 1
-                      ? "1 process"
-                      : `${processSummary.processCount} processes`}
-                  </Tag>
-                  <Tag color="blue">
-                    CPU {Math.round(processSummary.cpuPct)}%
-                  </Tag>
-                  <Tag color="green">
-                    RAM {formatMemoryMiB(processSummary.memRss)}
-                  </Tag>
-                  {processSummary.terminals > 0 ? (
-                    <Tag color="orange">
-                      {processSummary.terminals === 1
-                        ? "1 terminal"
-                        : `${processSummary.terminals} terminals`}
-                    </Tag>
-                  ) : null}
-                  {processSummary.notebooks > 0 ? (
-                    <Tag color="gold">
-                      {processSummary.notebooks === 1
-                        ? "1 notebook"
-                        : `${processSummary.notebooks} notebooks`}
-                    </Tag>
-                  ) : null}
-                </Space>
-                {processSummary.cpuTrend.length >= 2 ? (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                      gap: 10,
-                    }}
-                  >
-                    <WorkspaceProcessTrend
-                      label="CPU"
-                      values={processSummary.cpuTrend}
-                      unit="%"
-                      color={record.theme.color ?? COLORS.BLUE_D}
-                    />
-                    <WorkspaceProcessTrend
-                      label="RAM"
-                      values={processSummary.memTrend}
-                      unit="MiB"
-                      color={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
-                    />
-                  </div>
-                ) : null}
+                <WorkspaceProcessSparkline
+                  cpuValues={processSummary.cpuTrend}
+                  memValues={processSummary.memTrend}
+                  cpuColor={record.theme.color ?? COLORS.BLUE_D}
+                  memColor={record.theme.accent_color ?? COLORS.ANTD_GREEN_D}
+                  cpuLabel={`CPU ${Math.round(processSummary.cpuPct)}%`}
+                  memLabel={`RAM ${formatMemoryMiB(processSummary.memRss)}`}
+                />
               </div>
             ) : null}
             <Space size={10} wrap style={{ marginTop: 8 }}>
