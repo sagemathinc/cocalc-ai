@@ -158,10 +158,19 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const narrowerPX = useMemo(() => {
     return hideActionButtons ? homePageButtonWidth : 0;
   }, [hideActionButtons, homePageButtonWidth]);
+  const [workspaceStartupGuard, setWorkspaceStartupGuard] =
+    useState<boolean>(true);
 
   const initialWorkspaceRender = useMemo(() => {
     const orderedPaths: string[] =
       open_files_order?.toJS?.() ?? open_files_order ?? [];
+    if (!workspaceStartupGuard) {
+      return {
+        pending: false,
+        renderPaths: orderedPaths,
+        displayActiveTab: active_project_tab,
+      };
+    }
     const { workspaces } = projectCtx;
     if (workspaces.selection.kind !== "workspace") {
       return {
@@ -210,6 +219,28 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     current_path_abs,
     open_files_order,
     projectCtx.workspaces,
+    workspaceStartupGuard,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceStartupGuard) return;
+    const { workspaces } = projectCtx;
+    if (workspaces.selection.kind !== "workspace") {
+      setWorkspaceStartupGuard(false);
+      return;
+    }
+    if (workspaces.loading && workspaces.current == null) {
+      return;
+    }
+    if (!initialWorkspaceRender.pending) {
+      setWorkspaceStartupGuard(false);
+    }
+  }, [
+    initialWorkspaceRender.pending,
+    projectCtx.workspaces.current,
+    projectCtx.workspaces.loading,
+    projectCtx.workspaces.selection,
+    workspaceStartupGuard,
   ]);
 
   useEffect(() => {
