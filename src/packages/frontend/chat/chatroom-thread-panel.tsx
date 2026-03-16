@@ -61,6 +61,7 @@ import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
 import { resolveThreadStatusDot } from "./chatroom-sidebar";
+import { shouldOpenThreadSearchShortcut } from "./chatroom-thread-panel-shortcuts";
 import {
   AutomationConfigFields,
   buildAutomationDraft,
@@ -659,9 +660,7 @@ export function ChatRoomThreadPanel({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (anyOverlayOpen) return;
-      if (!(event.ctrlKey || event.metaKey)) return;
-      if (event.key.toLowerCase() !== "f") return;
+      if (!shouldOpenThreadSearchShortcut(event, anyOverlayOpen)) return;
       event.preventDefault();
       setThreadSearchOpen(true);
       setTimeout(() => {

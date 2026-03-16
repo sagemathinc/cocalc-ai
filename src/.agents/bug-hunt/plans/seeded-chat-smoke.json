@@ -1,0 +1,32 @@
+{
+  "name": "seeded-chat-smoke",
+  "steps": [
+    {
+      "name": "wait body",
+      "action": {
+        "name": "wait_for_selector",
+        "selector": "body",
+        "state": "visible",
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "assert chat path",
+      "assert": "return window.location.href.includes('.chat');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert seeded chat tab is visible",
+      "assert": "return document.body.innerText.includes('scratch.chat');",
+      "retries": 2,
+      "recovery": "reload"
+    },
+    {
+      "name": "assert chat composer is available",
+      "assert": "return document.querySelector('textarea') != null;",
+      "retries": 2,
+      "recovery": "reload"
+    }
+  ]
+}
