@@ -58,6 +58,8 @@
   "license": "SEE LICENSE.md",
   "dependencies": {
     "@cocalc/app-tasks": "workspace:*",
+    "@cocalc/chat": "workspace:*",
+    "@cocalc/comm": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/export": "workspace:*",
     "@cocalc/util": "workspace:*",

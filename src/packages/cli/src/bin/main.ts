@@ -162,6 +162,7 @@ import { createImportApi } from "../api/import";
 import { createTasksApi } from "../api/tasks";
 import { createLiveTextBinder } from "../api/text";
 import { createLiveTimeTravelBinder } from "../api/timetravel";
+import { createWorkspacesApi } from "../api/workspaces";
 import {
   registerBrowserCommand,
   type BrowserCommandDeps,
@@ -2206,6 +2207,17 @@ const workspacesCommandDeps = {
 
 registerWorkspacesCommand(program, workspacesCommandDeps);
 
+const workspacesApi = createWorkspacesApi<
+  CommandContext,
+  {
+    project_id: string;
+    title: string;
+    host_id: string | null;
+  }
+>({
+  resolveProjectConatClient,
+});
+
 const execCommandDeps = {
   withContext,
   tasksApi,
@@ -2213,6 +2225,7 @@ const execCommandDeps = {
   timeTravelApi,
   exportApi,
   importApi,
+  workspacesApi,
 } satisfies ExecCommandDeps;
 
 registerExecCommand(program, execCommandDeps);

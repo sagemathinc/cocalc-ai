@@ -193,6 +193,7 @@ interface Props0 {
   project_id: string;
   label?: string;
   iconName?: IconName;
+  imageUrl?: string;
   style?: CSSProperties;
   noPopover?: boolean;
   placement?;
@@ -229,7 +230,7 @@ export function FileTab(props: Readonly<Props>) {
   let label = label_prop; // label modified below in some situations
   const actions = useActions({ project_id });
   const intl = useIntl();
-  const { onCoCalcDocker } = useProjectContext();
+  const { onCoCalcDocker, workspaces } = useProjectContext();
   // this is @cocalc/comm/project-status/types::ProjectStatus
   const project_status = useTypedRedux({ project_id }, "status");
   // alerts only work on non-docker projects (for now) -- #7077
@@ -396,6 +397,10 @@ export function FileTab(props: Readonly<Props>) {
       ? (file_options(path)?.icon ?? "code-o")
       : (props.iconName ?? FIXED_PROJECT_TABS[name!].icon);
 
+  const image = path == null ? props.imageUrl?.trim() : undefined;
+  const workspaceAccentColor =
+    path != null ? workspaces.resolveWorkspaceForPath(path)?.theme.color : null;
+
   const tags =
     status_alerts.length > 0 ? (
       <div>
@@ -448,13 +453,29 @@ export function FileTab(props: Readonly<Props>) {
 
   const btnLeft = (
     <>
-      <Icon
-        style={{
-          display: condensed ? "inline-block" : undefined,
-          ...icon_style,
-        }}
-        name={icon}
-      />
+      {image ? (
+        <img
+          src={image}
+          alt={typeof label === "string" ? label : "workspace"}
+          style={{
+            display: condensed ? "inline-block" : undefined,
+            width: condensed ? 18 : 24,
+            height: condensed ? 18 : 24,
+            marginRight: "2px",
+            borderRadius: 6,
+            objectFit: "cover",
+            verticalAlign: "middle",
+          }}
+        />
+      ) : (
+        <Icon
+          style={{
+            display: condensed ? "inline-block" : undefined,
+            ...icon_style,
+          }}
+          name={icon}
+        />
+      )}
       {showLabel ? (
         <DisplayedLabel path={path} label={label} inline={!isFixedTab} />
       ) : null}
@@ -506,10 +527,9 @@ export function FileTab(props: Readonly<Props>) {
             right: 0,
             bottom: -5,
             height: 2,
-            backgroundColor: getTabAccentColor(
-              `${project_id}:${path}`,
-              tabAccentMode,
-            ),
+            backgroundColor:
+              workspaceAccentColor ??
+              getTabAccentColor(`${project_id}:${path}`, tabAccentMode),
             opacity: 0.85,
           }}
         />

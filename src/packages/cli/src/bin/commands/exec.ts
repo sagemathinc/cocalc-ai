@@ -6,6 +6,7 @@ import type { ImportApi } from "../../api/import";
 import type { TasksApi } from "../../api/tasks";
 import type { TextApi } from "../../api/text";
 import type { TimeTravelApi } from "../../api/timetravel";
+import type { WorkspacesApi } from "../../api/workspaces";
 
 export type ExecCommandDeps = {
   withContext: any;
@@ -14,6 +15,7 @@ export type ExecCommandDeps = {
   timeTravelApi: TimeTravelApi<any, any>;
   exportApi: ExportApi<any>;
   importApi: ImportApi<any>;
+  workspacesApi: WorkspacesApi<any, any>;
 };
 
 const BACKEND_EXEC_API_DECLARATION = `/**
@@ -25,6 +27,7 @@ const BACKEND_EXEC_API_DECLARATION = `/**
  * - api.timetravel
  * - api.export
  * - api.import
+ * - api.workspaces
  *
  * Return only JSON-serializable values from scripts.
  *
@@ -322,6 +325,254 @@ export interface BackendExecApi {
       cwd?: string;
     }): Promise<TaskImportResult>;
   };
+  workspaces: {
+    list(options?: {
+      projectIdentifier?: string;
+      cwd?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspaces: Array<{
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      }>;
+    }>;
+    resolve(options: {
+      path: string;
+      projectIdentifier?: string;
+      cwd?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      path: string;
+      workspace: {
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      } | null;
+    }>;
+    create(options: {
+      rootPath: string;
+      projectIdentifier?: string;
+      cwd?: string;
+      title?: string;
+      description?: string;
+      color?: string | null;
+      accentColor?: string | null;
+      icon?: string | null;
+      imageBlob?: string | null;
+      pinned?: boolean;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspace: {
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      };
+    }>;
+    update(options: {
+      workspace: string;
+      projectIdentifier?: string;
+      cwd?: string;
+      rootPath?: string;
+      title?: string;
+      description?: string;
+      color?: string | null;
+      accentColor?: string | null;
+      icon?: string | null;
+      imageBlob?: string | null;
+      pinned?: boolean;
+      chatPath?: string | null;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspace: {
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      };
+    }>;
+    delete(options: {
+      workspace: string;
+      projectIdentifier?: string;
+      cwd?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspace_id: string;
+      deleted: true;
+    }>;
+    notify(options: {
+      workspace: string;
+      text: string;
+      title?: string;
+      level?: "info" | "success" | "warning" | "error";
+      projectIdentifier?: string;
+      cwd?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspace: {
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      };
+    }>;
+    clearNotice(options: {
+      workspace: string;
+      projectIdentifier?: string;
+      cwd?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspace: {
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      };
+    }>;
+    message(options: {
+      workspace: string;
+      text: string;
+      tag?: string;
+      projectIdentifier?: string;
+      cwd?: string;
+    }): Promise<{
+      project: { project_id: string; title: string; host_id: string | null };
+      workspace: {
+        workspace_id: string;
+        project_id: string;
+        root_path: string;
+        title: string;
+        description: string;
+        color: string | null;
+        accent_color: string | null;
+        icon: string | null;
+        image_blob: string | null;
+        pinned: boolean;
+        last_used_at: number | null;
+        last_active_path: string | null;
+        chat_path: string | null;
+        notice_thread_id: string | null;
+        notice: {
+          title: string;
+          text: string;
+          level: "info" | "success" | "warning" | "error";
+          updated_at: number;
+        } | null;
+        source: "manual" | "git-root" | "inferred" | null;
+      };
+      chat_path: string;
+      notice_thread_id: string;
+      created_thread: boolean;
+      assigned: boolean;
+      timestamp: string;
+      message_id: string;
+    }>;
+  };
 }
 
 declare const api: BackendExecApi;
@@ -391,6 +642,32 @@ function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
         return await deps.importApi.tasks(ctx, options);
       },
     },
+    workspaces: {
+      async list(options?: any) {
+        return await deps.workspacesApi.list(ctx, options ?? {});
+      },
+      async resolve(options: any) {
+        return await deps.workspacesApi.resolve(ctx, options);
+      },
+      async create(options: any) {
+        return await deps.workspacesApi.create(ctx, options);
+      },
+      async update(options: any) {
+        return await deps.workspacesApi.update(ctx, options);
+      },
+      async delete(options: any) {
+        return await deps.workspacesApi.delete(ctx, options);
+      },
+      async notify(options: any) {
+        return await deps.workspacesApi.notify(ctx, options);
+      },
+      async clearNotice(options: any) {
+        return await deps.workspacesApi.clearNotice(ctx, options);
+      },
+      async message(options: any) {
+        return await deps.workspacesApi.message(ctx, options);
+      },
+    },
   };
 }
 
@@ -428,11 +705,13 @@ Current implemented namespaces:
 - api.tasks
 - api.text
 - api.timetravel
+- api.workspaces
 
 Important:
 - api.text.open({ path }) uses the live collaborative sync/session path.
 - api.text.association({ path }) gives backend-safe document association metadata.
 - api.tasks.open({ path }) uses the live collaborative sync/session path.
+- api.workspaces.* uses the project-scoped workspace DKV plus backend chat/state helpers.
 - api.export.* writes archive bundles locally where the backend runtime runs.
 - api.import.tasks merges a tasks bundle back into a local .tasks file.
 - Live namespaces do not read document state from disk directly.
