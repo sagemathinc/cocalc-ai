@@ -29,13 +29,8 @@ import {
   TOUCH_SENSOR_OPTIONS,
   getEventCoords,
 } from "@cocalc/frontend/components/dnd";
-import {
-  redux,
-  useActions,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { path_split, plural, uuid } from "@cocalc/util/misc";
-import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 
 export interface FileDragData {
   type: "file-drag";
@@ -394,17 +389,10 @@ export function FileDndProvider({
       const targetProjectId = findProjectTabAtPoint(x, y, project_id);
       if (targetProjectId) {
         try {
-          const targetStore = redux.getProjectStore(targetProjectId);
-          const destPath =
-            targetStore?.get("current_path_abs") ??
-            getProjectHomeDirectory(targetProjectId);
-          await actions.copyPathBetweenProjects({
-            src: { project_id, path: dragData.paths },
-            dest: { project_id: targetProjectId, path: destPath },
-          });
-          onUserFilesystemChange?.();
-          actions.set_all_files_unchecked();
-          preDragCheckedRef.current = null;
+          actions.setState({
+            file_action: "copy",
+            copy_destination_project_id: targetProjectId,
+          } as any);
           return;
         } catch (err) {
           actions.set_activity({

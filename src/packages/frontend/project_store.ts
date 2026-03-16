@@ -109,6 +109,7 @@ export interface ProjectStoreState {
   hide_masked_files?: boolean;
   type_filter?: string;
   show_directory_tree?: boolean;
+  copy_destination_project_id?: string;
   explorer_browsing_path_abs?: string;
   explorer_history_path_abs?: string;
   flyout_browsing_path_abs?: string;
