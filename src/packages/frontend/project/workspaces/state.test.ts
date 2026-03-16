@@ -81,6 +81,18 @@ describe("project workspaces path matching", () => {
     expect(
       selectionMatchesPath(
         { kind: "workspace", workspace_id: "a" },
+        [
+          {
+            ...record("/repo/a", "a"),
+            chat_path: "/home/user/.local/share/cocalc/workspaces/me/a.chat",
+          },
+        ],
+        "/home/user/.local/share/cocalc/workspaces/me/a.chat",
+      ),
+    ).toBe(true);
+    expect(
+      selectionMatchesPath(
+        { kind: "workspace", workspace_id: "a" },
         records,
         "/repo/b/file.ts",
       ),

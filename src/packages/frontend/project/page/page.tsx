@@ -27,6 +27,7 @@ import {
 import StudentPayUpgrade from "@cocalc/frontend/purchases/student-pay";
 import track from "@cocalc/frontend/user-tracking";
 import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
+import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { COLORS } from "@cocalc/util/theme";
 import {
   ProjectContext,
@@ -65,7 +66,6 @@ import {
   hostLabel,
 } from "@cocalc/frontend/projects/host-operational";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
-import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
 import type { MoveLroState } from "@cocalc/frontend/project/move-ops";
 import MoveInProgress from "./move-in-progress";
 import {
@@ -190,7 +190,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     const filesInWorkspace =
       active_project_tab === "files" &&
       !!current_path_abs &&
-      pathMatchesRoot(current_path_abs, current.root_path);
+      pathMatchesWorkspace(current, current_path_abs);
     const pending =
       (active_project_tab?.startsWith(EDITOR_PREFIX)
         ? !activePathIsVisible

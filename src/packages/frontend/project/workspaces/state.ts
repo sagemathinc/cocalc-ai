@@ -12,6 +12,7 @@ import {
   hasWorkspaceStoreState,
   normalizeWorkspaceSelection,
   openWorkspaceStore,
+  pathMatchesWorkspace,
   pathMatchesWorkspaceRoot,
   readWorkspaceOrderFromStore,
   readStoredWorkspaceRecords,
@@ -296,12 +297,10 @@ export function useProjectWorkspaces(
   const setSelection = useCallback(
     (next: WorkspaceSelection) => {
       const normalized = normalizeWorkspaceSelection(next, recordsRef.current);
-      const changed = !sameSelection(selection, normalized);
-      if (
-        changed &&
-        normalized.kind === "workspace" &&
-        normalized.workspace_id.trim()
-      ) {
+      if (sameSelection(selection, normalized)) {
+        return;
+      }
+      if (normalized.kind === "workspace" && normalized.workspace_id.trim()) {
         const updated =
           storeRef.current != null
             ? touchStoredWorkspaceRecord(
@@ -490,7 +489,7 @@ export function useProjectWorkspaces(
   const matchesPath = useCallback(
     (path: string) => {
       if (selection.kind === "workspace" && current != null) {
-        return pathMatchesRoot(path, current.root_path);
+        return pathMatchesWorkspace(current, path);
       }
       return selectionMatchesPath(selection, records, path);
     },

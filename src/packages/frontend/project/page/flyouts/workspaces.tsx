@@ -453,6 +453,9 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         workspace_id: record.workspace_id,
       });
       await ensureWorkspaceChatDirectory({ project_id, chat_path });
+      if (record.chat_path !== chat_path) {
+        workspaces.updateWorkspace(record.workspace_id, { chat_path });
+      }
       workspaces.setSelection({
         kind: "workspace",
         workspace_id: record.workspace_id,

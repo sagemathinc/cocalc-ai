@@ -359,20 +359,37 @@ export function pathMatchesWorkspaceRoot(
   );
 }
 
+export function pathMatchesWorkspace(
+  record: Pick<WorkspaceRecord, "root_path" | "chat_path">,
+  path: string,
+): boolean {
+  const normalizedPath = normalizeWorkspacePath(path);
+  const normalizedChatPath =
+    typeof record.chat_path === "string" && record.chat_path.trim()
+      ? normalizeWorkspacePath(record.chat_path.trim())
+      : null;
+  return (
+    normalizedChatPath === normalizedPath ||
+    pathMatchesWorkspaceRoot(normalizedPath, record.root_path)
+  );
+}
+
 export function resolveWorkspaceForPath(
   records: WorkspaceRecord[],
   path: string,
 ): WorkspaceRecord | null {
   const normalizedPath = normalizeWorkspacePath(path);
   for (const record of records) {
-    const chatPath = record.chat_path?.trim();
-    if (chatPath && chatPath === normalizedPath) {
+    if (
+      pathMatchesWorkspace(record, normalizedPath) &&
+      !pathMatchesWorkspaceRoot(normalizedPath, record.root_path)
+    ) {
       return record;
     }
   }
   let best: WorkspaceRecord | null = null;
   for (const record of records) {
-    if (!pathMatchesWorkspaceRoot(normalizedPath, record.root_path)) continue;
+    if (!pathMatchesWorkspace(record, normalizedPath)) continue;
     if (!best || record.root_path.length > best.root_path.length) {
       best = record;
     }
