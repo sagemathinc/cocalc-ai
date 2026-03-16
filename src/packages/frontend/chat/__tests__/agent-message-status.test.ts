@@ -28,7 +28,7 @@ describe("describeLastActivity", () => {
         now: 5000,
       }),
     ).toEqual({
-      label: "Awaiting activity",
+      label: "Starting...",
       ageMs: undefined,
       stale: false,
     });

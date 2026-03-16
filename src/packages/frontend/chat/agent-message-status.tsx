@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Badge, Button, Drawer, Tooltip } from "antd";
+import { Button, Drawer, Tooltip } from "antd";
+import { LoadingOutlined } from "@ant-design/icons";
 import {
   useEffect,
   useMemo,
@@ -68,7 +69,7 @@ export function describeLastActivity({
     typeof lastActivityAtMs !== "number" ||
     !Number.isFinite(lastActivityAtMs)
   ) {
-    return { label: "Awaiting activity", ageMs: undefined, stale: false };
+    return { label: "Starting...", ageMs: undefined, stale: false };
   }
   const ageMs = Math.max(0, now - lastActivityAtMs);
   return {
@@ -278,22 +279,35 @@ export function AgentMessageStatus({
     <>
       <div
         style={{
-          display: "flex",
+          display: "inline-flex",
           alignItems: "center",
           gap: 8,
           marginBottom: 8,
           flexWrap: "wrap",
+          padding: "4px 10px",
+          borderRadius: 999,
+          background: COLORS.GRAY_LLL,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          lineHeight: 1.2,
         }}
       >
-        <Badge status={generating ? "processing" : "default"} />
-        <Button
-          size="small"
-          onClick={() => setShowDrawer(true)}
-          title={liveStatusTitle || "View Codex activity log"}
+        {generating ? (
+          <LoadingOutlined
+            spin
+            style={{ fontSize: 12, color: COLORS.GRAY_D }}
+          />
+        ) : null}
+        <span
+          style={{
+            color: COLORS.GRAY_D,
+            fontSize: 12,
+            fontWeight: 500,
+          }}
         >
-          {generating ? "Working" : `Worked for\n${liveDurationLabel}`}
-        </Button>
-        {generating ? <span style={{ color: COLORS.GRAY_D }}>Live</span> : null}
+          {generating
+            ? `Running ${liveDurationLabel}`
+            : `Worked for ${liveDurationLabel}`}
+        </span>
         {generating && lastActivityInfo.label ? (
           <Tooltip
             title={
@@ -314,6 +328,21 @@ export function AgentMessageStatus({
             </span>
           </Tooltip>
         ) : null}
+        <Button
+          size="small"
+          type="text"
+          onClick={() => setShowDrawer(true)}
+          title={liveStatusTitle || "View Codex activity log"}
+          style={{
+            padding: 0,
+            height: "auto",
+            color: COLORS.GRAY_D,
+            fontSize: 12,
+            textDecoration: "underline",
+          }}
+        >
+          Activity
+        </Button>
       </div>
 
       <Drawer

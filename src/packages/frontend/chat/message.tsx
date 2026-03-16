@@ -95,6 +95,7 @@ const BORDER = "2px solid #ccc";
 const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
 const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
 const HEAD_REF = "HEAD";
+export const ACP_THINKING_PLACEHOLDER = ":robot: Thinking...";
 
 export function resolveThreadMetadataLookup({
   messageThreadId,
@@ -356,6 +357,20 @@ export function resolveRenderedMessageValue({
     return logValue;
   }
   return rowValue;
+}
+
+export function shouldSuppressAcpPlaceholderBody({
+  value,
+  generating,
+  showCodexActivity,
+}: {
+  value: string;
+  generating: boolean;
+  showCodexActivity: boolean;
+}): boolean {
+  return (
+    showCodexActivity && generating && value.trim() === ACP_THINKING_PLACEHOLDER
+  );
 }
 
 function getLatestCodexActivityAtMs(
@@ -1328,6 +1343,11 @@ export default function Message({
 
   function renderMessageBody({ message_class }) {
     const value = renderedMessageMarkdown;
+    const suppressPlaceholderBody = shouldSuppressAcpPlaceholderBody({
+      value,
+      generating: effectiveGenerating,
+      showCodexActivity,
+    });
     const inlineCodeLinks = field<InlineCodeLink[]>(
       message,
       "inline_code_links",
@@ -1380,18 +1400,20 @@ export default function Message({
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
-        <div onClickCapture={openCommitFromMessage}>
-          <StaticMarkdown
-            style={MARKDOWN_STYLE}
-            value={value}
-            className={message_class}
-            highlightQuery={searchHighlight}
-            inlineCodeLinks={
-              Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-            }
-            inlineCodeProjectRoot={activityBasePath}
-          />
-        </div>
+        {!suppressPlaceholderBody && value.trim().length > 0 ? (
+          <div onClickCapture={openCommitFromMessage}>
+            <StaticMarkdown
+              style={MARKDOWN_STYLE}
+              value={value}
+              className={message_class}
+              highlightQuery={searchHighlight}
+              inlineCodeLinks={
+                Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+              }
+              inlineCodeProjectRoot={activityBasePath}
+            />
+          </div>
+        ) : null}
       </>
     );
   }

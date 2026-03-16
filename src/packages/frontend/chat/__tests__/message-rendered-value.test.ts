@@ -1,6 +1,10 @@
 /** @jest-environment jsdom */
 
-import { resolveRenderedMessageValue } from "../message";
+import {
+  ACP_THINKING_PLACEHOLDER,
+  resolveRenderedMessageValue,
+  shouldSuppressAcpPlaceholderBody,
+} from "../message";
 
 describe("resolveRenderedMessageValue", () => {
   it("prefers row content when not generating and row has text", () => {
@@ -41,5 +45,23 @@ describe("resolveRenderedMessageValue", () => {
         generating: true,
       }),
     ).toBe("row text");
+  });
+
+  it("suppresses the ACP placeholder body while Codex is still starting", () => {
+    expect(
+      shouldSuppressAcpPlaceholderBody({
+        value: ACP_THINKING_PLACEHOLDER,
+        generating: true,
+        showCodexActivity: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldSuppressAcpPlaceholderBody({
+        value: ACP_THINKING_PLACEHOLDER,
+        generating: true,
+        showCodexActivity: false,
+      }),
+    ).toBe(false);
   });
 });
